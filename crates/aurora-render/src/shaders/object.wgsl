@@ -1329,7 +1329,7 @@ fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
 // base texture's slot points at the shared placeholder layer
 // (`textures::PLACEHOLDER`, slot 4) until its first texels arrive.
 fn rez_still_grey(rec: DrawRecord) -> bool {
-    return tex_loc[rec.tex.x] == tex_loc[4u];
+    return tex_loc.values[rec.tex.x] == tex_loc.values[4u];
 }
 
 // Height of the fragment within its object (0 bottom, 1 top), for the

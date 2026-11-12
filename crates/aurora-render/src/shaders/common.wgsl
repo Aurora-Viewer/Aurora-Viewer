@@ -253,7 +253,19 @@ struct SkinBind {
 // the page (high 16 bits) and its layer (low 16 bits).
 @group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
-@group(2) @binding(2) var<storage, read> tex_loc: array<u32>;
+struct TextureLocations {
+    page_count: u32,
+    values: array<u32>,
+}
+@group(2) @binding(2) var<storage, read> tex_loc: TextureLocations;
+
+// Stale or corrupt locations fall back to page 0, which always holds the
+// reserved textures. `TextureTable::build` binds at least that page.
+fn texture_page_index(loc: u32) -> u32 {
+    let page = loc >> 16u;
+    let last_bound_page = max(tex_loc.page_count, 1u) - 1u;
+    return select(page, 0u, page > last_bound_page);
+}
 
 // Local lights of a fragment (light_tiles.rs). In the main view, the lights
 // that cover its screen column, its screen row and its slice of depth at
@@ -372,20 +384,20 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSampleBias(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
+    let loc = tex_loc.values[idx];
+    return textureSampleBias(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
 }
 
 // Without the frame's mip bias: the shadow maps have their own size, and
 // their pass binds no frame uniform
 fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
+    let loc = tex_loc.values[idx];
+    return textureSample(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu);
 }
 
 fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
+    let loc = tex_loc.values[idx];
+    return textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
 }
 
 fn in_reflection_pass() -> bool {
@@ -1941,18 +1953,18 @@ fn ll_light_atten(d: f32, falloff: f32) -> f32 {
 
 // Last level of the projected texture's chain (LL's proj_lod).
 fn projector_levels(slot: u32) -> f32 {
-    let loc = tex_loc[slot];
-    return f32(textureNumLevels(tex_pages[loc >> 16u])) - 1.0;
+    let loc = tex_loc.values[slot];
+    return f32(textureNumLevels(tex_pages[texture_page_index(loc)])) - 1.0;
 }
 
 // The projected texture at `lod`, linear, kept inside the image (the
 // atlas sampler repeats; LL clamps).
 fn projector_sample(slot: u32, tc: vec2<f32>, lod: f32) -> vec4<f32> {
-    let loc = tex_loc[slot];
-    let size = vec2<f32>(textureDimensions(tex_pages[loc >> 16u]));
+    let loc = tex_loc.values[slot];
+    let size = vec2<f32>(textureDimensions(tex_pages[texture_page_index(loc)]));
     let half_texel = 0.5 * exp2(ceil(lod)) / size;
     let uv = clamp(vec2<f32>(tc.x, 1.0 - tc.y), half_texel, vec2<f32>(1.0) - half_texel);
-    let c = textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
+    let c = textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
     return vec4<f32>(srgb_to_linear(c.rgb), c.a);
 }
 

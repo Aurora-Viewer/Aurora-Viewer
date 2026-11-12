@@ -200,6 +200,18 @@ one sun shadow map of its own, centred on the probe (`probes::shadow_matrix`);
 under the rim of the dome the sky gives way to a mirror of it, for the sea.
 The views of a capture are mirrored (`probes::face_view`), so captures count
 as mirrored passes (`misc.w` 2).
+
+`shaders/cull.wgsl::write_args` validates indexed-indirect ranges against the
+bound u16 index buffer and zeros invalid draws; `cs_classify` counts each
+such face once per frame (left out of the triangle statistics), and the log
+names a new maximum only. CPU-built indirect lists get the same bound when they are pushed
+(`gpu_cull::bound_cpu_draw`); wgpu's `VALIDATION_INDIRECT_CALL` stays off (it
+does not cover the GPU-culled `multi_draw_indexed_indirect_count`). The scene
+texture table stores its bound page count in the header of the existing storage
+location buffer. `common.wgsl::texture_page_index` uses that count to send an
+out-of-range page to page 0, keeping the layer: the face samples a bound texture
+(whatever sits at that layer of page 0), never a stale descriptor; it is not a
+dedicated fallback texture.
 Reflection-probe capture mips use separate compute passes before the final
 radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
 30 when a mip written by one dispatch is sampled by later dispatches.
