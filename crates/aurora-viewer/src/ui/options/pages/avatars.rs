@@ -336,6 +336,46 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
                 cx.toggle(tr!("voice-lip-sync"), "", &field!(audio.lip_sync));
             });
+            // AvatarRotateThresholdSlow / Fast and our own head and eye
+            // limits (settings/avatar_motion.rs)
+            cx.group(tr!("ui-options-motion-group"), |cx| {
+                use crate::settings::avatar_motion as m;
+                cx.slider_whole(
+                    tr!("ui-options-motion-turn-slow"),
+                    tr!("ui-options-motion-turn-slow-help"),
+                    &field!(avatar_motion.turn_slow),
+                    m::TURN_RANGE,
+                    "°",
+                );
+                cx.slider_whole(
+                    tr!("ui-options-motion-turn-fast"),
+                    tr!("ui-options-motion-turn-fast-help"),
+                    &field!(avatar_motion.turn_fast),
+                    m::TURN_RANGE,
+                    "°",
+                );
+                cx.slider_whole(
+                    tr!("ui-options-motion-turn-mouselook"),
+                    tr!("ui-options-motion-turn-mouselook-help"),
+                    &field!(avatar_motion.turn_mouselook),
+                    m::TURN_RANGE,
+                    "°",
+                );
+                cx.slider_whole(
+                    tr!("ui-options-motion-head-limit"),
+                    tr!("ui-options-motion-head-limit-help"),
+                    &field!(avatar_motion.head_limit),
+                    m::HEAD_RANGE,
+                    "°",
+                );
+                cx.slider_whole(
+                    tr!("ui-options-motion-eye-limit"),
+                    tr!("ui-options-motion-eye-limit-help"),
+                    &field!(avatar_motion.eye_limit),
+                    m::EYE_RANGE,
+                    "°",
+                );
+            });
             // ANIM_AGENT_CUSTOMIZE, always played by the Legacy Viewer
             cx.group(tr!("ui-options-appearance-editing"), |cx| {
                 cx.toggle(

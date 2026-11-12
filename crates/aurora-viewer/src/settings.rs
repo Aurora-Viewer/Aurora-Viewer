@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub mod area_search;
+pub mod avatar_motion;
 pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
@@ -1062,6 +1063,9 @@ pub struct Settings {
     pub rlva: crate::world::rlva::preferences::Preferences,
     pub pose_requests: crate::world::poser_consent::Preferences,
     pub poser: crate::ik_edit::poser::Config,
+    /// The avatars' turn thresholds and our own head and eye look limits
+    /// (settings/avatar_motion.rs; Preferences › Avatars).
+    pub avatar_motion: avatar_motion::AvatarMotion,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -2245,6 +2249,7 @@ impl Default for Settings {
             rlva: Default::default(),
             pose_requests: Default::default(),
             poser: Default::default(),
+            avatar_motion: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),
@@ -3169,6 +3174,7 @@ impl Settings {
         self.large_surface_sculpt_threshold = area(self.large_surface_sculpt_threshold, 150.0);
         self.large_surface_frame_max = area(self.large_surface_frame_max, 5000.0);
         self.revoke_permissions = self.revoke_permissions.min(3);
+        self.avatar_motion = self.avatar_motion.sanitized();
         self.avatar_turn_speed = if self.avatar_turn_speed.is_finite() {
             self.avatar_turn_speed.clamp(0.0, 100.0)
         } else {

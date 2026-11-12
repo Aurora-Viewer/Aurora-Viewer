@@ -29,9 +29,42 @@ const PELVIS_LAG_MOUSELOOK: f32 = 0.15;
 const TURN_RATE_DELTA: f32 = 0.0019;
 const SHORTEST_LAG: f32 = 0.0001;
 const MOUSELOOK_PELVIS_FOLLOW_FACTOR: f32 = 0.5;
-/// AvatarRotateThresholdSlow / Fast (degrees).
-const ROTATE_THRESHOLD_SLOW: f32 = 60.0;
-const ROTATE_THRESHOLD_FAST: f32 = 2.0;
+
+/// When the body turns (degrees): AvatarRotateThresholdSlow / Fast of the
+/// Legacy Viewer, and a mouselook threshold, 0 for its own (half of the
+/// walking one, MOUSELOOK_PELVIS_FOLLOW_FACTOR). Preferences › Avatars,
+/// `settings::avatar_motion`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Thresholds {
+    pub slow: f32,
+    pub fast: f32,
+    pub mouselook: f32,
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Self {
+            slow: crate::settings::avatar_motion::TURN_SLOW,
+            fast: crate::settings::avatar_motion::TURN_FAST,
+            mouselook: 0.0,
+        }
+    }
+}
+
+impl Thresholds {
+    /// The threshold at this horizontal speed (m/s), in degrees.
+    fn at(&self, speed: f32, mouselook: bool) -> f32 {
+        if mouselook && self.mouselook > 0.0 {
+            return self.mouselook;
+        }
+        let threshold = clamp_rescale(speed, 0.1, 1.0, self.slow, self.fast);
+        if mouselook {
+            threshold * MOUSELOOK_PELVIS_FOLLOW_FACTOR
+        } else {
+            threshold
+        }
+    }
+}
 
 fn clamp_rescale(x: f32, in0: f32, in1: f32, out0: f32, out1: f32) -> f32 {
     let t = ((x - in0) / (in1 - in0)).clamp(0.0, 1.0);
@@ -58,6 +91,7 @@ pub struct Input {
     /// How much faster the body turns while walking or standing, 0 to 100 %
     /// (FSAvatarTurnSpeed, in Debug Settings); every avatar drawn.
     pub turn_speed: f32,
+    pub thresholds: Thresholds,
 }
 
 /// The walking and standing lag of the turn (s): PELVIS_LAG_WALKING,
@@ -122,11 +156,7 @@ impl Body {
             }
         }
         let pelvis = self.rotation * Vec3::X;
-        let mut threshold = clamp_rescale(speed, 0.1, 1.0, ROTATE_THRESHOLD_SLOW, ROTATE_THRESHOLD_FAST);
-        if i.mouselook_at.is_some() {
-            threshold *= MOUSELOOK_PELVIS_FOLLOW_FACTOR;
-        }
-        threshold = threshold.to_radians();
+        let mut threshold = i.thresholds.at(speed, i.mouselook_at.is_some()).to_radians();
         let angle = if fwd.length_squared() > 1e-8 {
             pelvis.angle_between(fwd)
         } else {
@@ -189,6 +219,7 @@ mod tests {
             flying: false,
             step_back: false,
             turn_speed: 0.0,
+            thresholds: Thresholds::default(),
         };
         let mut b = Body::new(Vec3::X);
         // standing: a 30° camera turn does not move the body
@@ -215,6 +246,7 @@ mod tests {
             flying: false,
             step_back: false,
             turn_speed: 0.0,
+            thresholds: Thresholds::default(),
         };
         for _ in 0..240 {
             b.update(&back, 1.0 / 60.0);
@@ -269,10 +301,45 @@ mod tests {
                 flying: false,
                 step_back: false,
                 turn_speed: speed,
+                thresholds: Thresholds::default(),
             };
             b.update(&face, 0.05);
             yaw(b.rotation)
         };
         assert!(turned(100.0) > turned(0.0) + 1.0, "{} vs {}", turned(100.0), turned(0.0));
+    }
+
+    #[test]
+    fn thresholds_default_to_the_legacy_values_and_a_wider_one_holds_the_body() {
+        let t = Thresholds::default();
+        assert_eq!(t.at(0.0, false), 60.0);
+        assert_eq!(t.at(5.0, false), 2.0);
+        // mouselook: half the walking one, unless a threshold of its own
+        assert_eq!(t.at(0.0, true), 30.0);
+        let own = Thresholds { mouselook: 120.0, ..t };
+        assert_eq!(own.at(0.0, true), 120.0);
+        assert_eq!(own.at(0.0, false), 60.0);
+        // standing, a 60° camera turn: the default turns the body, 90° keeps
+        // it (the turn starts past three quarters of the threshold, as in
+        // LLVOAvatar::updateOrientation: 45° and 67.5°)
+        let held = |thresholds: Thresholds| {
+            let mut b = Body::new(Vec3::X);
+            let still = Input {
+                prim_dir: Quat::from_rotation_z(60f32.to_radians()) * Vec3::X,
+                velocity: Vec3::ZERO,
+                in_air: false,
+                mouselook_at: None,
+                flying: false,
+                step_back: false,
+                turn_speed: 0.0,
+                thresholds,
+            };
+            for _ in 0..120 {
+                b.update(&still, 1.0 / 60.0);
+            }
+            yaw(b.rotation)
+        };
+        assert!(held(t) > 30.0, "{}", held(t));
+        assert!(held(Thresholds { slow: 90.0, ..t }).abs() < 5.0);
     }
 }

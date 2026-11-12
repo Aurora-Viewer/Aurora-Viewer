@@ -10063,9 +10063,15 @@ impl App {
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
-                self.world.agent.body_turn = self
-                    .world
-                    .update_bodies(world_now(), dt, at, ml, step_back, self.settings.avatar_turn_speed);
+                self.world.agent.body_turn = self.world.update_bodies(
+                    world_now(),
+                    dt,
+                    at,
+                    ml,
+                    step_back,
+                    self.settings.avatar_turn_speed,
+                    self.settings.avatar_motion.turning(),
+                );
             }
             self.revoke_on_sit();
             self.trace_own_motion();
@@ -10391,6 +10397,7 @@ impl App {
             self.scene.draw_distance = self.settings.draw_distance;
             self.scene.synchronize_animations = self.settings.synchronize_animations;
             self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
+            self.scene.own_look_limits = self.settings.avatar_motion.look_limits();
             self.scene.ground_feet_while_moving = self.settings.ground_feet_while_moving;
             self.scene.ground_feet_max_height = self.settings.ground_feet_max_height;
             self.scene.set_foot_scope_limit(self.settings.ground_feet_max_avatars);

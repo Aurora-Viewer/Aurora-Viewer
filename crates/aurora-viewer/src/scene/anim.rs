@@ -512,6 +512,9 @@ pub struct Controller {
     pointing: pointing::Pointing,
     /// The look-at target was cleared: HEAD_ROT stops (eyes keep `look`).
     pub look_cleared: bool,
+    /// Our own avatar's head and eye limits (radians, Preferences ›
+    /// Avatars); None: HEAD_ROTATION_CONSTRAINT and EYE_ROT_LIMIT_ANGLE.
+    pub look_limits: Option<(f32, f32)>,
     procedural: Procedural,
     /// Joints used by the procedural motions, as posed last frame
     /// (skeleton space).
@@ -706,6 +709,19 @@ const EYE_EASE: f32 = 0.5;
 const MEDIUM_PRIORITY: i32 = 1;
 /// LLBodyNoiseMotion's priority.
 const HIGH_PRIORITY: i32 = 2;
+
+/// The head and eye limits in use: our own from the settings, bounded to a
+/// quarter turn and half of one, or LLHeadRotMotion's constants.
+fn look_limits(own: Option<(f32, f32)>) -> (f32, f32) {
+    let bounded = |v: f32, max: f32, default: f32| if v.is_finite() { v.clamp(0.0, max) } else { default };
+    match own {
+        Some((head, eye)) => (
+            bounded(head, std::f32::consts::FRAC_PI_2, HEAD_ROTATION_CONSTRAINT),
+            bounded(eye, std::f32::consts::FRAC_PI_3, EYE_ROT_LIMIT_ANGLE),
+        ),
+        None => (HEAD_ROTATION_CONSTRAINT, EYE_ROT_LIMIT_ANGLE),
+    }
+}
 
 /// LLSmoothInterpolation::getInterpolant.
 fn interpolant(dt: f32, half_life: f32) -> f32 {
@@ -910,6 +926,7 @@ impl Controller {
         let dt = self.last_eval.map(|t| now.duration_since(t).as_secs_f32()).unwrap_or(0.0).min(1.0);
         self.last_eval = Some(now);
         let mut out = Vec::new();
+        let (head_limit, eye_limit) = look_limits(self.look_limits);
         let p = &self.posed;
         let pr = &mut self.procedural;
         let head_w = pr.head.update(!self.look_cleared, now, HEAD_ROT_EASE);
@@ -932,7 +949,7 @@ impl Controller {
                 }
                 None => Quat::IDENTITY,
             };
-            let head_local = constrain(target, HEAD_ROTATION_CONSTRAINT);
+            let head_local = constrain(target, head_limit);
             let torso_target = nlerp(TORSO_LAG, Quat::IDENTITY, head_local);
             pr.torso = nlerp(interpolant(dt, TORSO_LOOKAT_LAG_HALF_LIFE), pr.torso, torso_target);
             pr.last_head = nlerp(interpolant(dt, HEAD_LOOKAT_LAG_HALF_LIFE), pr.last_head, head_local);
@@ -967,7 +984,7 @@ impl Controller {
                     let f = local * Vec3::X;
                     let yaw = f.y.atan2(f.x);
                     let pitch = (-f.z).atan2((f.x * f.x + f.y * f.y).sqrt());
-                    rot = constrain(Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch), EYE_ROT_LIMIT_ANGLE);
+                    rot = constrain(Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch), eye_limit);
                     let iod = match (pl, pp) {
                         (Some(a), Some(b)) => a.1.distance(b.1),
                         _ => 0.064,
@@ -2832,6 +2849,35 @@ mod tests {
         controller.evaluate(&rig, at(1.02), None, &mut pose);
         let ahead = eye_yaw(&rig, &pose);
         assert!(left - ahead > 0.4, "eyes back ahead: {left} -> {ahead}");
+    }
+
+    /// Our own limits (Preferences › Avatars) replace the constants: with
+    /// the eyes held to 0° they stay ahead, apart from their jitter, and a
+    /// wider limit lets them follow a target over the shoulder.
+    #[test]
+    fn own_look_limits_replace_the_constants() {
+        assert_eq!(look_limits(None), (HEAD_ROTATION_CONSTRAINT, EYE_ROT_LIMIT_ANGLE));
+        let (head, eye) = look_limits(Some((72f32.to_radians(), 27f32.to_radians())));
+        assert!((head - HEAD_ROTATION_CONSTRAINT).abs() < 1e-6 && (eye - EYE_ROT_LIMIT_ANGLE).abs() < 1e-6);
+        assert_eq!(
+            look_limits(Some((f32::NAN, 9.0))),
+            (HEAD_ROTATION_CONSTRAINT, std::f32::consts::FRAC_PI_3)
+        );
+        let rig = rig();
+        let t0 = Instant::now();
+        let look = |limits: Option<(f32, f32)>| {
+            let mut controller = synchronized_controller();
+            controller.look_limits = limits;
+            let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            controller.look = Some(Vec3::new(-1.0, 1.5, 0.0));
+            controller.evaluate(&rig, t0, None, &mut pose);
+            controller.evaluate(&rig, t0 + Duration::from_secs(1), None, &mut pose);
+            eye_yaw(&rig, &pose)
+        };
+        // the random eye movements stay under 0.25 rad either way
+        let wide = look(Some((HEAD_ROTATION_CONSTRAINT, 1.0)));
+        let held = look(Some((HEAD_ROTATION_CONSTRAINT, 0.0)));
+        assert!(held.abs() < 0.3 && wide - held > 0.5, "{wide} vs {held}");
     }
 
     #[test]

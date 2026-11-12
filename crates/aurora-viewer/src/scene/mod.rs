@@ -855,6 +855,8 @@ pub struct Scene {
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
+    /// Our head and eye look limits (radians, `settings::avatar_motion`).
+    pub own_look_limits: (f32, f32),
     pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
     /// Verified native Movelock standing pose, not a manually requested seat.
@@ -1572,6 +1574,7 @@ impl Scene {
             poser: HashMap::new(),
             synchronize_animations: false,
             ground_avatar_feet: false,
+            own_look_limits: crate::settings::avatar_motion::AvatarMotion::default().look_limits(),
             ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
             ground_feet_native_stand: false,
@@ -5605,6 +5608,7 @@ impl Scene {
             motions.ground = self.grounding_frame(world, idx, now);
             motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);
             motions.aurora_feet = self.ground_avatar_feet;
+            motions.look_limits = (owner == world.agent_id).then_some(self.own_look_limits);
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
