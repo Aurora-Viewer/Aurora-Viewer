@@ -6,7 +6,7 @@
 
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
-use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::lookat::{Aim, Style};
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
@@ -53,6 +53,11 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_outfit_gallery = !aurora;
     s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
+    s.destinations_style = if aurora {
+        DestinationsStyle::Aurora
+    } else {
+        DestinationsStyle::Legacy
+    };
     s.classic_pay_window = !aurora;
     s.legacy_money_tracker = !aurora;
     s.classic_controls = !aurora;
@@ -190,6 +195,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-places-aurora"),
                 tr!("ui-options-aurora-places-classic"),
                 &field!(classic_places),
+            );
+            cx.wide().choice(
+                tr!("ui-options-aurora-destinations"),
+                tr!("ui-options-aurora-destinations-help"),
+                &field!(destinations_style),
+                &[
+                    (DestinationsStyle::Aurora, tr!("ui-options-aurora-destinations-aurora"), true),
+                    (DestinationsStyle::Legacy, tr!("ui-options-aurora-destinations-classic"), false),
+                ],
             );
             look(
                 cx,
@@ -547,6 +561,7 @@ mod tests {
         assert!(s.classic_outfit_gallery, "the Legacy Viewer's small outfit tiles");
         assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
+        assert_eq!(s.destinations_style, DestinationsStyle::Legacy, "the guide's web page");
         assert!(s.classic_pay_window);
         assert!(s.legacy_money_tracker, "the Legacy Viewer's Time / Name / Amount list");
         assert!(s.classic_controls, "the Legacy Viewer's two control windows");
@@ -584,6 +599,12 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert_eq!(s.destinations_style, DestinationsStyle::Aurora);
+        assert_eq!(
+            fresh.destinations_style,
+            DestinationsStyle::Aurora,
+            "Aurora's Destinations is the default"
+        );
         assert!(
             !s.classic_outfit_gallery && !fresh.classic_outfit_gallery,
             "the showcase is the default"
