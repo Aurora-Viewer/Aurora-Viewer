@@ -6025,7 +6025,7 @@ nameplate-linden-lab-tooltip = Linden Labの社員
 ui-perf-water-surface-refraction-waves = 水面（屈折、波）
 ui-options-maximum-worn-surface-area = 着用物の最大表面積
 ui-options-complexity-notices = 複雑度の通知
-ui-options-complexity-notices-help = アバターの複雑度と、周囲の人から完全に見えていない可能性を知らせる通知の表示時間です（ShowMyComplexityChanges、レガシービューアと同じく１０秒。0 = 通知なし）。
+ui-options-complexity-notices-help = アバターの複雑度と、周囲の人から完全に見えていない可能性を知らせる通知の表示時間です（ShowMyComplexityChanges。初期設定はオフ、レガシービューアでは１０秒。0 = 通知なし）。複雑度の通知は５分に１回までです。
 ui-options-shiny-surfaces-expensive-disabled-by-default = 光沢のある表面。高負荷、デフォルトで無効
 ui-contacts-nickname = ニックネーム
 ui-contacts-set-nickname = ニックネームを設定…
