@@ -715,7 +715,7 @@ impl App {
         }
     }
 
-    fn rlva_camera_commands(&mut self) {
+    pub(super) fn rlva_camera_commands(&mut self) {
         use crate::world::rlva::{
             Param,
             camera::{FocusRequest, FocusTarget},

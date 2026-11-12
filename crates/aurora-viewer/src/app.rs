@@ -45,6 +45,8 @@ mod alt_graph;
 mod avatar_health;
 mod avatar_reload;
 mod blender_live;
+#[path = "mcp_bridge.rs"]
+pub(crate) mod mcp_bridge;
 mod blender_shape;
 mod buy_currency;
 mod buy_land;
@@ -1063,6 +1065,7 @@ pub struct App {
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
+    mcp_bridge: mcp_bridge::McpBridge,
     task_transfer: std::collections::VecDeque<ui::inventory::task_drop::PendingTransfer>,
     /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
     contents_copies: contents_copy::ContentsCopies,
@@ -1952,6 +1955,7 @@ impl App {
             gesture_state: Default::default(),
             imports: Default::default(),
             blender_live: Default::default(),
+            mcp_bridge: Default::default(),
             task_transfer: Default::default(),
             contents_copies: Default::default(),
             world_edits: Default::default(),
@@ -3250,6 +3254,7 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        self.mcp_observe_event(&ev);
         if matches!(&ev, NetEvent::AgentMovementComplete { .. })
             && let Some(recovery) = &mut self.follow_recovery
         {
@@ -9553,6 +9558,7 @@ impl App {
         }
         self.local_bakes.apply(&mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
+        self.update_mcp_bridge(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -10069,6 +10075,7 @@ impl App {
             }
             self.scene.poser = self.ik_editor.pose_layers(&self.world);
             self.outfit_portrait_pose();
+            self.mcp_bridge.apply_poses(&mut self.scene.poser);
             self.ik_editor.tick_pose_storage(&self.scene.jobs, &self.egui_ctx, &self.world);
             if !self.scene.poser.is_empty() {
                 self.scene.ik_edit = Default::default();
@@ -12396,6 +12403,7 @@ impl App {
         // {
         //     self.bug_report.captured(w, h, pixels);
         // }
+        self.mcp_on_captured(&mut gfx.renderer);
         self.report_abuse_captured(&mut gfx.renderer);
         if self.inventory_images.capturing.is_some()
             && let Some((w, h, pixels)) = gfx.renderer.captured.take()

@@ -1,0 +1,2587 @@
+//! MCP Tool Registry, Profile Router (`compact` vs `all`), and Request Dispatcher.
+
+use crate::asset_inspect;
+use crate::bridge::{
+    AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, LsdOperation,
+    MAX_BOUNDED_ITEMS, McpError, McpRequestEnvelope, PrimTransformSpec, RollbackAction,
+    ViewerRequest, ViewerResponse,
+};
+use crate::lease::{DEFAULT_LEASE_SECONDS, LeaseManager};
+use crate::lsd;
+use crate::vision;
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpProfile {
+    Compact,
+    All,
+}
+
+impl McpProfile {
+    pub fn from_env() -> Self {
+        match std::env::var("AURORA_MCP_PROFILE")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "compact" => McpProfile::Compact,
+            _ => McpProfile::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "inputSchema")]
+    pub input_schema: Value,
+    #[serde(skip)]
+    pub in_compact_profile: bool,
+}
+
+pub struct McpRouter {
+    tx: mpsc::Sender<McpRequestEnvelope>,
+    pub leases: Arc<LeaseManager>,
+    pub profile: McpProfile,
+    manifests: Mutex<HashMap<String, Value>>,
+}
+
+impl McpRouter {
+    pub fn new(tx: mpsc::Sender<McpRequestEnvelope>, profile: McpProfile) -> Self {
+        Self {
+            tx,
+            leases: Arc::new(LeaseManager::default()),
+            profile,
+            manifests: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn list_tools(&self) -> Vec<ToolDefinition> {
+        let all = all_tool_definitions();
+        match self.profile {
+            McpProfile::All => all,
+            McpProfile::Compact => all.into_iter().filter(|t| t.in_compact_profile).collect(),
+        }
+    }
+
+    async fn send_to_viewer(
+        &self,
+        lease_id: Option<String>,
+        request: ViewerRequest,
+        timeout_ms: u64,
+    ) -> Result<ViewerResponse, McpError> {
+        // Flush any expired lease rollbacks first.
+        if let Some((_, expired_actions)) = self.leases.take_expired_rollbacks()
+            && !expired_actions.is_empty()
+        {
+            let (rtx, _rrx) = oneshot::channel();
+            let _ = self.tx.try_send(McpRequestEnvelope {
+                lease_id: None,
+                request: ViewerRequest::ApplyRollbacks {
+                    actions: expired_actions,
+                },
+                reply_tx: rtx,
+            });
+        }
+
+        let effective_lease = if request.requires_lease() {
+            Some(self.leases.verify_for_mutation(lease_id.as_deref())?)
+        } else {
+            lease_id
+        };
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(McpRequestEnvelope {
+                lease_id: effective_lease,
+                request,
+                reply_tx,
+            })
+            .await
+            .map_err(|_| McpError::ViewerDisconnected)?;
+
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), reply_rx).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(_)) => Err(McpError::ViewerDisconnected),
+            Err(_) => Err(McpError::Timeout(timeout_ms)),
+        }
+    }
+
+    /// Execute an MCP `tools/call` invocation and return the MCP CallToolResult JSON.
+    pub async fn call_tool(&self, name: &str, args: Value) -> Value {
+        match self.dispatch_tool(name, &args).await {
+            Ok(content_blocks) => json!({
+                "content": content_blocks,
+                "isError": false,
+            }),
+            Err(err) => json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "error": err.to_string(),
+                    })).unwrap_or_else(|_| err.to_string()),
+                }],
+                "isError": true,
+            }),
+        }
+    }
+
+    async fn dispatch_tool(&self, name: &str, args: &Value) -> Result<Vec<Value>, McpError> {
+        let lease_id = args
+            .get("lease_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+
+        match name {
+            // ---- Phase 0: Control Leases, Status & Dynamic API Inspection ----
+            "control_acquire" | "viewer_control_acquire" => {
+                let owner = args
+                    .get("owner")
+                    .or_else(|| args.get("label"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("mcp-agent");
+                let ttl = args
+                    .get("ttl_seconds")
+                    .or_else(|| args.get("seconds"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(DEFAULT_LEASE_SECONDS);
+                let (snap, expired_rollbacks) =
+                    self.leases.acquire(owner, ttl, lease_id.as_deref())?;
+                if !expired_rollbacks.is_empty() {
+                    let _ = self
+                        .send_to_viewer(
+                            None,
+                            ViewerRequest::ApplyRollbacks {
+                                actions: expired_rollbacks,
+                            },
+                            5000,
+                        )
+                        .await;
+                }
+                Ok(text_block(json!({
+                    "ok": true,
+                    "lease": snap,
+                })))
+            }
+
+            "control_release" | "viewer_control_release" => {
+                let (released, rollbacks) = self.leases.release(lease_id.as_deref())?;
+                let restored_count = rollbacks.len();
+                if !rollbacks.is_empty() {
+                    let _ = self
+                        .send_to_viewer(
+                            None,
+                            ViewerRequest::ApplyRollbacks { actions: rollbacks },
+                            5000,
+                        )
+                        .await;
+                }
+                Ok(text_block(json!({
+                    "ok": true,
+                    "released": released,
+                    "restored_rollbacks": restored_count,
+                })))
+            }
+
+            "connection_status" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::ConnectionStatus, 5000)
+                    .await?;
+                let mut payload = into_json(resp);
+                if let Value::Object(map) = &mut payload {
+                    map.insert(
+                        "active_lease".into(),
+                        serde_json::to_value(self.leases.status()).unwrap_or(Value::Null),
+                    );
+                    map.insert(
+                        "profile".into(),
+                        json!(match self.profile {
+                            McpProfile::Compact => "compact",
+                            McpProfile::All => "all",
+                        }),
+                    );
+                }
+                Ok(text_block(payload))
+            }
+
+            "capabilities_refresh" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::CapabilitiesRefresh, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "viewer_api_inspect" => {
+                let api = args
+                    .get("api")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                let operation = args.get("operation").and_then(Value::as_str);
+                Ok(text_block(inspect_viewer_api(api, operation)))
+            }
+
+            "viewer_call" => {
+                let api = req_str(args, "api")?;
+                let operation = req_str(args, "operation")?;
+                let call_args = args.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                let timeout_s = args
+                    .get("timeout")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(15)
+                    .clamp(1, 60);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ViewerCall {
+                            api,
+                            operation,
+                            arguments: call_args,
+                        },
+                        timeout_s * 1000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "events_subscribe" => {
+                let source = req_str(args, "source")?;
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::EventsSubscribe { source }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "events_unsubscribe" => {
+                let source = req_str(args, "source")?;
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::EventsUnsubscribe { source }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "events_read" => {
+                let after = args.get("after").and_then(Value::as_u64).unwrap_or(0);
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::EventsRead { after }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            // ---- Phase 1: Agent Status, Radar, Comms, Navigation & RLVa ----
+            "get_agent_status" | "avatar_position" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::GetAgentStatus, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "radar_scan_avatars" => {
+                let max_radius_m = args
+                    .get("max_radius_m")
+                    .or_else(|| args.get("distance"))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(96.0) as f32;
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(32)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::RadarScanAvatars {
+                            max_radius_m,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "radar_scan_objects" | "world_objects" => {
+                let max_radius_m = args
+                    .get("max_radius_m")
+                    .or_else(|| args.get("distance"))
+                    .and_then(Value::as_f64)
+                    .unwrap_or(32.0) as f32;
+                let root_only = args
+                    .get("root_only")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let name_filter = args
+                    .get("name_filter")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::RadarScanObjects {
+                            max_radius_m,
+                            root_only,
+                            name_filter,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "comms_read_history" => {
+                let channel_filter = args
+                    .get("channel_filter")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, 200) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::CommsReadHistory {
+                            channel_filter,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "comms_send" => {
+                let message = req_str(args, "message")?;
+                let channel = args.get("channel").and_then(Value::as_i64).unwrap_or(0) as i32;
+                let chat_type = match args
+                    .get("chat_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("normal")
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "whisper" => ChatKind::Whisper,
+                    "shout" => ChatKind::Shout,
+                    _ => ChatKind::Normal,
+                };
+                let target_uuid = parse_opt_uuid(args, "target_uuid")?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::CommsSend {
+                            message,
+                            channel,
+                            chat_type,
+                            target_uuid,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_walk_to" => {
+                let pos = parse_vec3(args, "global_position")
+                    .or_else(|_| parse_vec3(args, "position"))?;
+                let allow_flying = args
+                    .get("allow_flying")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let stop_distance = args
+                    .get("stop_distance")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.5) as f32;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::NavWalkTo {
+                            position: pos,
+                            allow_flying,
+                            stop_distance,
+                            timeout_ms: 0,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_movement_status" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::NavMovementStatus, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_stop" => {
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::NavStop, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "nav_move_and_teleport" => {
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("walk_to");
+                let req = match action {
+                    "walk_to" => {
+                        let position = parse_vec3_or_xyz(args)?;
+                        let allow_flying = args
+                            .get("allow_flying")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let stop_distance = args
+                            .get("stop_distance")
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.75) as f32;
+                        let timeout_ms = args
+                            .get("timeout_ms")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        ViewerRequest::NavWalkTo {
+                            position,
+                            allow_flying,
+                            stop_distance,
+                            timeout_ms,
+                        }
+                    }
+                    "sit" | "sit_on_object" => ViewerRequest::NavSit {
+                        target: args
+                            .get("target_id")
+                            .or_else(|| args.get("target"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    },
+                    "stand" | "stand_up" => ViewerRequest::NavStand,
+                    "stop" => ViewerRequest::NavStop,
+                    "teleport" | "teleport_to" => {
+                        let position = parse_vec3_or_xyz(args).unwrap_or([128.0, 128.0, 25.0]);
+                        let region_name = args
+                            .get("region_name")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
+                        ViewerRequest::NavTeleport {
+                            region_name,
+                            position,
+                        }
+                    }
+                    other => {
+                        return Err(McpError::InvalidParams(format!(
+                            "unknown nav_move_and_teleport action '{other}'"
+                        )));
+                    }
+                };
+                let timeout = args
+                    .get("timeout_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(15000)
+                    .clamp(2000, 30000);
+                let resp = self.send_to_viewer(lease_id, req, timeout).await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "rlva_execute" => {
+                let commands: Vec<String> = args
+                    .get("commands")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if commands.is_empty() {
+                    return Err(McpError::InvalidParams(
+                        "commands array must contain at least one @ command".into(),
+                    ));
+                }
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::RlvaExecute { commands }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            // ---- Phase 2: Settings, Camera, Poser & Floaters ----
+            "settings_query" => {
+                let search = args
+                    .get("search")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let modified_only = args
+                    .get("modified_only")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::SettingsQuery {
+                            search,
+                            modified_only,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "setting_get" => {
+                let group = args
+                    .get("group")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Global")
+                    .to_owned();
+                let key = req_str(args, "key")?;
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::SettingGet { group, key }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "setting_set" | "settings_set" => {
+                let group = args
+                    .get("group")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Global")
+                    .to_owned();
+                let key = args
+                    .get("key")
+                    .or_else(|| args.get("name"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'key' or 'name'".into()))?
+                    .to_owned();
+                let value = args
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| McpError::InvalidParams("missing 'value'".into()))?;
+                let rollback_on_lease_end = args
+                    .get("rollback_on_lease_end")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::SettingSet {
+                            group,
+                            key: key.clone(),
+                            value,
+                        },
+                        5000,
+                    )
+                    .await?;
+                match resp {
+                    ViewerResponse::SettingMutated {
+                        key,
+                        previous_value,
+                        current_value,
+                    } => {
+                        if rollback_on_lease_end {
+                            self.leases.record_rollback(RollbackAction::RestoreSetting {
+                                key: key.clone(),
+                                value: previous_value.clone(),
+                            });
+                        }
+                        Ok(text_block(json!({
+                            "ok": true,
+                            "key": key,
+                            "before": previous_value,
+                            "after": current_value,
+                            "rollback_registered": rollback_on_lease_end,
+                        })))
+                    }
+                    other => Ok(text_block(into_json(other))),
+                }
+            }
+
+            "camera_set" => {
+                let position = parse_vec3(args, "position")?;
+                let focus = parse_vec3(args, "focus")?;
+                let fov_deg = args.get("fov_deg").and_then(Value::as_f64).map(|v| v as f32);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::CameraControl {
+                            command: CameraCommand::ManualTransform {
+                                position,
+                                focus,
+                                fov_deg,
+                            },
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(self.handle_camera_response(resp)))
+            }
+
+            "camera_release" => {
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::CameraControl {
+                            command: CameraCommand::Release,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(self.handle_camera_response(resp)))
+            }
+
+            "mesh_preview_camera" => {
+                let yaw_deg = args.get("yaw").and_then(Value::as_f64).unwrap_or(30.0) as f32;
+                let pitch_deg = args.get("pitch").and_then(Value::as_f64).unwrap_or(15.0) as f32;
+                let distance = args.get("distance").and_then(Value::as_f64).unwrap_or(3.0) as f32;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::CameraControl {
+                            command: CameraCommand::MeshPreview {
+                                yaw_deg,
+                                pitch_deg,
+                                distance,
+                            },
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(self.handle_camera_response(resp)))
+            }
+
+            "camera_control" => {
+                let mode = args
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or("follow_avatar");
+                let command = match mode {
+                    "follow_avatar" => CameraCommand::FollowAvatar,
+                    "release" => CameraCommand::Release,
+                    "focus_object" => CameraCommand::FocusObject {
+                        object_id: req_str(args, "object_id")?,
+                        distance: args.get("distance").and_then(Value::as_f64).unwrap_or(4.0)
+                            as f32,
+                        pitch_deg: args
+                            .get("pitch_deg")
+                            .or_else(|| args.get("pitch"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(15.0) as f32,
+                        yaw_deg: args
+                            .get("yaw_deg")
+                            .or_else(|| args.get("yaw"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0) as f32,
+                    },
+                    "manual_transform" => CameraCommand::ManualTransform {
+                        position: parse_vec3(args, "position")?,
+                        focus: parse_vec3(args, "look_at")
+                            .or_else(|_| parse_vec3(args, "focus"))?,
+                        fov_deg: args
+                            .get("fov_deg")
+                            .or_else(|| args.get("fov"))
+                            .and_then(Value::as_f64)
+                            .map(|v| v as f32),
+                    },
+                    "orbit" => CameraCommand::Orbit {
+                        delta_yaw_deg: args
+                            .get("delta_yaw")
+                            .or_else(|| args.get("delta_yaw_deg"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0) as f32,
+                        delta_pitch_deg: args
+                            .get("delta_pitch")
+                            .or_else(|| args.get("delta_pitch_deg"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0) as f32,
+                        zoom_delta: args
+                            .get("zoom")
+                            .or_else(|| args.get("zoom_delta"))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0) as f32,
+                    },
+                    other => {
+                        return Err(McpError::InvalidParams(format!(
+                            "unknown camera_control mode '{other}'"
+                        )));
+                    }
+                };
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::CameraControl { command }, 5000)
+                    .await?;
+                Ok(text_block(self.handle_camera_response(resp)))
+            }
+
+            "poser_inspect" => {
+                let subject = parse_opt_uuid(args, "subject")?;
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::PoserInspect { subject }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "poser_set_bones" => {
+                let subject = parse_opt_uuid(args, "subject")?;
+                let transforms_val = args
+                    .get("transforms")
+                    .cloned()
+                    .ok_or_else(|| McpError::InvalidParams("missing 'transforms' array".into()))?;
+                let transforms: Vec<BoneTransform> = serde_json::from_value(transforms_val)
+                    .map_err(|e| McpError::InvalidParams(format!("invalid BoneTransform: {e}")))?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PoserSetBones {
+                            subject,
+                            transforms,
+                        },
+                        5000,
+                    )
+                    .await?;
+                self.leases.record_rollback(RollbackAction::ResetPoser);
+                Ok(text_block(into_json(resp)))
+            }
+
+            "poser_reset" => {
+                let subject = parse_opt_uuid(args, "subject")?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::PoserReset { subject }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "floater_list" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::FloaterList, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "floater_open" => {
+                let name = req_str(args, "name")?;
+                let open = args.get("open").and_then(Value::as_bool).unwrap_or(true);
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::FloaterOpen { name, open }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            // ---- Phase 3: Viewport Capture ("Vision"), Orbit & Image Diff ----
+            "viewport_capture" | "snapshot" => {
+                let layer_str = args
+                    .get("buffer_type")
+                    .or_else(|| args.get("layer"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("ColorRgb")
+                    .to_ascii_lowercase();
+                let buffer_type = if layer_str.contains("depth") {
+                    CaptureBufferType::DepthNormalized
+                } else {
+                    CaptureBufferType::ColorRgb
+                };
+                let include_ui = args
+                    .get("include_ui")
+                    .or_else(|| args.get("show_ui"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let include_hud = args
+                    .get("include_hud")
+                    .or_else(|| args.get("show_hud"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let max_w = args
+                    .get("width")
+                    .or_else(|| args.get("max_width"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1024) as u32;
+                let max_h = args
+                    .get("height")
+                    .or_else(|| args.get("max_height"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1024) as u32;
+                let label = args
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("viewport")
+                    .to_owned();
+
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::ViewportCapture {
+                            buffer_type,
+                            include_ui,
+                            include_hud,
+                            max_dimensions: (max_w, max_h),
+                        },
+                        10_000,
+                    )
+                    .await?;
+
+                match resp {
+                    ViewerResponse::FrameCaptured(raw) => {
+                        let encoded = tokio::task::spawn_blocking(move || {
+                            vision::encode_captured_frame(raw, (max_w, max_h), &label)
+                        })
+                        .await
+                        .map_err(|e| McpError::Internal(format!("encode join error: {e}")))??;
+
+                        Ok(vec![
+                            json!({
+                                "type": "image",
+                                "data": encoded.base64_png,
+                                "mimeType": "image/png",
+                            }),
+                            json!({
+                                "type": "text",
+                                "text": serde_json::to_string_pretty(&json!({
+                                    "ok": true,
+                                    "path": encoded.path,
+                                    "sha256": encoded.sha256,
+                                    "width": encoded.width,
+                                    "height": encoded.height,
+                                    "buffer_type": encoded.buffer_type,
+                                    "near_clip": encoded.near_clip,
+                                    "far_clip": encoded.far_clip,
+                                })).unwrap_or_default(),
+                            }),
+                        ])
+                    }
+                    other => Ok(text_block(into_json(other))),
+                }
+            }
+
+            "capture_orbit" => {
+                let focus = parse_vec3(args, "focus")?;
+                let radius = args
+                    .get("radius")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(3.0)
+                    .max(0.5) as f32;
+                let height_offset = args
+                    .get("height_offset")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0) as f32;
+                let views = args
+                    .get("views")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(4)
+                    .clamp(1, 12) as usize;
+                let label = args
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or("orbit")
+                    .to_owned();
+                let evidence_kind = args
+                    .get("evidence_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unspecified_viewer_scene")
+                    .to_owned();
+
+                let mut captured_views = Vec::with_capacity(views);
+                for i in 0..views {
+                    let angle = (i as f32) * std::f32::consts::TAU / (views as f32);
+                    let pos = [
+                        focus[0] + radius * angle.cos(),
+                        focus[1] + radius * angle.sin(),
+                        focus[2] + height_offset,
+                    ];
+                    let cam_resp = self
+                        .send_to_viewer(
+                            lease_id.clone(),
+                            ViewerRequest::CameraControl {
+                                command: CameraCommand::ManualTransform {
+                                    position: pos,
+                                    focus,
+                                    fov_deg: None,
+                                },
+                            },
+                            5000,
+                        )
+                        .await?;
+                    let _ = self.handle_camera_response(cam_resp);
+
+                    let frame_resp = self
+                        .send_to_viewer(
+                            None,
+                            ViewerRequest::ViewportCapture {
+                                buffer_type: CaptureBufferType::ColorRgb,
+                                include_ui: false,
+                                include_hud: false,
+                                max_dimensions: (1024, 1024),
+                            },
+                            10_000,
+                        )
+                        .await?;
+                    if let ViewerResponse::FrameCaptured(raw) = frame_resp {
+                        let view_label = format!("{label}-view-{i}");
+                        let encoded = tokio::task::spawn_blocking(move || {
+                            vision::encode_captured_frame(raw, (1024, 1024), &view_label)
+                        })
+                        .await
+                        .map_err(|e| McpError::Internal(format!("encode join error: {e}")))??;
+                        captured_views.push(json!({
+                            "view_index": i,
+                            "angle_deg": (angle.to_degrees() * 10.0).round() / 10.0,
+                            "camera_position": pos,
+                            "focus": focus,
+                            "path": encoded.path,
+                            "sha256": encoded.sha256,
+                            "width": encoded.width,
+                            "height": encoded.height,
+                        }));
+                    }
+                }
+
+                // Release temporary orbit camera back to viewer camera.
+                let _ = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::CameraControl {
+                            command: CameraCommand::Release,
+                        },
+                        5000,
+                    )
+                    .await;
+
+                let manifest_id = Uuid::new_v4().to_string();
+                let manifest = json!({
+                    "manifest_id": manifest_id,
+                    "label": label,
+                    "evidence_kind": evidence_kind,
+                    "focus": focus,
+                    "radius": radius,
+                    "views": captured_views,
+                });
+                let manifest_path =
+                    vision::capture_output_dir().join(format!("manifest-{manifest_id}.json"));
+                let _ = std::fs::write(
+                    &manifest_path,
+                    serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+                );
+                self.manifests
+                    .lock()
+                    .insert(manifest_path.display().to_string(), manifest.clone());
+                self.manifests.lock().insert(manifest_id, manifest.clone());
+
+                Ok(text_block(json!({
+                    "ok": true,
+                    "manifest_path": manifest_path.display().to_string(),
+                    "manifest": manifest,
+                })))
+            }
+
+            "capture_manifest_read" => {
+                let key = args
+                    .get("manifest_path")
+                    .or_else(|| args.get("manifest_id"))
+                    .or_else(|| args.get("path"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if let Some(m) = self.manifests.lock().get(key).cloned() {
+                    return Ok(text_block(m));
+                }
+                let text = std::fs::read_to_string(key).map_err(|e| {
+                    McpError::InvalidParams(format!("cannot read manifest '{key}': {e}"))
+                })?;
+                let val: Value = serde_json::from_str(&text)
+                    .map_err(|e| McpError::InvalidParams(format!("invalid manifest JSON: {e}")))?;
+                Ok(text_block(val))
+            }
+
+            "image_compare" => {
+                let reference = req_str(args, "reference")
+                    .or_else(|_| req_str(args, "image_a"))?;
+                let observed = req_str(args, "observed")
+                    .or_else(|_| req_str(args, "image_b"))?;
+                let res = tokio::task::spawn_blocking(move || {
+                    vision::compare_images(&reference, &observed)
+                })
+                .await
+                .map_err(|e| McpError::Internal(format!("image_compare join error: {e}")))??;
+                Ok(text_block(res))
+            }
+
+            // ---- Phase 4: Inventory & Appearance (COF State Machine) ----
+            "inventory_browse" => {
+                let folder_id_or_path = args
+                    .get("folder_id_or_path")
+                    .or_else(|| args.get("path"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("/")
+                    .to_owned();
+                let depth = args
+                    .get("depth")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(1)
+                    .clamp(1, 5) as u8;
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::InventoryBrowse {
+                            folder_id_or_path,
+                            depth,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "inventory_search" => {
+                let query = args
+                    .get("query")
+                    .or_else(|| args.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let folder_id = args
+                    .get("folder_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let asset_type = args
+                    .get("asset_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let worn_only = args
+                    .get("worn_only")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::InventorySearch {
+                            folder_id,
+                            query,
+                            asset_type,
+                            worn_only,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "appearance_get_worn" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::AppearanceGetWorn, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "appearance_mutate" => {
+                let op_name = args
+                    .get("op")
+                    .or_else(|| args.get("action"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("attach");
+                let operation = match op_name {
+                    "attach" | "wear" => AppearanceOperation::Attach {
+                        item_id: parse_req_uuid(args, "item_id")?,
+                        attach_point: args
+                            .get("attach_point")
+                            .and_then(Value::as_u64)
+                            .map(|v| v as u8),
+                        replace_existing: args
+                            .get("replace_existing")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    },
+                    "detach" | "take_off" => AppearanceOperation::Detach {
+                        item_id: parse_req_uuid(args, "item_id")?,
+                    },
+                    "wear_folder" | "replace_outfit" => AppearanceOperation::WearFolder {
+                        folder_id: parse_req_uuid(args, "folder_id")?,
+                        append: args
+                            .get("append")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(op_name == "wear_folder"),
+                    },
+                    "remove_folder" => AppearanceOperation::RemoveFolder {
+                        folder_id: parse_req_uuid(args, "folder_id")?,
+                    },
+                    other => {
+                        return Err(McpError::InvalidParams(format!(
+                            "unknown appearance_mutate op '{other}'"
+                        )));
+                    }
+                };
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::AppearanceMutate { operation },
+                        15_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            // ---- Phase 5: World Building, LSL, Linkset Data & Local Mesh ----
+            "prim_rez_new" => {
+                let position = parse_vec3(args, "position")?;
+                let scale = parse_vec3(args, "scale").unwrap_or([0.5, 0.5, 0.5]);
+                let rotation_quat = parse_vec4(args, "rotation_quat").unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                let pcode = args.get("pcode").and_then(Value::as_u64).unwrap_or(9) as u8;
+                let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimRezNew {
+                            position,
+                            scale,
+                            rotation_quat,
+                            pcode,
+                            name,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_transform" => {
+                let transforms: Vec<PrimTransformSpec> = if let Some(arr) = args.get("transforms") {
+                    serde_json::from_value(arr.clone()).map_err(|e| {
+                        McpError::InvalidParams(format!("invalid 'transforms' array: {e}"))
+                    })?
+                } else {
+                    let local_id = args
+                        .get("local_id")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| {
+                            McpError::InvalidParams("missing 'local_id' or 'transforms'".into())
+                        })? as u32;
+                    vec![PrimTransformSpec {
+                        local_id,
+                        position: parse_vec3(args, "position").ok(),
+                        rotation_quat: parse_vec4(args, "rotation_quat").ok(),
+                        rotation_euler_deg: parse_vec3(args, "rotation_euler_deg").ok(),
+                        scale: parse_vec3(args, "scale").ok(),
+                        name: args.get("name").and_then(Value::as_str).map(str::to_owned),
+                        description: args
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    }]
+                };
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::PrimTransform { transforms }, 6000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_set_shape" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let path_cut = parse_vec2(args, "path_cut").ok();
+                let profile_cut = parse_vec2(args, "profile_cut").ok();
+                let hollow = args.get("hollow").and_then(Value::as_f64).map(|v| v as f32);
+                let twist = parse_vec2(args, "twist").ok();
+                let color = parse_vec4(args, "color").ok();
+                let texture_id = parse_opt_uuid(args, "texture_id")?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimSetShape {
+                            local_id,
+                            path_cut,
+                            profile_cut,
+                            hollow,
+                            twist,
+                            color,
+                            texture_id,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_link" => {
+                let local_ids: Vec<u32> = args
+                    .get("local_ids")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_u64)
+                            .map(|n| n as u32)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if local_ids.is_empty() {
+                    return Err(McpError::InvalidParams("missing 'local_ids'".into()));
+                }
+                let delink = args.get("delink").and_then(Value::as_bool).unwrap_or(false);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimLink { local_ids, delink },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_delete" => {
+                let local_ids: Vec<u32> = args
+                    .get("local_ids")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_u64)
+                            .map(|n| n as u32)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::PrimDelete { local_ids }, 6000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsl_inspect_object_scripts" => {
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))?
+                    as u32;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::LslInspectObjectScripts { object_local_id },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsl_read_script" => {
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as u32;
+                let script_item_id = parse_req_uuid(args, "script_item_id")?;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::LslReadScript {
+                            object_local_id,
+                            script_item_id,
+                        },
+                        8000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsl_write_and_compile" => {
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as u32;
+                let script_item_id = parse_opt_uuid(args, "script_item_id")?;
+                let script_name = args
+                    .get("script_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("New Script")
+                    .to_owned();
+                let source_code = req_str(args, "source_code")?;
+                let mono = args.get("mono").and_then(Value::as_bool).unwrap_or(true);
+                let running = args.get("running").and_then(Value::as_bool).unwrap_or(true);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::LslWriteAndCompile {
+                            object_local_id,
+                            script_item_id,
+                            script_name,
+                            source_code,
+                            mono,
+                            running,
+                        },
+                        10_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsl_listen_script_output" => {
+                let object_id = parse_opt_uuid(args, "object_id")?;
+                let duration_ms = args
+                    .get("duration_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(500)
+                    .clamp(0, 10_000);
+                if duration_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(duration_ms)).await;
+                }
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::LslListenScriptOutput {
+                            object_id,
+                            duration_ms,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsd_inspect" => {
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))?
+                    as u32;
+                let filter_regex = args
+                    .get("filter_regex")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let include_protected = args
+                    .get("include_protected")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let passphrase = args
+                    .get("passphrase")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::LsdInspect {
+                            object_local_id,
+                            filter_regex,
+                            include_protected,
+                            passphrase,
+                            limit,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsd_mutate" => {
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))?
+                    as u32;
+                let operations: Vec<LsdOperation> = serde_json::from_value(
+                    args.get("operations").cloned().ok_or_else(|| {
+                        McpError::InvalidParams("missing 'operations' array".into())
+                    })?,
+                )
+                .map_err(|e| McpError::InvalidParams(format!("invalid LsdOperation: {e}")))?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::LsdMutate {
+                            object_local_id,
+                            operations,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "lsd_stress_test" => {
+                let payload = args
+                    .get("payload")
+                    .ok_or_else(|| McpError::InvalidParams("missing 'payload'".into()))?;
+                let protected_keys = args
+                    .get("protected_keys")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let filter_regex = args.get("filter_regex").and_then(Value::as_str);
+                let report = lsd::stress_test_payload(payload, protected_keys, filter_regex)?;
+                Ok(text_block(report))
+            }
+
+            "asset_inspect" | "asset_inspect_local" => {
+                let file_path = req_str(args, "file_path")
+                    .or_else(|_| req_str(args, "filename"))?;
+                let res = tokio::task::spawn_blocking(move || {
+                    asset_inspect::inspect_local_asset(&file_path)
+                })
+                .await
+                .map_err(|e| McpError::Internal(format!("asset_inspect join error: {e}")))??;
+                Ok(text_block(res))
+            }
+
+            "local_mesh_status" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::LocalMeshStatus, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "local_mesh_open" => {
+                let open = args.get("open").and_then(Value::as_bool).unwrap_or(true);
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::LocalMeshOpen { open }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "local_mesh_auto_reload" => {
+                let enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::LocalMeshAutoReload { enabled },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
+        }
+    }
+
+    fn handle_camera_response(&self, resp: ViewerResponse) -> Value {
+        match resp {
+            ViewerResponse::CameraMutated {
+                previous_camera,
+                state,
+            } => {
+                if let Some(rollback) = previous_camera {
+                    self.leases.record_rollback(rollback);
+                }
+                state
+            }
+            other => into_json(other),
+        }
+    }
+}
+
+fn into_json(resp: ViewerResponse) -> Value {
+    match resp {
+        ViewerResponse::Json(v) => v,
+        ViewerResponse::SettingMutated {
+            key,
+            previous_value,
+            current_value,
+        } => json!({
+            "ok": true,
+            "key": key,
+            "before": previous_value,
+            "after": current_value,
+        }),
+        ViewerResponse::CameraMutated { state, .. } => state,
+        ViewerResponse::PoserMutated { state } => state,
+        ViewerResponse::FrameCaptured(raw) => json!({
+            "width": raw.width,
+            "height": raw.height,
+            "bytes": raw.rgba_bytes.len(),
+        }),
+    }
+}
+
+fn text_block(val: Value) -> Vec<Value> {
+    vec![json!({
+        "type": "text",
+        "text": serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()),
+    })]
+}
+
+fn req_str(args: &Value, key: &str) -> Result<String, McpError> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| McpError::InvalidParams(format!("missing required string '{key}'")))
+}
+
+fn parse_req_uuid(args: &Value, key: &str) -> Result<Uuid, McpError> {
+    let s = req_str(args, key)?;
+    Uuid::parse_str(s.trim())
+        .map_err(|e| McpError::InvalidParams(format!("invalid UUID for '{key}': {e}")))
+}
+
+fn parse_opt_uuid(args: &Value, key: &str) -> Result<Option<Uuid>, McpError> {
+    let Some(s) = args.get(key).and_then(Value::as_str).map(str::trim) else {
+        return Ok(None);
+    };
+    if s.is_empty() {
+        return Ok(None);
+    }
+    Uuid::parse_str(s)
+        .map(Some)
+        .map_err(|e| McpError::InvalidParams(format!("invalid UUID for '{key}': {e}")))
+}
+
+fn parse_vec2(args: &Value, key: &str) -> Result<[f32; 2], McpError> {
+    let arr = args
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpError::InvalidParams(format!("missing 2D array '{key}'")))?;
+    if arr.len() != 2 {
+        return Err(McpError::InvalidParams(format!(
+            "'{key}' must have 2 numbers"
+        )));
+    }
+    Ok([
+        arr[0].as_f64().unwrap_or(0.0) as f32,
+        arr[1].as_f64().unwrap_or(0.0) as f32,
+    ])
+}
+
+fn parse_vec3(args: &Value, key: &str) -> Result<[f32; 3], McpError> {
+    let arr = args
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpError::InvalidParams(format!("missing 3D vector '{key}'")))?;
+    if arr.len() != 3 {
+        return Err(McpError::InvalidParams(format!(
+            "'{key}' must have 3 numbers"
+        )));
+    }
+    Ok([
+        arr[0].as_f64().unwrap_or(0.0) as f32,
+        arr[1].as_f64().unwrap_or(0.0) as f32,
+        arr[2].as_f64().unwrap_or(0.0) as f32,
+    ])
+}
+
+fn parse_vec4(args: &Value, key: &str) -> Result<[f32; 4], McpError> {
+    let arr = args
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| McpError::InvalidParams(format!("missing 4D vector '{key}'")))?;
+    if arr.len() != 4 {
+        return Err(McpError::InvalidParams(format!(
+            "'{key}' must have 4 numbers"
+        )));
+    }
+    Ok([
+        arr[0].as_f64().unwrap_or(0.0) as f32,
+        arr[1].as_f64().unwrap_or(0.0) as f32,
+        arr[2].as_f64().unwrap_or(0.0) as f32,
+        arr[3].as_f64().unwrap_or(1.0) as f32,
+    ])
+}
+
+fn parse_vec3_or_xyz(args: &Value) -> Result<[f32; 3], McpError> {
+    if let Ok(v) = parse_vec3(args, "position") {
+        return Ok(v);
+    }
+    if let Ok(v) = parse_vec3(args, "global_position") {
+        return Ok(v);
+    }
+    let x = args
+        .get("x")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| McpError::InvalidParams("missing 'position' or 'x','y','z'".into()))?
+        as f32;
+    let y = args
+        .get("y")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| McpError::InvalidParams("missing 'y'".into()))? as f32;
+    let z = args
+        .get("z")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| McpError::InvalidParams("missing 'z'".into()))? as f32;
+    Ok([x, y, z])
+}
+
+fn inspect_viewer_api(api: &str, operation: Option<&str>) -> Value {
+    let catalog = json!({
+        "LLAppViewer": {
+            "description": "Core viewer lifecycle and frame telemetry",
+            "operations": {
+                "getStatus": { "args": {}, "readonly": true },
+                "getVersion": { "args": {}, "readonly": true }
+            }
+        },
+        "LLViewerControl": {
+            "description": "Unified viewer settings registry (with lease rollback)",
+            "operations": {
+                "get": { "args": { "group": "Global", "key": "camera.fov" }, "readonly": true },
+                "set": { "args": { "group": "Global", "key": "camera.fov", "value": 1.05 }, "readonly": false },
+                "list": { "args": { "search": "", "modified_only": false, "limit": 50 }, "readonly": true }
+            }
+        },
+        "LLAgent": {
+            "description": "Avatar status, movement, autopilot, sitting and teleportation",
+            "operations": {
+                "getPosition": { "args": {}, "readonly": true },
+                "walkTo": { "args": { "position": [128.0, 128.0, 25.0] }, "readonly": false },
+                "stop": { "args": {}, "readonly": false },
+                "sit": { "args": { "target": "<uuid-or-local-id>" }, "readonly": false },
+                "stand": { "args": {}, "readonly": false }
+            }
+        },
+        "LLWorld": {
+            "description": "Bounded spatial radar for avatars and objects",
+            "operations": {
+                "getObjects": { "args": { "max_radius_m": 32.0, "limit": 50 }, "readonly": true },
+                "getAvatars": { "args": { "max_radius_m": 96.0, "limit": 32 }, "readonly": true }
+            }
+        },
+        "LLCamera": {
+            "description": "3D viewport camera control with automatic lease rollback",
+            "operations": {
+                "set": { "args": { "position": [128.0, 124.0, 26.0], "focus": [128.0, 128.0, 25.0] }, "readonly": false },
+                "release": { "args": {}, "readonly": false }
+            }
+        },
+        "Aurora.RLVa": {
+            "description": "Direct internal RestrainedLove (@) command execution",
+            "operations": {
+                "execute": { "args": { "commands": ["@version=2222"] }, "readonly": false }
+            }
+        },
+        "Aurora.Poser": {
+            "description": "Native Bento IK/Poser skeleton inspection and joint rotation override",
+            "operations": {
+                "inspect": { "args": {}, "readonly": true },
+                "setBones": { "args": { "transforms": [{ "bone_name": "mShoulderLeft", "rotation_euler_deg": [0.0, 0.0, -35.0] }] }, "readonly": false },
+                "reset": { "args": {}, "readonly": false }
+            }
+        },
+        "Aurora.Build": {
+            "description": "Async-correlated in-world prim rezzing, transforms, linking, LSL and Linkset Data",
+            "operations": {
+                "rezNew": { "args": { "position": [128.0, 130.0, 25.0], "scale": [1.0, 1.0, 1.0] }, "readonly": false },
+                "transform": { "args": { "local_id": 1, "scale": [2.0, 2.0, 0.5] }, "readonly": false },
+                "lsdInspect": { "args": { "object_local_id": 1 }, "readonly": true },
+                "lsdMutate": { "args": { "object_local_id": 1, "operations": [] }, "readonly": false }
+            }
+        }
+    });
+
+    if api.is_empty() {
+        return json!({
+            "available_apis": catalog,
+        });
+    }
+    if let Some(entry) = catalog.get(api) {
+        if let Some(op) = operation.filter(|s| !s.is_empty())
+            && let Some(op_spec) = entry.get("operations").and_then(|o| o.get(op))
+        {
+            return json!({
+                "api": api,
+                "operation": op,
+                "spec": op_spec,
+            });
+        }
+        return json!({
+            "api": api,
+            "details": entry,
+        });
+    }
+    json!({
+        "api": api,
+        "error": "unknown API name; pass empty string to list all APIs",
+        "available_apis": catalog.as_object().map(|m| m.keys().collect::<Vec<_>>()),
+    })
+}
+
+fn all_tool_definitions() -> Vec<ToolDefinition> {
+    vec![
+        // Phase 0: Session, Leases & Dynamic Dispatch
+        ToolDefinition {
+            name: "connection_status".into(),
+            description: "Check Aurora Viewer runtime MCP status, region connection, FPS, and active control lease.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "capabilities_refresh".into(),
+            description: "Refresh and report active simulator capabilities and runtime subsystems.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "control_acquire".into(),
+            description: "Acquire a cooperative viewer control lease (Legacy Viewer MCP compatible). Automatically restores settings/camera on release.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "default": "Aurora MCP workflow" },
+                    "seconds": { "type": "integer", "default": 300 },
+                    "lease_id": { "type": "string" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "viewer_control_acquire".into(),
+            description: "Acquire or renew a cooperative viewer control lease with automatic rollback stack.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "owner": { "type": "string", "default": "aurora-agent" },
+                    "ttl_seconds": { "type": "integer", "default": 300 },
+                    "lease_id": { "type": "string" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "control_release".into(),
+            description: "Release the active control lease and restore any temporary camera/setting overrides (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "lease_id": { "type": "string" } }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "viewer_control_release".into(),
+            description: "Release the active control lease and restore all rollback stack entries.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "lease_id": { "type": "string" } }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "viewer_api_inspect".into(),
+            description: "Inspect available viewer APIs and operations (LLAppViewer, LLViewerControl, LLAgent, LLWorld, LLCamera, Aurora.RLVa, Aurora.Poser, Aurora.Build).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "api": { "type": "string" },
+                    "operation": { "type": ["string", "null"] }
+                },
+                "required": ["api"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "viewer_call".into(),
+            description: "Dynamically invoke a viewer API operation discovered via viewer_api_inspect.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "api": { "type": "string" },
+                    "operation": { "type": "string" },
+                    "arguments": { "type": "object", "default": {} },
+                    "timeout": { "type": "integer", "default": 15 }
+                },
+                "required": ["api", "operation"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "events_subscribe".into(),
+            description: "Subscribe to a bounded viewer event stream (e.g. Chat, StartupState, LLAutopilot, ObjectUpdates, ScriptDebug).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "source": { "type": "string" } },
+                "required": ["source"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "events_unsubscribe".into(),
+            description: "Unsubscribe from a viewer event stream.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "source": { "type": "string" } },
+                "required": ["source"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "events_read".into(),
+            description: "Read subscribed viewer events after a sequence cursor.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "after": { "type": "integer", "default": 0 } }
+            }),
+            in_compact_profile: false,
+        },
+
+        // Phase 1: Agent Telemetry, Radar, Comms, Navigation & RLVa
+        ToolDefinition {
+            name: "get_agent_status".into(),
+            description: "Read agent UUID, display name, region name, coordinates (x,y,z), parcel, login state, FPS/VRAM, and sitting target.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "avatar_position".into(),
+            description: "Read avatar position/orientation from the viewer (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "radar_scan_avatars".into(),
+            description: "Spatially bounded scan of nearby avatars sorted by distance ascending (max 100).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "max_radius_m": { "type": "number", "default": 96.0 },
+                    "limit": { "type": "integer", "default": 32, "maximum": 100 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "radar_scan_objects".into(),
+            description: "Spatially bounded scan of nearby objects sorted by distance ascending (max 100).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "max_radius_m": { "type": "number", "default": 32.0 },
+                    "root_only": { "type": "boolean", "default": true },
+                    "name_filter": { "type": "string" },
+                    "limit": { "type": "integer", "default": 50, "maximum": 100 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "world_objects".into(),
+            description: "List nearby objects within distance in meters (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "distance": { "type": "number", "default": 32.0 } }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "comms_read_history".into(),
+            description: "Read recent Local Chat, Group Chat, IM, and Simulator Notice/Dialog entries from the 200-entry ring buffer.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "channel_filter": { "type": "string" },
+                    "limit": { "type": "integer", "default": 50, "maximum": 200 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "comms_send".into(),
+            description: "Send Local Chat (channel 0), scripted object/HUD channel messages (positive/negative channels), or instant messages.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "message": { "type": "string" },
+                    "channel": { "type": "integer", "default": 0 },
+                    "chat_type": { "type": "string", "enum": ["whisper", "normal", "shout"], "default": "normal" },
+                    "target_uuid": { "type": "string" }
+                },
+                "required": ["message"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "nav_move_and_teleport".into(),
+            description: "Walk to coordinates, sit on an object, stand up, or teleport to a region/coordinate.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["walk_to", "sit_on_object", "stand_up", "teleport_to", "stop"], "default": "walk_to" },
+                    "position": { "type": "array", "items": { "type": "number" } },
+                    "x": { "type": "number" },
+                    "y": { "type": "number" },
+                    "z": { "type": "number" },
+                    "target_id": { "type": "string" },
+                    "region_name": { "type": "string" },
+                    "allow_flying": { "type": "boolean", "default": false },
+                    "stop_distance": { "type": "number", "default": 0.75 },
+                    "timeout_ms": { "type": "integer", "default": 5000 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_walk_to".into(),
+            description: "Start walking to coordinates via autopilot (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "global_position": { "type": "array", "items": { "type": "number" } },
+                    "allow_flying": { "type": "boolean", "default": false },
+                    "stop_distance": { "type": "number", "default": 0.5 }
+                },
+                "required": ["global_position"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_movement_status".into(),
+            description: "Read autopilot progress and current avatar position (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_stop".into(),
+            description: "Cancel automatic movement and read resulting avatar state (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "rlva_execute".into(),
+            description: "Directly execute internal RestrainedLove (@) commands on Aurora's RLVa engine without needing an in-world LSL relay prim.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "commands": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["commands"]
+            }),
+            in_compact_profile: false,
+        },
+
+        // Phase 2: Settings, Camera, Poser & Floaters
+        ToolDefinition {
+            name: "settings_query".into(),
+            description: "Search Aurora's unified settings registry by name/path.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "search": { "type": "string", "default": "" },
+                    "modified_only": { "type": "boolean", "default": false },
+                    "limit": { "type": "integer", "default": 50, "maximum": 100 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "settings_set".into(),
+            description: "Modify a viewer setting with automatic lease rollback on disconnect/release.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": {},
+                    "rollback_on_lease_end": { "type": "boolean", "default": true }
+                },
+                "required": ["name", "value"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "setting_get".into(),
+            description: "Read a named viewer setting (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "group": { "type": "string", "default": "Global" },
+                    "key": { "type": "string" }
+                },
+                "required": ["key"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "setting_set".into(),
+            description: "Change a viewer setting and return before/after readback (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "group": { "type": "string", "default": "Global" },
+                    "key": { "type": "string" },
+                    "value": {}
+                },
+                "required": ["key", "value"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "camera_control".into(),
+            description: "Control the 3D camera (follow_avatar, focus_object, manual_transform, orbit, release) with automatic lease rollback.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "mode": { "type": "string", "enum": ["follow_avatar", "focus_object", "manual_transform", "orbit", "release"] },
+                    "object_id": { "type": "string" },
+                    "distance": { "type": "number" },
+                    "pitch_deg": { "type": "number" },
+                    "yaw_deg": { "type": "number" },
+                    "position": { "type": "array", "items": { "type": "number" } },
+                    "look_at": { "type": "array", "items": { "type": "number" } },
+                    "fov_deg": { "type": "number" },
+                    "delta_yaw": { "type": "number" },
+                    "delta_pitch": { "type": "number" },
+                    "zoom": { "type": "number" }
+                },
+                "required": ["mode"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "camera_set".into(),
+            description: "Set a fixed camera position and focus in region coordinates (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "position": { "type": "array", "items": { "type": "number" } },
+                    "focus": { "type": "array", "items": { "type": "number" } }
+                },
+                "required": ["position", "focus"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "camera_release".into(),
+            description: "Release scripted camera control back to the viewer (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "mesh_preview_camera".into(),
+            description: "Adjust mesh preview or avatar inspection camera orbit angles.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "yaw": { "type": "number", "default": 30.0 },
+                    "pitch": { "type": "number", "default": 15.0 },
+                    "distance": { "type": "number", "default": 3.0 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "poser_inspect".into(),
+            description: "Inspect Aurora's native Bento IK/Poser state, controllable joints, and current local rotations.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "subject": { "type": "string" } }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "poser_set_bones".into(),
+            description: "Batch-apply Euler (degrees) or Quaternion rotations to avatar Bento skeleton bones in the Poser.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "subject": { "type": "string" },
+                    "transforms": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "bone_name": { "type": "string" },
+                                "rotation_euler_deg": { "type": "array", "items": { "type": "number" } },
+                                "rotation_quat": { "type": "array", "items": { "type": "number" } },
+                                "position_offset": { "type": "array", "items": { "type": "number" } },
+                                "scale": { "type": "array", "items": { "type": "number" } }
+                            },
+                            "required": ["bone_name"]
+                        }
+                    }
+                },
+                "required": ["transforms"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "poser_reset".into(),
+            description: "Stop poser override and restore default avatar animation state.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "subject": { "type": "string" } }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "floater_list".into(),
+            description: "List viewer panels/floaters and their open state (direct state read, no UI scraping).".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "floater_open".into(),
+            description: "Open or close a named viewer panel/floater directly via internal state.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "open": { "type": "boolean", "default": true }
+                },
+                "required": ["name"]
+            }),
+            in_compact_profile: false,
+        },
+
+        // Phase 3: Vision / Viewport Capture
+        ToolDefinition {
+            name: "viewport_capture".into(),
+            description: "Non-blocking GPU readback of the rendered viewport (ColorRgb or linearized DepthNormalized) returned as an MCP PNG image + metadata.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "buffer_type": { "type": "string", "enum": ["ColorRgb", "DepthNormalized"], "default": "ColorRgb" },
+                    "include_ui": { "type": "boolean", "default": false },
+                    "include_hud": { "type": "boolean", "default": false },
+                    "max_width": { "type": "integer", "default": 1024 },
+                    "max_height": { "type": "integer", "default": 1024 },
+                    "label": { "type": "string", "default": "viewport" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "snapshot".into(),
+            description: "Capture rendered viewport image (COLOR or DEPTH) and return MCP image + saved PNG path and SHA256 (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "width": { "type": "integer", "default": 1280 },
+                    "height": { "type": "integer", "default": 720 },
+                    "layer": { "type": "string", "enum": ["COLOR", "DEPTH"], "default": "COLOR" },
+                    "show_ui": { "type": "boolean", "default": false },
+                    "show_hud": { "type": "boolean", "default": false },
+                    "label": { "type": "string", "default": "snapshot" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "capture_orbit".into(),
+            description: "Capture repeatable orbit views around a region-coordinate focus and write a JSON manifest.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "focus": { "type": "array", "items": { "type": "number" } },
+                    "radius": { "type": "number", "default": 3.0 },
+                    "height_offset": { "type": "number", "default": 1.0 },
+                    "views": { "type": "integer", "default": 4 },
+                    "label": { "type": "string", "default": "asset" },
+                    "evidence_kind": { "type": "string", "default": "unspecified_viewer_scene" }
+                },
+                "required": ["focus"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "capture_manifest_read".into(),
+            description: "Read a saved capture_orbit manifest by path or manifest_id.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "manifest_path": { "type": "string" },
+                    "manifest_id": { "type": "string" }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "image_compare".into(),
+            description: "Compare two same-size PNG images on disk, computing RMSE/MAE/changed pixels and saving a visual diff PNG.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "reference": { "type": "string" },
+                    "observed": { "type": "string" }
+                },
+                "required": ["reference", "observed"]
+            }),
+            in_compact_profile: true,
+        },
+
+        // Phase 4: Inventory & Appearance (COF Queue)
+        ToolDefinition {
+            name: "inventory_browse".into(),
+            description: "Browse inventory folders by UUID or path (e.g. '/My Inventory/Objects') with bounded depth and item limit.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "folder_id_or_path": { "type": "string", "default": "/" },
+                    "depth": { "type": "integer", "default": 1, "maximum": 5 },
+                    "limit": { "type": "integer", "default": 50, "maximum": 100 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "inventory_search".into(),
+            description: "Search inventory items with creator permission masks enforced (Legacy Viewer & Aurora compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "name": { "type": "string" },
+                    "folder_id": { "type": "string" },
+                    "asset_type": { "type": ["string", "null"] },
+                    "worn_only": { "type": "boolean", "default": false },
+                    "limit": { "type": "integer", "default": 50, "maximum": 100 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "appearance_get_worn".into(),
+            description: "List all currently worn system wearables/body parts and attachments with attachment point names.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "appearance_mutate".into(),
+            description: "Attach, detach, or wear an inventory item/folder serialized through the COF state-machine queue.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "op": { "type": "string", "enum": ["attach", "detach", "wear_folder", "remove_folder"] },
+                    "item_id": { "type": "string" },
+                    "folder_id": { "type": "string" },
+                    "attach_point": { "type": "integer" },
+                    "replace_existing": { "type": "boolean", "default": false },
+                    "append": { "type": "boolean", "default": true }
+                },
+                "required": ["op"]
+            }),
+            in_compact_profile: false,
+        },
+
+        // Phase 5: World Building, LSL, Linkset Data & Local Mesh
+        ToolDefinition {
+            name: "prim_rez_new".into(),
+            description: "Rez a new prim at region coordinates and wait for the simulator ObjectUpdate ack to return the new local_id and full_uuid.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "position": { "type": "array", "items": { "type": "number" } },
+                    "scale": { "type": "array", "items": { "type": "number" }, "default": [0.5, 0.5, 0.5] },
+                    "rotation_quat": { "type": "array", "items": { "type": "number" }, "default": [0.0, 0.0, 0.0, 1.0] },
+                    "pcode": { "type": "integer", "default": 9 },
+                    "name": { "type": "string" }
+                },
+                "required": ["position"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_transform".into(),
+            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer" },
+                    "position": { "type": "array", "items": { "type": "number" } },
+                    "rotation_quat": { "type": "array", "items": { "type": "number" } },
+                    "rotation_euler_deg": { "type": "array", "items": { "type": "number" } },
+                    "scale": { "type": "array", "items": { "type": "number" } },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "transforms": { "type": "array", "items": { "type": "object" } }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_set_shape".into(),
+            description: "Modify prim volume parameters (path_cut, profile_cut, hollow, twist) or face color/texture.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer" },
+                    "path_cut": { "type": "array", "items": { "type": "number" } },
+                    "profile_cut": { "type": "array", "items": { "type": "number" } },
+                    "hollow": { "type": "number" },
+                    "twist": { "type": "array", "items": { "type": "number" } },
+                    "color": { "type": "array", "items": { "type": "number" } },
+                    "texture_id": { "type": "string" }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_link".into(),
+            description: "Link or delink a list of prim local_ids (first local_id is root when linking).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_ids": { "type": "array", "items": { "type": "integer" } },
+                    "delink": { "type": "boolean", "default": false }
+                },
+                "required": ["local_ids"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_delete".into(),
+            description: "Delete (de-rez to trash) one or more prims by local_id.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_ids": { "type": "array", "items": { "type": "integer" } }
+                },
+                "required": ["local_ids"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsl_inspect_object_scripts".into(),
+            description: "Request and return task inventory items and scripts inside an in-world prim.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "object_local_id": { "type": "integer" } },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsl_read_script".into(),
+            description: "Read the LSL source code of a script inside a prim (enforcing creator copy+modify permissions).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "script_item_id": { "type": "string" }
+                },
+                "required": ["object_local_id", "script_item_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsl_write_and_compile".into(),
+            description: "Write and compile LSL source into a prim task script and return compiler diagnostics or success.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "script_item_id": { "type": "string" },
+                    "script_name": { "type": "string", "default": "New Script" },
+                    "source_code": { "type": "string" },
+                    "mono": { "type": "boolean", "default": true },
+                    "running": { "type": "boolean", "default": true }
+                },
+                "required": ["object_local_id", "source_code"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsl_listen_script_output".into(),
+            description: "Capture llOwnerSay, llSay, and DEBUG_CHANNEL script output from a target prim.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_id": { "type": "string" },
+                    "duration_ms": { "type": "integer", "default": 500 }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsd_inspect".into(),
+            description: "Inspect Linkset Data (LSD) keys, values, protected status, and 128 KiB byte quota usage on a linkset.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "filter_regex": { "type": "string" },
+                    "include_protected": { "type": "boolean", "default": true },
+                    "passphrase": { "type": "string" },
+                    "limit": { "type": "integer", "default": 50, "maximum": 100 }
+                },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsd_mutate".into(),
+            description: "Batch write, delete, reset, or import JSON into a linkset's 128 KiB Linkset Data store.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "object_local_id": { "type": "integer" },
+                    "operations": { "type": "array", "items": { "type": "object" } }
+                },
+                "required": ["object_local_id", "operations"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "lsd_stress_test".into(),
+            description: "Offline pre-flight validator for LSL Linkset Data JSON payloads against the 128 KiB store limit and Mono 32 KiB string ceiling.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "payload": {},
+                    "protected_keys": { "type": "boolean", "default": false },
+                    "filter_regex": { "type": "string" }
+                },
+                "required": ["payload"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "asset_inspect".into(),
+            description: "Inspect a local COLLADA/glTF/GLB/texture file and compute its SHA256, geometry counts, bounding box, and SL upload warnings (Legacy Viewer MCP compatible).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "filename": { "type": "string" } },
+                "required": ["filename"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "asset_inspect_local".into(),
+            description: "Inspect a local .gltf, .glb, .dae, or image file before upload.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "file_path": { "type": "string" } },
+                "required": ["file_path"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "local_mesh_status".into(),
+            description: "Read Aurora's local mesh / Blender Live preview status.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "local_mesh_open".into(),
+            description: "Open or close Aurora's local mesh / Blender Live panel.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "open": { "type": "boolean", "default": true } }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "local_mesh_auto_reload".into(),
+            description: "Enable or disable automatic reload for local mesh previewing.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "enabled": { "type": "boolean", "default": true } }
+            }),
+            in_compact_profile: false,
+        },
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_router_exposes_legacy_and_aurora_tools() {
+        let defs = all_tool_definitions();
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        // Verify Legacy Viewer compatibility tools
+        for legacy in [
+            "control_acquire",
+            "control_release",
+            "connection_status",
+            "capabilities_refresh",
+            "viewer_api_inspect",
+            "viewer_call",
+            "events_subscribe",
+            "events_read",
+            "events_unsubscribe",
+            "avatar_position",
+            "avatar_walk_to",
+            "avatar_movement_status",
+            "avatar_stop",
+            "world_objects",
+            "camera_set",
+            "camera_release",
+            "mesh_preview_camera",
+            "setting_get",
+            "setting_set",
+            "snapshot",
+            "capture_orbit",
+            "capture_manifest_read",
+            "image_compare",
+            "inventory_search",
+            "asset_inspect",
+            "local_mesh_open",
+            "local_mesh_status",
+            "local_mesh_auto_reload",
+            "floater_list",
+            "floater_open",
+        ] {
+            assert!(
+                names.contains(&legacy),
+                "missing Legacy Viewer MCP tool: {legacy}"
+            );
+        }
+        // Verify Aurora-native & LSD tools
+        for native in [
+            "viewer_control_acquire",
+            "viewer_control_release",
+            "get_agent_status",
+            "radar_scan_avatars",
+            "radar_scan_objects",
+            "comms_read_history",
+            "comms_send",
+            "nav_move_and_teleport",
+            "rlva_execute",
+            "settings_query",
+            "settings_set",
+            "camera_control",
+            "poser_inspect",
+            "poser_set_bones",
+            "poser_reset",
+            "viewport_capture",
+            "inventory_browse",
+            "appearance_get_worn",
+            "appearance_mutate",
+            "prim_rez_new",
+            "prim_transform",
+            "prim_set_shape",
+            "prim_link",
+            "prim_delete",
+            "lsl_inspect_object_scripts",
+            "lsl_read_script",
+            "lsl_write_and_compile",
+            "lsl_listen_script_output",
+            "lsd_inspect",
+            "lsd_mutate",
+            "lsd_stress_test",
+            "asset_inspect_local",
+        ] {
+            assert!(
+                names.contains(&native),
+                "missing Aurora-native MCP tool: {native}"
+            );
+        }
+    }
+}

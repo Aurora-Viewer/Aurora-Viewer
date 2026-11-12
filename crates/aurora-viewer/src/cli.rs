@@ -32,6 +32,10 @@ pub struct Cli {
     /// `--uninstall`: remove what the viewer registered on this computer,
     /// print what it did and exit, without a window (`uninstall.rs`).
     pub uninstall: bool,
+    /// `--mcp`: start the local Model Context Protocol (MCP) server.
+    pub mcp: bool,
+    /// `--mcp-port <port>`: port for the local MCP server (defaults to 3847).
+    pub mcp_port: Option<u16>,
     help: bool,
     version: bool,
 }
@@ -115,6 +119,14 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.title = args.next();
         } else if a == "--vr" {
             cli.vr = true;
+        } else if a == "--mcp" {
+            cli.mcp = true;
+        } else if let Some(v) = a.strip_prefix("--mcp-port=") {
+            cli.mcp_port = v.trim().parse::<u16>().ok();
+            cli.mcp = true;
+        } else if a == "--mcp-port" {
+            cli.mcp_port = args.next().and_then(|v| v.trim().parse::<u16>().ok());
+            cli.mcp = true;
         } else if let Some(v) = a.strip_prefix("--fps-limit=") {
             cli.fps_limit = parse_fps_limit(v);
         } else if a == "--fps-limit" {

@@ -1,0 +1,482 @@
+//! Asynchronous bridge protocol between the `aurora-mcp` background server and
+//! the main viewer frame loop (`crates/aurora-viewer/src/mcp_bridge.rs`).
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use thiserror::Error;
+use tokio::sync::{mpsc, oneshot};
+use uuid::Uuid;
+
+/// Default local port for the Streamable HTTP / SSE MCP server.
+pub const DEFAULT_MCP_PORT: u16 = 3847;
+
+/// Bounded command channel capacity to prevent memory growth if the main
+/// thread is paused or loading.
+pub const BRIDGE_CHANNEL_CAPACITY: usize = 64;
+
+/// Maximum per-frame time budget spent polling MCP commands on the main loop.
+pub const FRAME_BUDGET_MICROS: u64 = 1500;
+
+/// Maximum number of items returned by any bounded scan or search tool.
+pub const MAX_BOUNDED_ITEMS: usize = 100;
+
+#[derive(Debug, Clone, Error, Serialize, Deserialize, PartialEq, Eq)]
+pub enum McpError {
+    #[error("control lease required: call control_acquire or viewer_control_acquire first")]
+    NoActiveLease,
+    #[error("control lease held by '{holder}' (expires in {remaining_secs}s)")]
+    LeaseConflict {
+        holder: String,
+        remaining_secs: u64,
+    },
+    #[error("viewer main loop is disconnected or shutting down")]
+    ViewerDisconnected,
+    #[error("operation timed out after {0}ms")]
+    Timeout(u64),
+    #[error("invalid parameters: {0}")]
+    InvalidParams(String),
+    #[error("creator permissions forbid this operation: {0}")]
+    PermissionDenied(String),
+    #[error("viewer is not currently logged into a region or demo world")]
+    NotInWorld,
+    #[error("{0}")]
+    Internal(String),
+}
+
+/// Envelope sent from the async Tokio MCP server to the viewer's main loop.
+pub struct McpRequestEnvelope {
+    pub lease_id: Option<String>,
+    pub request: ViewerRequest,
+    pub reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+}
+
+/// State snapshot restored automatically when a control lease expires or is released.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum RollbackAction {
+    RestoreSetting {
+        key: String,
+        value: Value,
+    },
+    RestoreCamera {
+        mode: String,
+        position: [f32; 3],
+        focus: [f32; 3],
+        fov: f32,
+    },
+    ResetPoser,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatKind {
+    Whisper,
+    Normal,
+    Shout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BoneTransform {
+    pub bone_name: String,
+    /// Optional Euler angles in degrees `[rx, ry, rz]`.
+    pub rotation_euler_deg: Option<[f32; 3]>,
+    /// Optional quaternion `[x, y, z, w]`.
+    pub rotation_quat: Option<[f32; 4]>,
+    /// Optional local translation offset `[x, y, z]`.
+    pub position_offset: Option<[f32; 3]>,
+    /// Optional local scale `[sx, sy, sz]`.
+    pub scale: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum CameraCommand {
+    FollowAvatar,
+    Release,
+    FocusObject {
+        object_id: String,
+        distance: f32,
+        pitch_deg: f32,
+        yaw_deg: f32,
+    },
+    ManualTransform {
+        position: [f32; 3],
+        focus: [f32; 3],
+        fov_deg: Option<f32>,
+    },
+    Orbit {
+        delta_yaw_deg: f32,
+        delta_pitch_deg: f32,
+        zoom_delta: f32,
+    },
+    MeshPreview {
+        yaw_deg: f32,
+        pitch_deg: f32,
+        distance: f32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CaptureBufferType {
+    ColorRgb,
+    DepthNormalized,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum AppearanceOperation {
+    Attach {
+        item_id: Uuid,
+        attach_point: Option<u8>,
+        replace_existing: bool,
+    },
+    Detach {
+        item_id: Uuid,
+    },
+    WearFolder {
+        folder_id: Uuid,
+        append: bool,
+    },
+    RemoveFolder {
+        folder_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PrimTransformSpec {
+    pub local_id: u32,
+    pub position: Option<[f32; 3]>,
+    pub rotation_quat: Option<[f32; 4]>,
+    pub rotation_euler_deg: Option<[f32; 3]>,
+    pub scale: Option<[f32; 3]>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum LsdOperation {
+    Write {
+        key: String,
+        value: String,
+        passphrase: Option<String>,
+    },
+    Delete {
+        key: String,
+        passphrase: Option<String>,
+    },
+    Reset,
+    ImportJson {
+        entries: std::collections::BTreeMap<String, String>,
+        passphrase: Option<String>,
+    },
+}
+
+/// Requests sent from the MCP server to the viewer main thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ViewerRequest {
+    // Phase 0: Core Status, Capabilities, Leases & Dynamic Calls
+    ConnectionStatus,
+    CapabilitiesRefresh,
+    ApplyRollbacks {
+        actions: Vec<RollbackAction>,
+    },
+    ViewerCall {
+        api: String,
+        operation: String,
+        arguments: Value,
+    },
+    EventsSubscribe {
+        source: String,
+    },
+    EventsUnsubscribe {
+        source: String,
+    },
+    EventsRead {
+        after: u64,
+    },
+
+    // Phase 1: Agent Telemetry, Radar, Comms, Navigation & RLVa
+    GetAgentStatus,
+    RadarScanAvatars {
+        max_radius_m: f32,
+        limit: usize,
+    },
+    RadarScanObjects {
+        max_radius_m: f32,
+        root_only: bool,
+        name_filter: Option<String>,
+        limit: usize,
+    },
+    CommsReadHistory {
+        channel_filter: Option<String>,
+        limit: usize,
+    },
+    CommsSend {
+        message: String,
+        channel: i32,
+        chat_type: ChatKind,
+        target_uuid: Option<Uuid>,
+    },
+    NavWalkTo {
+        position: [f32; 3],
+        allow_flying: bool,
+        stop_distance: f32,
+        timeout_ms: u64,
+    },
+    NavMovementStatus,
+    NavStop,
+    NavSit {
+        target: Option<String>,
+    },
+    NavStand,
+    NavTeleport {
+        region_name: Option<String>,
+        position: [f32; 3],
+    },
+    RlvaExecute {
+        commands: Vec<String>,
+    },
+
+    // Phase 2: Settings, Camera, Poser & Floaters
+    SettingsQuery {
+        search: String,
+        modified_only: bool,
+        limit: usize,
+    },
+    SettingGet {
+        group: String,
+        key: String,
+    },
+    SettingSet {
+        group: String,
+        key: String,
+        value: Value,
+    },
+    CameraControl {
+        command: CameraCommand,
+    },
+    PoserInspect {
+        subject: Option<Uuid>,
+    },
+    PoserSetBones {
+        subject: Option<Uuid>,
+        transforms: Vec<BoneTransform>,
+    },
+    PoserReset {
+        subject: Option<Uuid>,
+    },
+    FloaterList,
+    FloaterOpen {
+        name: String,
+        open: bool,
+    },
+
+    // Phase 3: Viewport Capture (Color & Depth)
+    ViewportCapture {
+        buffer_type: CaptureBufferType,
+        include_ui: bool,
+        include_hud: bool,
+        max_dimensions: (u32, u32),
+    },
+
+    // Phase 4: Inventory & Appearance (COF Queue)
+    InventoryBrowse {
+        folder_id_or_path: String,
+        depth: u8,
+        limit: usize,
+    },
+    InventorySearch {
+        folder_id: Option<String>,
+        query: String,
+        asset_type: Option<String>,
+        worn_only: bool,
+        limit: usize,
+    },
+    AppearanceGetWorn,
+    AppearanceMutate {
+        operation: AppearanceOperation,
+    },
+
+    // Phase 5: World Building, LSL, Linkset Data & Local Mesh
+    PrimRezNew {
+        position: [f32; 3],
+        scale: [f32; 3],
+        rotation_quat: [f32; 4],
+        pcode: u8,
+        name: Option<String>,
+    },
+    PrimTransform {
+        transforms: Vec<PrimTransformSpec>,
+    },
+    PrimSetShape {
+        local_id: u32,
+        path_cut: Option<[f32; 2]>,
+        profile_cut: Option<[f32; 2]>,
+        hollow: Option<f32>,
+        twist: Option<[f32; 2]>,
+        color: Option<[f32; 4]>,
+        texture_id: Option<Uuid>,
+    },
+    PrimLink {
+        local_ids: Vec<u32>,
+        delink: bool,
+    },
+    PrimDelete {
+        local_ids: Vec<u32>,
+    },
+    LslInspectObjectScripts {
+        object_local_id: u32,
+    },
+    LslReadScript {
+        object_local_id: u32,
+        script_item_id: Uuid,
+    },
+    LslWriteAndCompile {
+        object_local_id: u32,
+        script_item_id: Option<Uuid>,
+        script_name: String,
+        source_code: String,
+        mono: bool,
+        running: bool,
+    },
+    LslListenScriptOutput {
+        object_id: Option<Uuid>,
+        duration_ms: u64,
+    },
+    LsdInspect {
+        object_local_id: u32,
+        filter_regex: Option<String>,
+        include_protected: bool,
+        passphrase: Option<String>,
+        limit: usize,
+    },
+    LsdMutate {
+        object_local_id: u32,
+        operations: Vec<LsdOperation>,
+    },
+    LocalMeshStatus,
+    LocalMeshOpen {
+        open: bool,
+    },
+    LocalMeshAutoReload {
+        enabled: bool,
+    },
+}
+
+/// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawCapturedFrame {
+    pub width: u32,
+    pub height: u32,
+    pub buffer_type: CaptureBufferType,
+    /// RGBA8 pixels for `ColorRgb`, or 8-bit linearized grayscale (or RGBA8) for `DepthNormalized`.
+    pub rgba_bytes: Vec<u8>,
+    pub near_clip: f32,
+    pub far_clip: f32,
+    pub camera_position: [f32; 3],
+    pub camera_focus: [f32; 3],
+    pub in_demo_mode: bool,
+}
+
+/// Responses sent back from the viewer main thread over the `oneshot` channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ViewerResponse {
+    Json(Value),
+    SettingMutated {
+        key: String,
+        previous_value: Value,
+        current_value: Value,
+    },
+    CameraMutated {
+        previous_camera: Option<RollbackAction>,
+        state: Value,
+    },
+    PoserMutated {
+        state: Value,
+    },
+    FrameCaptured(RawCapturedFrame),
+}
+
+impl ViewerRequest {
+    /// Returns true if executing this request mutates viewer or world state and
+    /// therefore requires an active control lease.
+    pub fn requires_lease(&self) -> bool {
+        match self {
+            ViewerRequest::ConnectionStatus
+            | ViewerRequest::CapabilitiesRefresh
+            | ViewerRequest::ApplyRollbacks { .. }
+            | ViewerRequest::EventsSubscribe { .. }
+            | ViewerRequest::EventsUnsubscribe { .. }
+            | ViewerRequest::EventsRead { .. }
+            | ViewerRequest::GetAgentStatus
+            | ViewerRequest::RadarScanAvatars { .. }
+            | ViewerRequest::RadarScanObjects { .. }
+            | ViewerRequest::CommsReadHistory { .. }
+            | ViewerRequest::NavMovementStatus
+            | ViewerRequest::SettingsQuery { .. }
+            | ViewerRequest::SettingGet { .. }
+            | ViewerRequest::PoserInspect { .. }
+            | ViewerRequest::FloaterList
+            | ViewerRequest::ViewportCapture { .. }
+            | ViewerRequest::InventoryBrowse { .. }
+            | ViewerRequest::InventorySearch { .. }
+            | ViewerRequest::AppearanceGetWorn
+            | ViewerRequest::LslInspectObjectScripts { .. }
+            | ViewerRequest::LslReadScript { .. }
+            | ViewerRequest::LslListenScriptOutput { .. }
+            | ViewerRequest::LsdInspect { .. }
+            | ViewerRequest::LocalMeshStatus => false,
+
+            ViewerRequest::ViewerCall { api, operation, .. } => {
+                // Read-only LEAP / viewer queries do not require a lease.
+                !is_readonly_viewer_call(api, operation)
+            }
+
+            ViewerRequest::CommsSend { .. }
+            | ViewerRequest::NavWalkTo { .. }
+            | ViewerRequest::NavStop
+            | ViewerRequest::NavSit { .. }
+            | ViewerRequest::NavStand
+            | ViewerRequest::NavTeleport { .. }
+            | ViewerRequest::RlvaExecute { .. }
+            | ViewerRequest::SettingSet { .. }
+            | ViewerRequest::CameraControl { .. }
+            | ViewerRequest::PoserSetBones { .. }
+            | ViewerRequest::PoserReset { .. }
+            | ViewerRequest::FloaterOpen { .. }
+            | ViewerRequest::AppearanceMutate { .. }
+            | ViewerRequest::PrimRezNew { .. }
+            | ViewerRequest::PrimTransform { .. }
+            | ViewerRequest::PrimSetShape { .. }
+            | ViewerRequest::PrimLink { .. }
+            | ViewerRequest::PrimDelete { .. }
+            | ViewerRequest::LslWriteAndCompile { .. }
+            | ViewerRequest::LsdMutate { .. }
+            | ViewerRequest::LocalMeshOpen { .. }
+            | ViewerRequest::LocalMeshAutoReload { .. } => true,
+        }
+    }
+}
+
+fn is_readonly_viewer_call(api: &str, operation: &str) -> bool {
+    let op = operation.to_ascii_lowercase();
+    matches!(
+        (api, op.as_str()),
+        ("LLAppViewer", "getstatus" | "getversion")
+            | ("LLViewerControl", "get" | "list")
+            | ("LLAgent", "getposition" | "getstatus" | "getgroups")
+            | ("LLWorld", "getobjects" | "getavatars" | "getregion")
+            | ("LLInventory", "search" | "browse" | "getworn")
+    ) || op.starts_with("get")
+        || op.starts_with("list")
+        || op.starts_with("read")
+        || op.starts_with("inspect")
+}
+
+/// Creates a bounded channel pair connecting the Tokio MCP server to the viewer main thread.
+pub fn create_bridge_channels() -> (
+    mpsc::Sender<McpRequestEnvelope>,
+    mpsc::Receiver<McpRequestEnvelope>,
+) {
+    mpsc::channel(BRIDGE_CHANNEL_CAPACITY)
+}
