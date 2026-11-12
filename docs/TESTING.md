@@ -9478,6 +9478,9 @@ while Studio is open; visibility must update. Stand yourself to return to the
 ordinary own-avatar view. Check a rotated seat, a multi-prim sofa, a low avatar
 detail limit and Photo mode. The podium should be below the furniture's base
 at entry. No object or avatar should move in the simulator because of Studio.
+Rotate the seat by 180 degrees, including a seat on a rotated child prim,
+and reopen Studio: its initial view must face the avatar's front using the
+avatar's full world rotation. A standing avatar's entry view must stay unchanged.
 Combine with `AURORA_DEMO_LOOKAT=targets`: no look-at dots/crosshairs, names
 or lines should appear in Studio, even for included companions. Combine with
 Studio's `cycle` mode to check that they return on exit with the same preferences.

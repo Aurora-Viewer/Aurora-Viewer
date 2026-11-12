@@ -84,7 +84,7 @@ impl App {
                 self.input = crate::agent::MoveInput::default();
                 self.down.clear();
                 let (floor, height) = self.studio_subject();
-                self.avatar_studio.enter(self.world.agent.yaw, height);
+                self.avatar_studio.enter(studio_facing(&self.world, Instant::now()), height);
                 self.avatar_studio.floor_offset = floor.z - self.studio_root().z;
                 if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "grounding") {
                     self.avatar_studio.floor_offset -= 1.25;
@@ -627,6 +627,20 @@ fn studio_mouse_hint(painter: &egui::Painter, rect: egui::Rect, button: usize, a
     paint(painter, action, movement, p.ink);
 }
 
+// Seated agent yaw is parent-relative. Like the seated branches of
+// LLAgentCamera (indra/newview/llagentcamera.cpp), use the avatar's resolved
+// render rotation, including every seat/link parent, for its world-facing view.
+fn studio_facing(world: &crate::world::World, now: Instant) -> f32 {
+    world
+        .objects
+        .index_of_uuid(&world.agent_id)
+        .filter(|&i| world.objects.get(i).is_some_and(|o| o.parent_id != 0))
+        .and_then(|i| Scene::object_transform(world, i, now, 0))
+        .map(|(_, rotation, _)| rotation * Vec3::X)
+        .filter(|forward| forward.is_finite() && forward.truncate().length_squared() > 1e-6)
+        .map_or(world.agent.yaw, |forward| forward.y.atan2(forward.x))
+}
+
 fn studio_pose_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, pose: &mut Pose, open: bool) {
     use crate::ui::{menu, widgets};
     let response = widgets::action_button(
@@ -752,5 +766,79 @@ mod hover_menu_tests {
         output.textures_delta.clear();
         assert!(row_height.is_some_and(|height| height <= 40.0));
         assert_eq!(hover_height, 0.35);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::NetEvent;
+
+    #[test]
+    fn entry_faces_the_seated_avatar_through_rotated_link_parents() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let updates = |frame| {
+            crate::demo::sit_events(frame)
+                .into_iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectUpdates { handle, objects } => Some((handle, objects)),
+                    _ => None,
+                })
+                .expect("seat fixture")
+        };
+        let (handle, mut seats) = updates(250);
+        let (_, mut avatars) = updates(300);
+        let mut avatar = avatars.remove(0);
+        avatar.parent_id = 951;
+        seats[1].rotation = Quat::from_rotation_z(0.7);
+        for (seat_yaw, local_yaw, expected_yaw) in [
+            (0.0, 0.3, 1.0),
+            (std::f32::consts::PI, 0.3, std::f32::consts::PI + 1.0),
+            (std::f32::consts::PI, 0.3 - std::f32::consts::PI, 1.0),
+        ] {
+            seats[0].rotation = Quat::from_rotation_z(seat_yaw);
+            avatar.rotation = Quat::from_rotation_z(local_yaw);
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: seats.iter().cloned().chain(std::iter::once(avatar.clone())).collect(),
+            });
+            // Let report-correction smoothing reach each fixture orientation;
+            // entry follows the rendered pose, not an undrawn server update.
+            let now = Instant::now() + std::time::Duration::from_secs(2);
+            let mut studio = Studio::default();
+            studio.enter(studio_facing(&world, now), 1.8);
+            let view = studio.view(Vec3::ZERO, 1.5);
+            let toward_camera = (view.eye - view.target).truncate().normalize();
+            let forward = (Quat::from_rotation_z(expected_yaw) * Vec3::X).truncate();
+            assert!(
+                toward_camera.dot(forward) > 0.9999,
+                "entry must show the avatar's front: seat={seat_yaw}, local={local_yaw}, expected={expected_yaw}, facing={}",
+                studio.facing
+            );
+        }
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        world.agent.yaw = 1.2;
+        assert_eq!(
+            studio_facing(&world, Instant::now()),
+            1.2,
+            "standing keeps the existing agent-facing behavior"
+        );
+        avatar.parent_id = 999_999;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert_eq!(
+            studio_facing(&world, Instant::now()),
+            world.agent.yaw,
+            "an unloaded seat retains a usable fallback"
+        );
     }
 }

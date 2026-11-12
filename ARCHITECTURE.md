@@ -4638,7 +4638,9 @@ Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
 `scene/avatar_studio.rs`) is a session-local dressing-room presentation,
 toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
 Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
-toggle and active indication. Left-drag orbits;
+toggle and active indication. Seated entry uses the avatar's resolved world
+rotation through the seat/link hierarchy to frame its front; standing entry
+retains the agent's heading. Left-drag orbits;
 right-drag adjusts the avatar-relative focus height without avatar-height bounds.
 Right clicks retain the native avatar and attachment context menus. The shared
 10-point right-gesture threshold separates a click from a focus-height drag;
