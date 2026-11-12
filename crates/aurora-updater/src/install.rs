@@ -276,8 +276,10 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
     let parent = Parent::open(plan.parent)?;
     let version = plan.version.clone();
     let mut stage = |s: HelperStage| stage(&version, s);
-    stage(HelperStage::Closing);
     fs::write(work.join("helper-ready"), b"ready")?;
+    // after the old viewer's go: its wait for this helper never includes
+    // the window's start
+    stage(HelperStage::Closing);
     parent.wait()?;
     let result = (|| -> Result<()> {
         stage(HelperStage::Installing);
