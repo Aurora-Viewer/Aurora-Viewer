@@ -183,6 +183,7 @@ pub struct Panels {
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
     pub appearance: bool,
+    pub avatar_studio: bool,
     pub ao: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
@@ -265,6 +266,7 @@ impl Panels {
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
             appearance: settings.show_appearance,
+            avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
             contacts: false,
