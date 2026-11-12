@@ -378,6 +378,7 @@ mod tests {
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
+            images: Default::default(),
         };
         let waiting = |session: &Session, sim: usize| session.sims[&addrs[sim]].circuit.unacked_count();
         let handshake = |region_id: Uuid| {

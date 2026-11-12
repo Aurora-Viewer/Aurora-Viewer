@@ -1419,6 +1419,12 @@ pub enum NetEvent {
         handle: RegionHandle,
         parcel: std::sync::Arc<ParcelInfo>,
     },
+    /// A bake reassembled from the simulator's UDP image packets
+    /// (`ImageData` / `ImagePacket`). `None`: `ImageNotInDatabase`.
+    HostImage {
+        id: Uuid,
+        bytes: Option<Vec<u8>>,
+    },
 }
 
 /// One avatar record of the People API (GetDisplayNames "agents" entries,
@@ -2380,6 +2386,9 @@ pub enum NetCommand {
     DummyWearablesUpdate,
     /// Forget the in-memory object caches (the files are deleted by the viewer).
     ClearObjectCache,
+    /// Bakes to fetch from the simulator that holds them (`image_udp`).
+    /// The set replaces the previous one; an empty set cancels what was in flight.
+    SyncHostImages(Vec<crate::image_udp::Want>),
     /// Build tools: selection, moves, new prims, links, terraforming.
     Build(crate::build::BuildCmd),
 }

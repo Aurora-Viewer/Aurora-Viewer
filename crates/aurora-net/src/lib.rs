@@ -20,6 +20,7 @@ pub mod group_money;
 pub mod groups;
 pub mod home;
 mod im_reply;
+pub mod image_udp;
 pub mod inventory;
 pub mod land;
 pub mod land_tool;

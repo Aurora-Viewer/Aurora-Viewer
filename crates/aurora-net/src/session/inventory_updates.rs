@@ -420,6 +420,7 @@ mod tests {
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 40,
+            images: Default::default(),
         };
         for (index, name) in ["LargeGenericMessage", "UpdateCreateInventoryItem", "BulkUpdateInventory"]
             .into_iter()
