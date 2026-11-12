@@ -7235,6 +7235,7 @@ impl App {
         let hud = (self.build.tool == crate::build::Tool::Edit)
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
+        let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
         let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
             (Some(point), Some(idx), ray)
         } else if self.build.tool == crate::build::Tool::Create && !self.settings.build.copy_selection && !(self.shift || self.ctrl) {
@@ -7246,12 +7247,16 @@ impl App {
             self.scene.creation_preview.candidates = candidates;
             (surface.map(|s| s.0), surface.and_then(|s| s.1), ray)
         } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
-            // LLToolFace picks the current cursor ray. A delayed GPU depth
-            // sample can still point at the previous object during Shift clicks.
-            let ray = self.build.cam.ray(x, y);
-            let target = self
+            // LLToolFace: CPU ray for ordinary prims, then the drawn-face pick
+            // for worn / rigged mesh (same Build designate as the move tool),
+            // so a face click does not fall through to the world behind.
+            let Some(picked) = self.click_pick() else {
+                return false;
+            };
+            let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
+            let cpu_target = self
                 .scene
-                .left_edit_ray_hits(
+                .face_edit_ray_hits(
                     &self.world,
                     ray,
                     false,
@@ -7260,7 +7265,16 @@ impl App {
                 )
                 .first()
                 .copied();
-            (None, target, ray)
+            let cpu_point = cpu_target.and_then(|idx| self.scene.edit_hit_point(&self.world, idx, ray));
+            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point);
+            let (hit, target) = match drawn {
+                Some(d) => {
+                    face_drawn = Some(d);
+                    (Some(d.hit.point), Some(d.idx))
+                }
+                None => (cpu_point, cpu_target),
+            };
+            (hit, target, ray)
         } else {
             let Some(picked) = self.click_pick() else {
                 return false;
@@ -7280,7 +7294,7 @@ impl App {
                     picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
                 )
             };
-            // a rigged mesh is selected where it is shown (Firestorm: with
+            // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
@@ -7294,9 +7308,14 @@ impl App {
             alt: self.alt,
         };
         // the surface under the cursor: face tool, grab surface info
-        let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
-            _ => None,
+        let surface = if let Some(d) = face_drawn {
+            self.scene.drawn_surface(&self.world, &d)
+        } else {
+            match (self.build.tool, self.build.edit_mode, target) {
+                (crate::build::Tool::Edit, crate::build::EditMode::Face, Some(i)) => self.scene.edit_touch_surface(&self.world, i, ray),
+                (crate::build::Tool::Edit | crate::build::Tool::Grab, _, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
+                _ => None,
+            }
         };
         let used = self.build.mouse_down(
             &mut self.world,
