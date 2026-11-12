@@ -277,12 +277,10 @@ mod tests {
     /// A group whose members and roles are all known: Bob in "everyone"
     /// only, an owner.
     fn loaded() -> GroupData {
-        let mut d = GroupData {
-            members_complete: true,
-            roles_complete: true,
-            role_members_complete: true,
-            ..Default::default()
-        };
+        let mut d = GroupData::default();
+        d.members_complete = true;
+        d.roles_complete = true;
+        d.role_members_complete = true;
         for m in [member(ME, false), member(BOB, false), member(OWNER, true)] {
             d.member_roles.insert(m.id, vec![Uuid::nil()]);
             d.members.insert(m.id, m);
