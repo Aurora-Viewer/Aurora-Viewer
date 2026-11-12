@@ -43,7 +43,8 @@
 //!
 //! `AURORA_DEMO_BUILD_TAB` shows a section: general | rights | object | transform |
 //! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
-//! `:media` (e.g. `texture:bp`); `:bp-normal` / `:bp-specular` select empty
+//! `:media` (e.g. `texture:bp`); `:bp-alpha` paints the selection with the
+//! built-in Transparent texture; `:bp-normal` / `:bp-specular` select empty
 //! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
 //! `AURORA_DEMO_BUILD_HANDLES=<percent>` sets the edit handle size.
@@ -94,6 +95,8 @@ pub enum Step {
     ReplaceApply,
     /// "Place on surface" on or off.
     Place(bool),
+    /// Paint the selection with the built-in Transparent texture.
+    TransparentDiffuse,
     /// Its Auto rotate, with that side.
     PlaceRotate(super::place::Side),
 }
@@ -223,12 +226,15 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
     tool.ui.tex_tab = match sub.trim() {
         "pbr" => 1,
-        "bp" | "classic" | "bp-normal" | "bp-specular" => 0,
+        "bp" | "classic" | "bp-normal" | "bp-specular" | "bp-alpha" => 0,
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
     // The scenario's tab, not the one its selection would open on.
-    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+    if matches!(
+        sub.trim(),
+        "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "bp-alpha" | "media"
+    ) {
         tool.keep_texture_tab();
     }
     match sub.trim() {
@@ -652,6 +658,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         215 => vec![Step::Open(t, m, land)],
         280 if parts[0] == "material-deselect" => vec![Step::CloseEditor],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
+        230 if bp_alpha_demo() => vec![Step::TransparentDiffuse],
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released
         226 if t != Tool::Land => vec![Step::Release],
@@ -698,6 +705,16 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         351 if edge.is_some() => vec![Step::Release],
         _ => Vec::new(),
     }
+}
+
+fn bp_alpha_demo() -> bool {
+    std::env::var("AURORA_DEMO_BUILD_TAB").is_ok_and(|value| {
+        value
+            .split('+')
+            .next()
+            .and_then(|head| head.split(':').nth(1))
+            .is_some_and(|sub| sub.trim() == "bp-alpha")
+    })
 }
 
 fn x_start(tool: &BuildTool) -> f32 {

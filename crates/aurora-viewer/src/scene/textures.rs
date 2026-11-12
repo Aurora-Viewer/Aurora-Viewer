@@ -1622,8 +1622,15 @@ impl TextureStreamer {
     }
 
     /// The texture has see-through pixels (None until it is decoded): the
-    /// build floater's "Alpha mode" is only offered then.
+    /// build floater's "Alpha mode" is only offered then. The built-in
+    /// transparent texture is never downloaded. The Legacy Viewer preloads
+    /// `transparent.j2c` as RGBA (`LLViewerTextureList::doPreloadImages`,
+    /// llviewertexturelist.cpp) and `LLPanelFace::LLSelectedTE::getImageFormat`
+    /// (llpanelface.cpp) reports that as alpha, so the combo is offered.
     pub fn has_alpha(&self, id: &Uuid) -> Option<bool> {
+        if is_builtin_transparent(id) {
+            return Some(true);
+        }
         if !self.is_loaded(id) {
             return None;
         }
@@ -4370,6 +4377,16 @@ mod tests {
         assert_ne!(held, source(5_000, Some(3)).image_revision(), "a coarser level shows");
         assert_ne!(source(5_000, None).image_revision(), source(9_000, None).image_revision());
         assert_ne!(source(90_000, Some(0)).revision(), source(40_000, Some(1)).revision());
+    }
+
+    #[test]
+    fn builtin_transparent_texture_has_alpha_before_it_is_loaded() {
+        let textures = TextureStreamer::new(PathBuf::new());
+        assert_eq!(textures.has_alpha(&aurora_prim::te::TRANSPARENT_TEXTURE), Some(true));
+        assert_eq!(textures.has_alpha(&super::super::avatar::IMG_INVISIBLE), Some(true));
+        assert_eq!(textures.has_alpha(&aurora_prim::te::WATER_EXCLUSION_TEXTURE), Some(true));
+        assert_eq!(textures.has_alpha(&Uuid::nil()), None);
+        assert_eq!(textures.has_alpha(&aurora_prim::te::BLANK_TEXTURE), None);
     }
 
     #[test]
