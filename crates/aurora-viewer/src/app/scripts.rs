@@ -565,6 +565,9 @@ impl App {
         {
             self.apply_script_action(action);
         }
+        // the copies of the unsaved scripts (ui/scripts/backup.rs)
+        self.sync_script_backup_dir();
+        self.script_editors.back_up();
         self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);
     }
 
@@ -872,6 +875,39 @@ mod tests {
         }
         assert_eq!(task_permissions(perm::COPY, 0), (false, false));
         assert_eq!(task_permissions(perm::COPY | perm::MODIFY, 0), (true, true));
+    }
+
+    /// A copy of the unsaved text (ui/scripts/backup.rs) is kept only for a
+    /// script its editor may edit: the editing right of [`permissions`],
+    /// read from the agent's mask (rules::agent_mask).
+    #[test]
+    fn an_unsaved_script_is_copied_only_when_it_may_be_edited() {
+        use aurora_net::inventory::InvItem;
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+        let item = |owner: Uuid, owner_mask: u32, everyone_mask: u32, group_owned: bool| InvItem {
+            owner,
+            owner_mask,
+            everyone_mask,
+            group_owned,
+            asset_type: 10,
+            ..Default::default()
+        };
+        let copied = |it: &InvItem, library: bool| permissions(rules::agent_mask(it, me), library, 0).1;
+        assert!(copied(&item(me, full, 0, false), false), "full permissions");
+        assert!(
+            copied(&item(me, perm::COPY | perm::MODIFY, 0, false), false),
+            "no transfer, as the Legacy Viewer"
+        );
+        assert!(!copied(&item(me, perm::MODIFY | perm::TRANSFER, 0, false), false), "no copy");
+        assert!(!copied(&item(me, perm::COPY | perm::TRANSFER, 0, false), false), "no modify");
+        assert!(!copied(&item(other, full, 0, false), false), "someone else's, nothing for everyone");
+        assert!(copied(&item(other, 0, full, false), false), "someone else's, editable by everyone");
+        assert!(!copied(&item(me, full, 0, true), false), "group-owned: the everyone mask");
+        assert!(!copied(&item(other, 0, full, false), true), "a Library script is read only");
+        // in an object: copy and modify, as for opening it
+        assert!(task_permissions(perm::COPY | perm::MODIFY, 0).1);
+        assert!(!task_permissions(perm::COPY, 0).1 && !task_permissions(perm::MODIFY, 0).1);
     }
 
     #[test]

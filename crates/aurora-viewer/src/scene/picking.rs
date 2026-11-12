@@ -2974,7 +2974,9 @@ pub(crate) mod tests {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
-        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+        // (within 3.5 m of the HUD point: a HUD root is drawn no further,
+        // scene/draw_limits.rs)
+        for (idx, x) in [(front, 1.0), (back, 3.0)] {
             let o = world.objects.get_mut(idx).unwrap();
             o.parent_id = parent;
             o.state = 31u8.rotate_left(4);
@@ -3057,7 +3059,7 @@ pub(crate) mod tests {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
-        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+        for (idx, x) in [(front, 1.0), (back, 3.0)] {
             let o = world.objects.get_mut(idx).unwrap();
             o.parent_id = parent;
             o.state = 31u8.rotate_left(4);
@@ -3119,7 +3121,7 @@ pub(crate) mod tests {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
-        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+        for (idx, x) in [(front, 1.0), (back, 3.0)] {
             let o = world.objects.get_mut(idx).unwrap();
             o.parent_id = parent;
             o.state = 31u8.rotate_left(4);
