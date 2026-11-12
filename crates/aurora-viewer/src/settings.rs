@@ -1507,7 +1507,10 @@ pub struct Settings {
     pub max_attachment_area: f32,
     /// ShowMyComplexityChanges: seconds the notices about our avatar
     /// complexity, and about the people around who may not see us fully,
-    /// stay (0 = no notices; 10 as in the Legacy Viewer's settings.xml).
+    /// stay (0 = no notices). Off by default (the Legacy Viewer's
+    /// settings.xml says 10): our complexity moving with the texture memory
+    /// made them a notice every few seconds in 0.9.7 (#3381), and most
+    /// people never asked for them.
     pub complexity_notice_seconds: u32,
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
@@ -1663,7 +1666,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 36;
+const SETTINGS_VERSION: u32 = 37;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2372,7 +2375,7 @@ impl Default for Settings {
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
-            complexity_notice_seconds: 10,
+            complexity_notice_seconds: 0,
             loading_avatars: 0,
             complexity_mode: 0,
             avatar_physics: true,
@@ -2449,6 +2452,13 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
     file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
         .and_then(|value| value.get("allow_overlays").and_then(serde_json::Value::as_bool))
         .unwrap_or(false)
+}
+
+/// `language` of a settings file's bytes; "default" for anything else.
+fn language_in(file: Option<&[u8]>) -> String {
+    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| "default".into())
 }
 
 fn for_mode(dir: PathBuf) -> PathBuf {
@@ -2619,6 +2629,13 @@ impl Settings {
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
             .and_then(|v| v.get(field).and_then(|c| c.as_str()).map(str::to_owned))
             .unwrap_or_default()
+    }
+
+    /// The saved language, read the same way for the startup splash
+    /// (`splash/`), which loads nothing else; "default" (the system's) when
+    /// the file or the field is missing.
+    pub fn language_at_start() -> String {
+        language_in(std::fs::read(Self::path()).ok().as_deref())
     }
 
     fn load_from(path: &Path) -> Settings {
@@ -2982,6 +2999,11 @@ impl Settings {
         }
         if self.settings_version < 36 {
             self.upgrade_display_scale(cfg!(target_os = "macos"));
+        }
+        if self.settings_version < 37 && self.complexity_notice_seconds == 10 {
+            // new default: no complexity notices (#3381). A file still on
+            // the former default, 10 s, takes it; another length was chosen
+            self.complexity_notice_seconds = 0;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3734,6 +3756,21 @@ mod tests {
         })
         .expect("settings json");
         assert!(super::allow_overlays_in(Some(&saved)));
+    }
+
+    /// The splash's early read of the language agrees with the settings.
+    #[test]
+    fn the_splash_reads_the_saved_language() {
+        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
+            assert_eq!(super::language_in(file), "default", "{file:?}");
+        }
+        let saved = serde_json::to_vec(&super::Settings {
+            language: "ja".into(),
+            ..Default::default()
+        })
+        .expect("settings json");
+        assert_eq!(super::language_in(Some(&saved)), "ja");
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name
@@ -4868,6 +4905,31 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_complexity_notices_are_off_by_default_and_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().complexity_notice_seconds, 0);
+        // a 0.9.7 file on the former default, 10 s
+        let old = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(old.sanitized().complexity_notice_seconds, 0);
+        // another length chosen: kept
+        let chosen = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 20,
+            ..Settings::default()
+        };
+        assert_eq!(chosen.sanitized().complexity_notice_seconds, 20);
+        // 10 s chosen after the migration: kept
+        let on = Settings {
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(on.sanitized().complexity_notice_seconds, 10);
     }
 
     #[test]

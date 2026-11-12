@@ -121,6 +121,170 @@ pub(super) fn outline_members(key: usize, members: &[usize], names: &[String]) -
     members.to_vec()
 }
 
+/// A joint that is a part of its own: a bone of a group, or a wing, the
+/// tail or a hind limb. The others (collision volumes and attachment points,
+/// named without the "m", and the spine, groin and skull inside the body)
+/// follow the part of the bone they hang from.
+fn own_part(name: &str) -> bool {
+    name.starts_with('m') && !(group(name) == OTHER && !optional_bone(name))
+}
+
+/// The bone whose part `joint` is: itself when it is a part's own, else the
+/// nearest such bone up the skeleton (`own_part`).
+fn part_owner(parent: &[Option<usize>], names: &[String], mut joint: usize) -> Option<usize> {
+    loop {
+        if own_part(&names[joint]) {
+            return Some(joint);
+        }
+        joint = parent[joint]?;
+    }
+}
+
+/// A body bone a part takes for its own on the meshes: the head the
+/// face's, a wrist its hand's. A Bento face shares its weights with mHead
+/// and a hand's palm is the wrist's: without them a face is patchy and
+/// fingers are a thin target. They stay Body bones to pose.
+fn lends_to_part(name: &str) -> bool {
+    name == "mHead" || name.starts_with("mWrist")
+}
+
+/// The GPU's part class for a canonical joint. Collision volumes and
+/// inner bones follow their owner; the face borrows the head, each hand
+/// its wrist. Zero still occludes, but is not an offered part.
+fn pick_class(joint: usize, parent: &[Option<usize>], names: &[String]) -> u32 {
+    let Some(owner) = part_owner(parent, names, joint) else { return 0 };
+    let name = &names[owner];
+    match part_key(name) {
+        0 if name == "mHead" => 2,
+        0 if name.starts_with("mWrist") => {
+            if name.ends_with("Left") {
+                3
+            } else {
+                4
+            }
+        }
+        0 => 1,
+        1 => 2,
+        2 => {
+            if name.ends_with("Left") {
+                3
+            } else {
+                4
+            }
+        }
+        WINGS => 5,
+        TAIL => 6,
+        _ => 0,
+    }
+}
+
+/// Four bits per palette joint, matching `poser_pick_class` in object.wgsl.
+/// Interpolating each class's summed weights lets the fragment choose the
+/// visible part independently of the triangle's vertex/index order.
+pub(super) fn pick_classes(parent: &[Option<usize>], names: &[String]) -> [u32; 32] {
+    let mut classes = [0u32; 32];
+    for j in 0..names.len().min(256) {
+        classes[j >> 3] |= pick_class(j, parent, names) << ((j & 7) * 4);
+    }
+    // The system body's identity slot belongs to the pelvis/body.
+    let root = names.len();
+    if root < 256 {
+        classes[root >> 3] |= 1 << ((root & 7) * 4);
+    }
+    classes
+}
+
+/// A mesh-picked part offers its nearest projected, offerable bone. The
+/// current tab is never offered, even though it lends bones to another
+/// part's surface (the head and wrists).
+pub(super) fn picked_part(
+    class: u32,
+    joints: &[(usize, egui::Pos2)],
+    parent: &[Option<usize>],
+    names: &[String],
+    offer: &[bool],
+    current: usize,
+    pointer: egui::Pos2,
+) -> Option<usize> {
+    let tab = match class {
+        1 => 0,
+        2 => 1,
+        3 | 4 => 2,
+        5 | 6 => OTHER,
+        _ => return None,
+    };
+    if tab == current {
+        return None;
+    }
+    joints
+        .iter()
+        .filter(|(j, _)| offer[*j] && group(&names[*j]) == tab && pick_class(*j, parent, names) == class)
+        .min_by(|a, b| a.1.distance_sq(pointer).total_cmp(&b.1.distance_sq(pointer)))
+        .map(|(j, _)| *j)
+}
+
+/// How far, in window pixels, the cursor may be from where the mesh pick
+/// was read for its answer to stand: it comes a frame or two late.
+const PICK_REACH: f32 = 4.0;
+
+/// The mesh pick's answer that stands for the cursor at `pointer` (window
+/// pixels): the one asked for this `subject` and read within `PICK_REACH`
+/// of it. Else None, and the bones decide at once: a flick to another
+/// avatar, the subject switched, a pixel no answer came for.
+pub(super) fn fresh_pick(stored: Option<(Uuid, u32, [f32; 2])>, subject: Uuid, pointer: egui::Pos2) -> Option<u32> {
+    let (asked, joint, [x, y]) = stored?;
+    (asked == subject && pointer.distance(egui::pos2(x, y)) <= PICK_REACH).then_some(joint)
+}
+
+/// The renderer's mask of `members` (`FrameParams::part_joints`): bit j for
+/// each palette joint whose part they are, the joints that follow a bone
+/// included. A fitted mesh body weights its vertices to the collision
+/// volumes (BELLY, PEC…) and a Bento body to the spine: they tint with the
+/// body. Joints past 256 have no bit (the skeleton has 206).
+pub(super) fn mask_joints(parent: &[Option<usize>], names: &[String], members: &[usize]) -> [u32; 8] {
+    let mut mask = [0u32; 8];
+    for j in 0..names.len().min(256) {
+        if part_owner(parent, names, j).is_some_and(|o| members.contains(&o)) {
+            mask[j >> 5] |= 1 << (j & 31);
+        }
+    }
+    mask
+}
+
+/// The joints the renderer keeps for a part on the subject's meshes (the
+/// tint fades where the weights pass from them to others):
+/// - the body without the bones it lends (`lends_to_part`: the head, the
+///   wrists) and what follows them, so it meets the face and the hands in a
+///   fade at the neck and the wrists instead of lighting them;
+/// - the face and the hands with the bone they hang from (the head, the
+///   wrist): the whole head, the whole hand;
+/// - another part, its own joints when a worn mesh weights them (rigged
+///   wings, a tail), else also the bone it hangs from.
+pub(super) fn mask_members(
+    key: usize,
+    members: &[usize],
+    parent: &[Option<usize>],
+    keys: &[usize],
+    names: &[String],
+    rigged: &std::collections::HashSet<usize>,
+) -> Vec<usize> {
+    if key == 0 {
+        return members.iter().copied().filter(|j| !lends_to_part(&names[*j])).collect();
+    }
+    let mut joints = members.to_vec();
+    if key != 1 && key != 2 && members.iter().any(|j| rigged.contains(j)) {
+        return joints;
+    }
+    for &m in members {
+        if let Some(up) = parent[m].filter(|up| !members.contains(up) && keys[*up] != key)
+            && !joints.contains(&up)
+        {
+            joints.push(up);
+        }
+    }
+    joints
+}
+
 /// The part's name for the hint: its group's tab, or Wings / Tail.
 fn part_label(key: usize) -> &'static str {
     match key {
@@ -193,20 +357,54 @@ impl Editor {
         // photo (a modifier's affordance shows with the modifier, as the
         // Mac's Cmd + hover link)
         let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        if let Some(joint) = offered_joint(&joints, &groups, &offer, self.poser.group, pointer).filter(|_| self.poser.part_hints && ctrl) {
+        // an avatar's part is drawn by the renderer from its meshes, and
+        // picked there (part_pick.rs); an animesh's keeps the bones (its
+        // skeleton is not an avatar's)
+        let avatar = world
+            .objects
+            .index_of_uuid(&self.poser.subject)
+            .and_then(|i| world.objects.get(i))
+            .is_some_and(|o| o.is_avatar());
+        // the pick is asked for an avatar; its meshes draw the part when the
+        // scene drew any of them (an impostor, a jelly doll, your own avatar
+        // in first person: the bone outline instead)
+        // ... and only while the pointer is over the subject (its skeleton's
+        // area on screen): Ctrl over the rest of the world costs nothing
+        let over_subject = compact::body_area(
+            joints
+                .iter()
+                .filter(|(j, _)| !optional_bone(&rig.canonical_names[*j]) || self.poser.rigged.contains(j))
+                .map(|(_, at)| *at),
+        )
+        .is_some_and(|area| area.contains(pointer));
+        self.poser.pick_wanted = ctrl && self.poser.part_hints && avatar && over_subject;
+        let meshes = avatar && self.poser_meshes_drawn();
+        // the mesh pick, once one came back: on the subject's surface, the
+        // part of its joint; off it, none. Until then, the bones.
+        let pointer_px = pointer * ctx.pixels_per_point();
+        let picked = fresh_pick(self.poser.mesh_pick, self.poser.subject, pointer_px).filter(|_| self.poser.pick_wanted && meshes);
+        let candidate = match picked {
+            Some(class) => picked_part(class, &joints, &rig.parent, &rig.canonical_names, &offer, self.poser.group, pointer),
+            None => offered_joint(&joints, &groups, &offer, self.poser.group, pointer),
+        };
+        if let Some(joint) = candidate.filter(|_| self.poser.part_hints && ctrl) {
             let members = part(&rig.parent, &keys, joint);
             let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
             let project = |at| proj.project(at).map(|(p, _)| p);
             // the part's own shape, see-through in the accent: the face an
             // oval around the head (one smooth outline), the others their
-            // bones' union
+            // bones' union (an animesh's: an avatar's is the renderer's)
             let fill = p.violet.gamma_multiply(0.32);
             let stroke = Stroke::new(1.5, p.violet_light.gamma_multiply(0.7));
-            let inside = if keys[joint] == 1 {
+            // the mesh pick already found the pointer on the part; the bones
+            // decide only without it
+            let inside = if picked.is_some() {
+                true
+            } else if keys[joint] == 1 {
                 let head = frame.joints[rig.names.get("mHead").copied().unwrap_or(rig.pelvis)];
                 let oval = silhouette::face(&rig.canonical_names, &world_at, &members, head, project)
                     .filter(|oval| silhouette::depth(&[*oval], pointer) > 0.0);
-                if let Some(oval) = oval {
+                if let Some(oval) = oval.filter(|_| !meshes) {
                     painter.add(egui::Shape::convex_polygon(oval.outline(64), fill, stroke));
                 }
                 oval.is_some()
@@ -221,12 +419,23 @@ impl Editor {
                     project,
                 );
                 let inside = silhouette::depth(&capsules, pointer) > 0.0;
-                if inside {
+                if inside && !meshes {
                     silhouette::paint(&painter, &silhouette::trace(&capsules), fill, stroke);
                 }
                 inside
             };
             if inside {
+                if meshes {
+                    let joints = mask_members(keys[joint], &members, &rig.parent, &keys, &rig.canonical_names, &self.poser.rigged);
+                    let mut mask = mask_joints(&rig.parent, &rig.canonical_names, &joints);
+                    // the identity slot (the system body's root vertices) is
+                    // the body's
+                    let root = rig.len();
+                    if keys[joint] == 0 && root < 256 {
+                        mask[root >> 5] |= 1 << (root & 31);
+                    }
+                    self.poser.part_overlay = Some((self.poser.subject, mask));
+                }
                 tip(aurora_i18n::tr!("poser-ctrl-click-group", group = part_label(keys[joint])).to_string());
                 return Hint::Group(joint);
             }

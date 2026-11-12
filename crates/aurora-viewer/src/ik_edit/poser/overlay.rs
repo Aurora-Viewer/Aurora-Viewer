@@ -65,6 +65,8 @@ impl Editor {
         self.poser.pointer_owned = false;
         self.poser.gizmo_hover = false;
         self.poser.marker_hover = false;
+        self.poser.part_overlay = None;
+        self.poser.pick_wanted = false;
         if !ctx.input(|i| i.pointer.primary_down()) {
             self.drag = None;
             if !ctx.input(|i| i.pointer.primary_released()) {
