@@ -2865,8 +2865,32 @@ fn resetting_the_animation_keeps_the_rest_pose_out_of_the_export() {
     let mut editor = Editor::default();
     editor.clip.document = Some(Arc::new(Document::new()));
     editor.clip.drag_key = Some((0, 0, 5));
+    // a bone posed by hand and not keyed yet
+    editor.clip.active = true;
+    editor.clip.frame = 40;
+    editor.clip.playing = true;
+    editor.clip.modified.insert(rig.names["mElbowLeft"]);
+    editor.goals.push(Goal {
+        follow: None,
+        weight: 1.0,
+        bone: rig.names["mElbowLeft"],
+        root: rig.names["mElbowLeft"],
+        position: Vec3::ZERO,
+        rotation: Some(Quat::from_rotation_y(0.6)),
+        contact: Vec3::ZERO,
+        pole: None,
+        mode: Mode::Direct,
+    });
 
     editor.reset_animation_from_studio(&world);
+
+    assert!(
+        editor.goals.is_empty(),
+        "the staged pose edits go with the keys: the avatar is back at rest"
+    );
+    assert!(editor.clip.modified.is_empty());
+    assert_eq!(editor.clip.frame, 0);
+    assert!(!editor.clip.playing);
 
     let document = editor.clip.document.clone().expect("the reset leaves a document");
     assert!(document.tracks.len() > 100, "every bone keeps its rest baseline for the preview");

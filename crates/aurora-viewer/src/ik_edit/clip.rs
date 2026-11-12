@@ -597,9 +597,11 @@ impl Editor {
         self.clip.checkpoint();
         self.clip.document = Some(Arc::new(document));
         self.clip.auto_key_retime_from = None;
-        self.clip.seek(0);
-        self.clip.playing = false;
         self.clip.changed();
+        // Drop the staged pose edits with the keys, as a seek does: left in
+        // place, the bones posed by hand would hold their pose over the
+        // rest pose the reset just restored.
+        self.clip_seek(0);
     }
 
     pub(super) fn studio_clip_redo(&mut self) {
