@@ -2737,6 +2737,13 @@ uses the same activation before allowing the viewer's global Search action.
 An explicit search focus request selects the whole query in either layout;
 ordinary frames, layout transitions and Enter keep the query's current caret.
 `settings.rs` keeps the editor's colours and options in the common settings.
+`ui/scripts/backup.rs` copies the text of an editable script with unsaved
+changes at most every ten seconds, on a thread of its own, into the
+account's `script-backups` folder, sealed with the cache key; the copy goes
+when its editor saves or closes, and stays when the connection is lost.
+`ui/scripts/recovery.rs` lists those copies at the next login, and
+`app/script_recovery.rs` recreates the chosen ones in Lost and Found
+(`NetCommand::CreateScriptItem`: CreateInventoryItem, then UpdateScriptAgent).
 `reference.rs` exposes the signatures and descriptions of the Firestorm
 catalogue embedded in `assets/lsl/reference.json`.
 `files.rs` carries out the dialogs, the imports/exports and the watching of
