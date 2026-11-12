@@ -26,6 +26,23 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-12 — Aurora 0.9.8 : des correctifs pour la construction, le chat et les cartes AMD
+Choisir une face sélectionne de nouveau les faces de ce que vous portez, et Faire disparaître avec Modifier les parties liées ne cache que la partie choisie. Le sélecteur de canal s'affiche près de chaque saisie du chat local et garde le canal choisi. Sur les cartes AMD, les feuilles des arbres ne sont plus des carrés et les cheveux mesh n'ont plus de traînées, et les cils en fondu restent visibles derrière les cheveux mesh. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)
+
+## 2026-11-12 — Démarrage, voix et poser
+Une petite fenêtre Aurora s'affiche pendant le démarrage et après le redémarrage d'une mise à jour. La voix locale se connecte sur les liaisons lentes, les boutons invisibles des HUD répondent de nouveau au clic gauche, et l'avis de complexité de l'avatar ne se répète plus (désactivé par défaut, Préférences › Graphismes › Avatars › Avis de complexité). Dans le poser, Ctrl enfoncé surligne la partie des meshes de l'avatar que Ctrl + clic choisira. Merci à Bruica, iGao, KanikaBreed, Nowalski et Odessa-Draekavik.
+
+## 2026-11-12 — Aurora 0.9.7 : la fenêtre Construction revue, la récupération de scripts et Destinations
+La fenêtre Construction est réorganisée : la sélection tient dans un en-tête repliable, les options forment des colonnes au-dessus des onglets, à ranger avec Organiser les options…, position, taille et rotation gardent toute la largeur, et Contenu a son menu d'affichage. Après un plantage ou une connexion perdue, la Récupération de scripts rend vos modifications non enregistrées à la connexion suivante, dans Objets perdus et trouvés. Destinations ouvre la fenêtre d'Aurora sur le Guide des destinations : recherche, catégories, notes et téléport en un clic. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.7)
+
+## 2026-11-12 — Poser, apparence et avatars
+Le poser gagne une fenêtre compacte qui laisse la scène libre, Maj + clic pour bouger plusieurs articulations ensemble, et un anneau qui tourne une articulation autour de l'axe de la caméra. Exporter XML, à côté d'Importer XML dans les éditeurs de silhouette, de physique et de vêtements, enregistre un fichier d'apparence, et le menu ⚙ d'Apparence exporte toute votre tenue. Votre avatar joue les animations de parole, de cri et de chuchotement dans le chat local, Recharger l'avatar répare un avatar qui s'affiche mal, et les couches mouillées et brillantes des corps mesh s'affichent.
+
+## 2026-11-12 — Encore plus proche du Legacy Viewer, et des correctifs
+Dialogues de script par objet garde un seul menu par objet au lieu d'une pile. Avancé › Libérer les touches rend les contrôles qu'un véhicule ou un HUD cassé retient, et un téléport en cours peut s'annuler. Les notices de groupe s'affichent aussi dans le chat du groupe, Navigateur préféré choisit où s'ouvrent les liens, et la Voie lactée est plus discrète, avec son curseur. Sur OpenSim, Demander le statut d'administrateur donne les pouvoirs d'administrateur. Merci à anne-skydancer, Bruica, circuskid, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Nowalski et Odessa-Draekavik.
+
 ## 2026-11-11 — Aurora 0.9.6 : la vitrine des tenues, les portraits auto et 65 looks photo
 La Galerie des tenues d'Apparence devient une vitrine : de grandes photos de vos tenues, un rail pour les favoris, les tenues sans photo et les dossiers, et on porte en un clic (les petites vignettes restent dans Préférences › Aurora). Portrait auto vous cadre en studio pour la photo gratuite de la tenue, Faire les portraits les fait toutes d'un coup, et une Photo HD en option coûte le prix d'envoi de la grille. L'onglet LUT du mode photo compte 20 looks de Czar Fenris et 45 de Nanner Pudding, merci à vous deux ! Cache et réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.6)
