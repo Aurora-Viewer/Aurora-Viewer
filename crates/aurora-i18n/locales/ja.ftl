@@ -13988,6 +13988,8 @@ admin-kick-message = 管理者によってログオフされました。
 admin-freeze-message = フリーズされました。移動もチャットもできません。管理者がインスタントメッセージ（IM）で連絡します。
 admin-unfreeze-message = フリーズが解除されました。
 
+resource-preview-tabs-title = インベントリのプレビュー
+resource-preview-close-tab = このタブを閉じる
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 
 picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。

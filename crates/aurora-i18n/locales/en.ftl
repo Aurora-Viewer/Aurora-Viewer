@@ -14050,6 +14050,8 @@ admin-kick-message = An administrator has logged you off.
 admin-freeze-message = You have been frozen. You cannot move or chat. An administrator will contact you via instant message (IM).
 admin-unfreeze-message = You are no longer frozen.
 
+resource-preview-tabs-title = Inventory previews
+resource-preview-close-tab = Close this tab
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.

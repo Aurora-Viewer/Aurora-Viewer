@@ -33,6 +33,21 @@ pub fn cascade_items(kind: i32) -> [Uuid; 6] {
 }
 
 pub fn seed_cascade(inv: &mut Inventory, agent: Uuid, kind: i32) {
+    if matches!(kind, 1 | 20) {
+        if let Some(original) = inv.items.values().find(|item| item.asset_type == kind).cloned() {
+            inv.add_items(
+                (1..=3)
+                    .map(|n| {
+                        let mut item = original.clone();
+                        item.id = Uuid::from_u128(0xde40_2180_0000_0000_0000_0000_0000_0000 + ((kind as u128) << 16) + n);
+                        item.name = format!("{} {n:02}", original.name);
+                        item
+                    })
+                    .collect(),
+            );
+        }
+        return;
+    }
     if !matches!(kind, 7 | 10) {
         return;
     }

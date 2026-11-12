@@ -159,6 +159,7 @@ pub struct LibraryUi {
     scope: Scope,
     selected: Option<Uuid>,
     windows: Vec<windows::PreviewWindow>,
+    preview_groups: Vec<windows::PreviewGroup>,
     focus_preview: Option<Uuid>,
     previews: previews::Previews,
     agent: Uuid,

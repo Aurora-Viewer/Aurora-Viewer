@@ -14050,6 +14050,8 @@ admin-kick-message = Un administrateur vous a déconnecté.
 admin-freeze-message = Vous avez été gelé. Vous ne pouvez plus bouger ni parler. Un administrateur vous contactera par message instantané (IM).
 admin-unfreeze-message = Vous n’êtes plus gelé.
 
+resource-preview-tabs-title = Aperçus de l’inventaire
+resource-preview-close-tab = Fermer cet onglet
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 
 picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.
