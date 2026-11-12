@@ -252,6 +252,17 @@ pub enum WorldMapStyle {
     Legacy,
 }
 
+/// The Destinations window: Aurora's own list of the guide's places
+/// (`ui/destinations/aurora.rs`, the default), or the guide's web page as
+/// the Legacy Viewer shows it (Preferences › Aurora). A grid whose guide is
+/// a web page only shows that page in both.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DestinationsStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// The photo mode: Aurora's viewfinder (the world full screen under a
 /// camera's overlay, `ui::viewfinder`), Aurora's panel anchored on the
 /// right, or the Legacy Viewer's floater (floater_snapshot.xml: a floating
@@ -1040,6 +1051,12 @@ pub struct Settings {
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
     /// notices are turned off.
     pub mute_groups_without_notices: bool,
+    /// FSGroupNoticesToIMLog: a group notice also writes a line in its
+    /// group's chat, or only its transcript when no chat is open (on).
+    pub group_notices_in_chat: bool,
+    /// FSBetterGroupNoticesToIMLog: that line starts with "Group Notice Sent
+    /// by" and the subject, else it is only the notice's text (on).
+    pub group_notice_subjects_in_chat: bool,
     /// GroupSnoozeTime: how long the snooze of a group chat lasts, in
     /// minutes (15; 0 only closes it until its next message). The Legacy
     /// Viewer counts seconds: a snooze is minutes to hours long (#945).
@@ -1313,6 +1330,11 @@ pub struct Settings {
     pub classic_places: bool,
     /// The order of Aurora's "Places" lists.
     pub places_sort: PlacesSort,
+    /// The Destinations window's look.
+    pub destinations_style: DestinationsStyle,
+    /// Aurora's Destinations window in its wide view (rail, cards and
+    /// preview): the first time, then the last view chosen.
+    pub destinations_wide: bool,
     pub invert_mouse: bool,
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
@@ -1516,6 +1538,13 @@ pub struct Settings {
     /// which an avatar also shows as a silhouette (0 = no limit; ignored
     /// without a complexity limit, as in LL).
     pub max_attachment_area: f32,
+    /// ShowMyComplexityChanges: seconds the notices about our avatar
+    /// complexity, and about the people around who may not see us fully,
+    /// stay (0 = no notices). Off by default (the Legacy Viewer's
+    /// settings.xml says 10): our complexity moving with the texture memory
+    /// made them a notice every few seconds in 0.9.7 (#3381), and most
+    /// people never asked for them.
+    pub complexity_notice_seconds: u32,
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
@@ -1670,7 +1699,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 37;
+const SETTINGS_VERSION: u32 = 38;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2214,6 +2243,8 @@ impl Default for Settings {
             trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
+            group_notices_in_chat: true,
+            group_notice_subjects_in_chat: true,
             group_snooze_minutes: 15,
             former_group_snooze_seconds: None,
             group_snooze_ask: false,
@@ -2313,6 +2344,8 @@ impl Default for Settings {
             outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
+            destinations_style: DestinationsStyle::Aurora,
+            destinations_wide: true,
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
@@ -2378,6 +2411,7 @@ impl Default for Settings {
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
+            complexity_notice_seconds: 0,
             loading_avatars: 0,
             complexity_mode: 0,
             avatar_physics: true,
@@ -2988,12 +3022,17 @@ impl Settings {
         if self.settings_version < 36 {
             self.upgrade_display_scale(cfg!(target_os = "macos"));
         }
+        if self.settings_version < 37 && self.complexity_notice_seconds == 10 {
+            // new default: no complexity notices (#3381). A file still on
+            // the former default, 10 s, takes it; another length was chosen
+            self.complexity_notice_seconds = 0;
+        }
         // "Hide the chat bar when not in use" became the "Chat bar" choice:
         // on is "Shown when typing", off (or absent) "Always shown". Only
         // earlier files: an older build that saved over a newer file wrote
         // the switch back beside the choice, which stays
         let autohide = self.former_autohide_chat_bar.take();
-        if self.settings_version < 37 {
+        if self.settings_version < 38 {
             self.chat_bar = if autohide == Some(true) {
                 ChatBar::WhenTyping
             } else {
@@ -3020,6 +3059,7 @@ impl Settings {
             1.0
         };
         self.loading_avatars = self.loading_avatars.min(2);
+        self.complexity_notice_seconds = self.complexity_notice_seconds.min(60);
         self.max_attachment_area = if self.max_attachment_area.is_finite() {
             self.max_attachment_area.clamp(0.0, 100_000.0)
         } else {
@@ -4297,7 +4337,7 @@ mod tests {
     fn chat_bar_is_always_shown_by_default_and_once_for_earlier_files() {
         assert_eq!(Settings::default().sanitized().chat_bar, ChatBar::Always);
         let read = |file: serde_json::Value| serde_json::from_value::<Settings>(file).expect("read settings").sanitized();
-        for version in [0, 16, 33, 34, 35, 36] {
+        for version in [0, 16, 33, 34, 35, 36, 37] {
             let on = read(serde_json::json!({ "settings_version": version, "autohide_chat_bar": true }));
             assert_eq!(on.chat_bar, ChatBar::WhenTyping, "version {version}");
             assert_eq!(on.settings_version, SETTINGS_VERSION);
@@ -4920,6 +4960,31 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_complexity_notices_are_off_by_default_and_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().complexity_notice_seconds, 0);
+        // a 0.9.7 file on the former default, 10 s
+        let old = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(old.sanitized().complexity_notice_seconds, 0);
+        // another length chosen: kept
+        let chosen = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 20,
+            ..Settings::default()
+        };
+        assert_eq!(chosen.sanitized().complexity_notice_seconds, 20);
+        // 10 s chosen after the migration: kept
+        let on = Settings {
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(on.sanitized().complexity_notice_seconds, 10);
     }
 
     #[test]

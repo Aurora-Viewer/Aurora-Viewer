@@ -309,6 +309,7 @@ const BEFORE: &[&str] = &[
     "classic_search",
     "classic_region_estate",
     "classic_places",
+    "destinations_style",
     "classic_inventory",
     "classic_pay_window",
     "legacy_money_tracker",

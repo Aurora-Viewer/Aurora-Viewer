@@ -125,12 +125,14 @@ mod region_restart;
 mod region_window;
 mod release_keys;
 mod relogin;
+mod render_info;
 mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
 mod rlva;
 mod safe_graphics;
 mod script_clicks;
+mod script_recovery;
 mod scripts;
 mod settings_backup;
 mod shape_editor;
@@ -466,6 +468,8 @@ pub struct App {
     relogin: relogin::Relogin,
     /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
     viewer_stats: viewer_stats::Tracker,
+    /// The avatar render info and the complexity notice (app/render_info.rs).
+    render_info: render_info::Tracker,
     panels: Panels,
     /// Conversations and the mini-map as last frame left them (their
     /// startup settings follow an open or a close only).
@@ -1091,6 +1095,8 @@ pub struct App {
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     script_editors: ui::scripts::Editors,
+    /// The scripts an earlier session left unsaved (app/script_recovery.rs).
+    script_recovery: script_recovery::Recovery,
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
@@ -1593,6 +1599,7 @@ impl App {
             demo_mfa_challenge: None,
             relogin: Default::default(),
             viewer_stats: Default::default(),
+            render_info: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
             chat_ui,
@@ -1966,6 +1973,7 @@ impl App {
             task_notecards: Default::default(),
             demo_documents: Default::default(),
             script_editors: Default::default(),
+            script_recovery: Default::default(),
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
@@ -2651,6 +2659,17 @@ impl App {
                 self.task_notecard_saved(*request, *object, *item, result);
                 return;
             }
+            if let NetCommand::CreateScriptItem {
+                request,
+                parent,
+                name,
+                description,
+                source,
+            } = &cmd
+            {
+                self.demo_create_script(*request, *parent, name, description, source);
+                return;
+            }
             if let NetCommand::CreateInventoryItem {
                 parent,
                 kind,
@@ -3324,6 +3343,10 @@ impl App {
             self.panels.world_map = true;
             return;
         }
+        if let NetEvent::AvatarRenderInfo { handle, visibility } = ev {
+            self.render_info_answer(handle, visibility);
+            return;
+        }
         if let NetEvent::UploadCost(cost) = ev {
             self.world.upload_cost = Some(cost);
             return;
@@ -3389,6 +3412,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.script_recovery_saved(request, item, &result) {
+                return;
+            }
             if self.ik_editor.project_saving(request) {
                 if let Ok(saved) = &result {
                     self.world.inventory.add_items(vec![saved.clone()]);
@@ -3882,6 +3908,7 @@ impl App {
                     )
                 };
                 self.load_region_titles(l.agent_id);
+                self.script_recovery_login(l.agent_id);
                 self.chat_ui.recent_emojis = if self.demo {
                     let mut recent = ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis());
                     if let Ok(favorites) = std::env::var("AURORA_DEMO_FAVORITE_EMOJIS") {
@@ -3932,7 +3959,13 @@ impl App {
                 self.login_favorites.session_started(&self.settings, self.demo);
                 // the demo's teleport history: several days, never saved
                 if self.demo {
-                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
+                    let mut visits = crate::demo::place::history();
+                    // AURORA_DEMO_DESTINATIONS: two of the guide's places visited
+                    if crate::demo::destinations::mode().is_some() {
+                        visits.extend(crate::demo::destinations::history());
+                        visits.sort_by(|a, b| a.date.total_cmp(&b.date));
+                    }
+                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(visits);
                     // earlier places in the session, for the arrows' list
                     if crate::ui::bars::demo::get().open == Some(crate::ui::bars::demo::Open::TpList) {
                         self.world.tp_history = crate::world::tphistory::TeleportHistory::seeded(crate::demo::place::session());
@@ -6247,6 +6280,9 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
+        // the copies of the script editors closed just before (ui/scripts/backup.rs)
+        self.script_editors.back_up();
+        crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
@@ -6931,6 +6967,7 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
         self.release_keys_demo_steps();
@@ -9149,6 +9186,7 @@ impl App {
             return;
         }
         self.update_notice();
+        self.update_render_info();
         // Aurora's media plugins: downloaded once, when none are found (the
         // web pages of the profiles need them even with media disabled), and
         // only once the user agreed (the card of `ui::media_pack`, or a
@@ -9407,6 +9445,10 @@ impl App {
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
+            self.world.groups.notices_in_chat = crate::world::groups::NoticesInChat {
+                on: self.settings.group_notices_in_chat,
+                subjects: self.settings.group_notice_subjects_in_chat,
+            };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
@@ -12118,6 +12160,19 @@ impl App {
                 for command in commands {
                     self.send(command);
                 }
+            }
+            // the notices' cards closed, then Aurora Builders' chat shown:
+            // its notice's line stays (FSGroupNoticesToIMLog)
+            if self.frame_count == crate::demo::notifs::CHAT_AT && mode == "group-notice-chat" {
+                let ids: Vec<u64> = self.world.notifications.list.iter().map(|n| n.id).collect();
+                for id in ids {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.world.social.focus_im = Some(crate::demo::DEMO_GROUP1);
+                ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
             }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
@@ -14886,16 +14941,17 @@ impl App {
     /// The grid's Destination Guide page (LFSimFeatureHandler::
     /// destinationGuideURL), None on a grid without one.
     /// AURORA_DEMO_DESTINATIONS=<page>: a page of the tester's choice in
-    /// demo, "sl" for the Second Life guide's address.
+    /// demo, "sl" for the Second Life guide's address; the native modes
+    /// (compact, wide, legacy, empty) have the Second Life guide's.
     fn destination_guide(&self) -> Option<String> {
         use ui::destinations::{GuideGrid, guide_url};
         let language = aurora_i18n::language();
         if self.demo {
             let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
-            return match page.trim() {
-                "sl" => guide_url(GuideGrid::SecondLife, language),
-                page => Some(page.to_owned()),
-            };
+            if page.trim() == "sl" || crate::demo::destinations::mode().is_some() {
+                return guide_url(GuideGrid::SecondLife, language);
+            }
+            return Some(page.trim().to_owned());
         }
         match self.settings.grid {
             crate::settings::GridChoice::SecondLife => guide_url(GuideGrid::SecondLife, language),
@@ -14919,6 +14975,26 @@ impl App {
                     .unwrap_or("");
                 guide_url(GuideGrid::OpenSim { region, login, id }, language)
             }
+        }
+    }
+
+    /// Where Aurora's Destinations window reads the guide: the feed of the
+    /// Second Life guide's page on both Second Life grids (guide.js reads
+    /// the main grid's on both), the demo's made-up guide in demo; None
+    /// shows the guide's web page (the Legacy style, another grid's guide).
+    fn destination_feed(&self) -> Option<crate::destination_guide::Source> {
+        use crate::destination_guide::Source;
+        if self.demo {
+            return crate::demo::destinations::mode()
+                .and_then(crate::demo::destinations::fixture)
+                .map(Source::Demo);
+        }
+        if self.settings.destinations_style != crate::settings::DestinationsStyle::Aurora {
+            return None;
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta => Some(Source::Live),
+            crate::settings::GridChoice::Custom => None,
         }
     }
 
@@ -16130,7 +16206,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
-                    destinations: self.destination_guide().is_some(),
+                    destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -17588,6 +17664,7 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
+                self.show_script_recovery(&ctx, &p);
                 for action in ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
@@ -17982,7 +18059,19 @@ impl App {
                 let guide_cookie = cookie
                     .as_ref()
                     .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
-                self.destinations_ui.show(
+                // Aurora's window (Preferences › Aurora), else the page
+                let feed = self.destination_feed();
+                let native = feed.map(|source| ui::destinations::Native {
+                    source,
+                    runtime: Some(self.net.runtime()),
+                    env: ui::destinations::aurora::Env {
+                        history: &self.world.tp_storage.items,
+                        access: self.world.agent_access(),
+                        here: self.world.main().map(|r| r.name.as_str()),
+                    },
+                });
+                let mut wide = self.settings.destinations_wide;
+                let landmark = self.destinations_ui.show(
                     &ctx,
                     &p,
                     &mut self.panels.destinations,
@@ -17992,8 +18081,21 @@ impl App {
                         cookie: guide_cookie,
                         url: guide.as_deref(),
                     },
+                    native.as_ref(),
+                    &mut wide,
                 );
-                self.toolbar_ui.destinations = guide.is_some();
+                if wide != self.settings.destinations_wide {
+                    self.settings.destinations_wide = wide;
+                    self.settings.save();
+                }
+                self.toolbar_ui.destinations = guide.is_some() || feed.is_some();
+                if let Some(ui::destinations::aurora::Action::Landmark { favorite }) = landmark {
+                    // LLFloaterCreateLandmark, in Favorites for the star
+                    let folder = favorite
+                        .then(|| ui::places::system_folder(&self.world.inventory, ui::places::model::FOLDER_FAVORITES))
+                        .flatten();
+                    self.open_create_landmark(folder);
+                }
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -19326,10 +19428,24 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             // AURORA_DEMO_DESTINATIONS=<page>|sl: the Destination Guide on
-            // that page (sl: the Second Life guide's address), open at start
+            // that page (sl: the Second Life guide's address), open at start;
+            // compact|wide|empty: Aurora's window on the made-up guide,
+            // legacy: the Legacy style for this run
             if self.destination_guide().is_some() {
+                use crate::demo::destinations::Mode;
                 self.panels.destinations = true;
                 self.panels.perf = false;
+                match crate::demo::destinations::mode() {
+                    Some(Mode::Compact) => {
+                        self.destinations_ui.aurora.demo_open = true;
+                        self.destinations_ui.demo_wide = Some(false);
+                    }
+                    Some(Mode::Wide) => {
+                        self.destinations_ui.aurora.demo_open = true;
+                        self.destinations_ui.demo_wide = Some(true);
+                    }
+                    _ => {}
+                }
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
             // Me › Marketplace listings open on the demo SLM server

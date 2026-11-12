@@ -1034,7 +1034,14 @@ script-experience-none = None
 script-experience-choose = Choose an experience…
 script-experiences-unavailable = Unable to load your experiences. The current association is preserved; try again.
 script-experience-demo = Demo experience
-script-disconnected = Disconnected. The unsaved source has been kept; you can copy it.
+script-disconnected = Disconnected. The unsaved source has been kept; you can copy it, and the next login offers it back.
+script-recovery-title = Script recovery
+script-recovery-intro = Aurora Viewer has found scripts with unsaved changes, probably left by a crash or a lost connection. The scripts you recover are placed in the Lost And Found folder of your inventory.
+script-recovery-recover = Recover
+script-recovery-unknown = (Unknown script)
+script-recovery-no-folder = The Lost And Found folder is not loaded yet. Try again in a moment.
+script-recovery-failed = { $name } could not be recovered: { $reason } Its copy is kept for the next login.
+script-recovery-demo-name = Demo door script
 exit-title = Close Aurora Viewer?
 exit-world-body = Quit the viewer or return to the login screen?
 exit-login-body = Do you want to quit Aurora Viewer?
@@ -2351,6 +2358,12 @@ common-communication = Communication
 ui-bars-communicate = Communicate
 common-complexity = { "Complexity: " }{ $value0 }
 ui-context-complexity = { "Complexity: " }{ $value0 }{ $value1 }
+avatar-complexity-notice = Your avatar complexity is { $complexity }.
+avatar-render-everyone-now = Everyone can see you now.
+avatar-render-not-everyone = You may not be rendered by everyone around you.
+avatar-render-over-half = You may not be rendered by over half of those around you.
+avatar-render-most-of = You may not be rendered by most of those around you.
+avatar-render-anyone = You may not be rendered by anyone around you.
 ui-options-complexity-in-name-tags = Complexity in name tags
 ui-options-maximum-avatar-complexity = Maximum avatar complexity
 common-behavior = Behavior
@@ -3695,6 +3708,10 @@ common-groups = Groups
 ui-profile-groups = Groups:
 ui-options-groups-and-blocking = Groups and blocking
 ui-options-groups-without-notices = Groups without notices
+ui-options-group-notices-in-chat = Group notices in group chat
+ui-options-group-notices-in-chat-hint = A group notice also writes a line in its group's chat (only in the group's transcript when its chat is not open)
+ui-options-group-notice-subjects-in-chat = With their subjects and authors
+ui-options-group-notice-subjects-in-chat-hint = The line starts with who sent the notice and its subject, otherwise it is only the notice's text
 ui-options-group-snooze-duration = Group chat snooze
 ui-options-group-snooze-duration-hint = How long the Snooze button of a group chat closes it and ignores its messages, in minutes. The first message after that opens it again. 0 only closes it until its next message.
 ui-options-group-snooze-suffix = { " min" }
@@ -4550,7 +4567,7 @@ build-ui-texture-metallic = Metallic
 ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = Same sounds and defaults as the Legacy Viewer. These are Second Life sounds: they load after login.
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = Any resident experience can be blocked. Blocked experiences cannot run on this land.
 build-ui-floaters-anyone = Anyone
-build-ui-general-anyone = Anyone:
+build-ui-general-anyone = Anyone can:
 build-ui-general-export = Export
 build-ui-floaters-anyone-can-copy = Anyone can copy
 ui-land-media-web-browser = Web browser
@@ -6036,6 +6053,8 @@ nameplate-linden-lab = Linden Lab
 nameplate-linden-lab-tooltip = A Linden Lab employee
 ui-perf-water-surface-refraction-waves = Water surface (refraction, waves)
 ui-options-maximum-worn-surface-area = Maximum worn surface area
+ui-options-complexity-notices = Complexity notices
+ui-options-complexity-notices-help = How long the notices about your avatar complexity stay, and the ones saying people around may not see you fully (ShowMyComplexityChanges; off by default, 10 s in the Legacy Viewer; 0 = no notices). Your complexity is told at most once every 5 minutes.
 ui-options-shiny-surfaces-expensive-disabled-by-default = Shiny surfaces; expensive, disabled by default
 ui-contacts-nickname = Nickname
 ui-contacts-set-nickname = Set nickname...
@@ -7590,6 +7609,7 @@ world-maturity-change-error = { "We were unable to change your preferences to vi
 world-mod-declined-your-teleport-offer = { $from }{ " declined your teleport offer" }
 world-mod-has-your-object = { $from }{ " has " }{ $verb }{ " your object" }
 world-mod-group-notice-sent-by = { "Sent by " }{ $sender }
+world-groups-notice-in-chat = Group Notice Sent by: { $sender }
 world-mod-gives-you = { $from }{ " gives you " }{ $what }
 world-payments-paid-you = { $name }{ " paid you L$" }{ $amount }
 world-payments-paid-you-message = { $name }{ " paid you L$" }{ $amount }{ ": " }{ $message }
@@ -8876,6 +8896,9 @@ script-debug-clear = Clear
 
 script-help-forward = Next
 replace-button = Replace this prim
+replace-button-short = Replace
+replace-link-label = Replace link
+replace-select-link = Select a link
 replace-demo-board = Board game — 15 prims
 replace-demo-old = Card stack
 replace-demo-new = New card stack
@@ -8947,12 +8970,12 @@ replace-recovery-incomplete = Recovery incomplete: { $reason } Check the parts i
 
 # Compact build workspace
 build-compact-title = Build
-build-workspace-title = Construction
+build-workspace-title = Build
 build-workspace-object = OBJECT
 build-workspace-tools = TOOLS
 build-compact-help = Ctrl+B: open / close; Ctrl+1 to 5: camera, move, edit, create, land.
 build-compact-transform = Transform
-build-compact-shape = Shape
+build-compact-shape = Object
 build-compact-materials = Materials
 build-compact-features = Features
 build-compact-rights = Rights
@@ -8963,16 +8986,25 @@ build-compact-select-hint = Click an object to begin.
 build-compact-counts = { $objects ->
     [one] { $objects } object
    *[other] { $objects } objects
-    } · { $prims ->
+    } - { $prims ->
     [one] { $prims } prim
    *[other] { $prims } prims
     }
 build-compact-impact = Impact { $impact }
+build-compact-summary-details = { " - " }{ $capacity }    { $counts }
+build-compact-link-action = Link
+build-compact-unlink-action = Unlink
+build-compact-link-value = Link { $number }
+build-compact-face-value = Face { $number }
 build-compact-move = Move
 build-compact-rotate = Rotate (Ctrl)
 build-compact-stretch = Stretch (Ctrl+Shift)
 build-compact-face = Select a face
 build-compact-align = Align (Shift: stack)
+build-compact-mode-move = Move
+build-compact-mode-rotate = Rotate
+build-compact-mode-stretch = Stretch
+build-compact-mode-align = Align
 build-compact-world = World
 build-compact-local = Local
 build-compact-reference = Reference
@@ -8983,6 +9015,7 @@ build-snap = Snap
 build-snap-off = Off
 build-snap-grid = Grid
 build-snap-objects = Objects
+build-snap-placement-settings = Surface placement
 build-place = Place on surface
 build-place-tip = Then click a surface or the ground: the selection goes against it, centred on the point, shown there as a hologram (P turns it on or off, Esc off).
 build-place-offset = Offset
@@ -9006,7 +9039,7 @@ build-compact-root-axis = Edit axis at root
 build-compact-highlight = Show highlight
 build-compact-probes = Select reflection probes
 build-compact-owned-only = Select only my objects
-build-compact-movable-only = Select only movable objects
+build-compact-movable-only = Select only movable
 build-compact-surrounding = Select by surrounding
 build-compact-undo = Undo (Ctrl+Z)
 build-compact-redo = Redo (Ctrl+Y)
@@ -9382,6 +9415,10 @@ ui-options-aurora-places = Places
 ui-options-aurora-places-help = A list with a preview that widens into a rail of folders, or the Legacy Viewer's three tabs.
 ui-options-aurora-places-aurora = List and preview
 ui-options-aurora-places-classic = Tabs (Legacy)
+ui-options-aurora-destinations = Destinations
+ui-options-aurora-destinations-help = Aurora's window lists the guide's places with filters, a preview and actions; Legacy shows the guide's web page. A grid whose guide is only a web page shows that page in both; on a grid without a guide the button stays dimmed.
+ui-options-aurora-destinations-aurora = Aurora
+ui-options-aurora-destinations-classic = Web page (Legacy)
 ui-options-aurora-people = People
 ui-options-aurora-people-help = Rows with picture, badges and range, or a table with columns like the Legacy Viewer's radar.
 ui-options-aurora-people-rows = Rich rows
@@ -9705,6 +9742,33 @@ web-browser-not-secure = The connection is not secure
 web-browser-loading = Loading…
 marketplace-unavailable = The Marketplace shows here once connected to Second Life.
 destinations-unavailable = This grid has no destination guide.
+destinations-hot = What's hot now
+destinations-search = Search a place in the guide
+destinations-results = Results
+destinations-count = { $category } · { $count ->
+    [one] { $count } place
+   *[other] { $count } places
+    }
+destinations-maturity = Maturity
+destinations-sort-population = By population
+destinations-sort-name = By name
+destinations-sort-newest = Newest first
+destinations-hide-visited = Hide visited places
+destinations-visited = Already visited
+destinations-until = Until { $date }
+destinations-people = { $count ->
+    [one] { $count } person there
+   *[other] { $count } people there
+    }
+destinations-updated-now = Official grid guide · updated just now
+destinations-updated = Official grid guide · updated { $minutes } min ago
+destinations-loading = Loading the guide…
+destinations-failed = The guide could not be read. Try again in a moment.
+destinations-refresh = Refresh
+destinations-empty = No place with these filters.
+destinations-same-category = In the same category
+destinations-no-same = No other place for now.
+destinations-here-only = A landmark is made where you stand: teleport there first.
 marketplace-listings-title = Marketplace listings
 marketplace-listings-menu = Marketplace listings
 marketplace-listings-tab-all = All
@@ -13014,6 +13078,8 @@ build-layout-loaded = Construction settings restored.
 build-layout-reload = Load
 build-layout-loading = Loading settings…
 build-layout-drop-hidden = Drop here to hide
+build-layout-drop-here = Drop here
+build-layout-drag-hint = Drag to move. Release on a highlighted target.
 build-layout-export = Export
 
 # Compact material layout

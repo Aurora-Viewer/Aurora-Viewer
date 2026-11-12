@@ -625,6 +625,13 @@ pub enum NetEvent {
         handle: RegionHandle,
         caps: Arc<HashMap<String, String>>,
     },
+    /// A region's answer to the GET of `AvatarRenderInfo` with both counts
+    /// (render_info.rs): of the viewers around that report on us,
+    /// `over_limit` draw our avatar as a silhouette.
+    AvatarRenderInfo {
+        handle: RegionHandle,
+        visibility: crate::render_info::Visibility,
+    },
     /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox",
     /// RenderMaterials limits read by LLViewerRegion::resetMaterialsCapThrottle
     /// and getMaxMaterialsPerTransaction; `None` = not given by the region).
@@ -2272,6 +2279,18 @@ pub enum NetCommand {
         name: String,
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
+    },
+    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// onCreateScript): CreateInventoryItem, then its text through
+    /// UpdateScriptAgent, compiled for Mono. Answered by
+    /// `InventoryContentSaved`, with the new item's id when it was created
+    /// but its text could not be saved.
+    CreateScriptItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through
