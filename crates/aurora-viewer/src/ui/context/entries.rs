@@ -262,6 +262,14 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             true,
             CtxAction::EditLinkedParts(!f.edit_linked),
         );
+        // Not in the Legacy Viewer's object menu (only Build › Object):
+        // added under Edit linked parts, which greys it, for quicker reach.
+        ui.item_if(
+            "package-import",
+            aurora_i18n::tr!("ui-bars-save-to-object-contents"),
+            o.save_to_contents,
+            CtxAction::SaveToObjectContents,
+        );
         ui.separator();
         // Tools.SelectedScriptAction (EditableSelected)
         for (icon, label, action) in [
@@ -1286,6 +1294,29 @@ mod tests {
                 .iter()
                 .any(|e| e.label == aurora_i18n::tr!("scene-particles-menu"))
         );
+    }
+
+    #[test]
+    fn save_back_to_object_contents_follows_edit_linked_parts_in_the_object_submenu() {
+        for enabled in [false, true] {
+            let mut facts = Facts::default();
+            facts.object.id = ID;
+            facts.object.save_to_contents = enabled;
+            let menu = world_menu(&object_target(), &facts, Vec3::ZERO);
+            let object = menu
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("common-object"))
+                .expect("Object submenu");
+            let Kind::Submenu(children) = object.kind else { panic!("submenu") };
+            let at = children
+                .iter()
+                .position(|e| matches!(e.kind, Kind::Action(CtxAction::EditLinkedParts(_))))
+                .expect("Edit linked parts");
+            let save = &children[at + 1];
+            assert!(matches!(save.kind, Kind::Action(CtxAction::SaveToObjectContents)));
+            assert_eq!(save.label, aurora_i18n::tr!("ui-bars-save-to-object-contents"));
+            assert_eq!(save.enabled, enabled);
+        }
     }
 
     #[test]

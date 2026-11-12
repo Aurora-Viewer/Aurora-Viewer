@@ -345,6 +345,8 @@ impl App {
             f.hud_move_locked = w.hud_locks.locked(root.full_id);
         }
         self.object_menu_facts(idx, &mut f);
+        // the right click selected the object (or kept the selection)
+        f.save_to_contents = self.build.save_to_contents_target(w).is_some();
         f.local_preview = o.is_editable_preview();
         if f.local_preview {
             f.wear = true;
@@ -807,6 +809,10 @@ impl App {
                     }
                     self.flush_build();
                 }
+            }
+            CtxAction::SaveToObjectContents => {
+                self.build.save_to_contents(&mut self.world);
+                self.flush_build();
             }
             CtxAction::Link(id) => self.menu_link(id),
             CtxAction::TakeSeparate { id, copy } => self.take_separate(id, copy),
