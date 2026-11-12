@@ -3911,7 +3911,8 @@ impl Session<'_> {
             "EstablishAgentCommunication" => {
                 let ipport = b["sim-ip-and-port"].as_str();
                 transition::link(|| format!("EstablishAgentCommunication for {ipport}"));
-                let seed = b["seed-capability"].as_str().to_owned();
+                // EstablishAgentCommunication's seed, same guess as the login seed.
+                let seed = crate::curl_url::ensure_scheme(b["seed-capability"].as_str());
                 if let Ok(addr) = ipport.parse::<SocketAddr>() {
                     self.set_seed(addr, seed);
                 }

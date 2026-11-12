@@ -529,7 +529,9 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
         region_y: v["region_y"].as_u32(),
         region_size_x: size("region_size_x"),
         region_size_y: size("region_size_y"),
-        seed_capability: v["seed_capability"].as_str().to_owned(),
+        // The login seed is handed to `CURLOPT_URL` as received
+        // (`LLViewerRegion::setSeedCapability`). A missing scheme is guessed.
+        seed_capability: crate::curl_url::ensure_scheme(v["seed_capability"].as_str()),
         look_at: parse_ll_vector(v["look_at"].as_str()).unwrap_or(Vec3::X),
         message: v["message"].as_str().to_owned(),
         agent_appearance_service: v["agent_appearance_service"].as_str().to_owned(),
@@ -606,6 +608,17 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_login_seed_without_a_scheme_is_fetched_as_http() {
+        let mut m = Map::new();
+        m.insert("agent_id".into(), Llsd::Uuid(Uuid::from_u128(1)));
+        m.insert("sim_ip".into(), "127.0.0.1".into());
+        m.insert("sim_port".into(), 9000.into());
+        m.insert("seed_capability".into(), "grid.example:8002/cap/seed".into());
+        let login = parse_success(Llsd::Map(m)).expect("login");
+        assert_eq!(login.seed_capability, "http://grid.example:8002/cap/seed");
+    }
 
     #[test]
     fn username_split() {
