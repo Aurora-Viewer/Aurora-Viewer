@@ -27,7 +27,8 @@ const MAX_LIGHTS: usize = 64;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
-/// Retain a shadow map until a challenger covers 20% more screen area.
+/// Retain a shadow map until a challenger sends 20% more light to the
+/// camera.
 const SHADOW_AREA_RETENTION: f32 = 1.2;
 /// A fast camera still leaves at least a quarter-second for each fade.
 const MAX_SHADOW_FADE_SPEED: f32 = 4.0;
@@ -36,7 +37,6 @@ const MAX_SHADOW_FADE_SPEED: f32 = 4.0;
 #[derive(Clone, Copy)]
 pub struct LightView {
     pub eye: Vec3,
-    pub forward: Vec3,
     /// The main view's frustum: the lights that reach it come first.
     pub frustum: CullView,
     /// The draw distance: lights whose sphere starts beyond it are left out
@@ -101,7 +101,10 @@ pub struct Scratch {
 /// Projectors that cast shadows and how far each has faded in:
 /// LLPipeline::generateSunShadow's update of mShadowSpotLight. A projector
 /// keeps its shadow map while it is among the `targets`; otherwise its
-/// shadows fade out, then the map goes to the target that has none.
+/// shadows fade out, then the map goes to the target that has none. Which
+/// projectors are the targets depends on the camera's position only, not on
+/// where it looks (`light_at_camera`; the Legacy Viewer ranks the projectors
+/// in view by apparent size, so a turn away loses the shadow).
 #[derive(Debug, Default)]
 pub struct SpotShadowSlots {
     /// Object index of the projector of each shadow map.
@@ -111,23 +114,25 @@ pub struct SpotShadowSlots {
 }
 
 impl SpotShadowSlots {
-    /// LLPipeline ranks the apparent area of projectors. Keep that ranking,
-    /// with a small retention margin for the maps already drawn: nearby
-    /// lights crossing in priority must not repeatedly trade visible shadows.
+    /// Rank the projectors by the light they send to the camera
+    /// (`light_at_camera`), with a small retention margin for the maps
+    /// already drawn: nearby lights crossing in priority must not repeatedly
+    /// trade visible shadows.
     fn targets(&self, ranked: &mut [(f32, usize)], limit: usize) -> [Option<usize>; MAX_PROJECTOR_SHADOWS] {
-        let area = |(angle, idx): &(f32, usize)| {
+        let area = |(priority, idx): &(f32, usize)| {
             let retention = if self.lights.contains(&Some(*idx)) {
                 SHADOW_AREA_RETENTION
             } else {
                 1.0
             };
-            angle * angle * retention
+            priority * retention
         };
         ranked.sort_by(|a, b| area(b).total_cmp(&area(a)).then(a.1.cmp(&b.1)));
         std::array::from_fn(|k| ranked.get(k).filter(|_| k < limit).map(|r| r.1))
     }
 
-    /// `targets`: the projectors that weigh most on screen within the budget.
+    /// `targets`: the projectors that send the most light to the camera within
+    /// the budget.
     /// The fade lasts a second, less as the camera moves faster.
     pub fn update(&mut self, targets: &[Option<usize>], eye: Vec3, dt: f32) {
         let limit = targets.len().min(MAX_PROJECTOR_SHADOWS);
@@ -164,17 +169,23 @@ impl SpotShadowSlots {
     }
 }
 
-/// LLVOVolume::updateSpotLightPriority: apparent size of a sphere of the
-/// light's radius, one radius down its beam and one radius towards the
-/// camera (LLPipeline::calcPixelArea's angle; only the order matters).
-fn spot_priority(position: Vec3, direction: Vec3, radius: f32, view: &LightView) -> f32 {
-    let center = position + direction * radius - view.forward * radius;
-    let mut dist = center.distance(view.eye);
-    if dist < 16.0 {
-        // calcPixelArea ramps the distance down for nearby objects
-        dist = (dist / 16.0).powi(2) * 16.0;
-    }
-    (radius * 3f32.sqrt() / dist.max(1e-4)).atan()
+/// What a light sends to the camera's position, to rank the projectors for
+/// the shadow maps: its brightest colour channel (intensity included) times
+/// the Legacy falloff (`ll_light_atten` of common.wgsl) at the camera's
+/// distance, not nearer than a third of the reach so that a light the camera
+/// stands in does not outweigh everything. It does not depend on where the
+/// camera looks; where the camera is outside the reach, the light is ranked
+/// by its distance alone, after those that reach it. (The Legacy Viewer's
+/// LLVOVolume::updateSpotLightPriority ranks the apparent size of the
+/// light's sphere, in view only.)
+fn light_at_camera(light: &PointLight, eye: Vec3) -> f32 {
+    let reach = light.radius.max(1e-4);
+    let dist = light.position.distance(eye);
+    let f = light.falloff.max(0.0);
+    let x = 1.0 - ((dist.max(reach / 3.0) / reach + f) / (1.0 + f)).clamp(0.0, 1.0);
+    let power = light.color.max_element().max(0.0);
+    // the second term only orders the lights out of reach, nearest first
+    power * 2.0 * x * x + 1e-6 / (1.0 + dist)
 }
 
 /// The avatar that wears the light, if any: a parent up its link is one
@@ -296,16 +307,13 @@ impl Scene {
             }
             kept
         });
-        // the projectors of the list that weigh most on screen, among
-        // those that reach into the half-space in front of the camera
+        // the projectors of the list that send the most light to the camera
+        // (wherever it looks: a turn away and back keeps the shadows)
         if view.projector_shadows {
             let mut ranked: Vec<(f32, usize)> = lights
                 .iter()
-                .filter_map(|Candidate { idx, light: l, .. }| {
-                    let p = l.projector?;
-                    let ahead = view.forward.dot(l.position - eye) > -l.radius;
-                    ahead.then(|| (spot_priority(l.position, p.direction, l.radius / 1.5, view), *idx))
-                })
+                .filter(|c| c.light.projector.is_some())
+                .map(|c| (light_at_camera(&c.light, eye), c.idx))
                 .collect();
             let limit = usize::from(view.projector_shadow_limit).min(MAX_PROJECTOR_SHADOWS);
             let targets = self.spot_shadows.targets(&mut ranked, limit);
@@ -490,7 +498,7 @@ mod tests {
             let targets = slots.targets(&mut ranked, 2);
             assert!(targets.contains(&Some(1)) && targets.contains(&Some(2)));
         }
-        let mut ranked = [(1.11, 3), (1.0, 1), (0.99, 2)];
+        let mut ranked = [(1.25, 3), (1.0, 1), (0.99, 2)];
         let targets = slots.targets(&mut ranked, 2);
         assert!(targets.contains(&Some(1)) && targets.contains(&Some(3)));
     }
@@ -532,7 +540,6 @@ mod tests {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 16.0 / 9.0, 0.1);
         LightView {
             eye,
-            forward,
             frustum: CullView::new(proj * view, eye, 900.0, fov),
             range: 128.0,
             dt: 0.016,
@@ -612,13 +619,37 @@ mod tests {
         assert!(!gives_light([1.0, 1.0, 1.0, 1.0], 0.0));
     }
 
+    fn projector(position: Vec3, radius: f32, color: Vec3, falloff: f32) -> PointLight {
+        PointLight {
+            position,
+            radius: radius * 1.5,
+            color,
+            falloff,
+            projector: None,
+        }
+    }
+
     #[test]
-    fn the_projector_that_weighs_most_on_screen_comes_first() {
-        let view = camera(Vec3::ZERO, Vec3::X);
-        let down = Vec3::NEG_Z;
-        let near = spot_priority(Vec3::new(10.0, 0.0, 3.0), down, 10.0, &view);
-        let far = spot_priority(Vec3::new(40.0, 0.0, 3.0), down, 10.0, &view);
-        let small = spot_priority(Vec3::new(10.0, 0.0, 3.0), down, 2.0, &view);
-        assert!(near > far && near > small, "{near} {far} {small}");
+    fn the_projector_that_sends_most_light_to_the_camera_comes_first() {
+        let eye = Vec3::ZERO;
+        let near = light_at_camera(&projector(Vec3::new(10.0, 0.0, 3.0), 10.0, Vec3::ONE, 0.0), eye);
+        let far = light_at_camera(&projector(Vec3::new(40.0, 0.0, 3.0), 10.0, Vec3::ONE, 0.0), eye);
+        let small = light_at_camera(&projector(Vec3::new(10.0, 0.0, 3.0), 2.0, Vec3::ONE, 0.0), eye);
+        let dim = light_at_camera(&projector(Vec3::new(10.0, 0.0, 3.0), 10.0, Vec3::splat(0.3), 0.0), eye);
+        assert!(near > far && near > small && near > dim, "{near} {far} {small} {dim}");
+        // out of reach: ranked by distance alone, after any that reaches
+        let out_near = light_at_camera(&projector(Vec3::new(30.0, 0.0, 0.0), 2.0, Vec3::ONE, 0.0), eye);
+        let out_far = light_at_camera(&projector(Vec3::new(60.0, 0.0, 0.0), 2.0, Vec3::ONE, 0.0), eye);
+        assert!(small > out_near && out_near > out_far && out_far > 0.0);
+    }
+
+    #[test]
+    fn a_projector_behind_the_camera_still_gets_a_shadow_map() {
+        let eye = Vec3::ZERO;
+        let behind = light_at_camera(&projector(Vec3::new(-4.0, 0.0, 2.0), 8.0, Vec3::ONE, 0.0), eye);
+        let ahead = light_at_camera(&projector(Vec3::new(40.0, 0.0, 2.0), 8.0, Vec3::ONE, 0.0), eye);
+        let slots = SpotShadowSlots::default();
+        let targets = slots.targets(&mut [(behind, 1), (ahead, 2)], 1);
+        assert_eq!(targets[0], Some(1));
     }
 }
