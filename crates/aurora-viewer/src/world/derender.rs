@@ -1126,7 +1126,11 @@ mod tests {
         let (root, child) = (key(crate::demo::worn::ROOT), key(crate::demo::worn::CHILD));
         let id_of = |w: &super::super::World, k: &ObjKey| w.objects.get(w.objects.index_of(k).expect("prim")).expect("prim").full_id;
         let child_id = id_of(&world, &child);
-        let children = |w: &super::super::World| w.objects.index_of(&root).map(|i| w.objects.get(i).map_or(0, |o| w.objects.children_of(&o.key).len()));
+        let children = |w: &super::super::World| {
+            w.objects
+                .index_of(&root)
+                .map(|i| w.objects.get(i).map_or(0, |o| w.objects.children_of(&o.key).len()))
+        };
         assert_eq!(children(&world), Some(1));
         assert!(!world.derender(child_id, entry(Kind::Object, false)));
         assert!(world.objects.index_of(&child).is_none());

@@ -151,7 +151,12 @@ impl App {
                 }
             }
             780 => {
-                let id = self.world.objects.index_of(&child).and_then(|i| self.world.objects.get(i)).map(|o| o.full_id);
+                let id = self
+                    .world
+                    .objects
+                    .index_of(&child)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.full_id);
                 self.context_menu = None;
                 if let Some(id) = id {
                     self.on_ctx_action(CtxAction::Derender { id, permanent: false });
