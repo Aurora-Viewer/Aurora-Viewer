@@ -130,6 +130,8 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "message-off",
     "microphone-off",
     "minimize",
+    "mouse",
+    "mouse-2",
     "movie",
     "music",
     "network",

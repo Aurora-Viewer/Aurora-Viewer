@@ -407,6 +407,10 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
 
 fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     let d = normalize(dir);
+    if (frame.studio_aurora[0].w > 0.0) {
+        let c = studio_sky_color(d);
+        return c + sky_stars(d, c, foot) * smoothstep(0.01, 0.08, d.z);
+    }
     let a = atmos_eval(d, false);
     // skyF.glsl: added to the haze color before its x 2, under the clouds
     let haze = a.color + sky_rainbow(a.light_dot) + sky_halo(a.light_dot);

@@ -212,6 +212,9 @@ pub mod flags {
     /// object.wgsl).
     pub const LAYER_RANK_SHIFT: u32 = 24;
     pub const LAYER_RANK_MAX: u32 = 7;
+    /// Bit of flags[3], above packed texture animation: local studio scenery
+    /// is excluded from the avatar's temporary white reveal.
+    pub const STUDIO_STAGE: u32 = 1 << 29;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -1080,6 +1083,10 @@ pub enum AoMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
+    /// Requested per-eye XR size, bounded by runtime limits.
+    pub vr_resolution: Option<[u32; 2]>,
+    pub vr_gamma: f32,
+    pub vr_vibrancy: f32,
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
@@ -1142,6 +1149,9 @@ impl RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            vr_resolution: None,
+            vr_gamma: 1.0,
+            vr_vibrancy: 1.0,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
@@ -1238,6 +1248,9 @@ pub struct SkyParams {
     pub halo_texture: u32,
     /// Night sky: which stars and how they are turned (stars.rs).
     pub stars: crate::stars::StarFrame,
+    /// Session-local studio sky, zero outside Avatar Studio. sRGB navy /
+    /// teal / violet / indigo; w values: enabled / yaw / time / white reveal.
+    pub studio_aurora: [[f32; 4]; 4],
 }
 
 impl Default for SkyParams {
@@ -1286,6 +1299,7 @@ impl Default for SkyParams {
             rainbow_texture: 0,
             halo_texture: 0,
             stars: crate::stars::StarFrame::default(),
+            studio_aurora: [[0.0; 4]; 4],
         }
     }
 }
@@ -1482,6 +1496,11 @@ pub struct FrameParams {
     /// (part_pick.rs): the cursor while Ctrl hovers the subject.
     pub part_pick: Option<[u32; 2]>,
     pub view: Mat4,
+    /// VR pivot policy; ignored by the desktop renderer.
+    pub vr_rig: crate::stereo_view::RigMode,
+    /// Region-local coordinate identity for feedback consumed by locomotion.
+    pub vr_origin: Option<u64>,
+    pub vr_revision: u64,
     pub proj: Mat4,
     /// A photo drawn in tiles: the part of it this frame draws, `proj`
     /// being this times the whole photo's projection (the viewer's
