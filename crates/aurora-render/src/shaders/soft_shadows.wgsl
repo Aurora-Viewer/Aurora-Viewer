@@ -50,6 +50,9 @@ const FILTER_FLOOR: f32 = 0.015;
 // spans in the cascade (`legacy_half`), where their blur hides the noise.
 const SHADOW_PENUMBRA: f32 = 0.03;
 const LEGACY_FADE: f32 = 3.0;
+// How many times the gap of the casters at the point itself a gathered
+// blocker may be from the receiver and still count (`cascade_soft`).
+const NEAR_REACH: f32 = 3.0;
 
 // Points of a disk of radius 1, spread evenly (a Poisson-like sequence):
 // every tap count takes each (32 / count)th, the same for every pixel.
@@ -228,6 +231,18 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             separation += dot(gap, hit);
             blockers += dot(hit, vec4<f32>(1.0));
         }
+        // The gathers' blockers count by how far they are from the receiver,
+        // and a far one can be the receiver's own surface: at a grazing sun
+        // a block of the minimum depths reaches the face's sunward end, a
+        // few metres nearer the light than the point, whatever the plane
+        // says. Averaged with a thin caster's true gap there (a post at its
+        // foot: centimetres), such hits drowned it, the penumbra came out
+        // wide and the shadow faded in over a metre from the contact. So
+        // when the point's own texels see a caster, only gathered blockers
+        // within a few times its gap (and 10 cm) count: a caster is about as
+        // far from the point across the search as at the point.
+        let near_gap = select(1e30, separation / blockers, blockers > 0.0);
+        let accept = vec4<f32>(NEAR_REACH * near_gap + 0.1 * depth_per_metre);
         let gathers = u32(p.light.w);
         for (var i = 0u; i < gathers; i++) {
             let o = rot * DISK[(i * 32u) / gathers] * search;
@@ -237,7 +252,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             // depth is taken at the far side of the block
             let expected = q.z + dot(gradient, local - uv) - bias - 0.5 * block * (abs(gradient.x) + abs(gradient.y));
             let gap = max(vec4<f32>(expected) - d, vec4<f32>(0.0));
-            let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected));
+            let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected) & gap <= accept);
             separation += dot(gap, hit);
             blockers += dot(hit, vec4<f32>(1.0));
         }

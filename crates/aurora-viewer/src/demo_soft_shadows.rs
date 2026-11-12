@@ -4,7 +4,9 @@
 //!
 //! - `1` or `near` (the same at 0.4 of the distance): along the start view, left to right: a pergola (a 6 m by 3 m roof
 //!   3 m up on four posts), a tall pole 14 m high, a table (a top 0.75 m up
-//!   on four legs) and a sphere on the ground (the acne check). The sun is
+//!   on four legs), a sphere on the ground (the acne check) and a thin lamp
+//!   post 3.5 m high, nearer than the rest (the contact shadow of a thin
+//!   caster: darkest at the post). The sun is
 //!   fixed 35 degrees up (AURORA_DEMO_SUN overrides it) and the soft shadows
 //!   are on at the Preferences' softness (AURORA_SOFT_SHADOWS=0 and
 //!   AURORA_SHADOW_SOFTNESS=<x> compare). Add AURORA_DEMO_CROWD=1 for a
@@ -156,6 +158,15 @@ pub fn events() -> Vec<NetEvent> {
     );
     ball.material = 3;
     objects.push(ball);
+    // a thin lamp post, flush on the plate: the contact shadow of a thin
+    // caster, which has to stay darkest where it touches the post (a low
+    // AURORA_DEMO_SUN, for example `27,5`, lays it towards the camera)
+    objects.push(block(
+        next(),
+        ground(eye + (look * 8.0 + across * -2.0) * scale),
+        Vec3::new(0.09, 0.09, 3.5),
+        wood,
+    ));
     log::info!("demo soft shadows: {} prims", objects.len());
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }

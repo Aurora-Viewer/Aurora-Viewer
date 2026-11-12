@@ -4570,7 +4570,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
-| `AURORA_DEMO_SOFT_SHADOWS=1` or `near` | A pergola, a 14 m pole, a table and a sphere on a pale receiving plate in a 35 degree sun, soft shadows on (`near`: at 0.4 of the distance) |
+| `AURORA_DEMO_SOFT_SHADOWS=1` or `near` | A pergola, a 14 m pole, a table, a thin post and a sphere on a pale receiving plate in a 35 degree sun, soft shadows on (`near`: at 0.4 of the distance) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -4865,6 +4865,13 @@ both open states and the selection count. Capture at frame 620.
   lets half the light into every shadow. `AURORA_DEMO_CROWD=1` adds a
   standing avatar. Look for acne on the sphere, none on the faces of the
   table, and no halo at the avatars' edges with `AURORA_AA=3` (MSAA 4x).
+  A thin lamp post (9 cm, 3.5 m, `AURORA_DEMO_SOFT_SHADOWS=near`) stands
+  flush on the plate: with a low sun that lays its shadow along the start
+  view, for example `AURORA_DEMO_SUN=27,5` (the shadow comes towards the
+  camera), its shadow must be darkest and sharpest where it touches the
+  post, and with `AURORA_SHADOW_SOFTNESS=1` only lighten further out; it
+  must not fade in from the contact (a grazing sun, 5 degrees up, did
+  that at 0.25 and wiped the stripe at 1).
 - **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the

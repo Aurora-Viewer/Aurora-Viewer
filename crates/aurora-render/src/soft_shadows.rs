@@ -91,6 +91,30 @@ pub(crate) fn filter_radius(gap: f32, softness: f32) -> f32 {
     (gap.max(0.0) * light_tan(softness)).clamp(FILTER_FLOOR, search_radius(softness).max(FILTER_FLOOR))
 }
 
+/// How many times the gap of the casters at the point itself a gathered
+/// blocker may be from the receiver and still count (`NEAR_REACH` in
+/// soft_shadows.wgsl).
+#[cfg(test)]
+pub(crate) const NEAR_REACH: f32 = 3.0;
+
+/// The mean gap, in metres, the search averages over its blockers, the
+/// point's own texels first (`local`: their gaps) then the gathered ones
+/// (`gathered`), which count only within `NEAR_REACH` times the mean of the
+/// local ones and 10 cm, when the local ones found a caster. Mirrored by
+/// `cascade_soft` in soft_shadows.wgsl (the tests state the model).
+#[cfg(test)]
+pub(crate) fn mean_gap(local: &[f32], gathered: &[f32]) -> f32 {
+    let near = if local.is_empty() {
+        f32::INFINITY
+    } else {
+        local.iter().sum::<f32>() / local.len() as f32
+    };
+    let accept = NEAR_REACH * near + 0.1;
+    let kept = local.iter().copied().chain(gathered.iter().copied().filter(|&g| g <= accept));
+    let (sum, n) = kept.fold((0.0, 0), |(s, n), g| (s + g, n + 1));
+    if n == 0 { 0.0 } else { sum / n as f32 }
+}
+
 /// Half the width, in metres, the filter of before spans in a cascade whose
 /// texel is `texel_m` metres: its taps keep between half a texel and two
 /// texels apart (`legacy_half` in soft_shadows.wgsl, tested as text).
@@ -664,6 +688,38 @@ mod tests {
         assert!((filter_radius(10.0, 0.23) - 0.046).abs() < 1e-4);
     }
 
+    /// A thin post's contact shadow: at its foot the true gap is centimetres,
+    /// but at a grazing sun the blocks of minimum depths also return the
+    /// receiver's own sunward ground, metres nearer the light. Those hits
+    /// used to drown the contact gap, the penumbra widened there and a thin
+    /// shadow faded in over a metre from the post (softer at the contact
+    /// than away from it).
+    #[test]
+    fn a_contact_shadow_is_not_widened_by_the_ground_the_search_sees() {
+        let (local, ground) = ([0.01_f32; 4], [3.0_f32; 24]);
+        // without the rule the mean is metres: a filter three times the floor
+        let all = local.iter().chain(&ground).sum::<f32>() / 28.0;
+        assert!(filter_radius(all, 1.0) > 3.0 * FILTER_FLOOR);
+        // with it the ground is out and the contact keeps the floor
+        let kept = mean_gap(&local, &ground);
+        assert!((kept - 0.01).abs() < 1e-6);
+        assert_eq!(filter_radius(kept, 1.0), FILTER_FLOOR);
+        // away from the post the local gap is large and the same hits stay
+        let far = [2.9_f32; 4];
+        assert!(mean_gap(&far, &ground) > 2.9);
+        // a point whose texels see no caster (a penumbra) takes every hit
+        assert_eq!(mean_gap(&[], &ground), 3.0);
+        // the darkness a thin stripe keeps never grows towards the caster:
+        // the filter along a contact shadow only widens with the gap
+        let mut last = 0.0;
+        for k in 0..=100 {
+            let d = 0.01 + 0.05 * k as f32;
+            let r = filter_radius(mean_gap(&[d; 4], &ground), 1.0);
+            assert!(r >= last - 1e-6, "monotonic at {d} m");
+            last = r;
+        }
+    }
+
     #[test]
     fn the_casters_reach_is_zero_without_soft_shadows() {
         assert_eq!(reach(false, 1.0), 0.0);
@@ -742,6 +798,8 @@ mod tests {
         ] {
             assert!(shader.contains(text) && common.contains(text), "{text}");
         }
+        assert!(shader.contains(&format!("const NEAR_REACH: f32 = {:?};", NEAR_REACH)));
+        assert!(shader.contains("let accept = vec4<f32>(NEAR_REACH * near_gap + 0.1 * depth_per_metre);"));
         assert!(shader.contains("const SHADOW_PENUMBRA: f32 = 0.03;") && common.contains("const SHADOW_PENUMBRA: f32 = 0.03;"));
         // the normal offset and the receiver bias of `cascade_shadow`
         assert!(shader.contains("n * (0.02 + 0.04 * f32(cascade))"));
