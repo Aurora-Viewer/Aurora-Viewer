@@ -1,9 +1,10 @@
-//! AURORA_DEMO_SET_NOTICES=config|config-bottom|chat: a contact set's own online notices
+//! AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat: a contact set's own online notices
 //! and automatic responses (world/contact_sets/notices.rs). At frame 60 the
 //! set Family (the demo friend in it, kept in memory) gets "Show
 //! notifications" and its own do not disturb response, and the friends'
 //! global notices are off for the run. `config` opens its settings window
-//! (`config-bottom` scrolled down to the choices of all the sets);
+//! (`config-responses` scrolled down to the set's responses,
+//! `config-bottom` to the choices of all the sets);
 //! `chat` shows nearby chat, where the demo friend going offline and online
 //! (frames 300 and 360) gets a line and another friend none; at 420, in do
 //! not disturb, the demo friend's message gets the set's response (logged).

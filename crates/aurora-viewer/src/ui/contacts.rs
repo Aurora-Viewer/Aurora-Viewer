@@ -224,8 +224,9 @@ pub struct ContactsUi {
     /// `ResponseMode::ALL`, as typed: saved when the field loses the focus
     /// or the window closes (the Legacy Viewer's commit on focus lost).
     response_edit: Option<(String, [String; 3])>,
-    /// AURORA_DEMO_SET_NOTICES=config-bottom: the window scrolled down.
-    pub demo_scroll_bottom: bool,
+    /// AURORA_DEMO_SET_NOTICES=config-responses|config-bottom: the window
+    /// scrolled down to the set's responses, or to its end.
+    pub demo_scroll: Option<DemoScroll>,
     /// Height under the group and contact set lists (the count line),
     /// measured each frame.
     groups_footer: f32,
@@ -2071,7 +2072,8 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         });
         visuals::preview(ui, p, world, &set);
         let mut area = egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 360.0).clamp(180.0, 420.0));
-        if std::mem::take(&mut st.demo_scroll_bottom) {
+        if st.demo_scroll == Some(DemoScroll::Bottom) {
+            st.demo_scroll = None;
             area = area.vertical_scroll_offset(5000.0);
         }
         area.show(ui, |ui| {
@@ -2093,10 +2095,10 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
             {
                 world.contact_sets.set_separate_chats(&set, apart);
             }
-            widgets::divider(ui, p);
-            set_responses(ui, p, world, st, &set, &cfg);
-            widgets::divider(ui, p);
             visuals::editor(ui, p, world, &set, &cfg.visuals);
+            widgets::divider(ui, p);
+            // after the set's own options, as floater_fs_contact_set_configuration.xml
+            set_responses(ui, p, world, st, &set, &cfg);
             widgets::divider(ui, p);
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
@@ -2135,12 +2137,16 @@ fn set_responses(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     if st.response_edit.as_ref().is_none_or(|(name, _)| name != set) {
         st.response_edit = Some((set.to_owned(), ResponseMode::ALL.map(|m| cfg.response(m).text.clone())));
     }
-    ui.label(
+    let heading = ui.label(
         RichText::new(aurora_i18n::tr!("ui-contacts-set-responses"))
             .size(12.5)
             .strong()
             .color(p.ink),
     );
+    if st.demo_scroll == Some(DemoScroll::Responses) {
+        st.demo_scroll = None;
+        heading.scroll_to_me(Some(egui::Align::TOP));
+    }
     for (i, mode) in ResponseMode::ALL.into_iter().enumerate() {
         let label = match mode {
             ResponseMode::Busy => aurora_i18n::tr!("ui-contacts-set-response-busy"),
@@ -2169,6 +2175,13 @@ fn set_responses(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
         }
         ui.add_space(4.0);
     }
+}
+
+/// Where AURORA_DEMO_SET_NOTICES scrolls a set's settings window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DemoScroll {
+    Responses,
+    Bottom,
 }
 
 /// What is still typed in the response fields, when the window closes.

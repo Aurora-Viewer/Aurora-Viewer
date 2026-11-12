@@ -12818,8 +12818,12 @@ impl App {
                 self.world.set_dnd(true);
             }
             // once the window has its height
-            if mode == "config-bottom" && self.frame_count == demo::SETUP + 30 {
-                self.contacts_ui.demo_scroll_bottom = true;
+            if self.frame_count == demo::SETUP + 30 {
+                self.contacts_ui.demo_scroll = match mode.as_str() {
+                    "config-responses" => Some(ui::contacts::DemoScroll::Responses),
+                    "config-bottom" => Some(ui::contacts::DemoScroll::Bottom),
+                    _ => None,
+                };
             }
             if self.frame_count == demo::MESSAGE + 5 {
                 let reply = self
