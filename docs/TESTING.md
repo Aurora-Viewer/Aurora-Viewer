@@ -10699,10 +10699,12 @@ What the inventory must show with these scenarios:
   Edit menu shortcuts reach the page. The clipboard holds "stale" first:
   "stalestale" means the paste took the system clipboard instead of the
   page's cut (the cut stays in the page under Wayland). Under X11 the
-  page gets no Cut, so the selection stays and "stalestale" is right
-  there. With `paste`, the viewer puts "pasted" on the clipboard, as
-  another program would, then presses Ctrl+V: the field reads
-  "aurorapasted" when the page gets the system clipboard.
+  page gets no Cut, so the selection stays: the field keeps "aurora",
+  or reads "stalestale" where the page can read the X clipboard. With
+  `paste`, the viewer puts "pasted" on the clipboard, as another program
+  would, then presses Ctrl+V: the field reads "aurorapasted" when the
+  page gets the system clipboard (Windows, macOS), "aurora" on Linux,
+  where the page, drawn off screen, cannot read it.
   `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
