@@ -236,43 +236,6 @@ fn meta(ui: &mut egui::Ui, p: &Palette, icon: Option<&str>, text: &str) {
     }
 }
 
-/// A G / M / A toggle: its badge and name, lit on `raised` while on; a
-/// rating the account may not see stays off and says why.
-fn rating_toggle(ui: &mut egui::Ui, p: &Palette, on: &mut bool, name: &str, allowed: bool) -> bool {
-    let font = FontId::proportional(12.0);
-    let lit = *on && allowed;
-    let ink = if lit { p.ink } else { p.muted_dim };
-    let galley = ui.painter().layout_no_wrap(name.to_owned(), font, ink);
-    let size = Vec2::new(6.0 + 16.0 + 6.0 + galley.size().x + 9.0, 26.0);
-    let (rect, resp) = ui.allocate_exact_size(size, if allowed { Sense::click() } else { Sense::hover() });
-    let radius = ui.visuals().widgets.inactive.corner_radius;
-    let fill = if lit {
-        p.raised
-    } else if allowed && resp.hovered() {
-        p.raised.gamma_multiply(0.5)
-    } else {
-        p.bar
-    };
-    ui.painter().rect_filled(rect, radius, fill);
-    let badge = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 8.0, rect.center().y), Vec2::splat(16.0));
-    let mut painter = ui.painter().clone();
-    if !lit {
-        painter.multiply_opacity(0.35);
-    }
-    widgets::paint_maturity_badge(&painter, p, name, badge, widgets::inner_radius(ui.visuals()));
-    widgets::paint_row_text(ui.painter(), galley, badge.right() + 6.0, rect.center().y, ink);
-    let resp = if allowed {
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-    } else {
-        resp.on_hover_text(aurora_i18n::tr!("search-rating-not-allowed"))
-    };
-    if allowed && resp.clicked() {
-        *on = !*on;
-        return true;
-    }
-    false
-}
-
 /// A digits-only field of the land filters, its name as its hint; true
 /// when its value is committed (Enter, or the field left).
 fn number_field(ui: &mut egui::Ui, label: &str, text: &mut String) -> bool {
@@ -575,7 +538,7 @@ impl SearchUi {
                         (&mut boxes.mature, aurora_i18n::tr!("common-moderate"), access.can_access_mature()),
                         (&mut boxes.adult, aurora_i18n::tr!("common-adult"), access.can_access_adult()),
                     ] {
-                        if rating_toggle(ui, p, on, name, allowed) {
+                        if widgets::pills::rating_toggle(ui, p, on, name, allowed, true) {
                             saved = true;
                             find = true;
                         }
