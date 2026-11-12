@@ -155,10 +155,11 @@ where
         refresh.push(*cof);
     }
     let mut removed = Vec::new();
+    let mut described: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
     for (folder, links) in &slams {
-        let (drop, add) = if change.create.is_some() && *folder == change.folder {
+        let (drop, add, redescribe) = if change.create.is_some() && *folder == change.folder {
             // The folder was just created, so it has nothing to diff.
-            (Vec::new(), links.iter().collect())
+            (Vec::new(), links.iter().collect(), Vec::new())
         } else {
             let current = fetch(vec![*folder]).await?;
             let items = current
@@ -182,6 +183,13 @@ where
         for id in drop {
             send_edit(UdpEdit::RemoveItem(id)).await?;
             removed.push(id);
+        }
+        // A kept link whose layer order changed: updateClothingOrderingInfo
+        // (llappearancemgr.cpp) rewrites its description with
+        // update_inventory_item, UpdateInventoryItem without AIS.
+        for item in redescribe {
+            described.insert(item.id, item.desc.clone());
+            send_edit(UdpEdit::UpdateItem(Box::new(item))).await?;
         }
     }
     // no answer comes on the circuit: a read shows when the links landed.
@@ -213,6 +221,12 @@ where
                     folder.items.retain(|item| !removed.contains(&item.id));
                 }
             }
+            // the layer order written, even if this read is older than it
+            for item in contents.iter_mut().flat_map(|c| c.items.iter_mut()) {
+                if let Some(desc) = described.get(&item.id) {
+                    item.desc.clone_from(desc);
+                }
+            }
             contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
             return Ok(contents);
         }
@@ -225,18 +239,29 @@ where
 
 /// One current link consumes one wanted link to the same item. What is left
 /// of the current links is removed; what is left of the wanted links is added.
-/// `sync_inventory_folder` (llviewerinventory.cpp).
-fn link_diff<'a>(current: &[crate::inventory::InvItem], wanted: &'a [OutfitLink]) -> (Vec<Uuid>, Vec<&'a OutfitLink>) {
+/// `sync_inventory_folder` (llviewerinventory.cpp). A kept link whose
+/// description (the clothing layer order, `@<type * 100 + index>`) is not the
+/// wanted one comes back with the new description, for an update.
+fn link_diff<'a>(
+    current: &[crate::inventory::InvItem],
+    wanted: &'a [OutfitLink],
+) -> (Vec<Uuid>, Vec<&'a OutfitLink>, Vec<crate::inventory::InvItem>) {
     let mut pending: Vec<&OutfitLink> = wanted.iter().collect();
     let mut remove = Vec::new();
+    let mut redescribe = Vec::new();
     for item in current.iter().filter(|item| is_link(item.asset_type)) {
         if let Some(at) = pending.iter().position(|link| link.target == item.asset_id) {
-            pending.remove(at);
+            let link = pending.remove(at);
+            if link.desc != item.desc {
+                let mut item = item.clone();
+                item.desc.clone_from(&link.desc);
+                redescribe.push(item);
+            }
         } else {
             remove.push(item.id);
         }
     }
-    (remove, pending)
+    (remove, pending, redescribe)
 }
 
 /// LLAssetType::AT_LINK and AT_LINK_FOLDER.
@@ -783,6 +808,48 @@ pub(crate) mod tests {
         let contents = result.expect("the intended folder, even though the server kept the link");
         assert!(contents[0].items.iter().all(|item| item.id != ic && item.asset_id != c));
         assert!(contents[0].items.iter().any(|item| item.asset_id == a));
+    }
+
+    /// A kept link whose layer order changed gets its new description, as
+    /// updateClothingOrderingInfo writes it, instead of keeping the old one.
+    #[tokio::test]
+    async fn a_kept_link_takes_its_new_layer_order() {
+        let folder = Uuid::from_u128(10);
+        let (a, ia) = (Uuid::from_u128(1), Uuid::from_u128(11));
+        let ordered = |desc: &str| {
+            llsd_map! {
+                "item_id" => ia, "parent_id" => folder, "asset_id" => a,
+                "name" => "Tattoo", "desc" => desc, "type" => 24, "inv_type" => 18,
+            }
+        };
+        // the read after the update is still the old order: the result is not
+        let (url, task) = server(vec![
+            (200, cof_reply(folder, 1, vec![ordered("@800")])),
+            (200, cof_reply(folder, 1, vec![ordered("@800")])),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let mut change = kept(folder, &[a]);
+        change.links[0].desc = "@801".into();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            change,
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        let contents = result.expect("outfit");
+        let edits = edits.lock().expect("edits");
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("one description update, got {edits:?}");
+        };
+        assert_eq!((item.id, item.desc.as_str()), (ia, "@801"));
+        let applied = contents.iter().flat_map(|c| &c.items).find(|i| i.id == ia).expect("kept link");
+        assert_eq!(applied.desc, "@801");
     }
 
     pub(crate) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
