@@ -6036,7 +6036,7 @@ impl App {
     /// sky track, what its day gives now (weather/region.rs). Every viewer
     /// with the same environment and clock shows the same weather.
     fn update_weather_now(&mut self) {
-        use crate::weather::region::RegionDay;
+        use crate::weather::region::{RegionDay, SkyWeather};
         let own = &self.settings.weather;
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -6105,6 +6105,14 @@ impl App {
         }
         self.env_ui.weather_source = if now.is_some() {
             WeatherSource::Region
+        } else if own.region_weather && self.in_world() {
+            // the region decides, and where it sets none the sky is clear and
+            // calm, as its sky is its own: my settings apply only once I use
+            // my own (they rained on in a region with none, "Restore to region
+            // settings" seeming to do nothing). What lay melts as after any
+            // weather (no snow so far is replayed)
+            now = Some(RegionDay::fixed(SkyWeather::CLEAR).apply(own, region, secs, false));
+            WeatherSource::RegionClear
         } else {
             WeatherSource::Mine
         };

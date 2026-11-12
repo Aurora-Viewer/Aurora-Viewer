@@ -14079,6 +14079,8 @@ ui-weather-northern-lights-violet = Violet
 ui-weather-northern-lights-red = Red
 ui-env-editor-northern-lights-tip = This sky's night has an aurora, for the viewers that let regions set the weather; it fades in and out with the sky. Its code is three letters longer
 ui-weather-window-tip = Rain, snow, wind, thunder and the northern lights, drawn for you only
+ui-weather-follow-region-tip = Restore to region settings: let the region set the weather (turns on “Let regions set the weather”). Where the region sets none, the sky is clear
+ui-weather-follow-region-on-tip = Following the region's weather. Turn it off with “Let regions set the weather” in the Aurora Weather window
 ui-weather-window-help = The weather Aurora draws for you only: what falls and how hard, the wind, thunder and the northern lights. Other people see their own weather. With "Let regions set the weather", a region's sky can set it instead
 ui-weather-amount = Amount
 ui-weather-amount-tip = How much falls: a drizzle on the left, a downpour on the right
@@ -14115,10 +14117,10 @@ ui-weather-quality-high = High
 ui-weather-region = Let regions set the weather
 ui-weather-source-preview = An environment editor is showing its sky’s weather. These settings apply again when it closes.
 ui-weather-source-my-sky = The sky you applied to yourself sets the weather. These settings apply again when you return to the shared environment.
-ui-weather-source-region = This region sets the weather. These settings apply again in regions that don’t, or when you use your own.
+ui-weather-source-region = This region sets the weather. These settings apply again when you use your own.
 ui-weather-source-use-mine = Use my own weather
-ui-weather-source-none = This region sets no weather, so yours applies here.
-ui-weather-region-tip = Regions and parcels whose environment carries an Aurora Weather code set the rain, snow, wind and thunder; everyone who lets them sees the same weather at the same time
+ui-weather-source-none = Regions set the weather, and this one sets none: the sky is clear here. These settings apply again when you use your own.
+ui-weather-region-tip = Regions and parcels whose environment carries an Aurora Weather code set the rain, snow, wind and thunder; everyone who lets them sees the same weather at the same time. Where a region sets none, the sky is clear
 
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 

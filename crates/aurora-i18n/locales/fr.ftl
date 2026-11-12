@@ -14079,6 +14079,8 @@ ui-weather-northern-lights-violet = Violet
 ui-weather-northern-lights-red = Rouge
 ui-env-editor-northern-lights-tip = La nuit de ce ciel a une aurore, pour les viewers qui laissent les régions choisir la météo ; elle apparaît et s’efface avec le ciel. Son code a trois lettres de plus
 ui-weather-window-tip = Pluie, neige, vent, orage et aurore boréale, dessinés pour vous seul
+ui-weather-follow-region-tip = Revenir aux réglages de la région : laisser la région choisir la météo (active « Laisser les régions choisir la météo »). Là où la région n’en fixe aucune, le ciel est dégagé
+ui-weather-follow-region-on-tip = La météo de la région est suivie. Pour l’arrêter, décochez « Laisser les régions choisir la météo » dans la fenêtre Météo Aurora
 ui-weather-window-help = La météo qu’Aurora dessine pour vous seul : ce qui tombe et à quelle force, le vent, l’orage et l’aurore boréale. Les autres voient leur propre météo. Avec « Laisser les régions choisir la météo », le ciel d’une région peut la choisir à la place
 ui-weather-amount = Intensité
 ui-weather-amount-tip = Combien il en tombe : bruine à gauche, averse à droite
@@ -14115,10 +14117,10 @@ ui-weather-quality-high = Haute
 ui-weather-region = Laisser les régions choisir la météo
 ui-weather-source-preview = Un éditeur d’environnement montre la météo de son ciel. Ces réglages reprennent à sa fermeture.
 ui-weather-source-my-sky = Le ciel que vous vous êtes appliqué fixe la météo. Ces réglages reprennent quand vous revenez à l’environnement partagé.
-ui-weather-source-region = Cette région fixe la météo. Ces réglages reprennent dans les régions qui ne le font pas, ou si vous utilisez la vôtre.
+ui-weather-source-region = Cette région fixe la météo. Ces réglages reprennent si vous utilisez la vôtre.
 ui-weather-source-use-mine = Utiliser ma propre météo
-ui-weather-source-none = Cette région ne fixe pas de météo : la vôtre s’applique ici.
-ui-weather-region-tip = Les régions et parcelles dont l'environnement porte un code Météo Aurora choisissent la pluie, la neige, le vent et l'orage ; tous ceux qui les laissent faire voient la même météo au même moment
+ui-weather-source-none = Les régions fixent la météo, et celle-ci n’en fixe aucune : le ciel est dégagé ici. Ces réglages reprennent si vous utilisez la vôtre.
+ui-weather-region-tip = Les régions et parcelles dont l'environnement porte un code Météo Aurora choisissent la pluie, la neige, le vent et l'orage ; tous ceux qui les laissent faire voient la même météo au même moment. Là où une région n’en fixe aucune, le ciel est dégagé
 
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 

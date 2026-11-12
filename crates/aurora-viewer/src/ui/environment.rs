@@ -132,13 +132,13 @@ impl EnvironmentUi {
                 Some(time_of_day),
                 LABEL_W,
                 lighting,
-                Some(&mut weather_open),
+                Some((&mut weather_open, &mut *weather)),
                 &mut out,
             );
             self.weather_open = weather_open;
         });
-        // Aurora Weather, its own window (the Environment window's only, not
-        // the Quick preferences' block)
+        // Aurora Weather, its own window (opened from the Environment window
+        // or the Quick preferences, drawn here for both)
         let mut weather_open = self.weather_open;
         self.show_weather(ctx, p, weather, &mut weather_open);
         self.weather_open = weather_open;
@@ -201,7 +201,7 @@ impl EnvironmentUi {
         time_of_day: Option<u8>,
         label_w: f32,
         lighting: &mut bool,
-        weather: Option<&mut bool>,
+        weather: Option<(&mut bool, &mut WeatherSettings)>,
         out: &mut Vec<EnvAction>,
     ) {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
@@ -254,8 +254,28 @@ impl EnvironmentUi {
             {
                 *lighting = !*lighting;
             }
-            // Aurora Weather beside it, "Aurora" in the aurora gradient
-            if let Some(weather) = weather {
+            // each arrow right after its own button: this one the sky's,
+            // water's and day cycle's (it leaves my own weather alone)
+            if widgets::icon_button(
+                ui,
+                p,
+                "restore",
+                aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
+                true,
+            ) {
+                out.push(EnvAction::Shared);
+            }
+            // Aurora Weather after them ("Aurora" in the aurora gradient),
+            // with its own way back to the region's: it turns "Let regions
+            // set the weather" on, still an opt in, by my own hand. One way,
+            // as the sky's: greyed once the region's is followed (turned off
+            // again in the Weather window). On the same row: a row of its
+            // own made the Quick preferences too tall at the largest text
+            let Some((open, weather)) = weather else {
+                return;
+            };
+            ui.add_space(12.0);
+            {
                 let font = widgets::control_font(ui, 12.0);
                 let label = crate::ui::options::aurora_word(p, aurora_i18n::tr!("ui-weather-aurora"), font, p.ink);
                 if ui
@@ -263,20 +283,19 @@ impl EnvironmentUi {
                     .on_hover_text(aurora_i18n::tr!("ui-weather-window-tip"))
                     .clicked()
                 {
-                    *weather = !*weather;
+                    *open = !*open;
+                }
+                let following = weather.region_weather;
+                let tip = if following {
+                    aurora_i18n::tr!("ui-weather-follow-region-on-tip")
+                } else {
+                    aurora_i18n::tr!("ui-weather-follow-region-tip")
+                };
+                if widgets::icon_button(ui, p, "restore", tip, !following) {
+                    weather.region_weather = true;
+                    weather.touched = true;
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::icon_button(
-                    ui,
-                    p,
-                    "restore",
-                    aurora_i18n::tr!("ui-environment-return-to-shared-environment"),
-                    true,
-                ) {
-                    out.push(EnvAction::Shared);
-                }
-            });
         });
         if let Some(time_of_day) = time_of_day {
             widgets::divider(ui, p);
@@ -1253,21 +1272,18 @@ pub(crate) fn colour_names() -> [&'static str; 3] {
 fn weather_source_note(ui: &mut egui::Ui, p: &Palette, source: crate::weather::WeatherSource, w: &mut WeatherSettings) {
     use crate::weather::WeatherSource;
     let text = match source {
-        // allowed, but this region sets none: mine applies
-        WeatherSource::Mine if w.region_weather => {
-            ui.label(RichText::new(aurora_i18n::tr!("ui-weather-source-none")).size(11.5).color(p.muted));
-            ui.add_space(4.0);
-            return;
-        }
         WeatherSource::Mine => return,
         WeatherSource::Preview => aurora_i18n::tr!("ui-weather-source-preview"),
         WeatherSource::MySky => aurora_i18n::tr!("ui-weather-source-my-sky"),
         WeatherSource::Region => aurora_i18n::tr!("ui-weather-source-region"),
+        // the region decides, and sets none here: clear
+        WeatherSource::RegionClear => aurora_i18n::tr!("ui-weather-source-none"),
     };
+    let regions = matches!(source, WeatherSource::Region | WeatherSource::RegionClear);
     widgets::surface(ui, p, |ui| {
         ui.set_min_width(ui.available_width());
         ui.label(RichText::new(text).size(12.0).color(p.ink));
-        if source == WeatherSource::Region && widgets::flat_button(ui, p, aurora_i18n::tr!("ui-weather-source-use-mine")).clicked() {
+        if regions && widgets::flat_button(ui, p, aurora_i18n::tr!("ui-weather-source-use-mine")).clicked() {
             w.region_weather = false;
             w.touched = true;
         }

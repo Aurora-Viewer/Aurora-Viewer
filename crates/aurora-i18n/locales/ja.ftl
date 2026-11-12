@@ -14017,6 +14017,8 @@ ui-weather-northern-lights-violet = 紫
 ui-weather-northern-lights-red = 赤
 ui-env-editor-northern-lights-tip = この空の夜にオーロラが出ます（地域に天気を設定させているビューアーで）。空に合わせて現れ、消えていきます。コードは 3 文字長くなります
 ui-weather-window-tip = 雨、雪、風、雷、オーロラ（あなたにだけ表示）
+ui-weather-follow-region-tip = リージョンの設定に戻す：天気をリージョンに任せます（「リージョンに天気を任せる」をオンにします）。リージョンが天気を設定していない場所では晴れになります
+ui-weather-follow-region-on-tip = リージョンの天気に従っています。オフにするには Aurora の天気ウィンドウで「リージョンに天気を任せる」を切り替えてください
 ui-weather-window-help = Aurora があなたにだけ表示する天気：降るもの、その強さ、風、雷、オーロラ。ほかの人には各自の天気が見えます。「地域に天気を設定させる」をオンにすると、地域の空が代わりに設定できます
 ui-weather-amount = 強さ
 ui-weather-amount-tip = 降る量：左は霧雨、右は土砂降り
@@ -14053,10 +14055,10 @@ ui-weather-quality-high = 高
 ui-weather-region = リージョンに天気を任せる
 ui-weather-source-preview = 環境エディタが空の天気をプレビュー中です。閉じるとこの設定に戻ります。
 ui-weather-source-my-sky = 自分に適用した空が天気を決めています。共有環境に戻るとこの設定に戻ります。
-ui-weather-source-region = このリージョンが天気を決めています。天気を決めないリージョンや、自分の天気を使うとこの設定に戻ります。
+ui-weather-source-region = このリージョンが天気を決めています。自分の天気を使うとこの設定に戻ります。
 ui-weather-source-use-mine = 自分の天気を使う
-ui-weather-source-none = このリージョンは天気を決めていないため、ここでは自分の天気が使われます。
-ui-weather-region-tip = 環境に Aurora の天気コードがあるリージョンや区画が、雨、雪、風、雷を決めます。許可した人は全員、同じ時に同じ天気を見ます
+ui-weather-source-none = 天気はリージョンが決めますが、このリージョンは天気を決めていないため、ここは晴れです。自分の天気を使うとこの設定に戻ります。
+ui-weather-region-tip = 環境に Aurora の天気コードがあるリージョンや区画が、雨、雪、風、雷を決めます。許可した人は全員、同じ時に同じ天気を見ます。天気を決めていないリージョンでは晴れになります
 
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 

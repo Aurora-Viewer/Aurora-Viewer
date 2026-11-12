@@ -260,7 +260,24 @@ impl QuickPrefsUi {
                 out.changed |= slot_row(ui, p, settings, Slot::Bandwidth);
                 out.changed |= complexity_row(ui, p, settings);
                 widgets::divider(ui, p);
-                env.selector_body(ui, p, view, loading, None, LABEL_W, lighting, None, &mut out.env);
+                // Aurora Weather after "Personal lighting", each with its own
+                // arrow back to the region's, as in the Environment window
+                // (its window is drawn with that one's)
+                let mut weather_open = env.weather_open;
+                let before = settings.weather.region_weather;
+                env.selector_body(
+                    ui,
+                    p,
+                    view,
+                    loading,
+                    None,
+                    LABEL_W,
+                    lighting,
+                    Some((&mut weather_open, &mut settings.weather)),
+                    &mut out.env,
+                );
+                env.weather_open = weather_open;
+                out.changed |= settings.weather.region_weather != before;
             });
         // saved once the button is released, not at every frame of a drag
         self.unsaved |= out.changed;

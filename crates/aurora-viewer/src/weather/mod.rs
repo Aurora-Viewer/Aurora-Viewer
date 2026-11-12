@@ -175,6 +175,8 @@ pub enum WeatherSource {
     MySky,
     /// The region or parcel ("Let regions set the weather").
     Region,
+    /// The same, where the region sets none: clear and calm.
+    RegionClear,
 }
 
 impl WeatherSettings {
