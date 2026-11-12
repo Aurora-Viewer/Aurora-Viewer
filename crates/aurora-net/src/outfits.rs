@@ -98,10 +98,14 @@ pub async fn mutate(
     Ok(contents)
 }
 
-/// `mutate` on a grid without AIS, which has no call that replaces a folder's
-/// links: as slam_inventory_folder falls back to (llviewerinventory.cpp),
-/// remove_folder_contents, then link_inventory_array. Links only: the folder's
-/// other content stays.
+/// `mutate` on a grid without AIS. `slam_inventory_folder`
+/// (llviewerinventory.cpp) diffs the folder: `sync_inventory_folder` removes a
+/// link that is not in the new set, including a second link to one item, and
+/// `link_inventory_items` adds only what is missing. The OpenSim branch of
+/// `remove_inventory_item` forgets the link locally at once, because the
+/// message has no callback. A read-back is used once those links are gone. If
+/// the server keeps listing them, the returned folder still leaves them out.
+/// Anything in the folder that is not a link stays.
 pub(crate) async fn mutate_udp<E, EFut>(
     http: &reqwest::Client,
     create_cap: Option<&str>,
@@ -150,15 +154,22 @@ where
         slams.push((*cof, links));
         refresh.push(*cof);
     }
+    let mut removed = Vec::new();
+    let mut described: std::collections::HashMap<Uuid, String> = std::collections::HashMap::new();
     for (folder, links) in &slams {
-        if change.create.is_none() || *folder != change.folder {
-            for content in fetch(vec![*folder]).await? {
-                for item in content.items.iter().filter(|item| is_link(item.asset_type)) {
-                    send_edit(UdpEdit::RemoveItem(item.id)).await?;
-                }
-            }
-        }
-        for link in links.iter() {
+        let (drop, add, redescribe) = if change.create.is_some() && *folder == change.folder {
+            // The folder was just created, so it has nothing to diff.
+            (Vec::new(), links.iter().collect(), Vec::new())
+        } else {
+            let current = fetch(vec![*folder]).await?;
+            let items = current
+                .iter()
+                .find(|content| content.folder_id == *folder)
+                .map(|content| content.items.as_slice())
+                .unwrap_or(&[]);
+            link_diff(items, links)
+        };
+        for link in add {
             send_edit(UdpEdit::Link {
                 parent: *folder,
                 target: link.target,
@@ -169,8 +180,23 @@ where
             })
             .await?;
         }
+        for id in drop {
+            send_edit(UdpEdit::RemoveItem(id)).await?;
+            removed.push(id);
+        }
+        // A kept link whose layer order changed: updateClothingOrderingInfo
+        // (llappearancemgr.cpp) rewrites its description with
+        // update_inventory_item, UpdateInventoryItem without AIS.
+        for item in redescribe {
+            described.insert(item.id, item.desc.clone());
+            send_edit(UdpEdit::UpdateItem(Box::new(item))).await?;
+        }
     }
-    // no answer comes on the circuit: a read shows when the links landed
+    // no answer comes on the circuit: a read shows when the links landed.
+    // A read that still lists a link we removed is the folder from before
+    // the simulator handled it, so it is not the result. The last read is
+    // trusted with those links left out: a suitcase can refuse the delete.
+    let removed: std::collections::HashSet<Uuid> = removed.into_iter().collect();
     const RETRIES: u32 = 5;
     for attempt in 0..=RETRIES {
         let mut contents = fetch(refresh.clone()).await?;
@@ -183,10 +209,24 @@ where
                     .any(|item| item.asset_id == link.target && is_link(item.asset_type))
             })
         });
+        let gone = removed
+            .iter()
+            .all(|id| !contents.iter().flat_map(|c| &c.items).any(|item| item.id == *id));
         let complete = refresh
             .iter()
             .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0));
-        if linked && complete {
+        if linked && complete && (gone || attempt == RETRIES) {
+            if !gone {
+                for folder in &mut contents {
+                    folder.items.retain(|item| !removed.contains(&item.id));
+                }
+            }
+            // the layer order written, even if this read is older than it
+            for item in contents.iter_mut().flat_map(|c| c.items.iter_mut()) {
+                if let Some(desc) = described.get(&item.id) {
+                    item.desc.clone_from(desc);
+                }
+            }
             contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
             return Ok(contents);
         }
@@ -195,6 +235,33 @@ where
         }
     }
     Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into())
+}
+
+/// One current link consumes one wanted link to the same item. What is left
+/// of the current links is removed; what is left of the wanted links is added.
+/// `sync_inventory_folder` (llviewerinventory.cpp). A kept link whose
+/// description (the clothing layer order, `@<type * 100 + index>`) is not the
+/// wanted one comes back with the new description, for an update.
+fn link_diff<'a>(
+    current: &[crate::inventory::InvItem],
+    wanted: &'a [OutfitLink],
+) -> (Vec<Uuid>, Vec<&'a OutfitLink>, Vec<crate::inventory::InvItem>) {
+    let mut pending: Vec<&OutfitLink> = wanted.iter().collect();
+    let mut remove = Vec::new();
+    let mut redescribe = Vec::new();
+    for item in current.iter().filter(|item| is_link(item.asset_type)) {
+        if let Some(at) = pending.iter().position(|link| link.target == item.asset_id) {
+            let link = pending.remove(at);
+            if link.desc != item.desc {
+                let mut item = item.clone();
+                item.desc.clone_from(&link.desc);
+                redescribe.push(item);
+            }
+        } else {
+            remove.push(item.id);
+        }
+    }
+    (remove, pending, redescribe)
 }
 
 /// LLAssetType::AT_LINK and AT_LINK_FOLDER.
@@ -596,6 +663,193 @@ pub(crate) mod tests {
         assert!(result.is_err());
         // a link sent now would land in a default folder
         assert!(matches!(edits.lock().expect("edits").as_slice(), [UdpEdit::CreateFolder { .. }]));
+    }
+
+    fn worn_link(folder: Uuid, item: Uuid, target: Uuid) -> Llsd {
+        llsd_map! {
+            "item_id" => item, "parent_id" => folder, "asset_id" => target,
+            "name" => "Hair", "type" => 24, "inv_type" => 18,
+        }
+    }
+
+    fn cof_reply(folder: Uuid, version: i32, items: Vec<Llsd>) -> Llsd {
+        llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
+            "folder_id" => folder, "version" => version,
+            "categories" => Llsd::Array(Vec::<Llsd>::new()), "items" => Llsd::Array(items),
+        }]) }
+    }
+
+    fn kept(folder: Uuid, targets: &[Uuid]) -> OutfitMutation {
+        OutfitMutation {
+            folder,
+            create: None,
+            links: targets
+                .iter()
+                .map(|target| OutfitLink {
+                    target: *target,
+                    name: "Hair".into(),
+                    desc: String::new(),
+                    folder: false,
+                    inv_type: 18,
+                })
+                .collect(),
+            cof: None,
+        }
+    }
+
+    /// A, B, C becoming A, B removes only C. A becoming A, B adds only B.
+    #[tokio::test]
+    async fn only_the_links_that_change_go_over_the_circuit() {
+        let folder = Uuid::from_u128(10);
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (ia, ib, ic) = (Uuid::from_u128(11), Uuid::from_u128(12), Uuid::from_u128(13));
+        let (url, task) = server(vec![
+            (
+                200,
+                cof_reply(
+                    folder,
+                    1,
+                    vec![worn_link(folder, ia, a), worn_link(folder, ib, b), worn_link(folder, ic, c)],
+                ),
+            ),
+            (200, cof_reply(folder, 2, vec![worn_link(folder, ia, a), worn_link(folder, ib, b)])),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            kept(folder, &[a, b]),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(edits.lock().expect("edits").as_slice(), &[UdpEdit::RemoveItem(ic)]);
+
+        let (url, task) = server(vec![
+            (200, cof_reply(folder, 1, vec![worn_link(folder, ia, a)])),
+            (200, cof_reply(folder, 2, vec![worn_link(folder, ia, a), worn_link(folder, ib, b)])),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            kept(folder, &[a, b]),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        assert!(result.is_ok(), "{result:?}");
+        let edits = edits.lock().expect("edits");
+        let [UdpEdit::Link { parent, target, .. }] = edits.as_slice() else {
+            panic!("only the missing link goes over the circuit: {edits:?}");
+        };
+        assert_eq!((*parent, *target), (folder, b));
+    }
+
+    /// The first read after a removal can still list the old link. That read is not applied.
+    #[tokio::test]
+    async fn a_stale_read_is_not_the_result() {
+        let folder = Uuid::from_u128(10);
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (ia, ib, ic) = (Uuid::from_u128(11), Uuid::from_u128(12), Uuid::from_u128(13));
+        let with_c = vec![worn_link(folder, ia, a), worn_link(folder, ib, b), worn_link(folder, ic, c)];
+        let (url, task) = server(vec![
+            (200, cof_reply(folder, 1, with_c.clone())),
+            (200, cof_reply(folder, 2, with_c)),
+            (200, cof_reply(folder, 3, vec![worn_link(folder, ia, a), worn_link(folder, ib, b)])),
+        ])
+        .await;
+        let (_edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            kept(folder, &[a, b]),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        let contents = result.expect("the folder once the removed link is gone");
+        assert_eq!(contents[0].version, 3, "a read that still lists the removed link is not the result");
+        assert!(contents[0].items.iter().all(|item| item.id != ic));
+    }
+
+    /// A Hypergrid suitcase can refuse the delete. The link is still left out of what we apply.
+    #[tokio::test]
+    async fn a_removal_the_server_keeps_is_still_left_out() {
+        let folder = Uuid::from_u128(10);
+        let (a, c) = (Uuid::from_u128(1), Uuid::from_u128(3));
+        let (ia, ic) = (Uuid::from_u128(11), Uuid::from_u128(13));
+        let listed = cof_reply(folder, 2, vec![worn_link(folder, ia, a), worn_link(folder, ic, c)]);
+        let (url, task) = server(vec![(200, listed); 7]).await;
+        let (_edits, send) = recorder();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            kept(folder, &[a]),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        let contents = result.expect("the intended folder, even though the server kept the link");
+        assert!(contents[0].items.iter().all(|item| item.id != ic && item.asset_id != c));
+        assert!(contents[0].items.iter().any(|item| item.asset_id == a));
+    }
+
+    /// A kept link whose layer order changed gets its new description, as
+    /// updateClothingOrderingInfo writes it, instead of keeping the old one.
+    #[tokio::test]
+    async fn a_kept_link_takes_its_new_layer_order() {
+        let folder = Uuid::from_u128(10);
+        let (a, ia) = (Uuid::from_u128(1), Uuid::from_u128(11));
+        let ordered = |desc: &str| {
+            llsd_map! {
+                "item_id" => ia, "parent_id" => folder, "asset_id" => a,
+                "name" => "Tattoo", "desc" => desc, "type" => 24, "inv_type" => 18,
+            }
+        };
+        // the read after the update is still the old order: the result is not
+        let (url, task) = server(vec![
+            (200, cof_reply(folder, 1, vec![ordered("@800")])),
+            (200, cof_reply(folder, 1, vec![ordered("@800")])),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let mut change = kept(folder, &[a]);
+        change.links[0].desc = "@801".into();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            change,
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        let contents = result.expect("outfit");
+        let edits = edits.lock().expect("edits");
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("one description update, got {edits:?}");
+        };
+        assert_eq!((item.id, item.desc.as_str()), (ia, "@801"));
+        let applied = contents.iter().flat_map(|c| &c.items).find(|i| i.id == ia).expect("kept link");
+        assert_eq!(applied.desc, "@801");
     }
 
     pub(crate) async fn server(replies: Vec<(u16, Llsd)>) -> (String, tokio::task::JoinHandle<Vec<(String, Llsd)>>) {
