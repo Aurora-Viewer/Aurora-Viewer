@@ -14,9 +14,12 @@ use uuid::Uuid;
 /// Why the attention is asked: it picks the setting of the flash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cause {
-    /// An instant message, a group chat or conference line, an offer or a
-    /// notice sent as an IM (FSFlashOnMessage).
+    /// An instant message, a group chat or conference line, a notice sent
+    /// as an IM (FSFlashOnMessage).
     Message,
+    /// An offer sent as an IM: a teleport, a friendship, an object, a group
+    /// invitation (FSFlashOnMessage, as a message).
+    Offer,
     /// An object's llInstantMessage (FSFlashOnObjectIM, under FSFlashOnMessage).
     ObjectIm,
     /// A script dialog or text box (FSFlashOnScriptDialog).
@@ -28,8 +31,11 @@ pub enum Cause {
     /// A line that holds one of the keywords (FSKeywords::notify): its
     /// sound, told to the system, no flash of its own.
     Keyword,
-    /// A notice that never flashes (a friend online, a simulator alert, the
-    /// region restart, whose alert flashes on its own…).
+    /// A friend came online (`true`) or went offline: told, never flashed
+    /// (FriendOnlineOffline).
+    Presence(bool),
+    /// A notice that never flashes (a simulator alert, the region restart,
+    /// whose alert flashes on its own…).
     Notice,
 }
 

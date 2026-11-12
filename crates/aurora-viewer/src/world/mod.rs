@@ -4842,7 +4842,22 @@ impl World {
         } else {
             None
         };
-        self.ask_attention(attention::Cause::Message, notice);
+        // an offer is told as one; an alert, a notice or an answer as a notice
+        let cause = if matches!(
+            im.dialog,
+            d::LURE_USER
+                | d::GODLIKE_LURE_USER
+                | d::TELEPORT_REQUEST
+                | d::FRIENDSHIP_OFFERED
+                | d::INVENTORY_OFFERED
+                | d::TASK_INVENTORY_OFFERED
+                | d::GROUP_INVITATION
+        ) {
+            attention::Cause::Offer
+        } else {
+            attention::Cause::Message
+        };
+        self.ask_attention(cause, notice);
         true
     }
 
@@ -5394,7 +5409,7 @@ impl World {
                     body: String::new(),
                     open: attention::Open::Conversation(id),
                 };
-                self.ask_attention(attention::Cause::Notice, Some(notice));
+                self.ask_attention(attention::Cause::Presence(online), Some(notice));
             }
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
