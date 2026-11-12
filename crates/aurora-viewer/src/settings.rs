@@ -1472,6 +1472,8 @@ pub struct Settings {
     pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
+    /// Hard particle intersections like the Legacy Viewer; Aurora fades by default.
+    pub classic_particle_intersections: bool,
     /// RenderAttachedParticles: the particles of what avatars wear (on;
     /// Preferences › Graphics, as the Legacy Viewer's).
     pub attached_particles: bool,
@@ -2384,6 +2386,7 @@ impl Default for Settings {
             background_gpu_pause: true,
             gpu_recovery: true,
             max_particles: 4096,
+            classic_particle_intersections: false,
             attached_particles: true,
             tracker_beacon: true,
             max_avatars: 16,
@@ -3442,6 +3445,7 @@ impl Settings {
             vr_resolution: self.camera.vr.resolution,
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
+            soft_particles: !self.classic_particle_intersections,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
                 1 => AntiAliasing::Fxaa,

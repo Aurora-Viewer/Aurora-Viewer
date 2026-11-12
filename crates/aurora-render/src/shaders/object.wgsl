@@ -2148,8 +2148,9 @@ fn fs_shadow(in: ShadowOut) {
 
 // --------------------------------------------------------------- particles
 
+override PARTICLE_GLOW_PASS: bool = false;
 const PART_EMISSIVE: u32 = 1u;
-const PART_ADDITIVE: u32 = 2u;
+const PART_KEEP_ZERO_ALPHA: u32 = 2u;
 const PART_AXIS: u32 = 4u;
 const PART_FOLLOW_VELOCITY: u32 = 8u;
 
@@ -2161,6 +2162,11 @@ struct PartIn {
     @location(4) color: vec4<f32>,
     @location(5) axis: vec3<f32>,
     @location(6) glow: f32,
+    @location(7) end_pos: vec3<f32>,
+    @location(8) end_glow: f32,
+    @location(9) end_axis: vec3<f32>,
+    @location(10) end_width: f32,
+    @location(11) end_color: vec4<f32>,
     @builtin(vertex_index) vi: u32,
 };
 
@@ -2171,99 +2177,165 @@ struct PartOut {
     @location(2) @interpolate(flat) texture: u32,
     @location(3) @interpolate(flat) flags: u32,
     @location(4) world_pos: vec3<f32>,
+    @location(5) glow: f32,
 };
 
 @vertex
 fn vs_particle(in: PartIn) -> PartOut {
+    // Interior zero-glow instances remain in a shared batch; clip them before
+    // rasterization instead of sampling their texture and depth for zero output.
+    if (PARTICLE_GLOW_PASS && in.glow <= 0.0 && in.end_glow <= 0.0) {
+        var empty: PartOut;
+        empty.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return empty;
+    }
     // two triangles: corners (-1,-1) (1,-1) (1,1) / (-1,-1) (1,1) (-1,1)
     let cx = array<f32, 6>(-1.0, 1.0, 1.0, -1.0, 1.0, -1.0);
     let cy = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
-    let c = vec2<f32>(cx[in.vi % 6u], cy[in.vi % 6u]);
+    // The reference ribbon uses the parent-minus/child-plus diagonal.
+    // Keeping it matters when endpoint width axes twist out of one plane.
+    let ribbon_indices = array<u32, 6>(2u, 5u, 1u, 5u, 0u, 1u);
+    let corner = select(in.vi % 6u, ribbon_indices[in.vi % 6u], (in.flags & PART_AXIS) != 0u);
+    let c = vec2<f32>(cx[corner], cy[corner]);
     var right = frame.cam_right.xyz;
     var up = frame.cam_up.xyz;
-    var offset: vec3<f32>;
+    // LLVOPartGroup::getGeometry faces each billboard towards its own eye
+    // ray, not the image plane; ribbons retain their source-space axes.
+    let to_cam = normalize(frame.camera_pos.xyz - in.pos);
+    let view_right = cross(vec3<f32>(0.0, 0.0, 1.0), to_cam);
+    if (dot(view_right, view_right) > 1e-8) {
+        right = normalize(view_right);
+        up = normalize(cross(to_cam, right));
+    }
+    var wp: vec3<f32>;
+    var color = in.color;
+    var glow = in.glow;
     var uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
-    if ((in.flags & PART_FOLLOW_VELOCITY) != 0u) {
-        // LLVOPartGroup::getGeometry projects velocity into the billboard
-        // plane, then rotates it without shortening the requested scale.
-        // A world-space velocity axis can otherwise turn a long, thin
-        // particle edge-on to the camera and make it disappear.
-        let to_cam = normalize(frame.camera_pos.xyz - in.pos);
-        let view_right = cross(vec3<f32>(0.0, 0.0, 1.0), to_cam);
-        if (dot(view_right, view_right) > 1e-8) {
-            right = normalize(view_right);
-            up = normalize(cross(to_cam, right));
-        }
-        let projected = vec2<f32>(dot(in.axis, right), dot(in.axis, up));
-        if (dot(projected, projected) > 1e-8) {
-            let direction = normalize(projected);
-            let old_right = right;
-            right = right * direction.y - up * direction.x;
-            up = old_right * direction.x + up * direction.y;
-        }
-        offset = right * c.x * in.size.x * 0.5 + up * c.y * in.size.y * 0.5;
-    } else if ((in.flags & PART_AXIS) != 0u && dot(in.axis, in.axis) > 1e-8) {
-        // Ribbon segments retain their world-space endpoints.
-        let to_cam = normalize(frame.camera_pos.xyz - in.pos);
-        up = in.axis * 0.5;
-        let side = cross(to_cam, normalize(in.axis));
-        right = select(frame.cam_right.xyz, normalize(side), dot(side, side) > 1e-6);
-        offset = right * c.x * in.size.x * 0.5 + up * c.y;
+    if ((in.flags & PART_AXIS) != 0u) {
+        // LLVOPartGroup::getGeometry: each end keeps its own width, axis,
+        // colour and glow. No camera-facing ribbon or midpoint rectangle.
+        let parent = c.y > 0.0;
+        let width = select(in.axis * in.size.x, in.end_axis * in.end_width, parent);
+        wp = select(in.pos, in.end_pos, parent) + width * c.x * 0.5;
+        color = select(in.color, in.end_color, parent);
+        glow = select(in.glow, in.end_glow, parent);
         // LLVOPartGroup lays the texture along the segment: u from the
         // parent end (c.y = 1) to this particle, v across the width. With
         // the billboard mapping a leash's lengthwise texture turned into a
         // crossbar on every link, a dashed line (#1924).
         uv = vec2<f32>(0.5 - c.y * 0.5, 0.5 - c.x * 0.5);
     } else {
-        offset = right * c.x * in.size.x * 0.5 + up * c.y * in.size.y * 0.5;
+        if ((in.flags & PART_FOLLOW_VELOCITY) != 0u) {
+            let projected = vec2<f32>(dot(in.axis, right), dot(in.axis, up));
+            if (dot(projected, projected) > 1e-8) {
+                let direction = normalize(projected);
+                let old_right = right;
+                right = right * direction.y - up * direction.x;
+                up = old_right * direction.x + up * direction.y;
+            }
+        }
+        wp = in.pos + right * c.x * in.size.x * 0.5 + up * c.y * in.size.y * 0.5;
     }
-    let wp = in.pos + offset;
     var out: PartOut;
     out.clip = frame.view_proj * vec4<f32>(wp, 1.0);
     out.uv = uv;
-    out.color = vec4<f32>(srgb_to_linear(in.color.rgb), in.color.a);
-    // glow brightens the particle (no bloom pass)
-    out.color = vec4<f32>(out.color.rgb * (1.0 + in.glow * 2.0), out.color.a);
+    // Interpolate vertex colour in sRGB first, as alphaV.glsl does.
+    out.color = color;
+    out.glow = glow;
     out.texture = in.texture;
     out.flags = in.flags;
     out.world_pos = wp;
     return out;
 }
 
-@fragment
-fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
-    // slot 0 is white: the default particle is a soft round dot
-    let ts = sample_tex(in.texture, in.uv);
-    var tex = vec4<f32>(srgb_to_linear(ts.rgb), ts.a);
+// LLDrawPoolAlpha::renderAlpha uses the ordinary legacy alpha shader for
+// particles. Port of alphaF.glsl / fullbrightF.glsl (indra/newview/app_settings/
+// shaders, originally LGPL 2.1): camera-facing normal, EEP lighting and haze.
+fn particle_light(base: vec3<f32>, in: PartOut) -> vec3<f32> {
+    let normal = normalize(cross(frame.cam_right.xyz, frame.cam_up.xyz));
+    let relative = in.world_pos - frame.camera_pos.xyz;
+    // Retain this control flow: an explicit if/else around the two
+    // atmosphere calls raised mixed-particle GPU time in profiling.
+    var atmos = ll_atmos_eye(relative);
+    if ((in.flags & PART_EMISSIVE) != 0u) {
+        // fullbrightF passes a zero light_dir to calcAtmosphericVars:
+        // it takes haze without the directional sun hotspot.
+        let eye = vec3<f32>(dot(relative, frame.cam_right.xyz), dot(relative, frame.cam_up.xyz), dot(relative, normal));
+        atmos = ll_atmos_core(eye, vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+    }
+    var col = base;
+    if ((in.flags & PART_EMISSIVE) == 0u) {
+        var ambient = atmos.amblit * ll_ambient_lighting(normal);
+        var sunlight = atmos.sunlit;
+        if (ll_classic_mode()) {
+            sunlight *= 1.35;
+        } else {
+            let linear = srgb_to_linear(ambient);
+            ambient = select(vec3<f32>(dot(linear, vec3<f32>(0.2126, 0.7152, 0.0722))), linear, colored_sky_ambient());
+            sunlight = srgb_to_linear(sunlight);
+            if (probes_on()) {
+                let lookup = ProbeLookup(normal, 0.0, true);
+                let probes = sample_probes_pair(in.world_pos, in.clip.xy, lookup, lookup, false, true, ambient);
+                if (probes.a.w > 0.0) { ambient = probes.a.rgb; }
+            }
+        }
+        let nl = max(dot(normal, frame.sun_dir.xyz), 0.0);
+        let view_depth = max(dot(in.world_pos - frame.camera_pos.xyz, -normal), 0.001);
+        let shadow = sun_shadow(in.world_pos, normal, view_depth, in.clip.xy);
+        if (ll_classic_mode()) {
+            col = srgb_to_linear(ambient * 0.9 + ll_linear_to_srgb(vec3<f32>(min(pow(nl, 1.2), shadow))) * sunlight * 0.7) * base;
+        } else {
+            col = (ambient + min(nl, shadow) * sunlight) * base;
+        }
+        // The forward alpha shader adds local diffuse before its final scale,
+        // rather than the deferred local-light pass's independent 0.9 scale.
+        col += ll_local_diffuse(base, normal, in.world_pos, in.clip.xy) / ll_local_scale();
+        col *= ll_final_scale();
+    }
+    if (camera_underwater() || (water_fx_on(256u) && in.world_pos.z < camera_water_level())) {
+        return apply_fog(col, in.world_pos);
+    }
+    // Alpha fullbright takes atmospheric haze too, including classic skies.
+    // atmosFragLighting uses the red transmission for all RGB channels.
+    return col * atmos.atten.r + srgb_to_linear(atmos.additive * 2.0) * frame.sky_cloud_pd2.w;
+}
+
+fn particle_tex(in: PartOut) -> vec4<f32> {
     if (in.texture == 0u) {
         let d = length(in.uv * 2.0 - vec2<f32>(1.0));
         let a = clamp(1.0 - d, 0.0, 1.0);
-        tex = vec4<f32>(1.0, 1.0, 1.0, a * a);
+        return vec4<f32>(1.0, 1.0, 1.0, a * a);
     }
-    var col = tex.rgb * in.color.rgb;
-    var alpha = tex.a * in.color.a;
-    if ((in.flags & PART_EMISSIVE) == 0u) {
-        // lit by the environment: ambient plus a share of the sun
-        let light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4
-                  + frame.sun_color.rgb * max(frame.sun_dir.z, 0.0) * 0.25;
-        col *= light;
-    }
-    // soft particles: fade where they cut into the scene
-    let d = scene_depth_at(screen_uv(in.clip.xy));
-    if (d > 0.0) {
-        let sp = world_from_depth(screen_uv(in.clip.xy), d);
-        let gap = distance(sp, frame.camera_pos.xyz) - distance(in.world_pos, frame.camera_pos.xyz);
-        alpha *= clamp(gap / max(frame.cam_right.w, 0.01), 0.0, 1.0);
-    }
-    col = apply_fog(col, in.world_pos);
-    if (alpha < 0.002) {
-        discard;
-    }
-    if ((in.flags & PART_ADDITIVE) != 0u) {
-        // premultiplied blend with zero alpha = additive
-        return vec4<f32>(col * alpha, 0.0);
-    }
-    return vec4<f32>(col * alpha, alpha);
+    return sample_tex(in.texture, in.uv);
+}
+
+fn particle_fade(in: PartOut) -> f32 {
+    // Aurora's optional soft intersections; zero selects Legacy clipping.
+    if (frame.cam_right.w <= 0.0) { return 1.0; }
+    let uv = screen_uv(in.clip.xy);
+    let d = scene_depth_at(uv);
+    if (d <= 0.0) { return 1.0; }
+    let sp = world_from_depth(uv, d);
+    let gap = distance(sp, frame.camera_pos.xyz) - distance(in.world_pos, frame.camera_pos.xyz);
+    return clamp(gap / frame.cam_right.w, 0.0, 1.0);
+}
+
+@fragment
+fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
+    let tex = particle_tex(in);
+    let alpha = tex.a * in.color.a * particle_fade(in);
+    // Some scripted blend functions deliberately change the destination at
+    // zero alpha (LLDrawPoolAlpha::renderAlpha, minimum_alpha = 0).
+    if ((in.flags & PART_KEEP_ZERO_ALPHA) == 0u && alpha < 1.0 / 255.0) { discard; }
+    let base = srgb_to_linear(tex.rgb * in.color.rgb);
+    return vec4<f32>(finite_hdr(particle_light(base, in)), alpha);
+}
+
+@fragment
+fn fs_particle_glow(in: PartOut) -> @location(0) vec4<f32> {
+    // emissiveF.glsl: glow uses texture coverage, independently of particle
+    // opacity/fullbright and without brightening the source colour.
+    return vec4<f32>(0.0, 0.0, 0.0, particle_tex(in).a * in.glow * particle_fade(in));
 }
 
 // ------------------------------------------------------------- impostors

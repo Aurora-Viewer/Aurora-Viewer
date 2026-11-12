@@ -932,7 +932,8 @@ struct Pipelines {
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
     blend_under_depth_ss: SidedPipelines,
-    particles: wgpu::RenderPipeline,
+    particles: ParticlePipelines,
+    particle_glow: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
@@ -1759,6 +1760,7 @@ pub(crate) struct Backend {
     motion_kept: bool,
     cull_cpu: Vec<crate::occlusion::CullDraw>,
     particle_buffer: wgpu::Buffer,
+    particle_commands: crate::particle_commands::Commands,
     particle_backoff: crate::gpu_alloc::Backoff,
     timer: Option<GpuTimer>,
     /// Two threads that finish command encoders beside this one.
@@ -1921,43 +1923,11 @@ fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-fn particle_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRS: [wgpu::VertexAttribute; 7] = [
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 0,
-            shader_location: 0,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 12,
-            shader_location: 1,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: 16,
-            shader_location: 2,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Uint32,
-            offset: 24,
-            shader_location: 3,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Unorm8x4,
-            offset: 28,
-            shader_location: 4,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
-            offset: 32,
-            shader_location: 5,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32,
-            offset: 44,
-            shader_location: 6,
-        },
+pub(crate) fn particle_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRS: [wgpu::VertexAttribute; 12] = wgpu::vertex_attr_array![
+        0 => Float32x3, 1 => Uint32, 2 => Float32x2, 3 => Uint32,
+        4 => Unorm8x4, 5 => Float32x3, 6 => Float32,
+        7 => Float32x3, 8 => Float32, 9 => Float32x3, 10 => Float32, 11 => Unorm8x4
     ];
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<ParticleInstance>() as u64,
@@ -2067,6 +2037,85 @@ struct PipeDesc<'a> {
     polygon_line: bool,
     /// Preserve water geometry in front of the near plane.
     unclipped_depth: bool,
+}
+
+/// A pipeline generation retains its shader/layout for first-use blend creation.
+/// Only ordinary alpha is compiled at startup or an MSAA/SSR rebuild. Slots are
+/// filled before command recording, so no draw substitutes a different blend.
+pub(crate) struct ParticlePipelines {
+    variants: [std::sync::OnceLock<wgpu::RenderPipeline>; crate::particles::BLEND_COUNT],
+    module: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    samples: u32,
+    format: wgpu::TextureFormat,
+    depth: Option<wgpu::TextureFormat>,
+}
+
+impl ParticlePipelines {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        module: &wgpu::ShaderModule,
+        layout: &wgpu::PipelineLayout,
+        samples: u32,
+        format: wgpu::TextureFormat,
+        depth: Option<wgpu::TextureFormat>,
+    ) -> Self {
+        let pipelines = Self {
+            variants: [const { std::sync::OnceLock::new() }; crate::particles::BLEND_COUNT],
+            module: module.clone(),
+            layout: layout.clone(),
+            samples,
+            format,
+            depth,
+        };
+        pipelines.ensure(device, 0);
+        pipelines
+    }
+
+    pub(crate) fn ensure(&self, device: &wgpu::Device, index: usize) {
+        self.variants[index].get_or_init(|| {
+            make_pipeline(
+                device,
+                &self.module,
+                &self.layout,
+                PipeDesc {
+                    label: "particles",
+                    vs: "vs_particle",
+                    fs: Some("fs_particle"),
+                    vb: Vb::Particle,
+                    cull: None,
+                    blend: Some(crate::particles::blend_state(index)),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    a2c: false,
+                    samples: self.samples,
+                    format: Some(self.format),
+                    gbuf: false,
+                    depth_format: self.depth,
+                    depth_bias: Default::default(),
+                    constants: &[],
+                    polygon_line: false,
+                    unclipped_depth: false,
+                },
+            )
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compiled_count(&self) -> usize {
+        self.variants.iter().filter(|slot| slot.get().is_some()).count()
+    }
+}
+
+impl std::ops::Index<usize> for ParticlePipelines {
+    type Output = wgpu::RenderPipeline;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        // Internal invariant: pair 0 is eager; Commands::prepare ensures every
+        // bounded blend index in the uploaded draw plan before either draw path.
+        self.variants[index].get().expect("particle blend prepared before recording")
+    }
 }
 
 /// The main view's draws, in the order of their indirect arguments, each list
@@ -3620,6 +3669,7 @@ impl Backend {
             motion_kept: false,
             cull_cpu: Vec::new(),
             particle_buffer,
+            particle_commands: crate::particle_commands::Commands::default(),
             particle_backoff: crate::gpu_alloc::Backoff::default(),
             timer,
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
@@ -3983,14 +4033,25 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
-        let particles = pipe(PipeDesc {
+        let particles = ParticlePipelines::new(device, &module, &scene_layout, samples, HDR_FORMAT, Some(DEPTH_FORMAT));
+        // LLDrawPoolAlpha::renderEmissives: colour untouched, texture alpha
+        // times per-vertex glow accumulated in the scene alpha for bloom.
+        let particle_glow = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
-            blend: Some(suppress),
-            write_mask: wgpu::ColorWrites::ALL,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent::REPLACE,
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+            write_mask: wgpu::ColorWrites::ALPHA,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
-            ..base("particles", "vs_particle", "fs_particle")
+            constants: &[("PARTICLE_GLOW_PASS", 1.0)],
+            ..base("particle glow", "vs_particle", "fs_particle_glow")
         });
         let water_particles = pipe(PipeDesc {
             vb: Vb::None,
@@ -4524,6 +4585,7 @@ impl Backend {
             blend_under,
             blend_under_depth_ss,
             particles,
+            particle_glow,
             water_particles,
             water_particles_under,
             glow,
@@ -5909,7 +5971,7 @@ impl Backend {
         ];
         let right = inv_view.transform_vector3(Vec3::X).normalize_or(Vec3::X);
         let up = inv_view.transform_vector3(Vec3::Y).normalize_or(Vec3::Z);
-        u.cam_right = right.extend(0.5).to_array();
+        u.cam_right = right.extend(if self.settings.soft_particles { 0.5 } else { 0.0 }).to_array();
         u.cam_up = up.extend(f.water_height).to_array();
         // water
         let w = &f.water;
@@ -7264,7 +7326,12 @@ impl Backend {
         }
         // glow passes only when some visible face glows (RenderGlow)
         // (a cut-out photo's alpha holds its coverage instead, cutout.rs)
-        let glow_on = f.glow && !f.cutout && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));
+        let glow_on = crate::particles::glow_enabled(
+            f.glow,
+            f.cutout,
+            !lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true),
+            &lists.particles,
+        );
         // diagnostic: AURORA_GLOW_SKIP bits leave out a family of glowing faces
         // (2 opaque, 4 alpha pool, 8 blended)
         static GLOW_SKIP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -7405,6 +7472,24 @@ impl Backend {
         } else {
             0
         };
+
+        // Failed growth retains a smaller buffer: ordered draws must use only
+        // the uploaded prefix, before any visibility clipping or glow batching.
+        self.particle_commands.plan.prepare(
+            &lists.particles[..n_particles as usize],
+            glow_on,
+            &crate::particles::Frustum::new(Mat4::from_cols_array_2d(&main.view_proj)),
+        );
+        stats.particle_work = self.particle_commands.prepare(
+            &self.device,
+            &[&self.groups.b, &self.records_bind_group, &scene.textures],
+            &self.particle_buffer,
+            &self.pipelines.particles,
+            &self.pipelines.particle_glow,
+            HDR_FORMAT,
+            Some(DEPTH_FORMAT),
+            self.msaa_samples,
+        );
 
         // ---- shadow caster culling per cascade (CPU lists: the terrain,
         // and every caster without the GPU lists). Each cascade keeps the
@@ -8971,9 +9056,8 @@ impl Backend {
             }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
-                pass.set_pipeline(&self.pipelines.particles);
-                pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
-                pass.draw(0..6, 0..n_particles);
+                self.particle_commands
+                    .draw(pass, &self.pipelines.particles, &self.pipelines.particle_glow);
             }
         };
         {

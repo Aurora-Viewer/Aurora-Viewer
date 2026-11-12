@@ -460,6 +460,7 @@ struct Period {
     triangles: u64,
     shadow_draws: u64,
     particles: u64,
+    particle_work: [u64; 8],
     occluded: u64,
     records_bytes: u64,
     palette_bytes: u64,
@@ -737,6 +738,19 @@ impl FrameProfile {
             }
         }
         p.particles += render.particles as u64;
+        let work = render.particle_work;
+        for (sum, value) in p.particle_work.iter_mut().zip([
+            work.batches,
+            work.color_draws,
+            work.glow_draws,
+            work.color_instances,
+            work.glow_instances,
+            work.culled,
+            work.bundle_builds,
+            work.bundles,
+        ]) {
+            *sum += u64::from(value);
+        }
         p.occluded += render.occluded.unwrap_or(0) as u64;
         p.records_bytes += render.records_uploaded;
         p.palette_bytes += render.palettes_uploaded;
@@ -1048,6 +1062,18 @@ fn summary(p: &Period, elapsed: Duration) -> String {
             let _ = write!(out, " {key}{k}={:.0}", count(*v) / unit);
         }
     }
+    let _ = write!(
+        out,
+        " | part_batches={:.0} part_color={:.0} part_glow={:.0} part_color_instances={:.0} part_glow_instances={:.0} part_culled={:.0} part_bundle_builds={:.0} part_bundles={:.0}",
+        count(p.particle_work[0]),
+        count(p.particle_work[1]),
+        count(p.particle_work[2]),
+        count(p.particle_work[3]),
+        count(p.particle_work[4]),
+        count(p.particle_work[5]),
+        count(p.particle_work[6]),
+        count(p.particle_work[7]),
+    );
     let s = &p.scene;
     let _ = write!(
         out,

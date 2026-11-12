@@ -41,6 +41,10 @@ mod occlusion;
 pub mod pacing;
 mod packet;
 mod part_pick;
+mod particle_commands;
+#[cfg(test)]
+mod particle_tests;
+pub mod particles;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]

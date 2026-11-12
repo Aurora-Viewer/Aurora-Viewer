@@ -69,6 +69,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
     s.colored_sky_ambient = aurora;
+    s.classic_particle_intersections = !aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -363,6 +364,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-hover-tips-legacy"),
                     &field!(classic_hover_tips),
                 );
+                look(
+                    cx,
+                    tr!("ui-options-particle-intersections"),
+                    tr!("ui-options-particle-intersections-help"),
+                    tr!("ui-options-particle-intersections-aurora"),
+                    tr!("ui-options-particle-intersections-legacy"),
+                    &field!(classic_particle_intersections),
+                );
                 // also in Graphics › Sky and environment, the same setting
                 cx.wide().experimental().choice(
                     tr!("ui-options-colored-sky-ambient"),
@@ -616,6 +625,19 @@ mod tests {
         assert_eq!(back.notifications_style, NotificationsStyle::Legacy);
         let old: Settings = serde_json::from_str("{}").expect("empty settings");
         assert_eq!(old.notifications_style, NotificationsStyle::Aurora);
+    }
+
+    #[test]
+    fn particle_intersections_persist_default_to_aurora_and_follow_bulk_choices() {
+        let mut s: Settings = serde_json::from_str("{}").expect("old preferences");
+        assert!(!s.classic_particle_intersections);
+        assert!(s.render_settings().soft_particles);
+        set_all(&mut s, Look::Legacy);
+        assert!(s.classic_particle_intersections);
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).expect("serialize")).expect("read back");
+        assert!(!back.render_settings().soft_particles);
+        set_all(&mut s, Look::Aurora);
+        assert!(s.render_settings().soft_particles);
     }
 
     #[test]

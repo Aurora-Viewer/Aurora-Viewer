@@ -862,7 +862,7 @@ impl DrawLists {
     }
 }
 
-/// One camera-facing particle quad (instance data, 48 bytes).
+/// One particle quad, retaining both independent ribbon endpoints (88 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct ParticleInstance {
@@ -874,17 +874,24 @@ pub struct ParticleInstance {
     pub flags: u32,
     /// Straight RGBA, sRGB encoded.
     pub color: [u8; 4],
-    /// Orientation axis for ribbons / velocity-aligned particles.
+    /// Ribbon child width axis, or velocity of a velocity-aligned billboard.
     pub axis: [f32; 3],
     pub glow: f32,
+    pub end_pos: [f32; 3],
+    pub end_glow: f32,
+    pub end_axis: [f32; 3],
+    pub end_width: f32,
+    pub end_color: [u8; 4],
+    /// Index of a supported source/destination blend pair; zero is ordinary alpha.
+    pub blend: u32,
 }
 
 pub mod particle_flags {
     /// Not lit by the environment.
     pub const EMISSIVE: u32 = 1;
-    /// Additive blending (destination factor ONE).
-    pub const ADDITIVE: u32 = 2;
-    /// Quad stretched along its world-space `axis` (ribbons).
+    /// Custom blend pairs without SOURCE_ALPHA may affect zero-alpha texels.
+    pub const KEEP_ZERO_ALPHA: u32 = 2;
+    /// Ribbon with independently positioned, oriented and shaded endpoints.
     pub const AXIS: u32 = 4;
     /// Velocity-oriented billboard: project its axis onto the viewing plane.
     pub const FOLLOW_VELOCITY: u32 = 8;
@@ -1077,6 +1084,8 @@ pub struct RenderSettings {
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
+    /// Fade scripted particles where they intersect opaque scene depth.
+    pub soft_particles: bool,
     pub aa: AntiAliasing,
     /// With FSR: RCAS's strength (0..1), none without RCAS.
     pub fsr_sharpness: Option<f32>,
@@ -1130,6 +1139,7 @@ impl Default for RenderSettings {
             vr_vibrancy: 1.0,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
+            soft_particles: true,
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
@@ -1615,6 +1625,20 @@ pub struct ShadowStats {
     pub gpu_ms: Option<[f32; 5]>,
 }
 
+/// Scripted particle work submitted by one frame; ordinary scene draw
+/// counters do not include these instanced colour/glow draws.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParticleDrawStats {
+    pub batches: u32,
+    pub color_draws: u32,
+    pub glow_draws: u32,
+    pub color_instances: u32,
+    pub glow_instances: u32,
+    pub culled: u32,
+    pub bundle_builds: u32,
+    pub bundles: u32,
+}
+
 /// Per-frame statistics reported by the renderer.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderStats {
@@ -1655,6 +1679,7 @@ pub struct RenderStats {
     /// with a render thread.
     pub cpu_encode_ms: f32,
     pub particles: u32,
+    pub particle_work: ParticleDrawStats,
     pub water_reflection: bool,
     pub mirror: bool,
     /// Draws hidden by the GPU occlusion (a frame or two late; None = off).

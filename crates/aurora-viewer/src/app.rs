@@ -11282,6 +11282,7 @@ impl App {
                 dt,
                 frozen,
                 self.camera.position,
+                lod_height as f32 / (2.0 * (self.camera.fov_y * 0.5).tan()),
                 max_particles,
                 self.settings.draw_distance,
                 self.settings.attached_particles,
@@ -11511,6 +11512,23 @@ impl App {
         self.world.objects.refresh_labelled();
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
+        }
+        // The mixed load uses a fixed view after demo loading resets.
+        if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_PARTICLES").is_ok_and(|mode| mode == "bench-mixed") {
+            let ground = crate::demo::floor_at(180.0, 127.0);
+            self.camera.set_view(
+                glam::Vec3::new(166.0, 126.5, ground + 4.7),
+                glam::Vec3::new(180.0, 126.5, ground + 4.7),
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
+            self.camera.snap();
+            self.settings.glow = true;
+            self.panels.people = false;
+            self.panels.minimap = false;
+            self.panels.chat = false;
+            self.panels.inventory = false;
+            self.panels.ao = false;
         }
         ui::fonts::preview::release_unused(&self.egui_ctx);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
@@ -14160,6 +14178,34 @@ impl App {
                 };
                 self.media.on_key(&self.world, None, code, 0, pressed, false, None, mods);
             }
+        }
+        // Wait until the demo's login/loading camera resets have completed.
+        if self.demo
+            && self.frame_count == 600
+            && std::env::var("AURORA_DEMO_PARTICLES").is_ok_and(|mode| matches!(mode.as_str(), "parity" | "parity-legacy"))
+        {
+            let ground = crate::demo::floor_at(180.0, 127.0);
+            self.camera.set_view(
+                glam::Vec3::new(168.0, 126.5, ground + 4.0),
+                glam::Vec3::new(180.0, 126.5, ground + 4.0),
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
+            self.camera.snap();
+            // Demo changes do not go through the preferences action queue.
+            if let Some(gfx) = &mut self.gfx {
+                gfx.renderer.apply_settings(self.settings.render_settings());
+            }
+        }
+        if self.demo
+            && self.frame_count == 620
+            && std::env::var("AURORA_DEMO_PARTICLES").is_ok_and(|mode| matches!(mode.as_str(), "parity" | "parity-legacy"))
+        {
+            log::info!(
+                "demo particle parity view: eye={:?}, focus={:?}",
+                self.camera.position,
+                self.camera.target
+            );
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
         if self.demo
@@ -20818,6 +20864,18 @@ impl ApplicationHandler for App {
                 };
                 self.camera
                     .set_view(focus + offset, focus, &mut self.world.agent, &self.settings.camera);
+            }
+            // Configure the isolated particle fixtures after demo initialization.
+            if let Ok(mode) = std::env::var("AURORA_DEMO_PARTICLES")
+                && matches!(mode.as_str(), "parity" | "parity-legacy")
+            {
+                self.panels.people = false;
+                self.panels.minimap = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.panels.ao = false;
+                self.settings.classic_particle_intersections = mode == "parity-legacy";
+                self.settings.glow = true;
             }
             if let Some(mode) = &self.ao_demo {
                 crate::ao::demo::assets(&mut self.scene);

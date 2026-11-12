@@ -581,6 +581,56 @@ fn leash_particles(target: Uuid) -> Vec<u8> {
     out
 }
 
+/// Deterministic rendering fixtures using the real extended particle wire
+/// format: lit/fullbright, destination mask, glow, fading glow, ribbon ends.
+fn parity_particles(kind: usize, target: Uuid) -> Vec<u8> {
+    use aurora_prim::particles::*;
+    let mut legacy = if kind == 5 { leash_particles(target) } else { fountain_particles() };
+    if kind != 5 {
+        legacy[8] = LL_PART_SRC_PATTERN_DROP;
+        legacy[15..17].copy_from_slice(&(60u16 * 256).to_le_bytes());
+        legacy[17..23].fill(0);
+        legacy[23] = 1;
+        for i in (24..36).step_by(2) {
+            legacy[i..i + 2].copy_from_slice(&32768u16.to_le_bytes());
+        }
+    }
+    let flags = if kind == 5 {
+        LL_PART_RIBBON_MASK | LL_PART_TARGET_POS_MASK | LL_PART_INTERP_COLOR_MASK | LL_PART_INTERP_SCALE_MASK | LL_PART_EMISSIVE_MASK
+    } else if kind == 0 {
+        0
+    } else {
+        LL_PART_EMISSIVE_MASK
+    };
+    legacy[68..72].copy_from_slice(&(flags | LL_PART_DATA_GLOW | LL_PART_DATA_BLEND).to_le_bytes());
+    legacy[72..74].copy_from_slice(&(if kind == 5 { 4u16 * 256 } else { 60u16 * 256 }).to_le_bytes());
+    let color = if kind >= 3 {
+        [32, 170, 240, if kind == 3 { 32 } else { 255 }]
+    } else {
+        [180, 32, 16, 255]
+    };
+    legacy[74..78].copy_from_slice(&color);
+    legacy[78..82].copy_from_slice(&[240, 40, 170, 255]);
+    legacy[82..86].copy_from_slice(if kind == 5 { &[20, 20, 2, 2] } else { &[48, 48, 48, 48] });
+    let mut block = Vec::with_capacity(98);
+    block.extend_from_slice(&(PS_SYS_DATA_BLOCK_SIZE as u32).to_le_bytes());
+    block.extend_from_slice(&legacy[..68]);
+    block.extend_from_slice(&22u32.to_le_bytes());
+    block.extend_from_slice(&legacy[68..]);
+    let glow = if kind >= 3 {
+        [200, if kind == 4 { 0 } else { 200 }]
+    } else {
+        [0, 0]
+    };
+    block.extend_from_slice(&glow);
+    block.extend_from_slice(if kind == 2 {
+        &[LL_PART_BF_ZERO, LL_PART_BF_SOURCE_ALPHA]
+    } else {
+        &[LL_PART_BF_SOURCE_ALPHA, LL_PART_BF_ONE_MINUS_SOURCE_ALPHA]
+    });
+    block
+}
+
 /// Two otherwise identical smoke emitters, with only LL_PART_WIND_MASK
 /// differing. Keep the ordinary compressed-update path and default texture.
 fn region_wind_particles(affected: bool) -> Vec<u8> {
@@ -5363,14 +5413,24 @@ pub fn events() -> Vec<NetEvent> {
     let particles_mode = std::env::var("AURORA_DEMO_PARTICLES").unwrap_or_default();
     if !particles_mode.is_empty() && particles_mode != "load" {
         let mode = particles_mode.as_str();
-        let ground = floor_at(136.0, 127.0);
+        let parity = matches!(mode, "parity" | "parity-legacy");
+        let ground = floor_at(if parity { 180.0 } else { 136.0 }, 127.0);
         add(prim(
             id,
-            Vec3::new(139.0, 125.0, ground + 3.0),
+            Vec3::new(if parity { 182.0 } else { 139.0 }, 125.0, ground + 3.0),
             Quat::IDENTITY,
             Vec3::new(0.1, 24.0, 6.0),
             boxp,
-            te([0.01, 0.01, 0.015, 1.0], 0, true, 0.0),
+            te(
+                if parity {
+                    [0.18, 0.18, 0.22, 1.0]
+                } else {
+                    [0.01, 0.01, 0.015, 1.0]
+                },
+                0,
+                true,
+                0.0,
+            ),
             ExtraParams::default(),
             "",
         ));
@@ -5382,7 +5442,7 @@ pub fn events() -> Vec<NetEvent> {
             if (mode == "wind" && !wind)
                 || (mode == "smoke" && wind)
                 || (mode == "legacy" && !wind)
-                || mode == "leash"
+                || matches!(mode, "leash" | "parity" | "parity-legacy")
                 || (mode == "worn" && wind)
             {
                 continue;
@@ -5415,6 +5475,62 @@ pub fn events() -> Vec<NetEvent> {
             add(o);
             id += 1;
         }
+        if matches!(mode, "parity" | "parity-legacy") {
+            for kind in 0..6 {
+                let y = 121.5 + (kind % 3) as f32 * 4.0;
+                let z = ground + 2.2 + (kind / 3) as f32 * 2.8;
+                // The rotated opaque slab intersects the lit sprite.
+                // Its depth crosses the billboard gradually, exposing the
+                // difference between hard clipping and the optional fade.
+                if kind == 0 {
+                    add(prim(
+                        id,
+                        Vec3::new(180.0, y, z),
+                        Quat::from_rotation_z(0.9),
+                        Vec3::new(0.12, 1.8, 1.8),
+                        boxp,
+                        te([0.35, 0.22, 0.08, 1.0], 0, true, 0.0),
+                        ExtraParams::default(),
+                        "",
+                    ));
+                    id += 1;
+                }
+                let target = if kind == 5 {
+                    let hand = prim(
+                        id,
+                        Vec3::new(180.0, y + 2.5, z),
+                        Quat::IDENTITY,
+                        Vec3::splat(0.12),
+                        boxp,
+                        te(teal, 0, true, 0.0),
+                        ExtraParams::default(),
+                        "",
+                    );
+                    let target = hand.full_id;
+                    add(hand);
+                    id += 1;
+                    target
+                } else {
+                    Uuid::nil()
+                };
+                let mut emitter = prim(
+                    id,
+                    Vec3::new(180.0, y, z),
+                    Quat::from_rotation_x(0.4),
+                    Vec3::splat(0.08),
+                    boxp,
+                    te(teal, 0, true, 0.0),
+                    ExtraParams::default(),
+                    "",
+                );
+                if kind == 5 {
+                    emitter.angular_velocity = Vec3::X * 0.8;
+                }
+                emitter.particles = aurora_net::objects::ParticleUpdate::Set(parity_particles(kind, target));
+                add(emitter);
+                id += 1;
+            }
+        }
         if mode == "leash" {
             // a collar and the hand that holds it, 5 m apart
             let hand = prim(
@@ -5442,6 +5558,51 @@ pub fn events() -> Vec<NetEvent> {
             );
             collar.particles = aurora_net::objects::ParticleUpdate::Set(leash_particles(target));
             add(collar);
+            id += 1;
+        }
+    }
+    // Mixed particle load: blend/glow draw pressure plus lit and rotating ribbon geometry.
+    if particles_mode == "bench-mixed" {
+        use aurora_prim::particles::*;
+        let ground = floor_at(180.0, 127.0);
+        for i in 0..32usize {
+            let y = 119.5 + (i % 8) as f32 * 2.0;
+            let z = ground + 1.4 + (i / 8) as f32 * 1.5;
+            let mut o = prim(
+                id,
+                Vec3::new(180.0 + (i % 3) as f32 * 0.15, y, z),
+                Quat::from_rotation_x(0.7),
+                Vec3::splat(0.08),
+                boxp,
+                te(teal, 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            let mut legacy = fountain_particles();
+            let ribbon = i % 4 == 3;
+            let lit = i % 4 == 0;
+            let glow = i % 2 == 1;
+            let flags = LL_PART_INTERP_COLOR_MASK
+                | LL_PART_INTERP_SCALE_MASK
+                | LL_PART_DATA_GLOW
+                | LL_PART_DATA_BLEND
+                | if lit { 0 } else { LL_PART_EMISSIVE_MASK }
+                | if ribbon { LL_PART_RIBBON_MASK } else { 0 };
+            legacy[68..72].copy_from_slice(&flags.to_le_bytes());
+            legacy[82..86].copy_from_slice(if ribbon { &[8, 32, 2, 48] } else { &[32, 32, 48, 48] });
+            let pairs = [[7u8, 9u8], [1, 7], [7, 0], [0, 1], [3, 4], [2, 9], [7, 3], [5, 7]];
+            let mut block = Vec::with_capacity(98);
+            block.extend_from_slice(&(PS_SYS_DATA_BLOCK_SIZE as u32).to_le_bytes());
+            block.extend_from_slice(&legacy[..68]);
+            block.extend_from_slice(&22u32.to_le_bytes());
+            block.extend_from_slice(&legacy[68..]);
+            block.extend_from_slice(if glow { &[128, 48] } else { &[0, 0] });
+            block.extend_from_slice(&pairs[i % pairs.len()]);
+            o.particles = aurora_net::objects::ParticleUpdate::Set(block);
+            if ribbon {
+                o.angular_velocity = Vec3::X * 0.8;
+            }
+            add(o);
             id += 1;
         }
     }
@@ -9485,6 +9646,39 @@ fn demo_water_eep(v: &str) -> Llsd {
 #[cfg(test)]
 mod particle_tests {
     use super::*;
+
+    #[test]
+    fn particle_parity_fixtures_use_extended_blends_glow_and_ribbon_endpoints() {
+        use aurora_prim::particles as ps;
+        let target = Uuid::from_u128(1234);
+        for kind in 0..6 {
+            let d = ps::parse(&parity_particles(kind, target)).expect("valid extended fixture");
+            assert_eq!(
+                d.part.blend_func_source,
+                if kind == 2 {
+                    ps::LL_PART_BF_ZERO
+                } else {
+                    ps::LL_PART_BF_SOURCE_ALPHA
+                }
+            );
+            assert_eq!(
+                d.part.blend_func_dest,
+                if kind == 2 {
+                    ps::LL_PART_BF_SOURCE_ALPHA
+                } else {
+                    ps::LL_PART_BF_ONE_MINUS_SOURCE_ALPHA
+                }
+            );
+            assert_eq!(d.part.has_glow(), kind >= 3);
+            assert_eq!(d.part.flags & ps::LL_PART_RIBBON_MASK != 0, kind == 5);
+            if kind == 5 {
+                assert_eq!(d.target_id, target);
+            } else {
+                assert_eq!(d.pattern, ps::LL_PART_SRC_PATTERN_DROP);
+                assert_eq!(d.burst_part_count, 1);
+            }
+        }
+    }
 
     #[test]
     fn demo_sky_ambient_is_a_grey_level_or_a_colour() {

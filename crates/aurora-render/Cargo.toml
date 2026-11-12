@@ -17,6 +17,7 @@ glam = { version = "0.34.1", features = ["bytemuck"] }
 log = "0.4.34"
 parking_lot = "0.13.0"
 pollster = "1.0.1"
+rayon = "1.12.0"
 thiserror = "2.0.21"
 uuid = "1.27.0"
 # counters: bytes of the live textures and buffers, for the memory budget (vram.rs)
@@ -60,7 +61,6 @@ xr-static-loader = ["openxr/static"]
 [dev-dependencies]
 naga = { version = "30", features = ["wgsl-in", "spv-out", "msl-out"] }
 aurora-assets = { path = "../aurora-assets" }
-rayon = "1.12.0"
 
 [lints]
 workspace = true

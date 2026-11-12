@@ -228,10 +228,12 @@ impl ParticleManager {
                 if p.flags & ps::LL_PART_HUD != 0 {
                     continue;
                 }
-                let Some((pos, right, up)) = pick_geometry(p, view) else { continue };
-                let Some(t) = quad_hit(origin, dir, right, up, pos) else {
-                    continue;
+                let hit = if p.is_ribbon() {
+                    ribbon_hit(p, origin, dir)
+                } else {
+                    pick_geometry(p, view).and_then(|(pos, right, up)| quad_hit(origin, dir, right, up, pos))
                 };
+                let Some(t) = hit else { continue };
                 if t <= max && best.is_none_or(|hit| t < hit.distance) {
                     best = Some(ParticleHit {
                         source: *id,
@@ -326,6 +328,7 @@ impl ParticleManager {
         dt: f32,
         frozen: bool,
         eye: Vec3,
+        pixel_scale: f32,
         max_particles: usize,
         draw_distance: f32,
         attached: bool,
@@ -492,41 +495,101 @@ impl ParticleManager {
             } else {
                 s.slot
             };
-            textures.note_usage(&s.texture, 128.0);
+            let mut texture_area = 0.0_f32;
             for p in s.ps.particles() {
                 if p.flags & ps::LL_PART_HUD != 0 {
                     continue;
                 }
-                let mut flags = 0;
-                if p.is_emissive() {
-                    flags |= particle_flags::EMISSIVE;
-                }
-                if p.blend_dst == ps::LL_PART_BF_ONE {
-                    flags |= particle_flags::ADDITIVE;
-                }
-                let Some((pos, axis, size, shape)) = geometry(p) else {
-                    continue;
-                };
-                flags |= shape;
-                let inst = ParticleInstance {
-                    pos: pos.to_array(),
-                    texture: slot,
-                    size,
-                    flags,
-                    color: [to_u8(p.color[0]), to_u8(p.color[1]), to_u8(p.color[2]), to_u8(p.color[3])],
-                    axis: axis.to_array(),
-                    glow: p.glow,
-                };
+                let Some(inst) = instance(p, slot) else { continue };
+                let pos = if p.is_ribbon() { (p.pos + p.prev_pos) * 0.5 } else { p.pos };
+                texture_area = texture_area.max(projected_texture_area(p, eye));
                 self.order_tmp.push(far_first_key(pos.distance_squared(eye), self.inst_tmp.len()));
                 self.inst_tmp.push(inst);
             }
+            // sqrt and positive pixel scale are monotone: the same maximum
+            // request needs one square root per source, not per particle.
+            textures.note_usage(&s.texture, texture_area.sqrt() * pixel_scale);
         }
         self.live = self.inst_tmp.len();
         // the order is sorted as plain integers (8 bytes each, not the
-        // 48-byte instances), then the instances are gathered
+        // 88-byte instances), then the instances are gathered
         self.order_tmp.sort_unstable();
         out.extend(self.order_tmp.iter().map(|k| self.inst_tmp[(k & 0xFFFF_FFFF) as usize]));
         parts.lap(Part::ParamsPartList, t);
+    }
+}
+
+/// LLVOPartGroup::updateGeometry uses projected area with a 10x priority
+/// boost, not a fixed texture resolution. Close or large sprites can reach
+/// discard 0; distant sprites retain ordinary streaming/budget behavior.
+fn projected_texture_area(p: &ps::Particle, eye: Vec3) -> f32 {
+    let area = p.size.x.max(0.0) * p.size.y.max(0.0);
+    area * 10.0 / p.pos.distance_squared(eye).max(1.0)
+}
+
+#[cfg(test)]
+fn texture_pixels(p: &ps::Particle, eye: Vec3, pixel_scale: f32) -> f32 {
+    projected_texture_area(p, eye).sqrt() * pixel_scale
+}
+
+fn instance(p: &ps::Particle, texture: u32) -> Option<ParticleInstance> {
+    let (pos, axis, size, shape) = geometry(p)?;
+    let ribbon = p.is_ribbon();
+    let mut flags = shape;
+    if p.is_emissive() {
+        flags |= particle_flags::EMISSIVE;
+    }
+    if p.blend_src != ps::LL_PART_BF_SOURCE_ALPHA && p.blend_dst != ps::LL_PART_BF_SOURCE_ALPHA {
+        flags |= particle_flags::KEEP_ZERO_ALPHA;
+    }
+    Some(ParticleInstance {
+        pos: if ribbon { p.pos } else { pos }.to_array(),
+        axis: if ribbon { p.axis } else { axis }.to_array(),
+        size: if ribbon { p.size.to_array() } else { size },
+        texture,
+        flags,
+        color: p.color.map(to_u8),
+        glow: p.glow,
+        // Ordinary sprites never consume ribbon endpoints. Avoid their
+        // colour conversion and copies while retaining full ribbon precision.
+        end_pos: if ribbon { p.prev_pos.to_array() } else { [0.0; 3] },
+        end_axis: if ribbon { p.prev_axis.to_array() } else { [0.0; 3] },
+        end_width: if ribbon { p.prev_width } else { 0.0 },
+        end_color: if ribbon { p.prev_color.map(to_u8) } else { [0; 4] },
+        end_glow: if ribbon { p.prev_glow } else { 0.0 },
+        blend: aurora_render::particles::blend_index(p.blend_src, p.blend_dst),
+    })
+}
+
+/// Actual reference triangles, including tapered and twisted ribbon ends.
+/// LLVOPartGroup::getGeometry writes parent +/- width before child +/- width.
+fn ribbon_corners(p: &ps::Particle) -> [Vec3; 4] {
+    let a = p.axis * p.size.x * 0.5;
+    let b = p.prev_axis * p.prev_width * 0.5;
+    [p.prev_pos + b, p.prev_pos - b, p.pos + a, p.pos - a]
+}
+
+fn ribbon_hit(p: &ps::Particle, origin: Vec3, dir: Vec3) -> Option<f32> {
+    let [a, b, c, d] = ribbon_corners(p);
+    let triangle = |a: Vec3, b: Vec3, c: Vec3| {
+        let edge = b - a;
+        let other = c - a;
+        let cross = dir.cross(other);
+        let determinant = edge.dot(cross);
+        if determinant.abs() < 1e-10 {
+            return None;
+        }
+        let inv = 1.0 / determinant;
+        let offset = origin - a;
+        let u = offset.dot(cross) * inv;
+        let q = offset.cross(edge);
+        let v = dir.dot(q) * inv;
+        let t = other.dot(q) * inv;
+        (u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t >= 0.0).then_some(t)
+    };
+    match (triangle(a, b, c), triangle(b, d, c)) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }
 
@@ -542,7 +605,8 @@ impl ParticleManager {
 fn geometry(p: &ps::Particle) -> Option<(Vec3, Vec3, [f32; 2], u32)> {
     if p.is_ribbon() {
         let seg = p.prev_pos - p.pos;
-        if seg.length_squared() <= 1e-8 {
+        let [a, b, c, d] = ribbon_corners(p);
+        if (b - a).cross(c - a).length_squared().max((d - b).cross(c - b).length_squared()) <= 1e-16 {
             return None;
         }
         return Some((p.pos + seg * 0.5, seg, [p.size.x, seg.length()], particle_flags::AXIS));
@@ -558,35 +622,27 @@ fn geometry(p: &ps::Particle) -> Option<(Vec3, Vec3, [f32; 2], u32)> {
     Some((p.pos, Vec3::ZERO, [p.size.x, p.size.y], 0))
 }
 
-/// Full quad axes from object.wgsl::particle_vs, not an approximation facing
-/// the click ray. Picking must follow the geometry actually visible on screen.
+/// Billboard axes from object.wgsl::vs_particle, not the click ray. Ribbons
+/// use their two actual triangles through ribbon_hit instead.
 fn pick_geometry(p: &ps::Particle, (eye, mut right, mut up): (Vec3, Vec3, Vec3)) -> Option<(Vec3, Vec3, Vec3)> {
     let (pos, axis, size, shape) = geometry(p)?;
+    let to_cam = (eye - pos).try_normalize()?;
+    let view_right = Vec3::Z.cross(to_cam);
+    if view_right.length_squared() > 1e-8 {
+        right = view_right.normalize();
+        up = to_cam.cross(right).normalize();
+    }
     if shape == particle_flags::FOLLOW_VELOCITY {
-        let to_cam = (eye - pos).try_normalize()?;
-        let view_right = Vec3::Z.cross(to_cam);
-        if view_right.length_squared() > 1e-8 {
-            right = view_right.normalize();
-            up = to_cam.cross(right).normalize();
-        }
         let projected = glam::Vec2::new(axis.dot(right), axis.dot(up));
         if projected.length_squared() > 1e-8 {
             let direction = projected.normalize();
             (right, up) = (right * direction.y - up * direction.x, right * direction.x + up * direction.y);
         }
-    } else if shape == particle_flags::AXIS {
-        let to_cam = (eye - pos).try_normalize()?;
-        let side = to_cam.cross(axis.normalize());
-        if side.length_squared() > 1e-6 {
-            right = side.normalize();
-        }
-        return Some((pos, right * size[0], axis));
     }
     Some((pos, right * size[0], up * size[1]))
 }
 
-/// Ray/parallelogram intersection, with full edge vectors (also handles the
-/// ribbon fallback's non-orthogonal axes). Like LLVOPartGroup triangle picking.
+/// Ray/parallelogram intersection for a billboard, with full edge vectors.
 fn quad_hit(origin: Vec3, dir: Vec3, right: Vec3, up: Vec3, pos: Vec3) -> Option<f32> {
     let normal = right.cross(up);
     let norm2 = normal.length_squared();
@@ -705,13 +761,16 @@ mod tests {
     }
 
     #[test]
-    fn particle_pick_respects_camera_billboard_axes_and_excludes_clouds_huds() {
+    fn particle_pick_respects_reference_billboard_axes_and_excludes_clouds_huds() {
         let id = Uuid::from_u128(72);
         let mut manager = ParticleManager::default();
         manager.sources.insert(id, pick_source(0, glam::Vec2::new(0.1, 6.0), Vec3::ZERO));
-        // A rolled camera rotates the visible long axis with the billboard.
+        // LLVOPartGroup builds axes from world Z and the eye ray, so camera
+        // roll does not rotate an ordinary particle's authored long axis.
         let view = (Vec3::ZERO, Vec3::Z, Vec3::Y);
-        let ray = (Vec3::ZERO, Vec3::new(10.0, 2.5, 0.0).normalize());
+        let horizontal = (Vec3::ZERO, Vec3::new(10.0, 2.5, 0.0).normalize());
+        assert!(manager.pick(horizontal, view, 30.0).is_none());
+        let ray = (Vec3::ZERO, Vec3::new(10.0, 0.0, 2.5).normalize());
         assert!(manager.pick(ray, view, 30.0).is_some());
         manager.sources.get_mut(&id).unwrap().cloud = true;
         assert!(manager.pick(ray, view, 30.0).is_none());
@@ -968,6 +1027,82 @@ mod tests {
         assert!(quad_hit(Vec3::new(0.0, 0.0, 0.3), dir, right, up, at).is_none());
         // behind the eye
         assert!(quad_hit(Vec3::new(11.0, 0.0, 0.0), dir, right, up, at).is_none());
+    }
+
+    #[test]
+    fn ribbon_instances_keep_both_ends_and_picking_follows_their_twist() {
+        let source = pick_source(ps::LL_PART_RIBBON_MASK, glam::Vec2::new(0.4, 8.0), Vec3::ZERO);
+        let mut p = source.ps.particles()[0];
+        p.pos = Vec3::new(10.0, -1.0, 0.0);
+        p.prev_pos = Vec3::new(10.0, 1.0, 0.0);
+        p.axis = Vec3::Z;
+        p.prev_axis = Vec3::new(0.6, 0.0, 0.8);
+        p.prev_width = 1.2;
+        p.color = [1.0, 0.0, 0.0, 0.2];
+        p.prev_color = [0.0, 0.0, 1.0, 0.8];
+        p.glow = 0.1;
+        p.prev_glow = 0.7;
+        p.blend_src = ps::LL_PART_BF_ZERO;
+        p.blend_dst = ps::LL_PART_BF_SOURCE_ALPHA;
+        let i = instance(&p, 17).expect("ribbon has area");
+        assert_eq!(i.pos, p.pos.to_array());
+        assert_eq!(i.end_pos, p.prev_pos.to_array());
+        assert_eq!(i.axis, p.axis.to_array());
+        assert_eq!(i.end_axis, p.prev_axis.to_array());
+        assert_eq!(i.end_width, 1.2);
+        assert_eq!(i.color, [255, 0, 0, 51]);
+        assert_eq!(i.end_color, [0, 0, 255, 204]);
+        assert_eq!((i.glow, i.end_glow), (0.1, 0.7));
+        assert_eq!(i.blend, aurora_render::particles::blend_index(1, 7));
+        let [a, b, c, d] = ribbon_corners(&p);
+        for point in [(a + b + c) / 3.0, (b + d + c) / 3.0] {
+            let origin = point - Vec3::X * 5.0;
+            let distance = ribbon_hit(&p, origin, Vec3::X).expect("actual ribbon triangle");
+            assert!((distance - 5.0).abs() < 1e-4);
+        }
+        assert!(ribbon_hit(&p, Vec3::new(0.0, 0.0, 2.0), Vec3::X).is_none());
+        // Coincident ends with different width axes still cover triangles.
+        p.prev_pos = p.pos;
+        assert!(geometry(&p).is_some());
+        p.prev_axis = p.axis;
+        assert!(geometry(&p).is_none());
+    }
+
+    #[test]
+    fn reducing_texture_area_before_sqrt_keeps_the_exact_detail_request() {
+        let source = pick_source(0, glam::Vec2::splat(0.5), Vec3::ZERO);
+        let template = source.ps.particles()[0];
+        let particles: Vec<_> = (0..512)
+            .map(|i| {
+                let mut p = template;
+                p.size = glam::Vec2::new((i % 17) as f32 * 0.25, (i % 11) as f32 * 0.375);
+                p.pos = Vec3::new(i as f32 * 0.023, (i % 7) as f32 * 0.71, 2.0);
+                p
+            })
+            .collect();
+        for eye in [Vec3::ZERO, Vec3::new(3.0, 8.0, 4.0)] {
+            for scale in [1.0, 128.0, 768.0, 1536.0] {
+                let before = particles.iter().map(|p| texture_pixels(p, eye, scale)).fold(0.0_f32, f32::max);
+                let after = particles
+                    .iter()
+                    .map(|p| projected_texture_area(p, eye))
+                    .fold(0.0_f32, f32::max)
+                    .sqrt()
+                    * scale;
+                assert_eq!(before.to_bits(), after.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn particle_texture_detail_tracks_reference_projected_area_not_a_128_pixel_cap() {
+        let source = pick_source(0, glam::Vec2::splat(0.5), Vec3::ZERO);
+        let p = source.ps.particles()[0];
+        let near = texture_pixels(&p, p.pos - Vec3::X, 768.0);
+        let far = texture_pixels(&p, p.pos - Vec3::X * 10.0, 768.0);
+        assert!(near > 1024.0, "a nearby 1024px particle reaches full detail");
+        assert!((near / far - 10.0).abs() < 1e-4);
+        assert_eq!(texture_pixels(&p, p.pos - Vec3::X, 1536.0), near * 2.0);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Local circular podium and an ocean plane beneath the inspection avatar.
 //! Private GPU allocations, never simulator objects or inventory assets.
 
+use aurora_prim::particles as ps;
 use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, ParticleInstance, Renderer, ShadowCaster, Vertex, flags, particle_flags};
 use glam::{Mat4, Quat, Vec3};
 
@@ -121,7 +122,8 @@ pub fn reveal_particles(out: &mut Vec<ParticleInstance>, floor: Vec3, height: f3
         out.push(ParticleInstance {
             pos: position.to_array(),
             size: [size; 2],
-            flags: particle_flags::EMISSIVE | particle_flags::ADDITIVE,
+            flags: particle_flags::EMISSIVE,
+            blend: aurora_render::particles::blend_index(ps::LL_PART_BF_SOURCE_ALPHA, ps::LL_PART_BF_ONE),
             color: [color[0], color[1], color[2], (fade * fade * 180.0).round() as u8],
             glow: fade * 0.4,
             ..Default::default()
@@ -375,6 +377,8 @@ mod tests {
         let mut start = Vec::new();
         reveal_particles(&mut start, Vec3::ZERO, 1.8, 0.0, colors, 10000);
         assert_eq!(start.len(), 96);
+        assert!(start.iter().all(|p| p.flags == particle_flags::EMISSIVE
+            && p.blend == aurora_render::particles::blend_index(ps::LL_PART_BF_SOURCE_ALPHA, ps::LL_PART_BF_ONE)));
         let mut later = Vec::new();
         reveal_particles(&mut later, Vec3::ZERO, 1.8, 0.5, colors, 96);
         assert_eq!(later.len(), start.len());

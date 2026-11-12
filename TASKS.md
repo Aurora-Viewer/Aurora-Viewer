@@ -1691,7 +1691,14 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
     - ⬜ to verify on Agni (QA): a real media earring / gauge worn, detached and reattached: no question; a media HUD: no question; another avatar wearing a media item: unchanged; a site already on the block list stays blocked on a worn item; the option off brings the question back
 - 🟡 Colour of lights: already linear in the packet (LLLightParams::setLinearColor), no more power of 2.2; local lights ×0.9 under a classic sky (multiPointLightF)
 - 🟡 Prims with the "Light" material (LL_MCODE_LIGHT) rendered fullbright like LLVOVolume
-- ⬜ Particle glow (currently approximated by a brightening)
+- 🟡 Particle rendering parity (#1944; PR #2040; related #1924 / #1049;
+  task `particle-render-parity`): Legacy blend factors, glow, lighting, texture detail and ribbon geometry;
+  checked offline and validated by the human, with remaining grid QA below.
+  - Preferences > Aurora > World and interface offers Particle intersection: Faded (Aurora, the default)
+    or Clipped (Legacy), persisted and included in the bulk style choices.
+  - ⬜ Grid QA: compare representative real emitters with the Legacy Viewer: custom blends and zero-alpha
+    masks, particle-only glow, large or nearby textures, moving textured ribbons, and both Faded /
+    Clipped intersection settings.
 - 🟡 Leash chains stood up as tall strips (#1049; task `ribbon-chain-size`): ribbon links emitted in the same frame (several per burst, or several bursts in one frame) share their position and motion, so the segment to their parent stays empty; Aurora drew such a link as a camera-facing billboard `size.x` × `size.y`, and leash scripts give ribbons a long y scale since ribbons ignore it. Now drawn as nothing, like the zero-area quad of `LLVOPartGroup::getGeometry`. Demo `AURORA_DEMO_PARTICLES=leash`: tall strips before, a thin sagging chain after. Full `scripts/check.ps1` green. Validated by the human in demo on 2026-10-26.
   - ⬜ QA on the grid: a real collar leash held by another avatar, in its ribbon and classic modes, still and walking; the chain runs from collar to hand with no tall strips, at 30 and 144+ FPS; cuff chains to a post (LockGuard-style); compare with the Legacy Viewer side by side.
 - 🟡 Ribbon particles drawn as dashes (#1924; task `ribbon-particle-uv`; validated by the human in demo on 2026-11-02): a ribbon segment mapped its texture like a billboard (u across the width, v along the segment), so a leash texture drawn along u became a crossbar on every link. Now u runs along the segment from its parent end and v across, like the texture coordinates of `LLVOPartGroup::getGeometry`. Demo `AURORA_DEMO_PARTICLES=leash` gets a chain texture along u: dashes before, one line after; demo particles now draw their procedural textures (they all fell back to the default dot). Full `scripts/check.ps1` green.
