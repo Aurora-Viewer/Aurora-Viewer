@@ -654,6 +654,13 @@ impl App {
                 let (w, h) = renderer.size();
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
                     "connected": self.in_world(),
+                    "screen": format!("{:?}", self.screen),
+                    "login_state": {
+                        "error": self.login_form.error.as_deref(),
+                        "busy": self.login_form.busy,
+                        "show_mfa": self.login_form.show_mfa,
+                        "progress": self.login_progress.as_ref().map(|(msg, frac)| json!({ "stage": msg, "fraction": frac })),
+                    },
                     "demo_mode": self.demo,
                     "agent_id": self.world.agent_id.to_string(),
                     "display_name": self.world.social.display_name_of(&self.world.agent_id),
@@ -1859,11 +1866,13 @@ impl App {
                 username,
                 password,
                 location,
+                mfa_token,
             } => {
                 let resp = self.handle_mcp_viewer_login(
                     username.as_deref(),
                     password.as_deref(),
                     location.as_deref(),
+                    mfa_token.as_deref(),
                 );
                 let _ = reply_tx.send(resp);
             }
@@ -4067,7 +4076,7 @@ impl App {
                 self.send(NetCommand::TeleportHome);
             }
             "world.login" | "viewer.login" | "login" => {
-                let _ = self.handle_mcp_viewer_login(None, None, None);
+                let _ = self.handle_mcp_viewer_login(None, None, None, None);
             }
             other => {
                 return Err(McpError::InvalidParams(format!(
@@ -4466,6 +4475,7 @@ impl App {
         username: Option<&str>,
         password: Option<&str>,
         location: Option<&str>,
+        mfa_token: Option<&str>,
     ) -> Result<ViewerResponse, McpError> {
         if !matches!(self.screen, Screen::Login) {
             return Ok(ViewerResponse::Json(json!({
@@ -4481,6 +4491,10 @@ impl App {
         }
         if let Some(pwd) = password {
             self.login_form.password = pwd.to_string();
+        }
+        if let Some(mfa) = mfa_token {
+            self.login_form.mfa_token = mfa.trim().to_string();
+            self.login_form.remember_mfa = true;
         }
         if let Some(loc) = location {
             match loc.trim().to_ascii_lowercase().as_str() {

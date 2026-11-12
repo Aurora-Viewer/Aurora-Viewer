@@ -503,6 +503,7 @@ pub enum ViewerRequest {
         username: Option<String>,
         password: Option<String>,
         location: Option<String>,
+        mfa_token: Option<String>,
     },
 }
 

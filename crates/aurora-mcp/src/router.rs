@@ -2038,6 +2038,7 @@ impl McpRouter {
                 let username = args.get("username").and_then(Value::as_str).map(str::to_owned);
                 let password = args.get("password").and_then(Value::as_str).map(str::to_owned);
                 let location = args.get("location").and_then(Value::as_str).map(str::to_owned);
+                let mfa_token = args.get("mfa_token").and_then(Value::as_str).map(str::to_owned);
                 let resp = self
                     .send_to_viewer(
                         None,
@@ -2045,6 +2046,7 @@ impl McpRouter {
                             username,
                             password,
                             location,
+                            mfa_token,
                         },
                         10_000,
                     )
@@ -3409,7 +3411,8 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "username": { "type": "string", "description": "Optional account name (e.g. 'First Last' or 'first.last'). If omitted, uses active saved account." },
                     "password": { "type": "string", "description": "Optional account password. If omitted, uses remembered credentials from the credential store." },
-                    "location": { "type": "string", "description": "Optional start location: 'home', 'last', or region name." }
+                    "location": { "type": "string", "description": "Optional start location: 'home', 'last', or region name." },
+                    "mfa_token": { "type": "string", "description": "Optional 6-digit multi-factor authentication code from authenticator app if MFA is required." }
                 }
             }),
             in_compact_profile: true,

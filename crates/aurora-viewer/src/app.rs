@@ -3813,6 +3813,7 @@ impl App {
             }
             NetEvent::HoverParcel { handle, parcel } => self.on_hover_parcel(handle, parcel),
             NetEvent::LoginProgress { message, fraction } => {
+                log::info!("NetEvent::LoginProgress: '{message}' ({fraction})");
                 self.loading_stage = message.clone();
                 self.login_progress = Some((message, fraction));
             }
@@ -3825,6 +3826,9 @@ impl App {
                 previous_session,
                 next_server,
             } => {
+                log::warn!(
+                    "NetEvent::LoginFailed: error='{error}', mfa={mfa_required}, tos={tos_required}, crit={critical_required}, bad_cred={bad_credentials}, prev={previous_session}, next={next_server:?}"
+                );
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
                 // (LLLoginInstance::constructAuthParams starts with an empty
@@ -3869,6 +3873,7 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                log::info!("NetEvent::LoggedIn: agent_id={}, session_id={}", l.agent_id, l.session_id);
                 self.parcel_music
                     .enter(!self.demo && self.settings.parcel_music_accounts.contains(&l.agent_id));
                 self.session_started(l.session_id);
