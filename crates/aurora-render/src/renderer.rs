@@ -2149,12 +2149,17 @@ const SOFT_PATH_ON: &str = "const SOFT_PATH: bool = true;";
 
 /// The common shader with the soft shadows' path (`SOFT_PATH`, common.wgsl)
 /// when `soft`, else without: the branches are folded away at compile time.
-fn common_shader_for(soft: bool) -> std::borrow::Cow<'static, str> {
+pub(crate) fn common_shader_for(soft: bool) -> std::borrow::Cow<'static, str> {
     let common = crate::common_shader_source();
     if soft {
         return common;
     }
-    debug_assert!(common.contains(SOFT_PATH_ON), "common.wgsl lost its SOFT_PATH line");
+    if !common.contains(SOFT_PATH_ON) {
+        // (the tests fail on it; at run time the soft variant is kept)
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| log::warn!("common.wgsl has no `{SOFT_PATH_ON}` line: the soft shadows' path stays compiled in"));
+        return common;
+    }
     common.replace(SOFT_PATH_ON, "const SOFT_PATH: bool = false;").into()
 }
 
@@ -5169,11 +5174,13 @@ impl Backend {
 
     /// Whether this frame draws the soft sun shadows: with the sun shadows,
     /// the mask ready and the cascades chosen per pixel (the mask has no
-    /// vertex distances), `AURORA_SOFT_SHADOWS=alt` every other second.
-    fn soft_on(&self, shadows: bool) -> bool {
+    /// vertex distances), `AURORA_SOFT_SHADOWS=alt` every other second. A
+    /// softness of 0 is the shadows of before: no mask, no cost.
+    fn soft_on(&self, shadows: bool, softness: f32) -> bool {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         let secs = START.get_or_init(Instant::now).elapsed().as_secs();
         shadows
+            && softness > 0.0
             && self.soft_pipelines
             && self.soft.is_some()
             && self.targets.soft.is_some()
@@ -6839,7 +6846,7 @@ impl Backend {
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
-        self.soft_now = self.soft_on(f.shadows);
+        self.soft_now = self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
@@ -10053,17 +10060,17 @@ impl Backend {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn the_scene_shader_without_soft_shadows_drops_their_path() {
-        let with = super::common_shader_for(true);
-        let without = super::common_shader_for(false);
-        assert!(with.contains(super::SOFT_PATH_ON));
-        assert!(!without.contains(super::SOFT_PATH_ON));
+        let with = common_shader_for(true);
+        let without = common_shader_for(false);
+        assert!(with.contains(SOFT_PATH_ON), "common.wgsl has its SOFT_PATH line");
+        assert!(!without.contains(SOFT_PATH_ON));
         assert!(without.contains("const SOFT_PATH: bool = false;"));
         assert_eq!(without.len(), with.len() + 1);
     }
-
-    use super::*;
 
     /// The occlusion's table is read by index against the main view's
     /// arguments: a cut-out photo leaves the ground and the water out of both,

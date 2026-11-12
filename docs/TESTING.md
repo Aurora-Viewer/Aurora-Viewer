@@ -11083,7 +11083,7 @@ What the inventory must show with these scenarios:
   light's size (2.3 degrees across at a softness of 1) gives the
   penumbra, and 12 rotated taps take the light (32 in a photo), then a
   bilateral blur in the world's metres removes their noise. The penumbra is
-  never narrower than 1.5 cm: sharp at the contact, soft far from it. Where it is narrower than the 3 cm filter of before, the shadow takes that filter (the same taps for every pixel, so no grain and nothing that crawls with the camera), fading into the rotated taps over three times that width. The shading reads the mask where its surface is the one of the
+  never narrower than the 3 cm filter of before (about ±3 cm): where it would be, the shadow takes that filter (the same taps for every pixel, so no grain and nothing that crawls with the camera; it ignores the `AURORA_SHADOW_FILTER=gaps` and `AURORA_SHADOW_BIAS=legacy` comparisons), fading into the rotated taps over three times the half width that filter spans in the cascade, and the two cascades of a split are mixed as before where both take it. At the default softness (0.25) a caster less than about 9 m above the receiver gives that filter, so the default is close to the previous shadows by design. A softness of 0 draws no mask at all: exactly the shadows of before. The shading reads the mask where its surface is the one of the
   prepass; blended faces in front of it, water, reflections and probes keep
   the filter of before. Off, nothing is created or drawn, the scene's shaders are compiled without the soft path (a variant built in the background when the setting changes, like the samples and SSR) and the casters'
   culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-2>`**

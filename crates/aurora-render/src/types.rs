@@ -1401,8 +1401,8 @@ pub struct FrameParams {
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
     /// With soft shadows: the size of the light, 1 = 2.3 degrees across (the
-    /// real sun, 0.53 degrees, is 0.23), 0 = a light with no size, only the
-    /// 1.5 cm filter (the Preferences' value, or the photo's own).
+    /// real sun, 0.53 degrees, is 0.23), 0 = a light with no size, the shadows
+    /// of before (the Preferences' value, or the photo's own).
     pub shadow_softness: f32,
     /// How dark the sun's shadows are, 1 = as before, 0 = no shadow (the
     /// Preferences' value, or the photo's own).

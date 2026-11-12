@@ -1083,6 +1083,20 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         validate(&format!("{}\n{}", crate::COMMON_SHADER, include_str!("shaders/ssr.wgsl")));
     }
 
+    /// The variants compiled while the soft shadows are off (`SOFT_PATH`
+    /// false in common.wgsl) are valid too.
+    #[test]
+    fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
+        let common = crate::renderer::common_shader_for(false);
+        validate(&format!(
+            "{}\n{}\n{}",
+            common,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        ));
+        validate(&format!("{}\n{}", common, include_str!("shaders/ssr.wgsl")));
+    }
+
     #[test]
     fn post_shader_is_valid() {
         validate(include_str!("shaders/post.wgsl"));

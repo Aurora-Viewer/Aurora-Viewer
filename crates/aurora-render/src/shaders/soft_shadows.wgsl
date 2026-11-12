@@ -38,14 +38,16 @@ struct Params {
 @group(0) @binding(7) var mm_in: texture_2d<f32>;
 @group(0) @binding(8) var mm_out: texture_storage_2d<r32float, write>;
 
-// The least radius of the filter, in metres (soft_shadows.rs FILTER_FLOOR):
-// shadows are sharp where they touch what casts them.
+// The least half width of the penumbra, in metres (soft_shadows.rs
+// FILTER_FLOOR): half the width of the filter of before.
 const FILTER_FLOOR: f32 = 0.015;
 // Where the penumbra is narrower than the filter of before (3 cm across,
-// `SHADOW_PENUMBRA` in common.wgsl), the shadow is that filter: its taps are
-// the same for every pixel, so a narrow penumbra shows no grain and no
-// pattern that crawls with the camera. The filter of the noisy taps takes
-// over by `LEGACY_FADE` times the floor, where its blur hides the noise.
+// `SHADOW_PENUMBRA` in common.wgsl, taps kept between half a texel and two
+// texels apart), the shadow is that filter: its taps are the same for every
+// pixel, so a narrow penumbra shows no grain and no pattern that crawls with
+// the camera, and shadow edges are never narrower than it. The rotated taps
+// take over by `LEGACY_FADE` times the half width the filter of before
+// spans in the cascade (`legacy_half`), where their blur hides the noise.
 const SHADOW_PENUMBRA: f32 = 0.03;
 const LEGACY_FADE: f32 = 3.0;
 
@@ -156,10 +158,11 @@ fn legacy_filter(uv: vec2<f32>, depth: f32, radius: f32, texel: f32, tile: vec2<
     return sum / f32(taps * taps);
 }
 
-// Shadow of one cascade (1 lit, 0 shadowed) and the radius of its filter in
-// metres; the light is -1 outside its tile, so that the other cascade of a
-// blend can take over (`cascade_shadow`).
-fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32>) -> vec2<f32> {
+// Shadow of one cascade (1 lit, 0 shadowed), the radius of its filter in
+// metres and the share of the filter of before in it (1: all of it); the
+// light is -1 outside its tile, so that the other cascade of a blend can
+// take over (`cascade_shadow`).
+fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32>) -> vec3<f32> {
     let m = p.cascade_vp[cascade];
     let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
     let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
@@ -171,7 +174,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
     let q = light_space(world_pos + bias_n, cascade);
     let uv = q.xy;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || q.z < 0.0 || q.z > 1.0) {
-        return vec2<f32>(-1.0, 0.0);
+        return vec3<f32>(-1.0, 0.0, 1.0);
     }
     let dims = vec2<f32>(textureDimensions(shadow_map));
     // texel of a tile, in tile coordinates
@@ -189,12 +192,17 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
     var gradient = vec2<f32>(-dot(n, row_x * radius), dot(n, row_y * radius)) * slope;
     gradient *= smoothstep(0.10, 0.20, abs(facing));
 
+    // the texel in metres, and the half width the filter of before spans
+    // there (its taps keep between half a texel and two texels apart)
+    let texel_m = 2.0 * radius * texel;
+    let legacy_half = clamp(SHADOW_PENUMBRA * 0.5, 0.75 * texel_m, 3.0 * texel_m);
     let angle = ign(frag, 0u) * 6.2831853;
     let rot = mat2x2<f32>(cos(angle), sin(angle), -sin(angle), cos(angle));
     var filter_m = FILTER_FLOOR;
     // the share of the filter of before (1: all of it, no light size or a
     // penumbra narrower than it)
     var before = 1.0;
+    var footprint = FILTER_FLOOR;
     if (p.light.x > 0.0) {
         // Blocker search: gathers over a rotated disk of the minimum depths
         // of blocks of 4, 8 or 16 texels (the larger the wider the disk, so
@@ -206,7 +214,6 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         // The point's shadow is bounded by the filter taps, a few per cent
         // of the light at the widest softness.
         let search = p.light.y / (2.0 * radius);
-        let texel_m = 2.0 * radius * texel;
         let wide = p.light.y / texel_m;
         let level = select(select(2u, 1u, wide <= 48.0), 0u, wide <= 24.0);
         let block = f32(4u << level) * texel;
@@ -234,17 +241,29 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             separation += dot(gap, hit);
             blockers += dot(hit, vec4<f32>(1.0));
         }
-        // no caster within the search: lit, with the floor's filter (the
-        // point's own texels and the blocks around it hold none)
+        // no caster within the search: lit, unless one stands within the
+        // reach of the filter of before (3 texels at most), which the
+        // rotated gathers can miss: the blocks of 4 texels around the point
+        // tell, and then the filter of before takes the edge as it is
         if (blockers == 0.0) {
-            return vec2<f32>(1.0, FILTER_FLOOR);
+            let block0 = 4.0 * texel;
+            let local = clamp(uv, vec2<f32>(block0), vec2<f32>(1.0 - block0));
+            let d = blocks_at((local + tile) * tile_scale * dims, 0u);
+            let expected = q.z + dot(gradient, local - uv) - bias - 0.5 * block0 * (abs(gradient.x) + abs(gradient.y));
+            if (any(d < vec4<f32>(expected))) {
+                return vec3<f32>(legacy_filter(uv, q.z - bias, radius, texel, tile, tile_scale), FILTER_FLOOR, 1.0);
+            }
+            return vec3<f32>(1.0, FILTER_FLOOR, 1.0);
         }
         {
             // the light's half width seen from the receiver, at the blockers'
             // mean distance; the least is the floor (contact hardening)
             let reach = separation / blockers / depth_per_metre * p.light.x;
             filter_m = clamp(reach, FILTER_FLOOR, max(p.light.y, FILTER_FLOOR));
-            before = 1.0 - smoothstep(FILTER_FLOOR, LEGACY_FADE * FILTER_FLOOR, reach);
+            // the rotated taps span at least 3/4 of a texel: it is that
+            // footprint that is compared with the filter of before
+            footprint = max(filter_m, 0.75 * texel_m);
+            before = 1.0 - smoothstep(legacy_half, LEGACY_FADE * legacy_half, footprint);
         }
     }
     var light = 0.0;
@@ -252,7 +271,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         light = before * legacy_filter(uv, q.z - bias, radius, texel, tile, tile_scale);
     }
     if (before < 1.0) {
-        let half_uv = max(filter_m / (2.0 * radius), 0.75 * texel);
+        let half_uv = footprint / (2.0 * radius);
         let taps = u32(p.light.z);
         var sum = 0.0;
         for (var i = 0u; i < taps; i++) {
@@ -262,13 +281,16 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         }
         light += (1.0 - before) * sum / f32(taps);
     }
-    return vec2<f32>(light, filter_m);
+    // the blur follows the footprint the rotated taps have
+    return vec3<f32>(light, select(footprint, FILTER_FLOOR, before >= 1.0), before);
 }
 
 // The sun's shadow at a point (`shadow_factor`): the cascade by the point's
-// distance, the last 15 % of a cascade dithered into the next one (one
-// evaluation a pixel, the blur averages the dither) and the fade at the far
-// end of the last cascade. With the radius of the filter.
+// distance, the last 15 % of a cascade mixed into the next as `shadow_factor`
+// does where both have the filter of before (deterministic: no stipple),
+// else dithered into it (one evaluation a pixel, the blur averages the
+// dither), and the fade at the far end of the last cascade. With the radius
+// of the filter.
 fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u32>) -> vec2<f32> {
     let splits = p.splits;
     if (view_depth > splits.z) {
@@ -289,9 +311,19 @@ fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u
         }
     }
     var s = cascade_soft(world_pos, n, pick, frag);
+    let other = select(cascade + 1u, cascade, pick != cascade);
     // in the band, a point outside one tile takes the other (cascade_shadow)
     if (s.x < 0.0 && t > 0.0) {
-        s = cascade_soft(world_pos, n, select(cascade + 1u, cascade, pick != cascade), frag);
+        s = cascade_soft(world_pos, n, other, frag);
+    } else if (t > 0.0 && s.z >= 1.0) {
+        // both cascades with the filter of before: mixed by the band, as
+        // in `shadow_factor`
+        let o = cascade_soft(world_pos, n, other, frag);
+        if (o.x >= 0.0 && o.z >= 1.0) {
+            let near = select(o.x, s.x, pick == cascade);
+            let far = select(s.x, o.x, pick == cascade);
+            s = vec3<f32>(mix(near, far, t), s.y, 1.0);
+        }
     }
     if (s.x < 0.0) {
         return vec2<f32>(1.0, 0.0);

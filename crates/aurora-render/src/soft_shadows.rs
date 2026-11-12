@@ -14,7 +14,8 @@
 //! Beyond the Legacy Viewer, which softens its shadows in screen space by a
 //! fixed pixel radius (`RenderShadowBlurSize`, with SSAO on only): here the
 //! penumbra is in metres, grows with the distance of the caster, and is
-//! never narrower than 1.5 cm, sharp where a shadow touches what casts it.
+//! never narrower than the filter of before (about ±3 cm): where it would be,
+//! the shadow takes that filter, with taps that are the same for every pixel.
 //! The light is 2.3 degrees across at a softness of 1 (the look of the first
 //! soft shadows PR, #2288); the real sun, 0.53 degrees, is a softness of 0.23.
 //! The search for casters reads the shadow atlas's minimum depths over blocks
@@ -22,9 +23,11 @@
 //! `mm_build`), so that no thin caster slips between the texels of a block.
 //!
 //! Off, nothing is created or drawn, and the shadows are those of before to
-//! the pixel: the pipelines are made with the first frame that wants them,
-//! the mask with the targets, and the casters' culling planes are those of
-//! before ([`reach`] is 0).
+//! the pixel: the scene's pipelines are a variant compiled without the soft
+//! path (`SOFT_PATH` in common.wgsl, rebuilt in the background when the
+//! setting changes), the mask is made with the targets, and the casters'
+//! culling planes are those of before ([`reach`] is 0). A softness of 0 draws
+//! no mask either: it is the shadows of before.
 //!
 //! `AURORA_SOFT_SHADOWS=0|1|alt` overrides the setting for a comparison;
 //! `alt` switches every second.
@@ -37,9 +40,9 @@ use glam::{Mat4, Vec3};
 /// is a light 2.3 degrees across, the real sun (0.53 degrees) about 0.23.
 const LIGHT_TAN: f32 = 0.02;
 
-/// The least radius of the filter, in metres (`FILTER_FLOOR` in
-/// soft_shadows.wgsl): a shadow is sharp where it touches what casts it,
-/// sharper than the 3 cm filter of before.
+/// The least half width of the penumbra, in metres (`FILTER_FLOOR` in
+/// soft_shadows.wgsl): half the width of the 3 cm filter of before, which
+/// takes the shadow wherever the penumbra would be narrower than it.
 pub(crate) const FILTER_FLOOR: f32 = 0.015;
 
 /// Radius of the light of a projector at a softness of 1, in metres: a
@@ -86,6 +89,24 @@ pub(crate) fn search_radius(softness: f32) -> f32 {
 #[cfg(test)]
 pub(crate) fn filter_radius(gap: f32, softness: f32) -> f32 {
     (gap.max(0.0) * light_tan(softness)).clamp(FILTER_FLOOR, search_radius(softness).max(FILTER_FLOOR))
+}
+
+/// Half the width, in metres, the filter of before spans in a cascade whose
+/// texel is `texel_m` metres: its taps keep between half a texel and two
+/// texels apart (`legacy_half` in soft_shadows.wgsl, tested as text).
+#[cfg(test)]
+pub(crate) fn legacy_half(texel_m: f32) -> f32 {
+    (0.5 * 0.03_f32).clamp(0.75 * texel_m, 3.0 * texel_m)
+}
+
+/// The share of the filter of before in a shadow whose rotated taps span
+/// `footprint` metres (half width): 1 up to `legacy_half`, 0 from
+/// `LEGACY_FADE` (3) times it, a smoothstep between (`before` in
+/// `cascade_soft`).
+#[cfg(test)]
+pub(crate) fn legacy_share(footprint: f32, legacy_half: f32) -> f32 {
+    let t = ((footprint - legacy_half) / (2.0 * legacy_half)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
 }
 
 /// How far, in metres, the casters of a cascade are read around a point
@@ -677,12 +698,50 @@ mod tests {
     }
 
     #[test]
+    fn the_filter_of_before_blends_into_the_rotated_taps_continuously() {
+        // the cascades' texels, in metres: fine to coarse
+        for texel_m in [0.005_f32, 0.007, 0.02, 0.024, 0.06, 0.08] {
+            let half = legacy_half(texel_m);
+            assert!(half >= 0.75 * texel_m && half <= 3.0 * texel_m);
+            // the footprint of the rotated taps is never under 3/4 of a texel
+            let foot = |reach: f32| reach.max(FILTER_FLOOR).max(0.75 * texel_m);
+            assert_eq!(legacy_share(foot(0.0), half), 1.0, "texel {texel_m}");
+            assert_eq!(legacy_share(half, half), 1.0);
+            assert_eq!(legacy_share(3.0 * half, half), 0.0);
+            assert_eq!(legacy_share(10.0 * half, half), 0.0);
+            let mut last = 1.0;
+            let mut x = 0.0_f32;
+            while x < 0.4 {
+                let share = legacy_share(foot(x), half);
+                assert!((0.0..=1.0).contains(&share));
+                assert!(share <= last + 1e-6, "never grows with the reach");
+                assert!(last - share < 0.02, "continuous: {last} to {share} at {x} (texel {texel_m})");
+                last = share;
+                x += 0.0002;
+            }
+        }
+        // the fine cascade: the filter of before up to the floor, as it was
+        assert_eq!(legacy_half(0.007), FILTER_FLOOR);
+        // a coarse texel widens the zone: reaches under its footprint still take it
+        assert!(legacy_share(0.04, legacy_half(0.06)) == 1.0);
+    }
+
+    #[test]
     fn the_shader_keeps_the_constants_of_the_shading() {
         let shader = include_str!("shaders/soft_shadows.wgsl");
         let common = include_str!("shaders/common.wgsl");
         let line = format!("const FILTER_FLOOR: f32 = {};", FILTER_FLOOR);
         assert!(shader.contains(&line), "soft_shadows.wgsl: {line}");
-        // the filter of before, whose width the narrow penumbrae fall back to
+        // the filter of before, whose width the narrow penumbrae fall back to:
+        // its taps' count and spacing are those of `cascade_shadow`
+        for text in [
+            "clamp(u32(ceil(span / texel - 1e-3)) + 1u, 4u, 7u)",
+            "clamp(half_uv * (2.0 / 3.0), 0.5 * texel, 2.0 * texel)",
+            "let half_uv = SHADOW_PENUMBRA * 0.5 / radius;",
+            "let span = 3.0 * spacing;",
+        ] {
+            assert!(shader.contains(text) && common.contains(text), "{text}");
+        }
         assert!(shader.contains("const SHADOW_PENUMBRA: f32 = 0.03;") && common.contains("const SHADOW_PENUMBRA: f32 = 0.03;"));
         // the normal offset and the receiver bias of `cascade_shadow`
         assert!(shader.contains("n * (0.02 + 0.04 * f32(cascade))"));
@@ -854,7 +913,7 @@ mod tests {
         // contact hardening: the caster 0.5 m up has a narrower penumbra than
         // the one 3 m up, whatever the light
         assert!(high.2 > low.2 * 1.3, "higher casters give wider penumbrae: {} vs {}", high.2, low.2);
-        // a larger light gives a wider one, a pinpoint light the 1.5 cm floor
+        // a larger light gives a wider one, a pinpoint light the filter of before
         assert!(high.2 > mid.2 * 1.3, "a larger light gives a wider one: {} vs {}", high.2, mid.2);
         assert!(
             mid.2 > pinpoint.2 * 1.3,

@@ -1408,7 +1408,7 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 // Whether this shader reads the soft shadows: the sun's mask and the
 // projectors' filter. `true` here; while the option is off the scene's
 // pipelines are compiled from this source with the line below set to `false`
-// (renderer.rs `without_soft_shadows`), so the soft branches and their
+// (renderer.rs `common_shader_for`), so the soft branches and their
 // registers are not in the shaders of a frame that never takes them. The
 // line is matched as it stands.
 const SOFT_PATH: bool = true;
