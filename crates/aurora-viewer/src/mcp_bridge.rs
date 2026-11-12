@@ -172,6 +172,7 @@ struct PendingScriptCreation {
     mono: bool,
     running: bool,
     started_at: Instant,
+    last_requested: Instant,
     reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
 }
 
@@ -527,7 +528,7 @@ impl App {
 
         // 2b. Progress pending async RezScript creations awaiting task inventory
         let mut remaining_creations = VecDeque::new();
-        while let Some(creation) = self.mcp_bridge.pending_script_creations.pop_front() {
+        while let Some(mut creation) = self.mcp_bridge.pending_script_creations.pop_front() {
             let new_item_id = self
                 .build
                 .contents
@@ -571,9 +572,16 @@ impl App {
                     },
                     source: creation.source_code,
                 });
-            } else if now.duration_since(creation.started_at) > Duration::from_secs(5) {
-                let _ = creation.reply_tx.send(Err(McpError::Timeout(5000)));
+            } else if now.duration_since(creation.started_at) > Duration::from_secs(12) {
+                let _ = creation.reply_tx.send(Err(McpError::Timeout(12000)));
             } else {
+                if now.duration_since(creation.last_requested) >= Duration::from_millis(500) {
+                    creation.last_requested = now;
+                    if let Some(idx) = self.world.objects.index_of_uuid(&creation.object_uuid) {
+                        self.build.request_contents(&self.world, idx, true);
+                        self.flush_build();
+                    }
+                }
                 remaining_creations.push_back(creation);
             }
         }
@@ -2918,8 +2926,22 @@ impl App {
             }
             item.item_id
         } else {
-            self.build.new_script(&self.world, idx);
-            self.flush_build();
+            let template_script = self.world.inventory.items.values().find(|it| {
+                (it.asset_type == 10 || it.inv_type == 10)
+                    && (it.owner_mask & perm::COPY) != 0
+                    && (it.owner_mask & perm::MODIFY) != 0
+            });
+            if let Some(template) = template_script {
+                if let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, template, running) {
+                    self.send(NetCommand::Build(drop.command));
+                } else {
+                    self.build.new_script(&self.world, idx);
+                    self.flush_build();
+                }
+            } else {
+                self.build.new_script(&self.world, idx);
+                self.flush_build();
+            }
             self.build.request_contents(&self.world, idx, true);
             self.flush_build();
             let immediate_new = self
@@ -2950,6 +2972,7 @@ impl App {
                         mono,
                         running,
                         started_at: Instant::now(),
+                        last_requested: Instant::now(),
                         reply_tx,
                     });
                 return;
