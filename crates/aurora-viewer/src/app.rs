@@ -460,8 +460,9 @@ pub struct App {
     /// (keys::page_cuts).
     page_copy: Vec<(u32, Option<String>)>,
     /// What the last Paste press gave the page (`media_clipboard`), which
-    /// its key repeats give again without reading the clipboard each time.
-    held_paste: Option<String>,
+    /// its key repeats give again without reading the clipboard each time;
+    /// told every key event (keys::HeldPaste).
+    held_paste: crate::media::keys::HeldPaste,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -1583,7 +1584,7 @@ impl App {
             ctrl: false,
             command: false,
             page_copy: Vec::new(),
-            held_paste: None,
+            held_paste: Default::default(),
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -14761,12 +14762,13 @@ impl App {
                 }
                 None
             }
-            aurora_media::EditCommand::Paste if keys::wants_clipboard(letter, code, pressed, repeat, mods) => {
+            aurora_media::EditCommand::Paste => {
                 if !repeat {
                     let at_copy = self.page_copy.iter().find(|(pid, _)| Some(*pid) == page);
-                    self.held_paste = keys::paste_text(at_copy.map(|(_, text)| text), read());
+                    let text = keys::paste_text(at_copy.map(|(_, text)| text), read());
+                    self.held_paste.press(code, text);
                 }
-                self.held_paste.clone()
+                self.held_paste.text(code)
             }
             _ => None,
         }
@@ -21080,6 +21082,13 @@ impl ApplicationHandler for App {
         {
             return;
         }
+        // a held Paste keeps its text only while its key stays down: told
+        // every key, wherever it goes next (keys::HeldPaste)
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && let PhysicalKey::Code(code) = ke.physical_key
+        {
+            self.held_paste.on_key(code, ke.state == ElementState::Pressed, ke.repeat);
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
@@ -21442,7 +21451,8 @@ impl ApplicationHandler for App {
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
                     // Paste on Linux: the viewer reads the clipboard
                     // and pastes it into the page by script (keys::paste_through_viewer)
-                    let page_keys = !typing && (self.media.focus.is_some() || self.focused_web().is_some());
+                    // only for a key the page gets: a media face skips a press egui took
+                    let page_keys = !typing && (self.focused_web().is_some() || (self.media.focus.is_some() && !resp.consumed));
                     let clipboard = if page_keys {
                         self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)
                     } else {

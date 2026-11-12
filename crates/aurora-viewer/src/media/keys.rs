@@ -226,12 +226,37 @@ fn cuts_on(linux: bool, wayland: bool) -> bool {
     !linux || wayland
 }
 
-/// Whether a key press is Paste and the viewer reads the clipboard for it
-/// (`paste_through_viewer`): read it then, and pass it to `edit`.
-pub fn wants_clipboard(letter: Option<char>, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
-    pressed
-        && edit_shortcut(letter, code, mods).is_some_and(|cmd| cmd == EditCommand::Paste && (!repeat || edit_repeats(cmd)))
-        && paste_through_viewer()
+/// What a Paste press gave the page (`paste_text`), which the repeats of
+/// that same key give again without reading the clipboard each time. Any
+/// other key's press, and that key's release, forget it: a repeat never
+/// pastes the text of an older press (V held, then Ctrl pressed, makes the
+/// repeats Ctrl+V), and the clipboard's text is not kept once the key is up.
+/// None held sends the repeats as `edit_paste`, as the press was.
+#[derive(Debug, Default)]
+pub struct HeldPaste(Option<(KeyCode, String)>);
+
+impl HeldPaste {
+    /// Every key event the page gets, before its Paste is looked at.
+    pub fn on_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
+        let ends = if pressed {
+            !repeat
+        } else {
+            self.0.as_ref().is_some_and(|(k, _)| *k == code)
+        };
+        if ends {
+            self.0 = None;
+        }
+    }
+
+    /// A Paste press of `code` that gives the page `text`.
+    pub fn press(&mut self, code: KeyCode, text: Option<String>) {
+        self.0 = text.map(|t| (code, t));
+    }
+
+    /// The text for a Paste press or repeat of `code`.
+    pub fn text(&self, code: KeyCode) -> Option<String> {
+        self.0.as_ref().filter(|(k, _)| *k == code).map(|(_, t)| t.clone())
+    }
 }
 
 /// The text a Paste puts into a page, from the system clipboard's text
@@ -265,7 +290,7 @@ pub fn record_copy(copies: &mut Vec<(u32, Option<String>)>, pid: u32, text: Opti
 /// the release still goes to the page, as in the Legacy Viewer, whose menus
 /// take only the key down (LLMenuItemCallGL::handleAcceleratorKey,
 /// indra/llui/llmenugl.cpp). `clipboard` is the text the
-/// viewer read for a Paste (`wants_clipboard`): `paste_script` puts it into
+/// viewer read for a Paste (`paste_through_viewer`): `paste_script` puts it into
 /// the page instead of `edit_paste`.
 pub fn edit(
     p: &mut MediaPlugin,
@@ -307,7 +332,10 @@ fn sent(cmd: EditCommand, cuts: bool) -> bool {
 /// tabs kept). It follows the focus into open shadow roots and into
 /// frames and embedded documents of the same origin; one of another origin
 /// is out of the script's reach and gets nothing, not even the paste event.
-/// An empty text pastes nothing. The text is one JSON string literal, never
+/// An empty text pastes nothing. The script runs among the page's own
+/// scripts, which can replace the functions it calls: a page that holds a
+/// frame of another origin could take the text pasted into that frame, which
+/// `edit_paste` would give the frame alone. The text is one JSON string literal, never
 /// code, with U+FFFE and U+FFFF escaped: XML, which carries the message to
 /// the plugin, does not allow them.
 pub fn paste_script(text: &str) -> String {
@@ -707,6 +735,34 @@ mod tests {
         }
         assert_eq!(c.len(), PAGE_COPIES);
         assert_eq!(c.last().map(|(p, _)| *p), Some(19));
+    }
+
+    #[test]
+    fn a_held_paste_keeps_its_text_only_while_its_key_is_down() {
+        let mut h = HeldPaste::default();
+        h.on_key(KeyCode::KeyV, true, false);
+        h.press(KeyCode::KeyV, Some("a".into()));
+        // its repeats, and another key's release (Shift up), keep it
+        h.on_key(KeyCode::KeyV, true, true);
+        h.on_key(KeyCode::ShiftLeft, false, false);
+        assert_eq!(h.text(KeyCode::KeyV), Some("a".into()));
+        // its release forgets it
+        h.on_key(KeyCode::KeyV, false, false);
+        assert_eq!(h.text(KeyCode::KeyV), None);
+        // V held, then Ctrl pressed: the repeats get no older paste's text
+        h.press(KeyCode::KeyV, Some("old".into()));
+        h.on_key(KeyCode::KeyV, true, false);
+        h.on_key(KeyCode::ControlLeft, true, false);
+        h.on_key(KeyCode::KeyV, true, true);
+        assert_eq!(h.text(KeyCode::KeyV), None);
+        // another key's press forgets it, and only its own key gets it
+        h.press(KeyCode::KeyV, Some("b".into()));
+        assert_eq!(h.text(KeyCode::KeyZ), None);
+        h.on_key(KeyCode::KeyZ, true, false);
+        assert_eq!(h.text(KeyCode::KeyV), None);
+        // a press the page pastes itself holds nothing
+        h.press(KeyCode::KeyV, None);
+        assert_eq!(h.text(KeyCode::KeyV), None);
     }
 
     #[test]
