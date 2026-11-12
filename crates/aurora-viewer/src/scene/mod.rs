@@ -5415,22 +5415,6 @@ impl Scene {
         )
     }
 
-    /// Evaluate skeleton poses of every palette owner near the camera; the
-    /// sync of the same frame uploads their joint palettes
-    /// (`update_anchors`). Only our avatar reports timed animation stops
-    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
-    /// Objects our avatar wears (HUDs left out): a step of the teleport and
-    /// crossing timelines (AURORA_PROFILE).
-    pub fn own_attachment_count(&self) -> usize {
-        let Some(own) = self.agent_idx else {
-            return 0;
-        };
-        self.gpu
-            .iter()
-            .filter(|g| g.owner_avatar == Some(own) && !g.hud && !g.is_avatar)
-            .count()
-    }
-
     /// What the avatars wear and play (`avatar summary`, AURORA_PROFILE):
     /// one walk over the objects, every 10 s.
     pub fn avatar_sample(&self) -> AvatarSample {
@@ -5471,6 +5455,10 @@ impl Scene {
         s
     }
 
+    /// Evaluate skeleton poses of every palette owner near the camera; the
+    /// sync of the same frame uploads their joint palettes
+    /// (`update_anchors`). Only our avatar reports timed animation stops
+    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
     pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
