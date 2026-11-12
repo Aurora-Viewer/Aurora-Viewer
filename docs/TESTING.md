@@ -10418,7 +10418,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
 | `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
-| `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_MUSIC=<url>`, `1` or `fade` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
@@ -10731,7 +10731,11 @@ What the inventory must show with these scenarios:
   `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
-  music waits for the radio button.
+  music waits for the radio button. `fade`: the same address, the radio
+  turned on at frame 300 and the parcel's station changed at frame 600
+  (`AURORA_FPS_LIMIT=60`); the log gives `parcel music: fade in over 3.00 s`,
+  then `fade out over 2.00 s` and `fade in` again on the new address, with
+  the Preferences âº Sound fade times.
   For #1628, use `https://stream.electroradio.fm/320k` and enable the parcel
   radio: music should play and the stream title should update. Stop and
   restart the radio, then check another HTTP/ICY station. The explicit

@@ -1861,6 +1861,12 @@ pub struct AudioSettings {
     /// Play the parcel music automatically when entering a parcel
     /// (FSParcelMusicAutoPlay, off by default: the radio toggle starts it).
     pub music_autoplay: bool,
+    /// Fade the parcel music when its station changes (the Legacy Viewer's
+    /// FSFadeAudioStream, on), over these seconds in and out
+    /// (FSAudioMusicFadeIn 3, FSAudioMusicFadeOut 2; 0 to 10).
+    pub music_fade: bool,
+    pub music_fade_in: f32,
+    pub music_fade_out: f32,
     /// Play parcel media automatically.
     pub media_autoplay: bool,
     /// Where the parcel music's title is told when it changes (the Legacy
@@ -1939,6 +1945,9 @@ impl Default for AudioSettings {
             muted: [false; 7],
             enabled: [true; 7],
             music_autoplay: false,
+            music_fade: true,
+            music_fade_in: 3.0,
+            music_fade_out: 2.0,
             media_autoplay: false,
             stream_title: StreamTitleShow::Chat,
             stream_title_announce: false,
@@ -2887,6 +2896,10 @@ impl Settings {
         }
         self.fps_limit = self.fps_limit.clamp(10, 500);
         self.background_fps_limit = self.background_fps_limit.clamp(1, 120);
+        // the Legacy Viewer's sliders: 0 to 10 s
+        for (secs, default) in [(&mut self.audio.music_fade_in, 3.0), (&mut self.audio.music_fade_out, 2.0)] {
+            *secs = if secs.is_finite() { secs.clamp(0.0, 10.0) } else { default };
+        }
         if self.settings_version < 6 {
             // new defaults: texture memory from the detected VRAM, 20 GB disk cache
             self.texture_budget_auto = true;
