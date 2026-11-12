@@ -38,11 +38,33 @@ pub(crate) struct Overlay {
     composite: wgpu::RenderPipeline,
     pub size: [u32; 2],
     output_srgb: bool,
+    /// Parts resolve their nearest coverage in private depth; selection
+    /// coverage continues to read the scene depth without changing it.
+    write_depth: bool,
 }
 
 impl Overlay {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: [u32; 2]) -> Self {
-        let image = |label| {
+        Self::build(device, format, size, wgpu::TextureFormat::R8Unorm, "fs_composite")
+    }
+
+    /// The poser's hovered part (Aurora's own): its mask holds the part's
+    /// share in red, graded where the weights pass to another part (a
+    /// knuckle, the neck), and the subject's coverage in green. The tint
+    /// fades with the share on the subject; the halo is drawn only off it,
+    /// on the outer outline, never across the body at a part's seam.
+    pub fn new_part(device: &wgpu::Device, format: wgpu::TextureFormat, size: [u32; 2]) -> Self {
+        Self::build(device, format, size, wgpu::TextureFormat::Rg8Unorm, "fs_composite_part")
+    }
+
+    fn build(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+        mask_format: wgpu::TextureFormat,
+        composite_entry: &str,
+    ) -> Self {
+        let image = |label, format| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
@@ -54,14 +76,14 @@ impl Overlay {
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::R8Unorm,
+                    format,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 })
                 .create_view(&Default::default())
         };
-        let mask = image("selected face coverage");
-        let horizontal = image("selected face horizontal halo");
+        let mask = image("selected face coverage", mask_format);
+        let horizontal = image("selected face horizontal halo", wgpu::TextureFormat::R8Unorm);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("selection overlay parameters"),
             size: std::mem::size_of::<Params>() as u64,
@@ -156,7 +178,7 @@ impl Overlay {
         let spread = pipeline("selection halo horizontal", "fs_spread", wgpu::TextureFormat::R8Unorm, None);
         let composite = pipeline(
             "selection halo composite",
-            "fs_composite",
+            composite_entry,
             format,
             Some(wgpu::BlendState::ALPHA_BLENDING),
         );
@@ -169,6 +191,7 @@ impl Overlay {
             composite,
             size,
             output_srgb: format.is_srgb(),
+            write_depth: mask_format == wgpu::TextureFormat::Rg8Unorm,
         }
     }
 
@@ -200,7 +223,10 @@ impl Overlay {
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
-                depth_ops: None,
+                depth_ops: self.write_depth.then_some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
                 stencil_ops: None,
             }),
             timestamp_writes: None,

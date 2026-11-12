@@ -212,6 +212,9 @@ pub mod flags {
     /// object.wgsl).
     pub const LAYER_RANK_SHIFT: u32 = 24;
     pub const LAYER_RANK_MAX: u32 = 7;
+    /// Bit of flags[3], above packed texture animation: local studio scenery
+    /// is excluded from the avatar's temporary white reveal.
+    pub const STUDIO_STAGE: u32 = 1 << 29;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -594,6 +597,10 @@ pub struct DrawLists {
     /// in the first `blend_depth` entries of `blend` (increasing, the last
     /// one `blend_depth`).
     pub blend_depth_runs: Vec<u32>,
+    /// `RiggedBlendDepth::Layers`: the ends, among `blend_depth_runs`, of the
+    /// runs drawn writing their depth on the copy only where nearly opaque
+    /// (eyelashes and brows drawn before the hair, #2121; increasing).
+    pub blend_depth_quiet: Vec<u32>,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -652,6 +659,9 @@ pub struct DrawLists {
     /// pattern laid along their texture mapping (LLFace::renderSelected).
     pub select_pattern: Vec<DrawCmd>,
     pub hud_select_pattern: Vec<DrawCmd>,
+    /// The poser subject's skinned faces, while a part is hovered: the part
+    /// is kept on them by its joints (`FrameParams::part_joints`).
+    pub part_faces: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -726,6 +736,7 @@ impl DrawLists {
         self.hud_select_faces.clear();
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
+        self.part_faces.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -755,6 +766,7 @@ impl DrawLists {
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
+        self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
@@ -778,6 +790,7 @@ impl DrawLists {
         self.hud_select_faces.clone_from(&src.hud_select_faces);
         self.select_pattern.clone_from(&src.select_pattern);
         self.hud_select_pattern.clone_from(&src.hud_select_pattern);
+        self.part_faces.clone_from(&src.part_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -806,6 +819,7 @@ impl DrawLists {
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
+        self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
@@ -832,6 +846,7 @@ impl DrawLists {
         self.hud_select_faces.clear();
         self.select_pattern.clear();
         self.hud_select_pattern.clear();
+        self.part_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1066,6 +1081,10 @@ pub enum AoMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
+    /// Requested per-eye XR size, bounded by runtime limits.
+    pub vr_resolution: Option<[u32; 2]>,
+    pub vr_gamma: f32,
+    pub vr_vibrancy: f32,
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
@@ -1117,6 +1136,9 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            vr_resolution: None,
+            vr_gamma: 1.0,
+            vr_vibrancy: 1.0,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
@@ -1212,6 +1234,9 @@ pub struct SkyParams {
     pub halo_texture: u32,
     /// Night sky: which stars and how they are turned (stars.rs).
     pub stars: crate::stars::StarFrame,
+    /// Session-local studio sky, zero outside Avatar Studio. sRGB navy /
+    /// teal / violet / indigo; w values: enabled / yaw / time / white reveal.
+    pub studio_aurora: [[f32; 4]; 4],
 }
 
 impl Default for SkyParams {
@@ -1260,6 +1285,7 @@ impl Default for SkyParams {
             rainbow_texture: 0,
             halo_texture: 0,
             stars: crate::stars::StarFrame::default(),
+            studio_aurora: [[0.0; 4]; 4],
         }
     }
 }
@@ -1356,7 +1382,24 @@ pub struct FrameParams {
     /// IMG_FACE_SELECT) once it is loaded; 0 while it loads and offline,
     /// where the shader draws its procedural stand-in.
     pub face_select_texture: u32,
+    /// The poser's hovered part (Aurora's own): bit j for the skeleton's
+    /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
+    /// as a selection's halo with a light tint inside.
+    pub part_joints: [u32; 8],
+    pub part_color: [f32; 4],
+    /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
+    /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
+    /// each part's weights and interpolates them before picking a part.
+    pub part_classes: [u32; 32],
+    /// The pixel whose visible part of `part_faces` to read back
+    /// (part_pick.rs): the cursor while Ctrl hovers the subject.
+    pub part_pick: Option<[u32; 2]>,
     pub view: Mat4,
+    /// VR pivot policy; ignored by the desktop renderer.
+    pub vr_rig: crate::stereo_view::RigMode,
+    /// Region-local coordinate identity for feedback consumed by locomotion.
+    pub vr_origin: Option<u64>,
+    pub vr_revision: u64,
     pub proj: Mat4,
     /// A photo drawn in tiles: the part of it this frame draws, `proj`
     /// being this times the whole photo's projection (the viewer's
