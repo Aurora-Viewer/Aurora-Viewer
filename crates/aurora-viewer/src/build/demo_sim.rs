@@ -682,6 +682,7 @@ impl DemoSim {
                     item_id: *item_id,
                     running,
                     mono: Some(mono),
+                    luau: aurora_net::scripts::Luau::Off,
                 }]
             }
             // the hover tips' parcel under the pointer
