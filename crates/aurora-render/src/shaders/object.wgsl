@@ -1011,6 +1011,28 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
 // legacy_light and legacy_local_spec.
 var<private> legacy_glare: f32 = 0.0;
 
+// AURORA_LEGACY_GLARE=0 (frame.light_mode.z): no glare, the blended legacy
+// faces take their texture alpha and leave early as before #3259, to tell
+// a glare fault from another on a card we cannot test (#3259 follow-up:
+// squares on blended leaves and streaks in hair on AMD cards).
+const LEGACY_GLARE_OFF: u32 = 0x100000u;
+
+fn legacy_glare_on() -> bool {
+    return (frame.light_mode.z & LEGACY_GLARE_OFF) == 0u;
+}
+
+// The alpha the glare gives a face of emissive mask `unlit`, as
+// materialF.glsl: glare *= 1 - emissive, then min(glare, 1). A glare that
+// is not a number (a degenerate normal or environment sample) gives none:
+// min and clamp of a NaN are left to the card, and one card's 1 drew
+// whole quads of empty texels. Tested on the bits: a driver may fold
+// `g != g` to false.
+fn legacy_glare_alpha(unlit: f32) -> f32 {
+    let g = legacy_glare * (1.0 - clamp(unlit, 0.0, 1.0));
+    let not_finite = (bitcast<u32>(g) & 0x7f800000u) == 0x7f800000u;
+    return select(clamp(g, 0.0, 1.0), 0.0, not_finite || !legacy_glare_on());
+}
+
 // Legacy material lighting applied to the sun + sky result `col`, as
 // softenLightF.glsl: sun highlight, applyGlossEnv and applyLegacyEnv. The
 // local light highlights are separate (legacy_local_spec), as LL adds them
@@ -1092,7 +1114,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
 // projector over it (the sun's highlight never glares). A glossy hair far
 // from any local light keeps leaving before the lighting (fs_blend).
 fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
-    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u) {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u || !legacy_glare_on()) {
         return false;
     }
     if (m.legacy_env > 0.0) {
@@ -1307,7 +1329,7 @@ fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
 // base texture's slot points at the shared placeholder layer
 // (`textures::PLACEHOLDER`, slot 4) until its first texels arrive.
 fn rez_still_grey(rec: DrawRecord) -> bool {
-    return tex_loc[rec.tex.x] == tex_loc[4u];
+    return tex_loc.values[rec.tex.x] == tex_loc.values[4u];
 }
 
 // Height of the fragment within its object (0 bottom, 1 top), for the
@@ -1519,7 +1541,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // other branch and has no glare, as emissive_brightness 1 there)
     var alpha = m.color.a;
     if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
-        alpha = max(alpha, min(legacy_glare, 1.0) * rec.base_color.a);
+        alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
     s.n = m.n;

@@ -1076,6 +1076,12 @@ pub struct TextureStreamer {
     legacy_bumps: HashMap<(Uuid, u8), Uuid>,
     legacy_bump_entries: HashMap<Uuid, legacy_bump_stream::LegacyBumpState>,
     legacy_bump_jobs: usize,
+    /// The full size of the textures evicted since the session began
+    /// (`known_size`): an avatar's complexity counts its textures' sizes,
+    /// and forgetting them on eviction made our own complexity move with
+    /// the texture memory, a "Your avatar complexity is N" notice each
+    /// time (#3381). 12 bytes a texture.
+    evicted_sizes: HashMap<Uuid, (u32, u32)>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -1551,6 +1557,7 @@ impl TextureStreamer {
             dirty: Vec::new(),
             forgotten: Vec::new(),
             evicted: Vec::new(),
+            evicted_sizes: HashMap::new(),
             slotless: 0,
             slotless_unreported: 0,
             slotless_ids: Vec::new(),
@@ -1604,6 +1611,13 @@ impl TextureStreamer {
     /// Full resolution of a texture once its header is known.
     pub fn full_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         self.entries.get(id).and_then(full_size)
+    }
+
+    /// [`full_size`](Self::full_size), or the size the texture had when it
+    /// was last evicted: what the complexity counts, steady while the
+    /// texture memory comes and goes.
+    pub fn known_size(&self, id: &Uuid) -> Option<(u32, u32)> {
+        self.full_size(id).or_else(|| self.evicted_sizes.get(id).copied())
     }
 
     /// Share source bytes and cache locations, never GPU readback or disk IO
@@ -2041,6 +2055,9 @@ impl TextureStreamer {
             let Some(e) = self.entries.remove(&id) else {
                 continue;
             };
+            if let Some(size) = full_size(&e) {
+                self.evicted_sizes.insert(id, size);
+            }
             self.forget_legacy_bump(id);
             self.counts.change(e.counted, 0);
             if let Some(mask) = self.pick_masks.remove(&id) {
@@ -5562,6 +5579,21 @@ mod tests {
         s.evict(&mut table, due);
         assert_eq!(s.slotless, 1);
         assert!(table.freed.is_empty());
+    }
+
+    #[test]
+    fn an_evicted_texture_keeps_its_known_size() {
+        // #3381: the complexity counts it the same once it is gone
+        let mut s = full_table(&[], &[]);
+        let mut table = Slots::default();
+        s.entries.insert(id(5), entry(Some(2), 0.0));
+        s.entries.insert(id(6), entry(None, 0.0));
+        assert_eq!(s.known_size(&id(5)), Some((1024, 1024)));
+        s.evict(&mut table, vec![id(5), id(6)]);
+        assert_eq!(s.full_size(&id(5)), None);
+        assert_eq!(s.known_size(&id(5)), Some((1024, 1024)));
+        // a size never known stays unknown
+        assert_eq!(s.known_size(&id(6)), None);
     }
 
     #[test]
