@@ -1917,8 +1917,10 @@ fn vs_part_pick(in: VsIn) -> PoserPickOut {
             let part_id = poser_pick_class(skin_binds[rec.flags.z + in.joints[k]].joint.x);
             let part = select(0u, part_id, part_id <= 6u);
             let weight = in.weights[k] / total;
-            if (part < 4u) { out.parts_lo[part] += weight; }
-            else { out.parts_hi[part - 4u] += weight; }
+            // FXC cannot address a dynamic component of an output struct's
+            // vector. Whole-vector additions keep the same per-part sums.
+            out.parts_lo += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(0u, 1u, 2u, 3u));
+            out.parts_hi += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(4u, 5u, 6u, 7u));
         }
     } else {
         // Unrigged accessories still win depth and occlude the body.

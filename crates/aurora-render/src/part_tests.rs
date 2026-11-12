@@ -93,10 +93,24 @@ fn input(vertex:u32,instance:u32)->VsIn {{
 #[test]
 fn poser_parts_match_interpolated_weights_sidedness_and_nearest_visible_coverage_on_gpu() {
     let _gpu = crate::test_gpu::lock();
-    let instance = wgpu::Instance::default();
+    check_part_rasterization(wgpu::Instance::default());
+}
+
+#[cfg(windows)]
+#[test]
+fn poser_part_rasterization_also_works_with_the_dx12_fxc_compiler() {
+    let _gpu = crate::test_gpu::lock();
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::DX12;
+    descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc;
+    check_part_rasterization(wgpu::Instance::new(descriptor));
+}
+
+fn check_part_rasterization(instance: wgpu::Instance) {
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         return;
     };
+    eprintln!("Poser raster regression adapter: {:?}", adapter.get_info());
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("part GPU device");
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production poser parts regression"),
