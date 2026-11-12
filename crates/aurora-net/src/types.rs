@@ -513,6 +513,13 @@ pub enum NetEvent {
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
     },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
+    },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
     /// Answer of a voice call request: the body, or the HTTP status of the
@@ -968,6 +975,11 @@ pub enum NetEvent {
         message: String,
         url: String,
     },
+    /// The simulator asks for a web window on this URL (llOpenFloater, the
+    /// "URLFloater" GenericMessage; `url_floater.rs`).
+    UrlFloater {
+        url: String,
+    },
     /// llMapDestination (ScriptTeleportRequest): a place to show on the
     /// world map. Despite its name it never teleports by itself.
     ScriptTeleportRequest {
@@ -1402,6 +1414,8 @@ pub enum NetEvent {
         item_id: Uuid,
         running: bool,
         mono: Option<bool>,
+        /// The event queue's Luau and LuauLanguage flags; `Off` when absent.
+        luau: crate::scripts::Luau,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -1599,6 +1613,13 @@ pub enum NetCommand {
     ChatSession {
         method: crate::social::SessionMethod,
         session: Uuid,
+    },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
     },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.
@@ -2269,6 +2290,9 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        /// A script (asset type 10) written in Lua ([`crate::scripts::lua_source`]):
+        /// compiled for "luau", never "mono".
+        lua: bool,
         data: Vec<u8>,
     },
     /// Create a named notecard, then upload its text after the matching

@@ -998,7 +998,46 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     let fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
     let gtdenom = 2.0 * nh;
     let gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
-    return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
+    return legacy_finite(lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl));
+}
+
+// AURORA_LEGACY_NAN=off|check (frame.light_mode.z): `off` lets a legacy
+// highlight or environment term that is not a number through, as before
+// (0.9.8); `check` paints magenta where one was caught.
+const LEGACY_NAN_OFF: u32 = 0x200000u;
+const LEGACY_NAN_CHECK: u32 = 0x400000u;
+// Whether this fragment caught one (the `check` mode). Reset by
+// shade_material.
+var<private> legacy_nan: bool = false;
+
+fn not_finite(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7f800000u) == 0x7f800000u;
+}
+
+// A legacy lighting term (a highlight, an environment sample) that is not a
+// finite number gives none. The highlight's divisions and powers can give
+// a NaN at grazing angles, and the min, max and clamp that follow are left
+// to the card: NVIDIA returns the other operand (no highlight), AMD keeps
+// the NaN, which `finite_hdr` turns black: black eyebrows, beards and eye
+// layers on mesh heads in 0.9.8, after #3389 had only taken its alpha
+// away. Tested on the bits, as legacy_glare_alpha: a driver may fold
+// `x != x` to false.
+fn legacy_finite(x: f32) -> f32 {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return x;
+    }
+    let bad = not_finite(x);
+    legacy_nan = legacy_nan || bad;
+    return select(x, 0.0, bad);
+}
+
+fn legacy_finite3(c: vec3<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return c;
+    }
+    let bad = not_finite(c.x) || not_finite(c.y) || not_finite(c.z);
+    legacy_nan = legacy_nan || bad;
+    return select(c, vec3<f32>(0.0), bad);
 }
 
 // The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
@@ -1010,6 +1049,27 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
 // highlight does not count, as there. Reset by shade_material, written by
 // legacy_light and legacy_local_spec.
 var<private> legacy_glare: f32 = 0.0;
+
+// AURORA_LEGACY_GLARE=0 (frame.light_mode.z): no glare, the blended legacy
+// faces take their texture alpha and leave early as before #3259, to tell
+// a glare fault from another on a card we cannot test (#3259 follow-up:
+// squares on blended leaves and streaks in hair on AMD cards).
+const LEGACY_GLARE_OFF: u32 = 0x100000u;
+
+fn legacy_glare_on() -> bool {
+    return (frame.light_mode.z & LEGACY_GLARE_OFF) == 0u;
+}
+
+// The alpha the glare gives a face of emissive mask `unlit`, as
+// materialF.glsl: glare *= 1 - emissive, then min(glare, 1). A glare that
+// is not a number (a degenerate normal or environment sample) gives none:
+// min and clamp of a NaN are left to the card, and one card's 1 drew
+// whole quads of empty texels. Tested on the bits: a driver may fold
+// `g != g` to false.
+fn legacy_glare_alpha(unlit: f32) -> f32 {
+    let g = legacy_glare * (1.0 - clamp(unlit, 0.0, 1.0));
+    return select(clamp(g, 0.0, 1.0), 0.0, not_finite(g) || !legacy_glare_on());
+}
 
 // Legacy material lighting applied to the sun + sky result `col`, as
 // softenLightF.glsl: sun highlight, applyGlossEnv and applyLegacyEnv. The
@@ -1058,8 +1118,8 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     }
     // sampleReflectionProbesLegacy clamps both: a very bright sky does not
     // wash a shiny face out
-    gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
-    env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    gloss_sky = clamp(legacy_finite3(gloss_sky), vec3<f32>(0.0), vec3<f32>(10.0));
+    env_sky = clamp(legacy_finite3(env_sky), vec3<f32>(0.0), vec3<f32>(10.0));
     // with GTAO, the glossy reflection fades in creases as a PBR one
     // (specular_occlusion; its roughness from the glossiness, as the probe
     // level above); the sharp environment is a mirror's lobe, which that
@@ -1092,7 +1152,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
 // projector over it (the sun's highlight never glares). A glossy hair far
 // from any local light keeps leaving before the lighting (fs_blend).
 fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
-    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u) {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u || !legacy_glare_on()) {
         return false;
     }
     if (m.legacy_env > 0.0) {
@@ -1307,7 +1367,7 @@ fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
 // base texture's slot points at the shared placeholder layer
 // (`textures::PLACEHOLDER`, slot 4) until its first texels arrive.
 fn rez_still_grey(rec: DrawRecord) -> bool {
-    return tex_loc[rec.tex.x] == tex_loc[4u];
+    return tex_loc.values[rec.tex.x] == tex_loc.values[4u];
 }
 
 // Height of the fragment within its object (0 bottom, 1 top), for the
@@ -1445,6 +1505,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     legacy_glare = 0.0;
+    legacy_nan = false;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1514,20 +1575,37 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
+    // Studio isolation leaves the live avatar and attachments in this pass.
+    // Blend the final radiance, preserving material alpha/cutouts and never
+    // editing their records. HUDs use fs_hud and scenery carries its own bit.
+    let white = select(0.0, clamp(frame.studio_aurora[3].w, 0.0, 1.0),
+        frame.studio_aurora[3].w > 0.0 && (rec.flags.w & FLAG_STUDIO_STAGE) == 0u);
+    col = mix(col, vec3<f32>(1.0), white);
     // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
     // the vertex alpha being the face color's (a fullbright face takes the
     // other branch and has no glare, as emissive_brightness 1 there)
     var alpha = m.color.a;
     if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
-        alpha = max(alpha, min(legacy_glare, 1.0) * rec.base_color.a);
+        alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
+    if ((frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
+        // magenta: a legacy term caught by legacy_finite; cyan: the colour
+        // is still not a number, from a source the guard does not cover
+        if (not_finite(col.x) || not_finite(col.y) || not_finite(col.z)) {
+            s.color = vec4<f32>(0.0, 4.0, 4.0, max(alpha, 0.5));
+        } else if (legacy_nan) {
+            s.color = vec4<f32>(4.0, 0.0, 4.0, max(alpha, 0.5));
+        }
+    }
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
         s.roughness = 1.0;
     }
+    s.roughness = mix(s.roughness, 1.0, white);
+    s.metallic *= 1.0 - white;
     return s;
 }
 
@@ -1796,6 +1874,152 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
         if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
     }
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
+// The poser's hovered part on the subject's skinned faces (Aurora's own):
+// each vertex's share of skinning weight on the part's palette joints
+// (`frame.part_joints`), graded across the mesh where the weights turn from
+// one part to the next. The position is vs_main's, so the depth test
+// against the scene matches.
+struct PoserPartOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) part: f32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+};
+
+// The diffuse coordinates as vs_main gives them, texture animation included,
+// for the part's alpha test.
+fn poser_part_uv(rec: DrawRecord, in: VsIn) -> vec2<f32> {
+    var st = face_st(in, rec);
+    let animated = has_tex_anim(rec);
+    if (animated) {
+        st = tex_anim_st(st, rec, frame.anim_clock.zw);
+    }
+    if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
+        return vec2<f32>(st.x, 1.0 - st.y);
+    }
+    return te_uv(st, rec);
+}
+
+// What of a face the part shows and picks: an alpha-masked face as it is
+// cut out; a blended one where it can be seen (a hair card's or a fishnet's
+// clear texels are not the avatar); others whole.
+const POSER_PART_BLEND_ALPHA: f32 = 0.1;
+fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>, front: bool) -> bool {
+    // Match the colour/depth passes: only double-sided materials show backs.
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { return false; }
+    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+    let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
+    if (!masked && !blended) {
+        return true;
+    }
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (masked && rec.base_color.a >= 0.004 && alpha < rec.params.w) {
+        return false;
+    }
+    return !(blended && alpha < POSER_PART_BLEND_ALPHA);
+}
+
+fn in_poser_part(joint: u32) -> bool {
+    let word = frame.part_joints[(joint >> 7u) & 1u][(joint >> 5u) & 3u];
+    return joint < 256u && ((word >> (joint & 31u)) & 1u) != 0u;
+}
+
+@vertex
+fn vs_part_mask(in: VsIn) -> PoserPartOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPartOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.part = 0.0;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let w = in.weights;
+        var share = 0.0;
+        for (var k = 0u; k < 4u; k++) {
+            if (w[k] > 0.0 && in_poser_part(skin_binds[rec.flags.z + in.joints[k]].joint.x)) {
+                share += w[k];
+            }
+        }
+        out.part = share / max(w.x + w.y + w.z + w.w, 1e-4);
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    // the part's share, eased so the tint fades where the weights pass to
+    // the next part (Overlay::new_part); green: the subject is here
+    return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
+}
+
+// The pick interpolates each part's summed skinning weights, as the mask
+// interpolates its share. A flat joint ID makes the first vertex decide
+// for the entire triangle and changes when a mesh reorders its indices.
+struct PoserPickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) parts_lo: vec4<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+    @location(4) parts_hi: vec4<f32>,
+};
+
+fn poser_pick_class(joint: u32) -> u32 {
+    if (joint >= 256u) { return 0u; }
+    let word = joint >> 3u;
+    return (frame.part_classes[word >> 2u][word & 3u] >> ((joint & 7u) * 4u)) & 15u;
+}
+
+@vertex
+fn vs_part_pick(in: VsIn) -> PoserPickOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPickOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.parts_lo = vec4<f32>(0.0);
+    out.parts_hi = vec4<f32>(0.0);
+    let total = dot(in.weights, vec4<f32>(1.0));
+    if ((rec.flags.x & FLAG_SKINNED) != 0u && total > 1e-4) {
+        for (var k = 0u; k < 4u; k++) {
+            if (in.weights[k] <= 0.0) { continue; }
+            let part_id = poser_pick_class(skin_binds[rec.flags.z + in.joints[k]].joint.x);
+            let part = select(0u, part_id, part_id <= 6u);
+            let weight = in.weights[k] / total;
+            // FXC cannot address a dynamic component of an output struct's
+            // vector. Whole-vector additions keep the same per-part sums.
+            out.parts_lo += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(0u, 1u, 2u, 3u));
+            out.parts_hi += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(4u, 5u, 6u, 7u));
+        }
+    } else {
+        // Unrigged accessories still win depth and occlude the body.
+        out.parts_lo.x = 1.0;
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_pick(in: PoserPickOut, @builtin(front_facing) front: bool) -> @location(0) vec4<u32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    var best = 0u;
+    var weight = in.parts_lo.x;
+    for (var part = 1u; part <= 6u; part++) {
+        var share = 0.0;
+        if (part < 4u) { share = in.parts_lo[part]; }
+        else { share = in.parts_hi[part - 4u]; }
+        if (share > weight) { best = part; weight = share; }
+    }
+    return vec4<u32>(best, 0u, 0u, 0u);
 }
 
 // Glow suppression of a face LL draws in its alpha pool: the glow under it

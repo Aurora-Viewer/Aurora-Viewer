@@ -294,6 +294,7 @@ struct Session<'a> {
     login: Arc<LoginResponse>,
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
+    last_run_sent: Option<(SocketAddr, bool)>,
     eq_tx: mpsc::UnboundedSender<EqMessage>,
     caps_tx: CapsSender,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
@@ -520,6 +521,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         login: login.clone(),
         sims: HashMap::new(),
         main: None,
+        last_run_sent: None,
         eq_tx,
         caps_tx,
         agent_update: AgentUpdateRule::new(Instant::now()),
@@ -802,6 +804,7 @@ impl Session<'_> {
     }
 
     fn send_complete_agent_movement(&mut self, addr: SocketAddr) {
+        self.last_run_sent = None;
         transition::step(|| format!("CompleteAgentMovement sent to region {}", transition::grid(self.handle_of(addr))));
         let mut m = CompleteAgentMovement::default();
         m.agent_data.agent_id = self.agent_id();
@@ -2231,6 +2234,11 @@ impl Session<'_> {
                 self.send_main(&m, false);
             }
             NetCommand::SetAlwaysRun(run) => {
+                let Some(region) = self.main else { return };
+                if !self.sims.contains_key(&region) || self.last_run_sent == Some((region, run)) {
+                    return;
+                }
+                self.last_run_sent = Some((region, run));
                 let mut m = SetAlwaysRun::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
@@ -2738,6 +2746,7 @@ impl Session<'_> {
                 request,
                 item,
                 asset_type,
+                lua,
                 data,
             } => {
                 let name = match asset_type {
@@ -2763,7 +2772,8 @@ impl Session<'_> {
                 let events = self.sh.events.clone();
                 let owner = self.agent_id();
                 tokio::spawn(async move {
-                    let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item, asset_type, data).await;
+                    let result =
+                        crate::inventory::operations::save_content_for(&http, &cap, &fetch, owner, item, asset_type, lua, data).await;
                     let _ = events.send(NetEvent::InventoryContentSaved { request, item, result });
                 });
             }
@@ -3075,6 +3085,7 @@ impl Session<'_> {
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
             | NetCommand::ChatSession { .. }
+            | NetCommand::ModerateText { .. }
             | NetCommand::Call { .. } => {}
             // handled by on_offline_command
             NetCommand::RequestOfflineMessages
@@ -5069,6 +5080,7 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
             self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == LargeGenericMessage::ID {
@@ -5085,6 +5097,7 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
             self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == UpdateCreateInventoryItem::ID {
@@ -6256,6 +6269,33 @@ mod event_queue_tests {
     }
 
     #[tokio::test]
+    async fn run_updates_only_send_on_changes_and_resync_after_region_arrival() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        sock.writable().await.expect("writable UDP socket");
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("neighbour simulator");
+        let main_addr = main.local_addr().unwrap();
+        let neighbour_addr = neighbour.local_addr().unwrap();
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let packets = || sh.stats.packets_out.load(std::sync::atomic::Ordering::Relaxed);
+        let initial = packets();
+        session.on_command(NetCommand::SetAlwaysRun(false));
+        session.on_command(NetCommand::SetAlwaysRun(false));
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        assert_eq!(packets() - initial, 2);
+        session.main = Some(neighbour_addr);
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        assert_eq!(packets() - initial, 3);
+        session.send_complete_agent_movement(neighbour_addr);
+        let before = packets();
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        assert_eq!(packets() - before, 1, "arrival resynchronizes unchanged run preference");
+    }
+
+    #[tokio::test]
     async fn remote_teleport_flags_reach_the_viewer_and_old_circuits_cannot_replace_own_animations() {
         let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
         let main: SocketAddr = "127.0.0.1:13001".parse().unwrap();
@@ -6376,6 +6416,7 @@ mod event_queue_tests {
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -6728,6 +6769,7 @@ mod script_dialog_tests {
             login: test_login(main.port()),
             sims,
             main: Some(main),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,

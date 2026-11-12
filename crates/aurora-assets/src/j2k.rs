@@ -194,6 +194,43 @@ fn bound_tile_parts(cs: &[u8], plausible: usize) -> Option<Vec<u8>> {
     copy
 }
 
+/// OpenJPEG 2.5.3 sizes a tile's tile-part index from the TLM marker segments
+/// of the main header, then fills one slot per SOT as it reads the codestream.
+/// On the branch where a SOT gives no tile-part count (TNsot = 0) it does not
+/// check the tile-part number (TPsot) against that size, so a later
+/// `opj_j2k_read_sod` can write one slot past the index (a heap overflow;
+/// fixed on OpenJPEG master by PR #1621, not yet in any release, hence
+/// openjpeg-sys 1.0.12 is still affected). Aurora always decodes a whole
+/// texture in codestream order and never uses TLM to seek, so every TLM
+/// segment of the main header is disabled before OpenJPEG reads it: its Stlm
+/// byte is set to the reserved size code (ST = 3), which `opj_j2k_read_tlm`
+/// rejects as invalid and OpenJPEG then falls back to growing the index from
+/// the SOT markers, the same as a stream with no TLM. Byte offsets are kept,
+/// so no other field moves. Returns a patched copy only when a TLM is present.
+///
+/// The TLM marker (0xFF55) lives only in the main header, which runs from the
+/// SOC to the first SOT (ISO 15444-1 A.4.4); the header is walked by segment
+/// length, so a 0xFF55 pair inside later coded data is never touched.
+fn disable_tlm_index(cs: &[u8]) -> Option<Vec<u8>> {
+    let mut copy: Option<Vec<u8>> = None;
+    let mut pos = 2usize; // past the SOC marker (0xFF4F)
+    while let Some(marker) = be16(cs, pos) {
+        // SOT / SOD / EOC end the main header.
+        if matches!(marker, 0xFF90 | 0xFF93 | 0xFFD9) {
+            break;
+        }
+        let Some(len) = be16(cs, pos + 2).map(usize::from).filter(|&l| l >= 2) else {
+            break;
+        };
+        // TLM body: Ztlm(1) Stlm(1) …; force ST = 3 in Stlm (bits 4-5).
+        if marker == 0xFF55 && len >= 4 && pos + 5 < cs.len() {
+            copy.get_or_insert_with(|| cs.to_vec())[pos + 5] |= 0x30;
+        }
+        pos = pos.checked_add(2 + len)?;
+    }
+    copy
+}
+
 /// What OpenJPEG may hold at once for one decode, estimated from the headers
 /// ([`decode_memory`]) before it reads them: its header parsing keeps the
 /// coding parameters of every tile, each tile it decodes the structures of
@@ -315,7 +352,7 @@ fn is_header_segment(marker: u16) -> bool {
 }
 
 /// Walk the marker segments of a header from `pos` as OpenJPEG reads them,
-/// handing each one (marker, contents) to `segment`, up to a marker `stop`
+/// handing each one (its position, marker, contents) to `segment`, up to a marker `stop`
 /// accepts or the end of the data. Other bytes are passed two at a time, as
 /// `opj_j2k_read_unk` looks for the next known marker. `steps` bounds the
 /// work over all the headers of a codestream: `None` once it runs out.
@@ -703,6 +740,10 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
     let cs = bounded.as_deref().unwrap_or(cs);
+    // Disable any TLM tile-part index: OpenJPEG 2.5.3 can write past it (see
+    // `disable_tlm_index`). Aurora decodes textures in codestream order anyway.
+    let no_tlm = disable_tlm_index(cs);
+    let cs = no_tlm.as_deref().unwrap_or(cs);
 
     let mut mem = MemStream { data: cs, offset: 0 };
 
@@ -1347,6 +1388,44 @@ mod tests {
         let mut coc = vec![2, 1];
         coc.extend_from_slice(&cod_body(&costly)[5..]);
         assert_refused(&codestream(&l, &segment(0xFF53, &coc)));
+    }
+
+    /// A codestream whose main header holds a TLM segment listing one
+    /// tile-part of 14 bytes for tile 0, followed by `parts` empty tile-parts
+    /// of that tile in order (TPsot 0, 1, …), none giving the tile-part count
+    /// (TNsot 0).
+    fn codestream_with_tlm(parts: u8) -> Vec<u8> {
+        let main = codestream(&Layout::texture(64, 64, 3), &[]);
+        let sot = main.windows(4).position(|w| w == [0xFF, 0x90, 0x00, 0x0A]).expect("SOT");
+        let mut cs = main[..sot].to_vec();
+        // Ztlm 0, Stlm: 8-bit Ttlm, 16-bit Ptlm; Ttlm 0, Ptlm 14.
+        cs.extend(segment(0xFF55, &[0, 0x10, 0, 0, 14]));
+        for part in 0..parts {
+            cs.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A, 0, 0, 0, 0, 0, 14, part, 0, 0xFF, 0x93]);
+        }
+        cs.extend_from_slice(&[0xFF, 0xD9]);
+        cs
+    }
+
+    /// OpenJPEG sizes its tile-part index from the TLM segments, then fills
+    /// it from the SOT markers: tile-parts the TLM does not list, with no
+    /// TNsot to resize it, wrote past its end (heap overflow). The main
+    /// header's TLM is disabled before OpenJPEG reads it, so the index grows
+    /// from the SOT markers instead.
+    #[test]
+    fn tile_parts_beyond_the_tlm_are_read_in_stream_order() {
+        let cs = codestream_with_tlm(200);
+        // The TLM is found and disabled (its Stlm byte forced to ST = 3).
+        let patched = disable_tlm_index(&cs).expect("TLM disabled");
+        // FF 55, Lcme(2), Ztlm(1), Stlm(1): Stlm is the sixth byte.
+        let tlm = cs.windows(2).position(|w| w == [0xFF, 0x55]).expect("TLM marker");
+        assert_eq!(patched[tlm + 5] & 0x30, 0x30, "Stlm ST bits set");
+        assert_eq!(&patched[..tlm + 5], &cs[..tlm + 5], "only the Stlm byte changes");
+        assert_eq!(&patched[tlm + 6..], &cs[tlm + 6..]);
+        // A codestream with no TLM is left untouched.
+        assert!(disable_tlm_index(&codestream(&Layout::texture(64, 64, 3), &[])).is_none());
+        // Decoding the crafted stream must not corrupt memory.
+        let _ = decode_j2k(&cs, 0);
     }
 
     /// Found by fuzzing: a SIZ header claiming 2^32 - 1 on both sides

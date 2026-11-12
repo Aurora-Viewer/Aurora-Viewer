@@ -68,12 +68,18 @@ pub(super) enum FacePick {
     Geometry,
     Inventory,
     HudMove,
-    /// HUD press: transparent scripted clickers win, plain alpha-zero
-    /// panels let a visible button behind them take the click.
+    /// HUD press: alpha-zero faces take the click like the Legacy Viewer's
+    /// transparent pick, except a plain hidden media panel, which lets a
+    /// button behind it take the click.
     HudClick,
     /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
     LeftBlend,
+    /// Build face tool: like `Left` (fully transparent world Blend texels
+    /// let the click through), and the visible faces of worn unrigged
+    /// meshes count. World left-clicks still use only their invisible
+    /// clickers (`only_hidden`).
+    Edit,
 }
 
 impl PickFace {
@@ -592,6 +598,19 @@ impl Scene {
         self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Left)
     }
 
+    /// The build face tool's hits (LLToolFace): `left_edit_ray_hits`, plus
+    /// the visible faces of worn unrigged meshes.
+    pub fn face_edit_ray_hits(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        hud: bool,
+        select_probes: bool,
+        select_limit: Option<f32>,
+    ) -> Vec<usize> {
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Edit)
+    }
+
     fn edit_ray_hits_mode(
         &self,
         world: &World,
@@ -875,7 +894,9 @@ impl Scene {
         if !g.hud && g.rigged {
             return None;
         }
-        let only_hidden = !g.hud && worn_unrigged_mesh(o, g);
+        // Edit mode needs the faces the user sees on worn unrigged mesh, so
+        // the face tool does not fall through to the world object behind.
+        let only_hidden = !g.hud && worn_unrigged_mesh(o, g) && mode != FacePick::Edit;
         if only_hidden && !include_hidden {
             return None;
         }
@@ -912,7 +933,14 @@ impl Scene {
             if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
-            let hud_clicker = hud_click && crate::interaction::special_hover_cursor(o);
+            // LLToolPie::handleMouseDown presses with a transparent pick, and
+            // a transparent attachment pick always wins: an invisible HUD
+            // button takes the press even when only its root has the touch
+            // script (a face HUD's close and minimise buttons). Only a hidden
+            // prim media panel lets a press through to the button behind it,
+            // unless its own prim shows the special cursor (specialHoverCursor).
+            let hud_clicker =
+                hud_click && (crate::interaction::special_hover_cursor(o) || !o.te.as_ref().is_some_and(|te| te.face(face).has_media()));
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) && !hud_clicker
             {
                 return None;
@@ -926,7 +954,7 @@ impl Scene {
                 indices: &f.indices,
             })
         });
-        if matches!(mode, FacePick::Left | FacePick::LeftBlend) && !g.hud && g.owner_avatar.is_none() {
+        if matches!(mode, FacePick::Left | FacePick::LeftBlend | FacePick::Edit) && !g.hud && g.owner_avatar.is_none() {
             // LLVolume::lineSegmentIntersect rejects back faces. After a
             // texture hole, an invisible exit face must not reclaim the
             // click from the surface the GPU actually drew (#1574).
@@ -1211,7 +1239,7 @@ impl Scene {
             }
             let Some(f) = f else { continue };
             let two_sided = mode == FacePick::Geometry || self.face_double_sided(world, o, face);
-            let mask = if matches!(mode, FacePick::Left | FacePick::LeftBlend)
+            let mask = if matches!(mode, FacePick::Left | FacePick::LeftBlend | FacePick::Edit)
                 && !g.hud
                 && g.owner_avatar.is_none()
                 && self.blend_face_mode(world, o, g, face, true)
@@ -1352,6 +1380,18 @@ impl Scene {
 
     pub fn left_touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
         self.touch_surface_mode(world, idx, ray, FacePick::Left)
+    }
+
+    /// Face / TE pick for the build face tool: same as left click, but worn
+    /// unrigged meshes keep their visible faces.
+    pub fn edit_touch_surface(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<TouchSurface> {
+        self.touch_surface_mode(world, idx, ray, FacePick::Edit)
+    }
+
+    /// World point of an edit face hit, for comparing with GPU-posed picks.
+    pub fn edit_hit_point(&self, world: &World, idx: usize, ray: (Vec3, Vec3)) -> Option<Vec3> {
+        let hit = self.face_hit_mode(world, idx, ray, Instant::now(), true, FacePick::Edit)?;
+        Some(ray.0 + ray.1 * hit.t)
     }
 
     fn touch_surface_mode(&self, world: &World, idx: usize, ray: (Vec3, Vec3), mode: FacePick) -> Option<TouchSurface> {
@@ -2407,6 +2447,41 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn edit_face_tool_reaches_visible_faces_of_worn_unrigged_mesh() {
+        // Build face tool must hit the worn mesh the user sees. Left click
+        // still uses only invisible clickers so a mesh body does not steal
+        // touches meant for scripted prims under it.
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        world.agent.position = ray.0;
+        let o = world.objects.get_mut(front).unwrap();
+        let mut volume = o.volume;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::from_u128(0xface),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        o.render.local_volume = Some(Box::new(volume));
+        scene.gpu[front].owner_avatar = world.objects.avatars().next().map(|(idx, _)| idx);
+        scene.gpu[front].built_faces = scene.gpu[front].faces.len();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), false).is_none());
+        assert!(
+            scene
+                .face_hit_mode(&world, front, ray, Instant::now(), true, FacePick::Edit)
+                .is_some()
+        );
+        assert_eq!(scene.face_edit_ray_hits(&world, ray, false, false, None), [front, back]);
+        assert_eq!(scene.left_edit_ray_hits(&world, ray, false, false, None), [back]);
+        assert!(scene.edit_touch_surface(&world, front, ray).is_some());
+        assert!(scene.left_touch_surface(&world, front, ray).is_none());
+        assert!(scene.edit_hit_point(&world, front, ray).is_some());
+    }
+
+    #[test]
     fn sphere_test_keeps_what_the_ray_can_reach() {
         let g = |center: Vec3, radius: f32| super::super::ObjGpu {
             center,
@@ -3050,10 +3125,12 @@ pub(crate) mod tests {
     }
 
     /// Ordinary HUD hover (no media focus) and HUD presses pick the same
-    /// target: a plain face at exactly alpha 0 lets the object behind it
-    /// take both, a face at 1/255 keeps both, and a transparent prim with a
-    /// special hover cursor (LLViewerObject::specialHoverCursor) stays the
-    /// target, as in LLVOVolume::lineSegmentIntersect.
+    /// target. An invisible button takes both, even when only its root has
+    /// the touch script, as LLToolPie::handleMouseDown's transparent pick
+    /// does (a face HUD's close and minimise buttons). A plain media panel
+    /// at exactly alpha 0 lets the object behind it take both, a face at
+    /// 1/255 keeps both, and a transparent media prim with a special hover
+    /// cursor (LLViewerObject::specialHoverCursor) stays the target.
     #[test]
     fn hud_hover_and_press_share_the_transparent_panel_policy() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
@@ -3081,6 +3158,10 @@ pub(crate) mod tests {
             draw.te_alpha = alpha;
             draw.pass = if alpha < 0.004 { Pass::Hidden } else { Pass::Blend };
         };
+        let set_media = |world: &mut World, on: bool| {
+            let face = &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0];
+            face.media_flags = if on { face.media_flags | 1 } else { face.media_flags & !1 };
+        };
         let targets = |world: &World, scene: &mut Scene| {
             let press = scene.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
             let hover = scene.hover_hud(world, cursor);
@@ -3088,12 +3169,20 @@ pub(crate) mod tests {
             press
         };
 
+        // An invisible button with no script of its own (the touch script
+        // is in the root) takes the press over the panel behind it.
         set_alpha(&mut world, &mut scene, 0.0);
-        assert_eq!(targets(&world, &mut scene), Some(back), "plain alpha-zero panel");
+        assert_eq!(targets(&world, &mut scene), Some(front), "invisible button");
+        world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(targets(&world, &mut scene), Some(front), "invisible button over a scripted panel");
+        world.objects.get_mut(back).unwrap().update_flags = 0;
+
+        set_media(&mut world, true);
+        assert_eq!(targets(&world, &mut scene), Some(back), "plain alpha-zero media panel");
         // Beacon and poser checks still see the panel itself.
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
 
-        // A scripted button behind the invisible panel takes hover and press.
+        // A scripted button behind the invisible media panel takes hover and press.
         world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
         assert_eq!(targets(&world, &mut scene), Some(back), "scripted button behind");
         world.objects.get_mut(back).unwrap().update_flags = 0;
@@ -3102,7 +3191,7 @@ pub(crate) mod tests {
         set_alpha(&mut world, &mut scene, 1.0 / 255.0);
         assert_eq!(targets(&world, &mut scene), Some(front), "alpha 1/255");
 
-        // Special hover cursors keep a transparent front face.
+        // Special hover cursors keep a transparent front media face.
         set_alpha(&mut world, &mut scene, 0.0);
         for (click_action, flags) in [
             (crate::interaction::code::SIT, 0),
@@ -3538,6 +3627,7 @@ pub(crate) mod tests {
             selected: false,
             remove: false,
             source_folder: Uuid::nil(),
+            from_task: Uuid::nil(),
         };
         let updates: Vec<_> = (0..16_000)
             .map(|n| {
@@ -3978,6 +4068,12 @@ pub(crate) mod tests {
                 );
                 assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(expected));
                 assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);
+                // the build face tool clicks through the same texels
+                assert_eq!(scene.edit_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);
+                assert_eq!(
+                    scene.face_edit_ray_hits(&world, ray, false, false, None),
+                    scene.left_edit_ray_hits(&world, ray, false, false, None)
+                );
                 assert!(scene.touch_surface(&world, front, ray).is_some());
                 for action in [
                     crate::interaction::code::NONE,

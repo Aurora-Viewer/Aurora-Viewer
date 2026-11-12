@@ -5,6 +5,7 @@ mod app_links;
 pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
+mod channel;
 mod completion;
 mod compose;
 mod console;
@@ -24,6 +25,7 @@ mod keys;
 mod latest;
 mod line_menu;
 mod members;
+pub mod moderation;
 mod object_row;
 mod offer_card;
 mod payment_card;
@@ -151,6 +153,9 @@ pub struct ChatUi {
     pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
+    /// The chat bar's channel menu is open: it keeps an autohidden bar shown
+    /// while the pointer goes into the menu, as `bar_emoji_open` does.
+    pub bar_channel_open: bool,
     /// The lines' style of the settings, given every frame by the app
     /// (`set_style`).
     pub style: crate::settings::ChatStyle,
@@ -216,6 +221,10 @@ pub struct ChatUi {
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
+    /// The selector's channel (the Legacy Viewer's `ChatChannel` spinner):
+    /// one for every nearby chat field, kept from one message to the next
+    /// for the session, used when the text has no `/n` (`channel::resolve`).
+    pub chat_channel: i32,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
@@ -456,6 +465,14 @@ impl ChatUi {
         }
     }
 
+    /// The channel selector's channel while Preferences show it: what a
+    /// nearby line without `/n` is sent on (`channel::resolve`). Off channel
+    /// 0 it is not said aloud, so no typing animation, as
+    /// FSNearbyChat::handleChatBarKeystroke given the spinner's channel.
+    pub fn selector_channel(&self) -> Option<i32> {
+        self.show_channel.then_some(self.chat_channel)
+    }
+
     /// The chat bar is drawn this frame: always, or with `autohide` while it
     /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
@@ -467,7 +484,13 @@ impl ChatUi {
         if self.bar_hidden {
             return self.focus_request;
         }
-        !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
+        !self.autohide
+            || self.has_focus
+            || self.focus_request
+            || !self.input.trim().is_empty()
+            || self.bar_emoji_open
+            || self.bar_channel_open
+            || self.bar_hovered
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -1743,6 +1766,17 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
+    });
+    line_menu::inline(r);
+}
+
+/// Right click on a member of a conversation's members' panel: the name
+/// menu, then a group chat's moderator options (`moderation`).
+fn member_menu(r: &egui::Response, p: &Palette, world: &World, conversation: uuid::Uuid, id: uuid::Uuid) {
+    super::contacts::drag::person_source(r, id);
+    super::menu::context_menu(r, p, |ui| {
+        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name);
+        moderation::menu(ui, p, world, conversation, id);
     });
     line_menu::inline(r);
 }
@@ -3472,7 +3506,11 @@ fn classic_pane(
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
-            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            let show_channel = st.selected.is_none() && st.show_channel;
+            let channel_w = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
+                .floor()
+                .max(40.0);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3492,6 +3530,9 @@ fn classic_pane(
                 Some(id) => suggest::Scope::Session(id, &people),
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+            if show_channel {
+                channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
+            }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output
@@ -3570,7 +3611,7 @@ fn classic_pane(
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
             match st.selected {
                 None => {
-                    let (channel, message) = parse_channel(&text);
+                    let (channel, message) = channel::resolve(&text, st.selector_channel());
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
@@ -3590,7 +3631,7 @@ fn classic_pane(
         sent,
     });
     if st.selected.is_none() {
-        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
+        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
         st.local_field(&resp, said, sent);
     }
     if !draft.is_empty() {
@@ -4066,6 +4107,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     if !line_menu.is_empty() {
         return line_menu;
     }
+    let moderate = moderation::demo_events(ctx, frame);
+    if !moderate.is_empty() {
+        return moderate;
+    }
     let preview = previews::demo_events(ctx, frame);
     if !preview.is_empty() {
         return preview;
@@ -4270,6 +4315,11 @@ pub(crate) fn bar_input_id() -> egui::Id {
     egui::Id::unique("nearby_chat_input")
 }
 
+/// The nearby chat bar's selector, separate from the workspace field.
+pub(crate) fn bar_channel_id() -> egui::Id {
+    bar_input_id().with("channel")
+}
+
 /// The text cursor of a field after the last character: the keyboard given
 /// to a field that holds a draft, or the letter that started the chat.
 pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
@@ -4279,7 +4329,7 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
-/// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
+/// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
@@ -4294,30 +4344,40 @@ pub(crate) fn bar_input(
     build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
 ) -> Option<OutgoingChat> {
     let mut out = None;
+    let show_channel = st.show_channel;
+    let channel_width = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+    let field_width = (width - channel_width).max(40.0);
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
-    let build = identified(build);
-    input::prepare(ui, bar_input_id(), true);
-    let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
-    let nav = super::emoji::codes::keys(ui, bar_input_id());
-    let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+    let build = identified(|edit| build(edit).desired_width(field_width));
     let mut emoji = emoji;
-    let minimum = ui.spacing().interact_size.y;
-    let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, width, minimum, build);
-    if recalled {
-        output.response.mark_changed();
-    }
-    super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
-    super::spelling::field(ui, p, &mut output, &mut st.input, true);
-    suggest::after(
-        ui,
-        p,
-        &mut output,
-        &mut st.input,
-        suggest_nav,
-        &mut st.suggest,
-        suggest::Scope::Nearby(gestures),
-    );
+    let output = ui
+        .horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            input::prepare(ui, bar_input_id(), true);
+            let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
+            let nav = super::emoji::codes::keys(ui, bar_input_id());
+            let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+            let minimum = ui.spacing().interact_size.y;
+            let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, field_width, minimum, build);
+            if recalled {
+                output.response.mark_changed();
+            }
+            super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
+            super::spelling::field(ui, p, &mut output, &mut st.input, true);
+            suggest::after(
+                ui,
+                p,
+                &mut output,
+                &mut st.input,
+                suggest_nav,
+                &mut st.suggest,
+                suggest::Scope::Nearby(gestures),
+            );
+            st.bar_channel_open = show_channel && channel::show(ui, p, &mut st.chat_channel, bar_channel_id());
+            output
+        })
+        .inner;
     let resp = output
         .response
         .response
@@ -4345,7 +4405,7 @@ pub(crate) fn bar_input(
     };
     let enter = send.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
-    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
+    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
@@ -4358,7 +4418,7 @@ pub(crate) fn bar_input(
         if send == SendKey::Ooc {
             text = ooc(&text);
         }
-        let (channel, message) = parse_channel(&text);
+        let (channel, message) = channel::resolve(&text, st.selector_channel());
         out = Some(OutgoingChat {
             message,
             channel,
@@ -4371,7 +4431,7 @@ pub(crate) fn bar_input(
             st.focus_request = true;
         }
     }
-    // Enter on an empty bar returns to movement (like Firestorm).
+    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
