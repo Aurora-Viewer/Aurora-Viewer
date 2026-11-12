@@ -1778,7 +1778,7 @@ pub(in super::super) fn web(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
                     )
                     .clicked()
                     {
-                        context::request(ui.ctx(), CtxAction::OpenUrl(page.clone()));
+                        context::request(ui.ctx(), CtxAction::OpenUrlExternal(page.clone()));
                     }
                     if widgets::action_button(ui, p, "refresh", "", ActionKind::Flat, Vec2::new(28.0, 24.0))
                         .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-reload"))

@@ -17,6 +17,7 @@ pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
 pub mod describe;
+pub mod draw_limits;
 pub mod drawn;
 pub mod fetch_priority;
 pub(crate) mod flexible;
@@ -352,6 +353,10 @@ pub struct FaceDraw {
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
     pub legacy_alpha: Option<u8>,
+    /// Its legacy material has a glossiness or an environment intensity:
+    /// blended, its reflections show even where its texture is transparent
+    /// (`legacy_glare` in object.wgsl).
+    pub legacy_glare: bool,
     pub two_sided: bool,
     /// The smaller of the texture entry's two scales, or of the frame grid of
     /// its texture animation: every texture of the face is loaded for it
@@ -385,6 +390,14 @@ impl FaceDraw {
     /// genDrawInfo, indra/newview/llvovolume.cpp, originally LGPL 2.1).
     pub fn fully_transparent(&self) -> bool {
         self.te_alpha < 0.004 && matches!(self.pbr_alpha, None | Some(1))
+    }
+
+    /// A legacy material drawn blended (its alpha mode, or a face color
+    /// alpha below 1) with a glossiness or an environment: its alpha is
+    /// max(texture alpha, glare) in materialF.glsl, so a transparent
+    /// texture still shows its reflections.
+    fn glares_when_blended(&self) -> bool {
+        self.legacy_glare && self.pbr_alpha.is_none() && (self.legacy_alpha == Some(legacy_mat::alpha_mode::BLEND) || self.te_alpha < 0.999)
     }
 
     /// Alpha mode bits of the face's draw record (shaders, shadows). A
@@ -864,6 +877,13 @@ pub struct Scene {
     /// The avatars and linksets chosen for the photo, every prim and
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
+    /// The avatar whose part the poser shows (its object index): its body
+    /// and what it wears go to `part_faces`, the part kept on its skinned
+    /// faces by the frame's `part_joints`.
+    pub poser_part: Option<usize>,
+    /// Whether the last lists drew any of that avatar's skinned faces (its
+    /// body or a rigged mesh): without, the poser keeps the bone outline.
+    pub poser_part_skinned: bool,
     /// The avatar an inventory drag would give to, and what it wears,
     /// outlined like the photo's (`mark_give_target`, #991).
     give_marks: (Option<usize>, std::collections::HashSet<usize>),
@@ -1559,6 +1579,8 @@ impl Scene {
             hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
+            poser_part: None,
+            poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
@@ -2627,7 +2649,9 @@ impl Scene {
         };
         if parent.is_avatar() && o.state != 0 {
             // attachment root: relative to the attachment point (the frame
-            // the GPU places worn objects from, anchors.rs)
+            // the GPU places worn objects from, anchors.rs), at most 3.5 m
+            // from it (draw_limits.rs)
+            let p = draw_limits::attachment_offset(p);
             let anchors::AttachFrame { pos: apos, rot: arot, hud } = anchors::attach_frame(world, parent, o.attachment_point());
             if hud {
                 let offset = if parent.full_id == world.agent_id {
@@ -3768,9 +3792,21 @@ impl Scene {
         }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
-        let rig_order = skeleton_owner
-            .filter(|_| rigged)
-            .map(|(_, skeleton)| blend_order::RigOrder::of(world, idx, skeleton));
+        let rig_order = skeleton_owner.filter(|_| rigged).map(|(_, skeleton)| {
+            // eyelashes, brows: the joints of a nonzero weight all of the face
+            let skin = match geom_key {
+                GeomKey::Mesh { id, .. } => self.meshes.meta(&id).and_then(|m| m.skin),
+                _ => None,
+            };
+            let face_detail = skin.is_some_and(|skin| {
+                blend_order::face_detail(
+                    geom.joint_bounds
+                        .iter()
+                        .filter_map(|b| skin.joint_names.get(b.joint as usize).map(String::as_str)),
+                )
+            });
+            blend_order::RigOrder::of(world, idx, skeleton, face_detail)
+        });
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
@@ -3984,6 +4020,7 @@ impl Scene {
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
+            let mut legacy_glare = false;
             let local_normal = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Normal);
             let local_specular = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Specular);
             if mat_id.is_none() && (!tf.material_id.is_nil() || local_normal.is_some() || local_specular.is_some()) {
@@ -4040,6 +4077,7 @@ impl Scene {
                         )
                     };
                     rec.legacy = [lm.normal_rot, lm.specular_rot, gloss, env];
+                    legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
                     if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
@@ -4163,6 +4201,7 @@ impl Scene {
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
+                legacy_glare,
                 two_sided,
                 repeats,
                 glow: rec.emissive[3] > 0.0,
@@ -4470,6 +4509,7 @@ impl Scene {
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
+                    legacy_glare: false,
                     two_sided: false,
                     repeats: 1.0,
                     glow: false,
@@ -4752,6 +4792,8 @@ impl Scene {
             let debug = debug_alpha.is_some() || pass_view;
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
+            // the poser's hovered part: its avatar and what it wears
+            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -4767,6 +4809,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
+                        || self.gpu.get(i).is_some_and(|g| posed(g, i))
                     {
                         visit.push((i, usage));
                     }
@@ -4786,6 +4829,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || captured(g, i)
+                        || posed(g, i)
                     {
                         visit.push((i, usage));
                     }
@@ -4811,6 +4855,7 @@ impl Scene {
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
+        let poser_part = self.poser_part;
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
@@ -4839,6 +4884,8 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            part_faces: Vec<DrawCmd>,
+            part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
@@ -4863,6 +4910,8 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            part_faces: Vec::new(),
+            part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
@@ -5024,6 +5073,14 @@ impl Scene {
                     {
                         l.select_faces.push(cmd);
                     }
+                    // the poser's hovered part: the subject's body and what it
+                    // wears (the shader keeps the part's own skinned
+                    // triangles; an unrigged worn object is coverage alone,
+                    // so the halo does not cross it)
+                    if poser_part.is_some() && avatar == poser_part && pass != Pass::Hidden {
+                        l.part_faces.push(cmd);
+                        l.part_skinned += usize::from(g.rigged || g.is_avatar);
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5126,6 +5183,8 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.part_faces.append(&mut b.part_faces);
+            a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -5172,6 +5231,11 @@ impl Scene {
             _ => blend_order::rig_runs,
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Layers {
+            blend_order::quiet_runs(&self.blend_tmp, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
+        } else {
+            self.lists.blend_depth_quiet.clear();
+        }
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         // under the water: back to front, the rigged first
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
@@ -5187,6 +5251,8 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.part_faces = result.part_faces;
+        self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
@@ -6136,8 +6202,10 @@ fn te_invisible(o: &Object, face: usize) -> bool {
 
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
-    // mesh heads and bodies): nothing to draw
-    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none()) {
+    // mesh heads and bodies): nothing to draw. A blended legacy material
+    // that glares still shows its reflections there, as materialF.glsl
+    // draws it (#1420): the "shine" layers of heads and eyes.
+    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none() && !f.glares_when_blended()) {
         return Pass::Hidden;
     }
     // A system body part: the avatar pool decides, not the texture alone.
@@ -7144,6 +7212,7 @@ mod tests {
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
+            legacy_glare: false,
             two_sided: false,
             repeats: 1.0,
             glow,
@@ -7164,6 +7233,31 @@ mod tests {
         let mut usage = Vec::new();
         note_face_usage(&mut usage, &face, 256.0, true);
         assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
+    }
+
+    /// materialF.glsl (blend): a transparent texture under a glossy or shiny
+    /// legacy material still shows its reflections (alpha = max(texture
+    /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
+    /// one, or not blended, the transparent texture stays hidden.
+    #[test]
+    fn transparent_texture_under_a_glaring_legacy_material_is_blended() {
+        let face = |glare: bool, legacy: Option<u8>, te_alpha: f32| FaceDraw {
+            base_slot: aurora_render::textures::TRANSPARENT,
+            legacy_glare: glare,
+            legacy_alpha: legacy,
+            te_alpha,
+            ..test_face(Pass::Hidden, false)
+        };
+        let blend = Some(legacy_mat::alpha_mode::BLEND);
+        let none = Some(legacy_mat::alpha_mode::NONE);
+        let mask = Some(legacy_mat::alpha_mode::MASK);
+        assert_eq!(classify(&face(true, blend, 1.0), AlphaKind::Mask), Pass::Blend);
+        assert_eq!(classify(&face(true, none, 0.5), AlphaKind::Mask), Pass::Blend);
+        assert_eq!(classify(&face(false, blend, 1.0), AlphaKind::Mask), Pass::Hidden);
+        assert_eq!(classify(&face(true, none, 1.0), AlphaKind::Mask), Pass::Hidden);
+        assert_eq!(classify(&face(true, mask, 1.0), AlphaKind::Mask), Pass::Hidden);
+        // a zero face color alpha hides it whatever the material
+        assert_eq!(classify(&face(true, blend, 0.0), AlphaKind::Mask), Pass::Hidden);
     }
 
     #[test]
