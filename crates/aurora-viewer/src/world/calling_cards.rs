@@ -81,7 +81,7 @@ impl World {
     /// disturb response, when we are in do not disturb.
     pub(super) fn calling_card_declined(&mut self, from: Uuid) {
         if self.status.dnd {
-            let text = self.status.cfg.dnd_text.clone();
+            let text = self.dnd_response_to(&from);
             self.auto_im(from, Uuid::nil(), &text);
         }
     }

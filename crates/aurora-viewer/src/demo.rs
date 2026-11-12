@@ -232,6 +232,10 @@ pub mod search;
 /// A seat deleted under the resident sitting on it (AURORA_DEMO_SEAT_KILL).
 #[path = "demo_seat_kill.rs"]
 pub mod seat_kill;
+/// A contact set's own online notices and automatic responses
+/// (AURORA_DEMO_SET_NOTICES).
+#[path = "demo_set_notices.rs"]
+pub mod set_notices;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -3206,19 +3210,42 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::ActiveGroup { id: *id, name, title }]
         }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
+        // the change comes back as the member's update; with
+        // AURORA_DEMO_CONV_MODERATE=error the server refuses it
+        aurora_net::NetCommand::ModerateText { session, agent, allow } => {
+            log::info!("demo: mute update of {agent} in {session} (text allowed: {allow})");
+            if crate::ui::chat::moderation::demo_mode() == Some("error") {
+                vec![NetEvent::SessionModerationFailed {
+                    session: *session,
+                    forbidden: true,
+                }]
+            } else {
+                vec![NetEvent::SessionAgents {
+                    session: *session,
+                    agents: vec![aurora_net::SessionAgent {
+                        agent: *agent,
+                        present: None,
+                        moderator: None,
+                        text_muted: Some(!*allow),
+                        entered: false,
+                    }],
+                }]
+            }
+        }
         aurora_net::NetCommand::ChatSession { method, session } => {
+            let me = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
             let agents = |ids: &[Uuid]| {
                 ids.iter()
                     .map(|a| aurora_net::SessionAgent {
                         agent: *a,
                         present: Some(true),
-                        moderator: Some(*a == DEMO_NOVA),
+                        // AURORA_DEMO_CONV_MODERATE: we moderate it too
+                        moderator: Some(*a == DEMO_NOVA || (*a == me && crate::ui::chat::moderation::demo_mode().is_some())),
                         text_muted: None,
                         entered: false,
                     })
                     .collect::<Vec<_>>()
             };
-            let me = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
             match method {
                 aurora_net::SessionMethod::AcceptInvitation => {
                     let mut ev = vec![NetEvent::ChatSessionReply {
@@ -5950,7 +5977,7 @@ pub fn events() -> Vec<NetEvent> {
         // AURORA_DEMO_MUSIC=<url>|1: parcel music, started by the radio toggle
         let music_url = match std::env::var("AURORA_DEMO_MUSIC").unwrap_or_default().trim() {
             "" | "0" => String::new(),
-            "1" => land::MUSIC_URL.into(),
+            "1" | "fade" => land::MUSIC_URL.into(),
             url => url.to_owned(),
         };
         // the parcel's cells: the 128 m square around the plaza (x and y
