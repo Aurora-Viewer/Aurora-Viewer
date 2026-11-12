@@ -248,8 +248,8 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         // foot): averaged in, their metres widened the penumbra at the contact
         // and the shadow faded in from the post. So where the point's own
         // texels see a caster, a gathered blocker weighs 1 up to `accept`
-        // (`NEAR_REACH` times that caster's gap plus a floor of 10 cm or two
-        // texels in the cascade) and falls to 0 at twice it, smoothly so that
+        // (`NEAR_REACH` times that caster's gap plus a floor of the larger of
+        // 10 cm and two texels in the cascade) and falls to 0 at twice it, smoothly so that
         // no edge or ridge follows the limit; a point whose texels see none
         // takes every hit. `blockers` counts them all, weighted or not.
         let near_gap = select(1e30, near_sum / near_n, near_n > 0.0);

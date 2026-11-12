@@ -112,8 +112,8 @@ pub(crate) fn blocker_weight(gap: f32, accept: f32) -> f32 {
 /// point's own texels' (`local`) all count; the gathered ones (`gathered`)
 /// weigh by [`blocker_weight`] against `NEAR_REACH` times the mean of the
 /// local gaps over `own` (the receiver's own surface reads that much nearer
-/// the light across a texel: not a caster) plus a floor of 10 cm or two
-/// texels (`texel_m`). With no such caster at the point every hit weighs 1.
+/// the light across a texel: not a caster) plus a floor of the larger of
+/// 10 cm and two texels (`texel_m`). With no such caster at the point every hit weighs 1.
 /// Mirrored by `cascade_soft` in soft_shadows.wgsl (the tests state the model).
 #[cfg(test)]
 pub(crate) fn mean_gap(local: &[f32], gathered: &[f32], own: f32, texel_m: f32) -> f32 {
