@@ -230,17 +230,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(camera.third_person_follow_joint),
                     &crate::camera::CameraFollowJoint::choices(),
                 );
-                cx.row(
-                    tr!("ui-options-camera-follow-intensity"),
-                    tr!("ui-options-camera-follow-intensity-tip"),
-                    &field!(camera.third_person_follow_intensity),
-                    |ui, s| {
-                        ui.add_enabled_ui(s.camera.third_person_follow_joint.is_some(), |ui| {
-                            super::super::slider(ui, &mut s.camera.third_person_follow_intensity, 0..=500, "%")
-                        })
-                        .inner
-                    },
-                );
+                // The intensity sits behind the body part's cog, greyed while
+                // following is Disabled, like the other fine-tuning rows.
+                let off = cx.s.camera.third_person_follow_joint.is_none();
+                cx.subs(off, |cx| {
+                    cx.slider(
+                        tr!("ui-options-camera-follow-intensity"),
+                        tr!("ui-options-camera-follow-intensity-tip"),
+                        &field!(camera.third_person_follow_intensity),
+                        0..=500,
+                        "%",
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-camera-no-mouse-wheel-zoom"),
                     tr!("ui-options-camera-the-mouse-wheel-does-not-move-the-camera-closer"),

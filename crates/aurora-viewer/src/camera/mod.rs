@@ -294,6 +294,11 @@ pub struct Camera {
     focus_object: Option<Uuid>,
     focus_geom: Option<FocusObject>,
     focus_object_offset: Vec3,
+    /// The focus left the avatar by unlocking the avatar shot in place (a
+    /// pan, an orbit or a zoom by keys or the Controls window), not by
+    /// picking another point: the body-part camera keeps following there.
+    /// Cleared as soon as the focus is set anywhere else.
+    joint_follow_unlocked: bool,
     /// mCameraFocusOffsetTarget / mCameraFocusOffset: camera minus focus.
     focus_offset_target: Vec3,
     focus_offset: Vec3,
@@ -368,6 +373,7 @@ impl Default for Camera {
             focus_on_avatar: true,
             focus_target: Vec3::ZERO,
             focus_object: None,
+            joint_follow_unlocked: false,
             focus_geom: None,
             focus_object_offset: Vec3::ZERO,
             // CameraOffsetBuild
@@ -440,11 +446,14 @@ impl Camera {
         self.mouselook() && (agent.is_sitting() || s.mouselook_follow_eyes)
     }
 
-    /// Body-part tracking needs the current skeleton pose before computing the shot.
+    /// Body-part tracking needs the current skeleton pose before computing
+    /// the shot. It follows the avatar shot, the avatar itself picked as the
+    /// focus, and that shot reframed in place; a point picked on land, water
+    /// or another object stays still.
     pub fn needs_animated_joint(&self, s: &CameraSettings) -> bool {
         self.third_person()
             && s.third_person_follow_joint.is_some()
-            && (self.focus_on_avatar || self.focus_object.is_none() || self.focus_object == Some(self.own))
+            && (self.focus_on_avatar || self.joint_follow_unlocked || (!self.own.is_nil() && self.focus_object == Some(self.own)))
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -698,12 +707,14 @@ impl Camera {
             let focus = self.avatar.position + self.frame_rotation(agent) * s.focus_offset();
             self.focus_on_avatar = false;
             self.set_focus_global(Some(focus), None, None, s);
+            self.joint_follow_unlocked = true;
         }
         self.focus_on_avatar = on;
     }
 
     /// LLAgentCamera::setFocusGlobal. `None` = our head.
     fn set_focus_global(&mut self, focus: Option<Vec3>, object: Option<Uuid>, geom: Option<FocusObject>, s: &CameraSettings) {
+        self.joint_follow_unlocked = false;
         self.focus_object = object;
         self.focus_geom = geom;
         match focus {
@@ -739,6 +750,7 @@ impl Camera {
         if d2 > 0.0001 {
             self.start_animation(s);
         }
+        self.joint_follow_unlocked = false;
         self.focus_object = object.map(|o| o.0);
         self.focus_geom = object.map(|o| o.1);
         self.focus_target = focus;
@@ -2426,6 +2438,50 @@ mod tests {
         assert!(camera_after.abs_diff_eq(camera_before + Vec3::Z * 0.25, 1e-4));
         assert!(focus_after.abs_diff_eq(focus_before + Vec3::Z * 0.25, 1e-4));
         assert!((camera_after.distance(focus_after) - camera_before.distance(focus_before)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn third_person_joint_tracking_stops_on_a_point_picked_on_land() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = uuid::Uuid::from_u128(0x1015);
+        let mut camera = Camera::default();
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.needs_animated_joint(&settings));
+
+        // Alt+click on the ground 30 m away: the orbit centre is land.
+        let ground = Vec3::new(158.0, 128.0, 20.0);
+        let ray = (camera.position, (ground - camera.position).normalize());
+        camera.alt_focus(ground, None, ray, &mut world.agent, &settings);
+        assert!(
+            !camera.needs_animated_joint(&settings),
+            "a land focus must not shake with the avatar"
+        );
+        let camera_before = camera.calc_camera_target(&world, &settings, &input);
+        let focus_before = camera.calc_focus_target(&world, &settings, &input, camera_before);
+        input.follow_joint_offset = Some(Vec3::new(0.0, 0.0, 0.25));
+        let camera_after = camera.calc_camera_target(&world, &settings, &input);
+        let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
+        assert!(camera_after.abs_diff_eq(camera_before, 1e-5));
+        assert!(focus_after.abs_diff_eq(focus_before, 1e-5));
+
+        // A pan from there is still a land shot.
+        camera.apply_keys(
+            CameraKeys {
+                pan_right: 1.0,
+                ..Default::default()
+            },
+            &mut world.agent,
+            &settings,
+            input.dt,
+        );
+        assert!(!camera.needs_animated_joint(&settings));
     }
 
     fn world_at(pos: Vec3) -> World {
