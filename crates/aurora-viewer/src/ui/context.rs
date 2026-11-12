@@ -193,6 +193,9 @@ pub struct Facts {
     pub ground_sit_blocked: bool,
     pub stand_blocked: bool,
     pub object_sit_blocked: bool,
+    /// RLVa is on for the session: Derender is greyed on our own
+    /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
+    pub rlva_enabled: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
     /// Appearance > Export shape XML: the worn shape may be written to a
