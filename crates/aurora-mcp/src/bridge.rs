@@ -505,6 +505,33 @@ pub enum ViewerRequest {
         location: Option<String>,
         mfa_token: Option<String>,
     },
+
+    // Phase 7: Physics Flags, Metadata, Animations & Economy
+    PrimSetPhysicsProperties {
+        local_id: u32,
+        physics: Option<bool>,
+        temporary: Option<bool>,
+        phantom: Option<bool>,
+        shape_type: Option<String>,
+        density: Option<f32>,
+        friction: Option<f32>,
+        restitution: Option<f32>,
+        gravity_multiplier: Option<f32>,
+    },
+    PrimSetMetadata {
+        local_id: u32,
+        name: Option<String>,
+        description: Option<String>,
+    },
+    AvatarAnimationPlay {
+        animation: String,
+        loop_anim: Option<bool>,
+    },
+    AvatarAnimationStop {
+        animation: String,
+    },
+    AvatarAnimationsList,
+    EconomyGetBalance,
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -577,7 +604,9 @@ impl ViewerRequest {
             | ViewerRequest::UiGetValue { .. }
             | ViewerRequest::UiListMenus { .. }
             | ViewerRequest::NotecardRead { .. }
-            | ViewerRequest::ViewerLogin { .. } => false,
+            | ViewerRequest::ViewerLogin { .. }
+            | ViewerRequest::AvatarAnimationsList
+            | ViewerRequest::EconomyGetBalance => false,
 
             ViewerRequest::LiveMeshControl { action, .. }
             | ViewerRequest::AssetUpload { action, .. } => {
@@ -624,7 +653,11 @@ impl ViewerRequest {
             | ViewerRequest::ObjectTouch { .. }
             | ViewerRequest::AvatarSit { .. }
             | ViewerRequest::NotecardWrite { .. }
-            | ViewerRequest::PrimSetParticles { .. } => true,
+            | ViewerRequest::PrimSetParticles { .. }
+            | ViewerRequest::PrimSetPhysicsProperties { .. }
+            | ViewerRequest::PrimSetMetadata { .. }
+            | ViewerRequest::AvatarAnimationPlay { .. }
+            | ViewerRequest::AvatarAnimationStop { .. } => true,
         }
     }
 }

@@ -1885,6 +1885,58 @@ impl App {
                 );
                 let _ = reply_tx.send(resp);
             }
+            // ---- Phase 7: Physics Flags, Metadata, Animations & Economy ----
+            ViewerRequest::PrimSetPhysicsProperties {
+                local_id,
+                physics,
+                temporary,
+                phantom,
+                shape_type,
+                density,
+                friction,
+                restitution,
+                gravity_multiplier,
+            } => {
+                let resp = self.handle_mcp_prim_set_physics_properties(
+                    local_id,
+                    physics,
+                    temporary,
+                    phantom,
+                    shape_type.as_deref(),
+                    density,
+                    friction,
+                    restitution,
+                    gravity_multiplier,
+                );
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::PrimSetMetadata {
+                local_id,
+                name,
+                description,
+            } => {
+                let resp = self.handle_mcp_prim_set_metadata(local_id, name.as_deref(), description.as_deref());
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::AvatarAnimationPlay {
+                animation,
+                loop_anim,
+            } => {
+                let resp = self.handle_mcp_avatar_animation_play(&animation, loop_anim.unwrap_or(true));
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::AvatarAnimationStop { animation } => {
+                let resp = self.handle_mcp_avatar_animation_stop(&animation);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::AvatarAnimationsList => {
+                let resp = self.handle_mcp_avatar_animations_list();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::EconomyGetBalance => {
+                let resp = self.handle_mcp_economy_get_balance();
+                let _ = reply_tx.send(resp);
+            }
         }
     }
 
@@ -4558,6 +4610,232 @@ impl App {
             "grid": self.settings.login_uri(),
         })))
     }
+
+    // ---- Phase 7: Physics Flags, Metadata, Animations & Economy ----
+
+    fn handle_mcp_prim_set_physics_properties(
+        &mut self,
+        local_id: u32,
+        physics: Option<bool>,
+        temporary: Option<bool>,
+        phantom: Option<bool>,
+        shape_type: Option<&str>,
+        density: Option<f32>,
+        friction: Option<f32>,
+        restitution: Option<f32>,
+        gravity_multiplier: Option<f32>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let (idx, _uuid) = self.resolve_prim_by_local_id(local_id)?;
+        let obj = self.world.objects.get(idx).ok_or_else(|| {
+            McpError::InvalidParams(format!("prim with local_id {local_id} not found"))
+        })?;
+
+        let f = obj.update_flags;
+        let phys_flag = physics.unwrap_or(f & crate::build::edits::FLAGS_USE_PHYSICS != 0);
+        let temp_flag = temporary.unwrap_or(f & crate::build::edits::FLAGS_TEMPORARY_ON_REZ != 0);
+        let phan_flag = phantom.unwrap_or(f & crate::build::edits::FLAGS_PHANTOM != 0);
+
+        // Update local object representation
+        if let Some(obj_mut) = self.world.objects.get_mut(idx) {
+            let mut updated_flags = obj_mut.update_flags;
+            if phys_flag {
+                updated_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+            } else {
+                updated_flags &= !crate::build::edits::FLAGS_USE_PHYSICS;
+            }
+            if temp_flag {
+                updated_flags |= crate::build::edits::FLAGS_TEMPORARY_ON_REZ;
+            } else {
+                updated_flags &= !crate::build::edits::FLAGS_TEMPORARY_ON_REZ;
+            }
+            if phan_flag {
+                updated_flags |= crate::build::edits::FLAGS_PHANTOM;
+            } else {
+                updated_flags &= !crate::build::edits::FLAGS_PHANTOM;
+            }
+            obj_mut.update_flags = updated_flags;
+        }
+
+        let has_physics_params = shape_type.is_some()
+            || density.is_some()
+            || friction.is_some()
+            || restitution.is_some()
+            || gravity_multiplier.is_some();
+
+        let shape_type_u8 = if let Some(st) = shape_type {
+            match st.to_ascii_lowercase().as_str() {
+                "none" => 1,
+                "convex_hull" | "convexhull" | "hull" => 2,
+                _ => 0, // Prim
+            }
+        } else {
+            0
+        };
+
+        if has_physics_params {
+            let params = aurora_net::build::PhysicsParams {
+                shape_type: shape_type_u8,
+                density: density.unwrap_or(1000.0),
+                friction: friction.unwrap_or(0.6),
+                restitution: restitution.unwrap_or(0.0),
+                gravity_multiplier: gravity_multiplier.unwrap_or(1.0),
+            };
+            self.send(NetCommand::Build(BuildCmd::SetPhysicsParams {
+                handle,
+                local_id,
+                physics: phys_flag,
+                temporary: temp_flag,
+                phantom: phan_flag,
+                params,
+            }));
+        } else {
+            self.send(NetCommand::Build(BuildCmd::SetFlags {
+                handle,
+                local_id,
+                physics: phys_flag,
+                temporary: temp_flag,
+                phantom: phan_flag,
+            }));
+        }
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "local_id": local_id,
+            "physics": phys_flag,
+            "temporary": temp_flag,
+            "phantom": phan_flag,
+            "shape_type": shape_type.unwrap_or(if shape_type_u8 == 2 { "convex_hull" } else if shape_type_u8 == 1 { "none" } else { "prim" }),
+        })))
+    }
+
+    fn handle_mcp_prim_set_metadata(
+        &mut self,
+        local_id: u32,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let (_idx, _uuid) = self.resolve_prim_by_local_id(local_id)?;
+
+        if let Some(new_name) = name {
+            self.send(NetCommand::Build(BuildCmd::SetName {
+                handle,
+                local_ids: vec![local_id],
+                name: new_name.to_string(),
+            }));
+        }
+
+        if let Some(new_desc) = description {
+            self.send(NetCommand::Build(BuildCmd::SetDescription {
+                handle,
+                local_ids: vec![local_id],
+                description: new_desc.to_string(),
+            }));
+        }
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "local_id": local_id,
+            "name": name,
+            "description": description,
+        })))
+    }
+
+    fn resolve_animation_uuid(&self, name_or_uuid: &str) -> Result<Uuid, McpError> {
+        if let Ok(id) = Uuid::parse_str(name_or_uuid) {
+            return Ok(id);
+        }
+        match name_or_uuid.trim().to_ascii_lowercase().as_str() {
+            "stand" => Ok(crate::own_motion::ANIM_STAND),
+            "walk" => Ok(crate::own_motion::ANIM_WALK),
+            "run" => Ok(crate::own_motion::ANIM_RUN),
+            "fly" => Ok(crate::own_motion::ANIM_FLY),
+            "hover" => Ok(crate::own_motion::ANIM_HOVER),
+            "hover_up" => Ok(crate::own_motion::ANIM_HOVER_UP),
+            "hover_down" => Ok(crate::own_motion::ANIM_HOVER_DOWN),
+            "crouch" | "crouchwalk" => Ok(crate::own_motion::ANIM_CROUCHWALK),
+            "wave" => Ok(uuid::uuid!("25680455-83e9-74e3-3b48-18e3845ff8f2")),
+            "bow" => Ok(uuid::uuid!("02061033-0c4a-688a-9238-d06900f3408a")),
+            "clap" => Ok(uuid::uuid!("9b0c1c4e-8ac7-2996-6924-2c67b140637f")),
+            "cheer" => Ok(uuid::uuid!("0092c431-fe6c-5900-520b-04424683058a")),
+            "dance" | "dance1" => Ok(uuid::uuid!("b68a3d7c-deaa-21d1-6fc5-20e718092e78")),
+            "dance2" => Ok(uuid::uuid!("9286e616-1802-0e46-6440-9c114d335a20")),
+            "dance3" => Ok(uuid::uuid!("3004677b-0609-da32-f703-4923b4726a78")),
+            "dance4" => Ok(uuid::uuid!("992b0a10-ff9d-fc40-4217-19416550974b")),
+            "point" => Ok(uuid::uuid!("073dd57d-a2a6-932d-222e-1402a30de3e4")),
+            "shrug" => Ok(uuid::uuid!("7db00ced-350f-4524-7439-f9c3fb477215")),
+            "laugh" => Ok(uuid::uuid!("0370f5a1-79f4-aa44-965b-46fa8091e0a3")),
+            "cry" => Ok(uuid::uuid!("9204271c-a002-d60f-4bfb-6ecde737e29f")),
+            "kiss" => Ok(uuid::uuid!("1e8d9095-a24e-44d3-ab14-46accd63cb17")),
+            "type" | "typing" => Ok(uuid::uuid!("c541c4db-7e65-ced4-00c7-ff204e8f7d63")),
+            other => Err(McpError::InvalidParams(format!("unknown animation name or invalid UUID: '{other}'"))),
+        }
+    }
+
+    fn handle_mcp_avatar_animation_play(
+        &mut self,
+        animation: &str,
+        _loop_anim: bool,
+    ) -> Result<ViewerResponse, McpError> {
+        let anim_uuid = self.resolve_animation_uuid(animation)?;
+        self.own_animation(anim_uuid, true);
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "animation": animation,
+            "uuid": anim_uuid.to_string(),
+            "status": "playing",
+        })))
+    }
+
+    fn handle_mcp_avatar_animation_stop(
+        &mut self,
+        animation: &str,
+    ) -> Result<ViewerResponse, McpError> {
+        let anim_uuid = self.resolve_animation_uuid(animation)?;
+        self.own_animation(anim_uuid, false);
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "animation": animation,
+            "uuid": anim_uuid.to_string(),
+            "status": "stopped",
+        })))
+    }
+
+    fn handle_mcp_avatar_animations_list(&self) -> Result<ViewerResponse, McpError> {
+        let agent_id = self.world.agent_id;
+        let anims = self.world.animations_of(&agent_id);
+        let now = Instant::now();
+        let list: Vec<Value> = anims
+            .iter()
+            .map(|a| {
+                let elapsed = now.saturating_duration_since(a.sequence_start).as_secs_f32();
+                json!({
+                    "uuid": a.id.to_string(),
+                    "sequence": a.sequence,
+                    "elapsed_seconds": elapsed,
+                })
+            })
+            .collect();
+
+        Ok(ViewerResponse::Json(json!({
+            "agent_id": agent_id.to_string(),
+            "count": list.len(),
+            "animations": list,
+        })))
+    }
+
+    fn handle_mcp_economy_get_balance(&self) -> Result<ViewerResponse, McpError> {
+        Ok(ViewerResponse::Json(json!({
+            "agent_id": self.world.agent_id.to_string(),
+            "balance_l$": self.world.balance,
+            "currency": "L$",
+        })))
+    }
 }
 
 #[cfg(test)]
@@ -4616,5 +4894,15 @@ mod tests {
         let matched = mgr.try_match_candidate(12, Uuid::new_v4(), [128.1, 127.9, 25.0]);
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().0.as_deref(), Some("MCP Cube"));
+    }
+
+    #[test]
+    fn animation_uuid_resolution_and_defaults() {
+        let wave = uuid::uuid!("25680455-83e9-74e3-3b48-18e3845ff8f2");
+        let stand = crate::own_motion::ANIM_STAND;
+        let walk = crate::own_motion::ANIM_WALK;
+        assert_eq!(walk, uuid::uuid!("6ed24bd8-91aa-4b12-ccc7-c97c857ab4e0"));
+        assert_eq!(stand, uuid::uuid!("2408fe9e-df1d-1d7d-f4ff-1384fa7b350f"));
+        assert_ne!(wave, stand);
     }
 }

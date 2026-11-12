@@ -2054,6 +2054,131 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            // ---- Phase 7: Physics Flags, Metadata, Animations & Economy ----
+            "prim_set_physics_properties" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let physics = args.get("physics").and_then(Value::as_bool);
+                let temporary = args.get("temporary").and_then(Value::as_bool);
+                let phantom = args.get("phantom").and_then(Value::as_bool);
+                let shape_type = args.get("shape_type").and_then(Value::as_str).map(str::to_owned);
+                let density = args.get("density").and_then(Value::as_f64).map(|v| v as f32);
+                let friction = args.get("friction").and_then(Value::as_f64).map(|v| v as f32);
+                let restitution = args.get("restitution").and_then(Value::as_f64).map(|v| v as f32);
+                let gravity_multiplier = args.get("gravity_multiplier").and_then(Value::as_f64).map(|v| v as f32);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimSetPhysicsProperties {
+                            local_id,
+                            physics,
+                            temporary,
+                            phantom,
+                            shape_type,
+                            density,
+                            friction,
+                            restitution,
+                            gravity_multiplier,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_set_metadata" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
+                let description = args.get("description").and_then(Value::as_str).map(str::to_owned);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimSetMetadata {
+                            local_id,
+                            name,
+                            description,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_animation_play" => {
+                let animation = args
+                    .get("animation")
+                    .or_else(|| args.get("name"))
+                    .or_else(|| args.get("id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'animation' (name or UUID)".into()))?
+                    .to_string();
+                let loop_anim = args.get("loop").and_then(Value::as_bool);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::AvatarAnimationPlay {
+                            animation,
+                            loop_anim,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_animation_stop" => {
+                let animation = args
+                    .get("animation")
+                    .or_else(|| args.get("name"))
+                    .or_else(|| args.get("id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'animation' (name or UUID)".into()))?
+                    .to_string();
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::AvatarAnimationStop {
+                            animation,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_animations_list" => {
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::AvatarAnimationsList,
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "economy_get_balance" => {
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::EconomyGetBalance,
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
         }
     }
@@ -3417,6 +3542,83 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: true,
         },
+        ToolDefinition {
+            name: "prim_set_physics_properties".into(),
+            description: "Modify physics flags (physical, temporary, phantom) and simulator physics collision shape parameters (prim, convex hull, none, density, friction, restitution) for a primitive or linkset.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer", "description": "Local ID of target primitive" },
+                    "physics": { "type": "boolean", "description": "Enable or disable rigid body dynamics (FLAGS_USE_PHYSICS)" },
+                    "temporary": { "type": "boolean", "description": "Mark as temporary on rez (dies after ~1 minute)" },
+                    "phantom": { "type": "boolean", "description": "Enable or disable phantom mode (avatar walks through)" },
+                    "shape_type": { "type": "string", "enum": ["prim", "convex_hull", "none"], "description": "Collision shape type: 'prim' (accurate), 'convex_hull' (low-cost hull), or 'none' (no collision)" },
+                    "density": { "type": "number", "description": "Material density in kg/m^3 (default 1000.0)" },
+                    "friction": { "type": "number", "description": "Surface friction coefficient [0.0 .. 1.0] (default 0.6)" },
+                    "restitution": { "type": "number", "description": "Restitution / bounciness [0.0 .. 1.0] (default 0.0)" },
+                    "gravity_multiplier": { "type": "number", "description": "Gravity multiplier (default 1.0)" }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_set_metadata".into(),
+            description: "Update the in-world name and description of a primitive or linkset.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer", "description": "Local ID of target primitive" },
+                    "name": { "type": "string", "description": "New in-world object name" },
+                    "description": { "type": "string", "description": "New in-world object description" }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_animation_play".into(),
+            description: "Start playing an animation on the agent avatar. Accepts either standard names ('dance', 'dance1'..'dance8', 'wave', 'bow', 'clap', 'cheer', 'point', 'shrug', 'laugh', 'cry', 'kiss', 'sit', 'stand', 'walk', 'run', 'fly', 'hover', 'type') or an asset UUID.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "animation": { "type": "string", "description": "Animation name (e.g. 'dance', 'wave', 'bow', 'clap') or asset UUID" },
+                    "loop": { "type": "boolean", "description": "Whether the animation loops (default true)" }
+                },
+                "required": ["animation"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_animation_stop".into(),
+            description: "Stop playing an animation on the agent avatar by name or UUID.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "animation": { "type": "string", "description": "Animation name or asset UUID to halt" }
+                },
+                "required": ["animation"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_animations_list".into(),
+            description: "List all currently active / playing animations on the agent avatar with elapsed duration and UUIDs.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "economy_get_balance".into(),
+            description: "Retrieve the avatar's current Linden Dollar (L$) account balance.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: false,
+        },
     ]
 }
 
@@ -3427,7 +3629,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 86, "expected 86 total tools (43 Legacy + 43 Aurora-native)");
+        assert_eq!(defs.len(), 92, "expected 92 total tools (43 Legacy + 49 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -3525,6 +3727,12 @@ mod tests {
             "notecard_write",
             "prim_set_particles",
             "viewer_login",
+            "prim_set_physics_properties",
+            "prim_set_metadata",
+            "avatar_animation_play",
+            "avatar_animation_stop",
+            "avatar_animations_list",
+            "economy_get_balance",
         ] {
             assert!(
                 names.contains(&native),
