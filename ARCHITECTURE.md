@@ -1379,11 +1379,19 @@ the face takes the head, a hand its wrist) that the frame uniform carries
 vertex's weight share on those joints into a two-channel mask drawn with the
 scene's depth test, composited by `selection::Overlay::new_part` (a fading
 tint on the subject, a halo on the outer outline only). While Ctrl hovers the
-subject, `aurora-render/src/part_pick.rs` draws those faces again with each
-pixel's dominant joint (`vs_part_pick`) and reads back the texel under the
+subject, `aurora-render/src/part_pick.rs` reads the visible part under the
 cursor a frame or two later (`FramePacket` request, `FrameResult::part_pick`,
-`Renderer::take_part_pick`); the poser offers that joint's part, and the
-bones decide until it answers or for an animesh.
+`Renderer::take_part_pick`). `FrameParams::part_classes` packs four bits per
+palette joint; `vs_part_pick` sums each part's weights at the vertex and the
+fragment chooses among their interpolated shares, independently of triangle
+index order. The poser offers the nearest projected bone within that part;
+the bones decide until a pick arrives or for an animesh. Both part passes
+honor material sidedness and resolve nearest coverage in a private copy of
+post depth, including unrigged blended accessories, without modifying scene
+depth. FSR's display depth supports that copy too. Readback slots carry
+monotonic sequence numbers so a reused slot cannot deliver an older answer
+over a newer one. `renderer::part_tests` exercises the production shaders
+and shared pipeline states on the GPU; `part_pick` also tests slot reuse.
 `world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
 state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
 and the independent target modal/reminder. Bridge 1.34 adds authenticated

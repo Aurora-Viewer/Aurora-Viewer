@@ -1829,7 +1829,9 @@ fn poser_part_uv(rec: DrawRecord, in: VsIn) -> vec2<f32> {
 // cut out; a blended one where it can be seen (a hair card's or a fishnet's
 // clear texels are not the avatar); others whole.
 const POSER_PART_BLEND_ALPHA: f32 = 0.1;
-fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>) -> bool {
+fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>, front: bool) -> bool {
+    // Match the colour/depth passes: only double-sided materials show backs.
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { return false; }
     let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
     let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
     if (!masked && !blended) {
@@ -1871,25 +1873,31 @@ fn vs_part_mask(in: VsIn) -> PoserPartOut {
 }
 
 @fragment
-fn fs_part_mask(in: PoserPartOut) -> @location(0) vec4<f32> {
+fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     portal_clip(records[in.record], in.world_pos);
-    if (!poser_part_texel_shown(records[in.record], in.uv)) { discard; }
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
     // the part's share, eased so the tint fades where the weights pass to
     // the next part (Overlay::new_part); green: the subject is here
     return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
 }
 
-// The poser's part under the cursor (part_pick.rs): each pixel of the
-// subject's skinned faces holds its dominant palette joint + 1 (the joint of
-// the most weight at the triangle's first vertex), with the scene's depth
-// test, so only what is seen answers.
+// The pick interpolates each part's summed skinning weights, as the mask
+// interpolates its share. A flat joint ID makes the first vertex decide
+// for the entire triangle and changes when a mesh reorders its indices.
 struct PoserPickOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
-    @location(1) @interpolate(flat) joint: u32,
+    @location(1) parts_lo: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) @interpolate(flat) record: u32,
+    @location(4) parts_hi: vec4<f32>,
 };
+
+fn poser_pick_class(joint: u32) -> u32 {
+    if (joint >= 256u) { return 0u; }
+    let word = joint >> 3u;
+    return (frame.part_classes[word >> 2u][word & 3u] >> ((joint & 7u) * 4u)) & 15u;
+}
 
 @vertex
 fn vs_part_pick(in: VsIn) -> PoserPickOut {
@@ -1900,24 +1908,38 @@ fn vs_part_pick(in: VsIn) -> PoserPickOut {
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.uv = poser_part_uv(rec, in);
     out.record = in.instance;
-    out.joint = 0u;
-    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
-        var best = 0u;
-        for (var k = 1u; k < 4u; k++) {
-            if (in.weights[k] > in.weights[best]) { best = k; }
+    out.parts_lo = vec4<f32>(0.0);
+    out.parts_hi = vec4<f32>(0.0);
+    let total = dot(in.weights, vec4<f32>(1.0));
+    if ((rec.flags.x & FLAG_SKINNED) != 0u && total > 1e-4) {
+        for (var k = 0u; k < 4u; k++) {
+            if (in.weights[k] <= 0.0) { continue; }
+            let part_id = poser_pick_class(skin_binds[rec.flags.z + in.joints[k]].joint.x);
+            let part = select(0u, part_id, part_id <= 6u);
+            let weight = in.weights[k] / total;
+            if (part < 4u) { out.parts_lo[part] += weight; }
+            else { out.parts_hi[part - 4u] += weight; }
         }
-        if (in.weights[best] > 0.0) {
-            out.joint = skin_binds[rec.flags.z + in.joints[best]].joint.x + 1u;
-        }
+    } else {
+        // Unrigged accessories still win depth and occlude the body.
+        out.parts_lo.x = 1.0;
     }
     return out;
 }
 
 @fragment
-fn fs_part_pick(in: PoserPickOut) -> @location(0) vec4<u32> {
+fn fs_part_pick(in: PoserPickOut, @builtin(front_facing) front: bool) -> @location(0) vec4<u32> {
     portal_clip(records[in.record], in.world_pos);
-    if (!poser_part_texel_shown(records[in.record], in.uv)) { discard; }
-    return vec4<u32>(in.joint, 0u, 0u, 0u);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    var best = 0u;
+    var weight = in.parts_lo.x;
+    for (var part = 1u; part <= 6u; part++) {
+        var share = 0.0;
+        if (part < 4u) { share = in.parts_lo[part]; }
+        else { share = in.parts_hi[part - 4u]; }
+        if (share > weight) { best = part; weight = share; }
+    }
+    return vec4<u32>(best, 0u, 0u, 0u);
 }
 
 // Glow suppression of a face LL draws in its alpha pool: the glow under it

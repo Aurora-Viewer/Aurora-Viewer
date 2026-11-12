@@ -1699,7 +1699,7 @@ impl Renderer {
     /// The poser's part under the cursor read back since the last call
     /// (part_pick.rs, asked with `FrameParams::part_pick`), with the window
     /// pixel it was read at: 0 when nothing of the subject is there,
-    /// joint + 1 otherwise.
+    /// a part class otherwise.
     pub fn take_part_pick(&mut self) -> Option<(u32, [u32; 2])> {
         self.collect();
         self.part_pick.take()

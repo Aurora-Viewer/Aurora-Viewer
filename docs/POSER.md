@@ -81,9 +81,12 @@ accepted): the part lights on the avatar's own meshes as they are drawn,
 its body, a Bento head, mesh hands, rigged clothing, with a tint that fades
 where the skin passes to the next part (a knuckle, the neck) and a soft
 halo on the outer outline only. The part under the cursor is the one the
-mesh shows there: the joint carrying the most weight on the surface under
-the pointer, read on the GPU (a frame or two later), and what stands in
-front of the avatar hides it. The face takes the whole head and a hand its
+mesh shows there: the part carrying the most combined skinning weight at
+the pixel under the pointer, read on the GPU (a frame or two later). A
+Ctrl + click selects that part's nearest joint. Visible accessories in
+front of the avatar hide what is behind them, including blended ones;
+the invisible back of a one-sided face does not capture the hover.
+The face takes the whole head and a hand its
 palm (the wrist), and the body stops at the neck and the wrists. A part
 the meshes do not weight (the system head is weighted to the head alone,
 its hands to the wrists) lights through the bone it hangs from. An animesh,

@@ -136,6 +136,7 @@ struct FrameU {
     /// The poser's hovered part: bit j for palette joint j (shaders'
     /// `in_poser_part`).
     part_joints: [[u32; 4]; 2],
+    part_classes: [[u32; 4]; 8],
     rez_gradient: [[f32; 4]; 3],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
@@ -955,7 +956,7 @@ struct Pipelines {
     selection_mask: wgpu::RenderPipeline,
     /// The poser's hovered part on the subject's skinned faces.
     part_mask: wgpu::RenderPipeline,
-    /// The dominant joint of the subject's faces (part_pick.rs).
+    /// The visible part of the subject's faces (part_pick.rs).
     part_pick: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
@@ -1635,6 +1636,9 @@ pub(crate) struct Backend {
     hud_selection: Option<crate::selection::Overlay>,
     /// The poser's hovered part (`part_faces`), as the selection's halo.
     part: Option<crate::selection::Overlay>,
+    /// Seeded from post depth while hovering; part faces resolve their own
+    /// nearest surface here, including blended unrigged accessories.
+    part_depth: Option<wgpu::TextureView>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
     frame_layout: wgpu::BindGroupLayout,
@@ -2018,6 +2022,24 @@ const PART_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     slope_scale: 2.0,
     clamp: 0.0,
 };
+
+// Both passes resolve nearest subject coverage in a private copy of scene
+// depth. Keep these states shared: otherwise mask and pick can disagree.
+fn part_desc(base: PipeDesc<'_>, format: wgpu::TextureFormat, write_mask: wgpu::ColorWrites) -> PipeDesc<'_> {
+    PipeDesc {
+        cull: None, // the fragments retain each material's sidedness
+        samples: 1,
+        format: Some(format),
+        depth_write: true,
+        write_mask,
+        depth_bias: PART_DEPTH_BIAS,
+        ..base
+    }
+}
+
+#[cfg(test)]
+#[path = "part_tests.rs"]
+mod part_tests;
 
 #[derive(Clone, Copy)]
 struct PipeDesc<'a> {
@@ -3520,6 +3542,7 @@ impl Backend {
             cutout: None,
             hud_selection: None,
             part: None,
+            part_depth: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -4165,24 +4188,16 @@ impl Backend {
         });
         // The poser's hovered part: the subject's skinned faces kept where
         // their weights are the part's joints (`vs_part_mask`)
-        let part_mask = pipe(PipeDesc {
-            cull: None,
-            samples: 1,
-            format: Some(wgpu::TextureFormat::Rg8Unorm),
-            depth_write: false,
-            write_mask: wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN,
-            depth_bias: PART_DEPTH_BIAS,
-            ..base("poser part coverage", "vs_part_mask", "fs_part_mask")
-        });
-        let part_pick = pipe(PipeDesc {
-            cull: None,
-            samples: 1,
-            format: Some(crate::part_pick::FORMAT),
-            depth_write: false,
-            write_mask: wgpu::ColorWrites::RED,
-            depth_bias: PART_DEPTH_BIAS,
-            ..base("poser part pick", "vs_part_pick", "fs_part_pick")
-        });
+        let part_mask = pipe(part_desc(
+            base("poser part coverage", "vs_part_mask", "fs_part_mask"),
+            wgpu::TextureFormat::Rg8Unorm,
+            wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN,
+        ));
+        let part_pick = pipe(part_desc(
+            base("poser part pick", "vs_part_pick", "fs_part_pick"),
+            crate::part_pick::FORMAT,
+            wgpu::ColorWrites::RED,
+        ));
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -5858,6 +5873,7 @@ impl Backend {
             [f.part_joints[0], f.part_joints[1], f.part_joints[2], f.part_joints[3]],
             [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
         ];
+        u.part_classes = std::array::from_fn(|i| std::array::from_fn(|j| f.part_classes[i * 4 + j]));
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
@@ -6695,6 +6711,30 @@ impl Backend {
         self.part_idle = if self.part_lit { 0 } else { self.part_idle.saturating_add(1) };
         if self.part_idle > PART_IDLE_FRAMES {
             self.part = None;
+            if self.part_pick_px.is_none() {
+                self.part_depth = None;
+            }
+        }
+        if self.part_lit || self.part_pick_px.is_some() {
+            let size = [post_size.0, post_size.1];
+            if self
+                .part_depth
+                .as_ref()
+                .is_none_or(|depth| depth.texture().width() != size[0] || depth.texture().height() != size[1])
+            {
+                self.part_depth = extra(&mut self.oom, &self.device, self.lost.get(), "poser part depth", |device| {
+                    make_view(
+                        device,
+                        "poser part depth",
+                        size[0],
+                        size[1],
+                        DEPTH_FORMAT,
+                        1,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                    )
+                    .1
+                });
+            }
         }
         if self.part_lit {
             let size = [post_size.0, post_size.1];
@@ -9340,7 +9380,7 @@ impl Backend {
         // outline refused by a full video memory is not): the frame's last
         // timestamp goes to whichever pass really ends it
         let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
-        let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some();
+        let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
@@ -9425,7 +9465,19 @@ impl Backend {
             calls.set(calls.get() + 2);
         }
 
+        // Resolve subject coverage against private depth. Without depth
+        // writes the last visited face wins, including the body behind a
+        // visible unrigged Blend attachment. The scene depth stays intact.
+        let part_depth = self.part_depth.as_ref().filter(|_| draws_part || self.part_pick_px.is_some());
+        if let Some(depth) = part_depth {
+            encoder.copy_texture_to_texture(
+                post_depth.texture().as_image_copy(),
+                depth.texture().as_image_copy(),
+                depth.texture().size(),
+            );
+        }
         if rg.part_faces.1 > 0
+            && let Some(depth) = part_depth
             && let Some((px, tag)) = self.part_pick_px
             && let Some(view) = self.part_pick.begin([post_size.0, post_size.1], px, tag)
         {
@@ -9441,8 +9493,11 @@ impl Backend {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: post_depth,
-                    depth_ops: None,
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -9460,9 +9515,10 @@ impl Backend {
 
         if rg.part_faces.1 > 0
             && self.part_lit
+            && let Some(depth) = part_depth
             && let Some(part) = &self.part
         {
-            let mut pass = part.begin_mask(&mut encoder, post_depth);
+            let mut pass = part.begin_mask(&mut encoder, depth);
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
             drop(pass);

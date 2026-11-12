@@ -175,8 +175,8 @@ pub(super) struct State {
     /// Ctrl hovers the subject (an avatar) with the parts on: the renderer
     /// is asked for its part under the cursor (part_pick.rs).
     pick_wanted: bool,
-    /// Its newest answer: the subject it was asked for, the dominant joint
-    /// plus one (0 off the subject) and the window pixel it was read at,
+    /// Its newest answer: the subject it was asked for, the visible part
+    /// class (0 off the subject or an occluding accessory) and its window pixel,
     /// trusted only there (`world_hints::fresh_pick`). None before the first
     /// since Ctrl came.
     mesh_pick: Option<(Uuid, u32, [f32; 2])>,
@@ -367,6 +367,14 @@ impl Editor {
     /// frame (part_pick.rs), while Ctrl hovers it.
     pub fn poser_pick_subject(&self) -> Option<Uuid> {
         (self.poser.active && self.open && self.poser.pick_wanted).then_some(self.poser.subject)
+    }
+    /// Packed palette-joint part classes for the GPU's interpolated pick.
+    pub fn poser_pick_classes(&self, rig: &Rig) -> [u32; 32] {
+        if self.poser_pick_subject().is_some() {
+            world_hints::pick_classes(&rig.parent, &rig.canonical_names)
+        } else {
+            [0; 32]
+        }
     }
     /// The renderer's part pick (`Renderer::take_part_pick`): the newest
     /// answer is kept while Ctrl is held, forgotten once it is let go.

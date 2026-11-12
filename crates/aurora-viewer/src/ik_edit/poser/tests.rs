@@ -2448,11 +2448,22 @@ fn the_mesh_pick_offers_the_part_its_joint_follows() {
     let (world, _) = fixture();
     let rig = &world.avatar_lib.rig;
     let names = &rig.canonical_names;
-    let groups: Vec<usize> = names.iter().map(|n| group(n)).collect();
     let keys: Vec<usize> = names.iter().map(|n| world_hints::part_key(n)).collect();
     let offer: Vec<bool> = (0..rig.len()).map(|j| world_hints::offerable(keys[j], false)).collect();
+    let classes = world_hints::pick_classes(&rig.parent, names);
+    let class = |j: usize| (classes[j >> 3] >> ((j & 7) * 4)) & 15;
+    let joints: Vec<_> = (0..rig.len()).map(|j| (j, egui::pos2(j as f32, 0.0))).collect();
     let picked = |joint: &str, current: usize| {
-        world_hints::picked_part(rig.names[joint], &rig.parent, names, &groups, &offer, current).map(|j| groups[j])
+        world_hints::picked_part(
+            class(rig.names[joint]),
+            &joints,
+            &rig.parent,
+            names,
+            &offer,
+            current,
+            egui::Pos2::ZERO,
+        )
+        .map(|j| group(&names[j]))
     };
     // posing the Hands: a fitted body's volume, a Bento spine: the body
     assert_eq!(picked("BELLY", 2), Some(0));
@@ -2466,6 +2477,33 @@ fn the_mesh_pick_offers_the_part_its_joint_follows() {
     assert_eq!(picked("mHead", 1), None, "posing the face, the head is its own");
     // a wing nobody wears: not offered
     assert_eq!(picked("mWing1Left", 0), None);
+    assert_eq!(class(rig.len()), 1, "the identity slot is the body's");
+    for name in ["mChest", "BELLY", "mSpine2"] {
+        assert_eq!(class(rig.names[name]), 1);
+    }
+    for name in ["mHead", "HEAD", "mSkull", "mEyeLeft"] {
+        assert_eq!(class(rig.names[name]), 2);
+    }
+    for name in ["mWristLeft", "L_HAND", "mHandIndex1Left"] {
+        assert_eq!(class(rig.names[name]), 3);
+    }
+    assert_eq!(class(rig.names["mWristRight"]), 4);
+    assert_eq!(class(rig.names["mWing1Left"]), 5);
+    assert_eq!(class(rig.names["mTail1"]), 6);
+    assert_eq!(class(rig.names["mHindLimb1Left"]), 0);
+    // Within the mesh-picked left hand choose the bone at the cursor,
+    // never the first finger in the skeleton nor a right-hand finger.
+    let finger = rig.names["mHandIndex2Left"];
+    let near = world_hints::picked_part(3, &joints, &rig.parent, names, &offer, 0, joints[finger].1);
+    assert_eq!(near, Some(finger));
+    assert_eq!(
+        world_hints::picked_part(0, &joints, &rig.parent, names, &offer, 1, egui::Pos2::ZERO),
+        None
+    );
+    assert_eq!(
+        world_hints::picked_part(99, &joints, &rig.parent, names, &offer, 1, egui::Pos2::ZERO),
+        None
+    );
 }
 
 #[test]

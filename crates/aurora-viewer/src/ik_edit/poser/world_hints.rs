@@ -148,25 +148,79 @@ fn lends_to_part(name: &str) -> bool {
     name == "mHead" || name.starts_with("mWrist")
 }
 
-/// The joint whose part the mesh pick offers (part_pick.rs gives the joint
-/// of the most weight under the pointer): its part's bone, a bone lent to a
-/// part (`lends_to_part`) giving that part's first child bone (the head the
-/// face root, a wrist its hand's fingers), when that part is offered
-/// (`offer`) and not the open group's (`current`).
+/// The GPU's part class for a canonical joint. Collision volumes and
+/// inner bones follow their owner; the face borrows the head, each hand
+/// its wrist. Zero still occludes, but is not an offered part.
+fn pick_class(joint: usize, parent: &[Option<usize>], names: &[String]) -> u32 {
+    let Some(owner) = part_owner(parent, names, joint) else { return 0 };
+    let name = &names[owner];
+    match part_key(name) {
+        0 if name == "mHead" => 2,
+        0 if name.starts_with("mWrist") => {
+            if name.ends_with("Left") {
+                3
+            } else {
+                4
+            }
+        }
+        0 => 1,
+        1 => 2,
+        2 => {
+            if name.ends_with("Left") {
+                3
+            } else {
+                4
+            }
+        }
+        WINGS => 5,
+        TAIL => 6,
+        _ => 0,
+    }
+}
+
+/// Four bits per palette joint, matching `poser_pick_class` in object.wgsl.
+/// Interpolating each class's summed weights lets the fragment choose the
+/// visible part independently of the triangle's vertex/index order.
+pub(super) fn pick_classes(parent: &[Option<usize>], names: &[String]) -> [u32; 32] {
+    let mut classes = [0u32; 32];
+    for j in 0..names.len().min(256) {
+        classes[j >> 3] |= pick_class(j, parent, names) << ((j & 7) * 4);
+    }
+    // The system body's identity slot belongs to the pelvis/body.
+    let root = names.len();
+    if root < 256 {
+        classes[root >> 3] |= 1 << ((root & 7) * 4);
+    }
+    classes
+}
+
+/// A mesh-picked part offers its nearest projected, offerable bone. The
+/// current tab is never offered, even though it lends bones to another
+/// part's surface (the head and wrists).
 pub(super) fn picked_part(
-    joint: usize,
+    class: u32,
+    joints: &[(usize, egui::Pos2)],
     parent: &[Option<usize>],
     names: &[String],
-    groups: &[usize],
     offer: &[bool],
     current: usize,
+    pointer: egui::Pos2,
 ) -> Option<usize> {
-    let mut owner = part_owner(parent, names, joint)?;
-    if lends_to_part(&names[owner]) {
-        let lent = owner;
-        owner = (0..names.len()).find(|j| parent[*j] == Some(lent) && groups[*j] != groups[lent] && own_part(&names[*j]))?;
+    let tab = match class {
+        1 => 0,
+        2 => 1,
+        3 | 4 => 2,
+        5 | 6 => OTHER,
+        _ => return None,
+    };
+    if tab == current {
+        return None;
     }
-    (offer[owner] && groups[owner] != current).then_some(owner)
+    joints
+        .iter()
+        .filter(|(j, _)| offer[*j] && group(&names[*j]) == tab && pick_class(*j, parent, names) == class)
+        .min_by(|a, b| a.1.distance_sq(pointer).total_cmp(&b.1.distance_sq(pointer)))
+        .map(|(j, _)| *j)
 }
 
 /// How far, in window pixels, the cursor may be from where the mesh pick
@@ -328,18 +382,9 @@ impl Editor {
         // the mesh pick, once one came back: on the subject's surface, the
         // part of its joint; off it, none. Until then, the bones.
         let pointer_px = pointer * ctx.pixels_per_point();
-        let picked = fresh_pick(self.poser.mesh_pick, self.poser.subject, pointer_px)
-            .filter(|_| self.poser.pick_wanted && meshes)
-            // the palette's identity slot (rig.len(): the system body's
-            // vertices on the root) counts as the pelvis
-            .map(|v| {
-                v.checked_sub(1)
-                    .map(|j| if j as usize == rig.len() { rig.pelvis } else { j as usize })
-                    .filter(|j| *j < rig.len())
-            });
+        let picked = fresh_pick(self.poser.mesh_pick, self.poser.subject, pointer_px).filter(|_| self.poser.pick_wanted && meshes);
         let candidate = match picked {
-            Some(Some(j)) => picked_part(j, &rig.parent, &rig.canonical_names, &groups, &offer, self.poser.group),
-            Some(None) => None,
+            Some(class) => picked_part(class, &joints, &rig.parent, &rig.canonical_names, &offer, self.poser.group, pointer),
             None => offered_joint(&joints, &groups, &offer, self.poser.group, pointer),
         };
         if let Some(joint) = candidate.filter(|_| self.poser.part_hints && ctrl) {

@@ -10920,6 +10920,7 @@ impl App {
                 .poser_part_overlay()
                 .filter(|_| self.snapshots.capturing.is_none())
                 .map_or([0; 8], |(_, mask)| mask),
+            part_classes: self.ik_editor.poser_pick_classes(&self.world.avatar_lib.rig),
             part_pick: self
                 .ik_editor
                 .poser_pick_subject()

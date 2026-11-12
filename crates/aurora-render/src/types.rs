@@ -1352,7 +1352,11 @@ pub struct FrameParams {
     /// as a selection's halo with a light tint inside.
     pub part_joints: [u32; 8],
     pub part_color: [f32; 4],
-    /// The pixel whose dominant joint of `part_faces` to read back
+    /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
+    /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
+    /// each part's weights and interpolates them before picking a part.
+    pub part_classes: [u32; 32],
+    /// The pixel whose visible part of `part_faces` to read back
     /// (part_pick.rs): the cursor while Ctrl hovers the subject.
     pub part_pick: Option<[u32; 2]>,
     pub view: Mat4,

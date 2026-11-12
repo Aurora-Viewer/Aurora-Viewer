@@ -28,6 +28,9 @@ pub(crate) struct Overlay {
     composite: wgpu::RenderPipeline,
     pub size: [u32; 2],
     output_srgb: bool,
+    /// Parts resolve their nearest coverage in private depth; selection
+    /// coverage continues to read the scene depth without changing it.
+    write_depth: bool,
 }
 
 impl Overlay {
@@ -178,6 +181,7 @@ impl Overlay {
             composite,
             size,
             output_srgb: format.is_srgb(),
+            write_depth: mask_format == wgpu::TextureFormat::Rg8Unorm,
         }
     }
 
@@ -209,7 +213,10 @@ impl Overlay {
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
-                depth_ops: None,
+                depth_ops: self.write_depth.then_some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
                 stencil_ops: None,
             }),
             timestamp_writes: None,

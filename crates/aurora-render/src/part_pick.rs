@@ -1,5 +1,5 @@
 //! The poser's part under the cursor, read from the meshes (Aurora's own):
-//! the joint that carries the most skinning weight on the subject's surface
+//! the part that carries the most skinning weight on the subject's surface
 //! seen at a pixel.
 //!
 //! The part the poser offers with Ctrl must be the one drawn under the
@@ -8,7 +8,7 @@
 //! asked, the subject's skinned faces (`part_faces`) are drawn once more at
 //! the display's size, with the scene's depth test (so what stands in front
 //! of them, another avatar or an object, hides them), each pixel holding
-//! its dominant palette joint + 1 (`fs_part_pick`); the texel under the
+//! its visible part class (`fs_part_pick`); the texel under the
 //! cursor alone is copied and read back a frame or two later, as
 //! drawn_pick.rs does. Only that pixel is rasterized (a scissor); nothing
 //! is drawn while nobody asks, and the target is freed a few seconds after
@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-/// The dominant joint + 1 of a pixel (0: none of the subject).
+/// The visible part class of a pixel (0: none or an occluding accessory).
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// One texel read back, in a row the copy accepts.
 const ROW: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
@@ -35,6 +35,7 @@ struct Slot {
     /// The window pixel asked, given back with the answer: the poser trusts
     /// it only while the cursor is still there.
     tag: [u32; 2],
+    sequence: u64,
 }
 
 /// A window pixel on a target drawn at another size (a lower render scale,
@@ -49,11 +50,13 @@ pub struct PartPick {
     slots: Vec<Slot>,
     /// The slot and texel this frame copies: mapped once submitted.
     encoded: Option<(usize, [u32; 2])>,
-    /// The last answer read back: the dominant joint + 1 (0 for none) and
+    /// The last answer read back: the visible part class (0 for none) and
     /// the window pixel it was read at.
     answer: Option<(u32, [u32; 2])>,
     /// Frames since the last pick (`idle`).
     idle: u32,
+    next_sequence: u64,
+    delivered_sequence: u64,
 }
 
 impl PartPick {
@@ -69,6 +72,7 @@ impl PartPick {
                 state: Arc::new(AtomicU8::new(IDLE)),
                 pending: false,
                 tag: [0, 0],
+                sequence: 0,
             })
             .collect();
         PartPick {
@@ -77,6 +81,8 @@ impl PartPick {
             encoded: None,
             answer: None,
             idle: 0,
+            next_sequence: 1,
+            delivered_sequence: 0,
         }
     }
 
@@ -132,6 +138,8 @@ impl PartPick {
         let slot = self.slots.iter().position(|s| !s.pending)?;
         self.slots[slot].pending = true;
         self.slots[slot].tag = tag;
+        self.slots[slot].sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
         self.encoded = Some((slot, pixel));
         self.idle = 0;
         self.texture.as_ref().map(|(_, view, _)| view)
@@ -206,14 +214,19 @@ impl PartPick {
             };
             s.state.store(IDLE, Ordering::Release);
             s.pending = false;
-            if let Some(joint) = joint {
-                self.answer = Some((joint, s.tag));
+            if let Some(part) = joint
+                && s.sequence > self.delivered_sequence
+            {
+                // Buffer indices are reused: slot 0 may be newer than slot
+                // 1. Keep ordering even after take_answer consumes a value.
+                self.delivered_sequence = s.sequence;
+                self.answer = Some((part, s.tag));
             }
         }
     }
 
     /// The newest answer since the last call, with the window pixel it was
-    /// read at: 0 when nothing of the subject is there, joint + 1 otherwise.
+    /// read at: 0 when nothing of the subject is there, a part class otherwise.
     pub fn take_answer(&mut self) -> Option<(u32, [u32; 2])> {
         self.answer.take()
     }
@@ -221,7 +234,7 @@ impl PartPick {
 
 #[cfg(test)]
 mod tests {
-    use super::target_pixel;
+    use super::*;
 
     #[test]
     fn a_window_pixel_lands_on_the_texel_that_shows_it_at_any_render_scale() {
@@ -234,5 +247,58 @@ mod tests {
         assert_eq!(target_pixel([1919, 1079], [1920, 1080], [960, 540]), [959, 539]);
         // a zero-sized window gives no division by zero
         assert_eq!(target_pixel([3, 4], [0, 0], [10, 10]), [30, 40]);
+    }
+
+    #[test]
+    fn reused_slots_cannot_replace_a_newer_answer_with_an_older_one() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("part GPU device");
+        let mut pick = PartPick::new(&device);
+        pick.set_target(Some(PartPick::make_target(&device, [1, 1])), [1, 1]);
+        let encode = |pick: &mut PartPick, value: u32| {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let view = pick.begin([1, 1], [0, 0], [value, 0]).unwrap();
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: value as f64,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 0.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+            }
+            pick.encode_copy(&mut encoder);
+            encoder.finish()
+        };
+        queue.submit([encode(&mut pick, 1)]);
+        pick.after_submit();
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        // Slot 1 is pending when harvesting frees slot 0. Reusing slot 0
+        // makes its next answer newer, despite its lower buffer index.
+        let second = encode(&mut pick, 2);
+        pick.harvest();
+        assert_eq!(pick.take_answer(), Some((1, [1, 0])));
+        queue.submit([second]);
+        pick.after_submit();
+        queue.submit([encode(&mut pick, 3)]);
+        pick.after_submit();
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        pick.harvest();
+        assert_eq!(pick.take_answer(), Some((3, [3, 0])));
+        assert_eq!(pick.take_answer(), None);
     }
 }
