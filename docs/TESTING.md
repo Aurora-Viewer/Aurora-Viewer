@@ -12200,8 +12200,9 @@ What the inventory must show with these scenarios:
   cascade hopped (up to 11 cm in the third cascade at the default quality).
   Now the anchor is held until the sun or moon has swept the grid by half a
   texel at the cascade's centre (seconds on the default day cycle, never on a
-  fixed sun), and taken again then, when the cascade's size changes, at a photo and at a region change. `old` brings back the anchor of
-  every frame. To compare with a fixed sun (`AURORA_DEMO_TOD=2`) and
+  fixed sun), and taken again then, when the cascade's size changes, at a
+  photo and at a region change. `old` brings back the anchor of every frame.
+  To compare with a fixed sun (`AURORA_DEMO_TOD=2`) and
   `AURORA_DEBUG_SHADOWS=1` (the shadows are the dark areas, in the colour of
   the cascade they come from, which makes the edges easy to see):
   `AURORA_DEMO_CAMERA=spin,640,400,1` turns the camera steadily from frame
