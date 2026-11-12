@@ -2165,6 +2165,25 @@ impl App {
         if self.demo && self.bridge_demo_command(&cmd) {
             return;
         }
+        // AURORA_DEMO_TELEPORT_FAILED: the region refuses every teleport
+        if self.demo
+            && let Some((reason, _)) = crate::demo::teleport_failure()
+            && matches!(
+                cmd,
+                NetCommand::TeleportTo { .. }
+                    | NetCommand::TeleportLandmark(_)
+                    | NetCommand::TeleportToRegion { .. }
+                    | NetCommand::TeleportHome
+            )
+        {
+            self.world.apply(NetEvent::TeleportStarted { flags: 0 });
+            self.world.apply(NetEvent::TeleportFailed {
+                code: reason.clone(),
+                reason,
+                region: String::new(),
+            });
+            return;
+        }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
         self.named_teleport.observe(&cmd, actor);
@@ -3314,7 +3333,7 @@ impl App {
                 match result {
                     Ok(command) => self.send_deferred_teleport(command, actor),
                     Err(reason) => {
-                        self.world.apply(NetEvent::TeleportFailed { reason });
+                        self.world.apply(NetEvent::viewer_teleport_failed(reason));
                     }
                 }
             }
@@ -6580,6 +6599,22 @@ impl App {
         self.suitcase_ask_for(&grid, go)
     }
 
+    /// Where the agent is, for the Hypergrid line of a teleport failure:
+    /// Second Life, its OpenSim login grid, or another grid by Hypergrid
+    /// (LFSimFeatureHandler::hyperGridURL against the login grid).
+    fn teleport_failure_grid(&self) -> crate::world::teleport_failure::Grid {
+        use crate::world::teleport_failure::Grid;
+        if self.demo && crate::demo::teleport_failure().is_some_and(|(_, hypergrid)| hypergrid) {
+            return Grid::OpenSimAway;
+        }
+        let Some(home) = crate::grids::home(&self.settings) else {
+            return Grid::SecondLife;
+        };
+        let away = crate::grids::current(&self.settings, self.world.opensim_extras())
+            .is_some_and(|here| !crate::grids::same_grid(&self.settings, &here, &home));
+        if away { Grid::OpenSimAway } else { Grid::OpenSimHome }
+    }
+
     /// The question for a teleport to `grid`, when it leaves worn items
     /// behind; true when the teleport is held for it.
     fn suitcase_ask_for(&mut self, grid: &str, go: SuitcaseGo) -> bool {
@@ -7702,9 +7737,7 @@ impl App {
     /// path when that delayed action is refused; scripts retain their actor.
     fn send_deferred_teleport(&mut self, command: NetCommand, actor: uuid::Uuid) {
         if actor.is_nil() && !self.user_teleport_allowed(&command) {
-            self.world.apply(NetEvent::TeleportFailed {
-                reason: aurora_i18n::tr!("rlva-blocked").into(),
-            });
+            self.world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!("rlva-blocked")));
         } else {
             self.send_from(command, actor);
         }
@@ -18146,6 +18179,13 @@ impl App {
                     self.answer_suitcase(ask, yes);
                 }
                 self.portal_crossing_question(&ctx, &p);
+                if let Some(failure) = self.world.tp_failure.as_ref() {
+                    let said = crate::world::teleport_failure::text(&failure.code, &failure.reason, &failure.region);
+                    let hint = crate::world::teleport_failure::hint(&failure.reason, self.teleport_failure_grid());
+                    if ui::context::teleport_failed(&ctx, &p, &said, hint) {
+                        self.world.tp_failure = None;
+                    }
+                }
                 if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {

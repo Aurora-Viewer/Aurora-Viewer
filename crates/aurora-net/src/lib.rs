@@ -49,6 +49,7 @@ pub mod slm;
 pub mod social;
 pub mod stats;
 pub mod task_inventory;
+pub mod teleport_failed;
 pub mod terrain;
 #[cfg(test)]
 mod test_http;

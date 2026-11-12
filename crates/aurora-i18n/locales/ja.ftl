@@ -14068,3 +14068,26 @@ joystick-layout-positional = 位置に基づく
 
 joystick-layout-auto = 自動
 joystick-layout-xinput = XInput
+
+## Teleport failures (world/teleport_failure.rs; teleport_strings.xml "errors")
+teleport-failed-title = テレポートに失敗しました。
+teleport-error-invalid-tport = テレポートは1分間に6回までです。うまくいかない場合は1分待ってからもう一度お試しください。問題が続く場合は、ログアウトして再度ログインしてください。
+teleport-error-invalid-region-handoff = リージョン間の移動の処理中に問題が発生しました。リージョンを移動する前に再ログインが必要な場合があります。
+teleport-error-blocked-tport = 申し訳ありません。現在テレポートはブロックされています。しばらくしてからもう一度お試しください。それでもテレポートできない場合は、ログアウトして再度ログインしてください。
+teleport-error-nolandmark-tport = 申し訳ありません。ランドマークの行き先が見つかりませんでした。
+teleport-error-timeout-tport = 申し訳ありません。テレポートの接続を完了できませんでした。しばらくしてからもう一度お試しください。
+teleport-error-no-help-island = Welcome Island には戻れません。
+teleport-error-noaccess-tport = 申し訳ありません。そのテレポート先へのアクセス権がありません。
+teleport-error-missing-attach-tport = 装着物がまだ届いていません。数秒待つか、ログアウトして再度ログインしてからテレポートしてください。
+teleport-error-too-many-uploads-tport = このリージョンのアセットキューが混み合っているため、テレポートを時間内に完了できません。数分後にもう一度お試しいただくか、混雑していない場所へ移動してください。
+teleport-error-expired-tport = 申し訳ありません。テレポートを時間内に完了できませんでした。数分後にもう一度お試しください。
+teleport-error-expired-region-handoff = 申し訳ありません。リージョン間の移動を時間内に完了できませんでした。数分後にもう一度お試しください。
+teleport-error-preexisting-tport = 申し訳ありません。テレポートを開始できませんでした。数分後にもう一度お試しください。
+teleport-error-no-host = テレポート先が見つかりません。一時的に利用できないか、すでに存在しない可能性があります。数分後にもう一度お試しください。
+teleport-error-no-inventory-host = インベントリは現在利用できません。
+teleport-error-must-get-age-region = このリージョンに入るには18歳以上である必要があります。
+teleport-error-special-usage-blocked = リージョンに入れません。「{ $region }」はスキルゲーミングリージョンで、入場には一定の条件を満たす必要があります。
+teleport-hint-hypergrid-home-refused = ホームグリッドが帰還を拒否しました。多くの場合、ホームグリッドの Hypergrid アドレス設定が、他のグリッドが使うアドレスと一致していないことが原因です。ホームグリッドの運営者に連絡してください。それまでは、再ログインするとホームに戻れます。
+teleport-hint-hypergrid-unreachable = 相手のグリッドに接続できませんでした。オフラインか、リンクが古いアドレスを指している可能性があります。
+teleport-hint-hypergrid-visitors-refused = そのグリッドは一部のグリッドの住人しか受け入れていません。
+teleport-hint-hypergrid-destination-gone = 行き先のリージョンは存在しないか、移動しています。他のグリッドへのランドマークやリンクは古くなることがあります。

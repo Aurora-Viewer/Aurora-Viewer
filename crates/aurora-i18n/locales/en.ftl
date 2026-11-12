@@ -14132,3 +14132,26 @@ joystick-layout-positional = Positional
 
 joystick-layout-auto = Automatic
 joystick-layout-xinput = XInput
+
+## Teleport failures (world/teleport_failure.rs; teleport_strings.xml "errors")
+teleport-failed-title = Teleport failed.
+teleport-error-invalid-tport = Teleport attempts are limited to 6 per minute. If you are having trouble, wait one minute and try teleporting again. If the problem persists, log out and log in again.
+teleport-error-invalid-region-handoff = Problem encountered processing your region crossing. You may need to log back in before you can cross regions.
+teleport-error-blocked-tport = Sorry, teleport is currently blocked. Try again in a moment. If you still cannot teleport, please log out and log back in to resolve the problem.
+teleport-error-nolandmark-tport = Sorry, but the system was unable to locate the landmark destination.
+teleport-error-timeout-tport = Sorry, but the system was unable to complete the teleport connection. Try again in a moment.
+teleport-error-no-help-island = You cannot teleport back to Welcome Island.
+teleport-error-noaccess-tport = Sorry, you do not have access to that teleport destination.
+teleport-error-missing-attach-tport = Your attachments have not arrived yet. Try waiting for a few more seconds or log out and back in again before attempting to teleport.
+teleport-error-too-many-uploads-tport = The asset queue in this region is currently clogged, so your teleport request will not be able to succeed in a timely manner. Please try again in a few minutes or go to a less busy area.
+teleport-error-expired-tport = Sorry, but the system was unable to complete your teleport request in a timely fashion. Please try again in a few minutes.
+teleport-error-expired-region-handoff = Sorry, but the system was unable to complete your region crossing in a timely fashion. Please try again in a few minutes.
+teleport-error-preexisting-tport = Sorry, but the system was unable to start your teleport. Please try again in a few minutes.
+teleport-error-no-host = Unable to find teleport destination. The destination may be temporarily unavailable or no longer exists. Please try again in a few minutes.
+teleport-error-no-inventory-host = The inventory system is currently unavailable.
+teleport-error-must-get-age-region = You must be age 18 or over to enter this region.
+teleport-error-special-usage-blocked = Unable to enter region. '{ $region }' is a Skill Gaming Region, and you must meet certain criteria in order to enter.
+teleport-hint-hypergrid-home-refused = Your home grid refused your return. This usually means its Hypergrid address setting does not match the address other grids use for it. Contact your home grid's operators; logging in again takes you home in the meantime.
+teleport-hint-hypergrid-unreachable = The other grid could not be reached. It may be offline, or the link may point to an old address.
+teleport-hint-hypergrid-visitors-refused = That grid only lets in residents of some grids.
+teleport-hint-hypergrid-destination-gone = The destination region no longer exists or has moved. Landmarks and links to other grids can go out of date.

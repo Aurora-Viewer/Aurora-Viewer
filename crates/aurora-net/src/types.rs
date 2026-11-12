@@ -776,8 +776,14 @@ pub enum NetEvent {
     VoiceModerationFailed {
         everyone: bool,
     },
+    /// A teleport refused or failed (`teleport_failed.rs`): `reason` is the
+    /// simulator's text, `code` the id the viewer looks up for its own
+    /// wording (AlertInfo's Message, else the reason), `region` its
+    /// REGION_NAME. The viewer's own failures leave `code` empty.
     TeleportFailed {
         reason: String,
+        code: String,
+        region: String,
     },
     Alert {
         message: String,
@@ -2476,6 +2482,18 @@ pub struct ExperienceLogEvent {
     pub object_name: String,
     pub parcel_name: String,
     pub attachment: bool,
+}
+
+impl NetEvent {
+    /// A teleport failure of the viewer's own (blocked, offline, given up):
+    /// no simulator code, so no Legacy popup, only the notice.
+    pub fn viewer_teleport_failed(reason: impl Into<String>) -> Self {
+        NetEvent::TeleportFailed {
+            reason: reason.into(),
+            code: String::new(),
+            region: String::new(),
+        }
+    }
 }
 
 #[cfg(test)]
