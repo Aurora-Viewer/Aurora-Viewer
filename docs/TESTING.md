@@ -1304,6 +1304,11 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.
+  The loading picture of a region larger than 256 m is the stitched level-1
+  map tiles (the same cells the minimap draws). The offline demo has no map
+  server, so that picture is checked on an OpenSim var region of at least
+  512 m: loading screen after a teleport, About Land's header, and
+  Region/Estate's overview. A 256 m region stays one tile.
 - **`AURORA_DEMO_TP_CAM`** (issue #2828): with `AURORA_DEMO_TP`, the camera
   is put on a point 8 m ahead just before the teleport, as with Alt and a
   click. `alt` keeps Preferences › Camera › "Return after a teleport in the

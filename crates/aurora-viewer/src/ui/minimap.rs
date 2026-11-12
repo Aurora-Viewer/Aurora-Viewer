@@ -1060,7 +1060,13 @@ impl MiniMap {
         handle: RegionHandle,
     ) -> Option<egui::TextureHandle> {
         let (ox, oy) = aurora_net::handle_to_origin(handle);
-        if let Ok(tile) = tiles.get(1, ox / 256, oy / 256, true) {
+        let (size_x, size_y) = world
+            .regions
+            .get(&handle)
+            .map(|region| (region.heightmap.size_x, region.heightmap.size_y))
+            .unwrap_or((256, 256));
+        let (cells_x, cells_y) = super::map_tiles::region_cells(size_x, size_y);
+        if let Ok(tile) = tiles.region_picture(ctx, ox / 256, oy / 256, cells_x, cells_y) {
             return Some(tile);
         }
         let region = world.regions.get(&handle)?;
