@@ -362,6 +362,7 @@ impl MediaManager {
     pub fn on_key(
         &mut self,
         world: &World,
+        letter: Option<char>,
         code: winit::keyboard::KeyCode,
         scancode: u32,
         pressed: bool,
@@ -380,7 +381,7 @@ impl MediaManager {
         let Some(p) = self.focused_mut().and_then(|m| m.plugin.as_mut()) else {
             return pressed;
         };
-        keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
+        keys::edit(p, letter, code, pressed, repeat, mods) || keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
     }
 
     /// Release the focus (LLViewerMediaFocus::clearFocus).
@@ -463,6 +464,10 @@ mod tests {
             g.owner_avatar = Some(own);
             g.center = o.position;
             g.radius = 1.0;
+        }
+        for idx in [front, back] {
+            // the server marks a face with prim media (TEM_MEDIA_MASK)
+            Arc::make_mut(world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].media_flags |= 1;
         }
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
         crate::scene::picking::tests::index_test_objects(&mut scene);

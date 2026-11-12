@@ -14,6 +14,7 @@ use crate::{
         widgets::{Floater, flat_button, icon_button},
     },
 };
+use aurora_net::scripts::Luau;
 use egui::{Id, RichText, Vec2};
 
 #[derive(Default)]
@@ -420,12 +421,24 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
                 }
             });
         }
-        ui.add_enabled_ui(
-            e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
-            |ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
-            },
-        );
+        // A script on the Luau VM keeps its target: no Mono box, which would
+        // turn a Lua source into LSL (choosing the target comes with SLua).
+        let luau = match e.luau {
+            Luau::Off => None,
+            Luau::Lsl => Some(aurora_i18n::tr!("script-luau-lsl")),
+            Luau::Lua => Some(aurora_i18n::tr!("script-luau-lua")),
+        };
+        if let Some(label) = luau {
+            ui.label(RichText::new(label).color(p.muted))
+                .on_hover_text(aurora_i18n::tr!("script-luau-hint"));
+        } else {
+            ui.add_enabled_ui(
+                e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
+                |ui| {
+                    crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                },
+            );
+        }
     });
     if !e.target.object.is_nil()
         && e.experience.show(ui, p, e.can_edit && e.loaded && e.saving.is_none())

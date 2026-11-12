@@ -73,10 +73,9 @@ impl Fixture {
         );
         fn collect(shape: &egui::Shape, labels: &mut Vec<(String, egui::Rect)>) {
             match shape {
-                egui::Shape::Text(text) if !text.galley.elided => labels.push((
-                    text.galley.text().to_owned(),
-                    egui::Rect::from_min_size(text.pos, text.galley.size()),
-                )),
+                egui::Shape::Text(text) if !text.galley.elided => {
+                    labels.push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2())))
+                }
                 egui::Shape::Vec(shapes) => {
                     for shape in shapes {
                         collect(shape, labels);
@@ -90,6 +89,15 @@ impl Fixture {
             collect(&shape.shape, &mut self.labels);
         }
         output.textures_delta.clear();
+    }
+    /// Where the last drawn text with this label is.
+    fn label(&self, label: &str) -> egui::Rect {
+        self.labels
+            .iter()
+            .rev()
+            .find(|(name, _)| name == label)
+            .unwrap_or_else(|| panic!("missing {label}: {:?}", self.labels))
+            .1
     }
     fn click_label(&mut self, label: &str) {
         self.settle();
@@ -284,6 +292,37 @@ fn texture_preview_grows_past_320_pixels_and_keeps_each_windows_display_options(
     f.open(111);
     assert!(!f.resources.windows[1].texture.display.actual_size);
     assert!(f.resources.windows[0].texture.display.actual_size);
+}
+
+#[test]
+fn material_footer_message_stays_below_wrapped_buttons_at_narrow_widths() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let item = Uuid::from_u128(113);
+    let local = Uuid::from_u128(125);
+    f.world.local_assets.insert(local, ("Local texture.png".into(), false));
+    f.open(113);
+    Arc::make_mut(&mut f.resources.windows[0].editor.as_mut().expect("editor").draft).base_color_texture = Some(local);
+    for scale in [1.0, 1.5, 2.0] {
+        crate::theme::Theme::default().apply(&f.ctx, scale);
+        for width in [260.0, 300.0, 620.0] {
+            widgets::place_floater(&f.ctx, &preview_window_id(item), egui::pos2(20.0, 60.0), egui::vec2(width, 600.0));
+            f.settle();
+            let status = f.label(aurora_i18n::tr!("resource-preview-local-maps"));
+            let buttons_bottom = ["common-save", "common-save-as", "common-cancel"]
+                .into_iter()
+                .map(|key| f.label(aurora_i18n::text(key)).bottom())
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                status.top() >= buttons_bottom,
+                "message overlaps a button at width {width}, scale {scale}"
+            );
+            assert!(f.rect(113).contains_rect(status), "message clipped at width {width}, scale {scale}");
+            let size = f.rect(113).size();
+            f.settle();
+            same_size(f.rect(113).size(), size);
+        }
+    }
 }
 
 #[test]
