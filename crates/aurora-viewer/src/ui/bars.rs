@@ -999,17 +999,24 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
             super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
         }
-        for (tab, icon, label) in [
-            (1, "users", aurora_i18n::tr!("common-friends")),
-            (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
-            (2, "users-group", aurora_i18n::tr!("common-groups")),
-            (4, "ban", aurora_i18n::tr!("ui-bars-block-list")),
-        ] {
+        let mut people_tab = |ui: &mut egui::Ui, tab, icon: &str, label: &str| {
             if menu::item(ui, p, icon, label) {
                 super::widgets::open_floater(ui.ctx(), "people", &mut panels.people);
                 panels.people_tab = tab;
             }
-        }
+        };
+        people_tab(ui, 1, "users", aurora_i18n::tr!("common-friends"));
+        people_tab(ui, 0, "radar-filled", aurora_i18n::tr!("common-nearby-people"));
+        people_tab(ui, 2, "users-group", aurora_i18n::tr!("common-groups"));
+        flip_window(
+            ui,
+            p,
+            "tags-filled",
+            aurora_i18n::tr!("toolbar-command-group-titles"),
+            super::group_titles::WINDOW,
+            &mut panels.group_titles,
+        );
+        people_tab(ui, 4, "ban", aurora_i18n::tr!("ui-bars-block-list"));
         menu::separator(ui, p);
         // Firestorm "Online Status" menu
         menu::submenu(ui, p, "circle-filled", aurora_i18n::tr!("ui-bars-online-status"), true, |ui| {
