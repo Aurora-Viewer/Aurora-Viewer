@@ -36,6 +36,7 @@ pub mod controls;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
+pub mod destinations;
 pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
@@ -180,6 +181,7 @@ pub struct Panels {
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
     pub appearance: bool,
+    pub avatar_studio: bool,
     pub ao: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
@@ -209,6 +211,8 @@ pub struct Panels {
     pub grid_status: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Destination Guide (toolbar `destinations`, World › Destinations).
+    pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
@@ -259,6 +263,7 @@ impl Panels {
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
             appearance: settings.show_appearance,
+            avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
             contacts: false,
@@ -276,6 +281,7 @@ impl Panels {
             bumps: false,
             grid_status: false,
             web_browser: false,
+            destinations: false,
             quick_prefs: false,
             voice_controls: false,
             about: false,

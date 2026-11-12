@@ -167,6 +167,29 @@ pub(super) struct State {
     /// Last frame, Ctrl showed another part or avatar under the pointer:
     /// the handles let it through this frame (`poser_ctrl_picks`).
     ctrl_hint: bool,
+    /// The part the renderer draws on the subject's meshes this frame (its
+    /// joints as `world_hints::mask_joints`), when Ctrl hovers one the
+    /// meshes carry; None draws nothing (the bone outline, if any, is the
+    /// poser's own painting).
+    part_overlay: Option<(Uuid, [u32; 8])>,
+    /// Ctrl hovers the subject (an avatar) with the parts on: the renderer
+    /// is asked for its part under the cursor (part_pick.rs).
+    pick_wanted: bool,
+    /// Its newest answer: the subject it was asked for, the visible part
+    /// class (0 off the subject or an occluding accessory) and its window pixel,
+    /// trusted only there (`world_hints::fresh_pick`). None before the first
+    /// since Ctrl came.
+    mesh_pick: Option<(Uuid, u32, [f32; 2])>,
+    /// Whether the scene drew any of the subject's meshes last frame, when it
+    /// listed them (`set_poser_meshes_drawn`): an impostored, jelly-dolled or
+    /// first-person subject has none, and keeps the bone outline. None:
+    /// not known yet (taken as drawn).
+    meshes_drawn: Option<(Uuid, bool)>,
+    /// The subject the pick answers were last taken for, and how many
+    /// answers still in flight to drop after a switch (they were drawn from
+    /// the subject before).
+    pick_for: Uuid,
+    pick_drop: u8,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -335,6 +358,61 @@ impl Editor {
     pub(in crate::ik_edit) fn poser_ctrl_picks(&self, modifiers: egui::Modifiers) -> bool {
         self.poser.active && (modifiers.ctrl || modifiers.command) && self.poser.ctrl_hint
     }
+    /// The part the renderer draws on the subject's meshes (the avatar and
+    /// the joints mask of `aurora_render::FrameParams::part_joints`).
+    pub fn poser_part_overlay(&self) -> Option<(Uuid, [u32; 8])> {
+        self.poser.part_overlay.filter(|_| self.poser.active && self.open)
+    }
+    /// The subject whose part under the cursor the renderer reads this
+    /// frame (part_pick.rs), while Ctrl hovers it.
+    pub fn poser_pick_subject(&self) -> Option<Uuid> {
+        (self.poser.active && self.open && self.poser.pick_wanted).then_some(self.poser.subject)
+    }
+    /// Packed palette-joint part classes for the GPU's interpolated pick.
+    pub fn poser_pick_classes(&self, rig: &Rig) -> [u32; 32] {
+        if self.poser_pick_subject().is_some() {
+            world_hints::pick_classes(&rig.parent, &rig.canonical_names)
+        } else {
+            [0; 32]
+        }
+    }
+    /// The renderer's part pick (`Renderer::take_part_pick`): the newest
+    /// answer is kept while Ctrl is held, forgotten once it is let go.
+    pub fn set_poser_mesh_pick(&mut self, answer: Option<(u32, [u32; 2])>) {
+        // a switch of subject: the answers still in flight (at most one per
+        // readback slot) are the former subject's
+        if self.poser.pick_for != self.poser.subject {
+            self.poser.pick_for = self.poser.subject;
+            self.poser.mesh_pick = None;
+            self.poser.pick_drop = 3;
+        }
+        if !self.poser.pick_wanted {
+            self.poser.mesh_pick = None;
+        } else if let Some((joint, [x, y])) = answer {
+            if self.poser.pick_drop > 0 {
+                self.poser.pick_drop -= 1;
+            } else {
+                self.poser.mesh_pick = Some((self.poser.subject, joint, [x as f32, y as f32]));
+            }
+        }
+    }
+    /// Whether the scene listed any of the subject's meshes for the part
+    /// (None: it was not asked to).
+    pub fn set_poser_meshes_drawn(&mut self, drawn: Option<bool>) {
+        // kept while the scene is not asked (no Ctrl): the last known answer
+        // for that subject, so its outline does not flicker at an edge
+        if let Some(drawn) = drawn {
+            self.poser.meshes_drawn = Some((self.poser.subject, drawn));
+        }
+    }
+    /// Whether the subject's meshes are drawn, as last known (unknown:
+    /// taken as drawn).
+    pub(super) fn poser_meshes_drawn(&self) -> bool {
+        self.poser
+            .meshes_drawn
+            .filter(|(s, _)| *s == self.poser.subject)
+            .is_none_or(|(_, d)| d)
+    }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {
         self.poser.subject
@@ -446,6 +524,12 @@ impl Editor {
     fn close_poser(&mut self) {
         self.poser.close_asked = false;
         self.open = false;
+        // the window no longer runs its hints: nothing stays lit nor picked
+        // (a pose kept by "stop when closed" off goes on without them)
+        self.poser.part_overlay = None;
+        self.poser.pick_wanted = false;
+        self.poser.mesh_pick = None;
+        self.poser.ctrl_hint = false;
         if self.poser.stop_on_close {
             self.poser.active = false;
         }
@@ -552,11 +636,20 @@ impl Editor {
         if mode == "poser-compact-save" && frame == 480 {
             self.poser.name = "Demo pose".into();
         }
-        // compact-face: no joint selected, so that no gizmo covers the face
+        // compact-face: no joint selected, so that no gizmo covers the face;
+        // compact-body: the Hands posed, so the body is another group's part
         if mode == "poser-compact-face" && frame == 500 {
+            // as a click beside: the pelvis is not picked again
             self.selected = None;
             self.poser.unselected = true;
             self.clear_together();
+        }
+        if mode == "poser-compact-body"
+            && frame == 500
+            && let Some(pose) = self.editor_frame(world)
+        {
+            self.poser.group = 2;
+            self.select_pose_group(2, &world.avatar_lib.rig, &pose);
         }
         // the head edited at 450, then the window's cross: the confirmation
         if mode == "poser-close" && frame == 700 {

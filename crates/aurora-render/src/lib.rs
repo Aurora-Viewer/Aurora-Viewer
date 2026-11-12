@@ -42,6 +42,7 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+mod part_pick;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]
@@ -83,7 +84,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
-pub use vr_control::VrState;
+pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
 /// on macOS yet (its Metal path is unvalidated).
@@ -181,6 +182,12 @@ mod shader_tests {
         validate(include_str!("shaders/rlva_overlay.wgsl"));
         validate(include_str!("shaders/rlva_resolution.wgsl"));
     }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn headset_grade_shader_is_valid() {
+        validate(crate::vr_mirror::HEADSET_GRADE_SHADER);
+    }
+
     fn validate(src: &str) {
         let module = match naga::front::wgsl::parse_str(src) {
             Ok(m) => m,

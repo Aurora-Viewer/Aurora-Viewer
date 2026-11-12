@@ -499,7 +499,9 @@ impl Editor {
                 ui.add_space(TRACKBALL / 2.0 - 60.0);
                 edited |= self.axis_sliders(ui, p, &mut value, base_point);
                 ui.add_space(4.0);
-                widgets::switch_labeled(ui, p, &mut self.poser.delta, aurora_i18n::tr!("poser-delta"));
+                // beside the trackball the column is narrow: the French and a
+                // larger font take two lines
+                widgets::switch_labeled_wrapped(ui, p, &mut self.poser.delta, aurora_i18n::tr!("poser-delta"));
             });
         });
         if edited {

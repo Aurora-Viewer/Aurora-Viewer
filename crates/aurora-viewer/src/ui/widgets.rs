@@ -65,8 +65,9 @@ pub use workspace::{
     navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
-    organization_header, organization_section, organization_typography, overlay, overlay_frame, paint_world_label,
+    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
+    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
+    organization_typography, overlay, overlay_frame, paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -313,6 +314,9 @@ pub struct Floater<'a> {
     pub header_status: Vec<(&'static str, String, Color32)>,
     /// A text action at the right end of the secondary header row.
     pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    /// A single-line detail row inside the expanded title section.
+    pub header_summary: Option<egui::WidgetText>,
+    pub header_summary_action: Option<&'a mut bool>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
@@ -374,6 +378,8 @@ impl<'a> Floater<'a> {
             title: title.into(),
             header_status: Vec::new(),
             header_status_action: None,
+            header_summary: None,
+            header_summary_action: None,
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
@@ -742,6 +748,7 @@ impl<'a> Floater<'a> {
             // title bar
             let mut buttons_left = f32::INFINITY;
             let mut note_rect = None;
+            let mut primary_title_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -821,7 +828,8 @@ impl<'a> Floater<'a> {
                         }
                     });
                 });
-                if !self.header_status.is_empty() || self.header_status_action.is_some() {
+                primary_title_rect = Some(title_row.response.rect);
+                if (!minimized || compact) && (!self.header_status.is_empty() || self.header_status_action.is_some()) {
                     let status = |ui: &mut egui::Ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
@@ -853,6 +861,24 @@ impl<'a> Floater<'a> {
                         status(ui);
                     }
                 }
+                if (!minimized || compact)
+                    && let Some(summary) = &self.header_summary
+                {
+                    let full_text = summary.text().to_owned();
+                    let sense = if self.header_summary_action.is_some() {
+                        Sense::click()
+                    } else {
+                        Sense::hover()
+                    };
+                    if ui
+                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+                        .on_hover_text(full_text)
+                        .clicked()
+                        && let Some(clicked) = &mut self.header_summary_action
+                    {
+                        **clicked = true;
+                    }
+                }
                 title_row
             };
             let flush = self.flush_body;
@@ -876,7 +902,9 @@ impl<'a> Floater<'a> {
             } else {
                 header_content(ui).response
             };
-            let mut title_rect = header.rect;
+            // Secondary header controls own their clicks; only the title row
+            // is the window's double-click target.
+            let mut title_rect = primary_title_rect.unwrap_or(header.rect);
             if framed_header.is_some() {
                 ui.painter().hline(header.rect.x_range(), header.rect.bottom(), divider_stroke(p));
             }
@@ -1645,6 +1673,25 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     resp
 }
 
+/// Compact padding for values adjoining construction controls.
+const READOUT_PADDING: Vec2 = Vec2::new(4.0, 1.0);
+pub const TEXT_BUTTON_HEIGHT: f32 = 18.0;
+
+/// A non-interactive value with the same neutral face as the adjoining buttons.
+pub fn readout_sized(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, size: Vec2) -> egui::Response {
+    let label = label.into();
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().button_padding = READOUT_PADDING;
+            let face = ui.visuals().widgets.inactive;
+            ui.visuals_mut().widgets.noninteractive = face;
+            ui.add_sized(size, egui::Button::new(label.clone()).sense(egui::Sense::hover()).truncate())
+        })
+        .inner;
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label.text()));
+    response
+}
+
 /// Check box of the interface, with the contract of `ui.checkbox`: the
 /// response is `changed()` when a click flipped `on`. A flat square with the
 /// corners of the theme, violet and ticked when on; the square and its label
@@ -1803,6 +1850,25 @@ pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
     ui.horizontal(|ui| {
         let mut resp = switch(ui, p, on);
         let text = ui.add(egui::Label::new(label).sense(Sense::click()));
+        if text.clicked() {
+            *on = !*on;
+            resp.mark_changed();
+        }
+        resp.union(text)
+    })
+    .inner
+}
+
+/// [`switch_labeled`] in a narrow column: the label wraps onto more lines
+/// instead of running past the column's edge (a long translation, a larger
+/// font), the switch beside its first line. It wraps within what is shown:
+/// a wider row above can stretch the column past its clip.
+pub fn switch_labeled_wrapped(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    let room = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
+    ui.horizontal_top(|ui| {
+        ui.set_max_width(room);
+        let mut resp = switch(ui, p, on);
+        let text = ui.add(egui::Label::new(label).wrap().sense(Sense::click()));
         if text.clicked() {
             *on = !*on;
             resp.mark_changed();
