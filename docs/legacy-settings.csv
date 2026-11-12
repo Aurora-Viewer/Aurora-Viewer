@@ -80,8 +80,8 @@ AvatarFeathering,F32,unreviewed,,,Avatar feathering (less is softer)
 AvatarInspectorTooltipDelay,F32,unreviewed,,field `delay`,Seconds before displaying avatar inspector tooltip
 AvatarNameTagMode,S32,unreviewed,,named in Aurora: aurora-viewer/src/ui/quick_prefs.rs:158,Select Avatar Name Tag Mode
 AvatarPhysics,Boolean,unreviewed,,field `avatar_physics`,Enable avatar physics.
-AvatarRotateThresholdFast,F32,unreviewed,,,"Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving fast (degrees)"
-AvatarRotateThresholdSlow,F32,unreviewed,,named in Aurora: aurora-viewer/src/world/body.rs:28,"Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving slowly (degrees)"
+AvatarRotateThresholdFast,F32,in-aurora,,"field `turn_fast` in `avatar_motion`; Preferences > Avatars > Animations > Turning and looking; 2 by default; 0..180","Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving fast (degrees)"
+AvatarRotateThresholdSlow,F32,in-aurora,,"field `turn_slow` in `avatar_motion`; Preferences > Avatars > Animations > Turning and looking; 60 by default; 0..180","Angle between avatar facing and camera facing at which avatar turns to face same direction as camera, when moving slowly (degrees)"
 AvatarSitOnAway,Boolean,unreviewed,,field `sit_when_away`,Sit down when marked AFK
 AvatarSitRotation,Quaternion,unreviewed,,,Avatar real sitting rotation used in preset
 AvatarWelcomePack,String,unreviewed,,,Avatar Welcome Pack contents
