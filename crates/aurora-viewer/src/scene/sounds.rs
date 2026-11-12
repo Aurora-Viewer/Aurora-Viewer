@@ -581,7 +581,7 @@ impl SoundManager {
                     let clip = super::jobs::caught(|| {
                         crate::cache::read_touch(&path)
                             .ok()
-                            .and_then(|d| SoundClip::decode(&d).ok())
+                            .and_then(|d| SoundClip::decode_asset(&d).ok())
                             .map(Arc::new)
                     })
                     .flatten();
@@ -662,7 +662,7 @@ impl SoundManager {
                 let tx = self.tx.clone();
                 jobs.spawn(move || {
                     // (a failed decode counts as a failure: retried later)
-                    let clip = super::jobs::caught(|| match SoundClip::decode(&d) {
+                    let clip = super::jobs::caught(|| match SoundClip::decode_asset(&d) {
                         Ok(c) => {
                             let _ = crate::cache::write(path, &d);
                             Some(Arc::new(c))
