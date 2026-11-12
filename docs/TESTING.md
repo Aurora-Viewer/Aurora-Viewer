@@ -5679,7 +5679,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
-| `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
+| `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy][:channel]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
@@ -7975,7 +7975,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_DEMO_OPTIONS=chat:script-errors` opens that section: the switch
   on, "Also say them on a chat channel" off, its channel (1) among its
   sub-settings.
-- **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
+- **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy][:channel]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the
   left with their picture and a green dot under the last one of each
@@ -7992,7 +7992,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and its name in its color above its group, the viewer's notices in
   centered pills). `legacy`: the friend's conversation in the legacy lines
   of the setting `chat_style` (`Legacy`; otherwise `Bubbles`), which the
-  demo does not save.
+  demo does not save. A last `:channel` (`bubbles:local:channel`,
+  `bubbles:legacy:channel`) shows the nearby chat in that style with its
+  channel selector, the "/0" chip before Send, as Preferences › Chat ›
+  Nearby chat › Show the channel selector does (#3391).
 - **`AURORA_DEMO_TYPING=1`**: our typing in the nearby chat without a key,
   held from our arrival on (`nearby chat: typing started` in the log). The
   demo plays its own stand-in for the typing animation (a grid asset it

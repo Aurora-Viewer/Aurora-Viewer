@@ -19610,6 +19610,11 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.selected = crate::demo::bubbles_conversation(view);
+                // =bubbles…:channel: the nearby chat, its channel selector shown
+                if crate::demo::bubbles_channel() {
+                    self.chat_ui.selected = None;
+                    self.chat_ui.demo_channel = true;
+                }
                 // AURORA_DEMO_PREVIEW_PLAY=card|window: the first video plays
                 self.chat_ui.previews.demo_play = match std::env::var("AURORA_DEMO_PREVIEW_PLAY").as_deref() {
                     Ok("card") => Some(crate::link_preview::Player::InCard),

@@ -1673,6 +1673,28 @@ fn the_field_acts() {
     }
 }
 
+/// The window of tabs (Bubbles, Lines) shows the nearby chat's channel chip
+/// too when the preferences ask for it (#3391), never in an IM, like the
+/// Legacy Viewer's `ChatChannel` spinner of the nearby chat.
+#[test]
+fn the_channel_chip_shows_in_the_window_of_tabs() {
+    for style in [ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = H::new(style);
+        h.open(None);
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: no chip by default");
+        h.st.show_channel = true;
+        h.open(None);
+        h.type_text("/5 secret");
+        assert!(h.shown(control_id("box-channel")).is_some(), "{style:?}: the chip shown");
+        assert!(h.painted("/5"), "{style:?}: the chip shows the channel");
+        h.press(control_id("box-channel"));
+        h.press_text(aurora_i18n::tr!("ui-chat-channel-reset"));
+        assert_eq!(h.st.draft_mut(None), "secret", "{style:?}: channel reset");
+        h.open(Some(JANE));
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: no chip in an IM");
+    }
+}
+
 /// Inventory dragged with an IM shown (#627): its messages fade behind
 /// "Drop here to give to Jane" from the start of the drag, wherever the
 /// pointer is; a drop on the conversation gives what is carried; a group's

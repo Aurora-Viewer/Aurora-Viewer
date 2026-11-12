@@ -1143,6 +1143,8 @@ pub fn recent_emojis() -> String {
 /// one with a resident nearby in do not disturb, after their automatic
 /// response; `group` the demo group chat; `local` the nearby chat; `legacy`
 /// the friend's conversation in the legacy lines (`ChatStyle::Legacy`).
+/// A last `:channel` shows the nearby chat instead, with its channel
+/// selector, as the preferences can (`bubbles_channel`, #3391).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bubbles {
     Friend,
@@ -1157,6 +1159,7 @@ pub fn bubbles_scenario() -> Option<Bubbles> {
         return Some(scene.view);
     }
     let v = std::env::var("AURORA_DEMO_CONV").ok()?;
+    let v = v.strip_suffix(":channel").unwrap_or(&v);
     Some(match v.strip_prefix("bubbles")? {
         "" => Bubbles::Friend,
         ":busy" => Bubbles::Busy,
@@ -1165,6 +1168,12 @@ pub fn bubbles_scenario() -> Option<Bubbles> {
         ":legacy" => Bubbles::Legacy,
         _ => return None,
     })
+}
+
+/// `AURORA_DEMO_CONV=bubbles…:channel`: the nearby chat with its channel
+/// selector, in the scenario's style.
+pub fn bubbles_channel() -> bool {
+    std::env::var("AURORA_DEMO_CONV").is_ok_and(|v| v.starts_with("bubbles") && v.ends_with(":channel"))
 }
 
 /// `AURORA_DEMO_CONV_POPOUT=1|option|nearby|nearby-out` (with `AURORA_DEMO_CONV=aurora…` or

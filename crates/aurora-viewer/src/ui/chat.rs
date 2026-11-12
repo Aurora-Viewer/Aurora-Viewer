@@ -3470,9 +3470,14 @@ fn classic_pane(
                 let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
                 gif_picker::button(&b, p, st);
             }
-            // leave exactly the send button + spacing (else the row overflows
-            // and the resizable window grows every frame)
-            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            // the nearby chat's channel chip, when the preferences show it
+            // (#3391; the Aurora field has its own, `compose.rs`)
+            let chip = st.selected.is_none() && st.show_channel;
+            let gap = ui.spacing().item_spacing.x;
+            let chip_w = if chip { compose::CHANNEL_CHIP_W + gap } else { 0.0 };
+            // leave exactly the chip, the send button + spacing (else the row
+            // overflows and the resizable window grows every frame)
+            let field_w = (ui.available_width() - chip_w - SEND_BTN_W - gap).floor().max(40.0);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3492,6 +3497,10 @@ fn classic_pane(
                 Some(id) => suggest::Scope::Session(id, &people),
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+            if chip {
+                let (channel, _) = parse_channel(&draft);
+                compose::channel_chip(ui, p, &mut draft, channel);
+            }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output

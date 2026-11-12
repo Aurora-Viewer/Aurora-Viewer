@@ -391,11 +391,17 @@ fn volume_button(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, named: bool) {
     });
 }
 
+/// The width of `channel_chip`, without the spacing after it.
+pub(super) const CHANNEL_CHIP_W: f32 = 30.0;
+
 /// The nearby chat's channel ("/0"): a click opens its number, which
-/// rewrites the "/n" opening the text.
-fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String, channel: i32) {
+/// rewrites the "/n" opening the text. Shared by the Aurora field and the
+/// Lines / Bubbles one (`classic_pane`), like the Legacy Viewer's
+/// `ChatChannel` spinner of the nearby chat (floater_fs_nearby_chat.xml,
+/// shown by `FSShowChatChannel`).
+pub(super) fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String, channel: i32) {
     let text = format!("/{channel}");
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(CHANNEL_CHIP_W, 22.0), egui::Sense::hover());
     let resp = ui.interact(rect, sidebar::control_id("box-channel"), egui::Sense::click());
     ui.painter().rect_filled(
         rect,
