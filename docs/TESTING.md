@@ -16,6 +16,9 @@ cargo run -p aurora-viewer -- --title "Test my-task"
 
 The logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
+The VR preferences can be inspected offline with `AURORA_DEMO_OPTIONS=vr`.
+Headset movement and resolution checks are listed in [VR.md](VR.md#movement-and-camera-preferences).
+
 For localisation, launch the same scenario with `--language en`, then
 `--language fr`. `AURORA_DEMO_OPTIONS=1` opens the interface preferences,
 with the language selector. Remove the argument to check the immediate
@@ -28,6 +31,29 @@ single crate resolves the features of its dependencies on its own, so Cargo
 builds a second copy of them (`cargo test -p aurora-render` alone: 67 s of
 dependencies, then again for the next `--workspace` build).
 
+**Search/filter clear buttons**: type a query in People, Conversations and
+Contacts, Places, the resource library, inventory destination/thumbnail
+pickers, construction Contents, Appearance, Poser/IK, scripts, group lists,
+land/region lists and the toolbar editor. Check both interface styles where
+available. A cross appears inside every filled field; clicking it clears the
+query, refreshes local results and keeps keyboard focus for the next query.
+The field and its surrounding controls keep their size. A clear click inside
+a font or environment popup keeps that popup open; a disabled field cannot
+be cleared. Searches submitted with Enter or a Search button keep that rule.
+The shared editor regression also covers custom ids, bare field faces,
+Unicode queries, typing after clearing and keyboard deletion.
+Choose a filtered result, then clear the entire query with the cross,
+Ctrl+A/Delete and Ctrl+A/Backspace. The same row remains selected and comes
+into view in the full list; its ancestor folders reopen when needed. Check
+long lists, the resource library's grid and strip, and nested inventory
+pickers. Duplicate assets must keep the exact inventory item that was
+chosen. Fields whose choices immediately perform an action and close the
+picker have no persistent selection to restore. Clearing an explicit server
+search does not submit a new request. Shared headless regressions cover
+ordinary, virtual, grid, horizontal and nested collapsible lists, plus selected
+messages in both Conversations styles; the thumbnail picker regression
+also covers nested folders and duplicate assets with all three clear actions.
+
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more
 than one sentence, or if there are several modes, a "Details" paragraph
@@ -36,6 +62,7 @@ the table rows that start with `AURORA_DEMO_<NAME>=1` and shows their second
 column: it must stay short.
 
 Contents: [Automated windows](#automated-test-windows-on-windows) ·
+[Windows SLurl handoff](#windows-slurl-handoff) ·
 [General](#general) · [Screenshots](#screenshots) ·
 [Camera, movement and pointer](#camera-movement-and-pointer) ·
 [Objects and building](#objects-and-building) · [HUDs](#huds) ·
@@ -75,6 +102,45 @@ window is minimised, hidden or loses its tag, and the script stops when the
 viewer's process closes. For a test with human intervention, keep the title
 `Test <task>` without the tag.
 
+## Windows SLurl handoff
+
+`cargo test --workspace slurl_handoff::windows` runs native Windows pipe and
+access-check regressions on isolated names. It covers the elevated owner's
+ACL with Administrators disabled in a duplicate client context, actual
+low-integrity refusal, unrelated logons, restricted client rights, long
+Unicode links, aborted connections, buffered links from clients that close before accept, native attribute-access requirements,
+last-focus selection, closing windows, scoped demos and compatibility with
+the old client and server. It does
+not elevate a process, change URL associations or connect to a grid.
+
+For the human check of #2402, start the built viewer with
+`--title "Test slurl-windows-2402"`. From another shell of the same user,
+run the same executable with the same title, followed by
+`--url "secondlife://Test%20Region/128/128/20"`. Both launches must use the
+same demo setting. On a grid, use a real SLurl chosen by the human in place
+of this example. In the world, the existing viewer must show the place
+details and its Teleport button; the sending process must exit without
+opening another window. Before login, the existing login screen must take
+the start location instead.
+
+Repeat with the receiving viewer started as administrator and the sending
+shell running normally under that same user's linked Windows account.
+Also run two receiving viewers. Focus A, then B, then the sending shell:
+only B must receive the next link. Focus A again and repeat: only A receives
+it. Close the last focused receiver and repeat: the remaining one receives
+it. Include a normal receiver and an administrator receiver.
+
+This human runtime check supplements the ACL test. Finally, explicitly
+choose this worktree's executable in Preferences as the user's SLurl
+handler, then check a link opened from the browser. An existing registration
+may still point at the installed release: a browser then starts that older
+client, which may lack the rights needed to reach an elevated viewer. The
+fix leaves valid existing associations under the user's control.
+On Windows a launch with no `--title` selects the last focused online
+receiver, including titled test windows. Explicitly titled senders select
+only receivers with that title; offline demos never receive online links.
+Actual grid login and teleporting are performed by the human.
+
 ## General
 
 | Variable | Effect |
@@ -90,7 +156,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (0: uncapped; 10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
-| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; interface and HUDs stay native |
+| `AURORA_RENDER_SCALE=50..100` | World resolution percentage; turns "Match the display" off for the launch |
 | `AURORA_TEXTURE_BUDGET_MB=256..32768` | Manual texture memory budget for this launch |
 | `AURORA_MAX_TEXTURE_RES=512\|1024\|2048` | Overrides "Maximum texture resolution" (Graphics › Distance and detail) |
 | `AURORA_DEMO_TEXTURE_RES=1` | Boards with 2048 px streamed textures, tinted by the resolution shown |
@@ -326,15 +392,25 @@ to the vertex shaders or to the passes is therefore checked with both,
 the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
 
-`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100,
-100 by default), before spatial upscaling. HUDs, labels and controls stay at
-native resolution. RLVa's resolution divisor takes precedence; saved photos
-ignore the user scale. `AURORA_TEXTURE_BUDGET_MB` selects a manual texture
-budget (256–32768 MB). Both follow the normal saved graphics settings path;
-use `AURORA_DEMO=1` for isolated comparisons. A Retina comparison can use
-`AURORA_WINDOW_SIZE=1728,1056`, `AURORA_GRAPHICS_PRESET=high`,
+`AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100),
+before spatial upscaling. HUDs, labels and controls stay at native
+resolution. Preferences › Graphics › Smoothness › "Match the display"
+follows the display's logical resolution instead (`100 / scale factor`: 50
+on a 2× display, 67 on 1.5× and 100 on 1×), as the Legacy Viewer does on a
+Mac with `RenderHiDPI 0`: on by default on macOS, off elsewhere, and
+`AURORA_RENDER_SCALE` turns it off for the launch. Moving the window to a
+display of another scale recomputes the percentage without a restart. With
+FSR as the anti-aliasing, FSR's mode sets the world's size instead. RLVa's
+resolution divisor takes precedence; saved photos ignore the user scale.
+`AURORA_TEXTURE_BUDGET_MB` selects a manual texture budget (256–32768 MB).
+Both follow the normal saved graphics settings path; use `AURORA_DEMO=1` for
+isolated comparisons. A Retina comparison can use
+`AURORA_WINDOW_SIZE=1440,900`, `AURORA_GRAPHICS_PRESET=high`,
 `AURORA_DEMO_TEXTURES=9000`, `AURORA_DEMO_CROWD=20` and the same capture
-frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50.
+frame, changing only `AURORA_RENDER_SCALE` between 100, 67 and 50. Without
+`AURORA_RENDER_SCALE`, with "Match the display" on, the same command checks
+the automatic scale: the log's `world resolution` line shows half the
+window's physical size on a 2× display.
 
 `AURORA_MAX_TEXTURE_RES` sets Preferences › Graphics › Maximum texture
 resolution (the Legacy Viewer's RenderMaxTextureResolution), saved with the
@@ -356,6 +432,13 @@ whatever the setting. With the textures of a cache instead,
 `AURORA_DEMO_STREAM=60,60,j2k=<folder>,size=4` (2048 px files) shows the
 same on real pictures, softer under 512.
 
+At user scales below 100%, the upscale applies the Sharpness setting once
+through CAS's scaling filter; the reduced post pass does not sharpen first.
+Compare Sharpness 0 (Catmull-Rom, no sharpening), 0.4 and 1 under MSAA and
+SMAA, then return to 100% (the existing post sharpening). HDR off and FSR
+disable CAS (FSR sharpens with its own RCAS); RLVa's
+nearest-pixel scaling and full-resolution photos keep their existing paths.
+
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
 without it, the demo opens at the size the window had in the last launch
@@ -372,7 +455,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic joystick input, preferences, lens reset gestures or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic controller input and preferences, avatar camera cycling, lens reset gestures or six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -387,8 +470,8 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_FREEZE_WORLD=1` | With `AURORA_DEMO_SNAPSHOT=viewfinder-frozen`: a prop derezzed and particles started while the world is frozen |
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
-| `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
-| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
+| `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the chosen one's strength and settings, the before / after line, the filter panel |
+| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -401,9 +484,74 @@ to OpenXR or provide stereo views.
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device
 or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
+`gamepad-preferences` opens Preferences › Controls › Gamepad › Map controls.
+A connected physical gamepad remains active; without one, a synthetic gamepad
+walks after frame 650 so mappings can be explored while moving;
+Gamepad › Settings shows the gamepad-only flycam travel speed and level-camera
+control. Horizontal and vertical sensitivity sliders edit the gamepad profile’s per-mode axis gains.
+Avatar Mode maps zoom to RT/LT, vertical pan to D-pad up/down, horizontal pan to
+D-pad left/right, and nearest/previous avatar cycling to RB/R1 and LB/L1 by default. Controller zoom stays in third
+person at close range; mouse-wheel zoom can still enter mouselook. Cycling before the nearest or
+after the furthest avatar returns to the player. In Avatar flight, B/Circle ascends
+and X/Square descends;
+flycam down/up are X (Square)/B (Circle). X (Square) crouches in Avatar and
+First Person; Y (Triangle) resets the current view in every mode. First Person
+returns to the current head position and avatar heading; VR Avatar recenters by horizontal translation,
+clearing pan while preserving zoom; Flycam removes artificial pitch and roll without moving.
+Earlier default flycam height bindings migrate to B/X once, alongside the
+new pan/target layout. Other custom bindings remain editable in Map controls.
+In VR, seated keyboard movement reaches vehicle controls and flycam keyboard travel
+remains independent of the avatar. First Person and the player-focused Avatar camera
+follow seated avatar/vehicle yaw while keeping the horizon level. VR ignores creator
+seat views, forced first-person requests and scripted follow-camera poses, retaining
+its own orbit, pan and zoom. Desktop mouse and keyboard retain the native seat and
+FollowCam paths. Gamepad orbit, pan and zoom can take over the seated view and
+retain the adjustment while driving. Avatar and Flycam look sensitivity default to 4.0,
+first-person look sensitivity to 1.875. Movement, orbit and zoom retain the pan
+point. Y/Triangle, switching view modes, and explicit avatar-target cycling reset
+horizontal and vertical pan. New movement/view input recenters VR by translation
+toward that pan point. First person has independent mappings and
+look sensitivity/inversion. Change view mode cycles First person → Avatar →
+Flycam → First person; disabled modes are skipped. First-person zoom uses a
+smooth transient lens zoom: it stays after release and looking around, then
+resets on player movement input or when entering flycam (passive avatar motion does not reset it); saved camera and mouse zoom settings are unchanged.
+In normal use, select **Input gamepad** in Gamepad Settings and turn on
+**Enable gamepad input**. The gamepad profile uses the mappings above by
+default. Joystick and 3D mouse has its own device, enable switch and tuning.
+Keep the flycam level gradually levels the camera when
+enabled and preserves free roll when disabled. The Flycam mapping list includes pressure-sensitive travel slowdown
+and speedup triggers;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650;
 `roll` also enables roll and disables auto-level. Capture after frame 900.
+`avatar-camera` (add `AURORA_DEMO_CROWD=6` for several targets) pans the player view down during frames 620–699, cycles to the
+nearest loaded avatar at 720, moves that avatar at 800, cycles forward at 900
+and back at 1000. Previous at 1040 returns to the player; Previous at 1060
+selects the furthest avatar; Next at 1080 returns to the player; Next at 1090
+selects the nearest. The player then moves during 1100–1159. Capture at
+`850,1050,1070,1085,1250`: tracked head, player, furthest head, player, and
+return after locomotion with the
+configured preset height. With `RUST_LOG=aurora_viewer=info`, demo log lines record the People-list rank, selected avatar,
+eye and focus. Synthetic camera pans do not change saved settings.
+`view-modes` presses Change view mode at frames 630, 900 and 1100; looks around
+in first person at 680–759, pulls RT immediately to full pressure at 780–819, looks around at 830–859,
+receives passive avatar displacement at 840, walks at 870–889, zooms again at 896–899
+and moves the flycam at 950–999. Entering flycam must restore the normal lens. Capture `770,810,865,895,1030,1170` for the first-person look, smooth lens zoom,
+retained zoom after release/look, movement reset, flycam and returned avatar. With `RUST_LOG=aurora_viewer=info`,
+`gamepad view modes` traces record camera modes, yaw, pitch and field of view.
+`avatar-orbit` zooms the unpanned player view during 620–999, pans down during
+1005–1044, zooms to the panned pivot during 1060–1519, orbits approximately half
+a turn during 1540–1649, receives passive player displacement at 1680, then
+zooms again during 1700–1849. Capture
+`1000,1010,1025,1055,1520,1700,1850`: third person at its close limit, the
+existing camera transition easing into the new pan pivot, panned rear view, panned
+front view and continued front zoom. `RUST_LOG=aurora_viewer=info` traces the
+player/focus positions, radius and mode at these frames; panned focus X/Y
+should match the moving player and the close radius should match front/back.
+`gamepad-defaults` uses the gamepad profile defaults in memory with an Xbox-style
+synthetic device whose native button order places triggers before A/B. Combine
+with `AURORA_DEMO_OPTIONS=gamepad/0` or `gamepad/1` to inspect settings/mappings;
+capture after frame 680. Nothing is saved by the scenario.
 `rearm` keeps a relative zoom axis at -1, enters flycam with a synthetic
 button press at frame 630 and leaves it at 750 while movement is held.
 The other axes centre at 770 and move the avatar again from 800.
@@ -774,8 +922,10 @@ its file's name (`Sepia`, `Toycamera`, `Lightleak`, `Miniature`,
 `Posterize`…, see `crates/aurora-render/src/looks/legacy/`), one of Aurora's
 looks as `aurora:<id>` (`aurora:instant`, `aurora:vhs`, `aurora:haze`…, see
 `crates/aurora-render/src/looks/aurora/`), a table of the library as
-`lut:<file>`, or `lut:demo` (a warm table, "Demo warm", written into the
-demo's library); the chosen one at 100 % or the percentage given, its
+`lut:<file>`, `lut:demo` (a warm table, "Demo warm", written into the
+demo's library), or a creator's table built into the viewer as
+`pack:<pack>/<name>` (`pack:czar-fenris/Film look`, see
+`assets/photo-luts/README.md`); the chosen one at 100 % or the percentage given, its
 settings set with `set=<v>,<v>,…` (an Aurora look's values in the order of
 its sliders, `aurora:glitch:set=0.03,0.02,42`); the log gives `photo look
 demo: <look> at <n> %` for each. `compare` puts the before / after line in
@@ -817,7 +967,12 @@ reset, saved positions), `roll` on the same tab with a 15° camera roll
 `compact-move` the same, then at frame 640 the toolbar's Move pressed on it
 (#1815: it expands on its Movement tab; capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
-not saved). `free` opens the photo window with its "Free camera" switch on:
+not saved). `views` (Aurora's window) and `classic-views` (the Legacy
+Viewer's camera window) save a view (#2755): the camera turned away at 610
+and saved as the Front view at 620, as the view's right click does, the Rear
+view at 640 and the Front view again at 660; the log gives the camera when
+saved and at 700, at the same place. The view is kept in the demo profile's
+settings: a second run starts with it. `free` opens the photo window with its "Free camera" switch on:
 the Controls window opens by itself on its camera tab, which drives the free
 camera (the "Free camera / The avatar stays put" banner with Back and its
 key, the move and look joysticks with up / down and their keys between them,
@@ -842,16 +997,21 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
+| `AURORA_DEMO_TP_CAM=alt\|alt-off` | The camera on a point before the demo teleport, "Return after a teleport in the region" on or off |
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
+| `AURORA_DEMO_TP_CANCEL=1\|locked` | The teleport screen's Cancel pressed during the demo teleport, or a teleport that cannot be cancelled |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
-| `AURORA_DEMO_SIT_TP=local\|region` | Sits on the nearest prim, then teleports from the seat |
+| `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
 | `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
+| `AURORA_DEMO_TURN_SELECT=1` | The avatar turns to face an object selected while the camera is off it |
+| `AURORA_DEMO_FIDGET=1` | The stock stand signalled, so the standing avatar's variants start |
+| `AURORA_DEMO_URL_FLOATER=1` | The simulator asks for a web window (llOpenFloater) |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
@@ -1116,7 +1276,7 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|zoom-unloaded|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
   winit reports it (neither Ctrl nor Alt), so its `demo camera` lines match
@@ -1137,7 +1297,12 @@ when unfocused") is ignored during a screenshot.
   at the centre, no crosshair, `alt free=true` in the log) with mouse motion
   from 625 to 640 (the view stays: same yaw at 622 and 641), Alt let go at
   650 (`cursor held=true` again) and the same motion until 670 (the view
-  turns); wheel; pulling back in flight; sitting on a
+  turns); wheel; `wheel-chat` (#2897): Communicate › Nearby Chat at 560
+  (the Conversations window, its field taking the keyboard: `typing=true`
+  in the log at 600), 12 wheel clicks in at 650 (mouselook: the window and
+  every other one go, `typing=false` at 662), out at 700 (the windows back,
+  still `typing=false` at 712; capture at 640, 680 and 730); pulling back in
+  flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
@@ -1154,6 +1319,11 @@ when unfocused") is ignored during a screenshot.
   The resident then slides 1.5 m south (660–760) and 1.2 m west (761–860).
   Capture at 655, 760 and 900: the same view of the resident each time, the
   scene moving behind them; `target` in the log moves with them.
+  `zoom-unloaded`, with `AURORA_DEMO_PEOPLE=rows`, runs the same Zoom at
+  frame 600 on the first far resident, only a coarse location yet: the
+  camera looks at that point. Its avatar arrives at frame 700 and the camera
+  turns to face it: in the log, `target` at f760 is 0.6 m above the f700
+  one and the camera has moved round to the avatar's front.
   `sit-ml` and `sit-ml-reclined` use that seat upright or tilted by 1.1 radians,
   delayed 400 frames past the loading fade. First person runs from 760 to 1060;
   mouse motion looks up at 880–900, down at 950–970 and sideways at 1020–1040.
@@ -1205,6 +1375,16 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.
+- **`AURORA_DEMO_TP_CAM`** (issue #2828): with `AURORA_DEMO_TP`, the camera
+  is put on a point 8 m ahead just before the teleport, as with Alt and a
+  click. `alt` keeps Preferences › Camera › "Return after a teleport in the
+  region" on, `alt-off` turns it off for that teleport only (never saved).
+  The log gives `camera: teleport arrival (inside the region true, return
+  after teleport …), on the avatar …`. Inside the region, `alt-off` leaves
+  the view where it was (on the avatar `false`) while `alt` brings it back
+  behind the avatar (`true`); with `remote` both come back, like the
+  Legacy Viewer. Capture at frame 400 (`AURORA_DEMO_TP="60,60,30"`) to see
+  it.
 - **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
   before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
   2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting
@@ -1216,6 +1396,17 @@ when unfocused") is ignored during a screenshot.
   stops at 50 % and no arrival comes. After 15 s + 3 s per attachment the
   screen closes on the world, a notice says the region did not confirm the
   arrival, and the session goes on.
+- **`AURORA_DEMO_TP_CANCEL`**: with `AURORA_DEMO_TP=remote`, the teleport
+  screen shows Cancel next to its title from the "teleport accepted" step
+  (0.35 s) until "connecting to the region" (2.4 s), as the Legacy Viewer
+  does from TeleportStart to TeleportFinish. `1` presses it 1.5 s into the
+  teleport: the screen fades out on the plaza, the avatar where it was, and
+  the log gives `teleport cancelled (…)` then `teleport cancel: teleporting
+  false, position …`. `locked` gives the demo's TeleportStart the
+  TELEPORT_FLAGS_DISABLE_CANCEL flag: no Cancel, unless Preferences ›
+  Controls › "Always show the teleport Cancel button" is on. Capture at frame
+  290 to see the button (`AURORA_CAPTURE_FRAMES=290`, with
+  `AURORA_DEMO_TP_NO_ARRIVAL=1` to keep the screen up).
 - **`AURORA_DEMO_TP_AWAY=1`**: at frame 760, our avatar arrives in a region
   25 km from the demo one, as after a teleport; at frame 960, it comes back
   there, before the demo region's simulator has closed it. The objects of
@@ -1232,6 +1423,9 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
   Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
   stays, through her map rights), and enabled again at frame 1000.
+  The departure's arrival also says "Teleport completed from" and a link to
+  the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
+  return says nothing, the far region having no name.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
@@ -1314,6 +1508,13 @@ when unfocused") is ignored during a screenshot.
   `demo sit tp: arrived, seated false, parent 0, seat animation false`
   (before the fix: `parent 150, seat animation true`, the avatar drawn
   seated far out of the region).
+  `ao-local` and `ao-region` do the same with the demo's AO turned on at
+  frame 240: the seat plays the stock sit, which the AO overrides and leaves
+  to the simulator, as the Legacy AO does; the teleport unseats us and the
+  simulator drops the stock sit but keeps the AO's animations (#2700). Capture frame 380:
+  seated in the AO's sit; frame 720: standing at the destination. The log
+  ends `AO state None, AO sit cover false` (before the fix: `AO state
+  Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the
   avatar slides right, its yaw unchanged), `2`: double right click
@@ -1349,6 +1550,25 @@ when unfocused") is ignored during a screenshot.
   (done|cancelled): …`. `menu` opens the wolf menu at frame 540, Me at 560
   and its "Double-click on the ground" entry at 580 (`menu,y`: another
   height in points): capture frame 620.
+- **`AURORA_DEMO_TURN_SELECT=1`**: at frame 300 the camera looks down on
+  the avatar from above (off the avatar, as after an Alt zoom) and the
+  build tools select the nearest object more than 53° to the avatar's side.
+  The log gives `selection turn: to <yaw>°`, then every 30 frames
+  `demo selection turn: yaw <yaw>°, turning true|false`: with
+  `AURORA_FPS_LIMIT=60`, the yaw reaches about 6° from the target in under
+  a second, then stays.
+- **`AURORA_DEMO_FIDGET=1`**: from frame 60 the demo's simulator signals
+  the stock stand for our avatar (instead of the demo's idle animation), so
+  the stand variants start. The log gives `stand fidget: variant <id>` or
+  `stand fidget: plain stand` at once, then every 8 to 20 s; with
+  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=2700`
+  (`AURORA_CAPTURE_EXIT=1`), about three lines in 45 s. Nothing is logged
+  when the AO is on.
+- **`AURORA_DEMO_URL_FLOATER=1`**: at frame 300 a "URLFloater" message as
+  the simulator sends it for llOpenFloater (escaped URL, `trusted_content`
+  asked for) goes through aurora-net's reader, then the app. The log gives
+  `demo URLFloater: https://example.invalid/welcome`; capture frame 360:
+  the link question for an unknown address, with that URL.
 - **`AURORA_DEMO_RCLICK`**: right click at (x, y) at frame 225, or with
   `tag` on the name plate of the nearest other avatar at frame 600.
 - **`AURORA_DEMO_PIE`**: `1` forces the pie menu, `0` forces the list, only
@@ -1489,12 +1709,14 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
-| `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland]` | World tooltips over objects, avatars and land |
+| `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland][:avatars]` | World tooltips over objects, avatars and land (`avatars`: avatars alone) |
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu, every scripted object's window |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_TORTURED_PRIMS=1` | Hollow reversed sphere and ordinary prim controls |
 | `AURORA_DEMO_BEACONS=1` | Object beacons and World overlays |
+| `AURORA_DEMO_RENDER_TYPES=<kinds>` | Advanced › Rendering types: those kinds hidden from the start |
+| `AURORA_DEMO_RELEASE_KEYS=1` | A vehicle script takes the movement keys: Advanced › Release keys enabled |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
@@ -1509,19 +1731,25 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
+| `AURORA_DEMO_SCRIPT_RECOVERY=1\|recover\|edit` | Copies of unsaved scripts and their recovery at login |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending\|passage-refused` | Movement options, local swimming poses, synthetic passage feedback and a refused passage |
-| `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
+| `AURORA_DEMO_FLEXIBLE=1\|missing-params` | Flexible prims: gravity, tension, wind, force, moving parent and default-parameter fallback |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
+| `AURORA_DEMO_SLIDESHOW=1[,<s>][,net=<ms>][,mbps=<m>][,crowd=<n>][,preload]` | A panel whose texture a script changes every few seconds, its pictures downloaded from a local server |
 | `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
+
+**Rendering types details.** `AURORA_DEMO_RENDER_TYPES` takes the kinds to hide, separated by commas: `terrain`, `water`, `sky`, `clouds`, `objects`, `avatars`, `animesh`, `trees`, `grass`, `particles` (unknown words are left aside). With `AURORA_DEMO_BARS=hidden` and a capture at frame 900: `objects` leaves the avatar on the bare terrain, the plaza's shadows gone; `avatars,animesh` leaves the name tag over an empty spot; `terrain,water` shows the sky under the plaza; `terrain,water,sky` a flat clear colour instead of the sky's gradient. Then open Advanced › Rendering types: the ticks match, and ticking back draws the kind at once. The grid check compares Develop › Rendering Types of the Legacy Viewer in a busy region (Avatars hides worn objects too; Animesh, Trees and Grass apart).
+
+**Release keys details.** `AURORA_DEMO_RELEASE_KEYS=1` makes a vehicle script take the arrow keys and Page Up / Down at frame 400 (taken, not passed on), as llTakeControls does. Advanced › Release keys is then enabled (it is greyed without the variable); choosing it sends ForceScriptControlRelease, the demo region answers with the releases and the entry is greyed again. With `AURORA_DEMO_MENU_SEARCH=` a word of the label in the interface's language (`release` in English, `touches` in French), `AURORA_FPS_LIMIT=60` and a capture at frame 640, the entry shows under Advanced in the wolf menu's search. The demo does not block the avatar's movement while the keys are taken (the region does that on the grid).
 
 
 ### Details
@@ -1632,14 +1860,160 @@ at 360 by 780; Aurora's visible icons and expanded transform area
 can raise its minimum height. Append
 `+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
 the side settings, hidden-item storage/notecard buttons or folded numeric values.
-The visible rail icons set the minimum editor height: attempt to shrink the
-window, then hide/restore icons and repeat. Every remaining icon must fit without
-a rail scrollbar. Check the settings gear remains square with values open/closed.
+Use `+expanded` to show the numeric values, and `+default-layout` to inspect the
+current default option layout without relying on a saved arrangement.
+Aurora's navigation has a horizontal section row above the editing panel
+(General, Object, Features, Materials and Contents), and a horizontal tool row at
+the bottom (Camera, Move, Edit, Create and Land). All five object-editing tabs use
+the Object icon and the same localized window title: Build in English,
+Construction in French. The customizable two-column
+options and action row sit below the impact summary and above the section icons.
+Impact, remaining capacity and object/prim counts share a single line inside
+the title section, directly below the ownership/permission status. Minimizing
+keeps only the top title/icon/help/minimize/close row; status, summary and the
+attached settings panel are hidden until restoration. Clicking the summary opens the existing weights
+window; unusually long summaries stay on one line with their full text on hover.
+The shared position, size and rotation values stay below the editing panel.
+The complete shared-controls container (both option columns, actions and the
+part/reference row) uses its measured content height, without a vertical scroll
+area. Adding or removing options grows or shrinks that container. Expanded
+Position/Size/Rotation also uses its measured height, without a vertical scroll
+area; all three vector rows stay visible. The editor's minimum height follows
+these measurements while retaining its chosen geometry when the contents fit.
+Expanded, they use the full panel width. Their collapse arrow sits near the
+middle of the Position caption line. Copy, stored paste and system clipboard
+paste are visible on each vector's own caption line. System paste uses the same
+request, vector parser, permission checks and transform bounds as the Legacy
+"p" action, independently of the internal copy buffer and active manipulator.
+Moving the options block preserves every saved item position, column and state.
+The default left column is Move, Rotate, Stretch, Select a face, Align and Edit
+linked parts. The right column is Stretch both sides, Stretch textures, Snap,
+Show highlight, Edit axis at root and Select reflection probes. The five
+selection/group/follow options remain in Settings. Each column stacks its own
+items: inserting, removing, reordering or wrapping a caption in one column does
+not add gaps or change item positions in the other. Full-width action rows remain
+boundaries between column groups. Drops into an empty tail append to that
+column's own list; Up/Down reorganizes its own column.
+Object is the former Shape section: Locked, Physics, Temporary and Phantom
+appear above its shape controls, using the same permission checks as Legacy.
+The former default section order upgrades once; custom orders remain intact.
+Move, Rotate, Stretch and Align are independent one-column controls using the
+same checkboxes as the other shared options. Move or hide each separately;
+the active mode is checked, and clicking it again keeps that mode selected.
+Snap is also one movable single-column checkbox row, displayed as
+`Snap - Grid / Objects` with compact inline choices. Choosing either mode enables
+Snap; the checkbox disables
+or restores the remembered mode. The active mode has accent, bold and underlined
+text. Its row height stays fixed in Off/Grid/Objects and Organize states, in
+either column. The choice is saved in settings and notecard profiles. Surface
+placement controls remain in a separate Settings section for active Objects
+snapping, without expanding the Snap option. Legacy retains its existing controls.
+Append `+snap-left` or `+snap-right` to `AURORA_DEMO_BUILD_TAB` for native captures
+of the Snap row in either column immediately before the action row.
+Old grouped arrangements expand in place, retaining their destination.
+Shared controls keep their existing caption sizes in compact rows.
+Link, Unlink and Duplicate share one text-action row, while Undo and
+Redo keep their icons. A four-point gap above the action row lightly separates it
+from the shared options. Object places Locked/Physics in the left column and
+Temporary/Phantom in the right column. Below them, Replace link has a disabled
+Select a link button until one linked part of an owned, modifiable object is
+selected with Edit linked parts active; it then reads Replace.
+The detailed replacement panel keeps its existing title and validation rules.
+Both styles clear unavailable transform numbers and their copy/paste actions,
+using the complete selection's properties and effective operation rights.
+A whole no-modify object with Move rights retains Position/Rotation, as in
+LLPanelObject::getState; linked movement and Size require Modify. Unknown or
+mixed denied selections do not expose the primary object's numbers. Geometry
+parameters and sculpt maps are hidden without Modify or for multiple volumes.
+Features also clears unavailable flexibility, light/projector and reflection
+probe parameters, following LLPanelVolume::getState. Public physics values,
+object flags, ownership and mesh LOD statistics remain readable as in Legacy.
+Texture/PBR/media selections and asset identifiers retain their shared guards.
+Use the existing shared/shared-denied demos for granted/revoked rights in both
+styles, plus the native permission regressions for mixed/unknown selections.
+The name and description fields stay in General. Check text editing, read-only
+selection and multi-object editing retain their existing permission checks.
+The everyone-permissions heading reads "Anyone can:". Aurora's sale options
+use the same horizontal divider below Click to as the one above it, without a
+surrounding frame. Legacy retains its existing sale frame.
+Share, Anyone can and Next owner start their controls at the same horizontal
+position. Move and Edit reserve the same first-column width, measured from
+their localized captions, so both Copy checkboxes align. Check these three
+rows in English, French and Japanese without widening the editor.
+The compact rows leave four-point gaps before Copy/Transfer and between
+Share and Deed, preserving the shared checkbox origins and Copy column.
+Captions sit two points from their own checkbox so the French Transfer
+caption also fits on one line at the existing width.
+Aurora also separates the everyone permissions and Show in search from the
+preceding controls. The price caption reads Price L$ (localized and using the
+region's currency).
+The French reflection-probe selection caption is shortened to "Sondes de
+réflexion" so the ordinary one-column option stays on one line.
+Aurora's shared binary options use the shared checkboxes, with no button face
+behind the label. Compact controls use an 18-point minimum row height and
+one-point row gaps, keeping the same text size and allowing wrapped captions.
+The entire label toggles the option; organizing must not toggle options.
+Both states reserve the same height, including wrapped labels.
+Transient build status messages appear in an opaque themed card below the
+editor for six seconds, without changing its content height. A newer status
+replaces the previous one. Owned-object deletion clears the old inline status
+instead of reporting the number of objects sent to Trash. Requests involving
+objects owned by someone else keep their warning. The side settings' notecard
+status and detailed-panel validation messages retain their own presentation.
+Append `+notice` to `AURORA_DEMO_BUILD_TAB` to trigger a synthetic build status
+at frame 700; a frame-900 capture shows the card over the demo world.
+In the two-column options block, Select a face and Edit linked parts can each
+use either column, just like the other options. Their
+previous/value/next controls share a separate horizontal row with Global, Local,
+Reference and Settings below the action row. Link/Face readouts show a dash when
+inactive or unavailable. This row stays horizontal when transform values are
+folded or expanded, and Settings remains reachable when actions are hidden.
+Check normal and Organize modes: reordering must not alter option values, and
+organizing must not step parts/faces or change the coordinate reference.
+While organizing, the two columns have no headings. Existing empty cells and
+row edges remain targetable without appending a blank row below the controls.
+Use the lower edge of the last row to append an item in either column. An empty
+options block still exposes its own drop area.
+Movable controls show a grip and inset outline during organization, painted
+over their existing geometry without adding padding, rows or width. Ordinary
+checkboxes return when organization ends. During a compatible drag, all legal
+occupied and empty destinations have violet outlines; the hovered destination
+also shows its insertion edge. Unrelated panels do not show drop markers.
+The action bar can only sit before or after the complete two-column block.
+Dragging it exposes just those two edges; dropping in the middle does nothing
+and shows the forbidden cursor. Up/Down moves the focused bar between edges,
+adding/moving options keeps its chosen edge, and older middle placements
+normalize to the bottom without changing either column's order.
+Append `+drag-option` or `+drag-actions` to `AURORA_DEMO_BUILD_TAB` for a held
+synthetic layout drag from frame 700; these enable organization for this demo
+run. Use `AURORA_DEMO_POINTER` to place the preview over a destination, and
+capture at frame 900. Compare with `+organize` without a drag: main-window and
+control rectangles must stay unchanged throughout the gesture.
+Drop here captions and slot outlines appear only while dragging a compatible
+item; the hovered column and insertion edge are highlighted. The hidden storage
+hint also appears only during a compatible drag. Drop an option in each column, including a
+blank partner and an occupied cell, then restart or export/load a notecard:
+the chosen column must persist without moving other options into that column.
+Left/Right arrows on a focused footer option also choose its column. Older
+local settings retain their column choices on first load.
+The impact/counts and remaining-capacity summary stays above the section row,
+outside the scrolling panel, without a divider or extra gap before the icons.
+The title bar uses only the shared minimize/restore
+button beside Close; Aurora no longer has a separate section-collapse button.
+The bottom tool row stays visible in every tool mode.
+Attempt to shrink the window, then hide/restore icons:
+the remaining buttons share their row, and hiding an entire row releases its
+height. Every button must remain visible. Check the settings gear remains square
+with values open/closed.
 The old `+grid` suffix now opens the same side settings with inline ruler controls.
 Human validation: move the main window to both sides; settings follow its free
 side and bottom. Organize options without changing their checkbox states, move
-both toolbar rows and rail icons into hidden storage and restore them. Export a
-named notecard, change the layout/ruler, load that inventory notecard and confirm
+individual mode buttons, the action row and navigation icons into hidden storage
+and restore them.
+The Reset all button below Load from a notecard restores the default order,
+locations and visibility of every control, preserving option values. A pending
+notecard load must not overwrite this reset when its response arrives.
+Export a named notecard, change the layout/ruler, load that inventory notecard and confirm
 restoration without changing object transforms. Check a foreign or malformed
 notecard reports an error without changing any settings. Construction preferences
 and layout save automatically in the local global settings file, shared across
@@ -1673,7 +2047,10 @@ and tiled PBR texture with its UV/tint override in PBR; the other slab retains
 its PBR rendering. In the native viewer, click BP, PBR and
 Media repeatedly, select another object/linked part/face, then leave Materials
 or close/fold the editor. Each object must retain its last mode after
-deselection, independently of the next object. Use
+deselection, independently of the next object. A new selection opens on
+PBR when one of its faces shows a PBR material and on BP when none does
+(#1945; off in Preferences › Build › Editing); the scenario's own tab is
+kept for its first selection. Use
 `AURORA_DEMO_BUILD=material-deselect,object:151` for an automatic native capture
 after closing/deselection: BP must remain plain and PBR must remain tiled.
 Reselect an object and choose PBR to restore its material, including every
@@ -1701,6 +2078,24 @@ the disk cache and read again, as a retry finding it on the server): the
 torus it describes replaces the sphere. A map still loading draws nothing,
 as in the Legacy Viewer. Capture with `AURORA_FPS_LIMIT=60` around frames
 700 and 1100.
+
+`AURORA_DEMO_SLIDESHOW=1[,<seconds>][,net=<ms>][,mbps=<m>][,side=<px>][,count=<n>][,crowd=<n>][,preload]`
+puts a panel 4 m ahead of the camera at frame 300 and changes its texture
+entry every `seconds` (3) to the next of `count` pictures (6), as a script
+calling llSetTexture makes the simulator send a full update. The pictures
+(`side` px, 1024; each its own hue and its number in white bars) come from
+the local asset server after `net` ms (150), on a link of `mbps` megabits a
+second if given, with no copy in the disk cache. `preload` puts the next
+picture on the panel's back face; `crowd=<n>` adds n boxes beyond it, each
+with its own picture, that compete for the downloads like the textures of a
+busy region. The log tells at each change whether the picture leaving was
+shown (`demo slideshow: picture 2 leaves after 1.5 s, shown: …` or `NEVER
+SHOWN`, with its state). `1,1.5,net=200,mbps=4,crowd=300`: while the crowd
+loads, a picture's download outlasts its turn; before the fix of #2830 every
+picture left with 0 bytes at every turn until the crowd had loaded, the
+panel staying in the rez grid (about 22 s); now each keeps what its download
+brought and shows from its second turn, now and then its third. Capture with
+`AURORA_FPS_LIMIT=60`.
 
 `AURORA_DEMO_TEXTURE_MISSING=1` places two boxes east of the start position
 (x=134, y=133 and 135.5) at frame 300, a white one and a dark, mostly
@@ -1965,6 +2360,11 @@ folders for the texture. On the grid, the human also checks the group
 permissions, the contents of another owner and the non-copyable items of
 worn objects.
 
+`AURORA_DEMO_BUILD=multi-rename,118,151` selects two independent roots,
+opens Edit > General, and applies the shared name `Shared edit`. Capture at
+620, 650 and 660: both selected roots before the edit, then each root in turn
+with its General name field showing the committed shared name.
+
 `AURORA_DEMO_BUILD=faces,object:99620` adds three cubes: two linked parts
 (A / A2) and a separate object (B). In Materials
 (`AURORA_DEMO_BUILD_TAB=texture:bp`), the script selects a face at 625, adds
@@ -2037,6 +2437,11 @@ results must follow those options, including in the Aurora Library tab.
 The inventory image picker, AO animation/notecard pickers, Move to, Replace
 links, environment settings and covenant notecard selectors share this order.
 Local names compare without case and with numeric runs (2 before 10).
+Type a search, click a result, then clear the field with its cross or with
+Ctrl+A followed by Delete or Backspace: the exact selected row must remain
+selected and scroll into view, opening its parent folders if needed. Check
+textures and materials in Inventory, Local and Aurora Library; unrelated
+folders keep their previous open/closed state.
 Both scenarios include resources numbered 2 and 10 with distinct dates:
 name order puts 2 first, date order puts 10 first.
 `faces-picker-material,object:99620` opens the same picker for a PBR
@@ -2060,10 +2465,13 @@ indication. The profile and terrain pickers keep their usual validation.
 
 `AURORA_DEMO_FLEXIBLE` replaces the objects of the plaza with six prims with
 four levels of softness, square / circular profiles, hollow, twist and
-non-uniform sizes. The last one follows a rotating root. `rigid` gives the
-comparison without simulation; an integer (6–2000) adds prims to measure the
-cost. The synthetic wind goes through the same event as the grid. `edit`
-isolates a tilted plate for the build tools. To check editing, add
+non-uniform sizes. The last one follows a rotating root. `missing-params`
+keeps the flexible path but omits `PARAMS_FLEXIBLE`, reproducing the reported
+grid state; those prims should still move with the default parameters.
+`rigid` changes the path to a straight line for a no-flex comparison. An
+integer (6–2000) adds prims to measure the cost. The synthetic wind goes
+through the same event as the grid. `edit` isolates a tilted plate for the
+build tools. To check editing, add
 `AURORA_DEMO_BUILD=move,object:90000` or `stretch,object:90000`: pivot on
 the base, deformed outline, translucent straight box and size handles.
 `stretch,object:90000,fz,100,0` pulls the face opposite the base; the
@@ -2079,7 +2487,7 @@ tests compare the complete physical trajectories at 30–500 fps, variable
 rates, the smoothing between steps, the anchoring, the change of origin and
 the catch-up after a long frame.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|object-readonly|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|search-left|search-inline|search-overlay|search-outside|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`**:
+**`AURORA_DEMO_SCRIPTS=inventory|object|object-readonly|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|search-left|search-inline|search-overlay|search-outside|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error|lua`**:
 `object-readonly` opens an object script without Modify permission: its source
 and save controls stay unavailable, but Reset remains usable without waiting
 for running-state information. The demo does not execute LSL or prove a simulator reset.
@@ -2090,6 +2498,10 @@ read-back; `error` simulates a compile diagnostic; `readonly` refuses the
 reading of a personal script without the Modify right. Saved sources can be
 closed then reopened in the same session. Typing `AURORA_DEMO_SYNTAX_ERROR`
 simulates a server error; the demo does not run a local LSL compiler.
+`lua` opens an inventory script whose item subtype says Lua (SLua), with a Lua
+source: the editor shows "Lua" instead of the Mono box, and at frame 320 it
+saves an edit; the log line
+`demo scripts: saved … for target luau` gives the compile target sent.
 `syntax` and `object-syntax` show the colouring of types, variables, native
 and custom functions, events, keywords, constants, numbers, strings and
 comments. `syntax-readonly` shows the same source coloured and selectable in
@@ -2193,10 +2605,23 @@ errors of owned objects also appear there, after filtering of the bridge and
 of blocked objects. The window allows seeing all the objects or a single one
 and clearing the displayed messages.
 
-**`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland]`** — the
+**`AURORA_DEMO_SCRIPT_RECOVERY=1|recover|edit`**: the copies of the scripts
+left unsaved, which the demo keeps only with this variable (a demo run never
+offers another one's scripts). `1` leaves a copy at login, as a crash would:
+the Script recovery window lists "Demo door script", ticked. Recover creates
+it in Lost and Found with the unsaved text and shows it in the inventory;
+Cancel forgets it; the window's X keeps it for the next run. `recover`
+answers Recover at frame 400. `edit` opens the demo inventory script at
+frame 280 and types in it at frame 320 without saving: within ten seconds
+the log says `script backup: unsaved changes copied`, and a run killed then
+started again with `edit` offers that text (`1` replaces it with its own). The copies are in the
+demo's account folder, `script-backups`, sealed with the cache key.
+
+**`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland][:avatars]`** — the
 world tooltips on for the session in that form (the Legacy Viewer's text
 with `legacy`), the saved settings untouched; on land unless `noland`, on
-every object with `all`. The simulator answers the parcel under the pointer
+every object with `all`; with `avatars`, the main switch off and "On avatars
+even when off" on: avatars only, nothing over objects or land. The simulator answers the parcel under the pointer
 (the plaza, the 128 m square in the middle, or the garden for sale around
 it) and the objects' properties. Rest the cursor with `AURORA_DEMO_HOVER="x,y"`
 and add `AURORA_DEMO_ACTIONS=1` for cubes that can be bought, paid and
@@ -2354,7 +2779,7 @@ Transaction windows, with the same variable:
   the next owner.
 - `buy-empty`: offers contents that cannot be sold and disables the purchase.
 
-**`AURORA_DEMO_DIALOG=12|4|long|links|scripted`** — llDialog menu of twelve answers in
+**`AURORA_DEMO_DIALOG=12|4|long|links|scripted|repeat`** — llDialog menu of twelve answers in
 three columns, arranged from the bottom to the top like Firestorm; `4`: four
 answers, to check the incomplete last row; `long`: long label truncated,
 with the full text on hover. Block and Ignore buttons under the menu.
@@ -2369,12 +2794,23 @@ llGiveInventory), then four pieces of information. The windows stay out
 until answered, in both notification styles: the newest three shown, the
 others behind "+ N more", the information folding away after its time;
 open and close the list, or go into mouselook and back, and they come out
-again.
+again. `repeat`: a fountain's menu sent three times on one channel, once on
+another, and a game table's menu on the first channel, as a HUD or vendor
+clicked several times. With Preferences › Chat › Notifications › "Script
+dialogs per object" on its default (one per channel) three stay: the
+fountain's "(3)" and "(4)" and the table's "(5)"; "One per object" keeps the
+fountain's last and the table's; "Unlimited" keeps all five (choose it, then
+relaunch: a change closes the dialogs open).
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
-`focus`, `create`, `land`, `select`. `AURORA_DEMO_BUILD_FRAME` changes its
-start frame.
+`focus`, `create`, `land`, `select`, `select-join`.
+`AURORA_DEMO_BUILD_FRAME` changes its start frame.
+`select-join,620,540,xy,140,-80` simulates a multi-parcel reply with no unique
+owner and the same area as the selected rectangle. After frame 635, Join must
+be enabled and open its confirmation. Plain `select` keeps a single-parcel
+reply: Join explains that the selection must span several parcels. This is an
+offline button/confirmation fixture; the human validates actual joins on a grid.
 `shared,object:99620` and `shared-denied,object:99620` select another resident's
 linkset with granted or denied effective Modify rights. Use
 `AURORA_DEMO_BUILD_TAB=texture:bp|texture:pbr|shape|features|general|rights` and
@@ -2446,7 +2882,7 @@ one drag (closer than 0.4 s) making one step.
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script. General includes object
 permissions; `rights`, `object` and `transform` redirect to General for older
-scenarios. `+weights`, `+media` and `+permissions` open the related dialogs;
+scenarios; `shape` opens the renamed Object section. `+weights`, `+media` and `+permissions` open the related dialogs;
 `+grid` opens the side settings with inline ruler controls.
 
 Use `faces-ready,object:99620` with `texture:bp-normal` or `texture:bp-specular`
@@ -2481,6 +2917,14 @@ neither may be interrupted by saving an intermediate digit or drag position.
 The window stays open. Changes must update the original object's item even
 after changing the build selection, and survive closing and reopening its
 properties. Check the same behavior with `AURORA_DEMO_INVENTORY=properties`.
+With `AURORA_DEMO_BUILD=contents-ready,object:118` and
+`AURORA_DEMO_BUILD_TAB=contents`, New script, Reset scripts and Refresh share a
+row. Rights, the inventory's shared CMT menu and the search field share the
+following row; search fills the remaining width. The CMT
+choice belongs to this construction window, independently of inventory: Mine
+by default, Next owner, Both or Hidden. Switching it changes only the displayed
+suffix, never item permissions or simulator commands. `contents+next-owner`
+still selects Both for captures.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
 `AURORA_DEMO_BUILD_TAB=contents+permissions`, check the eleven icon filters,
 All/Clear, Group/Anyone/Next owner columns and OK/Apply/Cancel. No-copy forces
@@ -2845,9 +3289,9 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
+| `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, Shift-click, move, edit |
 | `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, derender of a linked part, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
 
@@ -2874,6 +3318,9 @@ grid.
   at these mip levels. No grid assets are used.
 - `touch`: simulates press, drag and release on the child (frames
   720–900), then changes the colour of the HUD.
+- `touch-shift`: repeats the same interaction while Shift is held for the
+  press, then releases Shift; the HUD must still receive the touch and turn
+  green.
 - `zoom`: scales down to 50%; `hidden`: hides the HUDs; `media`: shows the
   local test page on the centre HUD.
 - `scale`: five wheel notches with the HUD key (frame 720), on a
@@ -2962,7 +3409,7 @@ The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
 
-**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -3009,6 +3456,14 @@ access to a grid.
 - `inspect`: "Inspect" at frame 740: the window lists the root and the
   linked prim, their figures and the totals; the prim of the highlighted
   row is outlined in yellow, the others in blue.
+- `derender-part` (#3384): "Edit" on the backpack at frame 700, "Edit
+  linked parts" ticked and its linked prim selected at 720, right click on
+  that prim at 740, "Derender temporarily" at 780: only the linked prim
+  goes, the root stays on the back. "Clear temporary" at 900 brings it
+  back in its linkset. The log writes `demo worn derender-part: derendered:
+  root present=true child present=false`, then `cleared: … child
+  present=true`. Captures at frames 770, 820 and 990
+  (`AURORA_FPS_LIMIT=60`).
 - `inventory`: the inventory opens on the item, double-clicked on its real
   row at frames 700–703 (the backpack detaches, its worn label leaves the
   row) and again at 900–903 (it is worn again: the demo server rezzes its
@@ -3078,7 +3533,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PELVIS_CONSTRAINT=1` | An animation constraint carrying the avatar's body out of sight, 4 s out of 8 |
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
-| `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns |
+| `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
 | `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -3278,14 +3733,18 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
   left wrist down/inwards at 480; capture 620 shows the bent elbow and
   connected wrist, with the position inspector in avatar coordinates.
   `camera` views the same head rotation from a quarter-turn camera orbit;
-  compare the trackball axes with `self`. `scale` shows the head's local
+  compare the trackball axes with `self`. `together` selects the left
+  eye, adds the right eye with Shift + click and turns the left eye at 450:
+  capture 620 shows both eyes looking the same way (not mirrored), both
+  markers ringed, and "+ 1 joint moves with it" under the joint's name.
+  `scale` shows the head's local
   scale handles; `physics` shows the collision volume scale handles. All
   body-part scenarios display only the selected tab's joints and shafts.
   Open at frame 420, edit at 450, capture 620. Animesh selects an
@@ -3301,7 +3760,46 @@ That ignored test creates and removes its own isolated profile.
   the remaining modes select the corresponding controls. The other modes
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script
-  silent, failed, taken off), plus Repair for `silent` and `failed`. Synthetic events
+  silent, failed, taken off), plus Repair for `silent` and `failed`. With
+  `AURORA_DEMO_SNAPSHOT=viewfinder`, `consent-request` and `consent-reminder`
+  show the question and the reminder over the full-frame photo mode, above
+  the poser window. `consent-reply` asks nothing by itself: whoever the user
+  asks from the subject menu accepts two seconds later (with
+  `AURORA_DEMO_SNAPSHOT=viewfinder`, an Ask made in the photo mode).
+  The scenarios above show the full window; `compact*` show the compact one
+  (for the session only, the saved choice untouched), with the nearby peer,
+  who accepts an Ask of yours 1.5 s later. `compact-invite` opens the
+  subject menu at 440; `compact-accept` has the peer accept at 480 and
+  poses them at 490 (your own picture beside Stop); `compact-long` does the
+  same with the longest names (a 30-letter display name, a 41-letter
+  account) to check the cut names and the distance. `compact-crowd` puts
+  five residents around you, asks them at 450 and has them all accept at
+  480, then opens the subject menu at 500 (the head's pile of pictures and
+  its "+n"). `compact-wings` and `compact-tail` count as wearing a rigged
+  mesh that uses the wing and tail bones, or the tail alone, so those parts
+  are offered to Ctrl + click and listed in Other. `compact-sliders` opens
+  the selected joint's Fine-tune (Handles, Values, X / Y / Z).
+  `compact-options` opens the title bar gear's options. `compact-save`
+  types a name and opens Save's form at 490 (Save, Save as…).
+  `compact-together` is `together` in the compact window: both eyes
+  selected, "+ 1 joint moves with it" under the joint's row.
+  `compact-face` unselects the joint at 500 (as a click beside), then holds
+  Ctrl over the forehead from 560 while posing the Body: capture 640 shows
+  the head lit from the mesh and "Ctrl + click: Face" (seen from the demo
+  camera, behind the avatar; the system head is weighted to the head bone,
+  so the whole head lights). `compact-body` opens the Hands tab at 500 and
+  holds Ctrl over the chest from 560: the body lit from its mesh without
+  the head, a soft halo on its outline (the demo also moves the app's
+  cursor there, for the GPU part pick).
+  For mesh-pick regression checks, hold Ctrl over a neck/wrist seam at
+  several LODs, a one-sided attachment seen from its back, and an unrigged
+  blended accessory in front of the body. The offered part must match the
+  lit surface; visible accessories block the body behind them in either
+  attachment order, while clear alpha texels do not. Repeat with reduced
+  render scale and FSR, then close the poser with Ctrl held and take a
+  photo: no part tint may remain in the photo. The GPU regression tests
+  also cover triangle index rotation and out-of-order readback slots.
+  Synthetic events
   do not validate real LSL delivery: two human-controlled grid clients must
   check bridge 1.34 provisioning and the complete consent round trip.
 - **`AURORA_DEMO_IK_EDIT=1|move|release|gizmo|gizmo-local|gizmo-rotate`**: reuse the synthetic motorcycle,
@@ -3711,7 +4209,7 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   With `interface` and `AURORA_TEXT_SIZE=2`, scroll the details to the bottom: Apply must remain fully visible.
 - **`AURORA_DEMO_AO=movement|movement-rebound|swim`**: test the actual integrated AO window. `movement` opens its persistent Movement (EXPERIMENTAL) tab, with a matching experimental heading and menu/toolbar/keybinding labels; `swim` opens the selected generic swimming list with synthetic contributed inventory links and expands only this owned offline window so the lists and cycle controls can be inspected; normal users retain their saved window size and scrolling. `swim-missing` opens Movement with one slot absent: swimming must remain unavailable with the shared warning triangle and missing-animation message. Confirm independent run/flight/swim/passage toggles, run and flight multipliers starting at x1, the active toolbar indicator, swim-state navigation, AO enable/pause, and animation choice/cycles. Ctrl+Alt+M and the movement toolbar open this same manager. Passage uses Ctrl plus the current jump keys (default E / Page Up); it requires its own switch, leaves text/media focus alone, and yields to explicit shortcut conflicts. Rebind Jump and confirm the displayed chord follows. Disable passage during its pulse to cancel it. In a normal human-driven grid session, assign all eight swimming slots in the selected set, enable swimming and verify another viewer sees the matching idle, movement, cushioned-entry and separate flight/shore exit animations. Ordinary AO disable/pause must not stop active swimming animations. Removing a slot or selecting an incomplete set must stop swimming; a different complete set cannot unlock that selection. No import-pack button or automatic fill/upload prompt may appear. Capture around frame 850.
 - **`AURORA_DEMO_AO=design-current|design-tabs|design-movement|design-section|design-swim`**: a native interactive layout study. The Current view reuses the existing AO body unchanged; the side workbench switches to Animations/Movement tabs or a collapsible section. Ctrl+Alt+M and the movement toolbar button open the prototype Movement tab and reopen its workbench; the separate movement floater stays hidden in this design scenario. Movement switches/sliders are temporary preview values and do not control motors or write account movement preferences. `design-swim` opens the AO swimming list and its matching avatar preview. The workbench selects simulated avatar animation states; swimming selection uses the actual AO state lists, including the eight separate swimming contexts in the synthetic inventory. Check AO activation/pause, state selection, animation double-click/cycles, independent motor switches and reset, and returning from movement controls to swimming animation selection. All inventory changes stay in the offline demo. Capture each layout around frame 850; keep the existing dimensions, palette, fonts and widgets for comparison.
-- **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle|points`**: animated root mesh, linked mesh flagged
+- **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle|points|far`**: animated root mesh, linked mesh flagged
   by a child and worn animesh, with independent skeletons of their own and
   alpha shadows. `churn`: the animesh on the ground (orange) also changes its
   mesh asset every 240 frames, like the rigged meshes that come and go on
@@ -3746,6 +4244,15 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   Center` (its back half) and `mPelvis` (its front half), and the animation
   moves the pelvis by position (0.3 m forward, 0.2 m down, 2 s loop): the
   back end stays on the root while the front end follows the pelvis.
+  `far` checks the drawing limits of `scene/draw_limits.rs`: the ground
+  animesh (orange) also plays an animation that holds its pelvis 8 m
+  forward, and is drawn with the near side of its box 3 m from its root
+  (its centre about 3.8 m east of the root, not 8 m), as in the Legacy
+  Viewer; the worn animesh (violet) is sent 5 m from the right hand and
+  drawn 3.5 m from it, along the same direction. Clicking either one
+  selects it where it is drawn. Every 120 frames the log has `demo
+  animesh far 9200: fixup offset Vec3(-4.3…, 0, 0) scale 1.000` and `demo
+  animesh far 9203: … drawn from its point Some(3.500) m`.
 - **`AURORA_DEMO_ANIMESH_TRIS=<n>`**: with `AURORA_DEMO_ANIMESH`, adds
   about n triangles to the demo's rigged mesh, as opaque faces of 45,000
   (each a thin tube around the torso, 7 faces at most). With
@@ -3876,8 +4383,9 @@ both open states and the selection count. Capture at frame 620.
 
 | Variable | Effect |
 |---|---|
+| `AURORA_DEMO_TERRAIN_CROSSING=1` | Two render-origin crossings preserving the transition position (#2335) |
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
-| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, or particle load |
+| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, a worn emitter, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
@@ -3892,8 +4400,9 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
-| `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
-| `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
+| `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]` | Where the real sky is seen from, its stars' brightness and the Milky Way's |
+| `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
+| `AURORA_DEMO_OCCLUSION=1\|edge` | Wall with hidden objects (occlusion test); `edge`: cubes in plain view beside a near wall |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
@@ -3903,6 +4412,17 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 
 ### Details
+
+- **`AURORA_DEMO_TERRAIN_CROSSING=1`** seeds a neighbouring region's terrain
+  at frame 60, then changes the main region at frames 600 and 900 while
+  preserving the global position at each transition. Capture frames `590,601,605,610`:
+  ground already drawn must remain present on the first frame of the
+  crossing, without waiting for the chunk upload budget. The offline floor
+  simulation uses region-local coordinates, so it may lower the avatar
+  after the first transition; the later return is not a fixed-height visual
+  comparison. This tests render
+  origin changes offline; actual vehicle crossings and teleports still
+  require human validation. Water retains its normal rebuild path.
 
 - **`AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,<frame>:<mode>…]`**: the
   anti-aliasing changes at each frame given (modes of `AURORA_AA`). A change
@@ -3977,6 +4497,9 @@ both open states and the selection count. Capture at frame 620.
   emitters with zero wind: both keep their original motion. Override either
   wind with `AURORA_DEMO_WIND=x,y` (raw grid values, scaled by two), for
   example `0,3` to reverse the drift. No grid connection is needed.
+  `worn`: the smoke emitter worn on our avatar's chest; turning off
+  Preferences › Graphics "Particles from worn objects" (RenderAttachedParticles)
+  clears it at once.
   These two modes frame the plumes automatically and close the demo's
   Inventory/AO windows so saved camera preferences cannot hide the comparison.
   `leash`: a leash script in front of the panel, a white ribbon chain from a
@@ -4180,14 +4703,38 @@ both open states and the selection count. Capture at frame 620.
   the bright sky; with `AURORA_DEMO_TOD=3` (sunset) only the brighter ones
   show. Capture with `AURORA_DEMO_SNAPSHOT=save:1600x900:png:<folder>` for an
   image without the interface.
-- **`AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]`**: the real sky seen
-  from `latitude` (degrees north, negative in the south; Preferences ›
-  Graphics › Environment › "Sky seen from" set to Custom) and, if given,
-  "Star brightness" (0.5 to 4, 2 by default), for this launch. With
+- **`AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>[,<milky way>]]`**: the
+  real sky seen from `latitude` (degrees north, negative in the south;
+  Preferences › Graphics › Environment › "Sky seen from" set to Custom)
+  and, if given, "Star brightness" (0.5 to 4, 2 by default) and "Milky Way
+  brightness" (0 to 2, 0.4 by default; 0 hides it), for this launch. An
+  empty field keeps its setting: `48.86,,1` sets the Milky Way alone. With
   `AURORA_DEMO_NIGHT_SKY=real:180,45` and `-33.87` (Sydney), the Southern
   Cross stands in the south and the Pole Star is under the horizon; with
   `real` and `48.86,1`, `48.86,2`, `48.86,4` the same sky at three
-  brightnesses.
+  brightnesses; with `real:180,30` (the summer Milky Way in the south) and
+  `48.86,,0`, `48.86,,0.4`, `48.86,,1` the band hidden, at its default and
+  at its former strength, the stars unchanged.
+- **`AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]`**: the
+  real sky's hour from the clock (Preferences › Graphics › Environment,
+  "Star hour": Real time) at `longitude` (degrees east, negative in the
+  west; the place becomes Custom, keeping its latitude), for this launch,
+  at the UTC moment given, the clock's otherwise. The stars no longer
+  follow the region's sun: at a fixed moment, two longitudes show two
+  skies. With `AURORA_DEMO_NIGHT_SKY=real:0,85`, the place at
+  `40.71` (`AURORA_DEMO_NIGHT_SKY_PLACE`) and `2.35,2026-01-15T23:00` the
+  sky overhead is the one New York sees five hours later,
+  `-74.01,2026-01-16T04:05`; `-74.01,2026-01-15T23:00` shows another.
+- **The Milky Way** (`AURORA_DEMO_NIGHT_SKY=real:0,85` in autumn and
+  winter, the band across the image): the band is made of points, a faint
+  haze under many tiny stars whose density follows the real star counts,
+  with dark lanes; turning the camera keeps every point in its place
+  (they belong to the sky, not the screen), zooming in separates them
+  without making them brighter or darker (the band keeps the same mean
+  light at every zoom), a point is never cut by a hard edge, and a wide
+  view or the water's reflection shows their mean light. With
+  `AURORA_PROFILE=1`, `g_terrain_sky` is about 0.18 ms at 1600 × 900 on
+  an RTX 5070 Ti.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
@@ -4290,6 +4837,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
+| `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4298,14 +4847,18 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
+| `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
 | `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_LEGACY_BUMP=1` or `matrix` | Legacy bump presets and normal-map precedence; `matrix` covers all four Shininess levels |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
+| `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
+| `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -4314,10 +4867,33 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
-| `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
+| `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
+| `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
+| `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
+| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
+
+- **`AURORA_DEMO_ALPHA_SORT=front|back`** loads the original three-material
+  unrigged fixture from `crates/aurora-viewer/assets/demo/alpha-sort/`, at frame
+  120, and frames its negative-Y (front) or positive-Y (back) side at frame 300.
+  With `AURORA_ALPHA_FACE_SORT=0`, the back blue layer incorrectly covers the red
+  front from the front camera. With sorting on (default), red covers green, then
+  blue; the back camera reverses that order. Check SMAA and MSAA 4x, then orbit,
+  rotate and wear the same mesh as a rigid attachment on the grid. Keep Alpha
+  Blending, white tint, zero face transparency, fullbright and unit UV repeats.
+  The PNGs contain true translucent areas as well as opaque bands and holes.
+  This tests ordering between nonrigged faces, not intersections inside one face
+  or the separate rigged attachment order. The switch also restores the former
+  radial ordering of portal and ban-line sort points for a consistent A/B.
+  Modes `hud`, `hud-back` and `hud-zoom` wear the same mesh at the centre HUD
+  point: red is nearest in `hud`, blue in `hud-back`; `hud-zoom` uses the red
+  side at 50% local size. The HUD uses its own +X depth, independent of the
+  world camera. With sorting off, its three faces share one object key and
+  blue incorrectly covers red in `hud`. Compare sorting off/on, SMAA/MSAA 4x,
+  reversed orientation and local zoom; ordinary HUD opacity, masks, clicks,
+  viewport zoom and visibility must stay unchanged. No grid assets are read.
 
 - **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
   adds 1 to 512 static layered prims with a procedural alpha texture; `none`
@@ -4480,6 +5056,36 @@ both open states and the selection count. Capture at frame 620.
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_LEGACY_BUMP=1`**: after frame 180, the plaza gets 18 panels
+  ordered by their texture-entry bump code, 0–17, followed by an explicit
+  legacy normal-map control and a PBR normal-map control. Check that 0 stays
+  flat, brightness/darkness and each standard pattern show relief, and the
+  two explicit-normal controls retain their own map. The standard panels use
+  synthetic height patterns under the preset IDs; compare the real preset
+  artwork on a grid, not against these demo patterns. Change Shininess through
+  None/Low/Medium/High on the same test face to ensure the stored shine value
+  and highlights remain independent of the bump preset. The generated maps
+  load with their source textures and improve as finer source levels arrive;
+  revisiting a face should reuse its cached map. Legacy Viewer references:
+  `LLDrawPoolBump::bindBumpMap`, `std_bump.ini`,
+  `LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl`.
+  With `matrix`, all 18 presets appear at None/Low/Medium/High Shininess in
+  four rows, ordered None/Low/Medium/High from the ground up. Both explicit-normal controls carry competing bump 9;
+  they must retain their own maps. Compare fixed camera, lighting, UV repeats,
+  mirrored/planar mapping and material settings against the reference. Synthetic
+  demo artwork validates the pipeline, not the real grid preset artwork.
+  Normals keep a stable streamed slot while finer source data arrives and use
+  the normal texture memory budget, including when minimized or after a GPU
+  recovery. No full-size CPU normal images persist after upload. Regression
+  tests cover BC7-only source pixels, source-refresh epochs, shared identities,
+  normal placeholders, memory reduction and final-user eviction.
+  For captures, start at `AURORA_DEMO_POS=168,118` for the compact wall or
+  `155,112` for the matrix. The wall is east of the plaza exhibits. Panels
+  share a vertical plane so no preset hides another. The two explicit-normal
+  controls sit above the preset rows.
+  For grid diagnosis, `AURORA_DEBUG_LEGACY_BUMP=1` logs standard preset
+  requests, source component counts, generated texture sizes and stable slots
+  by bump code. It does not log asset URLs or locations.
 - **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
   back of the default skeleton, bound to the chest, and encoded as an
   upload does it (vertices normalized, the bind shape bringing them back
@@ -4490,6 +5096,27 @@ both open states and the selection count. Capture at frame 620.
   neither worn nor a playing animated object; a chain much smaller,
   floating above the cube, is its bind shape applied without a skeleton.
   The same mesh worn by our avatar hangs down its back.
+- **`AURORA_DEMO_COPLANAR_LAYERS=1`**: one rigged mesh, a 0.5 x 0.8 m
+  plate of eight horizontal strips beside our avatar, worn sixteen times at
+  frame 120 (`demo_coplanar_layers.rs`): for each strip a skin copy (the
+  upper-body bake) and a dark layer copy showing that strip alone, the
+  other faces at texture-entry alpha 0. Both copies of a strip have the
+  same triangles, so the same depths, and the pairs arrive in alternating
+  order. The plate must be dark from top to bottom: the layer rank
+  (`DrawRecord::set_layer_rank`) puts a worn layer over the skin it lies
+  on. Skin-coloured bands, one strip in two, mean the winner follows the
+  order of the draw records again. Capture with `AURORA_AA=6` and `3`.
+- **`AURORA_DEMO_COPLANAR_DECAL=1`**: one static mesh, a 3 x 2.4 m panel
+  9 m along the start view (`demo_coplanar_decal.rs`), made of two faces
+  with the very same triangles, as a road section is a grass base with a
+  dirt track over it: face 0 opaque grass, face 1 two dirt strips on a
+  transparent background. The strips arrive hard-edged (drawn as a mask);
+  at frame 360 a full update gives face 1 a soft-edged texture (drawn
+  blended), as a season script changing the texture does. `mask` and
+  `blend` keep one version. The strips must stay on the panel after the
+  change: the blended pass of static faces passes equal depths, as the
+  Legacy Viewer's alpha pass (GL_LEQUAL). Grass alone after frame 360
+  means the blended face loses the depth test again.
 - **`AURORA_BLEND_SHADOWS=0`**: alpha-blended faces cast sun and projector
   shadows only when rigged, as before. By default every blended face casts,
   as in LLPipeline::renderShadow (renderAlphaObjects): glass whose texture
@@ -4507,7 +5134,10 @@ both open states and the selection count. Capture at frame 620.
   ahead; `far`: the same rows 30 m further and 30 m to the right, 56 to 88 m
   away (within the 96 m draw distance); `dense`: about 580 trees of every
   species, turned and sized at random, and 390 grass tufts over the land
-  ahead (the cost of a forest, with `AURORA_PROFILE=1`). The species
+  ahead (the cost of a forest, with `AURORA_PROFILE=1`). With
+  `AURORA_GRAPHICS_PRESET=potato` (trees' detail 0, as the Legacy Low)
+  neither trees nor grass are drawn; `deluxe` (1) keeps the finest trunks
+  further than `medium` (0.5). The species
   textures are not fetched: stand-ins drawn under their ids (bark on the
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
@@ -4567,11 +5197,63 @@ both open states and the selection count. Capture at frame 620.
   the loading screen (`geometry arena grown ahead behind the loading
   screen` in the log) and no growth happens in the scene any more. Delete
   that file to measure a first visit again.
-- **`AURORA_GPU_OOM=<mb>`** (demo or grid): every allocation of `mb`
-  megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
-  if video memory were full (`0`: all of them): the geometry arena, the
+- **`AURORA_GPU_OOM_TARGETS=<seconds>`** (demo or grid): for that long
+  after the first target is made, the render targets come back invalid, as
+  when the card is full at login. The window shows the interface over
+  black with a notice in the middle and `Video memory full` in its title,
+  and the log says once `render targets: out of video memory`. They are
+  tried again after 2 s, then twice as long each time up to 30 s, so the
+  world can come back up to 30 s after the time given; the log then says
+  `render targets: made again`. The same value on a build without the
+  retry stays black for good. The card is not filled: the targets are made
+  with no usage, which wgpu refuses, and this leaves the same invalid
+  textures, so the log holds `Invalid usage flags` lines a real card does
+  not.
+- **`AURORA_GPU_OOM_START=<seconds>`** (demo or grid): for that long after
+  the renderer is first made, its placeholder textures (bound in place of
+  a target) come back invalid, as when the card fills while the viewer
+  opens and refuses part of what the renderer makes outside the render
+  targets. The log says `renderer: out of video memory while it was made,
+  made again once memory is freed`; the window shows the interface over
+  black with the `Video memory full` notice. The whole renderer is made
+  again on the same device and window, with the frame's settings (2 s,
+  then twice as long each time up to 30 s), each refused try repeating
+  that line and `renderer: try refused (<ms> ms)`, the time the try held
+  the frame; once the time is over the log says `renderer: made again,
+  whole (<ms> ms)` and the world comes back. A build without the remake stays black
+  for good: every later try of the render targets fails on the `frame
+  mask` bind group. Made with no usage, as for `AURORA_GPU_OOM_TARGETS`,
+  so the log holds `Invalid usage flags` lines a real card does not.
+- **`AURORA_GPU_OOM_FIRST_USE=<seconds>`** (demo or grid): for that long
+  after the first one is made, every target made on first use counts as
+  refused by a full video memory. An effect the frame can go without is
+  left out and tried again after 2 s, then twice as long each time up to
+  30 s: the selection outline (`AURORA_DEMO_BUILD`), the depth of field
+  (`AURORA_DEMO_DOF`), a photo look; the log says once `<what>: out of
+  video memory, drawn without it for now`. One the frame cannot go without
+  shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
+  vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history
+  remade by an anti-aliasing, shadow, probe or water effects change, the
+  rigged blend depth; the log says `<what>: out of video memory, the
+  interface alone until it can be made`, then `render targets: made again`
+  once the time is over. A refused RLVa target never shows the world it
+  hides: the frame that found it fails as a whole. Without the check, the
+  world stayed frozen or black until the window size changed.
+- **`AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]`** (demo or grid): every
+  allocation of `mb` megabytes or more made through
+  `aurora-render/src/gpu_alloc.rs` fails as if video memory were full
+  (`0`: all of them), for the whole run or, with a duration, that long
+  after the first allocation, as when another program that held the
+  memory closes. With `after`, it starts that many seconds after the first
+  allocation instead, as when another program fills the card while the
+  viewer runs: the reserved textures and the first pages are made, which
+  a small value from the start refuses as well. Allocations covered: the
+  geometry arena, the
   draw records, the culling tables, the joint palettes and skin bindings,
-  particle and world-label upload buffers, and the texture pages. With
+  particle and world-label upload buffers, and the texture pages. The
+  interface's blur and glass count as a texture of the window's size and
+  are left out while refused (`interface blur` and `interface glass` in
+  the log). With
   `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
   the vertex arena grows by smaller steps up to 63 MB, then the log says
   once `vertex arena could not grow past 63 MB (out of video memory
@@ -4579,6 +5261,17 @@ both open states and the selection count. Capture at frame 620.
   drawing and the log holds no `wgpu error` line. Without the variable, a
   buffer the driver could not make used to be installed anyway, invalid,
   and every write into it was an error, every frame.
+  A texture whose page is refused keeps what it showed (grey while
+  loading), the log says once `textures: video memory full, uploads wait
+  until it can take them`, and it is sent again when the pages are tried
+  again: with `AURORA_GPU_OOM=1,20,3` and `AURORA_DEMO_TEXTURES=3000`,
+  the cubes still loading at 3 s stay grey until the pages are tried
+  again after the 20 s, then fill in, with `textures: video memory took
+  the uploads that waited for it`. Before, they stayed grey for the rest
+  of the session. (The demo's stress textures hold no data to decode
+  again: their texels come again, as a download would bring them. Its
+  own procedural textures, the plaza's, refused while full stay grey: the
+  grid has none.)
   World labels that cannot fit are omitted for that frame; a smaller frame
   resumes from the retained valid buffers. Excess particles wait while the
   portion that fits is uploaded and drawn. Hardware-limit regressions use
@@ -4626,6 +5319,14 @@ both open states and the selection count. Capture at frame 620.
   sphere's by its weight. Used to check `AURORA_PROBE_WALK` on the probes
   the plaza does not have otherwise (its only probe is the mirror's, which
   is a hero probe and no cube map).
+- **`AURORA_DEMO_OCCLUSION=edge`**: a tall wall 1.5 m ahead of the start
+  view covers its left half, and nine cubes stand in the open right half,
+  farther than the wall (with `AURORA_DEMO_POS="80,100"`, the default, on
+  open land). Every cube is in plain view: a capture must show the same
+  cubes as one with `AURORA_NO_OCCLUSION=1`. Before #2459 the Hi-Z pyramid
+  dropped the last row and column of each odd-sized level, so a large
+  object seen only in the right or bottom part of the screen was tested
+  against the wall's depth and culled.
 - **`AURORA_DEMO_OVERDRAW=<n>`**: n rows of opaque walls (12 if the
   value is not a number, 40 at most) east of the plaza, one
   behind the other and each taller than the one in front, sent from the
@@ -4882,6 +5583,27 @@ the image fitting, native 100% scroll view, ratio presets/custom ratio, dimensio
 description, UUID, refresh and permission-gated PNG/TGA export. Local map uploads
 open the texture import inspector to review and confirm their fee before replacing
 the map. These modes are offline; inventory save/copy acknowledgements are simulated.
+`preview-controls-local` marks the synthetic base-colour map as a local file:
+check its file name, eye badge and the local-texture explanation. Save / Save As
+remain enabled with the ordinary material permissions.
+`preview-controls-local-narrow` uses a 280 x 520 editor: Cancel wraps to the
+next button row and the full local-texture note stays underneath. Repeat with
+`AURORA_TEXT_SIZE=2` to check the enlarged text.
+`preview-controls-local-picker` also opens its picker on Local with the file
+selected. With `AURORA_DEMO_ACTIONS=sit` to seed the editable cube and
+`AURORA_WINDOW_SIZE=2560,1440` to keep it visible beside the editor,
+`preview-controls-local-apply` saves through the ordinary inventory save/ack
+path at frame 740, closes the image inspector, and applies the saved material
+to the demo object at frame 760. Capture after frame 800: the object
+and material preview share the local wood texture. The log's "demo saved local
+material" line gives the saved asset, map IDs and applied material ID.
+Outside these fixtures, add a PNG through Local, choose it in each of
+the four maps, confirm and reopen, or Cancel to restore the previous map. Editing
+the PNG updates the preview. Save and reopen the material, then apply it to an
+object: its local maps must remain visible. Restart with the source files still
+available and change one file: the saved material still uses that local texture.
+Remove the file: stale picker state must not restore it. Uploading the texture
+through the folder button remains a separate action with its ordinary fee review.
 `vertical` and `horizontal` open the corresponding presentation at frame 600;
 `types` and `types-horizontal` also open the checked
 type menu at frame 650 for screenshots; `inventory` also reveals the actual library folder
@@ -5008,15 +5730,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
+| `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
-| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|friend\|off` | A direct payment as a card in the conversation with the other resident |
+| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|sent-friend\|friend\|anyone\|off\|sale\|balance\|earning` | L$ received: a direct payment as a card in the conversation with the other resident, the toasts and the balance's rows |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` | Press Log in of the open login form at those frames |
+| `AURORA_DEMO_LOGIN_LAST=<n>` | Which demo account was logged in last, so the cards select it |
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -5025,6 +5749,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CRASH_SEND=<options>` | Crash report sending with a simulated GitHub |
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
+| `AURORA_SPLASH=0\|1` | No startup splash, or one even with `AURORA_CAPTURE` |
+| `AURORA_DEMO_SPLASH=<step>` | The startup splash stays on that step (`shaders:23/61`, `update-cache`) in demo |
+| `AURORA_DEMO_SPLASH_HOLD=<seconds>` | The startup splash stays open at least that long in demo |
+| `AURORA_SPLASH_CAPTURE=<file.png>` | Screenshot of the startup splash as it closes |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
 | `AURORA_DEMO_UPDATE_NOTICE=1\|ready` | The notice of a new version in the world, or of one downloaded |
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
@@ -5041,7 +5769,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
+| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
@@ -5052,7 +5780,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
-| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open\|fees\|fees-answered\|fees-short` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$ |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|group-notice-chat\|purchase\|purchase-open\|fees\|fees-answered\|fees-short` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$ |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
@@ -5066,7 +5794,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -5079,17 +5807,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; also fills Me › Experiences |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
+| `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
+| `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
-| `AURORA_DEMO_CHAT_INPUT=1\|long` | Paragraph drafts in the conversation and nearby-chat inputs |
+| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under them with the Legacy chat style): a full row, or the emojis given |
+| `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
+| `AURORA_DEMO_CHAT_INPUT=1\|long\|ime` | Paragraph drafts or Japanese IME composition in chat inputs |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|clips\|services\|links\|net` | Picture, GIF and YouTube cards; `clips` shows video files and an animated WebP; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
-| `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
+| `AURORA_DEMO_GIFS=1\|klipy\|sent\|recent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `recent` its Recent tab; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy\|links` | Enlarge a picture, open its independent window, click Copy image or hover its URL actions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
@@ -5105,33 +5837,40 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
-| `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
+| `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|environment|pose-cycle|pose-menu|lighting-menu` | Studio backdrop, transitions, grounded poses, lighting and menu previews |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
+| `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
+| `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
+| `AURORA_DEMO_SHAPE_XML_MENU=<file>` | With `AURORA_DEMO_SHAPE`: Appearance › Export shape XML of our avatar's menu |
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
+| `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
-| `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel` | Applied-local-appearance warning, highlight toggle and confirmed removal |
+| `AURORA_DEMO_LOCAL_APPEARANCES=1\|menu\|reveal\|confirm\|remove\|cancel\|deleted` | Applied-local-appearance warning, highlight toggle, confirmed removal and object deletion |
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
+| `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
-| `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
+| `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
+| `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open]` | "Places" on a tab, widened, its first place selected |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, or at its narrowest |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -5140,6 +5879,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
+| `AURORA_DEMO_DESTINATIONS=compact\|wide\|legacy\|empty\|<page>\|sl` | Destinations window open at start: Aurora's window on a made-up guide, the Legacy web window, or a web page (`sl`: the Second Life guide) |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
@@ -5188,6 +5928,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   issuer's jump lock. At frame 810 its log reports two local replies and no
   channel-zero network reply. `tools-closed` closes the console at frame 810
   and reports `fly=false, other_jump=true`. Capture after that frame in EN/FR.
+  `tools-restrictions`, `tools-exceptions` and `tools-modifiers` open the RLVa
+  tools on that tab with the same rules: `jump`, `detach`, `recvim` and
+  `recvim:20;50` (greyed in Exceptions, it is a distance), exceptions for two
+  residents and modifiers from `fartouch:2.5`, `sittp`, `setcam_avdistmax:10`
+  and `setcam_textures`. Modifiers lists all 21 rows, the unset ones muted as
+  `(default)`. Capture after frame 800. Demo mode shows every asset id; the
+  `hidden-` tags of the texture rows are covered by unit tests.
   `named-blocked` starts a named lookup, adds tploc and then resolves a distant
   destination; `maturity-blocked` holds a home teleport for a maturity response
   and adds tplm before releasing it. Both exercise the real deferred application
@@ -5293,12 +6040,38 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   counted as unread (the demo keeps no transcript: that both payments come
   back with the history is a unit test's, and a grid check). `sent-open`:
   no conversation open; our L$300 to Tess opens hers on its card, with
-  "Open the conversation when you pay a resident" turned on (off by
-  default). `friend`: no
-  conversation open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
-  stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
-  friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
-  and `--language en`.
+  "Open the conversation when you pay a resident" on Anyone (Never by
+  default). `sent-friend`: no conversation open, the same choice on
+  Friends only; our L$250 to a friend opens theirs on its card, our L$20
+  to a stranger shows nowhere (#2638). `friend`: no conversation open;
+  a friend's L$250 to us opens theirs on its card ("For the boat ride"),
+  a stranger's L$20 is a notification ("Open the conversation when a
+  resident pays you" on Friends only, the default). `anyone`: the same
+  on Anyone, both conversations open. `off`: the same on Never: no
+  conversation opens, both are notifications. `sale` (#2675): no
+  conversation; notifications for a sale ("for Steel helmet"), an object
+  paid with its name ("for Tip jar") and without, and a stranger's L$20,
+  no card. `balance`: no toast; 6 seconds after the start, three payments
+  0.9 s apart rise under the balance (12,480 L$), green, stacked
+  downwards, then a purchase of L$300 in red. They leave one at a time;
+  each one that lands flashes the number, green or red, and it ticks up
+  or down; `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other
+  looks. Right-click on the balance: "L$ received" and "L$ spent" hide
+  their own rows. `earning`: from 12,480 L$, every 10 seconds for as long
+  as the viewer runs, a sale, an object paid or a direct payment of 20 to
+  300 L$, a purchase of as much, or ten times as much L$ bought, with the
+  saved switches and limits, which can be changed meanwhile (by default a
+  direct payment has its toast or its card, the others their row alone;
+  `sale` turns every toast on for its run, `balance` off). Capture after
+  frame 400, with `--language fr` and `--language en`.
+- **`AURORA_DEMO_DEBUG_SETTINGS`**: opens Debug Settings at the first frame.
+  `1`: past the warning, nothing typed. `warning`: on the warning, with its
+  "Do not show this warning again". Any other value is typed in the search and
+  its first match is chosen: `colors.chat_direct` shows the colour swatch,
+  `camera.camera_offset` three numbers, `language` a text field, `show_huds` a
+  switch. A value the setting's type refuses (`update_mode` = `x`) shows the
+  reason and changes nothing. Look for the star on a changed setting, and for
+  no login, service key or text holding a UUID anywhere in the list.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
@@ -5434,11 +6207,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   effective texture encoding, not merely the presence of a texture or material.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
   previews, the camera, the permissions, the selection and the confirmation.
+  `animation-native-metadata` opens one native `.anim` file to check its
+  editable priority, loop mode and range, hand pose, expression and ease controls.
   With `texture` and `AURORA_DEMO_IMPORT_FILE`, also check grayscale and
   grayscale/alpha PNGs, and 16-bit grayscale, RGB and RGBA exports: all must
   show a preview without a channel error. Luminance is repeated in RGB,
@@ -5605,7 +6380,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   follow the same demo object: active GPU texture/material, then restoration
   or detection of the supporting prim. They require `AURORA_DEMO_ACTIONS=1`.
   The traces also check that the server data received no local UUID.
-  Add `AURORA_DEMO_LOCAL_APPEARANCES=1|menu|reveal|confirm|remove|cancel`
+  Add `AURORA_DEMO_LOCAL_APPEARANCES=1|menu|reveal|confirm|remove|cancel|deleted`
   to `local-material-applied` (or `local-texture-applied`) to hide the import,
   People and Inventory windows and focus the preview object at frame 600,
   then exercise the warning through real pointer events.
@@ -5614,6 +6389,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `reveal` switches it on at frame 680 and off at frame 850 without opening
   the menu. Capture frames 700/800 while pulsing and 950 after switching off.
   Highlight stays enabled until switched off and respects Reduce motion.
+  `deleted` enables the highlight at frame 680 and removes the preview object
+  through an ObjectsKilled event at frame 700, retaining its stored local
+  application. Capture frame 670 with the
+  warning and 740 after deletion: the warning and highlight must disappear.
   `local` loads texture, material and mesh together through the same filter.
   `AURORA_DEMO_IMPORT_REGISTRY=<test file>` enables the persistence of the
   import scenarios to this isolated file. First launch `local-texture-applied`,
@@ -5800,8 +6579,10 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_INVENTORY=hover-photo|hover-photo-object|aurora-hover-photo|aurora-hover-photo-object`**:
   hover the synthetic texture or an object with a saved picture after frame 600.
   Capture after frame 700. Both layouts must show the image without selecting
-  or opening the item. Preferences > Inventory > Show pictures on hover is on
-  by default; disabling it retains the text tooltip and stops picture requests.
+  or opening the item. Preferences > Inventory > Show pictures on hover is off
+  by default, like the text tooltips: turn it on (the text tooltips may stay
+  off, the picture then shows alone); disabling it retains the text tooltip and
+  stops picture requests.
   Objects without a saved thumbnail retain their text tooltip. The viewer does
   not rez objects or inspect their contained assets to manufacture a preview.
   On the grid, also check a snapshot, a linked texture, an object/folder with a
@@ -5976,7 +6757,7 @@ failure. Grid validation and any paid upload are performed by the human.
   of `auto_accept_inventory_chat` / `auto_accept_inventory_notify` in the
   isolated profile; closing a receipt must never send another acceptance.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
-- **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". Capture at frame 760 (900 for `group-notice-saved`) in English and French.
+- **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved|group-notice-chat`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". `group-notice-chat` closes both cards at frame 760 and shows the Aurora Builders chat (opened by Nova's invitation): its notice left a system line, "Group Notice Sent by: Tess Touch", the subject and the text, not counted as unread (Preferences › Chat › Groups and blocking, "Group notices in group chat" and "With their subjects and authors", both on); Northern Wolves has no chat open, so its line went to the group's transcript only. Capture at frame 760 (900 for `group-notice-saved` and `group-notice-chat`) in English and French.
 - **`AURORA_DEMO_NOTIFS=fees|fees-answered|fees-short`**: at frame 700, an invitation to Lagoon Sailing Club with a L$ 50 membership fee ("Membership fee" under its text, "Join · L$ 50" on its button) and a tip jar of Tess Touch asking to take L$ and animate the avatar: titled "Warning: access to your account", the warning then the other permission, Deny as the main button and Allow access beside it. `fees-answered` answers at frame 850: the invitation is replaced by "Join the group" naming the cost (Join / Cancel), the question is denied and the nearby chat tells it ("… has been denied permission to: Take L$ from your account."). `fees-short` asks L$ 5000: Accept at frame 850 leaves the invitation and adds "You do not have enough L$ to join this group". Capture at frame 760 (`fees`) or 900.
 - **`AURORA_DEMO_NOTIFS=purchase|purchase-open`**: a Marketplace purchase delivered at frame 700, in the grid's words, from no sender (#1604), with the demo inventory loaded just before. The nearby chat shows it as a notice (the box of items in compact rows, no "System" sender with its letter); "Received Items" in its text is a link to that folder. `purchase-open` clicks the link at frame 760: the inventory opens on its Received tab. Capture at frame 740 (`purchase`) or 820 (`purchase-open`).
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
@@ -6304,7 +7085,7 @@ failure. Grid validation and any paid upload are performed by the human.
     "Ombres", not "Nombre"); a shortcut is found by its keys (`Ctrl+M`), a
     command by its name (`gtp`). `zzzz` shows the empty result.
   - `modified`: the settings that differ from their defaults, all pages
-    together, with "Reset them all" (and its Undo).
+    together, with "Reset them all…" (its confirmation, then its Undo).
   - `cogs`: every cog open (the rows behind the cog of a row: the twelve
     effects of Aurora's water, the eight of the depth of field…), for
     captures; each opened block has its own darker face.
@@ -6317,6 +7098,9 @@ failure. Grid validation and any paid upload are performed by the human.
     every frame short.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
+    The button itself asks first: `reset-ask` opens its "Reset …?"
+    dialog, `reset-all-ask` the one of "Reset everything…", and
+    `modified-ask` the one of "Reset them all…".
   - `restore` (with `system`): the confirmation of a settings restore, for
     a backup of the demo's own profile (preferences, windows' layout, skin,
     accounts' files when they exist); "Restore" puts them back as a real
@@ -6518,7 +7302,7 @@ failure. Grid validation and any paid upload are performed by the human.
   onto an object you own with and without Ctrl, onto someone else's (a
   no-transfer item refuses the whole drop), and onto the Contents tab.
 
-- **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
+- **`AURORA_DEMO_GIVE=profile|avatar|texture[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
   `AURORA_DEMO_PROFILE=wolf` (or any other resident), leaves the pointer
   beside the profile window: the whole window fades behind the gift and
@@ -6532,6 +7316,10 @@ failure. Grid validation and any paid upload are performed by the human.
   a readable avatar capture use `AURORA_DEMO_CROWD=12`,
   `AURORA_DEMO_POS=129,134` and `AURORA_DEMO_CAMERA=close,1110,420,20`;
   capture at frame 715 (`over`) or 760 (`drop`) with `AURORA_FPS_LIMIT=60`.
+  `texture` does the same as `avatar` with the demo texture alone, the
+  cargo of a texture row: the copy cursor and the outline, never the
+  texture library's refusal, and `texture:drop` opens the confirmation for
+  that one texture.
   The demo crowd is drawn as a grid: compare with a capture without the
   variable to see the outline. Manually: drag an item, a folder or a
   selection onto another resident's profile (any tab, both styles), onto
@@ -6821,7 +7609,7 @@ failure. Grid validation and any paid upload are performed by the human.
   player's volume icon shows one wave instead of two at frame 1500; no
   `video volume kept` line follows (the player's own 100 % before it is
   set is not taken for a change).
-- **`AURORA_DEMO_GIFS=1|klipy|sent|menu|nokey|net`** (#932): the
+- **`AURORA_DEMO_GIFS=1|klipy|sent|recent|menu|nokey|net`** (#932): the
   Conversations window open on the friend's conversation (or the one of
   `AURORA_DEMO_CONV`), its field's GIF picker open (`gif_picker.rs`,
   `gif_search.rs`). Outside these scenarios the demo has no GIF button,
@@ -6832,7 +7620,9 @@ failure. Grid validation and any paid upload are performed by the human.
   placeholder reads "Search KLIPY"). `sent`: the first GIF is sent once its
   tile shows: its link becomes our message, and its card animates under it
   (with the previews of `AURORA_DEMO_CONV_PREVIEWS`' demo, made here).
-  Searching `none` shows the empty grid, the popup the same size. `menu`:
+  `recent`: the clock tab open on five GIFs sent before; KLIPY's tab has
+  its own list, empty here. Searching `none` shows the empty grid, the
+  popup the same size. `menu`:
   the picker closed, the GIF button's right-click menu open ("Hide the GIF
   button", "GIF settings…"). `nokey`: the real settings without a key: no
   GIF button, only the emoji one. `net`: the real services, with the keys
@@ -6854,7 +7644,7 @@ failure. Grid validation and any paid upload are performed by the human.
   right-click a selected message and choose Copy message: it must copy the same
   selection as Ctrl+C, including partial first/last messages. With no selection,
   Copy message still copies only its target; Quote still quotes that message.
-- **`AURORA_DEMO_CHAT_INPUT=1|long`** (#1226): open Conversations with a
+- **`AURORA_DEMO_CHAT_INPUT=1|long|ime`** (#1226, #2608): open Conversations with a
   paragraph draft in its field and the nearby-chat bar. `1` shows four lines,
   including an empty line and emoji; `long` exceeds the four-row viewport.
   Combine with `AURORA_DEMO_CONV` to check Aurora, Compact, Bubbles and Legacy,
@@ -6867,6 +7657,26 @@ failure. Grid validation and any paid upload are performed by the human.
   the dock stays in place, while the full Legacy bar reserves its taller
   layout. Conversation windows keep their size. Sending collapses the field.
   Capture at frame 750 or later. This fixture uses no grid or system clipboard.
+  `ime` instead starts with empty drafts and delivers a Japanese preedit at
+  frame 710 to the focused Conversations input. Capture at frame 750 or later:
+  no solid selection background, a stronger underline beneath the active
+  conversion segment (characters 4..7), and thin underlines elsewhere. Repeat
+  with each conversation style and a light or high-contrast palette. Native
+  Windows QA still needs ATOK and Microsoft IME: compose, convert, move the
+  active segment, commit and cancel in Conversations, nearby chat and search;
+  also check Korean composition and ordinary selection/copy/paste.
+- **`AURORA_DEMO_RECENT_EMOJIS=1|<emojis>`**: the row under the chat
+  fields (the island's, the Conversations window's), `1` a full row of 20,
+  or the emojis given, the last one first. Nothing is saved. A click adds
+  the emoji at the caret; a message sent moves its emojis to the front.
+  Unset, the row takes no room until a first emoji is sent. Set, the row
+  shows even though Preferences › Chat › Show recent emojis is off by
+  default. The Legacy bars
+  (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
+  the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their
+  tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
+  the row or the picker adds or removes one. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens
@@ -6959,6 +7769,33 @@ failure. Grid validation and any paid upload are performed by the human.
   the preview and, like every mode, publishes only once a few words are
   written in "What were you doing". A real authorization and a real issue are only tested
   by the human, outside the demo.
+- **`AURORA_SPLASH=0|1`**: the startup splash (`splash/`) is the small
+  window a launch shows before the renderer: the logo, a progress bar and
+  the step (`Starting…`, `Reading the settings…`, `Preparing the graphics
+  card…`, `Compiling shaders (n/total)…`, `Loading the interface…`). It
+  is another process of the same executable (`--splash`), drawn on the
+  CPU, and closes when the viewer's window shows its first frame. `0`:
+  none; `1`: one even in an automated capture (`AURORA_CAPTURE` has none
+  otherwise, unless `AURORA_SPLASH_CAPTURE` asks for its picture). Not
+  on macOS. The log says `startup splash: on screen <ms> after the start,
+  closed after <ms>`. To see a slow start: `AURORA_PIPELINE_CACHE=0` and
+  `__GL_SHADER_DISK_CACHE_PATH=<empty folder>` (NVIDIA, see
+  `AURORA_PIPELINE_CACHE`). An update shows the same window from the
+  updater's helper, from the old viewer's close until the new viewer's
+  splash is on screen (`Closing the previous version…`, `Installing the
+  update…`, `Clearing the cache…` when the release asks for it,
+  `Starting the new version…`, the new version under the title); `0`
+  turns it off too. To see it: `scripts/test-update.ps1 -ClearCache`,
+  then Install and restart.
+- **`AURORA_DEMO_SPLASH=starting|settings|gpu|shaders:<n>/<total>|interface|ready|update-closing|update-installing|update-cache|update-launching`**
+  and **`AURORA_DEMO_SPLASH_HOLD=<seconds>`**, with `AURORA_DEMO`: the
+  splash shows that step whatever the start does, and stays open at
+  least that many seconds after it opened (behind the viewer's window
+  once that shows). **`AURORA_SPLASH_CAPTURE=<file.png>`** writes its
+  last image as it closes. The splash alone, without a viewer behind:
+  `AURORA_DEMO=1 AURORA_DEMO_SPLASH=shaders:23/61
+  AURORA_DEMO_SPLASH_HOLD=2 AURORA_SPLASH_CAPTURE=splash-en.png
+  aurora-viewer --splash --language en < /dev/null` (Git Bash).
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: no effect
   while the built-in bug report form is disabled ("Report a bug" opens
   GitHub's issue chooser, see [BUG_REPORTING.md](BUG_REPORTING.md)); what
@@ -6979,6 +7816,7 @@ failure. Grid validation and any paid upload are performed by the human.
   into the issue.
 - **`AURORA_DEMO_LOGIN=cards|cards2|cards8|derez|mfa`**: synthetic account carousel with three, two or eight accounts and generated landscape thumbnails; `derez` starts the shortened fragment transition and holds synthetic connection progress inside the selected card, while `mfa` opens the two-factor challenge. No grid connection, saved-scene reads or credential-store access. Other card-mode clicks report that demo mode cannot connect. Cards keep their own grid/start selectors without password controls or a choice heading/count. Add account remains outside the carousel; arrows appear only above three accounts; smaller catalogues remain in a fixed row even in narrow windows. Check 800 × 733 and 1280 × 720 layouts, vertical scrolling at 800 × 560, and the 30-day checkbox in the MFA dialog.
 
+- **`AURORA_DEMO_LOGIN_LAST=<n>`** (`ui/login/carousel.rs`), with `AURORA_DEMO_LOGIN=cards|cards2|cards8`: the demo account number `n` (from 1) is the one of the last login, the second one by default (the only one with `cards1`). The cards select it when the screen opens, whatever account was added last and however many accounts there are: with `cards` and `n=1` or `3` the first or the third card has the violet Log in button, with `cards8` and `n=6` "Example 6" is centred. Enter starts the login of that account (the unit tests check it, since the demo sends no key). Without the variable the second card is selected (`cards8` centres "Example 2").
 - **`AURORA_DEMO_LOGIN_FAVORITES=1|open|pick`** (`login_favorites.rs`), with `AURORA_DEMO_LOGIN=cards`: a memory-only store gives the selected (middle) demo account five favorite landmarks and the third one, while the first (never logged in here) keeps Last location, Home and Region only. `1` shows them under a "Favorites" caption at the end of each card's Start menu (hover a favorite: its region and position); `open` opens the selected card's Start menu once, for a capture (`AURORA_CAPTURE_FRAMES=60`); `pick` chooses the selected account's second favorite, so the menu shows its name and `AURORA_DEMO_LOGIN_SUBMIT=<frame>` writes `demo login: start at the favourite … (uri:<region>&60&200&22)` to the log. Choosing Last, Home or Region again, or another card's favorite, replaces the choice; the choice is never saved. The session side runs in demo too, without `AURORA_DEMO_LOGIN`: `AURORA_DEMO_EXIT=logout AURORA_DEMO_LOGIN_FAVORITES=open` logs out at frame 800 and opens the login form's Start menu, which lists the demo inventory's two favorites (capture frame 1000; the log says `login favourites: 2 stored for this account`; nothing is written to disk in demo). An empty list there is the stale demo inventory cache: delete `cache\demo\inventory\<agent>.inv` first.
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.
 - **`AURORA_DEMO_LOGIN=cards1|derez1`**: a single saved account; `derez1` starts its validation. With no neighbour card to shatter, a faint echo of the chosen card breaks apart towards both sides from under it. Capture `AURORA_CAPTURE_FRAMES=30|36|42` and compare with `derez` (three cards).
@@ -6986,6 +7824,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_LOGIN=add-mfa`**: one saved account and the Add form open with a second synthetic identity typed in; Log in sends it to the offline server, which asks for the second factor 1.2 s later. The challenge must stay in the Add form with the new identity (never the saved card's), and the log line `demo login: request for a new account` names which identity was sent, without the name. `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` presses Log in at those frames for captures (`AURORA_DEMO_LOGIN_SUBMIT=40`, `AURORA_CAPTURE_FRAMES=170`). The demo never touches the system credential store.
 - **`AURORA_DEMO_LOGIN=mfa-refused`**: the first-account form with a synthetic code typed in. The offline server refuses a request that carries a code the way the grid refuses a wrong one, and challenges a request without one. With `AURORA_DEMO_LOGIN_SUBMIT=40,300`, the log must read `code true` for the first request and `code false` for the second, and the second answer opens an empty code field (capture frames 200 and 500).
 - **`AURORA_DEMO_LOGIN=terms`**: the first-account form with a synthetic identity typed in. The offline server asks first to accept the Terms of Service (reason "tos"), then to read a critical message (reason "critical"), then answers as the other demo forms do. The terms step shows the server's text, a "Read the Terms of Service" link (Linden Lab's page on their grids, else the address the message names) and its checkbox; the critical step shows its own title, text and checkbox. With `AURORA_DEMO_LOGIN_SUBMIT=40,300,560` (check each box by hand between the presses, or capture frames 200 and 460), the log reads `demo login: agree_to_tos false, read_critical false`, then `agree_to_tos true, read_critical false`: accepting the terms never acknowledges the message.
+- **`AURORA_DEMO_LOGIN=next-server`**: the first-account form with a synthetic identity typed in. The offline server sends the login on to another server, `login.other-grid.example` (`LoginError::NextServer`): the form shows the "Another login server" step with that name and its checkbox, and Log in stays disabled until the box is checked. With `AURORA_DEMO_LOGIN_SUBMIT=40,300` (check the box by hand between the presses, or capture frame 200), the log reads `demo login: the login server sends the login on to another server` once; the second press ends as the other demo forms do. The rule itself (same server followed, another one asked, encrypted to unencrypted refused) is in the unit tests of `aurora-net/src/login.rs`.
 
 - **`AURORA_DEMO_LOGIN=drag|drag2|drag-card|drag-card2`**: eight/two synthetic profiles with a left-button side-grip or portrait gesture injected into egui at frames 20–44. Capture frame 40 while held and frame 75 after release. With eight profiles, check continuous card motion, clipped neighbours, circular wrapping, final alignment and central selection without connecting. With two profiles, the same gesture must keep the cards fixed, without arrows or connecting. Input injection never moves the OS pointer. Manually drag in both directions from portraits, place images, names, card padding and Connect buttons; release over a card/outside the window and resize during motion. A simple click still connects, while grid/start menus and text-field drag selection remain usable. Also check Enter, dialogs and short-window vertical scrolling outside the browse row.
 
@@ -7027,10 +7866,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the files built into the viewer. The demo and the update test
   installation never download the news, even with this
   variable.
-- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta`**, with `AURORA_DEMO=1`: offer
+- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta|grace`**, with `AURORA_DEMO=1`: offer
   of a synthetic version, download at 42% or download finished; `beta`
   offers a nightly beta (`0.7.7-beta.20261025.1`), as a viewer on the Beta
-  channel sees it.
+  channel sees it; `grace` is the offer below a new minimum version during
+  its grace period (12 h left): "Sign in anyway" and "Update", no "Skip".
   "Update" animates a simulated progress; "Cancel" goes back to the
   offer. No download and no file replacement. Login
   is inert and the login preferences stay intact.
@@ -7096,11 +7936,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`600,600,600`) gives one frame to each renderer of the run, the start's
   then each recovery's (a recovery's counts its frames from 0 again): with
   the recovery on (the default), three losses within a minute recover,
-  recover with the safe graphics level, then close.
+  recover with the safe graphics level, then close. The report's
+  `GPU work at the loss` is then the first of the three, and
+  `GPU work at the later losses` the other two (`loss 2: … / loss 3: …`).
   The report's "Last state" table then shows the new device-lost fields
   (effects on, GPU frame times, session and region seconds,
   `GPU loss: first seen by` = `demo`), and its first table the
-  `Vulkan layers on offer`: read it in the session's
+  `Risk factors` (right under `Crash`), `GPU errors` (`none in the retained
+  session log` in demo), `OS GPU reset records` and `Vulkan layers
+  installed`: read it in the session's
   `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One
@@ -7195,10 +8039,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
-- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes`**: nearby chat said at the arrival,
+- **`AURORA_DEMO_CHAT_LINES=1|legacy|volumes[:lines]`**: nearby chat said at the arrival,
   shown above the chat bar with the Conversations window closed: two lines
   of one resident, an emote, an object's line, a long line with a link, a
-  shout (only the 6 most recent lines show, as always). `1`: Aurora's cards
+  shout. Preferences › Chat sets the maximum wrapped text lines (40 by
+  default, 0–50; 0 hides them), keeping the newest whole messages. Card
+  headers do not count toward the text limit. Append `:3` to any mode to
+  test three lines, or `:0` to hide them, without saving the override.
+  Compare `1:3` and `legacy:3`, and change the chat text size to check wrapping.
+  `1`: Aurora's cards
   (Preferences › Aurora › Nearby chat lines), one per sender in a row, the
   picture, the name, the time if shown, SHOUTS / WHISPERS / IM after the
   name, the lines under it, each fading on its own; `legacy`: the Legacy
@@ -7208,7 +8057,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `volumes` shows the same normal, whispered and shouted messages from us
   and an object in both the cards and Conversations, visible together to
   compare their colours, whisper italics and shout weight. These demo cards
-  remain visible for an hour without changing the saved timeout.
+  remain visible for an hour without changing the saved timeout. `stagger`
+  (cards) and `legacy:stagger` (one-line look) say the same lines one at a
+  time, every 2 s from 3 s after the arrival, so that each leaves on its
+  own at the end of its fade (20 s by default, then 3 s of fade), as in a
+  busy region (#2544). What to see: when a line leaves, or a new one
+  comes, the others move once to their new place and stay there, never a
+  line's height up or down for a frame and back. A still frame does not
+  show it: capture consecutive frames across a departure
+  (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
+  about 23 s to 31 s after the arrival) and compare the lines' bottom frame
+  by frame.
 
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
@@ -7278,6 +8137,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is hidden as by default); `compact` for the Compact style (one row
   per message, time, name and tags); `medium` (700 px), `narrow` (460
   px: the column becomes a rail of pictures) or a width in points;
+  `collapsed` (the column kept as a rail at any width by its button, in
+  the column's head, at the top of the rail; from
+  the scenario only: the settings keep nothing until the button is used),
+  `opened` (with a width of 560 to 599 points, such as `580`: the column
+  opened by its button in a narrow window; narrower, the button is greyed
+  out);
   `call-incoming` (Tess calls: the banner and the pulsing entry),
   `call` (the group's call: the stage, speaking ring, Tess muted by a
   moderator, the speaker in the column), `call-mini` (the stage reduced to
@@ -7374,11 +8239,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the `maps` part). `friend` follows Nova: the card shows "Loading…" then her
   region, the drawer's Friends tab lights her line; Orion, who does not share
   his position, is greyed. `legacy` shows the side panel layout without
-  touching the setting (Preferences › Aurora › World map). What to see: the
-  place card at the bottom left (rating, people, X / Y / Z, distance, five
-  buttons on one line), the layer pills at the top right (greyed when zoomed
-  out), zoom / my position / home at the bottom right; the panels fade while
-  the map is dragged and never let a click through to the map.
+  touching the setting (Preferences › Aurora › World map). `show-on-map`
+  shows a place in another region the way Places, the favorites bar and
+  search do: the map opens on it, not on the avatar. `show-link` shows the
+  same place from a place link, by region name (a chat link's Show on map, a
+  `secondlife:///app/worldmap` link): the region is not known yet, so the
+  map waits for its answer and slides to the place, never back to the spot
+  tracked before. What to see: the place
+  card at the bottom left (rating, people, X / Y / Z, distance, five buttons
+  on one line), the layer pills at the top right (greyed when zoomed out),
+  zoom / my position / home at the bottom right; the panels fade while the map
+  is dragged and never let a click through to the map.
   `beacon` shows a nearby destination without the world-map window: the
   bright upper column stays visible up to the screen edge, with a pin and a
   readable location / distance label. A second column descends from the
@@ -7402,6 +8273,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   value with Enter or
   by leaving the field: a destination appears without teleporting. Remove
   it: the coordinates return to our position and can be edited again.
+  `switch` flips the layout at frame 700 with the map open, as
+  Preferences › Aurora › World map does (with `legacy`: from the side panel
+  to the full-frame map). What to see (#2669): the window keeps its size and
+  stays resizable by its edges; capture frames 650, 760 and 1300. With
+  `AURORA_UI_FONT=OpenDyslexic AURORA_TEXT_SIZE=1.3` the side column's rows
+  measure wider than the column, which made the window grow to the screen's
+  width.
 - **`AURORA_DEMO_APPLINKS=1|<command>`**: Tess Touch's conversation and the
   chat console show one `secondlife:///app/...` link of each command: a
   group (its name), a link written with its own text, the "About Land"
@@ -7564,7 +8442,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
-- **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
+- **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview, and its marker's. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
 
   For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.
 
@@ -7579,7 +8457,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   stay in place. Cancellation and invalid files leave the current contacts intact.
 
 - **`AURORA_DEMO_PEOPLE_FILTER=<text>`**: combine with a People scenario to prefill its search. With `rows` or `legacy`, `tesstouch` and `tesstouch Resident` must find the resident displayed as `Tess ✧`; `TESS` must find the same resident. An empty filter restores all rows; unrelated text shows no matches. This deliberately searches display, legacy and account names regardless of the chosen name format, while retaining contact aliases and RLVa anonymity.
-- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked`**: People › Near you in
+- **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked|blocked-empty`**: People › Near you in
   Aurora's look, with the residents of the People mock-up (names, ranges,
   states, arrivals), alone on screen. `rows`: the rich rows grouped by
   range (whisper 10 m, say 20 m, shout 100 m, beyond), Tess selected with
@@ -7616,7 +8494,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   actions out: move, take out, menu), `recent` (420 × 300: four residents
   met lately, how long ago and where) and `blocked` (420 × 300: a resident
   blocked in full with "Unblock" out, one for voice and text, an object
-  for its sounds). Each tab keeps its menu of several people (Ctrl /
+  for its sounds); `blocked-empty` opens the same tab for a resident who
+  blocks nobody: the demo server answers the request with the
+  `emptymutelist` generic message, and the tab shows an empty list with no
+  "loading" nor "server did not respond" line. Each tab keeps its menu of several people (Ctrl /
   Shift) and its sheet; a window too narrow for the six tabs shows the
   ones around the open tab beside "…".
   Append `:<width>` for a responsive check, for example `hover:300`,
@@ -7724,16 +8605,32 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". The detached window has the look of the tab it
+  picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
   left (#961): People's friends tab in Aurora's look of People with the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
   the run; `hidden` disables it with Contacts initially selected, showing
-  the fallback to nearby chat. The saved preference defaults to off
+  the fallback to nearby chat. `conference` selects the online friends (IM starts a
+  conference), `map` one friend who shares their location (Map enabled), `invite`
+  the first group where we may invite, on the Groups tab (Invite enabled; add
+  `AURORA_DEMO_GROUP_PROFILE=officer`, a plain member may not invite), at frame 600;
+  add `AURORA_DEMO_PEOPLE=legacy` to see the classic buttons. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
+- **`AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat`**: at frame 60 the
+  set Family (the demo friend Nova in it, in memory only) gets "Show
+  notifications" and its own Do Not Disturb response, and the friends'
+  global online notices (toast and nearby chat) are off for the run.
+  `config` opens the set's settings window on its switches
+  ("Show notifications"); `config-responses` scrolls it down to the three
+  custom responses, below the appearance options; `config-bottom` to "All
+  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  nearby chat: at frames 300 and 360 Nova and another demo friend go
+  offline and online, and only Nova gets the two lines; at 400 do not
+  disturb comes on, at 420 Nova writes, and the log line `demo set
+  notices:` gives the response sent (the set's text). Capture at 620.
     In Aurora's look, Friends has no display-options gear: search, profile
     pictures and friendship rights stay available. Contact-set lists always
     show pictures; names use the set's explicit UI-name appearance and
@@ -7952,10 +8849,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   environment, experiences, covenant, interventions): `access`, `rules` or `terrain` scrolls to
   that section, `pending` makes two changes there and scrolls to the bar
   "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
-  `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
-  opens that question (EstateParcelAccessOverride, ChangeLindenEstate,
+  `ask-linden`, `ask-restrict`, `ask-bonus`, `ask-maturity`,
+  `ask-heights` or `ask-bake` opens that question
+  (EstateParcelAccessOverride, ChangeLindenEstate, Aurora's "Restrict who
+  can come?" for the lists only with 3 people here,
   ChangeObjectBonusFactor, RegionMaturityChange, ConfirmTextureHeights,
-  ConfirmBakeTerrain). The demo simulator keeps what Apply sends and
+  ConfirmBakeTerrain). The pending access changes of `pending` turn on
+  "Payment info on file": their Apply asks "Restrict who can come?" too.
+  The demo simulator keeps what Apply sends and
   answers it in the next RegionInfo / `estateupdateinfo`; the terrain's
   textures and elevations, which a real simulator sends back in a new
   RegionHandshake, stay shown as sent. A manager sees the bake greyed
@@ -8123,6 +9024,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `RequestGroups` response adds 64 named memberships (67 total). Combine it
   with `AURORA_DEMO_CONV=aurora:new`, then open Start group in the Conversations
   column to inspect the scrollable picker and reach the last entry.
+- **`AURORA_DEMO_ACTIVE_GROUP=none`**: starts the demo session with no active group
+  (`world.groups.active` nil and no group title worn). Used e.g. with `AURORA_DEMO_CONTACTS=groups`
+  to verify that "None (no group tag)" displays the active tag badge and "Activate" is enabled for groups.
 - **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
   toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
   600, with every title of the three demo groups and three region rules:
@@ -8162,7 +9066,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
-- **`AURORA_DEMO_LAND_MODERATION=menu|none|freeze|eject|eject-ban`**: the
+- **`AURORA_DEMO_GOD=1`**: at frame 400 Advanced › Request Admin Status is
+  asked, and the demo grants god level 200 at once (OpenSim's level for a
+  region owner or a grid god): the crown leads the navigation bar's parcel
+  icons, its tooltip names the level, and nearby chat says "Entering god
+  mode, level 200". Advanced then offers "Leave Admin Status", which takes
+  the crown away with "Leaving god mode, level 200". Outside the demo the
+  request goes to the region (RequestGodlikePowers), which answers with
+  GrantGodlikePowers or not at all. On an OpenSim grid, test as the region
+  owner: the crown and the notice on Ctrl+Alt+G, then gone on Leave. With the
+  level, Advanced › Admin appears: Object (its entries need a selection),
+  Parcel and, outside OpenSim, Region. In the demo they are only logged
+  ("admin: …").
+- **`AURORA_DEMO_LAND_MODERATION=menu|none|freeze|eject|eject-ban|estate-menu|estate-kick|estate-home|estate-ban`**: the
   violet wolf stands on our land (the ParcelOverlay cell under it becomes
   ours), then at frame 600 `menu` opens its world menu from its name plate
   (capture 720 with `AURORA_DEMO_PIE=0` and the pointer on Disturbance,
@@ -8175,6 +9091,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   does nothing with it. On the grid, test as the parcel owner, an estate
   manager and a group member with and without "Eject and freeze": the
   resident must be frozen, unfrozen, ejected, or ejected and banned.
+  The `estate-` modes leave the land someone else's and make us a manager
+  of the region's estate: `estate-menu` opens the wolf's world menu,
+  whose "Moderation" submenu then holds "Freeze" and "Eject from parcel",
+  then "Send home", "Kick from estate" and "Ban from estate" (capture 720
+  with the pointer on Moderation, `AURORA_DEMO_POINTER="825,692,s"`);
+  `estate-home` and `estate-kick` ask the question, what it does, one
+  button and Cancel; `estate-ban` asks "This estate" / "All estates you
+  manage" / Cancel. An answer logs the TeleportHome, KickFromEstate or
+  AccessDelta command (`estate moderation:`); the demo simulator does
+  nothing with it. The People list's Nearby menu and the minimap's
+  resident menu have the same "Moderation" submenu under the same
+  rights. On the grid, as an estate manager on
+  their estate: each of the three must act on the resident (sent home,
+  kicked, banned and listed in Region / Estate › Access).
 - **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles|card|card-offer`**:
   a resident's "Invite to group", "Add to contact set", "Block
   particles" and "Give my calling card", on the wolf (unblocked for the scenario, owner of the
@@ -8211,7 +9141,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `unknown`: a region for which nobody answers (error after 10 s);
   `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open]`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow]`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months. In Aurora's look (Preferences › Aurora ›
   Places), `:wide` opens the window at 1040 × 640 (the rail of sources and
@@ -8219,7 +9149,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   narrow row opens in place); `:wide,open` does both. The demo's favourite
   of the lagoon is a copy of its landmark (same asset): one place with a
   lit star.
-- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
+  `:classic` shows the Legacy Viewer's three tabs for the run, whatever
+  Preferences › Aurora › Places says (not saved): the Teleport / Map /
+  Profile bar stays whole at the bottom, down to the window's minimum size
+  and at any interface scale (#2641).
+  `:narrow` opens the window 260 points wide (its least width at text
+  size 1): with `:classic` and `AURORA_TEXT_SIZE=2`, the window widens to
+  the three buttons, each whole.- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
   gives it its notes and moves it to the chosen folder, Cancel deletes it.
@@ -8279,6 +9215,43 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the status line and load bar under the page. An http(s) link clicked in
   a page opens in the same window; a SLURL acts in the viewer; a link that
   asks for a new window (`target="_blank"`) does nothing.
+- **`AURORA_DEMO_DESTINATIONS=compact|wide|legacy|empty`**: Aurora's
+  Destinations window (Preferences › Aurora › Destinations, the default)
+  opens at start on a guide made up offline (`demo_destinations.rs`: 11
+  categories, 13 invented places with plain pictures drawn by the viewer,
+  read by the real feed's parser; no network). The window opens wide the
+  first time, then in the view chosen last (`destinations_wide`, saved);
+  the two modes force their view for the run without changing the saved
+  one. `compact`: the compact view (440 wide), the first visited place
+  opened in its row; `wide`: the wide view (1120), a rail of categories
+  with counts, three columns of cards and the preview of a place. Check in both: What's Hot Now first
+  (7 places, by population), the G / M / A toggles (A off by default; a
+  rating above the account's is not offered), the order menu (population,
+  name, newest), the search (it covers every category: "saiko" lists two
+  places), the people count on the pictures, "Already visited" on Lantern
+  Isle and Pixel Arcade (from the demo's teleport history), "Until …" on
+  the Garden Concert, the footer "Official grid guide · updated just now"
+  and its refresh button. Teleport, Show on map, About Land and Copy SLurl
+  act as for any place link; Create landmark and Add to favorites are
+  dimmed with a tooltip outside the place's region. The widen / compact
+  button of the title bar (or the window's edge dragged across the
+  widening point) switches the two layouts; "Hide visited places"
+  is in the wide toolbar only. `empty`: a guide with categories and no
+  place ("No place with these filters."). `legacy`: the Legacy style for
+  this run, the guide's web page (below). When the window closes, the log
+  says how many pictures it let go (`destination guide: window closed`).
+- **`AURORA_DEMO_DESTINATIONS=<page>|sl`**: the Destination Guide
+  (toolbar `destinations`, World › Destinations after Places,
+  LLFloaterDestinations) stands for this page in demo and opens at start;
+  `sl` gives the Second Life guide's address
+  (`https://lecs-viewer-web-components.s3.amazonaws.com/v3.0/agni/guide.html`,
+  written to the log as `destination guide: <address>`), which shows the
+  guide with a network and the browser's error page without one. Check:
+  the window (550 x 225, no address bar, like the Legacy window) shows the
+  page, the button is lit while it is open and closes it, the menu entry
+  shows. Without the variable the demo is a grid without a guide: the
+  button is dimmed with "This grid has no destination guide." in its
+  tooltip and the menu entry is hidden.
 - **`AURORA_DEMO_MARKETPLACE=<page>`**: World › SL Marketplace stands for
   this page in demo (a local `file:///…` page is enough): the window opens
   at start on it, the menu entry shows, and a link to an address under it
@@ -8419,6 +9392,107 @@ hand would (log: `demo physics edit: sliders at the lively layer`); the
 of `other` keep bouncing. Save stores the asset and applies it as the
 appearance, as a simulator bake would.
 
+**Avatar Studio.** `AURORA_DEMO_AVATAR_STUDIO=1` opens the studio at frame 640.
+Capture after frame 850. Inspect the circular podium, neutrally lit avatar,
+surrounding water, stars and animated aurora in the login screen's colours.
+Entry and exit fade to black before switching the scene, then uncover it:
+120 ms out, a covered switch, 180 ms in. The entering avatar initially has
+fullbright white radiance, preserving alpha/cutouts, holds white through
+the fade plus 80 ms, then blends linearly into its normal appearance over
+850 ms. A single small burst of sparks drifts away and fades within 1.2 s.
+`white` and `reveal` hold the visual effect at 0.22 and 0.65 seconds for
+captures at frame 850; the actual scene transition still runs normally.
+`cycle` also leaves the studio at frame 960; capture after frame 1050 to
+check the restored world. Reduced motion skips white/particles, while the
+short black fade remains; a particle budget of zero also suppresses sparks.
+Toggle quickly during either fade, press Escape during entry, and repeat
+at 30/120 FPS: no uncovered camera cut, stuck black frame or repeated burst.
+Avatar and attachment animations must continue, and HUD textures must retain
+their normal colours throughout the reveal. No worn material is modified.
+The controls overlay uses the top bars' glass island surface and 36-point height,
+with smaller mouse diagrams, inline captions and subtle dividers. Pose and
+Lighting dropdowns precede Reset/Leave studio on the right. The
+wheel diagram also has scroll arrows. Hover each hint for the full instruction.
+Inspect English, French and Japanese: captions should align, remain readable
+at ordinary UI scale, and avoid the avatar's head.
+Pose defaults to AO / In-world. T-Pose uses the shaped rest skeleton; A-Pose
+lowers both straight arms 45 degrees. `t-pose` and `a-pose` show those states;
+`pose-cycle` selects T until frame 800, A until frame 960, then returns to the
+current animation. Its clock, signals and worn attachments must keep working.
+Both presets normalize the displayed feet to the fixed podium, including mesh
+pelvis offsets. `grounding` puts the entry floor 1.25 m lower before selecting
+A-Pose: the avatar must still stand on the podium. The camera and podium remain
+fixed while switching poses. The bar keeps 10-point side padding, the top bars'
+vertical inset, and an optically centred title.
+`pose-menu` and `lighting-menu` open those menus at frame 800 for captures.
+Lighting defaults to Studio. `environment` instead uses the current sky,
+sun/moon, ambient and water settings, without the studio lights or aurora.
+Combine with `AURORA_DEMO_SKY=midday` to inspect a region environment. On the
+grid, the human checks that local overrides and Shared environment are both
+respected, including later changes while Studio stays open. The selector must
+not alter the saved environment, and returning to Studio restores its backdrop.
+Studio framing has no avatar-height focus bounds, pan radius or framing zoom
+limits. Drag above/below the avatar, pan several body lengths, and zoom beyond
+the initial distance or in closer than 35 cm. Reset must restore the composition
+while retaining the selected pose and lighting. Only finite camera values and
+a numerical eye/target separation are required.
+Opening Photo mode / the viewfinder hands its camera the current Studio view.
+Its autofocus clicks, right-drag/Alt framing, wheel lens/exposure controls,
+camera pad, depth of field and shutter take priority. The Studio guide hides
+while the viewfinder shows; the ocean/stage, pose and lighting choices remain.
+Closing Photo mode restores Studio's controls and the saved world camera/aim;
+the temporary photo camera is not sent to the simulator. Combine `grounding`
+with `AURORA_DEMO_SNAPSHOT=viewfinder-focus` and
+`AURORA_DEMO_SNAPSHOT_FRAME=1000`, then capture after frame 1100: the AF face
+marker should follow the grounded preset head. The human checks native photo
+capture, tilt, lens/aperture/exposure changes, free-camera controls, Photo-mode
+exit, and subsequent Studio framing/Reset with their live avatar.
+The water should reflect the sky; distant ridgelines stay near the horizon.
+`pedestal` lowers the focus to the feet and zooms in one wheel step for a
+repeatable close-up; capture at frame 850. Rounded upper/lower shoulders should catch
+the studio lights with a satin-metal finish, and the underside must be closed.
+The pedestal also participates in planar water reflection/refraction captures;
+its near wall must occlude reflections of the soles rather than showing the
+avatar through the plinth. Check GPU culling and `AURORA_CPU_CULL=1` at
+high and low focal heights, and compare planar reflections enabled/disabled.
+Region terrain must appear neither directly nor through water reflections or
+refraction, including classic and PBR terrain outside the main camera view.
+Right-click the avatar and its attachments: the normal menus, including skeleton
+reset and attachment edit/detach, must remain available. Small pointer jitter
+under 10 UI points must neither move focus nor suppress the menu. Right-drag
+beyond that threshold must adjust focus and never open a menu on release,
+including after returning to the starting point. Release a drag over a window:
+it stops without opening a menu. Select Edit on an attachment, then select and
+drag its build handles: editing must own the left button without rotating Studio.
+Close the editor: left-drag orbits again. Photo mode keeps its native controls.
+For offline menu captures, keep the viewer focused (focus loss cancels Studio
+gestures) and combine `AURORA_DEMO_AVATAR_STUDIO=a-pose` with
+`AURORA_DEMO_CLICKS=1000,800,300,menu` at 1600 × 1000. A mesh-head shape
+fixture (`AURORA_DEMO_SHAPE=mesh-head`) also exercises the attachment target.
+Reduced motion holds the aurora still. Left-drag the exposed view horizontally to turn. Right-drag up/down
+to move the focus vertically through the avatar's centre; horizontal motion
+must not move that height control sideways. Hold the middle mouse button and
+drag horizontally/vertically to pan in the current viewing plane: eye and
+focus translate together, without rotation or zoom. Orbit after panning;
+the avatar should retain its screen position. Release over an editor/HUD
+and move the pointer again: panning must stop. Starting over UI/HUDs must
+leave their controls usable; losing window focus must cancel the drag.
+Reset restores avatar-centred framing and clears pan. Wheel zoom must ease in/out about that
+focus even with the pointer over the sky or water, and must not change its height.
+Compare 30 and 120 FPS for the same smooth response. Reset restores full-body framing; Leave
+studio, Escape and the toolbar toggle restore the ordinary world. Add Avatar
+Studio through Toolbar buttons and verify its active indication and removal
+from any of the three bars. Wolf menu > Build > Avatar Studio appears before
+Poser and IK Edit, toggles the same mode, and is checked while open. Use
+`AURORA_DEMO_MENU_SEARCH=Avatar Studio` to capture its Build path without
+entering the studio. Combine with `AURORA_DEMO_SHAPE=body|mesh-head`
+and `AURORA_DEMO_APPEARANCE=worn`: the windows remain usable, edits appear
+on the studio avatar and Cancel restores the draft. Compare the ordinary
+scene before and after leaving, including SMAA and MSAA. Human grid checks:
+a worn mesh body/head, rigid and flexible attachments, creator HUD clicks,
+shape edits and outfit changes. The stage is local; no teleport, rezzed object,
+agent relocation or inspection-driven heading change should occur.
+
 **`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head|t-pose`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
@@ -8470,6 +9544,24 @@ server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after f
 900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
 On the grid, also check a rigged body, real baked textures and persistence after
 relogin; only the human connects and performs these checks.
+`AURORA_DEMO_SHAPE_XML=<file>` (with any `AURORA_DEMO_SHAPE` mode) reads that
+appearance XML into the draft as the Import XML button does, without its
+dialog: the avatar and the sliders take the file's shape at once, the footer
+says how many settings were imported, and Save keeps them. A file that is not
+a `linden_genepool` 1.0 shows the "not an avatar appearance file" message;
+`readonly` refuses the import. The button itself (the same in the physics and
+layer editors) opens the native file dialog.
+`AURORA_DEMO_SHAPE_XML_EXPORT=<file>` writes the draft, as it is when the
+editor opens, to that file as the Export XML button does, without its save
+dialog: one `<param>` per shape parameter, no texture or other id; the footer
+says where it was saved. `readonly` (no modify rights) refuses it with the
+"needs modify rights" message, and the button is greyed out. The file reads
+back with `AURORA_DEMO_SHAPE_XML`.
+`AURORA_DEMO_SHAPE_XML_MENU=<file>` runs Appearance › Export shape XML of our
+avatar's right-click menu without its save dialog: the worn shape's asset is
+read (not the editor's draft) and written as the button does, then a notice
+in the nearby chat says where. With `readonly` nothing is written and the
+menu entry is greyed out.
 Opening the editor stands our avatar up (a seated avatar leaves its seat, as
 in the Legacy Viewer), and while the editor is open our avatar plays the
 customise animation (not the physics layer editor, which keeps the camera,
@@ -8508,6 +9600,17 @@ unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
 
+**`AURORA_DEMO_RELOAD_AVATAR=other|self`** opens the right-click menu of
+the demo's other avatar (Violet Wolf, unblocked for the scenario, with its
+hat and orb) or of ours at frame 700, chooses "Reload avatar" at frame 740,
+then again at 760. Nearby chat shows the reload line at 740 (`self`: "your
+outfit is baked again…"; `other`: "on your screen…"), then at 760 the line
+asking to wait a few seconds. The log says `reload avatar <id>: <n> worn
+objects, <m> prims asked again, <k> failed meshes retried` (`other`: 2 worn
+objects, 3 prims), with the bake, texture and skeleton lines of each step.
+The demo has no bakes nor streamed textures, so the counts of downloads
+are 0; the downloads themselves need a grid test.
+
 **`AURORA_DEMO_OUTFIT_RESTORE=warm|cold`** — the login restore of the
 outfit's attachments (`world/outfit.rs`) against a demo region that behaves
 like the busy region of the 2026-10-27 grid logs: it puts back by itself
@@ -8525,8 +9628,26 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
 — opens Appearance with four synthetic outfits:
+
+- `xml`: opens Appearance’s gear menu at frame 650, showing Export my
+  appearance XML. Capture at frame 720 or later. Click it to test the native
+  save dialog, cancel, save, overwrite and failure notifications.
+- `xml-unavailable`: the same menu with incomplete own appearance data;
+  XML export is disabled rather than exporting defaults as a real appearance.
+
+Own appearance XML is a `linden_genepool version="1.0"` file with the
+current visual parameter weights, joint transforms and null texture UUIDs,
+following `LLVOAvatar::dumpArchetypeXML`. Its root is avatar-local and no
+region position is written. It exports no mesh, texture files or inventory
+items, and has no route for another avatar. Mesh override diagnostics and
+rigged extents from the reference debug dump are not separate XML records;
+the current joint transforms already include the applied pose/overrides.
+The Legacy Viewer’s wearable importer and Aurora's Import XML button (shape,
+physics and layer editors) consume the parameter IDs and values. The
+parameters of a worn item the agent may not modify are left out (stricter
+than the Legacy Viewer), and the notice says how many worn items were.
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
 beside the current outfit; double-click a worn one to take it off. Worn and
@@ -8553,6 +9674,76 @@ gallery's double-click continues to open the outfit's contents.
   seconds, an unanswered creator lookup uses its UUID; an item with no creator
   reports unknown / multiple. Closing Appearance still completes the copy;
   changing sessions cancels it. Inventory menus have no such action.
+- `showcase`: the gallery tab as Aurora's showcase (the default; Preferences ›
+  Aurora › Outfit gallery › Tiles (Legacy) brings back the small tiles): the
+  demo folders of My Outfits (Club, Beach › Night, Spring), three local
+  pictures, two favorites and the Cop outfit in the preview. The window widens
+  once to 1080 points the first time the showcase shows. Check the rail's
+  counts (All, Favorites, No picture, the folders), the banner of outfits
+  without a picture and its Show them, the star (amber on a favorite, a click
+  toggles it), the hover actions of a card (Wear, Add, Take a snapshot), and
+  the preview: picture buttons, folder path, ⋯ menu, Wear / Add / Edit or
+  Take off, the items by Body parts / Clothing / Attachments with Worn tags
+  and a hover Wear, and Copy outfit list. Make the window narrower: under
+  820 points the rail becomes a menu over the grid, under 600 the preview
+  gives way to the selection card under the grid.
+- `portrait`, `portrait-not-worn`, `portrait-shot`, `portrait-bust`,
+  `portrait-face`, `portrait-profile`, `photo-mode`: the showcase, then at
+  frame 600 the outfit's auto portrait (Fider #447) of the outfit worn (in
+  that framing or angle), of one not worn, or the square photo mode;
+  `portrait-shot` also takes the photo at frame 900. The window: the live preview framed on
+  the avatar (thirds, corners, "Framed automatically"), Framing / Pose /
+  Angle / Backdrop / Light, Hide the other avatars, Keep these settings,
+  Cancel / Take the photo, then Retake / Use this photo, and the link to the
+  photo mode. Check that the whole body, the bust or the face fills the
+  square with a small margin, from the front, three-quarter or profile; the
+  A pose lowers the arms to about 45°, Arms by the sides to the body; the
+  backdrops flatten the cut-out avatar over dark, grey or light, The scene
+  keeps the region; Studio lights the avatar from behind the camera. Cancel
+  (or the X) puts the camera, the pose and the light back. Not worn: Take
+  is off and "Wear it for the photo" wears it; once the photo is used or
+  cancelled, a small window offers "Put … back on" or "Keep this outfit".
+  Photo mode: the viewfinder with a square frame whatever the photo window
+  chosen, the banner "Photo for the outfit …", the helpers Reframe on my
+  avatar / A pose / Studio backdrop, the shutter shows the photo with Use for
+  the outfit / Retake. The log says `outfit portrait: …` at each step.
+- `portrait-hd`, `portrait-hd-poor`, `photo-mode-hd`: the same, with the
+  paid HD picture chosen at 1024 × 1024 and a fictional balance (L$ 500, or
+  L$ 5 for `-poor`; the demo's texture price is L$ 10). The HD picture
+  block under the choices (and under the photo in the photo mode): "HD
+  picture (L$ 10)", 512 × 512 / 1024 × 1024, and a note; with L$ 5 the box
+  is greyed and says the balance is too low. Take the photo, Use this photo:
+  "Sending the HD picture into the outfit costs L$ 10…", Back or "Pay L$ 10
+  and use it". Paid: the card shows the free picture, the showcase's large
+  preview the HD one, the balance drops by L$ 10 and the outfit's folder
+  holds "Photo of "…" outfit"; a second HD picture sends the first to the
+  Trash. The log says `outfit HD picture: …` at each step.
+- `batch`, `batch-run`: the showcase, then at frame 600 the batch
+  portraits' window (Fider #447, the banner's Take the portraits) over the
+  demo's outfits: those without a picture ticked, those with one to tick to
+  redo, the portrait settings folded, the note on what happens, Cancel /
+  Start (n), Start off while the current outfit has unsaved changes (as
+  in the demo). `batch-run` saves them and starts it at frame 700: "Photo
+  i of n…", the
+  progress, the current row with its live preview and its state (Loading
+  the outfit… worn / total items, Framing, Taking the portrait, Saving),
+  the others Waiting or Done with their photo, Pause / Resume and Stop and
+  put my outfit back. Two outfit changes are at least 5 s apart; the worn
+  outfit is taken first, without a change. At the end the starting outfit
+  is worn again and the window says how many portraits were taken and
+  skipped. The log says `outfit batch: …` at each step.
+- `batch-hd`, `batch-hd-poor`: the batch window with the paid HD pictures
+  ticked at 1024 × 1024 and a fictional balance (L$ 500, or L$ 15 for
+  `-poor`; the demo's price is L$ 10 a picture); the current outfit's
+  changes are saved at frame 640, Start is left to you. Under the portrait
+  settings, "HD pictures (L$ T: N × L$ 10)" follows the outfits ticked, with
+  "Your balance: L$ 500."; with L$ 15 the box is greyed and says the balance
+  is too low for the total. Start: "Sending N HD pictures costs L$ T in
+  all…", Back or "Pay L$ T and start". Paid: each outfit photographed gets
+  its free picture and an HD texture in its folder (the balance drops by
+  L$ 10 each, the outfit's previous HD picture goes to the Trash); the
+  window counts "HD pictures saved: n (L$ …)", those still being sent and
+  those not sent. The log says `outfit HD picture: …` for each.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
@@ -8706,7 +9897,7 @@ rezzed object must disappear while its inventory original stays in place and
 no inventory deletion dialog opens. Capture at frames 710 and 780. Clicking
 an inventory row afterwards must give its ordinary shortcuts back to the list.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|chat-keys|play|replay|once|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -8714,8 +9905,19 @@ chat gesture's editor; `play` starts the chat and animation at frame 650.
 world to leave text focus, then press the top-row and keypad `6` to compare
 playback. Change and save its key or modifier to check other digits,
 Ctrl and Shift; keypad digit shortcuts also work with NumLock off.
+`chat-keys` (#3124) adds active gestures on F6, Ctrl+F6, Shift+F6 and
+Ctrl+Shift+F6. At frame 540, nearby chat takes the keyboard with an unsent
+draft. Press each chord: its name appears in chat, while the draft and
+keyboard focus stay in the field. Repeat from Conversations and a detached
+conversation, in the Aurora and Legacy styles. Text and editing keys stay
+in the field; popup menus and other editors keep their function keys.
 Capture at frame 620 for the list/editor, 680 during playback and 800
 after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`once` (#2931) adds an authored one-shot on `/once` (F6), plays it at frames 650 and 1010,
+and waits for its natural completion before writing the finished chat line;
+there is no Stop Animation step. At 60 FPS capture frames 680, 950 and 1310:
+the motion plays, ends and can be played again. Each run sends one timed stop
+and completes the gesture. Busy-region latency still needs human grid validation.
 `replay` adds a clap gesture on F7 (the chime three times, 0.3 s apart),
 a gesture on Ctrl+Z and one on Ctrl+B, and opens the Ctrl+B gesture's
 editor, whose shortcut row warns that the build tools keep Ctrl+B. The
@@ -8828,6 +10030,14 @@ separate searches enabled and disabled; that preference controls only the text.
   `aurora-favorites-multi` show their selected rows and Add to Favorites
   menu; click it to check that every object receives its own star. Capture
   at frame 700; the `aurora` variants exercise the Aurora layout.
+- `favorites-flat`, `aurora-favorites-flat`: the same starred objects and a
+  starred Body folder below an ordinary parent. Favorites lists the objects
+  and Body directly, without My inventory or their parent folders. Body
+  retains its contents. `favorites-parents`, `aurora-favorites-parents` turn
+  on Preferences > Inventory > Display > Show parent folders in Favorites,
+  restoring the original hierarchy. The option is off by default, including
+  with existing settings. Capture at frame 700; test both layouts and turn
+  the option on and off while Favorites is open, then restart the viewer.
 - `aurora-sidebar-medium`, `aurora-sidebar-wide`: the expanded inventory
   with 80 extra folders for #970. Click folders near the top and bottom
   of the left column, then scroll it and repeat, including partly visible
@@ -8903,6 +10113,20 @@ separate searches enabled and disabled; that preference controls only the text.
   Each switch independently hides/shows only the suffix after the arrow;
   current rights and the detailed hover remain available. Check filtered,
   folder and unknown-link rows, horizontal scrolling and item selection.
+- `delete-confirm`: as `delete-button`, then the confirmation's Delete
+  button at frame 740. Capture 720 (the confirmation), then 780: the dialog
+  is closed and the row below the deleted folder is selected. The log gives
+  `demo inventory delete-confirm:` with the dialog state and the selected
+  row at both frames.
+- `aurora-delete-confirm`, `aurora-delete-confirm-medium`,
+  `aurora-delete-confirm-wide`: the same successful-delete regression in the
+  compact, medium and wide Aurora layouts. A real row click selects the demo
+  object, Delete opens its confirmation at frame 680, and Enter confirms at
+  740. Capture 720 and 780: the default action is visible, then the next row
+  is visibly selected with its details updated. Compare the ordinary `aurora`,
+  `aurora-medium` and `aurora-wide` scenarios for layout regressions.
+  These confirmation scenarios enable their Delete confirmation in the demo's
+  settings so that a previously disabled confirmation cannot skip the fixture.
 - `delete-key`, `delete-button`: select a folder containing three
   levels and their items, then open the confirmation with the Delete key or
   the trash button of the window footer. Capture 660 (selection and trash to
@@ -8912,6 +10136,15 @@ separate searches enabled and disabled; that preference controls only the text.
   unavailable), a text field (the Delete key edits the text) and a folder
   window. A selection entirely in the Trash asks for confirmation
   before permanent deletion.
+- `delete-enter`: as `delete-key`, then Enter at frame 740 answers the
+  confirmation. Capture 720 (the modal confirmation), then 780: the folder
+  is in the Trash and the dialog is closed.
+- `delete-tab`: as `delete-key`, then the first Tab at frame 710 focuses
+  Cancel and Enter at 740 cancels. Capture 700 (Delete focused), 720 (Cancel
+  focused) and 780 (dialog closed, original folder still selected). Also
+  check the full Delete / Cancel / Do not show again cycle and Shift+Tab.
+  Deletion captures simulate logical window focus so the keyboard highlight
+  remains visible without activating the native window.
 - `keyboard`, `aurora-keyboard`, `aurora-keyboard-wide`: click the demo
   object at frame 650, extend its selection with Shift+Down twice, then
   shrink it with Shift+Up at frame 710. Capture at 690 (three selected rows)
@@ -8939,6 +10172,13 @@ separate searches enabled and disabled; that preference controls only the text.
   opening of the destination folder; screenshot after 800. No activation
   of the native window and no reading of the system clipboard during these
   automatic scenarios.
+  Cut feedback: capture `clipboard-cut` at frame 710 (the two source rows
+  faded) and 800 (move finished, no cut feedback). `clipboard-cut-hold`
+  leaves the cut pending; `clipboard-cut-cancel` presses Escape at 730.
+  `clipboard-cut-folder-hold` fades the folder and its visible descendants.
+  Prefix these modes with `aurora-` for Aurora's layout. A new copy or cut
+  replaces the previous feedback; a refused paste keeps it. Returning from
+  another app after replacing the system clipboard cancels the old cut.
   `clipboard-progress` illustrates the possible states of the status line:
   update at frames 650–749, copy with a 2/3 counter at frames
   800–849, verification at frames 850–919, then end confirmation from 920.
@@ -9144,6 +10384,9 @@ separate searches enabled and disabled; that preference controls only the text.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:
   system / date sort, filters, preferences, Recent / Worn tree,
   filter excluding objects or search of 1,500 items.
+- `many-folders`, `aurora-many-folders`: 300 more top folders, in the
+  Legacy and Aurora styles; scroll to the end, press Collapse: the list
+  goes back to its top.
 - `long`, `long-filtered`: long names and horizontal scrolling in
   the full or filtered tree.
 - `resize-left`, `resize-right`: with a screenshot, drag the corresponding
@@ -9204,13 +10447,13 @@ What the inventory must show with these scenarios:
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_MEDIA=<url>` or `1` | Media on a prim |
+| `AURORA_DEMO_MEDIA=<url>`, `1` or `mini` | Media on a prim; `mini` uses Mini controls (buttons, no address) |
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
-| `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
+| `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2][,edit\|paste]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
 | `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
-| `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_MUSIC=<url>`, `1` or `fade` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
@@ -9229,6 +10472,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall`, `height` or `render` | Name plates in all their states, at the three distances; occlusion, stable height and manual rendering limits |
+| `AURORA_DEMO_CONTACT_MARKERS=region`, `parcel`, `fade` or `body` | Contact-set markers in the world, on loaded and coarse residents |
 | `AURORA_DEMO_CHAT_BUBBLES=1`, `typing` or `talk` | With `AURORA_DEMO_TAGS`: the residents talk, chat bubbles above the heads for this run; `typing`: the typing dots too; `talk`: as Preferences say |
 | `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members or Linden Lab employees: their plate's light and their tag |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
@@ -9319,6 +10563,21 @@ What the inventory must show with these scenarios:
   Lindens: the wolf (nearby chat, `AURORA_DEMO_PROFILE=wolf`), Lune of
   People › Near you, and with `AURORA_DEMO_TAGS=voice` Lune (full plate,
   typing) and Iris (compact pill).
+- **`AURORA_DEMO_CONTACT_MARKERS`** (`demo_contact_markers.rs`): three
+  contact sets with a marker, for this run only: Family (heart, circles),
+  Shop (star, diamonds) and Clubbing (no symbol, diamonds), Family with a
+  coloured border and Shop with a tinted background (the sets' nameplate
+  options; the others keep the plain ones), and four residents known only
+  by their coarse location, sent once a second: one circling the region in
+  40 s (the marker glides, then pins to each edge in turn), one behind the
+  camera (pinned, with its chevron), one far to the side, and one of unknown
+  altitude (at our own height). With `AURORA_DEMO_TAGS=voice`, Nova, Orion
+  and Vega join the sets: the marker sits above their plate, shows through
+  the wall, and under 15 m from the camera lands on its set's badge on the
+  plate and goes, or fades where it is without a badge (Clubbing).
+  `parcel`: members only on our parcel (the demo's region is cut into four);
+  `fade`: markers gone within 12 m of our avatar;
+  `body`: markers on the avatars' chest, for this run.
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),
@@ -9455,9 +10714,25 @@ What the inventory must show with these scenarios:
   and without `AURORA_DEMO_VOICE` (or with `sweep`), it follows the real
   microphone. On the grid it also confirms the scale of the levels against
   what the other residents' plates show.
+- **`AURORA_DEMO_MEDIA=mini`**: the same screen as `1`, with Mini controls.
+  The bar keeps back, forward, home, reload, volume and close, and shows
+  no address. A video or a sound file hides the address only once the
+  time plugin is the one playing it, so that case is the grid check:
+  this page is HTML and keeps its address.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
-  after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
+  after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and Ctrl+V
+  twice follow (Cmd on macOS): the field reads "auroraaurora" when the
+  Edit menu shortcuts reach the page. The clipboard holds "stale" first:
+  "stalestale" means the paste took the system clipboard instead of the
+  page's cut (the cut stays in the page under Wayland). Under X11 the
+  page gets no Cut, so the selection stays: the field keeps "aurora",
+  or reads "stalestale" where the page can read the X clipboard. With
+  `paste`, the viewer puts "pasted" on the clipboard, as another program
+  would, then presses Ctrl+V: the field reads "aurorapasted" when the
+  page gets the system clipboard (Windows, macOS), "aurora" on Linux,
+  where the page, drawn off screen, cannot read it.
+  `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
 - **Media plugins.** The media scenarios need Aurora's media plugins pack
@@ -9493,7 +10768,11 @@ What the inventory must show with these scenarios:
   `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
-  music waits for the radio button.
+  music waits for the radio button. `fade`: the same address, the radio
+  turned on at frame 300 and the parcel's station changed at frame 600
+  (`AURORA_FPS_LIMIT=60`); the log gives `parcel music: fade in over 3.00 s`,
+  then `fade out over 2.00 s` and `fade in` again on the new address, with
+  the Preferences âº Sound fade times.
   For #1628, use `https://stream.electroradio.fm/320k` and enable the parcel
   radio: music should play and the stream title should update. Stop and
   restart the radio, then check another HTTP/ICY station. The explicit
@@ -9503,6 +10782,16 @@ What the inventory must show with these scenarios:
   Windows/macOS use the system's certificate verifier, which can complete
   missing intermediate chains. Linux uses the system CA bundle and still
   needs the intermediates from the server or its trust store.
+  AzuraCast public player URLs also resolve their exported PLS playlist before
+  decoding. Use `https://login-na2.lightmanstreams.com/public/auto_dj_44` and
+  compare its direct `/listen/auto_dj_44/live` stream: both should play without
+  editing the parcel URL. The explicit network probe is
+  `cargo test --workspace --locked lightman_live_probe -- --ignored --nocapture`.
+  Local `playlist::tests` cover player JSON, PLS/M3U, relative redirects,
+  actual MP3 decoding, cancellation, loops and document limits. Discovered
+  links and their redirects must stay on the same HTTP(S) origin; HLS is
+  unsupported. No JavaScript is executed and normal media-filter consent
+  still precedes the first request.
 - **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing
@@ -9760,6 +11049,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
+| `AURORA_LEGACY_GLARE=0` | Transparent legacy materials without their glare (wet and shine layers invisible), as before #3259 |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
@@ -9778,7 +11068,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
-| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
+| `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -9788,6 +11078,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
+| `AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]` | The demo's region answers the avatar render info with these counts (8 reporting by default): the "may not see you fully" notice; the report it would get goes to the log |
 
 ### Details
 
@@ -9802,6 +11093,22 @@ What the inventory must show with these scenarios:
   adapter address and the serial show as `(not logged)`). On the
   grid the report is logged at debug level only, `sending viewer
   statistics: …` (`RUST_LOG=info,aurora_net=debug`).
+- **`AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]`**
+  (`aurora_net::render_info`, `app/render_info.rs`,
+  `world/complexity_notice.rs`): on the grid each region is told every 60 s
+  (2 s more per avatar) the complexity of the avatars we see there and which
+  ones we draw as silhouettes, and asked every 15 s how many viewers around
+  report on us (`reportinglimit`) and how many of them draw us as one
+  (`overlimit`). In demo mode nothing is sent: every 15 s the demo's region
+  answers with the given counts, our own avatar among the reporters (`3`:
+  3 of the 7 others; `7/8`: all of them). The notice "Your avatar complexity
+  is N." with its second line (with `3`: "You may not be rendered by
+  everyone around you.") shows about 75 s after the launch (the Legacy
+  Viewer waits 70 s, and the answers come every 15 s); it stays Preferences › Graphics › Avatars › Complexity
+  notices seconds (10; 0 shows none, nor does mouselook), and the next one
+  for other counts waits 5 minutes unless it is still out. Once our avatar
+  has its complexity, the log gets one line `avatar render info (demo): <n>
+  avatars reported: <llsd>` with the report the agent's region would get.
 - **`AURORA_VULKAN_LAYERS=keep`**: at start the viewer sets the variables
   that disable Overwolf's implicit Vulkan layers (`VK_LAYER_OW_OVERLAY`,
   `DISABLE_VULKAN_OW_OVERLAY_LAYER=1`; `VK_LAYER_OW_OBS_HOOK`,
@@ -9966,7 +11273,7 @@ What the inventory must show with these scenarios:
     colour and the overview the warning "Video memory over the driver's
     budget".
 - **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
-  instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
+  instead of 262,144 (`aurora-render/src/textures.rs`; the `renderer ready:`
   line of the log gives its size). Each texture known to the streamer holds
   a slot of it, from the first face that uses it until 45 s after the last
   one stopped. Used to fill the table in demo.
@@ -9986,6 +11293,16 @@ What the inventory must show with these scenarios:
     all get their texture (capture after frame 1500 with
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
+  - Textures left without a slot get one once the table has room again
+    (#2822): `AURORA_DEMO_TEXTURES=6000`, `AURORA_DEMO_TEXTURES_CHURN=1`,
+    `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_POS="215,126"` and `5000`. The
+    last 1,013 textures have no slot and their cubes, in front of the
+    camera, are white (capture at frame 250). The cubes removed at frame
+    300 give their slots back: the log says `texture table: … textures in
+    use have a slot again` and, on the next line, how many objects were
+    built again (678 cubes) and how long the pass took; at frame 650
+    those cubes have their texture. Before the fix they stayed white for
+    as long as they were there.
 
 - **`AURORA_COLORED_AMBIENT=0|1|alt`**: overrides Preferences › Graphics ›
   Sky and environment › Colored sky ambient for this launch (`alt`: on
@@ -10210,20 +11527,24 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
   frame 690). Softened, neither shows and no shadow spreads from the
   ground onto a caster nor the reverse.
-  **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
-  diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
+  **`AURORA_CONTACT_VARIANT=bend|no-early-out|no-shared|short|skip`**: a
+  diagnostic of the GPU hangs (device lost, Windows TDR) the AMD RX 9070 XT
   cards had as soon as the pass ran, each value without one construct of
   the window's shader (`variant_source`, contact_shadows.rs; photos keep
-  Bend's): `no-early-out`, no early exit of an all-sky wavefront through
+  Bend's, except with `no-shared`): `no-early-out`, no early exit of an all-sky wavefront through
   `workgroupUniformLoad`; `no-shared`, no workgroup memory nor barrier (each
   thread reads from the depth what the others would have shared,
   `contact_shadows_no_shared.wgsl`). Both draw the same mask as Bend's
   (the GPU test `the_variants_that_keep_the_image_draw_bends_mask`, run
   with `-- --ignored`). `short`: 16 samples per pixel instead of 60, the
   shadows about four times shorter; `skip`: the shader is not dispatched,
-  no contact shadow (the mask is still cleared and filtered). Any other
-  value keeps Bend's shader; the log says `contact shadows: diagnostic
-  variant …` when one is taken. They only draw with the
+  no contact shadow (the mask is still cleared and filtered). `bend` or
+  any other value keeps Bend's shader; the log says `contact shadows:
+  diagnostic variant …` when the variable is set. Unset, the AMD RX 9000
+  (RDNA 4) cards get `no-shared` for the window and the photos, as the
+  only variant that stopped their hangs (2026-11-10, #2238): the log says
+  `contact shadows: without workgroup memory on <card>`; `bend` puts
+  Bend's back on them, to compare. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear
@@ -10316,6 +11637,14 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
+- **`AURORA_LEGACY_GLARE=0`**: a transparent face with a legacy
+  material takes the alpha max(texture alpha, glare), as the Legacy
+  Viewer's `materialF.glsl`: its reflections show on its empty texels (the
+  wet and shine layers of mesh bodies, #1420). `0` turns the glare off: the
+  texture alpha only, and the empty texels discarded before the lighting,
+  as before #3259. For a tester whose card shows squares on blended leaves
+  or streaks in hair: the same place with and without it tells whether the
+  glare is the cause.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
@@ -10400,6 +11729,18 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=write`, the ring
   of #556 (the pane missing around the hair) appears; by default it does
   not.
+- **`AURORA_DEMO_WET_LAYER=1`**: three skin-coloured spheres 2.5 m ahead
+  of the start position (`AURORA_DEMO_POS`) and to the left of our avatar,
+  from the avatar outwards, each under a slightly larger shell: a
+  transparent texture (alpha 0) with a blended legacy material whose
+  specular map holds drips, as a body's wet layer; the built-in transparent
+  texture with the same material, as the shine layers of heads and eyes;
+  the transparent texture with no material, a control. With
+  `AURORA_DEMO_POS=100,100` the spheres stand on the right of the screen.
+  The first two show the drips reflecting the sky and nothing else of their
+  shell; the control shows nothing (#1420, the alpha max(texture alpha,
+  glare) of class3/deferred/materialF.glsl). Before the fix, no shell
+  showed anything.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended
@@ -11173,10 +12514,16 @@ the variable.
   after their last resend. `dup`: packets the simulator resent although we
   had them (our acknowledgement was late or lost). `unacked`: reliable
   packets still waiting for their acknowledgement.
-- `gaps`, `late`: sequence numbers the simulators skipped, and packets that
-  arrived after a later one (a resend, or out of order). `gaps` minus `late`
-  over a stretch of the log is what never arrived: a loss on the link, or a
-  receive buffer that overflowed while the loop was busy.
+- `gaps`, `late`, `lost`: provisional sequence holes, those filled before
+  their deadline, and confirmed losses. A hole becomes `lost` only after
+  sixteen smoothed round trips (ping floored at 100 ms), at most 5 s, like
+  the Legacy Viewer; an unanswered ping can extend that grace. A
+  resend or reordered packet arriving within that grace is not a loss.
+  The displayed loss percentage and the simulator bandwidth regulator
+  use `lost`, with received packet counts over the same period, even if a
+  slow frame makes the period longer than a second. Sequence restarts and
+  wraps do not create losses. `gaps - late` may include holes still pending
+  or cleared by a restart; use `lost` to diagnose actual timeouts.
 - `loop_max`: the longest time the session loop spent on one wake-up (a
   packet, a tick, a command). During that time no circuit is read,
   acknowledged or answered: a value of tens of milliseconds is a pause of

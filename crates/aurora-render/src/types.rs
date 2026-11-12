@@ -93,20 +93,31 @@ pub fn unpack_tangent(normal: [i8; 4]) -> Option<(Vec3, f32)> {
 }
 
 /// Per-vertex skinning data (parallel stream): 4 joint indices and 4
-/// normalized weights. Terrain uses these same eight bytes for its frame
+/// normalized 16-bit weights. The Legacy Viewer sends its weights to the
+/// GPU as floats (LLVolumeFace's weight4, objectSkinV.glsl): 8 bits are not
+/// enough there, because bodies that drive long bone position offsets with
+/// very small weights turn each 1/255 step into millimetres of movement and
+/// the surface terraces (#2372). Terrain uses this same stream for its frame
 /// ([`pack_terrain_frame`]); its records never enable skinning.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct SkinVertex {
     /// Mesh joint indices into the record's skin bindings (`flags[2]`).
     pub joints: [u8; 4],
-    pub weights: [u8; 4],
+    /// Unorm16 weights ([`pack_skin_weight`]), renormalised by the shader.
+    pub weights: [u16; 4],
 }
 
-/// Terrain has no skeleton: its parallel 8-byte stream holds octahedral
-/// normal/tangent directions (two snorm16 values each). This keeps the
-/// Legacy Viewer's terrain frame without reducing it to snorm8 or deriving
-/// the tangent from the normal. No vertex stride or GPU binding is added.
+/// The packed weight of a joint influence, 0.0..=1.0 in 65535 steps.
+pub fn pack_skin_weight(w: f32) -> u16 {
+    (w.clamp(0.0, 1.0) * 65535.0).round() as u16
+}
+
+/// Terrain has no skeleton: its parallel stream holds octahedral
+/// normal/tangent directions (two snorm16 values each): the normal in the
+/// joint bytes, the tangent in the first two weights (the last two stay 0).
+/// This keeps the Legacy Viewer's terrain frame without reducing it to snorm8
+/// or deriving the tangent from the normal. No GPU binding is added.
 pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
     let pack = |v: Vec3| {
         let v = v / v.abs().element_sum().max(1e-20);
@@ -115,20 +126,22 @@ pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
             p = (glam::Vec2::ONE - glam::Vec2::new(p.y, p.x).abs())
                 * glam::Vec2::new(if p.x < 0.0 { -1.0 } else { 1.0 }, if p.y < 0.0 { -1.0 } else { 1.0 });
         }
-        let x = ((p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
-        let y = ((p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
-        [x[0], x[1], y[0], y[1]]
+        [
+            (p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16,
+            (p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16,
+        ]
     };
+    let [nx, ny] = pack(normal).map(i16::to_le_bytes);
+    let [tx, ty] = pack(tangent);
     SkinVertex {
-        joints: pack(normal),
-        weights: pack(tangent),
+        joints: [nx[0], nx[1], ny[0], ny[1]],
+        weights: [tx as u16, ty as u16, 0, 0],
     }
 }
 
 pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
-    let unpack = |bytes: [u8; 4]| {
-        let x = f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32767.0;
-        let y = f32::from(i16::from_le_bytes([bytes[2], bytes[3]])) / 32767.0;
+    let unpack = |x: i16, y: i16| {
+        let (x, y) = (f32::from(x) / 32767.0, f32::from(y) / 32767.0);
         let mut n = Vec3::new(x, y, 1.0 - x.abs() - y.abs());
         if n.z < 0.0 {
             n.x = (1.0 - y.abs()) * if x < 0.0 { -1.0 } else { 1.0 };
@@ -136,7 +149,11 @@ pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
         }
         n.normalize_or(Vec3::Z)
     };
-    (unpack(frame.joints), unpack(frame.weights))
+    let j = frame.joints;
+    (
+        unpack(i16::from_le_bytes([j[0], j[1]]), i16::from_le_bytes([j[2], j[3]])),
+        unpack(frame.weights[0] as i16, frame.weights[1] as i16),
+    )
 }
 
 /// One mesh joint of a skinned mesh (LLMeshSkinInfo): its inverse bind
@@ -190,6 +207,14 @@ pub mod flags {
     /// Bit of flags[3], above the texture animation's 24 packed bits.
     /// World faces whose material permits Blend texture alpha only.
     pub const WORLD_BLEND_PICK: u32 = 1 << 31;
+    /// Bits 24..26 of flags[3], above the texture animation: the layer rank
+    /// of a rigged face (`DrawRecord::set_layer_rank`, `layer_clip` in
+    /// object.wgsl).
+    pub const LAYER_RANK_SHIFT: u32 = 24;
+    pub const LAYER_RANK_MAX: u32 = 7;
+    /// Bit of flags[3], above packed texture animation: local studio scenery
+    /// is excluded from the avatar's temporary white reveal.
+    pub const STUDIO_STAGE: u32 = 1 << 29;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -344,6 +369,16 @@ impl DrawRecord {
     /// flags[3]'s texture-animation mode and dimensions.
     pub fn set_world_blend_pick(&mut self, enabled: bool) {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
+    /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
+    /// exactly on another one, such as a worn layer made from the body's own
+    /// mesh: the vertex shaders pull a higher rank toward the camera by a few
+    /// depth steps (`layer_clip`), so the same layer wins on every face and
+    /// after every rebuild, whatever the order of the draw records.
+    pub fn set_layer_rank(&mut self, rank: u32) {
+        let mask = flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT;
+        self.flags[3] = (self.flags[3] & !mask) | ((rank.min(flags::LAYER_RANK_MAX)) << flags::LAYER_RANK_SHIFT);
     }
 
     /// Upper 16 bits of flags.x: visual HUD zoom in units of 1/4096.
@@ -562,6 +597,10 @@ pub struct DrawLists {
     /// in the first `blend_depth` entries of `blend` (increasing, the last
     /// one `blend_depth`).
     pub blend_depth_runs: Vec<u32>,
+    /// `RiggedBlendDepth::Layers`: the ends, among `blend_depth_runs`, of the
+    /// runs drawn writing their depth on the copy only where nearly opaque
+    /// (eyelashes and brows drawn before the hair, #2121; increasing).
+    pub blend_depth_quiet: Vec<u32>,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -615,6 +654,9 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    /// The poser subject's skinned faces, while a part is hovered: the part
+    /// is kept on them by its joints (`FrameParams::part_joints`).
+    pub part_faces: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -687,6 +729,7 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.part_faces.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -716,6 +759,7 @@ impl DrawLists {
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
+        self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
@@ -737,6 +781,7 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.part_faces.clone_from(&src.part_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -765,6 +810,7 @@ impl DrawLists {
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
+        self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
@@ -789,6 +835,7 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.part_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1023,6 +1070,10 @@ pub enum AoMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
+    /// Requested per-eye XR size, bounded by runtime limits.
+    pub vr_resolution: Option<[u32; 2]>,
+    pub vr_gamma: f32,
+    pub vr_vibrancy: f32,
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
@@ -1074,6 +1125,9 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            vr_resolution: None,
+            vr_gamma: 1.0,
+            vr_vibrancy: 1.0,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
@@ -1169,6 +1223,9 @@ pub struct SkyParams {
     pub halo_texture: u32,
     /// Night sky: which stars and how they are turned (stars.rs).
     pub stars: crate::stars::StarFrame,
+    /// Session-local studio sky, zero outside Avatar Studio. sRGB navy /
+    /// teal / violet / indigo; w values: enabled / yaw / time / white reveal.
+    pub studio_aurora: [[f32; 4]; 4],
 }
 
 impl Default for SkyParams {
@@ -1217,6 +1274,7 @@ impl Default for SkyParams {
             rainbow_texture: 0,
             halo_texture: 0,
             stars: crate::stars::StarFrame::default(),
+            studio_aurora: [[0.0; 4]; 4],
         }
     }
 }
@@ -1309,7 +1367,24 @@ pub struct FrameParams {
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
     pub selection_scale: f32,
+    /// The poser's hovered part (Aurora's own): bit j for the skeleton's
+    /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
+    /// as a selection's halo with a light tint inside.
+    pub part_joints: [u32; 8],
+    pub part_color: [f32; 4],
+    /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
+    /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
+    /// each part's weights and interpolates them before picking a part.
+    pub part_classes: [u32; 32],
+    /// The pixel whose visible part of `part_faces` to read back
+    /// (part_pick.rs): the cursor while Ctrl hovers the subject.
+    pub part_pick: Option<[u32; 2]>,
     pub view: Mat4,
+    /// VR pivot policy; ignored by the desktop renderer.
+    pub vr_rig: crate::stereo_view::RigMode,
+    /// Region-local coordinate identity for feedback consumed by locomotion.
+    pub vr_origin: Option<u64>,
+    pub vr_revision: u64,
     pub proj: Mat4,
     /// A photo drawn in tiles: the part of it this frame draws, `proj`
     /// being this times the whole photo's projection (the viewer's
@@ -1391,6 +1466,9 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// The sky's rendering type is hidden (the viewer's Advanced ›
+    /// Rendering types): the view starts from `clear_color` instead.
+    pub hide_sky: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
@@ -1661,6 +1739,9 @@ pub struct RenderStats {
     /// presentation (ms; None when it was not presented). What the GPU
     /// still has to draw after `present` is not in it.
     pub input_ms: Option<f32>,
+    /// The render targets could not be made: video memory is full, the
+    /// frame shows the interface alone, and they are tried again.
+    pub video_memory_full: bool,
     /// Main thread: the sleep the frame pacing asks before the next frame
     /// reads its input (pacing.rs, ms).
     pub pace_ms: f32,
@@ -1739,7 +1820,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terrain_frames_keep_direction_precision_in_the_existing_eight_bytes() {
+    fn small_weights_on_long_bone_offsets_deform_smoothly() {
+        // #2372: a body moves bones about 0.8 m and weights the surface a
+        // few percent on them. What the shader moves (weights renormalised,
+        // object.wgsl skin_matrix) must follow the mesh's weight closely.
+        let lever = 0.8;
+        let moved = |packed: [f32; 2]| packed[0] / (packed[0] + packed[1]) * lever;
+        let mut old_error = 0.0f32;
+        for i in 1..=200 {
+            let w = i as f32 * 0.0003;
+            let new = moved([pack_skin_weight(w), pack_skin_weight(1.0 - w)].map(f32::from));
+            assert!((new - w * lever).abs() < 0.00005, "weight {w}: {new} m instead of {} m", w * lever);
+            let old = moved([w, 1.0 - w].map(|w| (w * 255.0).round()));
+            old_error = old_error.max((old - w * lever).abs());
+        }
+        // the 8-bit weights stepped by more than a millimetre
+        assert!(old_error > 0.001, "{old_error}");
+        // the Legacy Viewer's smallest influence (LLVolume) still counts
+        assert!(pack_skin_weight(0.001) > 0);
+        assert_eq!(pack_skin_weight(1.0), u16::MAX);
+    }
+
+    #[test]
+    fn terrain_frames_keep_direction_precision_in_the_skin_stream() {
         for x in -3..=3 {
             for y in -3..=3 {
                 for z in -3..=3 {
@@ -1755,7 +1858,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 12);
         assert_eq!(std::mem::size_of::<Vertex>(), 24);
     }
 
@@ -2113,5 +2216,52 @@ mod tests {
         }
         record.set_world_blend_pick(false);
         assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK);
+    }
+
+    #[test]
+    fn layer_rank_keeps_texture_animation_and_pick_bits() {
+        let animation = 1 | (7 << 8) | (15 << 16);
+        let mut record = DrawRecord {
+            flags: [flags::SKINNED, 42, 128, animation | flags::OBJECT_MASK_PICK],
+            ..Default::default()
+        };
+        record.set_world_blend_pick(true);
+        for rank in 0..=flags::LAYER_RANK_MAX {
+            record.set_layer_rank(rank);
+            assert_eq!((record.flags[3] >> flags::LAYER_RANK_SHIFT) & flags::LAYER_RANK_MAX, rank);
+            assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
+            assert_ne!(record.flags[3] & flags::OBJECT_MASK_PICK, 0);
+            assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+        }
+        record.set_layer_rank(99);
+        assert_eq!(
+            (record.flags[3] >> flags::LAYER_RANK_SHIFT) & flags::LAYER_RANK_MAX,
+            flags::LAYER_RANK_MAX
+        );
+        record.set_layer_rank(0);
+        assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK | flags::WORLD_BLEND_PICK);
+    }
+
+    /// The shaders read the rank with the same bits, in the same flags word.
+    #[test]
+    fn layer_rank_bits_match_wgsl() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const LAYER_RANK_SHIFT: u32 = {}u;", flags::LAYER_RANK_SHIFT)));
+        assert!(wgsl.contains(&format!("const LAYER_RANK_MAX: u32 = {}u;", flags::LAYER_RANK_MAX)));
+        let mask = flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT;
+        assert_eq!(mask & 0x00ff_ffff, 0, "clear of the texture animation");
+        assert_eq!(
+            mask & (flags::OBJECT_MASK_PICK | flags::WORLD_BLEND_PICK),
+            0,
+            "clear of the pick bits"
+        );
+        let object = include_str!("shaders/object.wgsl");
+        assert!(object.contains("(rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX"));
+        // every eye view of a face goes through eye_clip, or the prepass and
+        // the scene pass would disagree on a ranked face's depth (the terrain
+        // too: the prepass draws it with vs_depth)
+        for src in [object, include_str!("shaders/env.wgsl")] {
+            assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
+        }
     }
 }

@@ -42,14 +42,8 @@ fn output_color(linear: vec3<f32>) -> vec3<f32> {
     return select(high, low, linear <= vec3<f32>(0.0031308));
 }
 
-@fragment
-fn fs_composite(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
-    let p = vec2<i32>(pixel.xy);
-    let inside = mask_at(p);
-    if (inside > 0.5) {
-        if (params.pulse <= 0.0) { discard; }
-        return vec4<f32>(output_color(params.color.rgb), params.pulse * params.color.a);
-    }
+// The exterior halo at `p` (off the coverage), or None (alpha 0).
+fn exterior_halo(p: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(horizontal));
     var halo = 0.0;
     let radius = i32(ceil(5.0 * params.scale));
@@ -60,10 +54,39 @@ fn fs_composite(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
             halo = max(halo, textureLoad(horizontal, q, 0).r * exp(-0.10 * distance * distance));
         }
     }
-    if (halo <= 0.01) { discard; }
+    if (halo <= 0.01) { return vec4<f32>(0.0); }
     // A narrow dark separator keeps the violet band visible against light
     // or violet materials; all these pixels are OUTSIDE selected coverage.
     let separator = smoothstep(0.78, 0.90, halo);
     let color = params.color.rgb * mix(1.0, 0.12, separator);
     return vec4<f32>(output_color(color), min(halo * 1.35, 0.92) * params.color.a);
+}
+
+@fragment
+fn fs_composite(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pixel.xy);
+    let inside = mask_at(p);
+    if (inside > 0.5) {
+        if (params.pulse <= 0.0) { discard; }
+        return vec4<f32>(output_color(params.color.rgb), params.pulse * params.color.a);
+    }
+    let halo = exterior_halo(p);
+    if (halo.a <= 0.0) { discard; }
+    return halo;
+}
+
+// The poser's part (Overlay::new_part): on the subject (green), a tint that
+// fades with the part's share (red); off it, the halo of the part alone.
+@fragment
+fn fs_composite_part(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pixel.xy);
+    let m = textureLoad(coverage, p, 0).rg;
+    if (m.g > 0.5) {
+        let a = m.r * params.pulse * params.color.a;
+        if (a <= 0.003) { discard; }
+        return vec4<f32>(output_color(params.color.rgb), a);
+    }
+    let halo = exterior_halo(p);
+    if (halo.a <= 0.0) { discard; }
+    return halo;
 }

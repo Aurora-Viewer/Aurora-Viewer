@@ -1000,7 +1000,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         // no Share: it only brought the inventory forward, and an item
         // dropped anywhere on the window is given (`super::give_drop`)
-        if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
+        if menu::item(ui, p, "car-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
             act(CtxAction::RequestTeleport(id));
         }
         if compact && menu::item(ui, p, "users", aurora_i18n::tr!("ui-profile-aurora-view-in-people")) {
@@ -1042,6 +1042,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         ) {
             act(CtxAction::ShowHistory(Some(id)));
         }
+        context::admin_submenu(ui, p, world, id, act);
     });
 }
 

@@ -302,3 +302,22 @@ fn sent_links_are_trusted_pictures_for_the_previews() {
         );
     }
 }
+
+#[test]
+fn recent_gifs_stay_apart_by_service_newest_first_and_bounded() {
+    let mut s = Settings::default();
+    s.note_sent(Provider::Giphy, "a");
+    s.note_sent(Provider::Klipy, "k");
+    s.note_sent(Provider::Giphy, "b");
+    s.note_sent(Provider::Giphy, "a");
+    assert_eq!(s.recent_ids(Provider::Giphy), ["a", "b"]);
+    assert_eq!(s.recent_ids(Provider::Klipy), ["k"]);
+    for i in 0..30 {
+        s.note_sent(Provider::Giphy, &format!("g{i}"));
+    }
+    assert_eq!(s.recent_ids(Provider::Giphy).len(), MAX_RECENT);
+    assert_eq!(s.recent_ids(Provider::Giphy)[0], "g29");
+    assert_eq!(s.recent_ids(Provider::Klipy), ["k"], "one service's list leaves the other's");
+    let old: Settings = serde_json::from_str("{}").expect("settings saved before the recent GIFs");
+    assert!(old.recent.is_empty());
+}
