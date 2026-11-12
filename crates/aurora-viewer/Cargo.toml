@@ -131,7 +131,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Inpu
 # windows-sys does not cover; already in the tree through wgpu and cpal
 # and the login device ids (machine_id.rs): WMI through COM
 # and the network adapters' names (net_adapters.rs): GetAdaptersAddresses
-windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
+# and the accent colour (system_theme.rs): UISettings
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "UI_ViewManagement", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_WinRT", "Win32_System_Wmi"] }
 
 [target.'cfg(unix)'.dependencies]
 # getenv without allocating, for the allocator's choice (allocator.rs), and
@@ -140,9 +141,10 @@ libc = "0.2.190"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The application menu's Quit item routed to the window's close
-# (mac_quit.rs); the versions already in the tree
+# (mac_quit.rs) and the accent colour (system_theme.rs); the versions
+# already in the tree
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSMenu", "NSMenuItem", "NSResponder"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSColor", "NSColorSpace", "NSMenu", "NSMenuItem", "NSResponder", "objc2-core-foundation"] }
 # The graphics card box (app/gpu_stall.rs): a CFUserNotification kept to be
 # cancelled; already in the tree through rfd
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFBase", "CFDate", "CFDictionary", "CFString", "CFUserNotification"] }

@@ -5727,6 +5727,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
+| `AURORA_DEMO_SYSTEM_THEME=<look>[;<look>…][;secs=<n>]` or `system` | Follows a made-up system theme, or the real one, in this run, never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
@@ -7190,6 +7191,19 @@ failure. Grid validation and any paid upload are performed by the human.
   faces in the background's hue; the secondary text in the text's hue;
   text that still reads on its background. `AURORA_DEMO_CONTRAST=1`
   ignores them. Combine with `AURORA_DEMO_OPTIONS=appearance/2` (the page).
+- **`AURORA_DEMO_SYSTEM_THEME=<look>[;<look>…][;secs=<n>]`**: follows the
+  system theme for this run, as Preferences › Appearance › Skin › Follow
+  the system theme does, without touching the saved settings, on looks
+  made up by the demo. A look is `light` or `dark`, with an optional
+  `accent:<hex>`: `light,accent:#2563EB;dark,accent:#E11D48;secs=3` changes
+  every 3 seconds (4 by default), and a single look stays. `system` follows
+  the real system instead. What to look for: the windows, bars, name
+  plates and chat change at once, with no restart; on `light`, counts,
+  selected rows and initials still read; on `dark`, the skin's own
+  background and text come back. `AURORA_DEMO_COLORS` wins over it,
+  `AURORA_DEMO_CONTRAST=1` ignores it. Combine with
+  `AURORA_DEMO_OPTIONS=appearance/2` (the swatches show the colours in
+  use; a look with no accent shows the note that the desktop gives none).
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›
