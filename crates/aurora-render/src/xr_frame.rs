@@ -150,6 +150,7 @@ impl Session {
         } else if offered.contains(&raw_format(format.remove_srgb_suffix())?) {
             format.remove_srgb_suffix()
         } else {
+            log::warn!("XR world: the runtime offers only these image formats: {offered:?}");
             return Err("Runtime does not support the viewer output format".into());
         };
         let format_raw = raw_format(eye_format)?;
