@@ -481,7 +481,7 @@ fn is_viewer_log(name: &str) -> bool {
 /// files of this run (`keep`) are never chosen.
 fn prune_choice(mut files: Vec<(PathBuf, SystemTime)>, now: SystemTime, keep: &[PathBuf]) -> Vec<PathBuf> {
     files.retain(|(path, _)| !keep.contains(path));
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|(_, written)| std::cmp::Reverse(*written));
     files
         .into_iter()
         .skip(KEEP_NEWEST)
