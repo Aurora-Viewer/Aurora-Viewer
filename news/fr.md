@@ -26,6 +26,16 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-12 — Aurora 0.9.7 : la fenêtre Construction revue, la récupération de scripts et Destinations
+La fenêtre Construction est réorganisée : la sélection tient dans un en-tête repliable, les options forment des colonnes au-dessus des onglets, à ranger avec Organiser les options…, position, taille et rotation gardent toute la largeur, et Contenu a son menu d'affichage. Après un plantage ou une connexion perdue, la Récupération de scripts rend vos modifications non enregistrées à la connexion suivante, dans Objets perdus et trouvés. Destinations ouvre la fenêtre d'Aurora sur le Guide des destinations : recherche, catégories, notes et téléport en un clic. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.7)
+
+## 2026-11-12 — Poser, apparence et avatars
+Le poser gagne une fenêtre compacte qui laisse la scène libre, Maj + clic pour bouger plusieurs articulations ensemble, et un anneau qui tourne une articulation autour de l'axe de la caméra. Exporter XML, à côté d'Importer XML dans les éditeurs de silhouette, de physique et de vêtements, enregistre un fichier d'apparence, et le menu ⚙ d'Apparence exporte toute votre tenue. Votre avatar joue les animations de parole, de cri et de chuchotement dans le chat local, Recharger l'avatar répare un avatar qui s'affiche mal, et les couches mouillées et brillantes des corps mesh s'affichent.
+
+## 2026-11-12 — Encore plus proche du Legacy Viewer, et des correctifs
+Dialogues de script par objet garde un seul menu par objet au lieu d'une pile. Avancé › Libérer les touches rend les contrôles qu'un véhicule ou un HUD cassé retient, et un téléport en cours peut s'annuler. Les notices de groupe s'affichent aussi dans le chat du groupe, Navigateur préféré choisit où s'ouvrent les liens, et la Voie lactée est plus discrète, avec son curseur. Sur OpenSim, Demander le statut d'administrateur donne les pouvoirs d'administrateur. Merci à anne-skydancer, Bruica, circuskid, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Nowalski et Odessa-Draekavik.
+
 ## 2026-11-11 — Aurora 0.9.6 : la vitrine des tenues, les portraits auto et 65 looks photo
 La Galerie des tenues d'Apparence devient une vitrine : de grandes photos de vos tenues, un rail pour les favoris, les tenues sans photo et les dossiers, et on porte en un clic (les petites vignettes restent dans Préférences › Aurora). Portrait auto vous cadre en studio pour la photo gratuite de la tenue, Faire les portraits les fait toutes d'un coup, et une Photo HD en option coûte le prix d'envoi de la grille. L'onglet LUT du mode photo compte 20 looks de Czar Fenris et 45 de Nanner Pudding, merci à vous deux ! Cache et réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.6)
