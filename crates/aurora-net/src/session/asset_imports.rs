@@ -76,6 +76,9 @@ const PERM_COPY: u32 = 0x8000;
 /// PERM_MOVE, plus SettingsNextOwnerModify and SettingsNextOwnerTransfer
 /// (on); SettingsNextOwnerCopy is not defined, so it reads as off.
 const SETTINGS_NEXT_OWNER: u32 = 0x0008_0000 | 0x4000 | 0x2000;
+/// PERM_MOVE | PERM_TRANSFER, LLScriptRecoverQueue::recoverNext's next
+/// owner rights for a recovered script.
+const SCRIPT_RECOVERY_NEXT_OWNER: u32 = 0x0008_0000 | 0x2000;
 
 struct Pending {
     started: Instant,
@@ -526,6 +529,84 @@ impl Session<'_> {
         self.send_main(&message, true);
     }
 
+    /// LLScriptRecoverQueue::recoverNext (indra/newview/
+    /// llfloaterscriptrecover.cpp): a script item under `parent` with
+    /// PERM_MOVE | PERM_TRANSFER for the next owner and no transaction, its
+    /// text uploaded once the callback names it (onCreateScript).
+    pub(super) fn create_script_item(&mut self, request: Uuid, parent: Uuid, name: String, description: String, source: String) {
+        let cap = self.main_cap("UpdateScriptAgent");
+        let valid = !parent.is_nil() && !name.trim().is_empty() && name.len() <= 255 && source.len() <= crate::scripts::MAX_SOURCE;
+        let Some(cap) = cap.filter(|_| valid && self.asset_imports.settings.len() < 8) else {
+            emit(
+                self.sh,
+                NetEvent::InventoryContentSaved {
+                    request,
+                    item: Uuid::nil(),
+                    result: Err(aurora_i18n::tr!("script-save-unavailable").into()),
+                },
+            );
+            return;
+        };
+        let callback = self.inventory_callback(false);
+        let mut message = CreateInventoryItem::default();
+        message.agent_data.agent_id = self.agent_id();
+        message.agent_data.session_id = self.session_id();
+        message.inventory_block.folder_id = parent;
+        message.inventory_block.callback_id = callback;
+        message.inventory_block.next_owner_mask = SCRIPT_RECOVERY_NEXT_OWNER;
+        // AT_LSL_TEXT, IT_LSL, NO_INV_SUBTYPE
+        message.inventory_block.type_ = 10;
+        message.inventory_block.inv_type = 10;
+        message.inventory_block.wearable_type = 0;
+        message.inventory_block.name = str_field(&name);
+        message.inventory_block.description = str_field(&description);
+        self.asset_imports.settings.insert(
+            callback,
+            SettingsCreate {
+                started: Instant::now(),
+                request,
+                folder: parent,
+                data: source.into_bytes(),
+                // the text goes up through UpdateScriptAgent alone
+                caps: (cap, String::new()),
+                asset_type: 10,
+            },
+        );
+        self.send_main(&message, true);
+    }
+
+    /// onCreateScript / onSavedScript: the recovered text, compiled for Mono.
+    /// A script that does not compile is saved all the same, as the Legacy
+    /// Viewer does (only an HTTP failure fails the recovery).
+    fn recovered_script_created(&mut self, pending: SettingsCreate, item: &InvItem) {
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        let mut item = item.clone();
+        tokio::spawn(async move {
+            let target = crate::scripts::ScriptTarget {
+                object: Uuid::nil(),
+                item: item.id,
+            };
+            let options = crate::scripts::ScriptOptions {
+                mono: true,
+                running: false,
+                experience: Uuid::nil(),
+            };
+            let source = String::from_utf8_lossy(&pending.data).into_owned();
+            let result = crate::scripts::save(&http, &pending.caps.0, target, options, source)
+                .await
+                .map(|saved| {
+                    item.asset_id = saved.asset;
+                    item.clone()
+                });
+            let _ = events.send(NetEvent::InventoryContentSaved {
+                request: pending.request,
+                item: item.id,
+                result,
+            });
+        });
+    }
+
     /// onInventoryItemCreated: everyone may copy the new settings item, then its asset
     /// goes up (updateInventoryItem).
     fn settings_created(&mut self, pending: SettingsCreate, item: &InvItem) {
@@ -539,6 +620,10 @@ impl Session<'_> {
                     result: Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-save").into()),
                 },
             );
+            return;
+        }
+        if pending.asset_type == 10 {
+            self.recovered_script_created(pending, item);
             return;
         }
         if pending.asset_type == 56 && item.everyone_mask != PERM_COPY {
