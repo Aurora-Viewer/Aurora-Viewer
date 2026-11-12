@@ -362,12 +362,14 @@ impl MediaManager {
     pub fn on_key(
         &mut self,
         world: &World,
+        letter: Option<char>,
         code: winit::keyboard::KeyCode,
         scancode: u32,
         pressed: bool,
         repeat: bool,
         text: Option<&str>,
         mods: Modifiers,
+        clipboard: Option<&str>,
     ) -> bool {
         self.enforce_focus(world);
         if self.focus.is_none() {
@@ -380,7 +382,9 @@ impl MediaManager {
         let Some(p) = self.focused_mut().and_then(|m| m.plugin.as_mut()) else {
             return pressed;
         };
-        keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
+        keys::edit(p, letter, code, pressed, repeat, mods, clipboard)
+            || keys::forward(p, code, scancode, pressed, repeat, text, mods)
+            || pressed
     }
 
     /// Release the focus (LLViewerMediaFocus::clearFocus).
