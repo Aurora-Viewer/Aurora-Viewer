@@ -147,6 +147,8 @@ const BEFORE: &[&str] = &[
     "confirm_payments",
     "payment_confirm_threshold",
     "name_tag_distance",
+    "contact_markers",
+    "contact_marker_anchor",
     "show_own_name_tag",
     "show_friend_name_tags",
     "show_other_name_tags",
@@ -176,6 +178,7 @@ const BEFORE: &[&str] = &[
     "inventory.recent_hours",
     "inventory.show_worn",
     "inventory.show_favorites",
+    "inventory.favorites_show_parent_folders",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
@@ -184,6 +187,7 @@ const BEFORE: &[&str] = &[
     "inventory.double_click_add_clothes",
     "inventory.warn_task_move",
     "inventory.warn_scripted_task_move",
+    "inventory.confirm_delete",
     // Fonts
     "font",
     "font_scale",
@@ -266,6 +270,8 @@ const BEFORE: &[&str] = &[
     "no_neighbour_regions",
     "cache_size_mb",
     "cache_location",
+    "browser_behavior",
+    "browser_home_page",
     "audio",
     "media",
     "keybinds",
@@ -301,6 +307,7 @@ const BEFORE: &[&str] = &[
     "classic_search",
     "classic_region_estate",
     "classic_places",
+    "destinations_style",
     "classic_inventory",
     "classic_pay_window",
     "legacy_money_tracker",
@@ -391,8 +398,9 @@ fn a_setting_has_one_page() {
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
         // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer
-        if path == "keybinds" || path == "colored_sky_ambient" {
+        // differences from the Legacy Viewer;
+        // inventory delete confirm: Confirmations and Inventory (#2344)
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
         let elsewhere: Vec<_> = paths
@@ -401,6 +409,29 @@ fn a_setting_has_one_page() {
             .collect();
         assert!(elsewhere.is_empty(), "`{path}` of {page:?} is also on {elsewhere:?}");
     }
+}
+
+#[test]
+fn camera_and_vr_page_resets_are_independent() {
+    let mut s = Settings::default();
+    s.camera.vr.mouse_look = true;
+    s.camera.vr.resolution = Some([2560, 2560]);
+    s.camera.vr.gamma = 1.5;
+    s.camera.vr.vibrancy = 0.7;
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Camera, &mut s);
+    assert!(s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, Some([2560, 2560]));
+    assert_eq!(s.camera.vr.gamma, 1.5);
+    assert_eq!(s.camera.vr.vibrancy, 0.7);
+    assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Vr, &mut s);
+    assert!(!s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, None);
+    assert_eq!(s.camera.vr.gamma, 1.0);
+    assert_eq!(s.camera.vr.vibrancy, 1.0);
+    assert_eq!(s.camera.smoothing, 8.0);
 }
 
 #[test]
@@ -472,11 +503,30 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn gamepad_and_joystick_preferences_reset_independently() {
+    let mut settings = Settings::default();
+    settings.joystick.enabled = true;
+    settings.joystick.device = "raw-device".into();
+    settings.joystick.avatar.gain[5] = 0.35;
+    settings.gamepad.enabled = true;
+    settings.gamepad.device = "pad-device".into();
+    settings.gamepad.avatar.gain[5] = 7.0;
+    let raw = settings.joystick.clone();
+    let pad = settings.gamepad.clone();
+    reset_page_settings(Page::Controls, &mut settings);
+    assert_eq!(settings.gamepad, pad);
+    settings.joystick = raw.clone();
+    reset_page_settings(Page::Gamepad, &mut settings);
+    assert_eq!(settings.joystick, raw);
+    assert_eq!(settings.gamepad, Settings::default().gamepad);
+}
+
+#[test]
 fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     let mut s = Settings::default();
     s.joystick.enabled = true;
     s.joystick.device = "test-device".into();
-    s.joystick.gamepad();
+    s.joystick.raw_gamepad_preset();
     s.joystick.flycam.gain[3] = 0.7;
     s.joystick.avatar.dead_zone[0] = 0.4;
     s.joystick.auto_level = false;
@@ -754,6 +804,35 @@ fn group_titles_are_chosen_in_one_dropdown_and_reset_together() {
 }
 
 #[test]
+fn browser_behavior_radio_writes_the_selected_setting() {
+    use crate::settings::BrowserBehavior;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    assert_eq!(s.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+    let choices = [
+        (BrowserBehavior::SystemForAll, aurora_i18n::tr!("ui-options-browser-system-all")),
+        (
+            BrowserBehavior::BuiltInForSecondLife,
+            aurora_i18n::tr!("ui-options-browser-second-life"),
+        ),
+        (BrowserBehavior::BuiltInForAll, aurora_i18n::tr!("ui-options-browser-internal-all")),
+    ];
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, Vec::new());
+    }
+    for (behavior, label) in choices {
+        let at = texts.iter().find(|t| t.source == label).expect("browser choice").rect.center();
+        for events in click(at) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, events);
+        }
+        assert_eq!(s.browser_behavior, behavior);
+        assert!(r.changed);
+    }
+}
+
+#[test]
 fn keyboard_scale_survives_an_unrelated_preference_change_and_reload() {
     for key in [egui::Key::Plus, egui::Key::Minus] {
         let mut frames = Frames::new();
@@ -811,6 +890,9 @@ fn preference_shapes(
 ) -> Vec<egui::Shape> {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
+    // the Spelling tab's status line must not follow the checker that
+    // other tests load at the same time
+    crate::spelling::tests::pin_status(crate::spelling::Status::Ready);
     frames.shapes(events, |ui| {
         ui.set_width(view.2);
         ui.spacing_mut().item_spacing.y = 0.0;

@@ -480,7 +480,14 @@ impl RegionUi {
             .or_else(|| info.as_ref().map(|i| i.owner))
             .unwrap_or_default();
         let manager = info.as_ref().is_some_and(|i| i.is_estate_manager);
-        let role = estate::role(world.agent_id, owner, manager);
+        // a god has the owner's whole window (LLPanelEstateInfo /
+        // LLPanelEstateAccess::updateControls: god || owner || manager, the
+        // terrain's and the managers' list owner_or_god); the region checks
+        let role = if world.god_level > 0 {
+            Role::Owner
+        } else {
+            estate::role(world.agent_id, owner, manager)
+        };
         View {
             handle,
             role,

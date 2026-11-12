@@ -882,7 +882,11 @@ mod tests {
             contribution: 0,
         };
         let can = |role: Role, groups: &[GroupMembership], power: u64| {
-            let rights = AgentRights { id: DEMO_AGENT, groups };
+            let rights = AgentRights {
+                id: DEMO_AGENT,
+                groups,
+                god: false,
+            };
             modifiable_by_agent(&initial(role), &rights, power)
         };
         let officer = [member(OFFICER_POWERS)];

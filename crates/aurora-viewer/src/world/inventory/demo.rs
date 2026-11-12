@@ -47,6 +47,36 @@ pub fn seed_lost(inv: &mut Inventory, agent: Uuid) {
     inv.generation += 1;
 }
 
+/// A Lost and Found folder alone, when the demo inventory has none (the
+/// script recovery scenario puts the recovered scripts there).
+pub fn seed_lost_folder(inv: &mut Inventory) {
+    if inv.system_folder(16).is_some() {
+        return;
+    }
+    inv.folders.insert(
+        LOST_FOLDER,
+        Folder {
+            info: InvFolder {
+                id: LOST_FOLDER,
+                parent: inv.root,
+                name: aurora_i18n::tr!("common-lost-and-found").to_owned(),
+                type_default: 16,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let root = inv.root;
+    if let Some(folder) = inv.folders.get_mut(&root) {
+        folder.children.push(LOST_FOLDER);
+    }
+    inv.generation += 1;
+}
+
 pub fn lost_reply(agent: Uuid) -> aurora_net::inventory::orphans::Contents {
     aurora_net::inventory::orphans::Contents {
         folders: Vec::new(),
@@ -511,10 +541,16 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "delete"
         | "delete-key"
         | "delete-button"
+        | "delete-enter"
+        | "delete-tab"
         | "clipboard"
         | "clipboard-copy"
         | "clipboard-cut"
         | "clipboard-folder"
+        | "delete-confirm"
+        | "aurora-delete-confirm"
+        | "aurora-delete-confirm-medium"
+        | "aurora-delete-confirm-wide"
         | "clipboard-cut-folder"
         | "clipboard-progress"
         | "clipboard-window"
@@ -745,6 +781,36 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
         }));
     }
     inv.add_items(items);
+    inv.sort_all();
+}
+
+/// Hundreds of empty top folders, as some residents keep: still a long list
+/// once every folder is collapsed.
+pub fn seed_many_folders(inv: &mut Inventory, count: u128) {
+    let root = inv.root;
+    for n in 0..count {
+        let id = Uuid::from_u128(0x00c0_11a9_5e00_0000 + n);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: root,
+                    name: aurora_i18n::tr!("world-inventory-demo-folder", n = format!("{n:03}")),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&root) {
+            folder.children.push(id);
+        }
+    }
     inv.sort_all();
 }
 

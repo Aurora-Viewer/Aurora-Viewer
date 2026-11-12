@@ -184,12 +184,14 @@ pub(super) fn show(
     let search = st.searches.entry(st.selected).or_default();
     if let Some(q) = search.filter.as_mut() {
         ui.add_space(2.0);
-        ui.add(
-            egui::TextEdit::singleline(q)
-                .id(find::filter_id(st.selected))
-                .hint_text(aurora_i18n::tr!("ui-chat-filter"))
-                .desired_width(ui.available_width()),
-        );
+        {
+            let width = ui.available_width();
+            crate::ui::widgets::search_text_edit(ui, p, q, |edit| {
+                edit.id(find::filter_id(st.selected))
+                    .hint_text(aurora_i18n::tr!("ui-chat-filter"))
+                    .desired_width(width)
+            })
+        };
     }
 }
 

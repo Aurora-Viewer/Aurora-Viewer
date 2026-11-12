@@ -175,6 +175,13 @@ impl Scene {
         )
     }
 
+    /// Press target and depth for HUD media and object actions. Invisible
+    /// buttons take the press; a plain alpha-zero media panel lets the next
+    /// HUD surface take it.
+    pub fn hud_click_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), false, picking::FacePick::HudClick)
+    }
+
     /// The HUD move gesture reaches IGNORE prims, but respects texture holes.
     pub fn hud_move_pick(&self, world: &World, cursor: (f32, f32)) -> Option<usize> {
         self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), true, picking::FacePick::HudMove)
@@ -213,7 +220,9 @@ impl Scene {
             };
             if !g.hud
                 || g.owner_avatar != Some(own)
-                || (!include_hidden && mode != picking::FacePick::Surface && g.faces.iter().all(|f| f.pass == Pass::Hidden))
+                || (!include_hidden
+                    && !matches!(mode, picking::FacePick::Surface | picking::FacePick::HudClick)
+                    && g.faces.iter().all(|f| f.pass == Pass::Hidden))
                 || (!include_ignored && o.click_action == crate::interaction::code::IGNORE)
                 || !picking::ray_may_hit(g, ray)
             {

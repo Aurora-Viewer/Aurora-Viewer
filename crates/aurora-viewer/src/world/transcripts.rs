@@ -89,6 +89,11 @@ impl LineClock {
         self.revision = tick();
     }
 
+    /// A line's text changed in place: the views search the lines again.
+    pub fn edited(&mut self) {
+        self.revision = tick();
+    }
+
     pub fn popped_front(&mut self) {
         self.first += 1;
         self.revision = tick();
@@ -903,6 +908,42 @@ mod tests {
         clean(&w, &root);
     }
 
+    /// An empty block list comes back as the "emptymutelist" generic
+    /// message: offline messages are asked for at once, not after the
+    /// request's 30 s timeout.
+    #[test]
+    fn offline_messages_follow_an_empty_block_list_at_once() {
+        use aurora_net::NetCommand;
+        let root = temp();
+        let me = crate::demo::DEMO_AGENT;
+        let mut w = world(&root, me);
+        let asked = |w: &mut World| {
+            w.tick_social();
+            w.groups
+                .take_commands()
+                .iter()
+                .filter(|c| matches!(c, NetCommand::RequestOfflineMessages))
+                .count()
+        };
+        w.movement_complete = true;
+        let handle = 0x0003_E800_0003_E800;
+        w.main_region = Some(handle);
+        w.apply(aurora_net::NetEvent::Capabilities {
+            handle,
+            caps: Arc::new([("ReadOfflineMsgs".to_owned(), "x".to_owned())].into_iter().collect()),
+        });
+        w.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        assert_eq!(asked(&mut w), 0);
+        assert!(matches!(w.mutes.state, crate::world::mutes::LoadState::Requested(_)));
+        w.apply(aurora_net::NetEvent::MuteList(aurora_net::MuteListSource::ServerEmpty));
+        assert_eq!(w.mutes.state, crate::world::mutes::LoadState::Loaded);
+        assert_eq!(asked(&mut w), 1);
+        clean(&w, &root);
+    }
+
     /// #1198: a payment we made comes back with the conversation's history,
     /// as one we received does.
     #[test]
@@ -975,6 +1016,55 @@ mod tests {
         w.social.names.insert(Uuid::from_u128(3), "Bob Roe".into());
         assert_eq!(w.transcript_of(Some(Uuid::from_u128(3))).1, None);
         clean(&w, &root);
+    }
+
+    /// A sale to us writes its line to the payer's transcript, as the
+    /// PaymentReceived notice's `log_to_im` does; a muted payer and a group
+    /// write nothing there.
+    #[test]
+    fn a_sale_writes_its_line_to_the_payer_s_transcript_but_not_a_muted_one_or_a_group() {
+        let agent = Uuid::from_u128(1);
+        let jane = Uuid::from_u128(2);
+        let sale = |id: u128, source_group: bool| aurora_net::NetEvent::MoneyTransaction {
+            id: Uuid::from_u128(id),
+            success: true,
+            kind: 5000, // TRANS_OBJECT_SALE
+            source: jane,
+            source_group,
+            dest: agent,
+            dest_group: false,
+            amount: 100,
+            item: "Steel helmet".into(),
+            // the server's sentence: without one, nothing is displayed
+            description: "jane Resident paid you L$100.".into(),
+        };
+        let lines = |w: &World| w.chat_log.file_of("jane").map(|_| file_texts(w, "jane")).unwrap_or_default();
+        for case in ["sale", "muted", "group"] {
+            let root = temp();
+            let mut w = world(&root, agent);
+            w.payments.notify_direct = true;
+            w.payments.notify_received = true;
+            w.social.names.insert(jane, "jane Resident".into());
+            if case == "muted" {
+                w.mutes.reset(agent);
+                w.block(jane, "jane Resident", crate::world::mutes::MuteType::Agent)
+                    .expect("blocked");
+            }
+            w.payment(&sale(70, case == "group"));
+            settle(&mut w);
+            settle(&mut w);
+            let written = lines(&w);
+            if case == "sale" {
+                assert_eq!(written.len(), 1, "{case}: {written:?}");
+                assert!(
+                    written[0].1.contains("100") && written[0].1.contains("Steel helmet"),
+                    "{case}: {written:?}"
+                );
+            } else {
+                assert!(written.is_empty(), "{case}: {written:?}");
+            }
+            clean(&w, &root);
+        }
     }
 
     #[test]
