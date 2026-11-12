@@ -2432,6 +2432,85 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            // Phase 11: Spatial Voice Suite
+            "voice_status" => {
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::VoiceStatus, 5_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "voice_participants_list" => {
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::VoiceParticipantsList, 5_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "voice_set_user_volume" => {
+                let avatar_uuid = req_str(&args, "avatar_uuid")
+                    .or_else(|_| req_str(&args, "target_uuid"))
+                    .or_else(|_| req_str(&args, "agent_id"))?;
+                let volume = args
+                    .get("volume")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| {
+                        McpError::InvalidParams(
+                            "missing required number 'volume' [0.0..1.0]".into(),
+                        )
+                    })? as f32;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::VoiceSetUserVolume {
+                            avatar_uuid,
+                            volume: volume.clamp(0.0, 1.0),
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "voice_set_user_mute" => {
+                let avatar_uuid = req_str(&args, "avatar_uuid")
+                    .or_else(|_| req_str(&args, "target_uuid"))
+                    .or_else(|_| req_str(&args, "agent_id"))?;
+                let mute = args
+                    .get("mute")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::VoiceSetUserMute {
+                            avatar_uuid,
+                            mute,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "voice_transmit" => {
+                let transmitting = args
+                    .get("transmitting")
+                    .or_else(|| args.get("transmit"))
+                    .or_else(|| args.get("speaking"))
+                    .or_else(|| args.get("on"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::VoiceTransmit { transmitting },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             "environment_apply_preset" => {
                 let preset = args
                     .get("preset")
@@ -4070,6 +4149,62 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: false,
         },
+        ToolDefinition {
+            name: "voice_status".into(),
+            description: "Inspect the viewer's spatial WebRTC voice connection status, channel type (spatial parcel/region vs. multiagent call), ear listening mode, and microphone speaking level.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "voice_participants_list".into(),
+            description: "List all participants currently in voice range (or in an active voice call), including their speaking state, audio volume energy, moderator mute status, and user volume settings.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "voice_set_user_volume".into(),
+            description: "Adjust the volume level of a specific resident in the active spatial or call voice channel [0.0 = silent, 0.5 = normal, 1.0 = maximum boost]. Requires an active automation lease.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "avatar_uuid": { "type": "string", "description": "Target resident UUID" },
+                    "volume": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Volume scalar between 0.0 (silent) and 1.0 (loud)" }
+                },
+                "required": ["avatar_uuid", "volume"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "voice_set_user_mute".into(),
+            description: "Locally mute or unmute a resident in the active voice session. Requires an active automation lease.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "avatar_uuid": { "type": "string", "description": "Target resident UUID" },
+                    "mute": { "type": "boolean", "description": "True to mute, false to unmute" }
+                },
+                "required": ["avatar_uuid", "mute"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "voice_transmit".into(),
+            description: "Set the avatar's in-world microphone transmission state (push-to-talk). When enabled with an active microphone, avatar transmits voice audio into the region. Requires an active automation lease.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "transmitting": { "type": "boolean", "description": "True to activate microphone transmission (talking), false to mute/stop" }
+                },
+                "required": ["transmitting"]
+            }),
+            in_compact_profile: true,
+        },
     ]
 }
 
@@ -4080,7 +4215,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 105, "expected 105 total tools (43 Legacy + 62 Aurora-native)");
+        assert_eq!(defs.len(), 110, "expected 110 total tools (43 Legacy + 67 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -4197,6 +4332,11 @@ mod tests {
             "environment_get",
             "environment_set_time",
             "environment_apply_preset",
+            "voice_status",
+            "voice_participants_list",
+            "voice_set_user_volume",
+            "voice_set_user_mute",
+            "voice_transmit",
         ] {
             assert!(
                 names.contains(&native),

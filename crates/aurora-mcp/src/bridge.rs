@@ -586,6 +586,21 @@ pub enum ViewerRequest {
         sky_uuid: Option<String>,
         water_uuid: Option<String>,
     },
+
+    // Phase 11: Spatial Voice Suite
+    VoiceStatus,
+    VoiceParticipantsList,
+    VoiceSetUserVolume {
+        avatar_uuid: String,
+        volume: f32,
+    },
+    VoiceSetUserMute {
+        avatar_uuid: String,
+        mute: bool,
+    },
+    VoiceTransmit {
+        transmitting: bool,
+    },
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -668,7 +683,9 @@ impl ViewerRequest {
             | ViewerRequest::ParcelInfoQuery
             | ViewerRequest::GroupsList
             | ViewerRequest::FriendsList { .. }
-            | ViewerRequest::EnvironmentGet => false,
+            | ViewerRequest::EnvironmentGet
+            | ViewerRequest::VoiceStatus
+            | ViewerRequest::VoiceParticipantsList => false,
 
             ViewerRequest::LiveMeshControl { action, .. }
             | ViewerRequest::AssetUpload { action, .. } => {
@@ -728,7 +745,10 @@ impl ViewerRequest {
             | ViewerRequest::EconomyPayObject { .. }
             | ViewerRequest::GroupsActivate { .. }
             | ViewerRequest::EnvironmentSetTime { .. }
-            | ViewerRequest::EnvironmentApplyPreset { .. } => true,
+            | ViewerRequest::EnvironmentApplyPreset { .. }
+            | ViewerRequest::VoiceSetUserVolume { .. }
+            | ViewerRequest::VoiceSetUserMute { .. }
+            | ViewerRequest::VoiceTransmit { .. } => true,
         }
     }
 }

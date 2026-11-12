@@ -376,6 +376,44 @@ impl Voice {
             _ => HashMap::new(),
         }
     }
+
+    /// Direct list of all participants in the active session.
+    pub fn participants(&self) -> Vec<aurora_voice::Participant> {
+        self.session
+            .as_ref()
+            .map(|(_, s)| s.participants())
+            .unwrap_or_default()
+    }
+
+    /// Locally mute or unmute a resident in the active session.
+    pub fn set_user_mute(&mut self, id: Uuid, mute: bool) {
+        if let Some((_, s)) = &self.session {
+            s.set_user_mute(id, mute);
+            if mute {
+                self.muted.insert(id);
+            } else {
+                self.muted.remove(&id);
+            }
+        }
+    }
+
+    /// Set a resident's volume (0.0 to 1.0) in the active session.
+    pub fn set_user_volume(&mut self, id: Uuid, volume: f32) {
+        if let Some((_, s)) = &self.session {
+            s.set_user_volume(id, volume);
+            self.volumes.insert(id, volume);
+        }
+    }
+
+    /// Check if a resident is locally muted.
+    pub fn is_muted(&self, id: &Uuid) -> bool {
+        self.muted.contains(id)
+    }
+
+    /// Get a resident's current volume setting.
+    pub fn user_volume(&self, id: &Uuid) -> f32 {
+        self.volumes.get(id).copied().unwrap_or(0.5)
+    }
 }
 
 /// Why the region or the parcel forbids nearby voice, `None` when it allows

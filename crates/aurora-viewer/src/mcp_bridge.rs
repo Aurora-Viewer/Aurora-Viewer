@@ -196,6 +196,7 @@ pub struct McpBridge {
     mcp_poses: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     local_mesh_auto_reload: bool,
     pub sse_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub last_voice_speaking: HashMap<Uuid, bool>,
 }
 
 impl McpBridge {
@@ -651,6 +652,31 @@ impl App {
                 }
                 Err(err) => {
                     let _ = next.reply_tx.send(Err(err));
+                }
+            }
+        }
+
+        // 4. Progress voice speaker activity monitoring for realtime SSE
+        if self.mcp_bridge.sse_tx.is_some() && self.voice.connected {
+            let levels = self.voice.levels(self.world.agent_id);
+            for (id, &(level, speaking)) in &levels {
+                let was_speaking = self
+                    .mcp_bridge
+                    .last_voice_speaking
+                    .get(id)
+                    .copied()
+                    .unwrap_or(false);
+                if was_speaking != speaking {
+                    self.mcp_bridge.last_voice_speaking.insert(*id, speaking);
+                    self.mcp_bridge.push_event(
+                        "voice",
+                        "SpeakerChanged",
+                        json!({
+                            "avatar_uuid": id.to_string(),
+                            "speaking": speaking,
+                            "level": level,
+                        }),
+                    );
                 }
             }
         }
@@ -2030,6 +2056,26 @@ impl App {
                     sky_uuid.as_deref(),
                     water_uuid.as_deref(),
                 );
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::VoiceStatus => {
+                let resp = self.handle_mcp_voice_status();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::VoiceParticipantsList => {
+                let resp = self.handle_mcp_voice_participants_list();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::VoiceSetUserVolume { avatar_uuid, volume } => {
+                let resp = self.handle_mcp_voice_set_user_volume(&avatar_uuid, volume);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::VoiceSetUserMute { avatar_uuid, mute } => {
+                let resp = self.handle_mcp_voice_set_user_mute(&avatar_uuid, mute);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::VoiceTransmit { transmitting } => {
+                let resp = self.handle_mcp_voice_transmit(transmitting);
                 let _ = reply_tx.send(resp);
             }
         }
@@ -5452,6 +5498,120 @@ impl App {
             previous_time_of_day,
             state,
         })
+    }
+
+    // ---- Phase 11: Spatial Voice Suite ----
+
+    fn handle_mcp_voice_status(&self) -> Result<ViewerResponse, McpError> {
+        let light_str = match self.voice.light {
+            crate::voice::VoiceLight::Off => "Off",
+            crate::voice::VoiceLight::Connecting => "Connecting",
+            crate::voice::VoiceLight::Connected => "Connected",
+            crate::voice::VoiceLight::Down => "Down",
+        };
+        let ear_str = match self.settings.audio.voice_ear {
+            crate::settings::VoiceEar::Avatar => "Avatar",
+            crate::settings::VoiceEar::Camera => "Camera",
+        };
+        let is_transmitting = self.talking();
+        let in_call = self.world.calls.active.is_some();
+        let channel_type = if in_call { "Call" } else { "Spatial" };
+
+        Ok(ViewerResponse::Json(json!({
+            "voice_enabled": self.settings.audio.voice_enabled,
+            "connected": self.voice.connected,
+            "status": self.voice.status,
+            "light": light_str,
+            "channel_type": channel_type,
+            "ear": ear_str,
+            "own_speaking": self.voice.own_level > aurora_voice::SPEAKING_AUDIO_LEVEL,
+            "own_level": self.voice.own_level,
+            "mic_level": self.voice.mic_level,
+            "mic_meter": self.voice.mic_meter,
+            "is_transmitting": is_transmitting,
+            "in_call": in_call,
+        })))
+    }
+
+    fn handle_mcp_voice_participants_list(&self) -> Result<ViewerResponse, McpError> {
+        let participants = self.voice.participants();
+        let mut list = Vec::new();
+
+        for p in participants {
+            let name = self
+                .world
+                .social
+                .names
+                .get(&p.agent_id)
+                .cloned()
+                .or_else(|| self.world.social.avatar_names.complete(&p.agent_id))
+                .unwrap_or_else(|| p.agent_id.to_string());
+
+            let user_volume = self.voice.user_volume(&p.agent_id);
+            let user_muted = self.voice.is_muted(&p.agent_id);
+
+            list.push(json!({
+                "avatar_uuid": p.agent_id.to_string(),
+                "name": name,
+                "speaking": p.speaking,
+                "level": p.level,
+                "moderator_muted": p.moderator_muted,
+                "user_muted": user_muted,
+                "user_volume": user_volume,
+            }));
+        }
+
+        Ok(ViewerResponse::Json(json!({
+            "count": list.len(),
+            "connected": self.voice.connected,
+            "participants": list,
+        })))
+    }
+
+    fn handle_mcp_voice_set_user_volume(
+        &mut self,
+        avatar_uuid_str: &str,
+        volume: f32,
+    ) -> Result<ViewerResponse, McpError> {
+        let id = Uuid::parse_str(avatar_uuid_str.trim())
+            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+
+        self.voice.set_user_volume(id, volume);
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "avatar_uuid": id.to_string(),
+            "volume": volume,
+            "status": "volume_updated",
+        })))
+    }
+
+    fn handle_mcp_voice_set_user_mute(
+        &mut self,
+        avatar_uuid_str: &str,
+        mute: bool,
+    ) -> Result<ViewerResponse, McpError> {
+        let id = Uuid::parse_str(avatar_uuid_str.trim())
+            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+
+        self.voice.set_user_mute(id, mute);
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "avatar_uuid": id.to_string(),
+            "muted": mute,
+            "status": if mute { "user_muted" } else { "user_unmuted" },
+        })))
+    }
+
+    fn handle_mcp_voice_transmit(&mut self, transmitting: bool) -> Result<ViewerResponse, McpError> {
+        self.voice.set_transmit(transmitting);
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "transmitting": transmitting,
+            "status": if transmitting { "transmitting_started" } else { "transmitting_stopped" },
+        })))
     }
 }
 
