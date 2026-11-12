@@ -4715,7 +4715,13 @@ finish using the renderer's built-in neutral textures. Its supplemental CPU
 draw is included in the main view and both water captures, alongside GPU
 avatar draws; the reflected camera therefore sees the same solid occluder.
 The existing isolation visibility path selects the live avatar and its
-attachments without replacing photo choices. Terrain isolation also clears
+attachments without replacing photo choices. When seated, it also includes
+the seat's complete linkset and avatars seated on any prim of that linkset,
+with their body attachments but not their HUDs. The sorted root set invalidates
+GPU visibility when sitters join, stand or change seats; existing hidden render
+types and avatar detail limits still apply. The entry floor accounts for the
+furniture's rotated bounds so the podium does not intersect its base.
+Terrain isolation also clears
 the separate classic/PBR terrain lists used by water reflection and refraction,
 including offscreen land. Region terrain, water and
 particles are replaced by the local stage; native windows and worn HUDs

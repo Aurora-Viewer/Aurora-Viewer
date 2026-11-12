@@ -24,7 +24,22 @@ impl App {
         let id = &self.world.agent_id;
         let root = self.studio_root();
         let feet = ["mFootLeft", "mFootRight"].map(|name| self.scene.joint_world(&self.world, id, name, now));
-        let bottom = feet.into_iter().flatten().map(|p| p.z).reduce(f32::min).unwrap_or(root.z - 0.9) - crate::avatar_studio::SOLE_HEIGHT;
+        let mut bottom =
+            feet.into_iter().flatten().map(|p| p.z).reduce(f32::min).unwrap_or(root.z - 0.9) - crate::avatar_studio::SOLE_HEIGHT;
+        if let Some((_, seat)) = crate::snapshot::isolate::studio_seat(&self.world) {
+            for (index, object) in self.world.objects.iter() {
+                if crate::snapshot::isolate::root_of(&self.world, index).is_none_or(|(_, id)| id != seat) {
+                    continue;
+                }
+                if let Some((position, rotation, _)) = Scene::object_transform(&self.world, index, now, 0) {
+                    let half = glam::Mat3::from_quat(rotation).abs() * object.scale.abs() * 0.5;
+                    let base = position.z - half.z;
+                    if base.is_finite() {
+                        bottom = bottom.min(base);
+                    }
+                }
+            }
+        }
         let top = self.scene.joint_world(&self.world, id, "mHead", now).map_or(root.z + 0.85, |p| p.z) + 0.2;
         (root.with_z(bottom), (top - bottom).clamp(0.5, 6.0))
     }
@@ -337,7 +352,6 @@ impl App {
         lists.land_overlay.clear();
         lists.creation_preview.clear();
         lists.physics_shapes.clear();
-        lists.impostor_sprites.clear();
         if let Some(age) = effect_age {
             let colors = [self.palette.teal, self.palette.violet_light, self.palette.indigo_light].map(|c| [c.r(), c.g(), c.b()]);
             crate::scene::avatar_studio::reveal_particles(

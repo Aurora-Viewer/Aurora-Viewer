@@ -9470,6 +9470,14 @@ of `other` keep bouncing. Save stores the asset and applies it as the
 appearance, as a simulator bake would.
 
 **Avatar Studio.** `AURORA_DEMO_AVATAR_STUDIO=1` opens the studio at frame 640.
+Shared seating: on the grid, sit on furniture before entering Studio. Its whole
+linkset and other avatars seated on its root or child prims should appear,
+including their body attachments. Other furniture, standing bystanders and
+other residents' HUDs stay hidden. Have a companion join, stand and change seats
+while Studio is open; visibility must update. Stand yourself to return to the
+ordinary own-avatar view. Check a rotated seat, a multi-prim sofa, a low avatar
+detail limit and Photo mode. The podium should be below the furniture's base
+at entry. No object or avatar should move in the simulator because of Studio.
 Capture after frame 850. Inspect the circular podium, neutrally lit avatar,
 surrounding water, stars and animated aurora in the login screen's colours.
 Entry and exit fade to black before switching the scene, then uncover it:
