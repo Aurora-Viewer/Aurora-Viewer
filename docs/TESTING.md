@@ -9481,6 +9481,10 @@ at entry. No object or avatar should move in the simulator because of Studio.
 Rotate the seat by 180 degrees, including a seat on a rotated child prim,
 and reopen Studio: its initial view must face the avatar's front using the
 avatar's full world rotation. A standing avatar's entry view must stay unchanged.
+Use an off-centre seat on a sofa with offset linked parts: the podium must be
+centred under the whole furniture, independent of the sitter's position or worn
+attachments. Move/rotate the furniture or change seats within it: its centre
+must stay on the podium. Camera focus and panning remain avatar-relative.
 Combine with `AURORA_DEMO_LOOKAT=targets`: no look-at dots/crosshairs, names
 or lines should appear in Studio, even for included companions. Combine with
 Studio's `cycle` mode to check that they return on exit with the same preferences.

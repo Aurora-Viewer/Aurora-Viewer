@@ -4640,8 +4640,11 @@ toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
 Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
 toggle and active indication. Seated entry uses the avatar's resolved world
 rotation through the seat/link hierarchy to frame its front; standing entry
-retains the agent's heading. Left-drag orbits;
-right-drag adjusts the avatar-relative focus height without avatar-height bounds.
+retains the agent's heading.
+The seated podium uses the furniture linkset's bounds, excluding sitters and
+attachments. Its centre is cached in the furniture root's local frame and follows
+that root without a per-frame linkset scan; the camera still focuses on the avatar.
+Left-drag orbits; right-drag adjusts the avatar-relative focus height without avatar-height bounds.
 Right clicks retain the native avatar and attachment context menus. The shared
 10-point right-gesture threshold separates a click from a focus-height drag;
 dragging never opens a menu on release. Attachment editing keeps native
