@@ -200,6 +200,18 @@ one sun shadow map of its own, centred on the probe (`probes::shadow_matrix`);
 under the rim of the dome the sky gives way to a mirror of it, for the sea.
 The views of a capture are mirrored (`probes::face_view`), so captures count
 as mirrored passes (`misc.w` 2).
+
+`shaders/cull.wgsl::write_args` validates indexed-indirect ranges against the
+bound u16 index buffer and zeros invalid draws; `cs_classify` counts each
+such face once per frame (left out of the triangle statistics), and the log
+names a new maximum only. CPU-built indirect lists get the same bound when they are pushed
+(`gpu_cull::bound_cpu_draw`); wgpu's `VALIDATION_INDIRECT_CALL` stays off (it
+does not cover the GPU-culled `multi_draw_indexed_indirect_count`). The scene
+texture table stores its bound page count in the header of the existing storage
+location buffer. `common.wgsl::texture_page_index` uses that count to send an
+out-of-range page to page 0, keeping the layer: the face samples a bound texture
+(whatever sits at that layer of page 0), never a stale descriptor; it is not a
+dedicated fallback texture.
 Reflection-probe capture mips use separate compute passes before the final
 radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
 30 when a mip written by one dispatch is sampled by later dispatches.
@@ -606,6 +618,10 @@ Shift+Enter whispers only in nearby chat; other conversations consume it
 before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
+`ui/chat/channel.rs` shares the nearby-chat channel selector across all
+conversation layouts and both local chat bars. Its channel (`ChatUi::chat_channel`)
+stays outside the draft, like the Legacy spinner; `channel::resolve` applies it
+when the text, OOC-wrapped first, has no `/n`.
 
 The night sky (`aurora-render/src/stars.rs`, `sky_stars` in `shaders/env.wgsl`)
 draws the 8,795 naked-eye stars of `assets/stars/stars.bin` (Tycho-2,
@@ -1370,6 +1386,28 @@ import preview. `poser/storage.rs` returns the successful save path to the UI;
 the refreshed library selects that entry and reports its full path, and native
 file pickers start in the account-local poses directory (#3169). Poser does not
 start IK-project autosaves or object imports.
+The poser's part under Ctrl is drawn and picked from the subject's meshes:
+`poser/world_hints.rs` turns the part into a 256-bit palette joint mask
+(collision volumes, attachment points and the inner spine follow their bone;
+the face takes the head, a hand its wrist) that the frame uniform carries
+(`FrameParams::part_joints`); `scene/mod.rs` lists the subject's skinned faces
+(`part_faces`, visited with the GPU lists too); `vs_part_mask` grades each
+vertex's weight share on those joints into a two-channel mask drawn with the
+scene's depth test, composited by `selection::Overlay::new_part` (a fading
+tint on the subject, a halo on the outer outline only). While Ctrl hovers the
+subject, `aurora-render/src/part_pick.rs` reads the visible part under the
+cursor a frame or two later (`FramePacket` request, `FrameResult::part_pick`,
+`Renderer::take_part_pick`). `FrameParams::part_classes` packs four bits per
+palette joint; `vs_part_pick` sums each part's weights at the vertex and the
+fragment chooses among their interpolated shares, independently of triangle
+index order. The poser offers the nearest projected bone within that part;
+the bones decide until a pick arrives or for an animesh. Both part passes
+honor material sidedness and resolve nearest coverage in a private copy of
+post depth, including unrigged blended accessories, without modifying scene
+depth. FSR's display depth supports that copy too. Readback slots carry
+monotonic sequence numbers so a reused slot cannot deliver an older answer
+over a newer one. `renderer::part_tests` exercises the production shaders
+and shared pipeline states on the GPU; `part_pick` also tests slot reuse.
 `world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
 state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
 and the independent target modal/reminder. Bridge 1.34 adds authenticated
@@ -1806,8 +1844,41 @@ never acquire or configure it. Runtime images are returned to attachment layout
 before release. `vr_mirror.rs` samples an already rendered left-eye image into the desktop
 surface at up to 30 FPS, preserving aspect ratio and returning the runtime image
 to attachment layout before release. Bind groups are cached per eye image; no
-CPU readback or third world-rendering pass is used. Desktop presentation is
+CPU readback or third world-rendering pass is used. When a headset colour
+setting is active, the eyes render into ungraded textures. The mirror samples
+those textures and a fullscreen pass applies gamma and vibrancy to the
+headset output. The optional grade textures are released at identity. Runtime
+swapchains prefer sRGB. Display-encoded staging bytes can be copied to an sRGB
+twin; UNORM-only runtime images receive a GPU conversion to linear colour before
+submission. Preferences group the VR fields inside the camera settings while
+retaining their existing flat serialized names. Desktop presentation is
 restored when VR ends.
+
+VR keeps physical VIEW-space tracking direct and separates it from the artificial
+rig and the avatar movement body. `vr_control` returns a coherent predicted head
+sample and runtime focus without blocking the render worker. Samples carry their
+reference/origin identity so a recenter or region change cannot become a stale
+body-follow command. Gamepad mappings reuse the desktop movement pipeline with
+artificial pitch/roll suppressed. Walking uses projected gaze; Flycam travel uses
+full physical gaze and steering pivots at the current tracked head.
+
+`camera/vr.rs` owns the pure room-scale follow/framing logic. First-person body
+following uses head-projected displacement with separate start/stop radii,
+normal walking controls and manual-input priority. Only accepted body-follow
+displacement is counter-translated out of the rig, so catch-up cannot drag the
+head or create runaway feedback. Physical tracking is never smoothed.
+
+Avatar mode reuses the native gamepad orbit, pan, focus and camera animation
+paths. The VR layer retains horizontal user-driven orbit while suppressing
+artificial pitch/roll, adds positional automatic centering without rotating
+its view, and holds zoom height through settling. D-pad target selection uses
+the native travel timing with preserved view heading rather than a target-front
+turn. Native focus height and explicit vertical pan are retained; the VR layer
+does not replace travel with a separate slow framing controller.
+
+The toolbar VR popup selects the entry mode. `ui/options/pages/vr.rs` owns optional horizontal mouse look and
+per-eye resolution settings. Resolution is passed to `xr_frame::Session::new`
+and bounded by runtime and device limits at creation.
 
 `Renderer::render_to_texture` hands a caller-owned output texture through
 `FramePacket` to the rendering thread. The backend validates its size, format,
@@ -2796,6 +2867,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ao/`, `app/ao.rs`, `ui/ao.rs` | Built-in Animation Overrider: catalogue of the authoritative `#Aurora/Aurora AO` sets, inventory links and ZHAO import (`inventory.rs`), one startup reconstruction from `#Firestorm/#AO` when the Aurora folder is absent (`bootstrap.rs`), explicit single-set Legacy Viewer copying (`migration.rs`, on-demand picker in `ui/ao/migration.rs`), states / cycles / groups / tracks and remapping of the pose of our avatar only (`runtime.rs`), synthetic assets and transitions (`demo.rs`); AIS operations and asynchronous replies in `app/ao.rs`, management window opened by the AO button of the bottom bar. The raw signals of the simulator are still used for movement and transitions; the overrides are announced through AgentAnimation. Activation and last set saved per account UUID; pause and standing poses specific to the session. |
 | `camera/` | The camera like LLAgentCamera: view behind the avatar, Alt camera on a point or an object (`focus.rs`), seat camera, scripted camera (`follow.rs`: LLFollowCam parameters, per-object activation stack held by World and avatar-relative simulation; `world/mod.rs` deactivates seat/attachment linkset sources before parent changes, retaining parameters and unrelated sources), mouselook and its right-button zoom (`mouselook_zoom.rs`: LLToolCompGun's held zoom, the wheel steps, the view limits), transitions, smoothing, pull-back in flight, collision sent by the simulator; camera presets (`presets.rs`, issue #1164: a saved `CameraShot` held by the avatar, a place in global metres or an object it follows, with the photo mode's lens, looks and light as optional parts; captured and applied by `app/camera_presets.rs`, listed by the viewfinder's `ui/viewfinder/presets.rs` panel and the Controls window); the photo window's free camera (`free.rs`: its own position and heading while the avatar stays, moves in the camera's frame like the Legacy Viewer's 3D mouse flycam, optional collisions that slide along objects and the ground; `Camera::update` shows it and keeps the avatar's view behind it); Legacy Viewer settings (`settings.rs`, with `SavedViews`: the Rear, Front, Side and Shoulder views the user saved over their templates, #2755), demo scenarios (`demo.rs`) |
 | `world/` | World state received from the network: the favourites (`favorites.rs`: the Favorites folder's landmarks in the account's order, LLFavoritesOrderStorage), objects, regions, terrain, objects of the out-of-range regions set aside until these close or come back into range (`parked.rs`), environment (EEP: cycles and settings assets in `eep.rs`, choice local > parcel > region > default day, local environment and fades in `eep_env.rs`, the photo's own sky, water, day cycle, time and sun laid over it in `eep_photo.rs`, what experience controllers push (ENV_PUSH, above the parcel and under the local environment) in `eep_push.rs`, lists of the environment picker and loading of the folders in `env_select.rs`), selected parcel of "About Land", its rights and its refresh while the window is open (`land.rs`), who may freeze or eject a resident where they stand (`land_moderation.rs`), social, avatar profiles, inventory, groups (active, pinned; the open profile's members and roles in `group_data.rs`, its parcels and accounts in `group_money.rs`), contact sets and nicknames (`contact_sets.rs`), blocks, derendered objects and residents and the account's asset blacklist (`derender.rs`: their updates dropped, kept to come back at once; Show Friends Only hides the avatars that are not friends the same way, `friends_only.rs`), messages of the Legacy Viewer's LSL bridge (hidden), body orientation, gaze (LookAt), map, place profiles of "Places" and of the separate windows (`place_details.rs`: region by its name, landmark, RemoteParcelRequest, ParcelInfoRequest), the parcel snapshots of the favourites and of the Places rows without a thumbnail, by landmark or by point (`place_snapshots.rs`), landmark assets and handles of their regions (`landmarks.rs`), dated and saved teleport history (`tphistory.rs`), how long a teleport or crossing waits for the region to confirm the arrival (`arrival_wait.rs`), what an avatar wears against the worn objects its appearance lists, for the Dev Toolbox's J2 (`worn_listed.rs`, issue #2747), teleport offers and requests from other residents waiting for their answer (`teleport_invites.rs`), whether the teleport screen offers Cancel and what a cancel leaves (`teleport_cancel.rs`), our temporary attachments (an experience's or llAttachToAvatarTemp's, with no inventory item) and their names from AttachmentResources (`temp_attachments.rs`), residents' inventory offers as cards in the giver's conversation, answered through their notification, and the inventory opened on a kept offer's item (ShowInInventory) (`inventory_offers.rs`), direct payments between a resident and us as cards in their conversation, and lines in its transcript (`payments.rs`), calling cards given and received (`calling_cards.rs`), the content rating chosen during the session and its sync with the server (`maturity.rs`), experiences' details, the permission questions waiting for them and the agent's permission for each (`experiences.rs`), one text rule for the names of objects and owners in dialogs: on one line, without bidi embeddings, overrides or isolates, the name as sent kept for blocking (`dialog_names.rs`), Set Home to Here and the map's home that follows it (`home.rs`), the account settings of Preferences › Privacy the grid keeps (`user_info.rs`)… |
+| `camera/vr.rs` | Pure VR comfort controls: positional centering layered on native Avatar movement, horizontal zoom and delayed-authority first-person body arrival, independent from direct headset tracking. |
 | `scene/` | What is sent to the GPU: geometry and LOD, textures (streaming), avatars (skeleton, animations, silhouette), particles, water, reflection probes, world sounds, impostors, environment settings assets (`settings.rs`: sky, water, day cycle) |
 | `ui/` | egui interface: bars (`bars.rs`: the Legacy Viewer's full-width bars and what both looks share; `bars/islands.rs`: Aurora's top bar, glass islands over the world sampling the windows' blur, the system island's items, detailed tooltip and right click; `bars/clock.rs`: the bars' clock, SLT or local time with its zone's abbreviation (tz database) switched by a click, with or without seconds, in 12 or 24 hours (Auto: the system's regional format); `bars/place.rs`: the place island, what it shows by the room it has, its menu; `bars/location_suggest.rs`: what the destination field and the Legacy bars' location field suggest while a place is typed (landmarks, then places of the history, Legacy matching and dictionary order) and the row Enter takes; `bars/dock.rs`: the bottom islands, the chat island with the chat bar's field and the toolbar's buttons in a centred dock, one height for both; `bars/side.rs`: the left and right toolbars; `bars/sizing.rs`: the widths of a toolbar's buttons; `bars/favorites.rs`: the favourites in the place island's menu, the row under the islands or the dock's grid, chosen by "Favourites access"; `bars/demo.rs`: `AURORA_DEMO_BARS`; `interface.rs`: the interface hidden by Alt+Shift+U, immersive mode (hidden but the chat) and the bars in mouselook), windows, options, chat, contacts (friends, groups, contact sets: `contacts.rs`), avatar profiles (`profile.rs`, the Legacy Viewer's tabbed window, and `profile/aurora.rs`, the default window with its header and cards, on the same state), world map (`worldmap/`: the full-frame layout's floating panels in `overlay.rs`, the Legacy Viewer's side panel in `mod.rs`), "Places" (`places.rs`: the Legacy Viewer's tabs of favourites, landmarks, teleport history; `places/aurora.rs`: Aurora's look, narrow with tabs and rows that open in place, widened with a rail of sources and folders and a preview; `places/model.rs`: its places, one per landmark asset, their last visit from the history, the history's places without a landmark) and place profiles (`place_details.rs`, also as separate windows), "Create landmark" (`landmark_create.rs`), "Asset blacklist" (`blacklist.rs`: the derendered objects and residents), "Region / Estate" (`region/`: the window, its roles and "View as" in `mod.rs`, the header and the overview in `overview.rs`, Manage's sections in `manage.rs`, its Interventions and their dialogs (message, teleport home, kick, objects returned, restart, schedule) in `interventions.rs`, the Top scripts / Top colliders window in `top_objects.rs`, Environment, Experiences and Covenant with their pickers and scope question in `estate_wide.rs`, the rules' and terrain's Advanced folds (telehub and spawn points, PBR terrain materials and their transforms, RAW file) in `advanced.rs`, the classic window (the Legacy Viewer's eight tabs over the same sections) in `classic.rs`, their changes waiting for "Apply" in `draft.rs`, the questions and notices in `confirm.rs`, People's four estate lists with their pickers, scope question and CSV files in `people.rs`; data in `world/estate.rs`, what the app feeds it (the selection for the telehub, the terrain's materials) in `app/region_window.rs`, protocol in `aurora-net/src/estate.rs`, `session/estate.rs` and `session/terrain_raw.rs` (the RAW file's Xfer)), "About Land" (`land/`, one file per tab, dialogs; Aurora's layout over them in `aurora.rs`, its overview in `overview.rs`, the settings by intent in `manage.rs`, the access lists and object owners in `people.rs`, Script info in `scripts.rs`), the pieces the redesigned windows share (`sheet.rs`: header on the field's face with its gauge, page tabs with "View as", pills, cards with a title and a link, lines of facts, settings rows with their sentence, amber lock banner and line, "Advanced" folds, a column of sections whose navigation follows the scrolling (a row of icons in a compact window), the bar of changes waiting for "Apply", list heads and resident rows), group profile (`group_profile.rs` and `group_profile/`: header, Home, Members, Notices, Land and L$ (`land.rs`), Experiences (`experiences.rs`) and Administration tabs, or the classic window), resident picker (`avatar_picker.rs`), experience profile with its permission (`experience_profile.rs`), the Me › Experiences window with its five lists (`experiences.rs`), web page in a window (`web_view.rs`), the media filter's question and its list in the preferences (`media_filter.rs`), the Marketplace web site in a window (`marketplace.rs`), the toolbar's built-in web browser (`web_browser.rs`: LLFloaterWebContent on `web_view.rs`), the grid's Destination Guide (`destinations.rs`: LLFloaterDestinations on `web_view.rs`, the guide's address per grid, the Legacy style; `destinations/aurora.rs`: Aurora's window on the guide's feed, compact with category chips and rows that open in place, widened with a rail of categories, cards and a preview; the shared place rows of `place_card.rs`), texture picker, inventory, environment picker and "Personal lighting" (`environment.rs`), maps, debug overlays; sounds caused by the widgets (`sound_cues.rs`: clicks, refused keys, windows); the progress window of a selection's script actions (`script_queue.rs`); right-click menus: shared look (`menu.rs`: Tabler icon, submenus, checked boxes) and entries like the Legacy Viewer (`context.rs`: world, avatar names, groups) |
 | `build/` | Building tools like LLFloaterTools: selection and manipulators (`manip.rs`), selection regressions for linked parts and whole objects (`selection_tests.rs`), cycling through the selection under the pointer with CTRL + wheel (`cycle.rs`: units per linkset or prims of a single object, high-precision wheel), direct moving of HUDs (`hud_drag.rs`: root of the linkset, screen / attachment point conversion, local echo and position MultipleObjectUpdate on release), Move (`grab.rs`) and Align (`align.rs`) tools, a click that puts the selection against the surface under the cursor (`place.rs`, "Place on surface"), snap to objects while moving (`object_snap.rs`: the selection flush against nearby prims, a box prim by its box and a mesh or shaped prim by its visible triangles, stopped at their faces, with its guides; Aurora's own, `object_snap_tests.rs` on the demo boxes), terrain (`land.rs`), edits of the selection (`edits.rs`), materials and media (`materials.rs`), object contents (`contents.rs`) and the inventory dropped into them, one item or a whole selection with its folders, from the world or the Contents tab (`contents_drop.rs`), the texture and material ids a face, sculpt or projector copy may carry to another prim, and the limited item that follows them into its contents (`texture_copy.rs`), the script actions of a selection (`script_queue.rs`: Reset / Run / Stop / Remove scripts, object after object), impact and weights (`costs.rs`), the avatars and animated objects whose animations pause while something they carry is selected (`anim_pause.rs`), demo simulator (`demo_sim.rs`); the window and its tabs in `build/ui/` |
@@ -2886,7 +2958,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/close_key.rs` | Ctrl+W closes the frontmost window, as File › Close Window, and on macOS Command+W does too (both are the keyboard Control mask). Ctrl+Shift+W, and Command+Shift+W on macOS, closes every window, as File › Close All Windows, including the mini-map (`shown_extra`). Taken at the start of the interface's frame, before a text field reads it (`begin`), only when a window is there; every `widgets::Floater` declares itself (`shown`) and closes as its cross when the key is for it (`take`); the Conversations window takes a single close first for its conversation shown, and Close All closes that window |
 | `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/cascade.rs`, `ui/widgets/demo.rs`, `ui/widgets/scroll_offset.rs`, `ui/widgets/hero.rs` | Shared widgets and floating windows; the head shared by the Aurora avatar and group profiles, a banner as tall as what it holds with the picture, who it is and the actions centred on one line and the tabs along its bottom, laid out again when its height changes (`hero`); Construction and inventory menu customization share organization typography, headings, close controls and drag previews in `ui/widgets/workspace.rs`; a scroll offset decided after a scroll area is shown (rows above that changed height, automatic scrolling) given back to it at its next show, egui keeping the offset private (`scroll_offset`); the capitals of every text field centred on its face, the field keeping its height (`field_text_margin`, used by `theme.rs` for the theme's fields and by the bare fields laid on their own face); Firestorm inventory preview/editor cascades by type and creation order; collapsing by double-clicking the title or by a button, expanded size kept and collapsed bar movable; offline gestures on the real title; resize handles bounded before the move, opposite edge fixed, limits of the content and of the visible area; position and size kept by egui; names longer than their space cut with "…" with the whole name on hover (`elided_label`, `paint_elided`) for the lists of residents, groups and conversations |
 | `ui/layout.rs`, `ui/layout/anchor.rs`, `ui/layout/gesture.rs` | Interface layout: egui's memory (positions, sizes, collapsed windows) written to `ui_layout.ron` on exit and read back at startup; work area left by the bars (`work_area`) and common gap `GAP` of the default layout and of snapping (none: the windows touch); `Slot`, through which `widgets::Floater` and the minimap (`widgets::bare_window`) go, records each measured window and its movement room; `anchor.rs` converts existing default positions/sizes and older layouts directly into the closest of eight corresponding perimeter points and its signed offset. A window can supply an explicit first-opening point. Completed moves/resizes recompute the closest pair among four corners and four side midpoints. Its invisible point and signed offset persist across viewer resizing and sessions, including closed windows and migration of older layouts; glued windows share a point chosen from their block bounds. `gesture.rs`: the gestures of the frame (`layout::frame`, `layout::resizing`): window dragged by its title together with those stuck to it, block kept within the screen, snapping proposed then applied on release (under the pointer for a resize), sticking links created, saved with the layout and removed when they no longer hold (window closed, collapsed, moved apart, Alt) |
-| `ui/theme_guard.rs` | Test only: reads the interface sources (`ui/`, `build/ui/`, `imports/ui*`, `crash/window.rs`) and fails if a window directly uses an egui widget replaced by a shared widget of `ui/widgets.rs`, or itself writes a radius or a colour instead of those of the theme (AGENTS.md, section 7); list of the rules, of their replacement and of the exceptions (files of `ALLOWED`, lines marked `// theme-guard:`), themselves checked |
+| `ui/theme_guard.rs` | Test only: reads the interface sources (`ui/`, `build/ui/`, `imports/ui*`, `crash/window.rs`, `splash/window.rs`) and fails if a window directly uses an egui widget replaced by a shared widget of `ui/widgets.rs`, or itself writes a radius or a colour instead of those of the theme (AGENTS.md, section 7); list of the rules, of their replacement and of the exceptions (files of `ALLOWED`, lines marked `// theme-guard:`), themselves checked |
 | `ui/snap.rs`, `ui/snap/overlay.rs` | Window snapping, geometry only: which moving edges stick to what (edge facing another window, same-side edge of a neighbour, work area; 10 px margin, edges that touch (`layout::GAP`, no gap), size limits of a resize, holding of the displayed snap), guide to draw, side-by-side windows (`touching`), groups (`group`, `block_limits`). `layout/gesture.rs` only snaps and attaches moved windows while Alt is held, and Alt also detaches the dragged window from its group; resize snapping retains its separate behavior. `overlay.rs`: the guide and the "Alt" pill drawn above the windows |
 | `ui/text_menu.rs`, `ui/text_menu/tests.rs` | Right-click menu of every text field, like the Legacy Viewer's text editors (menu_text_editor.xml: Cut, Copy, Paste, Delete, Select All, greyed by canCut / canCopy / canPaste / canDoDelete): one hook around the interface pass, no change at the fields. It finds the focused field with a `TextEditState` under the right click, reads editable / password from the IME request egui makes for it, keeps a selection right-clicked inside it, and plays the chosen entry into the field at the next frame as egui events (the clipboard's text for Paste). A field with its own right-click menu (script editor, notecards) keeps it. On a misspelled word of a spell-checked field (`ui/spelling.rs`), up to five suggestions, Add to Dictionary and Add to Ignore come first (LLSpellCheckMenuHandler); a suggestion selects its word and is pasted over it, only if the field still holds it. Demo `AURORA_DEMO_TEXT_MENU`, `AURORA_DEMO_SPELLING=menu` |
 | `ui/spelling.rs`, `ui/spelling/tests.rs`, `ui/options/pages/spelling.rs` | Spelling in a field, called after the fields the Legacy Viewer checks (chat bars, Conversations inputs, notecards, group notices, landmark notes, About Land description, postcard and profile photo texts): the auto-replace of a typed space (chat and notecards only), then the misspelled words (cached per field id with the text's hash and the checker's revision) drawn as the Legacy red zigzag over the galley, none under the word being typed for half a second; `marked` gives them to `ui/text_menu.rs`. Preferences › Chat › Spelling: the dictionaries (main, extra, import / remove) and the auto-replace lists and keywords. |
@@ -2981,6 +3053,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `app/busy_pause.rs` | A window behind whose GPU frames crawl (two of 150 ms or more in a row: another program in front keeps the card busy, #2355) stops drawing its 3D until it has the focus again, with the pause of `texture_budget::Background` (empty lists, `PAUSED_RESOLUTION_DIVISOR`) but its textures kept; the world blurred and darkened, an amber notice under the windows and "— Paused" in the window title. Not during a photo, a headset or a timed run; Preferences › Graphics switch, on by default (AURORA_DEMO_BUSY_PAUSE). |
 | `app/gpu_recovery.rs` | The window, the renderer and egui's input state made the same way at start (`resumed`) and after a GPU device loss; the recovery itself (Preferences › Graphics `gpu_recovery`, on by default; `AURORA_GPU_RECOVERY=1`/`0` forces it; not in VR): a new window and device, the old window kept until the new one has presented, the session and the world kept, the scene released on the lost renderer (`Scene::forget_gpu`) and reloaded on the new one (`Scene::adopt_gpu`, `TextureStreamer::gpu_reset`), particles, media and terrain paint brought back, the lost renderer's tickets dropped; the rule for repeated losses (`loss_step`: of the last five minutes, recover, recover with the safe graphics level, close). |
 | `app/egui_shadow.rs` | A CPU copy of egui's textures from the deltas it hands to the renderer (egui keeps no pixels), given whole to the renderer of a GPU recovery. |
+| `splash/` | The startup splash: another process of the executable (`--splash`, `mod.rs` starts it and feeds it the start's step on its standard input), a borderless window drawn on the CPU with the crash window's painter (`window.rs`: egui into a `softbuffer` surface, the login card's look painted once), the step, its share of the bar and its text (`progress.rs`, from the viewer's phase and `aurora_render::start_progress`); it closes when the viewer's window shows. An update's switch shows the same window from the updater's helper (`UpdateWindow`, fed `aurora_updater::install::HelperStage`), until the new viewer's splash is on screen. Not on macOS |
 | `app/safe_graphics.rs` | The safe graphics after GPU trouble in the last session: the login card's choices, the Potato level applied only on the user's click, the level's values kept in `graphics-before-safe.json` and put back on request. |
 | `scene/lights.rs` | Local lights of the frame: the prim lights closest to the camera (range × 1.5, falloff, colour) and, for those that have a texture, their projector — cone computed from the position, the rotation and the size of the prim (`aurora-render` `Projector`), texture reserved as long as the light stays in the list; choice of up to 16 projectors that cast shadows (saved budget, default 2), with a 20% apparent-area retention margin and camera-driven shadow-map fades capped at 4 m/s (`SpotShadowSlots`, #1494) |
 | `scene/animesh.rs` | Standalone skeletons of the animated objects, animations of the linkset, bounds of the poses for culling and shadows, demo scenario |
@@ -3279,14 +3352,86 @@ The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
-HID reports through hidapi on one worker; the frame copies a bounded latest
+HID reports through hidapi on one worker. Joystick and Gamepad preferences
+store separate device selections, enable switches and tuning. Each lists its
+own devices, and both switches default off. Native gamepads are recognized by
+two stick pairs and four face buttons. Recognized pads use the console defaults
+and unsigned trigger pressure. The frame copies a bounded latest
 snapshot without waiting. `Controller` applies mapping, dead zones, gain,
 button edges, focus/stale-input gating and re-centring after changes.
 Relative channels re-arm independently; absolute zoom needs no centre.
 Mode switches retain button edges while clearing held movement, so an
 off-centre axis cannot block the flycam toggle or the other controls.
 `app/joystick.rs` joins avatar input to the existing simulator controls and
-running state; the independent flycam pose is shown by `camera::Camera`,
+running state. Stick magnitude selects walk or run at the saved threshold;
+the simulator protocol carries directional movement as held flags, so it has
+no continuous speed value. Turning and camera axes retain their analogue
+values. Gamepads use a console-style camera: the right stick orbits the idle
+third-person view around the avatar, while movement folds that orbit behind
+the avatar and routes right-stick yaw to avatar steering. The gamepad backend
+resolves the standardized right-stick X/Y axes from gilrs-core's native axis
+codes, so driver-specific trigger ordering cannot swap orbit and elevation.
+It also identifies standardized buttons and triggers, detects Xbox and
+PlayStation styles from device metadata when possible, and retains a Generic
+fallback. Preferences › Controls › Gamepad (a dedicated page immediately below
+Mouse and keyboard in the Controls sidebar section) configures gamepad mappings, camera sensitivity and independent horizontal and vertical inversion.
+Its Settings and Map controls tabs keep configuration together. Map controls has
+separate Avatar Mode, First person and Flycam sections: each mode can choose its movement and
+camera sticks, while buttons and analog triggers are selected from the connected
+controller's available inputs. Older joystick profiles can retain inherited avatar up/down bindings until
+the user assigns a flycam-specific input. Gamepad defaults resolve A/B and bumpers through native control metadata rather
+than fixed button indices. Avatar flight and Flycam use B/Circle to ascend and X/Square to descend.
+RB/R1 and LB/L1 select the next and previous nearby avatars. Avatar and Flycam camera gains default to 4.0, first
+person to 1.875 in the Gamepad profile. Gamepad Settings exposes a
+gamepad-only flycam travel-speed multiplier and the existing Keep the flycam
+level setting. Leveling uses the original feathered return when enabled and
+allows free roll when disabled.
+The Flycam mappings include pressure-sensitive slowdown and speedup triggers,
+with separate minimum and maximum speed multipliers that blend linearly from
+the default speed according to trigger pressure. The first trigger pressed
+owns speed adjustment until it is released, and the configured default speed
+resumes after release.
+`joystick/bindings.rs` resolves Gamepad mappings for preferences and sampling.
+Each profile arms and samples independently. When both send input in one
+frame, gamepad input takes priority. Flycam keeps the profile that entered it.
+Older enabled gamepad profiles migrate from Joystick to Gamepad while preserving
+native axes, gains and button numbers. Device classification is deferred across
+saves when the saved device is disconnected. Explicit Gamepad profiles take
+precedence. Raw joystick profiles keep their existing input path.
+Avatar-mode camera bindings expose pressure-sensitive trigger zoom, D-pad
+four-way pan, and nearest/previous avatar cycling. Cycling calls
+`ui::people::nearby` for its existing nearest-first ordering and dispatches the
+same `CtxAction::ZoomAvatar` used by People. The player is a stop between the
+nearest and furthest ends of that list in both directions. The selected avatar starts at the
+posed head from `Scene::head_world`, then uses the camera's existing object
+tracking and orbit/pan paths. Movement returns to the player through
+`Camera::reset_view`. Vertical pan uses the existing unlocked camera focus and
+persists through movement, orbit and zoom. Reset camera, mode changes and explicit
+target cycling clear pan; movement returns to the player while preserving pan. On the player, panning unlocks around the
+avatar's horizontal center, not the preset's forward aim offset, preserving the
+eye and focus height. Entering that pivot retains the existing focus animation
+with `CameraSettings::zoom_time`; continued pan updates its destination without
+restarting it. That temporary own-avatar focus reuses object-relative
+tracking with the normal camera's `AvatarFrame` position, so passive movement
+and seated motion keep the pan even before the own object is available.
+Returning to the normal player view clears this temporary tracking. Controller zoom never enters mouselook and retains a
+nonzero minimum orbit radius even with mouse constraints disabled; mouse-wheel
+mode switching remains unchanged. No extra player height is serialized.
+Digital D-pads and native hat axes share semantic bindings; the backend
+normalizes their platform-specific vertical sign.
+The gamepad view button cycles First person → Avatar → Flycam → First person through
+existing mouselook, flycam and reset transitions. Disabled modes are skipped.
+`joystick.first_person` contains independent stick/button bindings and signed
+axis gains; look input feeds the existing `AgentState` yaw/pitch path.
+First-person trigger zoom uses a transient lens in `camera/mouselook_zoom.rs`: pressure
+integrates a log-space target, eased over 80 ms. It survives release and yaw/pitch
+changes and passive avatar movement. Explicit player movement input (before
+crouch latching), leaving mouselook or changing the normal
+FOV resets it. The existing mouse-button zoom remains independent and takes precedence. Avatar and raw joystick/flycam tuning remain shared
+with the legacy preferences; first-person tuning is independent.
+Travel scaling is applied during flycam position integration, after device
+axis safety clamps, so the configured 20×–50× speed endpoints are effective.
+The independent flycam pose is shown by `camera::Camera`,
 including roll, zoom and region-origin shifts. It is cleared by reset,
 mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the

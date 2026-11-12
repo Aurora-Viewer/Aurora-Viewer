@@ -73,11 +73,26 @@ the accent, with "Ctrl + click: Hands" by the cursor, and Ctrl + click
 selects its nearest joint and opens its group. Without Ctrl nothing shows
 and the click stays the world's (in the photo mode, a plain click on the
 face still sets the focus, and a Ctrl + click on a part stays the
-poser's instead of passing to the world). The body is one part, drawn
-without the head (the face's oval shows it, and a Ctrl over the head does
-not offer the body), a hand reaches its
-wrist, the face is an oval that follows the head, and the wings and the
-tail are offered only when a worn rigged mesh uses them.
+poser's instead of passing to the world). The wings and the tail are
+offered only when a worn rigged mesh uses them.
+
+**Drawn and picked from the meshes** (an avatar: you, or a resident who
+accepted): the part lights on the avatar's own meshes as they are drawn,
+its body, a Bento head, mesh hands, rigged clothing, with a tint that fades
+where the skin passes to the next part (a knuckle, the neck) and a soft
+halo on the outer outline only. The part under the cursor is the one the
+mesh shows there: the part carrying the most combined skinning weight at
+the pixel under the pointer, read on the GPU (a frame or two later). A
+Ctrl + click selects that part's nearest joint. Visible accessories in
+front of the avatar hide what is behind them, including blended ones;
+the invisible back of a one-sided face does not capture the hover.
+The face takes the whole head and a hand its
+palm (the wrist), and the body stops at the neck and the wrists. A part
+the meshes do not weight (the system head is weighted to the head alone,
+its hands to the wrists) lights through the bone it hangs from. An animesh,
+and the first frames before the GPU answers, use the outline built from
+the bones: the body without the head, the hand reaching its wrist, the face
+an oval that follows the head.
 
 The subject menu (both windows) uses the People list's rows: the picture,
 the name over the account name, and the distance at the right in Near

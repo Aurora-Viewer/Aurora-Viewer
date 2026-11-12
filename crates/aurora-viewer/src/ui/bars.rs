@@ -39,7 +39,7 @@ pub enum AdminAction {
 
 #[derive(Default)]
 pub enum BarAction {
-    ToggleVr,
+    VrView(crate::camera::VrView),
     IkEdit,
     Poser,
     /// Build › Edit particles (Object.EditParticles).
@@ -2422,7 +2422,6 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "marketplacelistings" => return BarAction::ToggleMarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
-        "vr_view" => return BarAction::ToggleVr,
         "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
@@ -3297,6 +3296,27 @@ pub(crate) fn toolbar_row(
             if let Some(a) = fav {
                 *action = BarAction::Favorite(a);
             }
+            continue;
+        }
+        if b.command == "vr_view" {
+            use crate::camera::VrView;
+            menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((egui::RectAlign::TOP, 7.0)),
+                |ui| {
+                    for (mode, label) in [
+                        (VrView::FirstPerson, aurora_i18n::tr!("ui-options-camera-vr-view-first-person")),
+                        (VrView::Avatar, aurora_i18n::tr!("vr-mode-avatar")),
+                        (VrView::Flycam, aurora_i18n::tr!("vr-mode-flycam")),
+                    ] {
+                        if menu::item(ui, p, "", label) {
+                            *action = BarAction::VrView(mode);
+                        }
+                    }
+                },
+            );
             continue;
         }
         if b.command == "ao" {
