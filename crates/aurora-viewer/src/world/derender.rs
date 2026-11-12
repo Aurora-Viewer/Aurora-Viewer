@@ -1113,6 +1113,34 @@ mod tests {
         assert!(world.objects.index_of_uuid(&hat).is_some());
     }
 
+    /// "Edit linked parts" then Derender (#3384): one child prim of our worn
+    /// linkset goes, its root and the rest of the linkset stay.
+    #[test]
+    fn a_linked_part_alone_can_be_derendered_and_comes_back_linked() {
+        use aurora_net::NetEvent;
+        let (mut world, handle) = demo_world();
+        for ev in crate::demo::worn::events() {
+            let _ = world.apply(ev);
+        }
+        let key = |local_id| ObjKey { region: handle, local_id };
+        let (root, child) = (key(crate::demo::worn::ROOT), key(crate::demo::worn::CHILD));
+        let id_of = |w: &super::super::World, k: &ObjKey| w.objects.get(w.objects.index_of(k).expect("prim")).expect("prim").full_id;
+        let child_id = id_of(&world, &child);
+        let children = |w: &super::super::World| w.objects.index_of(&root).map(|i| w.objects.get(i).map_or(0, |o| w.objects.children_of(&o.key).len()));
+        assert_eq!(children(&world), Some(1));
+        assert!(!world.derender(child_id, entry(Kind::Object, false)));
+        assert!(world.objects.index_of(&child).is_none());
+        assert_eq!(children(&world), Some(0), "the root stays, without the part");
+        // the simulator sends the whole linkset again: the part stays out
+        let resent = world.derender.hidden.values().filter_map(|h| h.update.clone()).collect::<Vec<_>>();
+        assert_eq!(resent.len(), 1);
+        let _ = world.apply(NetEvent::ObjectUpdates { handle, objects: resent });
+        assert!(world.objects.index_of(&child).is_none());
+        assert_eq!(children(&world), Some(0));
+        world.underender(&[child_id]);
+        assert_eq!(children(&world), Some(1), "back in its linkset");
+    }
+
     #[test]
     fn an_attachment_that_came_before_its_derendered_wearer_goes_with_it() {
         use aurora_net::NetEvent;
