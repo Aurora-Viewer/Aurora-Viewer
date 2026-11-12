@@ -141,6 +141,7 @@ mod shape_editor;
 mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
+mod stand_fidget;
 mod stream_list;
 mod suggest_demo;
 mod task_notecards;
@@ -612,6 +613,9 @@ pub struct App {
     /// The yaw the avatar turns to, facing what it selected
     /// (FSTurnAvatarToSelectedObject, app/selection_turn.rs).
     selection_turn: Option<f32>,
+    /// The stock stand variants of a standing avatar without an AO
+    /// (LLAgent::fidget, app/stand_fidget.rs).
+    stand_fidget: stand_fidget::Fidget,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     /// Build › Edit particles (ParticleEditor).
@@ -1716,6 +1720,7 @@ impl App {
             double_press: false,
             autopilot: None,
             selection_turn: None,
+            stand_fidget: Default::default(),
             autopilot_flags: 0,
             autopilot_stop_pending: false,
             mic_on: false,
@@ -10451,6 +10456,7 @@ impl App {
                 crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
             }
             self.update_ao(now);
+            self.update_stand_fidget(now);
             if self.demo && crate::demo::animation_edit_demo() {
                 match self.frame_count {
                     420 | 750 => {
