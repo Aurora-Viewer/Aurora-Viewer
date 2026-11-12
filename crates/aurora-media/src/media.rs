@@ -93,6 +93,31 @@ pub struct Modifiers {
     pub command: bool,
 }
 
+/// The Edit menu commands a page takes (the `edit_*` messages of
+/// LLPluginClassMedia, indra/llplugin/llpluginclassmedia.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+impl EditCommand {
+    fn message(self) -> &'static str {
+        match self {
+            EditCommand::Undo => "edit_undo",
+            EditCommand::Redo => "edit_redo",
+            EditCommand::Cut => "edit_cut",
+            EditCommand::Copy => "edit_copy",
+            EditCommand::Paste => "edit_paste",
+            EditCommand::SelectAll => "edit_select_all",
+        }
+    }
+}
+
 impl Modifiers {
     fn translate(self) -> String {
         let mut s = String::new();
@@ -739,6 +764,21 @@ impl MediaPlugin {
         self.send(PluginMessage::new(CLASS_MEDIA_BROWSER, "focus").with("focused", focused));
     }
 
+    /// An Edit menu command on the focused page (LLPluginClassMedia::undo,
+    /// redo, cut, copy, paste, selectAll in
+    /// indra/llplugin/llpluginclassmedia.cpp): the CEF plugin runs it in the
+    /// page, with the system clipboard.
+    pub fn edit(&mut self, cmd: EditCommand) {
+        self.send(PluginMessage::new(CLASS_MEDIA, cmd.message()));
+    }
+
+    /// LLPluginClassMedia::executeJavaScript
+    /// (indra/llplugin/llpluginclassmedia.cpp): run a script in the page's
+    /// main frame.
+    pub fn execute_javascript(&mut self, code: &str) {
+        self.send(PluginMessage::new(CLASS_MEDIA, "execute_javascript").with("code", code));
+    }
+
     // ------------------------------------------------------------ navigation
 
     /// LLPluginClassMedia::setCookie: a cookie in the browser's store (the
@@ -1093,6 +1133,17 @@ mod tests {
         assert!(!volume_changed(0.0, 0.0));
         assert!(!volume_changed(0.5, 0.5005));
         assert!(volume_changed(0.5, 0.6));
+    }
+
+    #[test]
+    fn edit_commands_are_the_messages_the_cef_plugin_reads() {
+        // MediaPluginCEF::receiveMessage, indra/media_plugins/cef/media_plugin_cef.cpp
+        assert_eq!(EditCommand::Undo.message(), "edit_undo");
+        assert_eq!(EditCommand::Redo.message(), "edit_redo");
+        assert_eq!(EditCommand::Cut.message(), "edit_cut");
+        assert_eq!(EditCommand::Copy.message(), "edit_copy");
+        assert_eq!(EditCommand::Paste.message(), "edit_paste");
+        assert_eq!(EditCommand::SelectAll.message(), "edit_select_all");
     }
 
     #[test]

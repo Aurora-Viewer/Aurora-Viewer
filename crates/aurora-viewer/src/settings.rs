@@ -519,6 +519,10 @@ pub struct Settings {
     pub crosshair: crate::ui::crosshair::Settings,
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
+    pub gamepad: crate::joystick::Settings,
+    /// Pre-split profile awaiting device classification after an upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
@@ -1511,7 +1515,10 @@ pub struct Settings {
     pub max_attachment_area: f32,
     /// ShowMyComplexityChanges: seconds the notices about our avatar
     /// complexity, and about the people around who may not see us fully,
-    /// stay (0 = no notices; 10 as in the Legacy Viewer's settings.xml).
+    /// stay (0 = no notices). Off by default (the Legacy Viewer's
+    /// settings.xml says 10): our complexity moving with the texture memory
+    /// made them a notice every few seconds in 0.9.7 (#3381), and most
+    /// people never asked for them.
     pub complexity_notice_seconds: u32,
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
@@ -1667,7 +1674,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 36;
+const SETTINGS_VERSION: u32 = 37;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2009,6 +2016,8 @@ impl Default for Settings {
             camera: Default::default(),
             crosshair: Default::default(),
             joystick: Default::default(),
+            gamepad: crate::joystick::Settings::gamepad_defaults(),
+            pending_legacy_gamepad: None,
             auto_hover_height: false,
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
@@ -2377,7 +2386,7 @@ impl Default for Settings {
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
-            complexity_notice_seconds: 10,
+            complexity_notice_seconds: 0,
             loading_avatars: 0,
             complexity_mode: 0,
             avatar_physics: true,
@@ -2454,6 +2463,13 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
     file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
         .and_then(|value| value.get("allow_overlays").and_then(serde_json::Value::as_bool))
         .unwrap_or(false)
+}
+
+/// `language` of a settings file's bytes; "default" for anything else.
+fn language_in(file: Option<&[u8]>) -> String {
+    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| "default".into())
 }
 
 fn for_mode(dir: PathBuf) -> PathBuf {
@@ -2626,6 +2642,13 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// The saved language, read the same way for the startup splash
+    /// (`splash/`), which loads nothing else; "default" (the system's) when
+    /// the file or the field is missing.
+    pub fn language_at_start() -> String {
+        language_in(std::fs::read(Self::path()).ok().as_deref())
+    }
+
     fn load_from(path: &Path) -> Settings {
         // what the file says of the window: nothing on a first launch
         let mut saved_window = (None, false);
@@ -2662,10 +2685,18 @@ impl Settings {
     /// understand; for a newer build's file, also what to keep of it on save.
     fn read_document(value: serde_json::Value, path: &Path) -> Option<(Settings, Option<(serde_json::Value, Vec<String>)>)> {
         let version = value["settings_version"].as_u64().unwrap_or(0);
-        let Some(read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
+        let Some(mut read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
             crate::tolerant::backup(path);
             return None;
         };
+        if version <= SETTINGS_VERSION as u64 && value.get("gamepad").is_none() && read.value.joystick.enabled {
+            read.value.pending_legacy_gamepad = Some(read.value.joystick.clone());
+            let mut preset = crate::joystick::Settings::default();
+            preset.raw_gamepad_preset();
+            if read.value.joystick.mapping == preset.mapping {
+                read.value.finish_legacy_gamepad_migration(None);
+            }
+        }
         let mut newer = None;
         if version > SETTINGS_VERSION as u64 {
             // No migration runs backwards: `sanitized` only migrates older
@@ -2716,7 +2747,53 @@ impl Settings {
         self.night_sky_milky_way = within(self.night_sky_milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY);
     }
 
+    /// Complete only after the old selector identifies a real device. Persist
+    /// the source while disconnected so saving defaults cannot lose the upgrade.
+    pub(crate) fn migrate_legacy_gamepad(&mut self, snapshot: &crate::joystick::Snapshot) -> bool {
+        let Some(source) = &self.pending_legacy_gamepad else { return false };
+        if self.gamepad != crate::joystick::Settings::gamepad_defaults() || self.joystick != *source {
+            self.pending_legacy_gamepad = None;
+            return true;
+        }
+        let Some(device) = snapshot.devices.iter().find(|d| source.device.is_empty() || d.id == source.device) else {
+            return false;
+        };
+        if device.is_gamepad {
+            let id = device.id.clone();
+            self.finish_legacy_gamepad_migration(Some(id));
+        } else {
+            self.pending_legacy_gamepad = None;
+        }
+        true
+    }
+
+    fn finish_legacy_gamepad_migration(&mut self, device: Option<String>) {
+        let Some(mut profile) = self.pending_legacy_gamepad.take() else {
+            return;
+        };
+        if let Some(device) = device {
+            profile.device = device;
+        }
+        // Preserve native axes, gains and button indices. New actions start
+        // unbound so they cannot shadow a button assigned by the old profile.
+        profile.gamepad_layout_version = 1;
+        profile.crouch_button = -1;
+        profile.reset_view_button = -1;
+        profile.first_person.tuning = profile.avatar.clone();
+        profile.first_person.jump_button = profile.jump_button;
+        profile.first_person.rise_button = profile.rise_button;
+        profile.first_person.fall_button = profile.fall_button;
+        profile.first_person.crouch_button = -1;
+        profile.first_person.zoom_in_button = -1;
+        profile.first_person.zoom_out_button = -1;
+        self.gamepad = profile;
+        self.joystick.enabled = false;
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
+        if self.settings_version <= SETTINGS_VERSION {
+            self.gamepad.migrate_gamepad_layout();
+        }
         if self
             .graphics_saved_active
             .as_ref()
@@ -2987,6 +3064,11 @@ impl Settings {
         }
         if self.settings_version < 36 {
             self.upgrade_display_scale(cfg!(target_os = "macos"));
+        }
+        if self.settings_version < 37 && self.complexity_notice_seconds == 10 {
+            // new default: no complexity notices (#3381). A file still on
+            // the former default, 10 s, takes it; another length was chosen
+            self.complexity_notice_seconds = 0;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3338,6 +3420,9 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            vr_gamma: self.camera.vr.gamma,
+            vr_vibrancy: self.camera.vr.vibrancy,
+            vr_resolution: self.camera.vr.resolution,
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {
@@ -3620,6 +3705,28 @@ mod tests {
     }
 
     #[test]
+    fn saved_gamepad_defaults_upgrade_to_pan_shoulders_and_face_button_height() {
+        use crate::joystick::{AUTO_DPAD_DOWN, AUTO_DPAD_LEFT, AUTO_DPAD_RIGHT, AUTO_DPAD_UP, AUTO_LEFT_BUMPER, AUTO_RIGHT_BUMPER};
+        let mut document = serde_json::to_value(Settings::default()).expect("settings");
+        let pad = document["gamepad"].as_object_mut().unwrap();
+        pad.remove("gamepad_layout_version");
+        pad.remove("gamepad_avatar_pan_left_button");
+        pad.remove("gamepad_avatar_pan_right_button");
+        for (name, binding) in [
+            ("gamepad_avatar_next_button", AUTO_DPAD_RIGHT),
+            ("gamepad_avatar_previous_button", AUTO_DPAD_LEFT),
+            ("rise_button", AUTO_RIGHT_BUMPER),
+            ("fall_button", AUTO_LEFT_BUMPER),
+            ("flycam_rise_button", AUTO_DPAD_UP),
+            ("flycam_fall_button", AUTO_DPAD_DOWN),
+        ] {
+            pad.insert(name.into(), serde_json::json!(binding));
+        }
+        let loaded = serde_json::from_value::<Settings>(document).expect("old settings").sanitized();
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
+    }
+
+    #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;
         let old: Settings = serde_json::from_str("{}").expect("old preferences");
@@ -3652,6 +3759,97 @@ mod tests {
         assert!(old.log_import_at_login);
         let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
         assert!(!off.log_import_at_login);
+    }
+
+    #[test]
+    fn legacy_gamepad_preset_migrates_without_hardware_and_respects_existing_profile() {
+        let path = scratch_settings_file();
+        let mut old = crate::joystick::Settings {
+            enabled: true,
+            ..Default::default()
+        };
+        old.raw_gamepad_preset();
+        let document = serde_json::json!({"settings_version":30,"joystick":old});
+        let (loaded, newer) = super::Settings::read_document(document.clone(), &path).expect("legacy preset");
+        let loaded = loaded.finished(newer);
+        assert!(loaded.gamepad.enabled);
+        assert!(!loaded.joystick.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+        assert_eq!(loaded.gamepad.mapping, old.mapping);
+        assert_eq!(loaded.gamepad.flycam, old.flycam);
+        let mut explicit = document;
+        explicit["gamepad"] = serde_json::to_value(crate::joystick::Settings::gamepad_defaults()).unwrap();
+        let (loaded, _) = super::Settings::read_document(explicit, &path).expect("existing profile");
+        assert!(!loaded.gamepad.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+    }
+
+    #[test]
+    fn legacy_raw_joystick_classification_preserves_the_original_input() {
+        let path = scratch_settings_file();
+        let document = serde_json::json!({"settings_version":30,"joystick":{"enabled":true,"device":"flight"}});
+        let (loaded, newer) = super::Settings::read_document(document, &path).expect("legacy flight stick");
+        let mut loaded = loaded.finished(newer);
+        let snapshot = crate::joystick::Snapshot {
+            devices: vec![crate::joystick::Device::new("flight".into(), "Flight stick".into(), 6)],
+            ..Default::default()
+        };
+        assert!(loaded.migrate_legacy_gamepad(&snapshot));
+        assert!(loaded.joystick.enabled);
+        assert!(!loaded.gamepad.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+    }
+
+    #[test]
+    fn joystick_legacy_file_preserves_custom_axes_and_buttons() {
+        let path = scratch_settings_file();
+        std::fs::write(
+            &path,
+            r#"{"settings_version":30,"joystick":{"enabled":true,"mapping":[2,1,0,3,5,4,6],"jump_button":1,"flycam_button":0}}"#,
+        )
+        .expect("write legacy settings");
+        let (loaded, newer) = super::Settings::read_document(read_back(&path), &path).expect("read legacy settings");
+        let mut loaded = loaded.finished(newer);
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
+        assert!(loaded.pending_legacy_gamepad.is_some(), "classification waits for the saved device");
+        loaded.save_to(&path);
+        let s = loaded.joystick.clone();
+        let saved = read_back(&path);
+        assert_eq!(saved["joystick"]["mapping"], serde_json::json!([2, 1, 0, 3, 5, 4, 6]));
+        let device = crate::joystick::Device::gamepad(
+            "pad".into(),
+            "Pad".into(),
+            8,
+            [[Some(0), Some(1)], [Some(3), Some(4)]],
+            [Some(6), Some(7)],
+            crate::joystick::GamepadStyle::Generic,
+            vec![],
+        );
+        let source = saved["pending_legacy_gamepad"].clone();
+        assert!(source.is_object(), "saving while disconnected keeps the migration");
+        let snapshot = crate::joystick::Snapshot {
+            devices: vec![device.clone()],
+            ..Default::default()
+        };
+        assert!(loaded.migrate_legacy_gamepad(&snapshot));
+        assert!(loaded.gamepad.enabled);
+        assert!(!loaded.joystick.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+        assert_eq!(loaded.gamepad.mapping, s.mapping);
+        assert_eq!(loaded.gamepad.avatar, s.avatar);
+        assert_eq!(loaded.gamepad.flycam, s.flycam);
+        assert_eq!(loaded.gamepad.first_person.tuning, s.avatar);
+        assert!(!loaded.migrate_legacy_gamepad(&snapshot), "conversion happens only once");
+        assert!(s.enabled);
+        assert_eq!((s.jump_button, s.flycam_button), (1, 0));
+        assert_eq!(s.avatar.gain, [1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.0]);
+        assert_eq!(s.flycam.gain, [2.1, 2.0, 2.0, 0.0, 0.1, 0.15, 0.0]);
+        assert_eq!(s.first_person.move_stick, crate::joystick::GamepadStick::Custom);
+        assert_eq!(s.first_person.camera_stick, crate::joystick::GamepadStick::Custom);
+        for (channel, axis) in [2, 1, 0, 3, 5, 4, 6].into_iter().enumerate() {
+            assert_eq!(s.resolved_axis(&device, false, channel), Some(axis));
+            assert_eq!(s.resolved_axis(&device, true, channel), Some(axis));
+        }
     }
 
     #[test]
@@ -3739,6 +3937,21 @@ mod tests {
         })
         .expect("settings json");
         assert!(super::allow_overlays_in(Some(&saved)));
+    }
+
+    /// The splash's early read of the language agrees with the settings.
+    #[test]
+    fn the_splash_reads_the_saved_language() {
+        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
+            assert_eq!(super::language_in(file), "default", "{file:?}");
+        }
+        let saved = serde_json::to_vec(&super::Settings {
+            language: "ja".into(),
+            ..Default::default()
+        })
+        .expect("settings json");
+        assert_eq!(super::language_in(Some(&saved)), "ja");
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name
@@ -4873,6 +5086,31 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_complexity_notices_are_off_by_default_and_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().complexity_notice_seconds, 0);
+        // a 0.9.7 file on the former default, 10 s
+        let old = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(old.sanitized().complexity_notice_seconds, 0);
+        // another length chosen: kept
+        let chosen = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 20,
+            ..Settings::default()
+        };
+        assert_eq!(chosen.sanitized().complexity_notice_seconds, 20);
+        // 10 s chosen after the migration: kept
+        let on = Settings {
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(on.sanitized().complexity_notice_seconds, 10);
     }
 
     #[test]

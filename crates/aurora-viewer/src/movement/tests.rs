@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn vr_body_follow_walk_override_suspends_run_enhancement_then_restores_user_run() {
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    f.water = None;
+    f.running = true;
+    let input = MoveInput {
+        forward: true,
+        ..Default::default()
+    };
+    let mut walk = crate::camera::vr::WalkOverride::default();
+    assert_eq!(walk.update(true, true), Some(false));
+    walk.apply_frame(&mut f);
+    assert!(!f.running && f.suspended);
+    assert_eq!(runtime.update(&prefs(), &f, &input, Instant::now()).motion, Motion::default());
+    assert_eq!(walk.update(false, true), Some(true));
+    let mut f = frame();
+    f.water = None;
+    f.running = true;
+    walk.apply_frame(&mut f);
+    assert_eq!(runtime.update(&prefs(), &f, &input, Instant::now()).motion.mode, 1);
+}
+
+#[test]
 fn passage_feedback_requires_the_current_action_and_an_actual_terminal_report() {
     use aurora_net::bridge::PassageReport;
     let now = Instant::now();
