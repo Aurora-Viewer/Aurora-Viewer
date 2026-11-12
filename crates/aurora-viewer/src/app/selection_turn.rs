@@ -138,7 +138,7 @@ impl App {
             self.flush_build();
             log::info!("demo selection turn: yaw {:.0}°, object at {center:?}", yaw.to_degrees());
             self.turn_to_selection(idx, center);
-        } else if self.frame_count % 30 == 0 {
+        } else if self.frame_count.is_multiple_of(30) {
             log::info!(
                 "demo selection turn: yaw {:.0}°, turning {}",
                 self.world.agent.yaw.to_degrees(),
