@@ -171,6 +171,9 @@ impl App {
                         // (LLToolSelect::handleObjectSelection, temp_select)
                         self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
+                        if let Some(bounds) = self.build.bounds(&self.world, Instant::now()) {
+                            self.turn_to_selection(idx, bounds.center);
+                        }
                         Target::Object { key, full_id, offset }
                     }
                 }
