@@ -1,4 +1,6 @@
-// Temporal anti-aliasing: reprojection through depth, 3x3 neighbourhood clamp.
+// Temporal anti-aliasing: reprojection through each pixel's motion (the
+// depth prepass's, motion_history.rs) or, for the sky, through the camera;
+// 3x3 neighbourhood clamp.
 
 @group(0) @binding(0) var cur_tex: texture_2d<f32>;
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
@@ -9,8 +11,13 @@ struct TaaParams {
     inv_view_proj: mat4x4<f32>,
     prev_view_proj: mat4x4<f32>,
     params: vec4<f32>, // x reset, y current weight, z width, w height
+    motion: vec4<f32>, // x: 1 when the motion vectors move the history (AURORA_TAA_MOTION)
 };
 @group(0) @binding(4) var<uniform> taa: TaaParams;
+// xy: the mesh normal (GTAO's), zw: the pixel's screen motion since the
+// last frame in uv, without the jitter (object.wgsl depth_normal); 0
+// where the prepass drew nothing
+@group(0) @binding(5) var motion_tex: texture_2d<f32>;
 
 struct Out {
     @builtin(position) clip: vec4<f32>,
@@ -62,16 +69,28 @@ fn fs_taa(in: Out) -> @location(0) vec4<f32> {
         return vec4<f32>(itm(c), glow);
     }
     // reverse-Z: 0 is infinitely far
-    let d = max(textureLoad(depth_tex, px, 0), 1e-7);
-    let ndc = vec2<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
-    let wp = taa.inv_view_proj * vec4<f32>(ndc, d, 1.0);
-    let world = wp.xyz / wp.w;
-    let pp = taa.prev_view_proj * vec4<f32>(world, 1.0);
-    if (pp.w <= 0.0) {
-        return vec4<f32>(itm(c), glow);
+    let depth = textureLoad(depth_tex, px, 0);
+    let motion = textureLoad(motion_tex, px, 0).zw;
+    var puv: vec2<f32>;
+    if (taa.motion.x > 0.5 && depth > 0.0 && any(motion != vec2<f32>(0.0))) {
+        // what the prepass drew moved by its own motion, the camera's
+        // included: avatars, animesh and moving objects keep their history
+        puv = in.uv - motion;
+    } else {
+        // the sky, what only the main pass drew (water: the prepass left
+        // its motion cleared) and what did not move: the camera alone,
+        // through the depth
+        let d = max(depth, 1e-7);
+        let ndc = vec2<f32>(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+        let wp = taa.inv_view_proj * vec4<f32>(ndc, d, 1.0);
+        let world = wp.xyz / wp.w;
+        let pp = taa.prev_view_proj * vec4<f32>(world, 1.0);
+        if (pp.w <= 0.0) {
+            return vec4<f32>(itm(c), glow);
+        }
+        let pn = pp.xy / pp.w;
+        puv = vec2<f32>(pn.x * 0.5 + 0.5, 0.5 - pn.y * 0.5);
     }
-    let pn = pp.xy / pp.w;
-    let puv = vec2<f32>(pn.x * 0.5 + 0.5, 0.5 - pn.y * 0.5);
     if (puv.x < 0.0 || puv.y < 0.0 || puv.x > 1.0 || puv.y > 1.0) {
         return vec4<f32>(itm(c), glow);
     }

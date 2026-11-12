@@ -9,6 +9,7 @@ use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
 use egui::Vec2;
 use uuid::Uuid;
 
+pub mod backup;
 mod colors;
 mod debug;
 mod dialogs;
@@ -19,6 +20,7 @@ mod focus;
 mod folding;
 mod indent;
 mod preprocessor;
+pub mod recovery;
 mod reference;
 pub mod settings;
 mod syntax;
@@ -161,6 +163,10 @@ pub struct Editors {
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
     pub agent_name: String,
+    /// The account's folder of copies of the unsaved scripts (backup.rs);
+    /// `None` keeps none.
+    pub backup_dir: Option<std::path::PathBuf>,
+    pub backups: backup::Book,
 }
 
 struct PendingInclude {
@@ -177,7 +183,32 @@ impl Editors {
         self.debug.open = true;
     }
 
+    /// Copy the unsaved scripts (backup.rs), at most every
+    /// `backup::INTERVAL`, off the frame thread.
+    pub fn back_up(&mut self) {
+        self.back_up_now(false);
+    }
+
+    fn back_up_now(&mut self, force: bool) {
+        let docs = self.documents.iter().map(|e| backup::Doc {
+            target: e.target,
+            name: &e.name,
+            source: &e.source,
+            unsaved: e.loaded && e.source != e.baseline,
+            editable: e.loaded && e.can_edit,
+        });
+        let jobs = self
+            .backups
+            .plan(self.backup_dir.as_deref(), docs, std::time::Instant::now(), force);
+        backup::run(jobs);
+    }
+
     pub fn disconnected(&mut self) {
+        // the latest text is copied, and the copies stay for the next login
+        // whatever the editors do now (LLScriptEdContainer's destructor
+        // keeps the file when there is no region)
+        self.back_up_now(true);
+        self.backups.release();
         self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
@@ -553,10 +584,12 @@ impl Editors {
                 e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
-                e.status = if saved.compiled {
+                e.status = if !saved.compiled {
+                    aurora_i18n::tr!("script-compile-failed")
+                } else if saved.checked {
                     aurora_i18n::tr!("script-saved")
                 } else {
-                    aurora_i18n::tr!("script-compile-failed")
+                    aurora_i18n::tr!("script-saved-not-compiled")
                 }
                 .into();
                 if e.close_after_save && saved.compiled && !e.dirty() {
@@ -1566,6 +1599,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(72),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1655,6 +1689,7 @@ mod tests {
                 &Ok(ScriptSaved {
                     asset: Uuid::from_u128(99),
                     compiled: true,
+                    checked: true,
                     errors: vec![],
                 }),
             );
@@ -1807,6 +1842,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));
@@ -1833,6 +1869,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: false,
+                checked: true,
                 errors: vec!["(1, 1) Syntax error".into()],
             }),
         );
@@ -1871,6 +1908,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(4),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1899,6 +1937,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));

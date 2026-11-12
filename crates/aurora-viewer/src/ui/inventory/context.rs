@@ -13,9 +13,11 @@ pub(super) fn exposes_asset_uuid(kind: i32) -> bool {
     matches!(kind, 0 | 1 | 3 | 5 | 7 | 13 | 20 | 21 | 56 | 57 | 58 | 59)
 }
 
-pub(super) fn copyable_asset_uuid(item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
-    let full_perm = rules::COPY | rules::MODIFY | rules::TRANSFER;
-    (exposes_asset_uuid(item.asset_type) && item.owner_mask & full_perm == full_perm && !item.asset_id.is_nil()).then_some(item.asset_id)
+/// The asset UUID of a full-permission item, or of any for a god
+/// (LLViewerInventoryItem::getProtectedAssetUUID: isGodlikeWithoutAdminMenuFakery).
+pub(super) fn copyable_asset_uuid(inv: &Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> Option<Uuid> {
+    (exposes_asset_uuid(item.asset_type) && (god || rules::held(inv, item) & rules::FULL == rules::FULL) && !item.asset_id.is_nil())
+        .then_some(item.asset_id)
 }
 
 fn entry(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool, action: InvAction, actions: &mut Vec<InvAction>) {
@@ -486,16 +488,66 @@ mod tests {
         for kind in -1..=60 {
             item.asset_type = kind;
             let allowed = [0, 1, 3, 5, 7, 13, 20, 21, 56, 57, 58, 59].contains(&kind);
-            assert_eq!(copyable_asset_uuid(&item), allowed.then_some(item.asset_id), "asset type {kind}");
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item, false),
+                allowed.then_some(item.asset_id),
+                "asset type {kind}"
+            );
         }
         item.asset_type = 0;
         for missing in [rules::COPY, rules::MODIFY, rules::TRANSFER] {
             item.owner_mask = full_perm & !missing;
-            assert_eq!(copyable_asset_uuid(&item), None, "missing permission {missing:x}");
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item, false),
+                None,
+                "missing permission {missing:x}"
+            );
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item, true),
+                Some(item.asset_id),
+                "a god copies it"
+            );
         }
         item.owner_mask = full_perm;
         item.asset_id = Uuid::nil();
-        assert_eq!(copyable_asset_uuid(&item), None);
+        assert_eq!(copyable_asset_uuid(&Inventory::default(), &item, false), None);
+    }
+
+    #[test]
+    fn god_permissions_asset_uuid_copy_uses_held_rights() {
+        let agent = Uuid::from_u128(9901);
+        let other = Uuid::from_u128(9902);
+        let inv = Inventory {
+            owner: agent,
+            ..Default::default()
+        };
+        for (name, owner, group_owned, owner_mask, everyone_mask, ordinary) in [
+            ("other owner", other, false, rules::FULL, rules::COPY, false),
+            ("group owned", agent, true, rules::FULL, rules::COPY, false),
+            ("Library", other, false, rules::COPY, rules::FULL, true),
+            ("own full", agent, false, rules::FULL, 0, true),
+            ("own no copy", agent, false, rules::FULL & !rules::COPY, 0, false),
+            ("own no transfer", agent, false, rules::FULL & !rules::TRANSFER, 0, false),
+            ("own no modify", agent, false, rules::FULL & !rules::MODIFY, 0, false),
+        ] {
+            let item = aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(9903),
+                asset_id: Uuid::from_u128(9904),
+                asset_type: 0,
+                owner,
+                group_owned,
+                owner_mask,
+                everyone_mask,
+                ..Default::default()
+            };
+            for god in [false, true] {
+                assert_eq!(
+                    copyable_asset_uuid(&inv, &item, god),
+                    (ordinary || god).then_some(item.asset_id),
+                    "{name}, god={god}"
+                );
+            }
+        }
     }
 
     #[test]

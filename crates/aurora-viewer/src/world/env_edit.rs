@@ -21,6 +21,17 @@ pub const FLAG_NOCOPY: u32 = 1;
 pub const FLAG_NOMOD: u32 = 1 << 1;
 pub const FLAG_NOTRANS: u32 = 1 << 2;
 pub const FLAG_NOSAVE: u32 = 1 << 3;
+/// PERM_TRANSFER of an item's permission masks.
+const PERM_TRANSFER: u32 = 0x2000;
+
+/// The permission flags of a settings map and of the frames it holds (a
+/// day's frames may be stricter than the day). A map without a `flags` key
+/// has none (LLSettingsBase's mSettingFlags stays 0): the simulator adds
+/// them to a restricted setting it applies.
+pub fn source_flags(map: &Llsd) -> u32 {
+    let frames = map["frames"].as_map().into_iter().flat_map(|m| m.values());
+    frames.fold(map["flags"].as_u32(), |f, frame| f | frame["flags"].as_u32())
+}
 
 /// Haze keys that live in `legacy_haze` once edited.
 const LEGACY_HAZE: [&str; 7] = [
@@ -520,6 +531,50 @@ impl Rights {
         }
     }
 
+    /// What the shown environment allows an editor without an item (the
+    /// sky and water snapshots, a parcel's or region's day): the settings
+    /// flags of that source, None when they are not known. The Legacy
+    /// Viewer gives a snapshot every right (loadInventoryItem(null)) and a
+    /// parcel's day its own flags; Aurora follows the source's flags in
+    /// both, and also keeps Save As for a source that allows modifying:
+    /// saving without an item uploads new settings, where a no-modify item
+    /// only gets a server copy. Settings of unknown rights stay editable
+    /// for a preview, and are not saved.
+    pub fn of_source(flags: Option<u32>) -> Rights {
+        let Some(flags) = flags else {
+            return Rights::PREVIEW_ONLY;
+        };
+        let r = Rights::from_flags(flags);
+        Rights {
+            copy: r.copy && r.modify,
+            ..r
+        }
+    }
+
+    /// Settings of unknown rights: edited and applied to oneself only.
+    pub const PREVIEW_ONLY: Rights = Rights {
+        save: false,
+        copy: false,
+        modify: true,
+        transfer: false,
+    };
+
+    /// The settings flags these rights stand for (`of_source` of them gives
+    /// them back), None for `PREVIEW_ONLY`: what a frame applied from an
+    /// editor keeps of its source.
+    pub fn source_flags(self, flags: u32) -> Option<u32> {
+        if self == Rights::PREVIEW_ONLY {
+            return None;
+        }
+        Some(self.flags(flags) | if self.save { 0 } else { FLAG_NOSAVE })
+    }
+
+    /// The next owner mask of an item saved from settings with these
+    /// rights: no transfer when the source has none.
+    pub fn next_owner_mask(self, mask: u32) -> u32 {
+        if self.transfer { mask } else { mask & !PERM_TRANSFER }
+    }
+
     /// The flags written into the settings (setFlag / clearFlag).
     pub fn apply(self, doc: &mut SettingsDoc) {
         let f = self.flags(doc.flags());
@@ -665,6 +720,82 @@ mod tests {
         assert_eq!(legacy_preset_name("Nacon%27s%20Sunset"), "Nacon's Sunset");
     }
 
+    /// The keys LLSettingsSky::validationList and
+    /// LLSettingsWater::validationList require.
+    const REQUIRED_SKY: [&str; 21] = [
+        "absorption_config",
+        "bloom_id",
+        "cloud_color",
+        "cloud_pos_density1",
+        "cloud_pos_density2",
+        "cloud_scale",
+        "cloud_scroll_rate",
+        "cloud_shadow",
+        "gamma",
+        "glow",
+        "max_y",
+        "mie_config",
+        "moon_rotation",
+        "planet_radius",
+        "rayleigh_config",
+        "sky_bottom_radius",
+        "sky_top_radius",
+        "star_brightness",
+        "sun_arc_radians",
+        "sun_rotation",
+        "sunlight_color",
+    ];
+    const REQUIRED_WATER: [&str; 11] = [
+        "blur_multiplier",
+        "fresnel_offset",
+        "fresnel_scale",
+        "normal_map",
+        "normal_scale",
+        "scale_above",
+        "scale_below",
+        "underwater_fog_mod",
+        "water_fog_color",
+        "water_fog_density",
+        "wave1_direction",
+    ];
+
+    /// What goes up, read back as the server reads it.
+    fn assert_uploadable(doc: &SettingsDoc, required: &[&str]) {
+        let back = Settings::decode_asset(&doc.to_asset()).expect("asset");
+        for key in required {
+            assert!(back.has(key), "{key} is missing from the {:?} asset", doc.kind());
+        }
+    }
+
+    #[test]
+    fn new_settings_carry_every_key_the_server_requires() {
+        let sky = br#"<llsd><map><key>gamma</key><array><real>1.2</real><real>0</real><real>0</real><real>1</real></array></map></llsd>"#;
+        let imported = SettingsDoc::import_legacy_sky(sky, "Imported").expect("converted");
+        assert_uploadable(&imported, &REQUIRED_SKY);
+        assert_uploadable(&SettingsDoc::snapshot_sky(&SkyFrame::default(), "Snapshot"), &REQUIRED_SKY);
+        let water = br#"<llsd><map><key>waterFogDensity</key><real>16</real></map></llsd>"#;
+        let imported = SettingsDoc::import_legacy_water(water, "Imported").expect("converted");
+        assert_uploadable(&imported, &REQUIRED_WATER);
+        assert_uploadable(&SettingsDoc::snapshot_water(&WaterFrame::default(), "Snapshot"), &REQUIRED_WATER);
+        // what the frame does not carry is the Legacy Viewer's defaults(), and
+        // a preset's own value wins
+        let back = Settings::decode_asset(&imported_sky_with_radius().to_asset()).expect("asset");
+        assert_eq!(back["planet_radius"].as_f32(), 7000.0);
+        assert_eq!(back["sky_top_radius"].as_f32(), 6420.0);
+        assert_eq!(back["mie_config"].at(0)["anisotropy"].as_f32(), 0.8);
+        assert_eq!(back["rayleigh_config"].at(0)["exp_scale"].as_f32(), -1.0 / 8000.0);
+        // in the validator's ranges: it would clamp the absorption's raw defaults
+        let absorption = &back["absorption_config"];
+        assert_eq!(absorption.len(), 2);
+        assert_eq!(absorption.at(0)["width"].as_f32(), 25000.0);
+        assert_eq!(absorption.at(1)["constant_term"].as_f32(), 1.0);
+    }
+
+    fn imported_sky_with_radius() -> SettingsDoc {
+        let sky = br#"<llsd><map><key>planet_radius</key><real>7000</real></map></llsd>"#;
+        SettingsDoc::import_legacy_sky(sky, "Imported").expect("converted")
+    }
+
     #[test]
     fn rights_follow_the_item_and_nosave() {
         let r = Rights::from_item(0x8000 | 0x2000, 0);
@@ -678,5 +809,50 @@ mod tests {
         assert_eq!(Rights::from_flags(FLAG_NOSAVE), Rights::from_item(0, FLAG_NOSAVE));
         assert_eq!(correct_item_name(" a|b "), "ab");
         assert_eq!(correct_item_name(""), "Unnamed");
+    }
+
+    #[test]
+    fn environment_save_follows_the_source_settings_rights() {
+        // settings of unknown rights: edited for a preview, never saved
+        let unknown = Rights::of_source(None);
+        assert_eq!(unknown, Rights::PREVIEW_ONLY);
+        assert!(unknown.modify && !unknown.save && !unknown.copy && !unknown.transfer);
+        assert_eq!(unknown.source_flags(0), None);
+        // no flags: every right, as the Legacy Viewer's snapshot
+        assert_eq!(Rights::of_source(Some(0)), Rights::FREE);
+        assert_eq!(Rights::FREE.source_flags(FLAG_NOCOPY), Some(0));
+        // no copy: no Save As
+        let r = Rights::of_source(Some(FLAG_NOCOPY));
+        assert!(r.save && !r.copy && r.modify && r.transfer);
+        // no modify: no Save As either (no item to copy on the server)
+        let r = Rights::of_source(Some(FLAG_NOMOD));
+        assert!(r.save && !r.copy && !r.modify);
+        // no transfer: Save As, the new item's next owner without transfer
+        let r = Rights::of_source(Some(FLAG_NOTRANS));
+        assert!(r.save && r.copy && r.modify && !r.transfer);
+        assert_eq!(r.next_owner_mask(0x8000 | 0x4000 | 0x2000 | 0x80000), 0x8000 | 0x4000 | 0x80000);
+        assert_eq!(Rights::FREE.next_owner_mask(0xe000), 0xe000);
+        assert_eq!(r.source_flags(0), Some(FLAG_NOTRANS));
+        // no save: nothing but applying to oneself, and it stays no save
+        let r = Rights::of_source(Some(FLAG_NOSAVE));
+        assert!(!r.save && !r.copy && !r.modify && !r.transfer);
+        assert_eq!(r.source_flags(0).map(|f| f & FLAG_NOSAVE), Some(FLAG_NOSAVE));
+    }
+
+    #[test]
+    fn source_flags_join_the_frames_and_default_to_none() {
+        let day = llsd_map! {
+            "flags" => FLAG_NOTRANS as i32,
+            "frames" => llsd_map! {
+                "a" => llsd_map! { "flags" => FLAG_NOCOPY as i32 },
+                "b" => llsd_map! {},
+            },
+        };
+        assert_eq!(source_flags(&day), FLAG_NOTRANS | FLAG_NOCOPY);
+        assert_eq!(source_flags(&llsd_map! { "flags" => 0 }), 0);
+        // no flags key: no restriction, as the Legacy Viewer reads it
+        assert_eq!(source_flags(&llsd_map! { "frames" => llsd_map! {} }), 0);
+        let frame_only = llsd_map! { "frames" => llsd_map! { "a" => llsd_map! { "flags" => FLAG_NOMOD as i32 } } };
+        assert_eq!(source_flags(&frame_only), FLAG_NOMOD);
     }
 }

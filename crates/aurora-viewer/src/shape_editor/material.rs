@@ -48,7 +48,10 @@ impl Face {
         };
         if let Some(id) = object.visual_material(index) {
             let mut material = scene.materials.peek(&id).map(|m| (*m).clone()).unwrap_or_default();
-            if object.local_appearance(index).is_none()
+            if object
+                .local_appearance(index)
+                .and_then(crate::world::objects::LocalAppearance::surface)
+                .is_none()
                 && let Some(override_) = world
                     .gltf_overrides
                     .get(&object.key)
@@ -56,6 +59,9 @@ impl Face {
                     .map(|(_, override_)| override_)
             {
                 material.apply_override(override_);
+            }
+            if let Some(appearance) = object.local_appearance(index) {
+                appearance.apply_pbr(&mut material);
             }
             out.textures = [
                 material.base_color_texture,
@@ -92,6 +98,11 @@ impl Face {
                 _ => 0,
             };
             out.alpha_explicit = true;
+        }
+        if object.visual_material(index).is_none()
+            && let Some(normal) = object.local_texture(index, crate::world::objects::LocalTextureSlot::Normal)
+        {
+            out.textures[1] = normal;
         }
         for texture in &mut out.textures {
             if let Some((slot, _)) = avatar::bake_slot_for(texture) {

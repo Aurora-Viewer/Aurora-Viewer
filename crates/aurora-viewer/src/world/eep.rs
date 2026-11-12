@@ -19,6 +19,8 @@ pub const DEFAULT_WATER_NORMAL: Uuid = uuid::uuid!("822ded49-9a6c-f61c-cb89-6df5
 /// Default rainbow and 22° halo textures (LLSettingsSky IMG_RAINBOW, IMG_HALO).
 pub const DEFAULT_RAINBOW_ID: Uuid = uuid::uuid!("11b4c57c-56b3-04ed-1f82-2004363882e4");
 pub const DEFAULT_HALO_ID: Uuid = uuid::uuid!("12149143-f599-91a7-77ac-b52a3c0f59cd");
+/// Default bloom texture (LLSettingsSky IMG_BLOOM1).
+pub const DEFAULT_BLOOM_ID: Uuid = uuid::uuid!("3c59f7fe-9dc8-47f9-8aaf-a9dd1fbc3bef");
 /// The sky dome's height and radius (LLSettingsSky::DOME_OFFSET and
 /// DOME_RADIUS). The Legacy Viewer draws with these whatever a sky sets.
 pub const LEGACY_DOME_OFFSET: f32 = 0.96;
@@ -672,14 +674,57 @@ pub(crate) fn llsd_quat(q: Quat) -> Llsd {
     Llsd::Array(vec![q.x.into(), q.y.into(), q.z.into(), q.w.into()])
 }
 
+/// One layer of an atmosphere profile (LLSettingsSky::createDensityProfileLayer).
+fn density_layer(width: f32, exp_term: f32, exp_scale: f32, linear_term: f32, constant_term: f32) -> Llsd {
+    aurora_llsd::llsd_map! {
+        "width" => width,
+        "exp_term" => exp_term,
+        "exp_scale" => exp_scale,
+        "linear_term" => linear_term,
+        "constant_term" => constant_term,
+    }
+}
+
+/// rayleighConfigDefault.
+fn rayleigh_config_default() -> Llsd {
+    Llsd::Array(vec![density_layer(0.0, 1.0, -1.0 / 8000.0, 0.0, 0.0)])
+}
+
+/// mieConfigDefault.
+fn mie_config_default() -> Llsd {
+    let mut layer = density_layer(0.0, 1.0, -1.0 / 1200.0, 0.0, 0.0);
+    layer.insert("anisotropy", 0.8f32);
+    Llsd::Array(vec![layer])
+}
+
+/// absorptionConfigDefault as absorptionValidationList leaves it, and so as
+/// the Legacy Viewer uploads it: the linear terms clamp to 0, the constants
+/// to 0 and 1.
+fn absorption_config_default() -> Llsd {
+    Llsd::Array(vec![
+        density_layer(25000.0, 0.0, 0.0, 0.0, 0.0),
+        density_layer(0.0, 0.0, 0.0, 0.0, 1.0),
+    ])
+}
+
 impl SkyFrame {
     /// The sky as a settings map (LLSettingsSky::getSettings, the keys
     /// [`Settings::from_llsd`] reads back): Firestorm's `sky_llsd` of a local
-    /// sky that has no asset (LLEnvironment::saveToSettings).
+    /// sky that has no asset (LLEnvironment::saveToSettings). Keys the frame
+    /// does not carry take LLSettingsSky::defaults(): validationList requires
+    /// them, and the server refuses an upload without them (HTTP 400).
     pub fn settings_llsd(&self) -> Llsd {
         use aurora_llsd::llsd_map;
         let mut m = llsd_map! {
             "type" => "sky",
+            "bloom_id" => DEFAULT_BLOOM_ID,
+            "planet_radius" => 6360.0f32,
+            "sky_bottom_radius" => 6360.0f32,
+            "sky_top_radius" => 6420.0f32,
+            "sun_arc_radians" => 0.00045f32,
+            "rayleigh_config" => rayleigh_config_default(),
+            "mie_config" => mie_config_default(),
+            "absorption_config" => absorption_config_default(),
             "sun_rotation" => llsd_quat(self.sun_rotation),
             "moon_rotation" => llsd_quat(self.moon_rotation),
             "sunlight_color" => llsd_vec3(self.sunlight),

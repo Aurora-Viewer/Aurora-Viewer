@@ -108,6 +108,8 @@ pub struct NameTag {
     /// rather than a sphere centred on its avatar's current position.
     pub at: Vec3,
     pub normal: Vec3,
+    /// Where the resident's contact-set marker lands on the plate.
+    pub marker_slot: Option<egui::Rect>,
 }
 
 impl NameTag {
@@ -117,6 +119,7 @@ impl NameTag {
             rect,
             at,
             normal: proj.view_proj.row(3).truncate().normalize_or_zero(),
+            marker_slot: None,
         }
     }
 
@@ -204,13 +207,9 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     let Some(view) = scene.lists.hud_view else { return };
     let own = world.objects.index_of_uuid(&world.agent_id);
     let ppp = ctx.pixels_per_point();
-    let proj = Projector {
-        view_proj: view.matrix(),
-        width: view.width,
-        height: view.height,
-        ppp,
-    };
     let painter = ctx.layer_painter(egui::LayerId::background());
+    let now = Instant::now();
+    let mut labels = Vec::new();
     for (idx, o) in world.objects.texted() {
         if !world.rlva.hover_visible(o.full_id, true) {
             continue;
@@ -218,19 +217,26 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         if o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
             continue;
         }
-        let Some((pos, _, _)) = Scene::object_transform(world, idx, Instant::now(), 0) else {
+        let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
             continue;
         };
+        labels.push((idx, o, pos));
+    }
+    // LLHUDText::updateAll sorts HUD text by its +X distance, far first.
+    labels.sort_by(|a, b| b.2.x.total_cmp(&a.2.x));
+    for (idx, o, pos) in labels {
         let scale = world.hud_scale(idx);
-        let Some((point, _)) = proj.project(pos + Vec3::Z * o.scale.z * scale * 0.6) else {
+        // HUD text is never frustum-culled: an off-screen anchor can still
+        // have visible letters. Use the attachment geometry's projection.
+        let [x, y] = view.pixel(pos + Vec3::Z * o.scale.z * scale * 0.6);
+        let point = Pos2::new(x / ppp, y / ppp);
+        if !point.is_finite() {
             continue;
-        };
+        }
         let c = o.text_color;
         let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
         let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
-        let galley = super::bidi::no_wrap(ctx, text, egui::FontId::proportional(12.0 * scale), color);
-        let rect = egui::Align2::CENTER_BOTTOM.anchor_size(point, galley.size());
-        painter.galley(rect.min, galley, color);
+        super::floating_text::paint(&painter, text, point, 12.0 * scale, color, view.zoom);
     }
 }
 
@@ -331,6 +337,29 @@ fn plate_content(
     }
 }
 
+/// What the avatars' name tags show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AvatarTags {
+    /// As Preferences › Name tags say.
+    Shown,
+    /// World › Hide name tags: a resident's chat bubble still shows, under
+    /// their name, as with the name tags turned off in Preferences
+    /// (LLVOAvatar::idleUpdateNameTag: `visible_chat`).
+    Bubbles,
+    /// Immersive mode without name tags: no plate, no bubble.
+    Hidden,
+}
+
+/// What the name tags show: each mode keeps its own switch, the immersive
+/// one (#859) and World › Hide name tags (`show_name_tags`).
+pub fn avatar_tags(immersive: bool, immersive_name_tags: bool, show_name_tags: bool) -> AvatarTags {
+    match (immersive, immersive_name_tags, show_name_tags) {
+        (true, true, _) | (false, _, true) => AvatarTags::Shown,
+        (true, false, _) => AvatarTags::Hidden,
+        (false, _, false) => AvatarTags::Bubbles,
+    }
+}
+
 /// `voice`: avatars in voice chat (level, speaking); absence means no voice.
 /// `plates`: the avatars get name plates instead of the classic tags.
 /// Each name tag and floating text is painted after the mark of where it
@@ -347,7 +376,7 @@ pub fn draw(
     proj: &Projector,
     eye: Vec3,
     show_own: bool,
-    avatar_tags: bool,
+    avatar_tags: AvatarTags,
     settings: &crate::settings::Settings,
     visibility: &mut NameTagVisibility,
     voice: &HashMap<uuid::Uuid, (f32, bool)>,
@@ -395,7 +424,7 @@ pub fn draw(
         }
         if o.is_avatar() {
             // immersive mode without name tags: no plate, no bubble under it
-            if !avatar_tags {
+            if avatar_tags == AvatarTags::Hidden {
                 continue;
             }
             if world.rlva.has("shownearby") && o.full_id != world.agent_id {
@@ -419,7 +448,8 @@ pub fn draw(
             // the name tags' settings, their distance and their timer
             // (LLVOAvatar::idleUpdateNameTag: visible_chat)
             let chatting = bubbles.as_ref().is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
-            if !chatting && (!name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) || d > settings.name_tag_distance) {
+            let names = avatar_tags == AvatarTags::Shown && name_tag_enabled(settings, own, world.social.is_friend(&o.full_id));
+            if !chatting && (!names || d > settings.name_tag_distance) {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
@@ -619,7 +649,7 @@ pub fn draw(
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let text = world.rlva_hover_privacy.apply(&o.text);
-            let lines = text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
+            let lines = vec![(text.into_owned(), col, 12.0)];
             tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0, None));
         }
     }
@@ -633,6 +663,12 @@ pub fn draw(
         // the scene hides what it has in front of this point
         aurora_render::world_label_at(ctx, Some(at));
         let is_avatar = d < 1000.0;
+        if !is_avatar {
+            if let Some((text, color, size)) = lines.into_iter().next() {
+                super::floating_text::paint(&painter, text, sp, size, color, 1.0);
+            }
+            continue;
+        }
         let fade = if is_avatar {
             (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0) * alpha
         } else {
@@ -709,17 +745,6 @@ pub fn draw(
             let h = g.size().y;
             let pos = Pos2::new(text_x, y);
             let rect = Align2::CENTER_TOP.anchor_size(pos, g.size());
-            if !is_avatar {
-                // drop shadow (LLFontGL::DROP_SHADOW)
-                let a = g.job.sections.first().map(|s| s.format.color.a()).unwrap_or(255);
-                // the same galley in black: a right-to-left line is in
-                // sections that a plain copy of its text would lose
-                painter.galley_with_override_text_color(
-                    rect.min + egui::vec2(1.0, 1.0),
-                    g.clone(),
-                    Color32::from_black_alpha((a as f32 * 0.7) as u8),
-                );
-            }
             // every line was laid out with its own color: nothing to fall back on
             painter.galley(rect.min, g, Color32::PLACEHOLDER);
             y += h;
@@ -732,14 +757,17 @@ pub fn draw(
         } else {
             plate_tags.iter().map(|t| (t.id, t.fade)).collect()
         };
-        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at| {
+        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at, marker_slot| {
             // right after its plate, before the nearer ones
             if let Some(b) = plate_bubbles.get(&id) {
                 let top = Pos2::new(rect.center().x, rect.bottom() + super::chat_bubbles::GAP);
                 let fade = fades.get(&id).copied().unwrap_or(1.0);
                 super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, true, now_s);
             }
-            name_tags.push(NameTag::new(id, rect, at, proj))
+            name_tags.push(NameTag {
+                marker_slot,
+                ..NameTag::new(id, rect, at, proj)
+            })
         });
     }
     // what else is painted for the world (the tracking beacon) stands nowhere
@@ -751,6 +779,16 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hide name tags keeps the chat bubbles, as the Legacy Viewer does with
+    /// its names off; immersive mode keeps its own switch, which hides both.
+    #[test]
+    fn each_mode_keeps_its_own_name_tag_switch() {
+        assert_eq!(avatar_tags(false, false, true), AvatarTags::Shown);
+        assert_eq!(avatar_tags(false, true, false), AvatarTags::Bubbles);
+        assert_eq!(avatar_tags(true, false, true), AvatarTags::Hidden);
+        assert_eq!(avatar_tags(true, true, false), AvatarTags::Shown);
+    }
 
     #[test]
     fn plate_render_badges_distinguish_manual_limits_and_follow_setting_changes() {
@@ -902,7 +940,7 @@ mod tests {
                             &proj,
                             Vec3::new(128.0, 128.0, 5.0),
                             true,
-                            true,
+                            AvatarTags::Shown,
                             settings,
                             &mut visibility,
                             &empty,
@@ -1012,7 +1050,7 @@ mod tests {
                             &proj,
                             eye,
                             true,
-                            true,
+                            AvatarTags::Shown,
                             settings,
                             &mut visibility,
                             &empty,

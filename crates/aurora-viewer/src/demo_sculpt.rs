@@ -28,8 +28,8 @@ pub fn events() -> Vec<NetEvent> {
         }
     };
     // The demo has its own cache; exercise the ordinary asset/decode path.
-    let cache = crate::settings::cache_dir().join("tex");
-    if let Err(e) = std::fs::create_dir_all(&cache).and_then(|()| std::fs::write(cache.join(format!("{MAP}.j2c")), encoded)) {
+    let cache = crate::settings::asset_cache_dir().join("tex");
+    if let Err(e) = std::fs::create_dir_all(&cache).and_then(|()| crate::cache::write(cache.join(format!("{MAP}.j2c")), &encoded)) {
         log::warn!("demo sculpt: cannot write the synthetic map ({e})");
         return Vec::new();
     }

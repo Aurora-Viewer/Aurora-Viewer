@@ -1,8 +1,8 @@
 //! The motion vectors shown instead of the image (AURORA_DEBUG_MOTION=1):
 //! the direction of each pixel's motion as its hue, its length as its
 //! brightness. Where the depth prepass wrote none (the sky, or a frame
-//! without GTAO's mesh normals, which carry them), the camera's motion
-//! alone, from `FrameU::motion_reproj`.
+//! where neither GTAO's mesh normals nor TAA ask for them), the camera's
+//! motion alone, from `FrameU::motion_reproj`.
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};

@@ -34,7 +34,16 @@ pub(super) fn show(
                     imports.type_filters[index] = !imports.type_filters[index];
                 }
             }
-            if unified && widgets::icon_toggle_sized(ui, p, "eye-filled", Choice::Local.label(), imports.choice == Choice::Local, 30.0) {
+            if unified
+                && widgets::icon_toggle_sized(
+                    ui,
+                    p,
+                    widgets::local_texture::ICON,
+                    Choice::Local.label(),
+                    imports.choice == Choice::Local,
+                    30.0,
+                )
+            {
                 imports.choice = if imports.choice == Choice::Local {
                     Choice::Bulk
                 } else {

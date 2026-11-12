@@ -117,7 +117,8 @@ fn assert_no_object_delete(inspector: &Inspector) {
 }
 
 #[test]
-fn next_owner_display_toggle_adds_rights_without_editing_or_sending_commands() {
+fn contents_cmt_menu_selects_each_display_without_editing_or_sending_commands() {
+    use crate::ui::inventory::permissions::Rights;
     let (mut inspector, object, _) = fixture();
     let original = inspector.tool.contents.objects[&object].items.clone();
     let before = inspector.show(vec![]).1;
@@ -126,19 +127,47 @@ fn next_owner_display_toggle_adds_rights_without_editing_or_sending_commands() {
             .iter()
             .any(|(text, _)| text.starts_with("Entry 000") && text.contains("CMT") && !text.contains('→'))
     );
-    click_text(
-        &mut inspector,
-        aurora_i18n::tr!("inventory-permissions-next-label"),
-        egui::Modifiers::NONE,
-        egui::PointerButton::Primary,
-    );
-    assert!(inspector.tool.ui.contents_show_next_owner);
-    let shown = inspector.show(vec![]).1;
-    assert!(
-        shown
-            .iter()
-            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("CMT→CMT"))
-    );
+    let texts = inspector.show(vec![]).1;
+    let text_rect = |label| texts.iter().find(|(text, _)| text == aurora_i18n::text(label)).unwrap().1;
+    let new_script = text_rect("common-new-script");
+    let reset = text_rect("build-ui-contents-reset-scripts");
+    let refresh = text_rect("build-ui-contents-refresh");
+    assert!(new_script.right() < reset.left());
+    assert!(reset.right() < refresh.left());
+    assert!((new_script.center().y - reset.center().y).abs() < 1.0);
+    assert!((refresh.center().y - reset.center().y).abs() < 1.0);
+    for (choice, key, count) in [
+        (Rights::Both, "inventory-rights-both", 2),
+        (Rights::Next, "inventory-rights-next", 1),
+        (Rights::Hidden, "inventory-rights-hidden", 0),
+        (Rights::Mine, "inventory-rights-mine", 1),
+    ] {
+        let rect = inspector
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("contents-rights-button")))
+            .unwrap();
+        let rights = text_rect("common-rights");
+        assert!(rights.right() < rect.left());
+        assert!((rights.center().y - rect.center().y).abs() < 1.0);
+        let search = inspector
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("contents-search-field")))
+            .unwrap();
+        assert!(rect.right() < search.left());
+        assert!((search.center().y - rect.center().y).abs() < 1.0);
+        pointer(&mut inspector, rect.center(), egui::Modifiers::NONE, egui::PointerButton::Primary);
+        click_text(
+            &mut inspector,
+            aurora_i18n::text(key),
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        assert_eq!(inspector.tool.ui.contents_rights, choice);
+        let shown = inspector.show(vec![]).1;
+        let entry = &shown.iter().find(|(text, _)| text.starts_with("Entry 000")).unwrap().0;
+        assert_eq!(entry.matches("CMT").count(), count);
+        assert_eq!(entry.contains('→'), choice.shows_next());
+    }
     assert!(
         inspector.tool.out.is_empty(),
         "Display must not emit task-inventory or permission commands"
@@ -149,20 +178,6 @@ fn next_owner_display_toggle_adds_rights_without_editing_or_sending_commands() {
             (after.owner_mask, after.next_owner_mask)
         );
     }
-    click_text(
-        &mut inspector,
-        aurora_i18n::tr!("inventory-permissions-next-label"),
-        egui::Modifiers::NONE,
-        egui::PointerButton::Primary,
-    );
-    assert!(!inspector.tool.ui.contents_show_next_owner);
-    assert!(
-        inspector
-            .show(vec![])
-            .1
-            .iter()
-            .any(|(text, _)| text.starts_with("Entry 000") && !text.contains('→'))
-    );
 }
 
 #[test]
@@ -190,6 +205,50 @@ fn contents_ctrl_shift_and_context_selection_follow_the_visible_order() {
         4,
         "Right click preserves the selected batch"
     );
+}
+
+#[test]
+fn contents_context_copy_keeps_selected_mixed_types_in_one_request_in_both_layouts() {
+    for legacy in [false, true] {
+        for selected in [1, 2] {
+            let (mut inspector, object, ids) = fixture();
+            inspector.settings.legacy_window = legacy;
+            let items = &mut inspector.tool.contents.objects.get_mut(&object).unwrap().items;
+            items[0].asset_type = 7;
+            items[0].inv_type = 7;
+            items[2].asset_type = 6;
+            items[2].inv_type = 6;
+            resize_inspector(&mut inspector, vec2(400.0, 820.0));
+            inspector.tool.ui.requests.clear();
+            click(&mut inspector, 0, egui::Modifiers::NONE);
+            if selected == 2 {
+                click(&mut inspector, 2, egui::Modifiers::CTRL);
+            }
+            click_text(&mut inspector, "Entry 000", egui::Modifiers::NONE, egui::PointerButton::Secondary);
+            click_text(
+                &mut inspector,
+                aurora_i18n::tr!("build-ui-contents-copy-to-inventory"),
+                egui::Modifiers::NONE,
+                egui::PointerButton::Primary,
+            );
+            let expected = if selected == 1 { vec![ids[0]] } else { vec![ids[0], ids[2]] };
+            assert!(
+                matches!(&inspector.tool.ui.requests[..],
+                    [crate::build::ui::Request::CopyContents { object: source, items }]
+                    if *source == object && items.iter().map(|item| item.item_id).collect::<Vec<_>>() == expected
+                ),
+                "legacy={legacy}, selected={selected}: one folder request, with only the selection"
+            );
+            assert!(
+                !inspector
+                    .tool
+                    .out
+                    .iter()
+                    .any(|cmd| matches!(cmd, NetCommand::Build(BuildCmd::MoveTaskInventory { .. }))),
+                "the menu must wait for the common folder and move confirmation"
+            );
+        }
+    }
 }
 
 #[test]
