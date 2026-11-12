@@ -26,6 +26,13 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-12 — Aurora 0.9.8 : des correctifs pour la construction, le chat et les cartes AMD
+Choisir une face sélectionne de nouveau les faces de ce que vous portez, et Faire disparaître avec Modifier les parties liées ne cache que la partie choisie. Le sélecteur de canal s'affiche près de chaque saisie du chat local et garde le canal choisi. Sur les cartes AMD, les feuilles des arbres ne sont plus des carrés et les cheveux mesh n'ont plus de traînées, et les cils en fondu restent visibles derrière les cheveux mesh. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)
+
+## 2026-11-12 — Démarrage, voix et poser
+Une petite fenêtre Aurora s'affiche pendant le démarrage et après le redémarrage d'une mise à jour. La voix locale se connecte sur les liaisons lentes, les boutons invisibles des HUD répondent de nouveau au clic gauche, et l'avis de complexité de l'avatar ne se répète plus (désactivé par défaut, Préférences › Graphismes › Avatars › Avis de complexité). Dans le poser, Ctrl enfoncé surligne la partie des meshes de l'avatar que Ctrl + clic choisira. Merci à Bruica, iGao, KanikaBreed, Nowalski et Odessa-Draekavik.
+
 ## 2026-11-12 — Aurora 0.9.7 : la fenêtre Construction revue, la récupération de scripts et Destinations
 La fenêtre Construction est réorganisée : la sélection tient dans un en-tête repliable, les options forment des colonnes au-dessus des onglets, à ranger avec Organiser les options…, position, taille et rotation gardent toute la largeur, et Contenu a son menu d'affichage. Après un plantage ou une connexion perdue, la Récupération de scripts rend vos modifications non enregistrées à la connexion suivante, dans Objets perdus et trouvés. Destinations ouvre la fenêtre d'Aurora sur le Guide des destinations : recherche, catégories, notes et téléport en un clic. Cache et réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.7)

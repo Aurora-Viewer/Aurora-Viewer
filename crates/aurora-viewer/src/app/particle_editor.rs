@@ -271,6 +271,7 @@ impl App {
             handle: self.world.main_region.unwrap_or_default(),
             options: ScriptOptions {
                 mono: true,
+                luau: aurora_net::scripts::Luau::Off,
                 running: true,
                 experience: Uuid::nil(),
             },
