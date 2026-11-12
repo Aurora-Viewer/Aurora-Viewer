@@ -6047,7 +6047,7 @@ nameplate-linden-lab-tooltip = A Linden Lab employee
 ui-perf-water-surface-refraction-waves = Water surface (refraction, waves)
 ui-options-maximum-worn-surface-area = Maximum worn surface area
 ui-options-complexity-notices = Complexity notices
-ui-options-complexity-notices-help = How long the notices about your avatar complexity stay, and the ones saying people around may not see you fully (ShowMyComplexityChanges, 10 s as in the Legacy Viewer; 0 = no notices)
+ui-options-complexity-notices-help = How long the notices about your avatar complexity stay, and the ones saying people around may not see you fully (ShowMyComplexityChanges; off by default, 10 s in the Legacy Viewer; 0 = no notices). Your complexity is told at most once every 5 minutes.
 ui-options-shiny-surfaces-expensive-disabled-by-default = Shiny surfaces; expensive, disabled by default
 ui-contacts-nickname = Nickname
 ui-contacts-set-nickname = Set nickname...
