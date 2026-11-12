@@ -126,6 +126,9 @@ pub struct ObjectFacts {
     pub delete: bool,
     /// LLSelectMgr::enableUnlinkObjects: a linkset we can modify.
     pub unlink: bool,
+    /// enable_save_into_task_inventory: Build › Save back to object
+    /// contents applies to the menu's selection.
+    pub save_to_contents: bool,
     /// Blocked (LLMuteList), for "Ignore" / "Stop ignoring".
     pub blocked: bool,
     /// Name from ObjectProperties (block list entry).
@@ -454,6 +457,9 @@ pub enum CtxAction {
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
     Unlink(Uuid),
+    /// "Save back to object contents" (Tools.SaveToObjectInventory), on
+    /// the menu's selection.
+    SaveToObjectContents,
     /// Link the selected objects (Tools.Link).
     Link(Uuid),
     /// "Take as separate items" / "Take copies as separate items"

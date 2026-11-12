@@ -343,6 +343,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::Buy(..) => "Buy",
         CtxAction::Open(..) => "Open",
         CtxAction::Unlink(..) => "Unlink",
+        CtxAction::SaveToObjectContents => "SaveToObjectContents",
         CtxAction::Link(..) => "Link",
         CtxAction::TakeSeparate { .. } => "TakeSeparate",
         CtxAction::Return(..) => "Return",
