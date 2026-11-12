@@ -5786,8 +5786,9 @@ impl App {
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
-            presence: self.settings.toast_friends_online,
-            presence_in_chat: self.settings.friends_online_in_chat,
+            // AURORA_DEMO_SET_NOTICES: only the contact set's notices
+            presence: self.settings.toast_friends_online && !(self.demo && crate::demo::set_notices::active()),
+            presence_in_chat: self.settings.friends_online_in_chat && !(self.demo && crate::demo::set_notices::active()),
             im: self.settings.toast_im,
             // AURORA_DEMO_TOASTS shows a group message too (off by default)
             group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
@@ -12892,6 +12893,55 @@ impl App {
                 }
             }
         }
+        if self.demo
+            && let Some(mode) = crate::demo::set_notices::mode()
+        {
+            use crate::demo::set_notices as demo;
+            if self.frame_count == demo::SETUP {
+                demo::setup(&mut self.world);
+                self.panels.perf = false;
+                self.panels.appearance = false;
+                if mode.starts_with("config") {
+                    self.panels.chat = false;
+                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                } else {
+                    self.panels.chat = true;
+                }
+            }
+            if self.frame_count == demo::DND {
+                self.world.set_dnd(true);
+            }
+            // once the window has its height
+            if self.frame_count == demo::SETUP + 30 {
+                self.contacts_ui.demo_scroll = match mode.as_str() {
+                    "config-responses" => Some(ui::contacts::DemoScroll::Responses),
+                    "config-bottom" => Some(ui::contacts::DemoScroll::Bottom),
+                    _ => None,
+                };
+            }
+            if self.frame_count == demo::MESSAGE + 5 {
+                let reply = self
+                    .world
+                    .social
+                    .ims
+                    .iter()
+                    .find(|s| s.other == crate::demo::DEMO_FRIEND)
+                    .and_then(|s| {
+                        s.lines
+                            .iter()
+                            .rev()
+                            .find(|l| l.kind == crate::world::ChatKind::System)
+                            .map(|l| l.text.clone())
+                    });
+                log::info!("demo set notices: {reply:?}");
+            }
+            let agent = self.world.agent_id;
+            for event in demo::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         if self.demo && crate::demo::im_announce::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::im_announce::events(self.frame_count, agent) {
@@ -14792,6 +14842,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
             BarAction::EditParticles => self.open_particle_editor(),
+            BarAction::SaveToObjectContents => self.build.save_to_contents(&mut self.world),
             BarAction::ToggleNameTags => {
                 self.settings.show_name_tags = !self.settings.show_name_tags;
                 self.settings.save();
@@ -16926,6 +16977,7 @@ impl App {
                         .map(|b| b.label())
                         .unwrap_or_default(),
                     edit_particles: self.particle_editor_target().is_some(),
+                    save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
