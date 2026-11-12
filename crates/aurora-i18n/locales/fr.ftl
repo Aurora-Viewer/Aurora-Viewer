@@ -1887,7 +1887,7 @@ app-gpu-lost =
     • fermer les autres programmes qui utilisent beaucoup la carte graphique ;
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
-cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
+cmdline-mod-set-avatar-hover-height-usage-zoffset-value-or-delta = Définir la hauteur de survol de l'avatar (utilisation : /zoffset valeur ou +delta).
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
 demo-auto-blend = Auto : fondu
 demo-auto-mask = Auto : masque
@@ -6133,6 +6133,8 @@ common-next = Suivant
 ui-bars-next = { "Suivant : " }{ $d }
 app-chat-commands-tracking = { "Suivi de " }{ $name }.
 app-chat-commands-tracking-2 = { "Suivi de " }{ $region }{ " (<" }{ $value0 }{ ", " }{ $value1 }{ ", " }{ $value2 }>).
+app-chat-commands-hover-height-unavailable = Cette région ne prend pas en charge la hauteur de survol.
+app-chat-commands-hover-height-now = Hauteur de survol : { $value } m
 common-follow = Suivre
 follow-title = Suivi
 follow-distance = Distance de suivi

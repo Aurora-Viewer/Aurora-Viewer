@@ -186,6 +186,25 @@ impl App {
                 let pos = self.world.agent.position;
                 self.teleport_in_region(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
             }
+            Command::HoverHeight(command) => {
+                // /zoffset… (chatbar_as_cmdline.cpp) edits AvatarHoverOffsetZ,
+                // which the Legacy Viewer's hover height window also edits and
+                // which is ignored where the region has no hover height.
+                if !self.world.hover_height_available() || !self.world.hover_height.ready() {
+                    self.report_command(aurora_i18n::tr!("app-chat-commands-hover-height-unavailable"));
+                } else {
+                    let target = command.target(self.world.hover_height.effective());
+                    // Like the window: a manual height ends the automatic one.
+                    if std::mem::replace(&mut self.settings.auto_hover_height, false) {
+                        self.settings.save();
+                    }
+                    let value = self.world.hover_height.set_current(target);
+                    self.report_command(aurora_i18n::tr!(
+                        "app-chat-commands-hover-height-now",
+                        value = format!("{value:.3}")
+                    ));
+                }
+            }
             Command::TeleportHome => {
                 self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
             }

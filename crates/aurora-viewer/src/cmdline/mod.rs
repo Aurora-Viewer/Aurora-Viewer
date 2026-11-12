@@ -116,6 +116,33 @@ impl Amount {
     }
 }
 
+/// Step of `/zoffset_up` and `/zoffset_down`: the default of the Legacy
+/// Viewer's AvatarHoverOffsetStepSize setting (settings_per_account.xml).
+pub const HOVER_STEP: f32 = 0.05;
+
+/// `/zoffset…` (hover height), as in chatbar_as_cmdline.cpp.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HoverHeightCommand {
+    Up,
+    Down,
+    Reset,
+    /// `/zoffset 0.1` (absolute) or `/zoffset +0.1` (relative).
+    Set(Amount),
+}
+
+impl HoverHeightCommand {
+    /// The height to go to from `current`, kept within the hover height range.
+    pub fn target(self, current: f32) -> f32 {
+        let value = match self {
+            HoverHeightCommand::Up => current + HOVER_STEP,
+            HoverHeightCommand::Down => current - HOVER_STEP,
+            HoverHeightCommand::Reset => 0.0,
+            HoverHeightCommand::Set(amount) => amount.apply(current),
+        };
+        crate::world::hover_height::bounded(value).unwrap_or(current)
+    }
+}
+
 /// `sscanf("%f")`: the float at the start of `s`, ignoring what follows.
 fn leading_f32(s: &str) -> Option<f32> {
     Scanner::new(s).float()
@@ -232,13 +259,14 @@ pub enum Command {
     /// `trkpos <x, y, z>` (region coordinates) or `trkpos name`.
     TrackPosition(Vec3),
     TrackAvatar(String),
+    HoverHeight(HoverHeightCommand),
     ClearChat,
     CopyCamera,
     PasteCamera(CameraSpec),
 }
 
-fn hover_unavailable() -> &'static str {
-    aurora_i18n::tr!("cmdline-mod-use-hover-height-in-appearance")
+fn hover_usage() -> &'static str {
+    aurora_i18n::tr!("cmdline-mod-set-avatar-hover-height-usage-zoffset-value-or-delta")
 }
 fn camera_parse_error() -> &'static str {
     aurora_i18n::tr!("cmdline-mod-invalid-camera-position-expected-x-y-z-or-x")
@@ -306,7 +334,19 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         "/touch" => return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::Touch)),
         "/siton" => return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::SitOn)),
         "/standup" => return Some(Command::StandUp),
-        "/zoffset_up" | "/zoffset_down" | "/zoffset_reset" | "/zoffset" => return Some(Command::Unavailable(hover_unavailable())),
+        "/zoffset_up" => return Some(Command::HoverHeight(HoverHeightCommand::Up)),
+        "/zoffset_down" => return Some(Command::HoverHeight(HoverHeightCommand::Down)),
+        "/zoffset_reset" => return Some(Command::HoverHeight(HoverHeightCommand::Reset)),
+        "/zoffset" => {
+            // Without a value the usage is shown; a token that is not a
+            // number does nothing (and is not sent as chat).
+            return Some(match i.word() {
+                None => Command::Report(vec![hover_usage().to_string()]),
+                Some(token) => {
+                    Amount::parse(token).map_or(Command::Report(Vec::new()), |a| Command::HoverHeight(HoverHeightCommand::Set(a)))
+                }
+            });
+        }
         _ => {}
     }
     if is(&s.offer_tp) {
@@ -446,6 +486,37 @@ mod tests {
         );
         assert_eq!(cmd("gth"), None);
         assert_eq!(cmd("flr"), Some(Command::Ground { offset: 0.0 }));
+        let hover = |text: &str| cmd(text);
+        assert_eq!(hover("/zoffset_up"), Some(Command::HoverHeight(HoverHeightCommand::Up)));
+        assert_eq!(hover("/zoffset_down"), Some(Command::HoverHeight(HoverHeightCommand::Down)));
+        assert_eq!(hover("/zoffset_reset"), Some(Command::HoverHeight(HoverHeightCommand::Reset)));
+        assert_eq!(
+            hover("/zoffset 0.3"),
+            Some(Command::HoverHeight(HoverHeightCommand::Set(Amount {
+                value: 0.3,
+                relative: false
+            })))
+        );
+        assert_eq!(
+            hover("/zoffset -0.2"),
+            Some(Command::HoverHeight(HoverHeightCommand::Set(Amount {
+                value: -0.2,
+                relative: true
+            })))
+        );
+        // No value: usage line; not a number: swallowed silently.
+        assert!(matches!(hover("/zoffset"), Some(Command::Report(lines)) if lines.len() == 1));
+        assert_eq!(hover("/zoffset abc"), Some(Command::Report(Vec::new())));
+        // Target: 5 cm steps, reset, absolute, relative, clamped to +-3 m.
+        let set = |value, relative| HoverHeightCommand::Set(Amount { value, relative });
+        assert!((HoverHeightCommand::Up.target(0.1) - 0.15).abs() < 1e-6);
+        assert!((HoverHeightCommand::Down.target(0.1) - 0.05).abs() < 1e-6);
+        assert_eq!(HoverHeightCommand::Reset.target(1.2), 0.0);
+        assert_eq!(set(0.3, false).target(1.0), 0.3);
+        assert!((set(0.3, true).target(1.0) - 1.3).abs() < 1e-6);
+        assert_eq!(set(9.0, false).target(0.0), 3.0);
+        assert_eq!(HoverHeightCommand::Down.target(-3.0), -3.0);
+        assert_eq!(HoverHeightCommand::Up.target(2.99), 3.0);
         assert_eq!(cmd("flr -5"), Some(Command::Ground { offset: 0.0 }));
         assert_eq!(cmd("flr 2.5"), Some(Command::Ground { offset: 2.5 }));
         assert_eq!(cmd("tph"), Some(Command::TeleportHome));

@@ -227,6 +227,21 @@ impl HoverHeight {
         }
     }
 
+    /// Sets, previews and saves the height that applies in the current
+    /// posture: the sitting posture's own when it has one, else the standing
+    /// one. Returns the height now in use (the value kept within the range).
+    pub fn set_current(&mut self, value: f32) -> f32 {
+        let posture = self.posture;
+        if posture.seat().is_some_and(|seat| self.preview.seats()[seat].separate) {
+            self.preview_seated(posture, value);
+            self.commit_seated(posture);
+        } else {
+            self.preview(value);
+            self.commit();
+        }
+        self.effective()
+    }
+
     /// A sitting posture's own height, previewed (`Standing` has none).
     pub fn seated(&self, posture: Posture) -> SeatedHeight {
         posture.seat().map(|seat| self.preview.seats()[seat]).unwrap_or_default()
@@ -446,6 +461,26 @@ mod tests {
         assert_eq!(height.seated(Posture::OnObject).height, Some(-0.15), "inactive slider");
         height.set_separate(Posture::OnObject, true);
         assert_eq!(height.seated_value(Posture::OnObject), -0.15);
+    }
+
+    #[test]
+    fn set_current_edits_the_height_of_the_current_posture() {
+        let mut height = HoverHeight::default();
+        assert_eq!(height.set_current(0.2), 0.2);
+        assert_eq!(height.value(), 0.2);
+        assert_eq!(height.set_current(9.0), MAX, "kept within the range");
+        height.set_current(0.2);
+        // Sitting without a separate height edits the standing one.
+        height.set_posture(Posture::OnObject);
+        assert_eq!(height.set_current(0.25), 0.25);
+        assert_eq!(height.value(), 0.25);
+        // With a separate height, only that posture changes.
+        height.set_separate(Posture::OnObject, true);
+        assert_eq!(height.set_current(-0.1), -0.1);
+        assert_eq!(height.value(), 0.25);
+        assert_eq!(height.seated_value(Posture::OnObject), -0.1);
+        height.set_posture(Posture::Standing);
+        assert_eq!(height.effective(), 0.25);
     }
 
     #[test]

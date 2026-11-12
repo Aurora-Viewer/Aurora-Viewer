@@ -1884,7 +1884,7 @@ app-gpu-lost =
     • close the other programs that use the graphics card a lot;
     • at the next start, choose the safe graphics that Aurora will offer.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
-cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
+cmdline-mod-set-avatar-hover-height-usage-zoffset-value-or-delta = Set avatar hover height (usage: /zoffset value or +delta).
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
 demo-auto-blend = Auto: blend
 demo-auto-mask = Auto: mask
@@ -6125,6 +6125,8 @@ common-next = Next
 ui-bars-next = { "Next: " }{ $d }
 app-chat-commands-tracking = { "Tracking " }{ $name }.
 app-chat-commands-tracking-2 = { "Tracking " }{ $region }{ " (<" }{ $value0 }{ ", " }{ $value1 }{ ", " }{ $value2 }>).
+app-chat-commands-hover-height-unavailable = This region does not support hover height.
+app-chat-commands-hover-height-now = Hover height: { $value } m
 common-follow = Follow
 follow-title = Following
 follow-distance = Target distance
