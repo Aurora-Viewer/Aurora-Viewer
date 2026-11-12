@@ -8586,6 +8586,12 @@ impl App {
             ContactsAction::GroupTitles => {
                 ui::widgets::toggle_floater(&self.egui_ctx, ui::group_titles::WINDOW, &mut self.panels.group_titles);
             }
+            ContactsAction::Conference(ids) => self.on_ctx_action(ui::context::CtxAction::Conference(ids)),
+            ContactsAction::SearchGroups => {
+                self.panels.search = true;
+                self.search_ui.open_tab(crate::world::search::Tab::Groups);
+            }
+            ContactsAction::GroupInvite(group) => self.group_profile_ui.invite.show_for_group(group),
             ContactsAction::ToggleTornOff => {
                 let torn_off = !self.settings.contacts.torn_off;
                 self.settings.contacts.torn_off = torn_off;
@@ -13155,6 +13161,15 @@ impl App {
             if std::env::var("AURORA_DEMO_CONTACTS").as_deref() == Ok("empty") {
                 self.world.social.friends.clear();
             }
+        }
+        // AURORA_DEMO_CONTACTS=conference|map|invite: what the buttons need
+        // selected, once the friends and groups are in
+        if self.demo
+            && self.frame_count == 600
+            && let Ok(mode) = std::env::var("AURORA_DEMO_CONTACTS")
+        {
+            let (friends, group) = ui::contacts::demo_selection(&self.world, &mode);
+            self.contacts_ui.demo_select(friends, group);
         }
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {
@@ -20139,7 +20154,7 @@ impl ApplicationHandler for App {
                 self.chat_ui.contacts = true;
                 self.settings.show_contacts_tab = v != "hidden";
                 self.settings.contacts.tab = match v.as_str() {
-                    "groups" | "groupes" => 1,
+                    "groups" | "groupes" | "invite" => 1,
                     "sets" | "cercles" => 2,
                     _ => 0,
                 };

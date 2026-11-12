@@ -8579,7 +8579,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
   picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
@@ -8587,7 +8587,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
   the run; `hidden` disables it with Contacts initially selected, showing
-  the fallback to nearby chat. The saved preference defaults to off
+  the fallback to nearby chat. `conference` selects the online friends (IM starts a
+  conference), `map` one friend who shares their location (Map enabled), `invite`
+  the first group where we may invite, on the Groups tab (Invite enabled; add
+  `AURORA_DEMO_GROUP_PROFILE=officer`, a plain member may not invite), at frame 600;
+  add `AURORA_DEMO_PEOPLE=legacy` to see the classic buttons. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
     In Aurora's look, Friends has no display-options gear: search, profile
     pictures and friendship rights stay available. Contact-set lists always
