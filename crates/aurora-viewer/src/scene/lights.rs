@@ -27,9 +27,29 @@ const MAX_LIGHTS: usize = 64;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
-/// Retain a shadow map until a challenger sends 20% more light to the
-/// camera.
+/// Retain a shadow map until a challenger of its tier scores 20 % more (linear
+/// on the score, about what the old margin on the squared angle, hence the
+/// area, was).
 const SHADOW_AREA_RETENTION: f32 = 1.2;
+/// A projector that held a shadow map while it was on screen keeps it for
+/// this long after it left the view, so that turning back shows its shadow
+/// at once; the Legacy Viewer drops it with the next frame.
+const SHADOW_HOLD: f32 = 5.0;
+
+/// How a projector ranks for a shadow map, best first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Tier {
+    /// Off screen, but it kept a map while it was on screen, recently.
+    Held,
+    /// On screen, beyond its own reach of the camera: by apparent size.
+    Seen,
+    /// On screen and its light reaches the camera: by that light.
+    Lighting,
+}
+
+/// A projector candidate for a shadow map: its tier, its score within the
+/// tier, its object index.
+type Ranked = (Tier, f32, usize);
 /// A fast camera still leaves at least a quarter-second for each fade.
 const MAX_SHADOW_FADE_SPEED: f32 = 4.0;
 
@@ -101,34 +121,58 @@ pub struct Scratch {
 /// Projectors that cast shadows and how far each has faded in:
 /// LLPipeline::generateSunShadow's update of mShadowSpotLight. A projector
 /// keeps its shadow map while it is among the `targets`; otherwise its
-/// shadows fade out, then the map goes to the target that has none. Which
-/// projectors are the targets depends on the camera's position only, not on
-/// where it looks (`light_at_camera`; the Legacy Viewer ranks the projectors
-/// in view by apparent size, so a turn away loses the shadow).
+/// shadows fade out, then the map goes to the target that has none. Targets
+/// are the projectors on screen first (as the Legacy Viewer's, which draws
+/// the lights in the frustum, pipeline.cpp, and ranks them by
+/// LLVOVolume::updateSpotLightPriority / LLPipeline::calcPixelArea), ranked
+/// by the light they send to the camera's position (`light_at_camera`) or,
+/// beyond their reach, by apparent size; a projector off screen keeps the map
+/// it had for `SHADOW_HOLD` seconds.
 #[derive(Debug, Default)]
 pub struct SpotShadowSlots {
     /// Object index of the projector of each shadow map.
     pub lights: Vec<Option<usize>>,
     pub fade: Vec<f32>,
+    /// Seconds each map's projector has been off screen.
+    unseen: Vec<f32>,
     last_eye: Option<Vec3>,
 }
 
 impl SpotShadowSlots {
-    /// Rank the projectors by the light they send to the camera
-    /// (`light_at_camera`), with a small retention margin for the maps
-    /// already drawn: nearby lights crossing in priority must not repeatedly
-    /// trade visible shadows.
-    fn targets(&self, ranked: &mut [(f32, usize)], limit: usize) -> [Option<usize>; MAX_PROJECTOR_SHADOWS] {
-        let area = |(priority, idx): &(f32, usize)| {
+    /// Rank the candidates: by tier, then by score with a small retention
+    /// margin for the maps already drawn: nearby lights crossing in priority
+    /// must not repeatedly trade visible shadows.
+    fn targets(&self, ranked: &mut [Ranked], limit: usize) -> [Option<usize>; MAX_PROJECTOR_SHADOWS] {
+        let score = |(_, score, idx): &Ranked| {
             let retention = if self.lights.contains(&Some(*idx)) {
                 SHADOW_AREA_RETENTION
             } else {
                 1.0
             };
-            priority * retention
+            score * retention
         };
-        ranked.sort_by(|a, b| area(b).total_cmp(&area(a)).then(a.1.cmp(&b.1)));
-        std::array::from_fn(|k| ranked.get(k).filter(|_| k < limit).map(|r| r.1))
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(score(b).total_cmp(&score(a))).then(a.2.cmp(&b.2)));
+        std::array::from_fn(|k| ranked.get(k).filter(|_| k < limit).map(|r| r.2))
+    }
+
+    /// Count the seconds each map's projector has been off screen
+    /// (`on_screen` tells whether one is on screen); call it before `update`.
+    fn note_seen(&mut self, on_screen: impl Fn(usize) -> bool, dt: f32) {
+        self.unseen.resize(self.lights.len(), 0.0);
+        for (age, light) in self.unseen.iter_mut().zip(&self.lights) {
+            match light {
+                Some(idx) if !on_screen(*idx) => *age += dt,
+                _ => *age = 0.0,
+            }
+        }
+    }
+
+    /// Whether the projector still holds its map after leaving the screen.
+    fn held(&self, idx: usize) -> bool {
+        self.lights
+            .iter()
+            .position(|l| *l == Some(idx))
+            .is_some_and(|k| self.unseen.get(k).is_some_and(|age| *age < SHADOW_HOLD))
     }
 
     /// `targets`: the projectors that send the most light to the camera within
@@ -138,6 +182,7 @@ impl SpotShadowSlots {
         let limit = targets.len().min(MAX_PROJECTOR_SHADOWS);
         self.lights.resize(limit, None);
         self.fade.resize(limit, 0.0);
+        self.unseen.resize(limit, 0.0);
         let speed = self.last_eye.map_or(0.0, |e| e.distance(eye) / dt.max(1e-4));
         self.last_eye = Some(eye);
         let amount = dt * speed.clamp(1.0, MAX_SHADOW_FADE_SPEED);
@@ -160,6 +205,7 @@ impl SpotShadowSlots {
             if let Some(slot) = self.lights.iter().position(Option::is_none) {
                 self.lights[slot] = Some(*target);
                 self.fade[slot] = 0.0;
+                self.unseen[slot] = 0.0;
             }
         }
     }
@@ -173,19 +219,45 @@ impl SpotShadowSlots {
 /// the shadow maps: its brightest colour channel (intensity included) times
 /// the Legacy falloff (`ll_light_atten` of common.wgsl) at the camera's
 /// distance, not nearer than a third of the reach so that a light the camera
-/// stands in does not outweigh everything. It does not depend on where the
-/// camera looks; where the camera is outside the reach, the light is ranked
-/// by its distance alone, after those that reach it. (The Legacy Viewer's
-/// LLVOVolume::updateSpotLightPriority ranks the apparent size of the
-/// light's sphere, in view only.)
+/// stands in does not outweigh everything. 0 beyond the reach, and for a
+/// score that is not finite. It does not depend on where the camera looks.
 fn light_at_camera(light: &PointLight, eye: Vec3) -> f32 {
     let reach = light.radius.max(1e-4);
     let dist = light.position.distance(eye);
     let f = light.falloff.max(0.0);
     let x = 1.0 - ((dist.max(reach / 3.0) / reach + f) / (1.0 + f)).clamp(0.0, 1.0);
-    let power = light.color.max_element().max(0.0);
-    // the second term only orders the lights out of reach, nearest first
-    power * 2.0 * x * x + 1e-6 / (1.0 + dist)
+    let score = light.color.max_element().max(0.0) * 2.0 * x * x;
+    if score.is_finite() { score } else { 0.0 }
+}
+
+/// Apparent size of a sphere of the projector's radius (its reach over 1.5)
+/// seen from the camera, as LLPipeline::calcPixelArea's angle for
+/// LLVOVolume::updateSpotLightPriority (pipeline.cpp, llvovolume.cpp; only the
+/// order matters): ranks the projectors on screen that are beyond their reach.
+fn apparent_size(light: &PointLight, eye: Vec3) -> f32 {
+    let mut dist = light.position.distance(eye);
+    if dist < 16.0 {
+        // calcPixelArea ramps the distance down for nearby objects
+        dist = (dist / 16.0).powi(2) * 16.0;
+    }
+    let size = (light.radius / 1.5 * 3f32.sqrt() / dist.max(1e-4)).atan();
+    if size.is_finite() { size } else { 0.0 }
+}
+
+/// The ranking of a projector for a shadow map: on screen, by the light it
+/// sends to the camera or, out of its reach, by apparent size; off screen
+/// only while it holds a map it had (`SpotShadowSlots::held`).
+fn rank(on_screen: bool, light: &PointLight, idx: usize, eye: Vec3, held: bool) -> Option<Ranked> {
+    if on_screen {
+        if eye.distance(light.position) < light.radius {
+            Some((Tier::Lighting, light_at_camera(light, eye), idx))
+        } else {
+            Some((Tier::Seen, apparent_size(light, eye), idx))
+        }
+    } else {
+        // (the order within the tier only matters when the budget is short)
+        held.then(|| (Tier::Held, apparent_size(light, eye), idx))
+    }
 }
 
 /// The avatar that wears the light, if any: a parent up its link is one
@@ -307,13 +379,16 @@ impl Scene {
             }
             kept
         });
-        // the projectors of the list that send the most light to the camera
-        // (wherever it looks: a turn away and back keeps the shadows)
+        // the projectors on screen first, then those that kept a map a moment
+        // ago (see `rank`): the camera's direction does not matter beyond
+        // what is on screen
         if view.projector_shadows {
-            let mut ranked: Vec<(f32, usize)> = lights
+            let on_screen = |idx: usize| lights.iter().any(|c| c.idx == idx && c.in_view && c.light.projector.is_some());
+            self.spot_shadows.note_seen(on_screen, view.dt);
+            let mut ranked: Vec<Ranked> = lights
                 .iter()
                 .filter(|c| c.light.projector.is_some())
-                .map(|c| (light_at_camera(&c.light, eye), c.idx))
+                .filter_map(|c| rank(c.in_view, &c.light, c.idx, eye, self.spot_shadows.held(c.idx)))
                 .collect();
             let limit = usize::from(view.projector_shadow_limit).min(MAX_PROJECTOR_SHADOWS);
             let targets = self.spot_shadows.targets(&mut ranked, limit);
@@ -494,11 +569,11 @@ mod tests {
             ..Default::default()
         };
         for incoming in [0.98, 1.01, 1.04, 1.01, 0.98] {
-            let mut ranked = [(incoming, 3), (1.0, 1), (0.99, 2)];
+            let mut ranked = [(Tier::Lighting, incoming, 3), (Tier::Lighting, 1.0, 1), (Tier::Lighting, 0.99, 2)];
             let targets = slots.targets(&mut ranked, 2);
             assert!(targets.contains(&Some(1)) && targets.contains(&Some(2)));
         }
-        let mut ranked = [(1.25, 3), (1.0, 1), (0.99, 2)];
+        let mut ranked = [(Tier::Lighting, 1.25, 3), (Tier::Lighting, 1.0, 1), (Tier::Lighting, 0.99, 2)];
         let targets = slots.targets(&mut ranked, 2);
         assert!(targets.contains(&Some(1)) && targets.contains(&Some(3)));
     }
@@ -509,7 +584,7 @@ mod tests {
             lights: vec![Some(1), Some(2)],
             ..Default::default()
         };
-        assert_eq!(slots.targets(&mut [(0.3, 3)], 2)[..2], [Some(3), None]);
+        assert_eq!(slots.targets(&mut [(Tier::Lighting, 0.3, 3)], 2)[..2], [Some(3), None]);
         assert_eq!(slots.targets(&mut [], 2), [None; MAX_PROJECTOR_SHADOWS]);
     }
 
@@ -634,22 +709,112 @@ mod tests {
         let eye = Vec3::ZERO;
         let near = light_at_camera(&projector(Vec3::new(10.0, 0.0, 3.0), 10.0, Vec3::ONE, 0.0), eye);
         let far = light_at_camera(&projector(Vec3::new(40.0, 0.0, 3.0), 10.0, Vec3::ONE, 0.0), eye);
-        let small = light_at_camera(&projector(Vec3::new(10.0, 0.0, 3.0), 2.0, Vec3::ONE, 0.0), eye);
+        // (2 m of radius, 3 m of reach: within it)
+        let small = light_at_camera(&projector(Vec3::new(2.0, 0.0, 0.0), 2.0, Vec3::ONE, 0.0), eye);
         let dim = light_at_camera(&projector(Vec3::new(10.0, 0.0, 3.0), 10.0, Vec3::splat(0.3), 0.0), eye);
-        assert!(near > far && near > small && near > dim, "{near} {far} {small} {dim}");
-        // out of reach: ranked by distance alone, after any that reaches
-        let out_near = light_at_camera(&projector(Vec3::new(30.0, 0.0, 0.0), 2.0, Vec3::ONE, 0.0), eye);
-        let out_far = light_at_camera(&projector(Vec3::new(60.0, 0.0, 0.0), 2.0, Vec3::ONE, 0.0), eye);
-        assert!(small > out_near && out_near > out_far && out_far > 0.0);
+        assert!(near > far && near > dim && small > 0.0, "{near} {far} {small} {dim}");
+        // beyond its reach a light sends nothing, whatever it is made of
+        assert_eq!(
+            light_at_camera(&projector(Vec3::new(60.0, 0.0, 0.0), 2.0, Vec3::ONE, 0.0), eye),
+            0.0
+        );
+        assert_eq!(
+            light_at_camera(&projector(Vec3::new(2.0, 0.0, 0.0), 2.0, Vec3::splat(f32::NAN), 0.0), eye),
+            0.0
+        );
+        assert_eq!(apparent_size(&projector(Vec3::ZERO, f32::INFINITY, Vec3::ONE, 0.0), eye), 0.0);
+    }
+
+    /// Apparent size orders the projectors on screen beyond their reach.
+    #[test]
+    fn a_projector_on_screen_beyond_its_reach_ranks_by_apparent_size() {
+        let eye = Vec3::ZERO;
+        let near = rank(true, &projector(Vec3::new(30.0, 0.0, 0.0), 4.0, Vec3::ONE, 0.0), 1, eye, false).unwrap();
+        let far = rank(true, &projector(Vec3::new(60.0, 0.0, 0.0), 4.0, Vec3::ONE, 0.0), 2, eye, false).unwrap();
+        assert_eq!((near.0, far.0), (Tier::Seen, Tier::Seen));
+        assert!(near.1 > far.1 && far.1 > 0.0);
     }
 
     #[test]
-    fn a_projector_behind_the_camera_still_gets_a_shadow_map() {
+    fn a_projector_on_screen_beats_one_off_screen() {
         let eye = Vec3::ZERO;
-        let behind = light_at_camera(&projector(Vec3::new(-4.0, 0.0, 2.0), 8.0, Vec3::ONE, 0.0), eye);
-        let ahead = light_at_camera(&projector(Vec3::new(40.0, 0.0, 2.0), 8.0, Vec3::ONE, 0.0), eye);
+        // a bright one right behind the camera, a dim far one in view
+        let behind = rank(
+            false,
+            &projector(Vec3::new(-3.0, 0.0, 0.0), 8.0, Vec3::splat(5.0), 0.0),
+            1,
+            eye,
+            true,
+        )
+        .unwrap();
+        let seen = rank(
+            true,
+            &projector(Vec3::new(50.0, 0.0, 0.0), 4.0, Vec3::splat(0.2), 0.0),
+            2,
+            eye,
+            false,
+        )
+        .unwrap();
+        // (off screen and holding no map: not a candidate at all)
+        assert!(rank(false, &projector(Vec3::new(-3.0, 0.0, 0.0), 8.0, Vec3::ONE, 0.0), 3, eye, false).is_none());
         let slots = SpotShadowSlots::default();
-        let targets = slots.targets(&mut [(behind, 1), (ahead, 2)], 1);
-        assert_eq!(targets[0], Some(1));
+        assert_eq!(slots.targets(&mut [behind, seen], 1)[0], Some(2));
+        assert_eq!(slots.targets(&mut [behind, seen], 2)[..2], [Some(2), Some(1)]);
+    }
+
+    #[test]
+    fn a_bright_projector_in_view_beats_a_dim_one_in_view() {
+        let eye = Vec3::ZERO;
+        let bright = rank(
+            true,
+            &projector(Vec3::new(30.0, 0.0, 0.0), 40.0, Vec3::splat(3.0), 0.0),
+            1,
+            eye,
+            false,
+        )
+        .unwrap();
+        let dim = rank(
+            true,
+            &projector(Vec3::new(5.0, 0.0, 0.0), 40.0, Vec3::splat(0.2), 0.0),
+            2,
+            eye,
+            false,
+        )
+        .unwrap();
+        let slots = SpotShadowSlots::default();
+        assert_eq!(slots.targets(&mut [dim, bright], 1)[0], Some(1));
+    }
+
+    /// A projector that held a map keeps it for `SHADOW_HOLD` seconds after
+    /// it leaves the screen, and not longer; one that comes back keeps it.
+    #[test]
+    fn a_projector_that_leaves_the_view_keeps_its_map_for_the_hold() {
+        let eye = Vec3::ZERO;
+        let lamp = projector(Vec3::new(8.0, 0.0, 0.0), 8.0, Vec3::ONE, 0.0);
+        let mut slots = SpotShadowSlots::default();
+        let frame = |slots: &mut SpotShadowSlots, on_screen: bool| {
+            slots.note_seen(|_| on_screen, 0.1);
+            let held = slots.held(7);
+            let mut ranked: Vec<Ranked> = rank(on_screen, &lamp, 7, eye, held).into_iter().collect();
+            let targets = slots.targets(&mut ranked, 2);
+            slots.update(&targets[..2], eye, 0.1);
+        };
+        for _ in 0..15 {
+            frame(&mut slots, true);
+        }
+        assert_eq!((slots.lights[0], slots.fade[0]), (Some(7), 1.0));
+        // the camera turns away: the map stays, at full strength
+        for _ in 0..45 {
+            frame(&mut slots, false);
+        }
+        assert_eq!((slots.lights[0], slots.fade[0]), (Some(7), 1.0));
+        // back in view: the shadow is there at once
+        frame(&mut slots, true);
+        assert_eq!((slots.lights[0], slots.fade[0]), (Some(7), 1.0));
+        // away for longer than the hold: the map fades out and goes
+        for _ in 0..80 {
+            frame(&mut slots, false);
+        }
+        assert_eq!(slots.lights[0], None);
     }
 }

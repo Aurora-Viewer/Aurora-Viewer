@@ -4574,15 +4574,15 @@ both open states and the selection count. Capture at frame 620.
   our avatar. The square of light of the projector with the white image has
   soft edges (visible with `AURORA_DEMO_TOD=3`): the fade comes from the
   distance to the focal point, not from the levels of the texture. The post
-  casts its shadow on the wall: the two projectors most present on screen
-  have a shadow map (`AURORA_PROJECTOR_SHADOWS=0`: none, the wall is
-  lit behind the post), and their shadows fade in
-  during the first second. Which projectors get a map depends on where the
-  camera is, not on where it looks: with `AURORA_DEMO_CAMERA=spin,640,400,2`
-  and `AURORA_PROJECTOR_TRACE=1` (the log's `projector trace` lines) the
-  same two projectors keep their maps all along the turn (before, a projector
-  passing behind the camera lost its map, and its shadows faded back in when
-  it came round). `point`: the three projectors without their
+  casts its shadow on the wall: the projectors on screen that send the most
+  light to the camera (the Legacy Viewer ranks the ones in its frustum by
+  apparent size) have a shadow map, two at most (`AURORA_PROJECTOR_SHADOWS=0`:
+  none, the wall is lit behind the post), and their shadows fade in during
+  the first second. A projector that held a map keeps it for 5 seconds after
+  it leaves the screen, so that turning back shows its shadow at once: with
+  `AURORA_DEMO_CAMERA=spin,640,400,2` and `AURORA_PROJECTOR_TRACE=1` (the
+  log's `projector trace` lines) the same two projectors keep their maps and
+  their fade of 1 along the turn. `point`: the three projectors without their
   texture, hence point lights, as they were rendered before being supported —
   the pool light then lights in cyan our avatar from below and
   the sides of the slab's relief turned towards it. The orange light is
@@ -12198,9 +12198,9 @@ What the inventory must show with these scenarios:
   took a centre across a cell of the lattice (3 to 4 times a full turn) the
   grid changed phase by up to half a texel and every far shadow edge of that
   cascade hopped (up to 11 cm in the third cascade at the default quality).
-  Now the anchor is held while the sun or moon does not move, and taken again
-  when it moves (a day cycle behaves as before), when the cascade's size
-  changes, at a photo and at a region change. `old` brings back the anchor of
+  Now the anchor is held until the sun or moon has swept the grid by half a
+  texel at the cascade's centre (seconds on the default day cycle, never on a
+  fixed sun), and taken again then, when the cascade's size changes, at a photo and at a region change. `old` brings back the anchor of
   every frame. To compare with a fixed sun (`AURORA_DEMO_TOD=2`) and
   `AURORA_DEBUG_SHADOWS=1` (the shadows are the dark areas, in the colour of
   the cascade they come from, which makes the edges easy to see):

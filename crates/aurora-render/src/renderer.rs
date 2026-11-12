@@ -2781,6 +2781,12 @@ fn cascade_matrix(center: Vec3, radius: f32, light_dir: Vec3, anchor: Vec3, size
     proj * view
 }
 
+/// How far, in texels, the light's movement may have swept the grid at the
+/// cascade's centre before a held anchor is given up: half a texel, the most
+/// a new anchor can move the grid's phase, so taking it again never shifts
+/// the edges by more than the drift it removes.
+const SHADOW_ANCHOR_SWEEP: f32 = 0.5;
+
 /// The anchors of the sun's cascades, kept between frames.
 ///
 /// The texel grid of a cascade is snapped to whole texels from a world
@@ -2789,40 +2795,48 @@ fn cascade_matrix(center: Vec3, radius: f32, light_dir: Vec3, anchor: Vec3, size
 /// texel away: taking the anchor from the cascade's centre (`shadow_anchor`)
 /// moved every shadow edge of the cascade each time the camera, turning or
 /// walking, took the centre across a cell of the lattice (3 to 4 times a
-/// turn). While the light does not move the anchor is kept instead. It is
-/// taken again when the light moves (the grid then turns around its anchor,
-/// so the anchor must stay near the cascade: a day cycle gives what
-/// `shadow_anchor` gave before), when the cascade's size changes (the
-/// field of view, the shadow distance or the quality), when its centre
-/// is `SHADOW_ANCHOR_REACH` away, at a photo's tiles and at a region change.
+/// turn). The anchor is kept instead. The grid turns around its anchor when
+/// the light moves, sweeping a point at distance `d` by `d` times the light's
+/// angle: a held anchor is given up when that sweep, at the cascade's
+/// centre, since it was taken passes `SHADOW_ANCHOR_SWEEP` texels (the
+/// light is compared with the light of that moment, not the last frame's: a
+/// slow day cycle holds the anchor for seconds, and a drift too small for
+/// one frame is not lost). It is also taken again when the cascade's size
+/// changes (the field of view, the shadow distance or the quality), when its
+/// centre is `SHADOW_ANCHOR_REACH` away, at a photo's tiles and at a region
+/// change.
 #[derive(Default)]
 struct CascadeAnchors {
-    light: Vec3,
-    held: [Option<(Vec3, f32, u32)>; CASCADES],
+    /// Anchor, radius, texels a side and light direction of each cascade.
+    held: [Option<(Vec3, f32, u32, Vec3)>; CASCADES],
 }
 
 impl CascadeAnchors {
-    /// Start a frame: forget the anchors when the light moved (or `cut`, or
-    /// the anchors are not held).
-    fn begin(&mut self, light: Vec3, cut: bool, hold: bool) {
-        if cut || !hold || !light.abs_diff_eq(self.light, 1e-6) {
+    /// Start a frame: forget the anchors on a `cut` or when they are not
+    /// held.
+    fn begin(&mut self, cut: bool, hold: bool) {
+        if cut || !hold {
             self.held = [None; CASCADES];
         }
-        self.light = light;
     }
 
     /// The anchor of cascade `i`, whose fit is the sphere (`center`,
-    /// `radius`) and whose map has `size` texels a side.
-    fn pick(&mut self, i: usize, center: Vec3, radius: f32, size: u32) -> Vec3 {
-        if let Some((anchor, r, s)) = self.held[i]
-            && r == radius
-            && s == size
-            && anchor.distance(center) <= SHADOW_ANCHOR_REACH
-        {
-            return anchor;
+    /// `radius`), whose map has `size` texels a side, lit along `light`.
+    fn pick(&mut self, i: usize, center: Vec3, radius: f32, size: u32, light: Vec3) -> Vec3 {
+        if let Some((anchor, r, s, l)) = self.held[i] {
+            let reach = anchor.distance(center);
+            let texel = 2.0 * radius / size as f32;
+            // (the radius is rounded to 1/16 m: half a step tells equal ones)
+            if (r - radius).abs() < 0.03
+                && s == size
+                && reach <= SHADOW_ANCHOR_REACH
+                && l.distance(light) * reach <= SHADOW_ANCHOR_SWEEP * texel
+            {
+                return anchor;
+            }
         }
         let anchor = shadow_anchor(center, radius);
-        self.held[i] = Some((anchor, radius, size));
+        self.held[i] = Some((anchor, radius, size, light));
         anchor
     }
 }
@@ -5895,7 +5909,7 @@ impl Backend {
         // a photo's tiles and a region change (every position shifts) start
         // the anchors again
         self.cascade_anchors
-            .begin(light_dir, f.photo_tile != Mat4::IDENTITY || self.motion_cut, shadow_anchor_held());
+            .begin(f.photo_tile != Mat4::IDENTITY || self.motion_cut, shadow_anchor_held());
         let mut out = [Mat4::IDENTITY; CASCADES];
         let mut near = f.near;
         for (i, &split) in splits.iter().enumerate() {
@@ -5919,11 +5933,11 @@ impl Backend {
             // anchor, and from ~200 m away it swept the shadows by up to
             // ~12 texels a second near the camera (visible jumps as the EEP
             // sun moves); from the cell it is 20-80 times slower, a slow
-            // glide like Firestorm (which does not snap). While the light
+            // glide like the Legacy Viewer (which does not snap). While the light
             // does not move the anchor is held (`CascadeAnchors`): the grid
             // then has one phase for good, and the shadow edges do not hop
             // when the camera crosses a cell.
-            let anchor = self.cascade_anchors.pick(i, center, radius, self.shadow_size);
+            let anchor = self.cascade_anchors.pick(i, center, radius, self.shadow_size, light_dir);
             out[i] = cascade_matrix(center, radius, light_dir, anchor, self.shadow_size);
             near = split;
         }
@@ -10581,8 +10595,8 @@ mod tests {
             let yaw = step as f32 * std::f32::consts::TAU / 720.0;
             // the centre of a slice (n + f) / 2 ahead of the camera
             let center = camera + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 125.0;
-            anchors.begin(light, false, true);
-            let kept = anchors.pick(1, center, radius, size);
+            anchors.begin(false, true);
+            let kept = anchors.pick(1, center, radius, size, light);
             held.push(texel_phase(cascade_matrix(center, radius, light, kept, size), probe, size));
             let fresh = shadow_anchor(center, radius);
             hops += usize::from(fresh != last_old);
@@ -10596,42 +10610,81 @@ mod tests {
         assert!(spread(&old) > 0.05, "old: {}", spread(&old));
     }
 
+    /// The default day cycle (4 hours, 60 frames a second) turns the light by
+    /// 7e-6 rad a frame: a turn of the camera keeps its anchors for seconds
+    /// (a light compared with the previous frame's gave a new one every
+    /// frame), and the grid never sweeps more than the bound at the centre.
+    #[test]
+    fn a_slow_day_cycle_holds_the_anchor_within_the_bound() {
+        let (radius, size) = (71.0f32, 2048u32);
+        let texel = 2.0 * radius / size as f32;
+        let camera = Vec3::new(137.3, 119.8, 31.0);
+        let per_frame = std::f32::consts::TAU / (4.0 * 3600.0 * 60.0);
+        let mut anchors = CascadeAnchors::default();
+        let mut taken = 0;
+        let mut last = Vec3::NAN;
+        let mut worst = 0.0f32;
+        for step in 0..720 {
+            let yaw = step as f32 * std::f32::consts::TAU / 720.0;
+            let center = camera + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 125.0;
+            let a = step as f32 * per_frame;
+            let light = Vec3::new(a.cos() * 0.5, a.sin() * 0.5 + 0.3, -0.8).normalize();
+            anchors.begin(false, true);
+            let anchor = anchors.pick(1, center, radius, size, light);
+            taken += usize::from(anchor != last);
+            last = anchor;
+            let (_, _, _, at) = anchors.held[1].unwrap();
+            worst = worst.max(at.distance(light) * anchor.distance(center) / texel);
+        }
+        assert!(worst <= SHADOW_ANCHOR_SWEEP + 1e-3, "{worst}");
+        assert!(taken < 40, "{taken} anchors in 720 frames");
+        // a light that drifts by less than any one frame's threshold is not lost
+        let mut drift = CascadeAnchors::default();
+        let center = Vec3::new(130.0, 120.0, 25.0);
+        let first = drift.pick(0, center, 20.0, 2048, Vec3::NEG_Z);
+        let far = center + Vec3::new(60.0, 0.0, 0.0);
+        let mut moved = false;
+        for k in 1..4000 {
+            let l = Vec3::new(k as f32 * 5e-7, 0.0, -1.0).normalize();
+            moved |= drift.pick(0, far, 20.0, 2048, l) != first;
+        }
+        assert!(moved, "a drift of 5e-7 a frame never moved the anchor");
+    }
+
     #[test]
     fn the_cascade_anchor_is_taken_again_when_it_must() {
         let light = Vec3::new(0.2, 0.1, -0.9).normalize();
         let center = Vec3::new(130.0, 120.0, 25.0);
         let mut a = CascadeAnchors::default();
-        a.begin(light, false, true);
-        let first = a.pick(0, center, 20.0, 2048);
+        a.begin(false, true);
+        let first = a.pick(0, center, 20.0, 2048, light);
         assert_eq!(first, shadow_anchor(center, 20.0));
         // the centre moves on, the light does not: the anchor stays
-        a.begin(light, false, true);
-        assert_eq!(a.pick(0, center + Vec3::new(55.0, -30.0, 4.0), 20.0, 2048), first);
+        let moved = center + Vec3::new(55.0, -30.0, 4.0);
+        assert_eq!(a.pick(0, moved, 20.0, 2048, light), first);
+        // the same radius to a rounding error
+        assert_eq!(a.pick(0, moved, 20.001, 2048, light), first);
         // another size (field of view, shadow distance) or quality
-        a.begin(light, false, true);
-        assert_ne!(a.pick(0, center + Vec3::new(55.0, -30.0, 4.0), 25.0, 2048), first);
-        let held = a.pick(1, center, 20.0, 2048);
-        a.begin(light, false, true);
-        assert_eq!(a.pick(1, center, 20.0, 2048), held);
+        assert_ne!(a.pick(0, moved, 25.0, 2048, light), first);
+        let held = a.pick(1, center, 20.0, 2048, light);
+        assert_eq!(a.pick(1, center, 20.0, 2048, light), held);
+        assert_ne!(a.pick(1, center + Vec3::new(500.0, 0.0, 0.0), 20.0, 4096, light), held);
         // a centre a kilometre away
-        a.begin(light, false, true);
+        assert_eq!(a.pick(2, center, 20.0, 2048, light), shadow_anchor(center, 20.0));
         let far = center + Vec3::new(1500.0, 0.0, 0.0);
-        assert_eq!(a.pick(2, center, 20.0, 2048), shadow_anchor(center, 20.0));
-        a.begin(light, false, true);
-        assert_eq!(a.pick(2, far, 20.0, 2048), shadow_anchor(far, 20.0));
-        // the light moves: every anchor is taken from the centre again
-        a.begin(Vec3::new(0.2, 0.12, -0.9).normalize(), false, true);
-        assert_eq!(
-            a.pick(0, center + Vec3::new(55.0, 0.0, 0.0), 20.0, 2048),
-            shadow_anchor(center + Vec3::new(55.0, 0.0, 0.0), 20.0)
-        );
+        assert_eq!(a.pick(2, far, 20.0, 2048, light), shadow_anchor(far, 20.0));
+        // the sun moves enough: the anchor follows it, from the new centre
+        let turned = Vec3::new(0.2, 0.12, -0.9).normalize();
+        let next = center + Vec3::new(55.0, 0.0, 0.0);
+        a.pick(0, center, 20.0, 2048, light);
+        assert_eq!(a.pick(0, next, 20.0, 2048, turned), shadow_anchor(next, 20.0));
         // a photo tile or a region change, or `AURORA_SHADOW_ANCHOR=old`
         for (cut, hold) in [(true, true), (false, false)] {
-            a.begin(Vec3::new(0.2, 0.12, -0.9).normalize(), false, true);
-            a.pick(0, center, 20.0, 2048);
-            a.begin(Vec3::new(0.2, 0.12, -0.9).normalize(), cut, hold);
+            a.begin(false, true);
+            a.pick(0, center, 20.0, 2048, light);
+            a.begin(cut, hold);
             let moved = center + Vec3::new(30.0, 0.0, 0.0);
-            assert_eq!(a.pick(0, moved, 20.0, 2048), shadow_anchor(moved, 20.0));
+            assert_eq!(a.pick(0, moved, 20.0, 2048, light), shadow_anchor(moved, 20.0));
         }
     }
 
