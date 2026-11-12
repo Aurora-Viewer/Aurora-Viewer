@@ -6823,6 +6823,12 @@ impl Backend {
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
         self.blend_ao_depth = blend_ao == BlendAo::New;
+        // AURORA_LEGACY_GLARE=0: the blended legacy faces without the glare
+        // of #3259 (object.wgsl LEGACY_GLARE_OFF)
+        static GLARE_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *GLARE_OFF.get_or_init(|| std::env::var("AURORA_LEGACY_GLARE").is_ok_and(|v| v.trim() == "0")) {
+            main.light_sets.mode[2] |= 0x100000;
+        }
         main.light_sets.mode[2] |= match blend_ao {
             BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
@@ -7270,9 +7276,19 @@ impl Backend {
 
         // ---- indirect args
         self.indirect_cpu.clear();
+        // The CPU-built lists get the same index-range bound as cull.wgsl's
+        // write_args: wgpu's indirect validation is off (main_thread.rs).
+        let index_limit = (scene.indices.size() / 2).min(u64::from(u32::MAX)) as u32;
+        let cpu_clamped = std::cell::Cell::new(0u32);
         let push = |cpu: &mut Vec<DrawIndexedIndirect>, l: &[DrawCmd]| -> (u64, u32) {
             let start = cpu.len() as u64 * std::mem::size_of::<DrawIndexedIndirect>() as u64;
-            cpu.extend(l.iter().map(DrawIndexedIndirect::from));
+            cpu.extend(l.iter().map(|c| {
+                let mut d = DrawIndexedIndirect::from(c);
+                if crate::gpu_cull::bound_cpu_draw(&mut d, index_limit) {
+                    cpu_clamped.set(cpu_clamped.get() + 1);
+                }
+                d
+            }));
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
@@ -7380,8 +7396,9 @@ impl Backend {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
             }
+            // the same limit as the CPU-built lists' bound (`push`)
             self.cull
-                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
+                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, index_limit, frame);
         }
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
@@ -7451,6 +7468,13 @@ impl Backend {
         }
         for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
+        }
+        // after every CPU-built list: main view, HUD, debug, selection,
+        // preview, shadows and probes
+        if cpu_clamped.get() > 0 {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            let n = cpu_clamped.get();
+            ONCE.call_once(|| log::warn!("indirect draws: {n} CPU-built draws had an index range past the index buffer and were skipped"));
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {
@@ -8839,9 +8863,22 @@ impl Backend {
                                 continue;
                             }
                             let run = (b0 + from as u64 * stride, end - from);
-                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            if lists.blend_depth_quiet.binary_search(&end).is_ok() {
+                                // eyelashes and brows, drawn before the hair:
+                                // their depth where nearly opaque only (a
+                                // lash itself, in front of a strand), then
+                                // their colour, so that neither their
+                                // card's nearly empty part nor their lashes
+                                // blurred into a band by the mipmaps cut
+                                // the hair drawn after them in straight
+                                // edges (#2121)
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, run, from);
+                                blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                            } else {
+                                blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            }
                             from = end;
                         }
                     }
