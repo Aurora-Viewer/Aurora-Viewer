@@ -2426,6 +2426,21 @@ impl World {
 
     /// The root prim of the object our avatar wears from inventory item
     /// `item` (LLVOAvatar::getWornAttachment).
+    /// How many objects our avatar wears, HUDs included, each linkset once:
+    /// LLVOAvatar::getAttachmentCount (indra/newview/llvoavatar.cpp) adds up
+    /// the attached objects of every attachment point, never their child
+    /// prims. The arrival's patience counts 3 s for each (`arrival_wait.rs`).
+    pub fn own_attachment_count(&self) -> usize {
+        let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return 0;
+        };
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment()))
+            .count()
+    }
+
     pub fn worn_attachment(&self, item: &Uuid) -> Option<usize> {
         if item.is_nil() {
             return None;
@@ -8091,6 +8106,41 @@ mod motion_tests {
         world.flush_arrival(t);
         world.flush_arrival(t + std::time::Duration::from_secs(60));
         assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+    }
+
+    /// TELEPORT_EXPIRY_PER_ATTACHMENT counts attached objects
+    /// (getAttachmentCount), HUDs included, not their prims: two worn
+    /// linksets of 50 prims and a HUD give up a stuck arrival after
+    /// 15 + 3 x 3 s, not after minutes.
+    #[test]
+    fn the_arrival_waits_per_worn_object_not_per_prim() {
+        let (mut world, _, worn, here, _) = worn_fixture();
+        let mut objects = Vec::new();
+        for n in 0..49 {
+            objects.push(prim(&worn, worn.local_id + 100 + n, worn.local_id));
+        }
+        let mut second = worn.clone();
+        second.local_id = worn.local_id + 1000;
+        second.full_id = Uuid::from_u128(0xBEEF2);
+        for n in 0..49 {
+            objects.push(prim(&second, second.local_id + 1 + n, second.local_id));
+        }
+        let mut hud = worn.clone();
+        hud.local_id = worn.local_id + 2000;
+        hud.full_id = Uuid::from_u128(0xBEEF3);
+        hud.state = 0xF1;
+        objects.push(second);
+        objects.push(hud);
+        world.apply(NetEvent::ObjectUpdates { handle: here, objects });
+        assert_eq!(world.own_attachment_count(), 3);
+        world.arrived_once = true;
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
+        let t = Instant::now();
+        let count = world.own_attachment_count();
+        assert!(!world.arrival_overdue(t, count));
+        assert!(!world.arrival_overdue(t + std::time::Duration::from_secs(24), count));
+        assert!(world.arrival_overdue(t + std::time::Duration::from_secs(25), count));
     }
 
     #[test]
