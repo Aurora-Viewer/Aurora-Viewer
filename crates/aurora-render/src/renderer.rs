@@ -5475,7 +5475,11 @@ impl Backend {
             self.apply_settings_with(s, None);
             return;
         }
-        if self.pipeline_build.as_ref().is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.ssr, soft)) {
+        if self
+            .pipeline_build
+            .as_ref()
+            .is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.ssr, soft))
+        {
             log::info!(
                 "compiling the pipelines for {samples} sample(s), SSR {}, soft shadows {}",
                 if s.ssr { "on" } else { "off" },
@@ -5558,7 +5562,19 @@ impl Backend {
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
-            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr, soft);
+            let scene = Self::make_pipelines(
+                &device,
+                frame,
+                records,
+                tex,
+                shadow,
+                [post, bloom],
+                gbuf,
+                samples,
+                format,
+                ssr,
+                soft,
+            );
             let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));

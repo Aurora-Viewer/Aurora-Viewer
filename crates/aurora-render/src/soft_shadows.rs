@@ -682,6 +682,8 @@ mod tests {
         let common = include_str!("shaders/common.wgsl");
         let line = format!("const FILTER_FLOOR: f32 = {};", FILTER_FLOOR);
         assert!(shader.contains(&line), "soft_shadows.wgsl: {line}");
+        // the filter of before, whose width the narrow penumbrae fall back to
+        assert!(shader.contains("const SHADOW_PENUMBRA: f32 = 0.03;") && common.contains("const SHADOW_PENUMBRA: f32 = 0.03;"));
         // the normal offset and the receiver bias of `cascade_shadow`
         assert!(shader.contains("n * (0.02 + 0.04 * f32(cascade))"));
         assert!(common.contains("n * (0.02 + 0.04 * f32(cascade))"));
