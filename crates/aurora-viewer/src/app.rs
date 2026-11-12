@@ -4069,7 +4069,7 @@ impl App {
                 ));
                 self.restore_local_environment();
             }
-            NetEvent::TeleportLocal { .. } | NetEvent::TeleportStarted => {
+            NetEvent::TeleportLocal { .. } | NetEvent::TeleportStarted { .. } => {
                 self.vr_rebase_after_travel();
             }
             NetEvent::TeleportFinished { .. } => {
