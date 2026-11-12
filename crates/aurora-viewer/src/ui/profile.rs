@@ -126,6 +126,7 @@ impl Edit {
 struct PickEdit {
     /// Nil for a pick being created.
     id: Uuid,
+    parcel: Uuid,
     name: String,
     desc: String,
     snapshot: Uuid,
@@ -908,6 +909,7 @@ fn classified_of(e: &ClassifiedEdit) -> aurora_net::ClassifiedInfo {
 fn pick_of(e: &PickEdit) -> PickInfo {
     PickInfo {
         id: if e.id.is_nil() { Uuid::new_v4() } else { e.id },
+        parcel: e.parcel,
         name: e.name.clone(),
         desc: e.desc.clone(),
         snapshot: e.snapshot,
@@ -1875,6 +1877,7 @@ fn new_pick(world: &World) -> PickEdit {
     };
     PickEdit {
         id: Uuid::nil(),
+        parcel: Uuid::nil(),
         name,
         desc,
         snapshot,
@@ -1907,6 +1910,7 @@ fn pick_detail(
     if own && let Some(i) = info {
         let server = PickEdit {
             id: i.id,
+            parcel: i.parcel,
             name: i.name.clone(),
             desc: i.desc.clone(),
             snapshot: i.snapshot,
@@ -2028,6 +2032,7 @@ fn pick_detail(
             let here = new_pick(world);
             if let Some((e, _)) = w.pick_edit.as_mut() {
                 e.pos = here.pos;
+                e.parcel = here.parcel;
                 e.location = here.location;
             }
         }
@@ -2536,6 +2541,24 @@ mod tests {
         e.text = "a".into();
         e.sync("c");
         assert_eq!(e.text, "c");
+    }
+
+    #[test]
+    fn editing_pick_contents_preserves_the_saved_parcel_and_position() {
+        let mut edit = PickEdit {
+            id: Uuid::from_u128(41),
+            parcel: Uuid::from_u128(42),
+            pos: DVec3::new(300_001.0, 300_002.0, 30.0),
+            ..Default::default()
+        };
+        edit.name = "Changed name".into();
+        edit.desc = "Changed description".into();
+        edit.snapshot = Uuid::from_u128(43);
+        let saved = pick_of(&edit);
+        assert_eq!(saved.parcel, Uuid::from_u128(42));
+        assert_eq!(saved.pos_global, edit.pos);
+        assert_eq!(saved.id, edit.id);
+        assert_eq!(saved.snapshot, edit.snapshot);
     }
 
     #[test]
