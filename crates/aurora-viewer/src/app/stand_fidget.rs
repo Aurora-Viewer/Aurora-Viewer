@@ -95,12 +95,17 @@ impl App {
                 ));
             }
         }
-        let standing = self.in_world()
-            && self
-                .world
-                .animations
-                .get(&me)
-                .is_some_and(|anims| anims.iter().any(|a| a.id == crate::own_motion::ANIM_STAND));
+        if !self.in_world() {
+            // logged out: the session took the animations with it, nothing
+            // to stop; the next login starts again from the plain stand
+            self.stand_fidget = Fidget::default();
+            return;
+        }
+        let standing = self
+            .world
+            .animations
+            .get(&me)
+            .is_some_and(|anims| anims.iter().any(|a| a.id == crate::own_motion::ANIM_STAND));
         let ao = self.settings.ao.accounts.get(&me).is_some_and(|a| a.enabled);
         let blocked = ao || self.world.agent.is_sitting();
         let Some(change) = self.stand_fidget.step(standing, blocked, self.world.status.away, now, random_pick) else {
