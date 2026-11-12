@@ -579,6 +579,22 @@ impl Session<'_> {
             log::warn!("emptymutelist for another agent ({agent})");
         }
     }
+
+    /// "URLFloater" (LLUrlFloaterDispatchHandler): only for our agent, as
+    /// process_generic_message drops the messages of another one.
+    pub(super) fn on_url_floater_generic(&self, agent: uuid::Uuid, method: &[u8], parameter: &[u8]) {
+        if field_str(method) != crate::url_floater::METHOD {
+            return;
+        }
+        if agent != self.agent_id() {
+            log::warn!("URLFloater for another agent ({agent})");
+            return;
+        }
+        if let Some(url) = crate::url_floater::url(parameter) {
+            log::info!("URLFloater: {url}");
+            emit(self.sh, NetEvent::UrlFloater { url });
+        }
+    }
 }
 
 /// Xfer ids only need to be unique among our transfers.

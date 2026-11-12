@@ -2746,6 +2746,7 @@ impl Session<'_> {
                 request,
                 item,
                 asset_type,
+                lua,
                 data,
             } => {
                 let name = match asset_type {
@@ -2771,7 +2772,8 @@ impl Session<'_> {
                 let events = self.sh.events.clone();
                 let owner = self.agent_id();
                 tokio::spawn(async move {
-                    let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item, asset_type, data).await;
+                    let result =
+                        crate::inventory::operations::save_content_for(&http, &cap, &fetch, owner, item, asset_type, lua, data).await;
                     let _ = events.send(NetEvent::InventoryContentSaved { request, item, result });
                 });
             }
@@ -5077,6 +5079,7 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
             self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == LargeGenericMessage::ID {
@@ -5093,6 +5096,7 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
             self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == UpdateCreateInventoryItem::ID {
