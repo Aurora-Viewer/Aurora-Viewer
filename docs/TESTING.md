@@ -1011,6 +1011,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_TURN_SELECT=1` | The avatar turns to face an object selected while the camera is off it |
 | `AURORA_DEMO_FIDGET=1` | The stock stand signalled, so the standing avatar's variants start |
+| `AURORA_DEMO_URL_FLOATER=1` | The simulator asks for a web window (llOpenFloater) |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
@@ -1563,6 +1564,11 @@ when unfocused") is ignored during a screenshot.
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=2700`
   (`AURORA_CAPTURE_EXIT=1`), about three lines in 45 s. Nothing is logged
   when the AO is on.
+- **`AURORA_DEMO_URL_FLOATER=1`**: at frame 300 a "URLFloater" message as
+  the simulator sends it for llOpenFloater (escaped URL, `trusted_content`
+  asked for) goes through aurora-net's reader, then the app. The log gives
+  `demo URLFloater: https://example.invalid/welcome`; capture frame 360:
+  the link question for an unknown address, with that URL.
 - **`AURORA_DEMO_RCLICK`**: right click at (x, y) at frame 225, or with
   `tag` on the name plate of the nearest other avatar at frame 600.
 - **`AURORA_DEMO_PIE`**: `1` forces the pie menu, `0` forces the list, only
