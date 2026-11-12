@@ -155,11 +155,11 @@ const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
-const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w, local scenery, not the avatar reveal
 // flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
 const LAYER_RANK_SHIFT: u32 = 24u;
 const LAYER_RANK_MAX: u32 = 7u;
 const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
+const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;

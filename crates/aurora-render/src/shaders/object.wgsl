@@ -1536,6 +1536,12 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
+    // Studio isolation leaves the live avatar and attachments in this pass.
+    // Blend the final radiance, preserving material alpha/cutouts and never
+    // editing their records. HUDs use fs_hud and scenery carries its own bit.
+    let white = select(0.0, clamp(frame.studio_aurora[3].w, 0.0, 1.0),
+        frame.studio_aurora[3].w > 0.0 && (rec.flags.w & FLAG_STUDIO_STAGE) == 0u);
+    col = mix(col, vec3<f32>(1.0), white);
     // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
     // the vertex alpha being the face color's (a fullbright face takes the
     // other branch and has no glare, as emissive_brightness 1 there)
@@ -1543,12 +1549,6 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
         alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
-    // Studio isolation leaves the live avatar and attachments in this pass.
-    // Blend the final radiance, preserving material alpha/cutouts and never
-    // editing their records. HUDs use fs_hud and scenery carries its own bit.
-    let white = select(0.0, clamp(frame.studio_aurora[3].w, 0.0, 1.0),
-        frame.studio_aurora[3].w > 0.0 && (rec.flags.w & FLAG_STUDIO_STAGE) == 0u);
-    col = mix(col, vec3<f32>(1.0), white);
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
     s.n = m.n;
     s.roughness = m.roughness;
