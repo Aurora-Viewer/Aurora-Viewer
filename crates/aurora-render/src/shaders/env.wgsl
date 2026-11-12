@@ -602,13 +602,13 @@ fn terrain_weights(c: f32) -> vec4<f32> {
 // used by the old approximation above. Slot 6 is reserved by TextureTable.
 // Its decoded image is top-down; LLSurfacePatch::eval supplies GL coordinates.
 fn terrain_noise_weights(c: f32, noise: f32, dx: vec2<f32>, dy: vec2<f32>, clamp_sampler: sampler) -> vec4<f32> {
-    let ramp_loc = tex_loc[6u];
+    let ramp_loc = tex_loc.values[6u];
     let uv = vec2<f32>(c, 1.0 - noise);
     let gx = dx * vec2<f32>(1.0, -1.0);
     let gy = dy * vec2<f32>(1.0, -1.0);
-    let a = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv, ramp_loc & 0xffffu, gx, gy).r;
-    let b = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv - vec2<f32>(2.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
-    let f = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv - vec2<f32>(1.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
+    let a = textureSampleGrad(tex_pages[texture_page_index(ramp_loc)], clamp_sampler, uv, ramp_loc & 0xffffu, gx, gy).r;
+    let b = textureSampleGrad(tex_pages[texture_page_index(ramp_loc)], clamp_sampler, uv - vec2<f32>(2.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
+    let f = textureSampleGrad(tex_pages[texture_page_index(ramp_loc)], clamp_sampler, uv - vec2<f32>(1.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
     return vec4<f32>(f * a, f * (1.0 - a), (1.0 - f) * b, (1.0 - f) * (1.0 - b));
 }
 
@@ -618,10 +618,10 @@ fn terrain_mix_weights(in: TerrainPbrOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx
         // LLTerrainPaintMap stores slots 2..4 in linear RGB; slot 1 is the
         // remainder. No height/noise threshold is applied to a paintmap.
         let slot = rec.flags.z;
-        let loc = tex_loc[slot];
+        let loc = tex_loc.values[slot];
         // Clamp each mip level at region edges; detail maps use repeat.
         let uv = in.region_pos.xy / rec.mat_uv.xy;
-        var other = max(textureSampleGrad(tex_pages[loc >> 16u], clamp_sampler, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
+        var other = max(textureSampleGrad(tex_pages[texture_page_index(loc)], clamp_sampler, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
         other /= max(1.0, dot(other, vec3<f32>(1.0)));
         return vec4<f32>(max(0.0, 1.0 - dot(other, vec3<f32>(1.0))), other);
     }
@@ -651,8 +651,8 @@ fn terrain_uv(p: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
 }
 
 fn terrain_sample(slot: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[slot];
-    return textureSampleGrad(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, dx, dy);
+    let loc = tex_loc.values[slot];
+    return textureSampleGrad(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, dx, dy);
 }
 
 fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>, tangent: vec4<f32>, planes: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
