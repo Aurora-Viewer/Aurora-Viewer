@@ -36,6 +36,8 @@ pub struct Cli {
     pub mcp: bool,
     /// `--mcp-port <port>`: port for the local MCP server (defaults to 3847).
     pub mcp_port: Option<u16>,
+    /// `--autologin`: log in immediately using the active saved account.
+    pub autologin: bool,
     help: bool,
     version: bool,
 }
@@ -121,6 +123,8 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.vr = true;
         } else if a == "--mcp" {
             cli.mcp = true;
+        } else if a == "--autologin" || a == "-autologin" {
+            cli.autologin = true;
         } else if let Some(v) = a.strip_prefix("--mcp-port=") {
             cli.mcp_port = v.trim().parse::<u16>().ok();
             cli.mcp = true;

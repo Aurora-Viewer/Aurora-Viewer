@@ -1855,6 +1855,18 @@ impl App {
                     reply_tx,
                 );
             }
+            ViewerRequest::ViewerLogin {
+                username,
+                password,
+                location,
+            } => {
+                let resp = self.handle_mcp_viewer_login(
+                    username.as_deref(),
+                    password.as_deref(),
+                    location.as_deref(),
+                );
+                let _ = reply_tx.send(resp);
+            }
         }
     }
 
@@ -3973,6 +3985,7 @@ impl App {
     fn handle_mcp_ui_list_menus(&self, query: &str) -> Result<ViewerResponse, McpError> {
         let q = query.trim().to_ascii_lowercase();
         let all_menus = [
+            "world.login",
             "world.new_prim",
             "world.sit_down",
             "world.stand_up",
@@ -4052,6 +4065,9 @@ impl App {
             }
             "world.teleport_home" => {
                 self.send(NetCommand::TeleportHome);
+            }
+            "world.login" | "viewer.login" | "login" => {
+                let _ = self.handle_mcp_viewer_login(None, None, None);
             }
             other => {
                 return Err(McpError::InvalidParams(format!(
@@ -4443,6 +4459,55 @@ impl App {
             true,
             reply_tx,
         );
+    }
+
+    fn handle_mcp_viewer_login(
+        &mut self,
+        username: Option<&str>,
+        password: Option<&str>,
+        location: Option<&str>,
+    ) -> Result<ViewerResponse, McpError> {
+        if !matches!(self.screen, Screen::Login) {
+            return Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "status": "already_logged_in",
+                "screen": format!("{:?}", self.screen),
+                "agent_id": self.world.agent_id.to_string(),
+            })));
+        }
+
+        if let Some(user) = username {
+            self.settings.username = user.to_string();
+        }
+        if let Some(pwd) = password {
+            self.login_form.password = pwd.to_string();
+        }
+        if let Some(loc) = location {
+            match loc.trim().to_ascii_lowercase().as_str() {
+                "home" => self.settings.start_location = "home".to_string(),
+                "last" => self.settings.start_location = "last".to_string(),
+                region => {
+                    self.settings.start_location = "region".to_string();
+                    self.settings.start_region = region.to_string();
+                }
+            }
+        }
+
+        let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+        if self.login_form.stored.is_none() && self.login_form.password.is_empty() {
+            self.login_form.stored = crate::credentials::load(&key.0, &key.1);
+        }
+        self.login_form.editing = false;
+        self.login_form.show_mfa = false;
+        self.login_form.error = None;
+        self.start_login();
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "status": "login_initiated",
+            "username": self.settings.username,
+            "grid": self.settings.login_uri(),
+        })))
     }
 }
 

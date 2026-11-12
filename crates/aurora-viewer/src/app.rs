@@ -156,6 +156,7 @@ mod wearable_editor;
 mod world_click_demo;
 mod worn_demo;
 
+#[derive(Debug)]
 enum Screen {
     Login,
     Loading { since: Instant },
@@ -15714,6 +15715,29 @@ impl App {
                     self.login_form.show_mfa = false;
                     self.login_form.error = None;
                     self.start_login();
+                }
+                if !self.demo && self.frame_count <= 2 {
+                    if let Some(login) = crate::cli::take_login() {
+                        self.settings.username = if login.last.eq_ignore_ascii_case("Resident") {
+                            login.first
+                        } else {
+                            format!("{} {}", login.first, login.last)
+                        };
+                        self.login_form.password = login.password;
+                        self.login_form.editing = false;
+                        self.login_form.show_mfa = false;
+                        self.login_form.error = None;
+                        self.start_login();
+                    } else if crate::cli::get().autologin {
+                        let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+                        if self.login_form.stored.is_none() && self.login_form.password.is_empty() {
+                            self.login_form.stored = crate::credentials::load(&key.0, &key.1);
+                        }
+                        self.login_form.editing = false;
+                        self.login_form.show_mfa = false;
+                        self.login_form.error = None;
+                        self.start_login();
+                    }
                 }
                 if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("next-server")

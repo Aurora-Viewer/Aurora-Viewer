@@ -497,6 +497,13 @@ pub enum ViewerRequest {
         emissive: Option<bool>,
         ribbon: Option<bool>,
     },
+
+    // Autonomous Session & Login Management
+    ViewerLogin {
+        username: Option<String>,
+        password: Option<String>,
+        location: Option<String>,
+    },
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -568,7 +575,8 @@ impl ViewerRequest {
             | ViewerRequest::UiFind { .. }
             | ViewerRequest::UiGetValue { .. }
             | ViewerRequest::UiListMenus { .. }
-            | ViewerRequest::NotecardRead { .. } => false,
+            | ViewerRequest::NotecardRead { .. }
+            | ViewerRequest::ViewerLogin { .. } => false,
 
             ViewerRequest::LiveMeshControl { action, .. }
             | ViewerRequest::AssetUpload { action, .. } => {

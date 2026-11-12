@@ -2034,6 +2034,24 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            "viewer_login" => {
+                let username = args.get("username").and_then(Value::as_str).map(str::to_owned);
+                let password = args.get("password").and_then(Value::as_str).map(str::to_owned);
+                let location = args.get("location").and_then(Value::as_str).map(str::to_owned);
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::ViewerLogin {
+                            username,
+                            password,
+                            location,
+                        },
+                        10_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
         }
     }
@@ -3383,6 +3401,19 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: false,
         },
+        ToolDefinition {
+            name: "viewer_login".into(),
+            description: "Initiate login into the grid when the viewer is on the login screen. If username and password are omitted, logs in automatically using saved account credentials from the viewer's secure credential store.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string", "description": "Optional account name (e.g. 'First Last' or 'first.last'). If omitted, uses active saved account." },
+                    "password": { "type": "string", "description": "Optional account password. If omitted, uses remembered credentials from the credential store." },
+                    "location": { "type": "string", "description": "Optional start location: 'home', 'last', or region name." }
+                }
+            }),
+            in_compact_profile: true,
+        },
     ]
 }
 
@@ -3393,7 +3424,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 85, "expected 85 total tools (43 Legacy + 42 Aurora-native)");
+        assert_eq!(defs.len(), 86, "expected 86 total tools (43 Legacy + 43 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -3490,6 +3521,7 @@ mod tests {
             "notecard_read",
             "notecard_write",
             "prim_set_particles",
+            "viewer_login",
         ] {
             assert!(
                 names.contains(&native),
