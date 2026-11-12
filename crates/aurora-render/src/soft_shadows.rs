@@ -14,7 +14,7 @@
 //! Beyond the Legacy Viewer, which softens its shadows in screen space by a
 //! fixed pixel radius (`RenderShadowBlurSize`, with SSAO on only): here the
 //! penumbra is in metres, grows with the distance of the caster, and is
-//! never narrower than the filter of before (about ±3 cm): where it would be,
+//! never narrower than the filter of before (3 cm across): where it would be,
 //! the shadow takes that filter, with taps that are the same for every pixel.
 //! The light is 2.3 degrees across at a softness of 1 (the look of the first
 //! soft shadows PR, #2288); the real sun, 0.53 degrees, is a softness of 0.23.
