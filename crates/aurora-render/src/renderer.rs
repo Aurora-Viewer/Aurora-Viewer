@@ -6823,6 +6823,12 @@ impl Backend {
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
         self.blend_ao_depth = blend_ao == BlendAo::New;
+        // AURORA_LEGACY_GLARE=0: the blended legacy faces without the glare
+        // of #3259 (object.wgsl LEGACY_GLARE_OFF)
+        static GLARE_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *GLARE_OFF.get_or_init(|| std::env::var("AURORA_LEGACY_GLARE").is_ok_and(|v| v.trim() == "0")) {
+            main.light_sets.mode[2] |= 0x100000;
+        }
         main.light_sets.mode[2] |= match blend_ao {
             BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
