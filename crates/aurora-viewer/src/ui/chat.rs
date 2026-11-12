@@ -464,6 +464,14 @@ impl ChatUi {
         }
     }
 
+    /// The channel selector's channel while Preferences show it: what a
+    /// nearby line without `/n` is sent on (`channel::resolve`). Off channel
+    /// 0 it is not said aloud, so no typing animation, as
+    /// FSNearbyChat::handleChatBarKeystroke given the spinner's channel.
+    pub fn selector_channel(&self) -> Option<i32> {
+        self.show_channel.then_some(self.chat_channel)
+    }
+
     /// The chat bar is drawn this frame: always, or with `autohide` while it
     /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
@@ -3591,7 +3599,7 @@ fn classic_pane(
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
             match st.selected {
                 None => {
-                    let (channel, message) = channel::resolve(&text, st.show_channel.then_some(st.chat_channel));
+                    let (channel, message) = channel::resolve(&text, st.selector_channel());
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
@@ -3611,7 +3619,7 @@ fn classic_pane(
         sent,
     });
     if st.selected.is_none() {
-        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
+        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
         st.local_field(&resp, said, sent);
     }
     if !draft.is_empty() {
@@ -4381,7 +4389,7 @@ pub(crate) fn bar_input(
     };
     let enter = send.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
-    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
+    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
@@ -4394,7 +4402,7 @@ pub(crate) fn bar_input(
         if send == SendKey::Ooc {
             text = ooc(&text);
         }
-        let (channel, message) = channel::resolve(&text, st.show_channel.then_some(st.chat_channel));
+        let (channel, message) = channel::resolve(&text, st.selector_channel());
         out = Some(OutgoingChat {
             message,
             channel,

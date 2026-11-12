@@ -254,7 +254,7 @@ pub(super) fn show(
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
                     match st.selected {
                         None => {
-                            let (channel, message) = super::channel::resolve(&text, st.show_channel.then_some(st.chat_channel));
+                            let (channel, message) = super::channel::resolve(&text, st.selector_channel());
                             let volume = st.volume.chat_type();
                             actions.push(ConvAction::Local(OutgoingChat {
                                 message,
@@ -277,7 +277,7 @@ pub(super) fn show(
                 sent,
             });
             if local {
-                let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
+                let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
                 st.local_field(&resp, said, sent);
             }
             if !draft.is_empty() {

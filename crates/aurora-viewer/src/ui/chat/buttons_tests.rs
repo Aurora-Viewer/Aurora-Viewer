@@ -1807,6 +1807,28 @@ fn the_chat_bar_channel_selector_is_visible_and_keeps_the_channel_on_send() {
     assert_eq!(h.st.chat_channel, 5, "the channel is kept for the next message");
 }
 
+/// Typing for the selector's channel off 0 starts no typing animation, as
+/// FSNearbyChat::handleChatBarKeystroke given the spinner's channel; on 0,
+/// or with the selector hidden, it does.
+#[test]
+fn typing_for_another_channel_is_not_typing_aloud() {
+    for (shown, channel, aloud) in [(true, 5, false), (true, 0, true), (false, 5, true)] {
+        let mut h = H::new(ChatStyle::Aurora);
+        h.st.show_channel = shown;
+        h.st.chat_channel = channel;
+        h.st.focus_request = true;
+        h.bar_frame(Vec::new());
+        h.bar_frame(Vec::new());
+        h.bar_frame(vec![egui::Event::Text("hello".into())]);
+        assert_eq!(h.st.input, "hello", "typed in the bar");
+        assert_eq!(
+            h.st.local_typing_update(std::time::Instant::now()),
+            aloud.then_some(true),
+            "selector shown {shown}, channel {channel}"
+        );
+    }
+}
+
 /// With "Autohide the chat bar" on and an empty bar, the channel's menu keeps
 /// the bar shown once the pointer leaves the bar for the menu.
 #[test]
