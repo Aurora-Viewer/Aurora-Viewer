@@ -1650,7 +1650,7 @@ impl Camera {
     pub fn look(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
         let k = DRAG_RATE * sensitivity;
         agent.yaw -= dx * k;
-        agent.pitch = (agent.pitch - dy * k).clamp(-1.5, 1.5);
+        agent.pitch = crate::agent::clamp_pitch(agent.pitch - dy * k);
     }
 
     /// Camera keys held this frame (LLAgentCamera::updateCamera); like
@@ -3787,6 +3787,36 @@ mod tests {
         settle(&mut camera, &mut world, &settings);
         let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
         assert!(controls.head_rotation.dot(world.agent.body_rotation()).abs() > 0.99999);
+    }
+
+    #[test]
+    fn mouselook_controls_send_pitch_without_tilting_the_drawn_body_or_seated_avatar() {
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        world.agent.yaw = 0.7;
+        world.agent.pitch = 0.6;
+        settle(&mut camera, &mut world, &settings);
+
+        let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        let expected = Quat::from_rotation_z(world.agent.yaw) * Quat::from_rotation_y(-world.agent.pitch);
+        assert!(controls.body_rotation.abs_diff_eq(expected, 1e-5));
+        assert!(
+            world
+                .agent
+                .body_rotation()
+                .abs_diff_eq(Quat::from_rotation_z(world.agent.yaw), 1e-5)
+        );
+
+        world.agent.seated = true;
+        let seated = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        assert!(seated.body_rotation.abs_diff_eq(world.agent.body_rotation(), 1e-5));
+
+        world.agent.seated = false;
+        camera.change_to_default(&mut world.agent, &settings);
+        let walking = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        assert!(walking.body_rotation.abs_diff_eq(world.agent.body_rotation(), 1e-5));
     }
 
     #[test]

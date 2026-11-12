@@ -319,7 +319,12 @@ impl App {
         let now = Instant::now();
         let link = self.demo_link.as_ref().map(|l| l.cfg.clone());
         let wanted = link.as_ref().and_then(|c| c.prediction).unwrap_or(self.settings.predict_own_motion);
-        let on = wanted && (!self.demo || link.is_some()) && self.world.movement_complete && !self.world.teleporting;
+        // Flying in mouselook, the region moves the avatar along the camera's
+        // pitch (the body rotation it receives, LLToolGun / gAgent.pitch); the
+        // intent and its calibration only know level motion, so the lead steps
+        // aside and the simulator's motion alone is drawn, as in the Legacy Viewer
+        let pitched_flight = self.world.agent.follows_camera_pitch(mouselook);
+        let on = wanted && (!self.demo || link.is_some()) && self.world.movement_complete && !self.world.teleporting && !pitched_flight;
         self.world.agent.set_predicting(on);
         let rtt = match &link {
             Some(c) => c.ping,
