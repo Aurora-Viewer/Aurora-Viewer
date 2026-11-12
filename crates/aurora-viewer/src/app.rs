@@ -7479,8 +7479,10 @@ impl App {
         );
         self.flush_build();
         // LLToolSelect::handleObjectSelection turns the avatar to what the
-        // click selected (app/selection_turn.rs)
+        // Edit tool's click selected (lltoolcomp.cpp: move, rotate, stretch;
+        // not Create, Grab or Land) (app/selection_turn.rs)
         if let Some(idx) = target
+            && self.build.tool == crate::build::Tool::Edit
             && !self.build.selection.is_empty()
             && let Some(bounds) = self.build.bounds(&self.world, Instant::now())
         {
