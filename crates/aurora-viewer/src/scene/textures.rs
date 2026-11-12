@@ -212,6 +212,12 @@ pub enum TexSource {
     Bake {
         url: String,
     },
+    /// Bake fetched from the avatar's simulator with `RequestImage`
+    /// (`LLVOAvatar::getImage` when `getImageURL` is empty: `FTT_HOST_BAKE`).
+    /// Not HTTP. OpenSim keeps the uploaded bake in that simulator only.
+    Host {
+        region: aurora_net::RegionHandle,
+    },
 }
 
 // LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
@@ -1190,6 +1196,11 @@ pub struct TextureStreamer {
     /// points their slot at the missing grey, so that their faces leave the
     /// rez grid (`textures::MISSING`).
     unavailable: Vec<Uuid>,
+    /// Host bakes to ask of their simulator this frame (`TexSource::Host`).
+    host_wants: Vec<aurora_net::image_udp::Want>,
+    /// The previous frame had host bakes in flight, so an empty list still
+    /// goes out and the simulator is told to stop.
+    host_live: bool,
     /// Decoded levels the uploads are done with and download bodies once
     /// merged, freed off this thread.
     trash: Trash<Vec<u8>>,
@@ -1564,6 +1575,8 @@ impl TextureStreamer {
             reslotted: Vec::new(),
             last_reslot: Instant::now(),
             unavailable: Vec::new(),
+            host_wants: Vec::new(),
+            host_live: false,
             trash: Trash::default(),
             cache_writer: None,
             alpha_changes: Vec::new(),
@@ -1664,6 +1677,7 @@ impl TextureStreamer {
                     .unwrap_or_default(),
                 match &e.source {
                     TexSource::Bake { .. } => ", bake service",
+                    TexSource::Host { .. } => ", host bake",
                     TexSource::Asset => "",
                 },
                 e.last_error
@@ -2112,6 +2126,17 @@ impl TextureStreamer {
         e.unused_since = None;
         if e.source == TexSource::Asset && *source != TexSource::Asset {
             e.source = source.clone();
+        } else if let (TexSource::Host { region }, TexSource::Host { region: now }) = (&mut e.source, source) {
+            // The avatar's simulator changed (a teleport or a crossing): an
+            // unfinished bake is asked of the new one, and one the old region
+            // did not have may be there.
+            if *region != *now && !e.complete {
+                *region = *now;
+                if e.gone {
+                    e.gone = false;
+                    e.failures = 0;
+                }
+            }
         }
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         Some(e.slot)
@@ -2610,7 +2635,69 @@ impl TextureStreamer {
     fn url_for(&self, id: &Uuid, e: &Entry, viewer_asset: Option<&str>) -> Option<String> {
         match &e.source {
             TexSource::Bake { url } => Some(url.clone()),
+            // The simulator is asked over UDP (`note_host_image`), never HTTP.
+            TexSource::Host { .. } => None,
             TexSource::Asset => viewer_asset.map(|base| asset_url(base, "texture_id", id)),
+        }
+    }
+
+    /// Host-bake requests gathered by the last `update`. `Some` when the list
+    /// is non-empty, or when the previous frame had one, so a bake that
+    /// dropped out is cancelled.
+    pub fn take_host_wants(&mut self) -> Option<Vec<aurora_net::image_udp::Want>> {
+        let wants = std::mem::take(&mut self.host_wants);
+        let live = !wants.is_empty();
+        let send = live || self.host_live;
+        self.host_live = live;
+        send.then_some(wants)
+    }
+
+    /// Bytes of a host bake, or `None` when the simulator does not have it.
+    /// Missing is sticky: no ten-minute retry (that retry is the HTTP 404
+    /// path). The bytes take the same decode path as a finished HTTP body.
+    pub fn note_host_image(&mut self, id: Uuid, bytes: Option<Vec<u8>>) {
+        let Some(e) = self.entries.get_mut(&id) else {
+            return;
+        };
+        if !matches!(e.source, TexSource::Host { .. }) {
+            return;
+        }
+        e.fetching = false;
+        let mut unavailable = false;
+        let mut dirty = false;
+        match bytes {
+            None => {
+                let was = e.unavailable();
+                e.gone = true;
+                e.retry_at = None;
+                e.failures = e.failures.max(1);
+                unavailable = !was && e.unavailable();
+                log::info!("texture {id} host bake missing (ImageNotInDatabase)");
+            }
+            Some(bytes) => {
+                e.data = Arc::new(bytes);
+                e.complete = true;
+                e.gone = false;
+                e.retry_at = None;
+                e.failures = 0;
+                e.last_error = None;
+                e.error_logged = false;
+                if e.info.is_none() {
+                    e.info = aurora_assets::j2k_info(&e.data);
+                    e.want_for_its_size();
+                }
+                if !e.dirty_cache {
+                    e.dirty_cache = true;
+                    dirty = true;
+                }
+            }
+        }
+        Self::settle(&mut self.todo, &mut self.counts, id, e);
+        if unavailable {
+            self.unavailable.push(id);
+        }
+        if dirty {
+            self.dirty.push(id);
         }
     }
 
@@ -2658,6 +2745,7 @@ impl TextureStreamer {
             forgotten,
             trash,
             legacy_bump_entries,
+            host_wants,
             ..
         } = self;
         if *bc7_cache && cache_writer.is_none() {
@@ -2791,8 +2879,31 @@ impl TextureStreamer {
                     }
                 }
                 // 2. fetch more
+                // LLVOAvatar::getImage (llvoavatar.cpp): no appearance URL, so
+                // the bake is RequestImage to the object host, not ViewerAsset.
+                // fetching stays false: a host bake's priority is sent again
+                // as the view changes, and that flag would skip this visit.
+                if let TexSource::Host { region } = e.source {
+                    if !e.gone && !e.complete {
+                        host_wants.push(aurora_net::image_udp::Want {
+                            region,
+                            image: id,
+                            // Always the whole file. A simulator stops at the
+                            // packet of the level asked (OpenSim J2KImage
+                            // m_stopPacket) while the header still counts every
+                            // packet, and the bytes here are decoded only once
+                            // complete. A bake is small; the Legacy Viewer's
+                            // partial levels are not kept for it.
+                            discard: 0,
+                            priority: e.px_now(),
+                            bake: true,
+                        });
+                    }
+                    return;
+                }
                 let Some(url) = (match &e.source {
                     TexSource::Bake { url } => Some(url.clone()),
+                    TexSource::Host { .. } => None,
                     TexSource::Asset => viewer_asset.map(|base| asset_url(base, "texture_id", &id)),
                 }) else {
                     return;
@@ -3029,6 +3140,7 @@ impl TextureStreamer {
                 }
                 let source = match e.source {
                     TexSource::Bake { .. } => " (bake service)",
+                    TexSource::Host { .. } => " (host bake)",
                     TexSource::Asset => "",
                 };
                 if e.error_logged {
@@ -5908,6 +6020,40 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+    #[test]
+    fn a_host_bake_is_not_fetched_over_http() {
+        let mut b = RefreshBench::new();
+        let id = Uuid::from_u128(0x2860);
+        let mut e = entry(None, 100.0);
+        e.source = TexSource::Host { region: 42 };
+        e.want = 3;
+        e.cache_state = 2;
+        e.queued = true;
+        b.s.entries.insert(id, e);
+        b.s.todo.push(id);
+        b.s.update(&b.jobs, &b.fetcher, Some("https://assets.example/"));
+        let e = &b.s.entries[&id];
+        assert_eq!(e.fetch_key, 0);
+        assert!(b.s.by_fetch_key.is_empty());
+        assert!(!e.fetching);
+        let wants = b.s.take_host_wants().expect("a host bake is asked of its simulator");
+        assert_eq!(wants.len(), 1);
+        assert_eq!(wants[0].region, 42);
+        assert_eq!(wants[0].image, id);
+        assert!(wants[0].bake);
+        // the whole file, whatever level the view wants: a simulator stops at
+        // the level asked and the bytes are decoded only once complete
+        assert_eq!(wants[0].discard, 0);
+        b.s.note_host_image(id, None);
+        let e = &b.s.entries[&id];
+        assert!(e.gone);
+        assert!(e.retry_at.is_none());
+        b.s.update(&b.jobs, &b.fetcher, Some("https://assets.example/"));
+        let again = b.s.take_host_wants().unwrap_or_default();
+        assert!(again.is_empty());
+        assert_eq!(b.s.entries[&id].fetch_key, 0);
     }
 
     #[test]

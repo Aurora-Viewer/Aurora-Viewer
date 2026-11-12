@@ -9617,6 +9617,9 @@ impl App {
             }
         }
         self.net_profile.events_left(self.net.events.len());
+        for (id, bytes) in self.world.take_host_images() {
+            self.scene.textures.note_host_image(id, bytes);
+        }
         let corrections = self.world.agent.take_corrections();
         if corrections.count > 0 {
             aurora_net::transition::step(|| format!("position of our avatar corrected by {:.2} m", corrections.largest));
@@ -10964,6 +10967,9 @@ impl App {
             );
             self.scene
                 .stream(&mut gfx.renderer, &self.net, &self.world, texture_budget * 1024 * 1024, frame_time);
+            if let Some(wants) = self.scene.textures.take_host_wants() {
+                self.send(NetCommand::SyncHostImages(wants));
+            }
         }
         self.perf.update_ms = t_up.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Stream);

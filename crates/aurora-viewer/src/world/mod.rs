@@ -734,6 +734,9 @@ pub struct World {
     pub reopen_ims: Vec<open_ims::Conversation>,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
+    /// Host bakes reassembled by the session, drained by the frame
+    /// (`TexSource::Host`). `None` means the simulator does not have the image.
+    host_images: Vec<(Uuid, Option<Vec<u8>>)>,
 }
 
 /// Lines kept in memory for one conversation (the nearby chat is one). The
@@ -770,6 +773,68 @@ fn saved_prefix(timestamp: u32) -> String {
 /// The largest region a grid can have (Constants.MaximumRegionSize,
 /// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
 const MAX_REGION_SIZE: u32 = 4096;
+
+/// A region handle that can be asked for a host bake. Zero is unset, and
+/// the preview region is not a simulator.
+fn usable_host_region(region: RegionHandle) -> Option<RegionHandle> {
+    (region != 0 && region != objects::PREVIEW_REGION).then_some(region)
+}
+
+/// Where a baked texture is fetched.
+///
+/// `LLVOAvatar::getImage` (`llvoavatar.cpp`) and `LLVOAvatarSelf::setNewBakedTexture`
+/// (`llvoavatarself.cpp`): an empty appearance service is `FTT_HOST_BAKE`
+/// from the avatar's object host. `getImageURL` with a service builds
+/// `appearance_service/texture/<avatar>/<bake>/<uuid>`.
+pub(crate) fn source_for_bake(service: &str, region: Option<RegionHandle>, avatar: Uuid, bake: &str, tex: Uuid) -> TexSource {
+    if !service.is_empty() {
+        let base = if service.ends_with('/') {
+            service.to_owned()
+        } else {
+            format!("{service}/")
+        };
+        return TexSource::Bake {
+            url: format!("{base}texture/{avatar}/{bake}/{tex}"),
+        };
+    }
+    match region.and_then(usable_host_region) {
+        Some(region) => TexSource::Host { region },
+        None => TexSource::Asset,
+    }
+}
+
+#[cfg(test)]
+mod bake_source_tests {
+    use super::source_for_bake;
+    use crate::scene::textures::TexSource;
+    use uuid::Uuid;
+
+    #[test]
+    fn an_empty_appearance_service_fetches_the_bake_from_the_host() {
+        let avatar = Uuid::from_u128(1);
+        let tex = Uuid::from_u128(2);
+        assert_eq!(
+            source_for_bake("", Some(0x100), avatar, "head", tex),
+            TexSource::Host { region: 0x100 }
+        );
+        assert_eq!(source_for_bake("", None, avatar, "head", tex), TexSource::Asset);
+        assert_eq!(source_for_bake("", Some(0), avatar, "head", tex), TexSource::Asset);
+        assert_eq!(
+            source_for_bake("", Some(crate::world::objects::PREVIEW_REGION), avatar, "head", tex),
+            TexSource::Asset
+        );
+        let url = match source_for_bake("https://bake.example", Some(0x100), avatar, "head", tex) {
+            TexSource::Bake { url } => url,
+            other => panic!("expected a bake url, got {other:?}"),
+        };
+        assert_eq!(url, format!("https://bake.example/texture/{avatar}/head/{tex}"));
+        let url = match source_for_bake("https://bake.example/", None, avatar, "head", tex) {
+            TexSource::Bake { url } => url,
+            other => panic!("expected a bake url, got {other:?}"),
+        };
+        assert_eq!(url, format!("https://bake.example/texture/{avatar}/head/{tex}"));
+    }
+}
 
 impl World {
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {
@@ -1014,6 +1079,7 @@ impl World {
             open_ims_path: None,
             reopen_ims: Vec::new(),
             cache_dir: None,
+            host_images: Vec::new(),
         }
     }
 
@@ -2601,15 +2667,24 @@ impl World {
     }
 
     pub fn bake_source(&self, avatar: Uuid, bake: &str, tex: Uuid) -> TexSource {
-        match self.login.as_ref().map(|l| l.agent_appearance_service.as_str()) {
-            Some(base) if !base.is_empty() => {
-                let base = if base.ends_with('/') { base.to_owned() } else { format!("{base}/") };
-                TexSource::Bake {
-                    url: format!("{base}texture/{avatar}/{bake}/{tex}"),
-                }
-            }
-            _ => TexSource::Asset,
-        }
+        let service = self.login.as_ref().map(|l| l.agent_appearance_service.as_str()).unwrap_or("");
+        source_for_bake(service, self.host_bake_region(avatar), avatar, bake, tex)
+    }
+
+    /// The simulator that holds this avatar's bakes: the object's region,
+    /// otherwise the region we are in. A preview attachment is not a grid.
+    fn host_bake_region(&self, avatar: Uuid) -> Option<RegionHandle> {
+        let from_object = self
+            .objects
+            .index_of_uuid(&avatar)
+            .and_then(|i| self.objects.get(i))
+            .and_then(|object| usable_host_region(object.key.region));
+        from_object.or_else(|| self.main_region.and_then(usable_host_region))
+    }
+
+    /// Bakes the session reassembled, for the texture streamer.
+    pub fn take_host_images(&mut self) -> Vec<(Uuid, Option<Vec<u8>>)> {
+        std::mem::take(&mut self.host_images)
     }
 
     /// Apply one network event. Returns events the app layer must handle.
@@ -4362,6 +4437,10 @@ impl World {
                 if let Some(reset) = self.skeleton_reset_from(source, target, animations) {
                     self.skeleton_resets.push(reset);
                 }
+                None
+            }
+            NetEvent::HostImage { id, bytes } => {
+                self.host_images.push((id, bytes));
                 None
             }
             other => Some(other),

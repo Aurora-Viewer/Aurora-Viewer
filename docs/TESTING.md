@@ -3550,6 +3550,13 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
+A grid whose login has an empty appearance service (OpenSim with ViewerAsset
+on another host) fetches those bakes from the simulator over UDP. There is
+no offline demo: it needs a live region. On that grid our avatar and the
+others finish loading, and the log has no `texture … fetch failed` line for
+a bake. A grid that publishes an appearance capability, and Second Life,
+still fetch bakes over HTTP.
+
 ### Details
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell

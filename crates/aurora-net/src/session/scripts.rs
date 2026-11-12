@@ -380,6 +380,7 @@ mod tests {
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
+            images: Default::default(),
         };
         for (object, sim) in [(Uuid::nil(), &main), (Uuid::from_u128(3), &neighbour)] {
             let target = ScriptTarget {
