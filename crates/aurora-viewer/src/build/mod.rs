@@ -1654,6 +1654,10 @@ impl BuildTool {
     /// the active group. Like the Legacy Viewer, the other selected roots
     /// stay out, no permission is asked here (the simulator decides) and
     /// the selection stays.
+    ///
+    /// Unlike the Legacy Viewer, which says nothing, a notice in the nearby
+    /// chat names the object being saved (the simulator sends no reply to
+    /// a save), and the source object's Contents list is read again.
     pub fn save_to_contents(&mut self, world: &mut World) {
         let Some((root, from)) = self.save_to_contents_target(world) else {
             return;
@@ -1662,6 +1666,12 @@ impl BuildTool {
             return;
         };
         let (handle, local_id) = (object.key.region, object.key.local_id);
+        let name = self
+            .props
+            .get(&object.full_id)
+            .map(|p| p.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| aurora_i18n::tr!("common-object").to_string());
         self.send(BuildCmd::DeRez {
             handle,
             local_ids: vec![local_id],
@@ -1670,6 +1680,11 @@ impl BuildTool {
             group_id: world.groups.active,
         });
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
+        world.system_notice(
+            aurora_i18n::tr!("ui-bars-save-to-object-contents-sent", name = name),
+            crate::world::notice_topics::Topic::Items,
+        );
+        self.contents_changed(from);
     }
 
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).

@@ -113,6 +113,10 @@ fn one_derez_saves_the_first_root_alone_and_keeps_the_selection() {
     rezzed_from(&mut tool, &world, 99610, from, true);
     rezzed_from(&mut tool, &world, 99614, from, true);
     let selection = tool.selection.clone();
+    // the source's listing was asked for and is still on its way
+    let listing = tool.contents.objects.entry(from).or_default();
+    listing.loading = true;
+    listing.requested = Some(Instant::now());
     tool.save_to_contents(&mut world);
     let root = world.objects.get(idx(&world, 99610)).expect("root").key;
     match &tool.out[..] {
@@ -133,6 +137,15 @@ fn one_derez_saves_the_first_root_alone_and_keeps_the_selection() {
         other => panic!("expected one DeRezObject, got {} commands", other.len()),
     }
     assert_eq!(tool.selection, selection);
+    // a notice names the object, the source's Contents are read again
+    let notice = world.chat.back().expect("notice");
+    assert_eq!(notice.kind, crate::world::ChatKind::System);
+    assert_eq!(
+        notice.text,
+        aurora_i18n::tr!("ui-bars-save-to-object-contents-sent", name = aurora_i18n::tr!("common-object"))
+    );
+    let listing = &tool.contents.objects[&from];
+    assert!(listing.requested.is_none() && !listing.loading);
     // nothing is sent when the entry is greyed out
     let mut none = selected(&world, &[99612]);
     none.save_to_contents(&mut world);
