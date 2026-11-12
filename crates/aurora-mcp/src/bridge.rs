@@ -552,6 +552,25 @@ pub enum ViewerRequest {
         target_uuid: String,
         ban: Option<bool>,
     },
+
+    // Phase 9: Economy & Social
+    EconomyPayAvatar {
+        target_uuid: String,
+        amount: i32,
+        message: Option<String>,
+    },
+    EconomyPayObject {
+        target_local_id: u32,
+        amount: i32,
+        description: Option<String>,
+    },
+    GroupsList,
+    GroupsActivate {
+        group_uuid: String,
+    },
+    FriendsList {
+        online_only: Option<bool>,
+    },
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -627,7 +646,9 @@ impl ViewerRequest {
             | ViewerRequest::ViewerLogin { .. }
             | ViewerRequest::AvatarAnimationsList
             | ViewerRequest::EconomyGetBalance
-            | ViewerRequest::ParcelInfoQuery => false,
+            | ViewerRequest::ParcelInfoQuery
+            | ViewerRequest::GroupsList
+            | ViewerRequest::FriendsList { .. } => false,
 
             ViewerRequest::LiveMeshControl { action, .. }
             | ViewerRequest::AssetUpload { action, .. } => {
@@ -682,7 +703,10 @@ impl ViewerRequest {
             | ViewerRequest::ParcelSetMusic { .. }
             | ViewerRequest::ParcelSetProperties { .. }
             | ViewerRequest::ParcelAccessListModify { .. }
-            | ViewerRequest::ParcelEject { .. } => true,
+            | ViewerRequest::ParcelEject { .. }
+            | ViewerRequest::EconomyPayAvatar { .. }
+            | ViewerRequest::EconomyPayObject { .. }
+            | ViewerRequest::GroupsActivate { .. } => true,
         }
     }
 }

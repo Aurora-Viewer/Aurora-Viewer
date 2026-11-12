@@ -2280,6 +2280,114 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            // ---- Phase 9: Economy & Social Suite ----
+            "economy_pay_avatar" => {
+                let target_uuid = args
+                    .get("target_uuid")
+                    .or_else(|| args.get("recipient"))
+                    .or_else(|| args.get("to"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'target_uuid'".into()))?
+                    .to_string();
+                let amount = args
+                    .get("amount")
+                    .or_else(|| args.get("amount_l$"))
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'amount'".into()))?
+                    as i32;
+                if amount <= 0 {
+                    return Err(McpError::InvalidParams("'amount' must be greater than 0".into()));
+                }
+                let message = args.get("message").and_then(Value::as_str).map(str::to_owned);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::EconomyPayAvatar {
+                            target_uuid,
+                            amount,
+                            message,
+                        },
+                        10_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "economy_pay_object" => {
+                let target_local_id = args
+                    .get("target_local_id")
+                    .or_else(|| args.get("local_id"))
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'target_local_id'".into()))?
+                    as u32;
+                let amount = args
+                    .get("amount")
+                    .or_else(|| args.get("amount_l$"))
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'amount'".into()))?
+                    as i32;
+                if amount <= 0 {
+                    return Err(McpError::InvalidParams("'amount' must be greater than 0".into()));
+                }
+                let description = args.get("description").and_then(Value::as_str).map(str::to_owned);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::EconomyPayObject {
+                            target_local_id,
+                            amount,
+                            description,
+                        },
+                        10_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "groups_list" => {
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::GroupsList,
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "groups_activate" => {
+                let group_uuid = args
+                    .get("group_uuid")
+                    .or_else(|| args.get("group_id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'group_uuid'".into()))?
+                    .to_string();
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::GroupsActivate { group_uuid },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "friends_list" => {
+                let online_only = args.get("online_only").and_then(Value::as_bool);
+
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::FriendsList { online_only },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
         }
     }
@@ -3781,6 +3889,66 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: false,
         },
+        ToolDefinition {
+            name: "economy_pay_avatar".into(),
+            description: "Transfer Linden Dollars (L$) from the agent's account balance directly to another resident with an optional transaction message.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_uuid": { "type": "string", "description": "Target resident avatar UUID" },
+                    "amount": { "type": "integer", "description": "Amount in Linden Dollars (L$) to transfer (must be > 0)" },
+                    "message": { "type": "string", "description": "Optional payment note or message" }
+                },
+                "required": ["target_uuid", "amount"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "economy_pay_object".into(),
+            description: "Pay Linden Dollars (L$) to an in-world object (such as a tip jar, vendor, or event terminal).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_local_id": { "type": "integer", "description": "Local ID of target object in simulator" },
+                    "amount": { "type": "integer", "description": "Amount in Linden Dollars (L$) to pay (must be > 0)" },
+                    "description": { "type": "string", "description": "Optional description for payment receipt" }
+                },
+                "required": ["target_local_id", "amount"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "groups_list".into(),
+            description: "List all groups the avatar is currently a member of, including group titles, powers bitmask, contribution, and currently active group.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "groups_activate".into(),
+            description: "Activate a group by UUID to display its tag and title over the avatar in-world.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "group_uuid": { "type": "string", "description": "UUID of the group to activate (or '00000000-0000-0000-0000-000000000000' to clear active tag)" }
+                },
+                "required": ["group_uuid"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "friends_list".into(),
+            description: "Retrieve the avatar's friends list, including display names, online status, and granted friendship permissions (can see online, see on map, modify objects).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "online_only": { "type": "boolean", "description": "Filter results to only friends currently online (default false)" }
+                }
+            }),
+            in_compact_profile: true,
+        },
     ]
 }
 
@@ -3791,7 +3959,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 97, "expected 97 total tools (43 Legacy + 54 Aurora-native)");
+        assert_eq!(defs.len(), 102, "expected 102 total tools (43 Legacy + 59 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -3900,6 +4068,11 @@ mod tests {
             "parcel_set_properties",
             "parcel_access_list_modify",
             "parcel_eject",
+            "economy_pay_avatar",
+            "economy_pay_object",
+            "groups_list",
+            "groups_activate",
+            "friends_list",
         ] {
             assert!(
                 names.contains(&native),

@@ -1967,6 +1967,34 @@ impl App {
                 let resp = self.handle_mcp_parcel_eject(&target_uuid, ban);
                 let _ = reply_tx.send(resp);
             }
+            ViewerRequest::EconomyPayAvatar {
+                target_uuid,
+                amount,
+                message,
+            } => {
+                let resp = self.handle_mcp_economy_pay_avatar(&target_uuid, amount, message);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::EconomyPayObject {
+                target_local_id,
+                amount,
+                description,
+            } => {
+                let resp = self.handle_mcp_economy_pay_object(target_local_id, amount, description);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::GroupsList => {
+                let resp = self.handle_mcp_groups_list();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::GroupsActivate { group_uuid } => {
+                let resp = self.handle_mcp_groups_activate(&group_uuid);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::FriendsList { online_only } => {
+                let resp = self.handle_mcp_friends_list(online_only);
+                let _ = reply_tx.send(resp);
+            }
         }
     }
 
@@ -5050,6 +5078,169 @@ impl App {
             "target_uuid": target.to_string(),
             "banned": ban_flag,
             "status": "eject_command_dispatched",
+        })))
+    }
+
+    fn handle_mcp_economy_pay_avatar(
+        &mut self,
+        target_uuid_str: &str,
+        amount: i32,
+        message: Option<String>,
+    ) -> Result<ViewerResponse, McpError> {
+        if amount <= 0 {
+            return Err(McpError::InvalidParams("amount must be greater than 0".into()));
+        }
+        let balance = self.world.balance.unwrap_or(0);
+        if balance < amount {
+            return Err(McpError::InvalidParams(format!(
+                "insufficient funds: balance is L${balance}, required L${amount}"
+            )));
+        }
+        let target = Uuid::parse_str(target_uuid_str.trim())
+            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+
+        let msg = message.unwrap_or_default();
+        self.send(NetCommand::PayResident {
+            to: target,
+            group: false,
+            amount,
+            message: msg.clone(),
+        });
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "target_uuid": target.to_string(),
+            "amount": amount,
+            "message": msg,
+            "balance_before": balance,
+            "status": "payment_dispatched",
+        })))
+    }
+
+    fn handle_mcp_economy_pay_object(
+        &mut self,
+        target_local_id: u32,
+        amount: i32,
+        description: Option<String>,
+    ) -> Result<ViewerResponse, McpError> {
+        if amount <= 0 {
+            return Err(McpError::InvalidParams("amount must be greater than 0".into()));
+        }
+        let balance = self.world.balance.unwrap_or(0);
+        if balance < amount {
+            return Err(McpError::InvalidParams(format!(
+                "insufficient funds: balance is L${balance}, required L${amount}"
+            )));
+        }
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let (_idx, target_uuid) = self.resolve_prim_by_local_id(target_local_id)?;
+
+        let desc = description.unwrap_or_else(|| format!("Object {target_local_id}"));
+        self.send(NetCommand::PayObject {
+            handle,
+            object: target_uuid,
+            amount,
+            description: desc.clone(),
+        });
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "target_local_id": target_local_id,
+            "target_uuid": target_uuid.to_string(),
+            "amount": amount,
+            "description": desc,
+            "balance_before": balance,
+            "status": "payment_dispatched",
+        })))
+    }
+
+    fn handle_mcp_groups_list(&self) -> Result<ViewerResponse, McpError> {
+        let active_id = self.world.groups.active;
+        let active_title = self.world.groups.active_title.clone();
+        let groups: Vec<Value> = self
+            .world
+            .groups
+            .groups
+            .iter()
+            .map(|g| {
+                json!({
+                    "group_id": g.id.to_string(),
+                    "name": g.name.clone(),
+                    "insignia": g.insignia.to_string(),
+                    "powers": g.powers,
+                    "accept_notices": g.accept_notices,
+                    "list_in_profile": g.list_in_profile,
+                    "contribution": g.contribution,
+                    "is_active": g.id == active_id,
+                })
+            })
+            .collect();
+
+        Ok(ViewerResponse::Json(json!({
+            "active_group_id": active_id.to_string(),
+            "active_group_title": active_title,
+            "count": groups.len(),
+            "groups": groups,
+        })))
+    }
+
+    fn handle_mcp_groups_activate(&mut self, group_uuid_str: &str) -> Result<ViewerResponse, McpError> {
+        let group_id = Uuid::parse_str(group_uuid_str.trim())
+            .map_err(|e| McpError::InvalidParams(format!("invalid group UUID: {e}")))?;
+
+        if group_id != Uuid::nil() && !self.world.groups.groups.iter().any(|g| g.id == group_id) {
+            return Err(McpError::InvalidParams(format!(
+                "avatar is not a member of group '{group_id}'"
+            )));
+        }
+
+        self.send(NetCommand::ActivateGroup(group_id));
+        self.world.groups.active = group_id;
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "active_group_id": group_id.to_string(),
+            "status": "group_activated",
+        })))
+    }
+
+    fn handle_mcp_friends_list(&self, online_only: Option<bool>) -> Result<ViewerResponse, McpError> {
+        use crate::world::social::rights;
+
+        let filter_online = online_only.unwrap_or(false);
+        let mut friends_vec = Vec::new();
+
+        for friend in &self.world.social.friends {
+            if filter_online && !friend.online {
+                continue;
+            }
+            let name = self
+                .world
+                .social
+                .names
+                .get(&friend.id)
+                .cloned()
+                .or_else(|| self.world.social.avatar_names.complete(&friend.id))
+                .unwrap_or_else(|| friend.id.to_string());
+
+            friends_vec.push(json!({
+                "avatar_uuid": friend.id.to_string(),
+                "name": name,
+                "online": friend.online,
+                "rights_given": friend.rights_given,
+                "rights_has": friend.rights_has,
+                "can_see_online": (friend.rights_has & rights::ONLINE_STATUS) != 0,
+                "can_see_on_map": (friend.rights_has & rights::MAP_LOCATION) != 0,
+                "can_modify_objects": (friend.rights_has & rights::MODIFY_OBJECTS) != 0,
+            }));
+        }
+
+        Ok(ViewerResponse::Json(json!({
+            "count": friends_vec.len(),
+            "online_only": filter_online,
+            "friends": friends_vec,
         })))
     }
 }
