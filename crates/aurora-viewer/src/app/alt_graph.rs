@@ -30,7 +30,7 @@ fn mouse_alt_ctrl(alt: bool, ctrl: bool, alt_graph: bool) -> (bool, bool) {
     (alt || alt_graph, ctrl || alt_graph)
 }
 
-fn produces_text(logical: &Key, text: Option<&str>) -> bool {
+pub(super) fn produces_text(logical: &Key, text: Option<&str>) -> bool {
     matches!(logical, Key::Dead(_)) || text.is_some_and(|s| s.chars().any(|c| !c.is_control()))
 }
 

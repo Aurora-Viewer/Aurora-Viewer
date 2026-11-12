@@ -64,6 +64,7 @@ mod dev_toolbox;
 mod folders;
 mod hover_pick;
 mod texture_picker;
+mod typing_pointer;
 use folders::chat_log_root;
 mod admin_status;
 mod avatar_studio;
@@ -556,6 +557,8 @@ pub struct App {
     cursor_hold: cursor_hold::CursorHold,
     /// Alt held in mouselook: the cursor given back, the view still.
     alt_cursor: cursor_hold::AltCursor,
+    /// The pointer hidden while a text field takes typing (#3211).
+    typing_pointer: typing_pointer::TypingPointer,
     numeric_drag: ui::numeric_drag::NumericDrag,
     /// Right-click menu of the text fields (Cut, Copy, Paste…).
     text_menu: ui::text_menu::TextMenu,
@@ -1674,6 +1677,7 @@ impl App {
             sent_fov: crate::camera::DEFAULT_FOV,
             cursor_hold: Default::default(),
             alt_cursor: Default::default(),
+            typing_pointer: Default::default(),
             numeric_drag: Default::default(),
             text_menu: Default::default(),
             alt: false,
@@ -12015,6 +12019,12 @@ impl App {
                 full.platform_output.cursor_image = None;
             }
         }
+        if self.typing_pointer.hidden() {
+            // typing in a field (#3211): egui shows the pointer again by
+            // itself once this stops, at the next move
+            full.platform_output.cursor_icon = egui::CursorIcon::None;
+            full.platform_output.cursor_image = None;
+        }
         if self.cursor_hold.held() {
             // the camera holds the hidden cursor: a cursor change from egui
             // would show it again in the middle of the drag
@@ -21945,6 +21955,7 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
+        self.typing_pointer_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
         // here, with no release to come. Like egui-winit, and like

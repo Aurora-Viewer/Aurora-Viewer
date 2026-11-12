@@ -188,10 +188,13 @@ pub(super) fn show(
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
-                        output
-                            .response
-                            .response
-                            .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
+                        let field = output.response.response;
+                        // the hint of the keys hides the last line while typing (#3211)
+                        if has_text && field.has_focus() {
+                            field
+                        } else {
+                            field.on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
+                        }
                     })
                     .inner
                 });

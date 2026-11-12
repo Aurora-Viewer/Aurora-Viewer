@@ -209,6 +209,8 @@ impl App {
             // take the real cursor of someone using the PC
             return;
         }
+        // the camera's hold takes over from a pointer hidden by typing
+        self.typing_pointer.show();
         let mouselook = self.mouselook_capture_enabled();
         let Some(kind) = self.cursor_hold.take(mouselook, focus, self.cursor_pos) else {
             return;
