@@ -517,9 +517,12 @@ impl Camera {
     /// Body-part tracking needs the current skeleton pose before computing
     /// the shot. It follows the avatar shot, the avatar itself picked as the
     /// focus, and that shot reframed in place; a point picked on land, water
-    /// or another object stays still.
+    /// or another object stays still. Never in a VR view: the headset sits at
+    /// the camera position, and moving it with the avatar's head or pelvis
+    /// would bob the whole world in the headset (motion sickness).
     pub fn needs_animated_joint(&self, s: &CameraSettings) -> bool {
         self.third_person()
+            && self.vr_mode.is_none()
             && s.third_person_follow_joint.is_some()
             && (self.focus_on_avatar || self.joint_follow_unlocked || (!self.own.is_nil() && self.focus_object == Some(self.own)))
     }
@@ -3704,6 +3707,32 @@ mod tests {
             !camera.needs_animated_joint(&settings),
             "another avatar's shot does not follow our body"
         );
+    }
+
+    #[test]
+    fn third_person_joint_tracking_is_off_in_a_vr_view() {
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.needs_animated_joint(&settings), "desktop third person follows");
+
+        camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        assert!(camera.third_person());
+        assert!(!camera.needs_animated_joint(&settings), "the headset must not bob with the avatar");
+        let camera_before = camera.calc_camera_target(&world, &settings, &input);
+        let focus_before = camera.calc_focus_target(&world, &settings, &input, camera_before);
+        input.follow_joint_offset = Some(Vec3::Z * 0.25);
+        let camera_after = camera.calc_camera_target(&world, &settings, &input);
+        let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
+        assert!(camera_after.abs_diff_eq(camera_before, 1e-5));
+        assert!(focus_after.abs_diff_eq(focus_before, 1e-5));
     }
 
     fn world_at(pos: Vec3) -> World {
