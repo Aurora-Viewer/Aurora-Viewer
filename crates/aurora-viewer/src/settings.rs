@@ -2451,6 +2451,13 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
         .unwrap_or(false)
 }
 
+/// `language` of a settings file's bytes; "default" for anything else.
+fn language_in(file: Option<&[u8]>) -> String {
+    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| "default".into())
+}
+
 fn for_mode(dir: PathBuf) -> PathBuf {
     if std::env::var_os("AURORA_DEMO").is_some() {
         dir.join("demo")
@@ -2619,6 +2626,13 @@ impl Settings {
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
             .and_then(|v| v.get(field).and_then(|c| c.as_str()).map(str::to_owned))
             .unwrap_or_default()
+    }
+
+    /// The saved language, read the same way for the startup splash
+    /// (`splash/`), which loads nothing else; "default" (the system's) when
+    /// the file or the field is missing.
+    pub fn language_at_start() -> String {
+        language_in(std::fs::read(Self::path()).ok().as_deref())
     }
 
     fn load_from(path: &Path) -> Settings {
@@ -3734,6 +3748,21 @@ mod tests {
         })
         .expect("settings json");
         assert!(super::allow_overlays_in(Some(&saved)));
+    }
+
+    /// The splash's early read of the language agrees with the settings.
+    #[test]
+    fn the_splash_reads_the_saved_language() {
+        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
+            assert_eq!(super::language_in(file), "default", "{file:?}");
+        }
+        let saved = serde_json::to_vec(&super::Settings {
+            language: "ja".into(),
+            ..Default::default()
+        })
+        .expect("settings json");
+        assert_eq!(super::language_in(Some(&saved)), "ja");
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name
