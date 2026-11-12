@@ -674,6 +674,15 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::ModerateGroupText { session, agent, allow } => {
+                self.send(aurora_net::NetCommand::ModerateText { session, agent, allow });
+            }
+            CtxAction::GroupChatEject { group, agent } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Eject { group, agent });
+            }
+            CtxAction::GroupChatBan { group, agent } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Ban { group, agent });
+            }
             // the volumes of the call's participants: applied live, saved
             // once the slider rests
             CtxAction::SetVoiceVolume(id, v) => {

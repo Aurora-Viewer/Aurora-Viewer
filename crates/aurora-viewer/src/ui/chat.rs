@@ -25,6 +25,7 @@ mod keys;
 mod latest;
 mod line_menu;
 mod members;
+pub mod moderation;
 mod object_row;
 mod offer_card;
 mod payment_card;
@@ -1765,6 +1766,17 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
+    });
+    line_menu::inline(r);
+}
+
+/// Right click on a member of a conversation's members' panel: the name
+/// menu, then a group chat's moderator options (`moderation`).
+fn member_menu(r: &egui::Response, p: &Palette, world: &World, conversation: uuid::Uuid, id: uuid::Uuid) {
+    super::contacts::drag::person_source(r, id);
+    super::menu::context_menu(r, p, |ui| {
+        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name);
+        moderation::menu(ui, p, world, conversation, id);
     });
     line_menu::inline(r);
 }
@@ -4094,6 +4106,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let line_menu = line_menu::demo_events(ctx, frame);
     if !line_menu.is_empty() {
         return line_menu;
+    }
+    let moderate = moderation::demo_events(ctx, frame);
+    if !moderate.is_empty() {
+        return moderate;
     }
     let preview = previews::demo_events(ctx, frame);
     if !preview.is_empty() {

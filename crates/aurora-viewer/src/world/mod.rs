@@ -3131,6 +3131,7 @@ impl World {
             | NetEvent::SessionStarted { .. }
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
+            | NetEvent::SessionModerationFailed { .. }
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
                 match &ev {

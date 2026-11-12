@@ -3210,19 +3210,42 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::ActiveGroup { id: *id, name, title }]
         }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
+        // the change comes back as the member's update; with
+        // AURORA_DEMO_CONV_MODERATE=error the server refuses it
+        aurora_net::NetCommand::ModerateText { session, agent, allow } => {
+            log::info!("demo: mute update of {agent} in {session} (text allowed: {allow})");
+            if crate::ui::chat::moderation::demo_mode() == Some("error") {
+                vec![NetEvent::SessionModerationFailed {
+                    session: *session,
+                    forbidden: true,
+                }]
+            } else {
+                vec![NetEvent::SessionAgents {
+                    session: *session,
+                    agents: vec![aurora_net::SessionAgent {
+                        agent: *agent,
+                        present: None,
+                        moderator: None,
+                        text_muted: Some(!*allow),
+                        entered: false,
+                    }],
+                }]
+            }
+        }
         aurora_net::NetCommand::ChatSession { method, session } => {
+            let me = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
             let agents = |ids: &[Uuid]| {
                 ids.iter()
                     .map(|a| aurora_net::SessionAgent {
                         agent: *a,
                         present: Some(true),
-                        moderator: Some(*a == DEMO_NOVA),
+                        // AURORA_DEMO_CONV_MODERATE: we moderate it too
+                        moderator: Some(*a == DEMO_NOVA || (*a == me && crate::ui::chat::moderation::demo_mode().is_some())),
                         text_muted: None,
                         entered: false,
                     })
                     .collect::<Vec<_>>()
             };
-            let me = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
             match method {
                 aurora_net::SessionMethod::AcceptInvitation => {
                     let mut ev = vec![NetEvent::ChatSessionReply {
