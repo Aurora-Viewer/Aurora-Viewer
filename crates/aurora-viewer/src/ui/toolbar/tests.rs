@@ -870,6 +870,24 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
     assert_eq!(commands(&settings.right), ["search"]);
 }
 
+/// A saved or imported layout naming `howto` (dropped by the Legacy Viewer)
+/// loads without it and keeps the rest.
+#[test]
+fn toolbar_sanitize_skips_the_retired_howto_command() {
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![button("people"), button("howto"), button("inventory")]),
+        left: vec![button("howto"), button("radar")],
+        right: vec![button("search"), button("howto")],
+        ..Default::default()
+    };
+    settings.sanitize();
+    let layout = layout();
+    assert_eq!(commands(settings.buttons(&layout)), ["people", "inventory"]);
+    assert_eq!(commands(&settings.left), ["radar"]);
+    assert_eq!(commands(&settings.right), ["search"]);
+    assert!(catalogue::find("howto").is_none());
+}
+
 /// The window lists the Legacy Viewer commands and Aurora additions, each
 /// once, with an embedded icon and localized labels;
 /// what Aurora runs does something, what it cannot run yet does nothing.
