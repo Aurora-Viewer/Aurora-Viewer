@@ -267,6 +267,41 @@ mod tests {
         assert!(ground.abs_diff_eq(expected, 1e-6));
     }
 
+    /// #2329: a ground animesh whose mesh was exported with a quarter turn in
+    /// its bind shape turns by the inverse of that turn, as
+    /// LLControlAvatar::matchVolumeTransform does (`bind_rot * obj_rot`,
+    /// bind_rot from getUnscaledQuaternion); the turn itself left it a half
+    /// turn off: upside down, or facing the other way.
+    #[test]
+    fn a_ground_animesh_turns_by_the_inverse_of_its_bind_rotation() {
+        let (mut scene, mut world, _) = fixture();
+        let index = mesh(&mut world, 9401, 11);
+        world.objects.get_mut(index).expect("animesh").extra.extended_mesh_flags = Some(1);
+        world.objects.get_mut(index).expect("animesh").parent_id = 0;
+        let position = Vec3::new(1.0, 2.0, 3.0);
+        let rotation = Quat::from_rotation_z(0.4);
+        let pelvis = Mat4::from_translation(-world.avatar_lib.pelvis);
+        for bind_turn in [
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            Quat::from_euler(glam::EulerRot::XYZ, 0.3, -1.1, 0.7),
+        ] {
+            let mut skin = skin(&[("mHipLeft", Vec3::ZERO)], false, 0.0);
+            // a scaled and moved bind shape: only its rotation counts
+            skin.bind_shape = Mat4::from_scale_rotation_translation(Vec3::new(2.0, 0.5, 3.0), bind_turn, Vec3::new(0.1, 0.2, 0.3));
+            scene.meshes.insert_demo_skin(Uuid::from_u128(11), skin);
+            let model = anchors::skeleton_model(&world, &scene.meshes, index, position, rotation, 1.0);
+            let expected = Mat4::from_rotation_translation(rotation * bind_turn.inverse(), position) * pelvis;
+            assert!(model.abs_diff_eq(expected, 1e-5), "{bind_turn:?}");
+        }
+        // no bind rotation: the prim's rotation alone, as before
+        scene
+            .meshes
+            .insert_demo_skin(Uuid::from_u128(11), skin(&[("mHipLeft", Vec3::ZERO)], false, 0.0));
+        let model = anchors::skeleton_model(&world, &scene.meshes, index, position, rotation, 1.0);
+        assert!(model.abs_diff_eq(Mat4::from_rotation_translation(rotation, position) * pelvis, 1e-6));
+    }
+
     // Independent LLXformMatrix oracle: compose positions with the parent's
     // own scale and rotation; never inherit that scale in the child's matrix.
     fn legacy_joints(rig: &Rig, base: &anim::SkeletonBase, rotations: &[Quat]) -> Vec<(Vec3, Quat)> {
@@ -320,14 +355,15 @@ mod tests {
                 let mut position = ap.position;
                 position.y *= world.hud_aspect;
                 (position, ap.rotation)
-            } else if let Some(joint) = ap.joint {
-                (
-                    avatar_pos + avatar_rot * (joints[joint].0 + joints[joint].1 * (base.scale[joint] * ap.local_position) - lib.pelvis),
-                    avatar_rot * joints[joint].1 * ap.rotation,
-                )
             } else {
-                // Avatar Center is on mRoot, outside the animated skeleton.
-                (avatar_pos + avatar_rot * ap.position, avatar_rot * ap.rotation)
+                // The fixture also rotates the attachment joints themselves.
+                // LLViewerJointAttachment follows that full frame, including
+                // Avatar Center, without scaling the worn geometry (#1694).
+                let joint = rig.names[&lib.attach_names[&point]];
+                (
+                    avatar_pos + avatar_rot * (joints[joint].0 - lib.pelvis),
+                    avatar_rot * joints[joint].1,
+                )
             };
             let root_object = world.objects.get(root).expect("root");
             let child_object = world.objects.get(child).expect("child");

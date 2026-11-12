@@ -18,7 +18,7 @@
 //!   between the file's history and the new lines, without those the file
 //!   already has.
 
-use super::chat_log::{Entry, Loaded, format, names};
+use super::chat_log::{Entry, Loaded, format, import, names};
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -86,6 +86,11 @@ impl Default for LineClock {
 
 impl LineClock {
     pub fn pushed_back(&mut self) {
+        self.revision = tick();
+    }
+
+    /// A line's text changed in place: the views search the lines again.
+    pub fn edited(&mut self) {
         self.revision = tick();
     }
 
@@ -327,6 +332,29 @@ impl World {
         }
         for loaded in self.chat_log.take_loaded() {
             self.apply_history(loaded);
+        }
+        if let Some(report) = self.chat_log.take_imported() {
+            self.history_imported(&report.changed);
+            self.import_report = Some(report);
+        }
+    }
+
+    /// An import changed these files: a conversation that shows nothing but
+    /// its history reads it again, with what was added. One with lines of
+    /// this session keeps what it shows until it is opened again, or the
+    /// file's end would repeat those lines; so does one still reading its
+    /// history.
+    fn history_imported(&mut self, changed: &std::collections::BTreeSet<String>) {
+        for s in &mut self.social.ims {
+            let imported = s.log.stem().is_some_and(|stem| {
+                let stem = names::clean_file_name(stem.trim());
+                changed.iter().any(|file| import::undated(file) == stem)
+            });
+            if imported && s.log.history == HistoryState::Done && s.lines.iter().all(|l| l.origin == Origin::Log) {
+                s.lines.clear();
+                s.clock.renumbered();
+                s.log.history = HistoryState::NotAsked;
+            }
         }
     }
 
@@ -628,6 +656,44 @@ mod tests {
         clean(&w, &root);
     }
 
+    /// The report of the import under way.
+    fn imported(w: &mut World) -> crate::world::chat_log::import::Report {
+        for _ in 0..500 {
+            if let Some(report) = w.chat_log.take_imported() {
+                return report;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the import did not end");
+    }
+
+    #[test]
+    fn with_both_saves_off_the_login_import_does_not_run_and_the_window_still_does() {
+        use crate::world::chat_log::import::Account;
+        let root = temp();
+        let from = temp();
+        std::fs::write(from.join("Bob.txt"), "[2026/10/01 12:00]  Jane Doe: hello\n").unwrap();
+        std::fs::write(from.join("chat.txt"), "[2026/10/01 12:00]  Jane Doe: hi\n").unwrap();
+        let mut w = world(&root, Uuid::from_u128(1));
+        w.chat_log.set_legacy_apps(Vec::new());
+        let account = Account {
+            first: "Jane".into(),
+            last: "Doe".into(),
+            grid: "agni".into(),
+        };
+        w.chat_log.cfg.log_im = false;
+        w.chat_log.cfg.log_nearby = false;
+        assert!(!w.chat_log.import_found(account.clone()));
+        w.chat_log.cfg.log_nearby = true;
+        assert!(w.chat_log.import_found(account));
+        imported(&mut w);
+        w.chat_log.cfg.log_nearby = false;
+        assert!(w.chat_log.import(vec![from.clone()]));
+        assert_eq!(imported(&mut w).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
+        clean(&w, &root);
+    }
+
     #[test]
     fn the_nearby_chat_is_logged_only_when_asked() {
         let root = temp();
@@ -841,6 +907,42 @@ mod tests {
         clean(&w, &root);
     }
 
+    /// An empty block list comes back as the "emptymutelist" generic
+    /// message: offline messages are asked for at once, not after the
+    /// request's 30 s timeout.
+    #[test]
+    fn offline_messages_follow_an_empty_block_list_at_once() {
+        use aurora_net::NetCommand;
+        let root = temp();
+        let me = crate::demo::DEMO_AGENT;
+        let mut w = world(&root, me);
+        let asked = |w: &mut World| {
+            w.tick_social();
+            w.groups
+                .take_commands()
+                .iter()
+                .filter(|c| matches!(c, NetCommand::RequestOfflineMessages))
+                .count()
+        };
+        w.movement_complete = true;
+        let handle = 0x0003_E800_0003_E800;
+        w.main_region = Some(handle);
+        w.apply(aurora_net::NetEvent::Capabilities {
+            handle,
+            caps: Arc::new([("ReadOfflineMsgs".to_owned(), "x".to_owned())].into_iter().collect()),
+        });
+        w.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        assert_eq!(asked(&mut w), 0);
+        assert!(matches!(w.mutes.state, crate::world::mutes::LoadState::Requested(_)));
+        w.apply(aurora_net::NetEvent::MuteList(aurora_net::MuteListSource::ServerEmpty));
+        assert_eq!(w.mutes.state, crate::world::mutes::LoadState::Loaded);
+        assert_eq!(asked(&mut w), 1);
+        clean(&w, &root);
+    }
+
     /// #1198: a payment we made comes back with the conversation's history,
     /// as one we received does.
     #[test]
@@ -913,6 +1015,55 @@ mod tests {
         w.social.names.insert(Uuid::from_u128(3), "Bob Roe".into());
         assert_eq!(w.transcript_of(Some(Uuid::from_u128(3))).1, None);
         clean(&w, &root);
+    }
+
+    /// A sale to us writes its line to the payer's transcript, as the
+    /// PaymentReceived notice's `log_to_im` does; a muted payer and a group
+    /// write nothing there.
+    #[test]
+    fn a_sale_writes_its_line_to_the_payer_s_transcript_but_not_a_muted_one_or_a_group() {
+        let agent = Uuid::from_u128(1);
+        let jane = Uuid::from_u128(2);
+        let sale = |id: u128, source_group: bool| aurora_net::NetEvent::MoneyTransaction {
+            id: Uuid::from_u128(id),
+            success: true,
+            kind: 5000, // TRANS_OBJECT_SALE
+            source: jane,
+            source_group,
+            dest: agent,
+            dest_group: false,
+            amount: 100,
+            item: "Steel helmet".into(),
+            // the server's sentence: without one, nothing is displayed
+            description: "jane Resident paid you L$100.".into(),
+        };
+        let lines = |w: &World| w.chat_log.file_of("jane").map(|_| file_texts(w, "jane")).unwrap_or_default();
+        for case in ["sale", "muted", "group"] {
+            let root = temp();
+            let mut w = world(&root, agent);
+            w.payments.notify_direct = true;
+            w.payments.notify_received = true;
+            w.social.names.insert(jane, "jane Resident".into());
+            if case == "muted" {
+                w.mutes.reset(agent);
+                w.block(jane, "jane Resident", crate::world::mutes::MuteType::Agent)
+                    .expect("blocked");
+            }
+            w.payment(&sale(70, case == "group"));
+            settle(&mut w);
+            settle(&mut w);
+            let written = lines(&w);
+            if case == "sale" {
+                assert_eq!(written.len(), 1, "{case}: {written:?}");
+                assert!(
+                    written[0].1.contains("100") && written[0].1.contains("Steel helmet"),
+                    "{case}: {written:?}"
+                );
+            } else {
+                assert!(written.is_empty(), "{case}: {written:?}");
+            }
+            clean(&w, &root);
+        }
     }
 
     #[test]

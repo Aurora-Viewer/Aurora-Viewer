@@ -141,6 +141,18 @@ impl<B: Clone, T: Clone, E> Journal<B, T, E> {
         self.data.len()
     }
 
+    /// Bytes of the buffer writes recorded since the last replay: what a
+    /// staging buffer must hold for them (write_staging.rs).
+    pub fn buffer_bytes(&self) -> usize {
+        self.ops
+            .iter()
+            .map(|op| match op {
+                Op::Buffer { data, .. } => data.len(),
+                _ => 0,
+            })
+            .sum()
+    }
+
     /// Recorded buffer writes, texture writes and submits (diagnostics).
     pub fn counts(&self) -> [usize; 3] {
         let mut n = [0; 3];

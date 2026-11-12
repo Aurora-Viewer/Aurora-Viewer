@@ -37,17 +37,30 @@ pub struct Link {
     /// When the shared pipe is free again.
     free_at: Mutex<Instant>,
     sent: [AtomicU64; 4],
+    /// Mesh requests are refused with a 403 until then (`meshfail=`).
+    meshes_refused_until: Option<Instant>,
 }
 
 impl Link {
     /// `mbps`: megabits a second (None: no limit but the round trip).
     pub fn new(delay: Duration, mbps: Option<f64>) -> Arc<Link> {
+        Self::refusing_meshes(delay, mbps, None)
+    }
+
+    /// The same link, refusing mesh requests for the time `refused`.
+    pub fn refusing_meshes(delay: Duration, mbps: Option<f64>, refused: Option<Duration>) -> Arc<Link> {
         Arc::new(Link {
             delay,
             bytes_per_second: mbps.filter(|m| *m > 0.0).map(|m| m * 1e6 / 8.0),
             free_at: Mutex::new(Instant::now()),
             sent: Default::default(),
+            meshes_refused_until: refused.map(|d| Instant::now() + d),
         })
+    }
+
+    /// Whether a request for this kind of asset is refused now.
+    fn refuses(&self, kind: &str) -> bool {
+        kind == "mesh" && self.meshes_refused_until.is_some_and(|t| Instant::now() < t)
     }
 
     /// Bytes of bodies sent for a kind (`texture`, `mesh`, `animatn`).
@@ -128,8 +141,10 @@ fn serve(stream: TcpStream, resolve: &Resolve, link: &Link) {
         }
         std::thread::sleep(link.delay);
         let asked = parse_request(&head);
-        let file = asked.and_then(|(kind, id, range)| Some((std::fs::read(resolve(kind, &id)?).ok()?, range)));
+        let file = asked.and_then(|(kind, id, range)| Some((super::source::read(&resolve(kind, &id)?).ok()?, range)));
+        let refused = asked.is_some_and(|(kind, _, _)| link.refuses(kind));
         let (status, headers, body) = match &file {
+            _ if refused => ("403 Forbidden", String::new(), &[][..]),
             Some((data, range)) => reply(data, *range),
             None => ("404 Not Found", String::new(), &[][..]),
         };

@@ -46,6 +46,11 @@ impl Rights {
     }
 }
 
+/// The same CMT menu, with state supplied independently by its owning window.
+pub fn rights_button(ui: &mut egui::Ui, p: &Palette, rights: &mut Rights, height: f32) -> egui::Response {
+    super::aurora::rights_button(ui, p, rights, height)
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Permissions {
     owner: Option<u32>,
@@ -88,7 +93,7 @@ impl Permissions {
         Some(
             actions::original(inv, id)
                 .and_then(|id| inv.items.get(&id))
-                .map_or_else(Self::default, |item| Self::new(item.owner_mask, item.next_owner_mask)),
+                .map_or_else(Self::default, |item| Self::new(actions::held(inv, item), item.next_owner_mask)),
         )
     }
 
@@ -103,8 +108,14 @@ impl Permissions {
     /// allowed, dimmed and struck through when refused, the next owner's
     /// after an arrow.
     pub fn append_to(self, job: &mut LayoutJob, p: &Palette, family: &FontFamily) {
-        Self::append_mask(job, p, family, self.owner);
-        if self.show_next {
+        self.append_with_rights(job, p, family, if self.show_next { Rights::Both } else { Rights::Mine });
+    }
+
+    pub fn append_with_rights(self, job: &mut LayoutJob, p: &Palette, family: &FontFamily, rights: Rights) {
+        if rights.shows_mine() {
+            Self::append_mask(job, p, family, self.owner);
+        }
+        if rights.shows_next() {
             job.append("→", LETTER_GAP, TextFormat::simple(FontId::proportional(LETTER_SIZE), p.muted));
             Self::append_mask(job, p, family, self.next);
         }
@@ -165,8 +176,15 @@ impl Permissions {
     /// Same suffix, hover and selection as the user's inventory. Long names
     /// enlarge the scrollable list rather than the containing window.
     pub fn row(self, ui: &mut egui::Ui, p: &Palette, name: &str, selected: bool) -> egui::Response {
+        self.row_with_rights(ui, p, name, selected, if self.show_next { Rights::Both } else { Rights::Mine })
+    }
+
+    pub fn row_with_rights(self, ui: &mut egui::Ui, p: &Palette, name: &str, selected: bool, rights: Rights) -> egui::Response {
         let mut label = super::super::widgets::name_with_suffix(name, "", FontId::proportional(13.0), p.ink);
-        self.append_suffix(ui, &mut label, p);
+        if rights != Rights::Hidden {
+            label.append(" ", 0.0, TextFormat::simple(FontId::proportional(12.0), p.muted));
+            self.append_with_rights(&mut label, p, &crate::ui::fonts::semibold(ui.ctx()), rights);
+        }
         super::super::widgets::inventory_item_label(ui, label, selected, egui::Sense::click_and_drag(), None)
     }
 }

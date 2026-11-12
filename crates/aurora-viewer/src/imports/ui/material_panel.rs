@@ -104,6 +104,7 @@ fn preview(
                 widgets::picture(ui, p, None, Vec2::splat(176.0), "cube-3d-sphere", "")
             }
             .on_hover_text(aurora_i18n::tr!("import-preview-gestures"));
+            widgets::local_texture::paint(ui, p, response.rect);
             ui.ctx()
                 .data_mut(|data| data.insert_temp(egui::Id::unique(("material_canvas", id)), response.rect));
         });
@@ -130,6 +131,7 @@ fn preview(
         .inner;
     ui.ctx()
         .data_mut(|data| data.insert_temp(egui::Id::unique(("material_canvas", id)), rect));
+    widgets::local_texture::paint(ui, p, rect);
     camera_hint(ui, p);
     checkbox(ui, p, &mut material.double_sided, aurora_i18n::tr!("import-double-sided"));
 }
@@ -181,6 +183,12 @@ fn clean_map(
             .filter(|(key, _)| images[slot].as_ref().is_some_and(|image| image.key == *key))
             .map(|(_, texture)| texture);
         let picture = widgets::picture(ui, p, texture, Vec2::splat(MAP_PREVIEW_SIZE), "photo-filled", "");
+        if images[slot].as_ref().is_some_and(|image| image.asset.is_none()) {
+            widgets::local_texture::paint(ui, p, picture.rect);
+        }
+        if let Some(target) = crate::ui::resource_drop::Target::hovered(ui, picture.rect, false, true) {
+            actions.push(Action::MapDrop(id, slot, target));
+        }
         if texture.is_some() && picture.clicked() {
             actions.push(Action::Zoom(id, Some(slot)));
         }
@@ -343,14 +351,20 @@ fn map_card(
             .filter(|(key, _)| images[slot].as_ref().is_some_and(|image| image.key == *key))
             .map(|(_, texture)| texture);
         let picture = widgets::picture(ui, p, texture, Vec2::splat(88.0), "photo-filled", aurora_i18n::tr!("import-no-map"));
+        if images[slot].as_ref().is_some_and(|image| image.asset.is_none()) {
+            widgets::local_texture::paint(ui, p, picture.rect);
+        }
+        if let Some(target) = crate::ui::resource_drop::Target::hovered(ui, picture.rect, false, true) {
+            actions.push(Action::MapDrop(id, slot, target));
+        }
         if texture.is_some() {
             if let Some(icon) = crate::ui::icons::global("zoom-in-filled") {
-                ui.put(
-                    egui::Rect::from_min_size(picture.rect.right_bottom() - Vec2::splat(24.0), Vec2::splat(20.0)),
-                    egui::Image::new(&icon)
-                        .fit_to_exact_size(Vec2::splat(18.0))
-                        .tint(p.ink)
-                        .sense(egui::Sense::hover()),
+                // Paint the overlay without moving the horizontal layout cursor.
+                ui.painter().image(
+                    icon.id(),
+                    egui::Rect::from_min_size(picture.rect.left_bottom() + Vec2::new(4.0, -22.0), Vec2::splat(18.0)),
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    p.ink,
                 );
             }
             if picture.clicked() {

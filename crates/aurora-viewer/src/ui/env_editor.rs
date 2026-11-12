@@ -524,7 +524,11 @@ impl EnvEditorUi {
     ) -> bool {
         let chosen = self.picker.show_live(ctx, p, world, images);
         self.wanted_images.extend(self.picker.wanted_images.drain());
-        let slot = self.picking;
+        let slot = self
+            .picker
+            .dropped_slot()
+            .and_then(|i| [TexSlot::Cloud, TexSlot::Sun, TexSlot::Moon, TexSlot::Normal].get(i).copied())
+            .or(self.picking);
         if !self.picker.open {
             self.picking = None;
         }
@@ -586,6 +590,8 @@ impl EnvEditorUi {
                 ui.painter()
                     .rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet), egui::StrokeKind::Inside);
             }
+            widgets::local_texture::asset(ui, p, rect, Some(id));
+            self.picker.drop_target_slot(ui, rect, false, enabled, slot as usize);
             if resp.clicked() {
                 self.open_texture(slot, label, id);
             }

@@ -10,7 +10,136 @@ use egui::{RichText, Vec2};
 pub enum Action {
     Save(Option<String>),
     Retry,
-    CustomizeAnimation(bool),
+    Appearance(AppearanceAction),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AppearanceAction {
+    Camera(bool),
+    Pose(bool),
+}
+
+#[derive(Clone, Copy)]
+pub struct AppearanceControls {
+    pub camera: bool,
+    pub pose: bool,
+}
+
+impl From<&crate::settings::Settings> for AppearanceControls {
+    fn from(settings: &crate::settings::Settings) -> Self {
+        Self {
+            camera: settings.appearance_camera_movement,
+            pose: settings.customize_animation,
+        }
+    }
+}
+
+pub(super) fn appearance_controls(ui: &mut egui::Ui, p: &Palette, mut controls: AppearanceControls) -> Vec<AppearanceAction> {
+    let mut actions = Vec::new();
+    for (value, label, hint, camera) in [
+        (
+            &mut controls.camera,
+            aurora_i18n::tr!("appearance-editor-camera"),
+            aurora_i18n::tr!("ui-options-appearance-camera-hint"),
+            true,
+        ),
+        (
+            &mut controls.pose,
+            aurora_i18n::tr!("shape-a-pose"),
+            aurora_i18n::tr!("ui-options-customize-animation-hint"),
+            false,
+        ),
+    ] {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::switch_labeled(ui, p, value, label).on_hover_text(hint).changed() {
+                    actions.push(if camera {
+                        AppearanceAction::Camera(*value)
+                    } else {
+                        AppearanceAction::Pose(*value)
+                    });
+                }
+            });
+        });
+    }
+    actions
+}
+
+/// The editor's title row: the item's name, then LLPanelEditWearable's
+/// Import button (panel_edit_wearable.xml `import_btn`) and an Export button,
+/// shared by the shape, physics and layer editors. Import reads an appearance
+/// XML into the draft (`shape_editor::xml_import`); it is greyed out without
+/// modify rights, as there. Export writes the draft to one
+/// (`shape_editor::xml_export`), greyed out without modify rights too
+/// (`actions::appearance_xml_export_allowed`). Which one was clicked.
+pub(super) fn name_row(ui: &mut egui::Ui, p: &Palette, glyph: Option<&str>, name: RichText, import: bool, export: bool) -> (bool, bool) {
+    let mut clicked = (false, false);
+    let buttons = |ui: &mut egui::Ui, clicked: &mut (bool, bool)| {
+        clicked.1 = widgets::action_button_if(
+            ui,
+            p,
+            "file-export",
+            aurora_i18n::tr!("appearance-xml-export-button"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            export,
+        )
+        .on_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
+        .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
+        .clicked();
+        clicked.0 = widgets::action_button_if(
+            ui,
+            p,
+            "file-import",
+            aurora_i18n::tr!("appearance-xml-import-button"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            import,
+        )
+        .on_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+        .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+        .clicked();
+    };
+    // The buttons go under the name when both would not fit on one row
+    // (the physics editor is narrow, item names are long), so the name is
+    // not cut down to a few letters.
+    let spacing = ui.spacing().item_spacing.x;
+    let buttons_w: f32 = [
+        ("file-export", aurora_i18n::tr!("appearance-xml-export-button")),
+        ("file-import", aurora_i18n::tr!("appearance-xml-import-button")),
+    ]
+    .iter()
+    .map(|(icon, label)| widgets::action_button_keyed_content(ui, icon, label, None) + widgets::KEYED_PAD + spacing)
+    .sum();
+    let glyph_w = if glyph.is_some() { 24.0 + spacing } else { 0.0 };
+    let name_w = egui::WidgetText::from(name.clone())
+        .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+        .size()
+        .x;
+    let one_row = glyph_w + name_w + spacing + buttons_w <= ui.available_width();
+    ui.horizontal(|ui| {
+        if let Some(icon) = glyph {
+            widgets::glyph(ui, icon, p.muted, 24.0);
+        }
+        if one_row {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                buttons(ui, &mut clicked);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(name.clone()).truncate());
+                });
+            });
+        } else {
+            ui.add(egui::Label::new(name.clone()).truncate());
+        }
+    });
+    if !one_row {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                buttons(ui, &mut clicked);
+            });
+        });
+    }
+    clicked
 }
 
 fn groups() -> [&'static str; 9] {
@@ -84,7 +213,7 @@ fn category_wheel(
     None
 }
 
-pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State, mut customize_animation: bool) -> (Vec<Action>, Vec<i32>) {
+pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State, controls: AppearanceControls) -> (Vec<Action>, Vec<i32>) {
     if !st.open {
         return (Vec::new(), Vec::new());
     }
@@ -97,6 +226,16 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     let mut open = true;
     let mut close = false;
     let mut reset = false;
+    let mut import = false;
+    let mut export = false;
+    let modify = st.draft.as_ref().is_some_and(|draft| draft.can_modify(world));
+    if let Some((message, imported)) = st.xml.poll(st.draft.as_mut(), modify, &world.avatar_lib.shape_params) {
+        st.message = message;
+        changed |= imported;
+    }
+    if let Some(message) = st.xml_export.poll() {
+        st.message = message;
+    }
     let mut floater = widgets::Floater::new(
         "shape_editor",
         aurora_i18n::tr!("shape-title"),
@@ -113,54 +252,57 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             let male = draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5;
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    widgets::glyph(ui, "man-filled", p.muted, 24.0);
-                    ui.add(egui::Label::new(RichText::new(&draft.item.name).strong().size(15.0).color(p.ink)).truncate());
-                });
-                ui.add_enabled_ui(modify && !busy, |ui| {
-                    let mut selection = male;
-                    ui.horizontal(|ui| {
-                        widgets::radio_value(ui, p, &mut selection, true, aurora_i18n::tr!("shape-male"));
-                        widgets::radio_value(ui, p, &mut selection, false, aurora_i18n::tr!("shape-female"));
-                    });
-                    if selection != male {
-                        draft.edited.params.insert(80, f32::from(selection));
-                        changed = true;
-                    }
-                });
-                let weights = world
-                    .avatar_lib
-                    .shape_params
-                    .weights_with(world.server_visual_params(), &draft.edited.params);
-                let shape = world.avatar_lib.shape_params.shape_weights(weights, &world.avatar_lib.rig);
-                let (_, height) = crate::scene::shape::body_size(&world.avatar_lib.rig, &shape.local_pos, &shape.scale);
-                // LLPanelEditWearable::updateTypeSpecificControls adds 0.195 m
-                // to the server collision height for the displayed stature.
-                let height = height + 0.195;
-                ui.horizontal(|ui| {
-                    let value = aurora_i18n::number((height * if st.feet { 3.28084 } else { 1.0 }) as f64, 2);
-                    ui.label(RichText::new(aurora_i18n::tr!("shape-height", value = value)).color(p.muted));
-                    if widgets::flat_button(
-                        ui,
-                        p,
-                        if st.feet {
-                            aurora_i18n::tr!("shape-feet")
-                        } else {
-                            aurora_i18n::tr!("shape-meters")
-                        },
-                    )
-                    .clicked()
-                    {
-                        st.feet = !st.feet;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if widgets::switch_labeled(ui, p, &mut customize_animation, aurora_i18n::tr!("shape-t-pose"))
-                            .on_hover_text(aurora_i18n::tr!("ui-options-customize-animation-hint"))
-                            .changed()
-                        {
-                            actions.push(Action::CustomizeAnimation(customize_animation));
+                (import, export) = name_row(
+                    ui,
+                    p,
+                    Some("man-filled"),
+                    RichText::new(&draft.item.name).strong().size(15.0).color(p.ink),
+                    modify && !busy && !st.xml.busy(),
+                    draft.can_export_xml(world) && !st.xml_export.busy(),
+                );
+                ui.columns(2, |columns| {
+                    columns[0].add_enabled_ui(modify && !busy, |ui| {
+                        let mut selection = male;
+                        ui.horizontal(|ui| {
+                            widgets::radio_value(ui, p, &mut selection, true, aurora_i18n::tr!("shape-male"));
+                            widgets::radio_value(ui, p, &mut selection, false, aurora_i18n::tr!("shape-female"));
+                        });
+                        if selection != male {
+                            draft.edited.params.insert(80, f32::from(selection));
+                            changed = true;
                         }
                     });
+                    let weights = world
+                        .avatar_lib
+                        .shape_params
+                        .weights_with(world.server_visual_params(), &draft.edited.params);
+                    let shape = world.avatar_lib.shape_params.shape_weights(weights, &world.avatar_lib.rig);
+                    let (_, height) = crate::scene::shape::body_size(&world.avatar_lib.rig, &shape.local_pos, &shape.scale);
+                    // LLPanelEditWearable::updateTypeSpecificControls adds 0.195 m
+                    // to the server collision height for the displayed stature.
+                    let height = height + 0.195;
+                    columns[0].horizontal(|ui| {
+                        let value = aurora_i18n::number((height * if st.feet { 3.28084 } else { 1.0 }) as f64, 2);
+                        ui.label(RichText::new(aurora_i18n::tr!("shape-height", value = value)).color(p.muted));
+                        if widgets::flat_button(
+                            ui,
+                            p,
+                            if st.feet {
+                                aurora_i18n::tr!("shape-feet")
+                            } else {
+                                aurora_i18n::tr!("shape-meters")
+                            },
+                        )
+                        .clicked()
+                        {
+                            st.feet = !st.feet;
+                        }
+                    });
+                    actions.extend(
+                        appearance_controls(&mut columns[1], p, controls)
+                            .into_iter()
+                            .map(Action::Appearance),
+                    );
                 });
             });
             ui.add_space(6.0);
@@ -201,7 +343,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(80.0);
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
                 if widgets::icon_toggle(ui, p, "photo-filled", aurora_i18n::tr!("shape-hints"), st.hints) {
                     st.hints = !st.hints;
                 }
@@ -426,6 +568,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     if reset && let Some(draft) = &mut st.draft {
         draft.edited = draft.original.clone();
     }
+    if import && let Some(draft) = &st.draft {
+        st.message.clear();
+        st.xml.start(ctx, draft);
+    }
+    if export && let Some(draft) = &st.draft {
+        st.message.clear();
+        let allowed = draft.can_export_xml(world);
+        if let Err(message) = st.xml_export.start(ctx, draft, allowed, &world.avatar_lib.shape_params) {
+            st.message = message;
+        }
+    }
     if changed || reset {
         st.changed(world);
     }
@@ -511,6 +664,96 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shape_and_layer_editors_offer_camera_above_pose_without_editing_the_draft() {
+        for layer in [false, true] {
+            let (mut world, mut shape) = crate::shape_editor::tests::fixture();
+            let (mut layer_world, mut wearable, _) = crate::wearable_editor::tests::fixture(14);
+            let ctx = egui::Context::default();
+            let palette = crate::theme::Theme::default().palette();
+            let mut draw = |events, controls| {
+                let mut actions = Vec::new();
+                let output = run_headless(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if layer {
+                            for action in super::super::wearable::show(
+                                ui.ctx(),
+                                &palette,
+                                &mut layer_world,
+                                &mut wearable,
+                                &Default::default(),
+                                controls,
+                            ) {
+                                if let super::super::wearable::Action::Appearance(action) = action {
+                                    actions.push(action);
+                                }
+                            }
+                        } else {
+                            for action in show(ui.ctx(), &palette, &mut world, &mut shape, controls).0 {
+                                if let Action::Appearance(action) = action {
+                                    actions.push(action);
+                                }
+                            }
+                        }
+                    },
+                );
+                (actions, output)
+            };
+            let controls = AppearanceControls { camera: true, pose: true };
+            let mut output = Default::default();
+            for _ in 0..4 {
+                let result = draw(Vec::new(), controls);
+                assert!(result.0.is_empty());
+                output = result.1;
+            }
+            let label = |key| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text() == aurora_i18n::text(key) => {
+                            let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                            assert!(shape.clip_rect.contains_rect(rect), "control stays visible");
+                            Some(rect.center())
+                        }
+                        _ => None,
+                    })
+                    .expect("appearance control")
+            };
+            let camera = label("appearance-editor-camera");
+            let pose = label("shape-a-pose");
+            assert!(camera.y < pose.y);
+            for (pos, expected) in [(camera, AppearanceAction::Camera(false)), (pose, AppearanceAction::Pose(false))] {
+                for pressed in [true, false] {
+                    let events = vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ];
+                    let (actions, _) = draw(events, controls);
+                    if pressed {
+                        assert!(actions.is_empty());
+                    } else {
+                        assert_eq!(actions, vec![expected]);
+                        break;
+                    }
+                }
+            }
+            assert!(!shape.draft.as_ref().expect("shape draft").dirty());
+            assert!(!wearable.draft.as_ref().expect("layer draft").dirty());
+        }
+    }
     fn run_headless(ctx: &egui::Context, input: egui::RawInput, draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
         let mut output = ctx.run_ui(input, draw);
         // These tests inspect layout/input without a renderer. Explicitly
@@ -527,7 +770,14 @@ mod tests {
             ..Default::default()
         };
         let _ = run_headless(ctx, input, |ui| {
-            actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state, true).0;
+            actions = show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                world,
+                state,
+                AppearanceControls { camera: true, pose: true },
+            )
+            .0;
         });
         actions
     }
@@ -551,7 +801,13 @@ mod tests {
         let mut output = Default::default();
         for _ in 0..3 {
             output = run_headless(&ctx, input.clone(), |ui| {
-                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state, true);
+                let _ = show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &mut world,
+                    &mut state,
+                    AppearanceControls { camera: true, pose: true },
+                );
             });
         }
         let at = output
@@ -622,7 +878,13 @@ mod tests {
             };
             let mut frame = |state: &mut State| {
                 run_headless(&ctx, input.clone(), |ui| {
-                    let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, state, true);
+                    let _ = show(
+                        ui.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        &mut world,
+                        state,
+                        AppearanceControls { camera: true, pose: true },
+                    );
                 })
             };
             for _ in 0..8 {
@@ -703,7 +965,13 @@ mod tests {
         let mut output = Default::default();
         for _ in 0..4 {
             output = run_headless(&ctx, input.clone(), |ui| {
-                let _ = show(ui.ctx(), &crate::theme::Theme::default().palette(), &mut world, &mut state, true);
+                let _ = show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &mut world,
+                    &mut state,
+                    AppearanceControls { camera: true, pose: true },
+                );
             });
         }
         assert!(

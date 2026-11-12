@@ -21,6 +21,55 @@ pub fn debug_on() -> bool {
 
 /// Upload budget per frame (bytes): a 1024² media is 4 MB.
 const UPLOAD_BUDGET: usize = 16 << 20;
+const RECENTLY_SHOWN: Duration = Duration::from_secs(60);
+const FLAGS_LOST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn request_priority(e: &ObjMedia, shown: bool) -> u8 {
+    if shown {
+        entry::SHOWN
+    } else if e.hud {
+        entry::HUD
+    } else if e.on_own_avatar {
+        entry::ATTACHMENT
+    } else {
+        entry::WORLD
+    }
+}
+
+/// The running plugin receives changed media parameters without being
+/// recreated or navigating away from its current page.
+trait MediaConfigTarget {
+    fn size(&mut self, width: i32, height: i32);
+    fn auto_scale(&mut self, enabled: bool);
+    fn looping(&mut self, enabled: bool);
+}
+
+impl MediaConfigTarget for MediaPlugin {
+    fn size(&mut self, width: i32, height: i32) {
+        self.set_size(width, height);
+    }
+
+    fn auto_scale(&mut self, enabled: bool) {
+        self.set_auto_scale(enabled);
+    }
+
+    fn looping(&mut self, enabled: bool) {
+        self.set_loop(enabled);
+    }
+}
+
+fn apply_entry_to_plugin(plugin: &mut impl MediaConfigTarget, old: (i32, i32, bool, bool), entry: &MediaEntry) {
+    let size = (entry.width_pixels as i32, entry.height_pixels as i32);
+    if (old.0, old.1) != size {
+        plugin.size(size.0, size.1);
+    }
+    if old.2 != entry.auto_scale {
+        plugin.auto_scale(entry.auto_scale);
+    }
+    if old.3 != entry.auto_loop {
+        plugin.looping(entry.auto_loop);
+    }
+}
 
 impl MediaManager {
     /// Update running plugins immediately, including while the native window
@@ -40,7 +89,7 @@ impl MediaManager {
         let _ = self.plugins(f.settings);
         self.on_parcel_messages(world, f.settings);
         self.scan_objects(world, scene, now);
-        self.fetch_media_data(f);
+        self.fetch_media_data(scene, f);
         self.reconcile_prims(world, f);
         self.update_parcel(world, f);
         self.apply_filter(world, f);
@@ -138,10 +187,13 @@ impl MediaManager {
                 if let Some(e) = self.objects.remove(&id) {
                     forget_slot(&mut self.slot_ids, e.idx, &id);
                 }
+                self.client.cancel(&id);
             }
         }
+        self.expire_visibility(now);
+        self.note_shown(now);
         for &idx in &changes {
-            self.visit(world, idx, hud);
+            self.visit(world, idx, hud, now);
         }
         changes.clear();
         self.changes = changes;
@@ -156,9 +208,27 @@ impl MediaManager {
         }
     }
 
+    fn expire_visibility(&mut self, now: Instant) {
+        self.recently_shown
+            .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
+    }
+
+    /// Stamps every prim whose media is showing now, in one pass over the
+    /// media implementations: `visit` then only looks its object up, instead
+    /// of searching every implementation for each media object.
+    fn note_shown(&mut self, now: Instant) {
+        for m in &self.impls {
+            if let MediaKey::Prim { object, .. } = m.key
+                && m.interest > 0.0
+            {
+                self.recently_shown.insert(object, now);
+            }
+        }
+    }
+
     /// One slot of the store: what it held is forgotten if the object is
     /// gone, its media state is read again if it is (still) a media object.
-    fn visit(&mut self, world: &World, idx: usize, hud: &dyn Fn(usize) -> bool) {
+    fn visit(&mut self, world: &World, idx: usize, hud: &dyn Fn(usize) -> bool, now: Instant) {
         let obj = world.objects.get(idx);
         if let Some(old) = self.slot_ids.get(&idx).copied()
             && obj.is_none_or(|o| o.full_id != old)
@@ -174,6 +244,7 @@ impl MediaManager {
                 }
                 None => {
                     self.objects.remove(&old);
+                    self.client.cancel(&old);
                 }
             }
         }
@@ -192,13 +263,43 @@ impl MediaManager {
         let has_media =
             o.te.as_ref()
                 .is_some_and(|te| local.is_some() || te.faces.iter().any(|f| f.media_flags & 1 != 0));
-        if !has_media {
+        let fetched_media = self
+            .objects
+            .get(&o.full_id)
+            .is_some_and(|e| e.data.as_ref().is_some_and(|d| d.faces.iter().any(Option::is_some)));
+        let flags_lost_expired = self.objects.get(&o.full_id).is_some_and(|e| {
+            e.flags_lost_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= FLAGS_LOST_TIMEOUT)
+        });
+        if !has_media && fetched_media && o.te.is_some() && !flags_lost_expired {
+            if let Some(e) = self.objects.get_mut(&o.full_id)
+                && e.flags_lost_since.is_none()
+            {
+                e.flags_lost_since = Some(now);
+                e.fetched_version = None;
+                e.asked_version = None;
+                log::info!("media: {} media flags cleared, asking its media again", o.full_id);
+            }
+        } else if !has_media {
             if let Some(e) = self.objects.remove(&o.full_id) {
+                log::info!(
+                    "media: {} has no media face any more ({}, hud {})",
+                    o.full_id,
+                    if o.te.is_some() {
+                        "texture entry without media"
+                    } else {
+                        "no texture entry"
+                    },
+                    e.hud
+                );
                 forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
             }
+            self.client.cancel(&o.full_id);
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
             return;
         }
+        // stamped by `note_shown` before the visits
+        let shown = self.recently_shown.contains_key(&o.full_id);
         let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
@@ -212,6 +313,9 @@ impl MediaManager {
         e.on_other_avatar = on_other_avatar;
         e.on_own_avatar = on_own_avatar;
         e.changed_by = entry::media_version_agent(&o.media_url);
+        if has_media {
+            e.flags_lost_since = None;
+        }
         if let Some(local) = local {
             if e.data.is_none() {
                 e.fetched_version = Some(local.version);
@@ -220,26 +324,58 @@ impl MediaManager {
             return;
         }
         // LLVOVolume::processUpdateMessage: fetch when the media version
-        // grew (or never fetched)
+        // grew (or never fetched), once per version: an answer that failed
+        // (the simulator busy past the retries) waits for the next change,
+        // instead of asking again at once and keeping the simulator's rate
+        // limit full for every other screen
         let version = entry::media_version(&o.media_url);
         let need = match (e.fetched_version, version) {
             (None, _) => true,
             (Some(have), Some(v)) => v > have,
             (Some(_), None) => false,
-        };
+        } && e.asked_version.is_none_or(|asked| version.unwrap_or(0) > asked);
+        let priority = request_priority(e, shown);
+        if self.client.is_queued(&o.full_id) {
+            self.client.prioritize(&o.full_id, priority);
+        }
         if need
             && !self.client.is_queued(&o.full_id)
             && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
         {
-            self.client.request(o.full_id, cap);
+            e.asked_version = Some(version.unwrap_or(0));
+            self.client.request(o.full_id, cap, e.fetched_version.is_some(), priority);
         }
     }
 
-    fn fetch_media_data(&mut self, f: &MediaFrame) {
+    fn fetch_media_data(&mut self, scene: &Scene, f: &MediaFrame) {
         let Some((rt, http)) = f.net.as_ref() else {
             return;
         };
-        for got in self.client.update(rt, http) {
+        // LLMediaDataClientObjectImpl::getMediaInterest: the focused object
+        // first, then the pixels on screen (HUDs count as a 512² page), the
+        // nearest first among equals
+        let (objects, focus) = (&self.objects, self.focus);
+        let interest = |id: &Uuid| -> Option<(f32, f32)> {
+            let om = objects.get(id)?;
+            if matches!(focus, Some(MediaKey::Prim { object, .. }) if object == *id) {
+                return Some((f32::MAX, 0.0));
+            }
+            if om.hud {
+                return Some((512.0 * 512.0, 0.0));
+            }
+            Some(match scene.gpu.get(om.idx).filter(|g| g.radius > 0.0) {
+                Some(g) => {
+                    let px = if f.view.sphere_visible(g.center, g.radius) {
+                        f.view.pixel_size(g.center, g.radius)
+                    } else {
+                        0.0
+                    };
+                    (px * px, g.center.distance(f.camera))
+                }
+                None => (0.0, f32::MAX),
+            })
+        };
+        for got in self.client.update(rt, http, Instant::now(), interest) {
             let Some(e) = self.objects.get_mut(&got.object) else {
                 continue;
             };
@@ -258,9 +394,13 @@ impl MediaManager {
                     }
                 }
                 Err(err) => {
+                    // not asked again until the version changes (asked_version)
                     log::info!("media: ObjectMedia for {} failed: {err}", got.object);
-                    // stop asking until the version changes
-                    e.fetched_version = Some(e.fetched_version.unwrap_or(0));
+                    if e.flags_lost_since.take().is_some() {
+                        // A terminal confirmation failure cannot justify
+                        // keeping the stale media implementation alive.
+                        e.data = None;
+                    }
                 }
             }
         }
@@ -299,13 +439,19 @@ impl MediaManager {
                 };
                 desired.insert(key);
                 let may_navigate = entry.may_navigate(you_own);
+                let may_control = entry.may_control(you_own);
                 if let Some(m) = self.impls.iter_mut().find(|m| m.key == key) {
                     m.may_navigate = may_navigate;
+                    m.may_control = may_control;
                     if m.entry.as_ref() != Some(entry) {
                         let old_url = m.entry.as_ref().map(|e| e.url().to_string()).unwrap_or_default();
+                        let (width, height) = (entry.width_pixels as i32, entry.height_pixels as i32);
+                        if let Some(plugin) = m.plugin.as_mut() {
+                            apply_entry_to_plugin(plugin, (m.width, m.height, m.auto_scale, m.looping), entry);
+                        }
                         m.entry = Some(entry.clone());
-                        m.width = entry.width_pixels as i32;
-                        m.height = entry.height_pixels as i32;
+                        m.width = width;
+                        m.height = height;
                         m.auto_scale = entry.auto_scale;
                         m.looping = entry.auto_loop;
                         // someone else navigated: follow (not our own change)
@@ -326,6 +472,7 @@ impl MediaManager {
                     && ((f.autoplay && self.tentative_autoplay) || (om.hud && f.settings.autoplay_huds) || self.force_autoplay);
                 m.entry = Some(entry.clone());
                 m.may_navigate = may_navigate;
+                m.may_control = may_control;
                 log::info!(
                     "media: {} face {fi}: {} (auto play {}, {}×{}, interact {}, first click {})",
                     id,
@@ -353,19 +500,28 @@ impl MediaManager {
 
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
-    /// unloaded, a refused one is no longer wanted. Media on our own worn
-    /// items is not asked about (`filter_trust_own_worn`).
+    /// unloaded, a refused one is no longer wanted. Media on items we wear
+    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// script, a file of this computer or a browser page never loads, with
+    /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
         let objects = &self.objects;
         for m in &mut self.impls {
             m.filter_hold = false;
-            if !f.settings.filter || !m.wanted {
+            if !m.wanted {
                 continue;
             }
             let source = match m.key {
                 MediaKey::Parcel => Source::ParcelMedia,
                 MediaKey::Prim { .. } => Source::PrimMedia,
             };
+            if world.media_filter.refuse_scheme(&m.url, source) {
+                m.wanted = false;
+                continue;
+            }
+            if !f.settings.filter {
+                continue;
+            }
             let verdict = if trusted_by_filter(objects, m.key, f.settings) {
                 world.media_filter.check_trusted(&m.url, source)
             } else {
@@ -878,10 +1034,15 @@ fn forget_slot(slot_ids: &mut HashMap<usize, Uuid>, idx: usize, id: &Uuid) {
     }
 }
 
-/// Whether the media filter loads a media without asking: on our own worn
-/// items (attachments and HUDs) when the option is on. Another avatar's
-/// attachments, objects in the world, the parcel media, and an item whose
-/// avatar has not arrived yet are asked about.
+/// Whether the media filter loads a media without asking: on items we wear
+/// (attachments and HUDs), whoever made them, when the option is on.
+/// Another avatar's attachments, objects in the world, the parcel media,
+/// and an item whose avatar has not arrived yet are asked about. The Legacy
+/// Viewer filters only the parcel media and music (filterMediaUrl,
+/// indra/newview/llviewerparcelmedia.cpp), never prim media: asking about
+/// the world's objects is already stricter, and asking about the HUDs one
+/// bought too would question every worn item, with nothing playing until
+/// answered.
 fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings: &MediaSettings) -> bool {
     settings.filter_trust_own_worn
         && match key {
@@ -950,6 +1111,49 @@ impl MediaImpl {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn running_media_receives_changed_dimensions_scale_and_loop() {
+        #[derive(Default)]
+        struct Effective {
+            size: (i32, i32),
+            scale: bool,
+            looping: bool,
+            calls: usize,
+        }
+        impl MediaConfigTarget for Effective {
+            fn size(&mut self, width: i32, height: i32) {
+                self.size = (width, height);
+                self.calls += 1;
+            }
+            fn auto_scale(&mut self, enabled: bool) {
+                self.scale = enabled;
+                self.calls += 1;
+            }
+            fn looping(&mut self, enabled: bool) {
+                self.looping = enabled;
+                self.calls += 1;
+            }
+        }
+        let mut running = Effective {
+            size: (640, 360),
+            ..Default::default()
+        };
+        let changed = MediaEntry {
+            width_pixels: 1024,
+            height_pixels: 512,
+            auto_scale: true,
+            auto_loop: true,
+            ..Default::default()
+        };
+        apply_entry_to_plugin(&mut running, (640, 360, false, false), &changed);
+        assert_eq!(
+            (running.size, running.scale, running.looping, running.calls),
+            ((1024, 512), true, true, 3)
+        );
+        apply_entry_to_plugin(&mut running, (1024, 512, true, true), &changed);
+        assert_eq!(running.calls, 3, "an unchanged entry must not reconfigure the plugin");
+    }
 
     #[test]
     fn minimized_mute_restores_media_source_volume_and_rolloff() {
@@ -1032,7 +1236,7 @@ mod tests {
                 o.owner_id = owner;
                 o.update_flags = if owned { OBJECT_YOU_OWNER } else { 0 };
                 for (interact, expected) in [(entry::PERM_OWNER, owned), (entry::PERM_ANYONE, true), (0, false)] {
-                    for controls in [0, 7] {
+                    for (controls, control_expected) in [(0, false), (entry::PERM_OWNER, owned), (entry::PERM_ANYONE, true), (7, true)] {
                         m.set_object_media(
                             screen,
                             ObjectMediaData {
@@ -1048,10 +1252,14 @@ mod tests {
                         );
                         track(&mut m, &mut w);
                         reconcile(&mut m, &w);
+                        let media = m.find(&key).expect("media");
                         assert_eq!(
-                            m.find(&key).expect("media").may_navigate,
-                            expected,
+                            media.may_navigate, expected,
                             "owned={owned}, owner={owner}, interact={interact}, controls={controls}"
+                        );
+                        assert_eq!(
+                            media.may_control, control_expected,
+                            "control owned={owned}, owner={owner}, interact={interact}, controls={controls}"
                         );
                     }
                 }
@@ -1199,6 +1407,70 @@ mod tests {
     }
 
     #[test]
+    fn visibility_expiry_demotes_an_already_queued_refresh_below_a_hud_load() {
+        let (mut w, screen) = world();
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        m.client.clear();
+        m.client.request(screen, "cap", true, entry::WORLD);
+        let entry = m.objects.get_mut(&screen).expect("tracked screen");
+        entry.fetched_version = Some(0);
+        entry.asked_version = Some(0);
+        let shown_at = Instant::now();
+        let mut media = MediaImpl::new(
+            MediaKey::Prim { object: screen, face: 0 },
+            "https://example.invalid".into(),
+            String::new(),
+        );
+        media.interest = 10.0;
+        m.impls.push(media);
+        m.note_shown(shown_at);
+        m.visit(&w, idx, &|_| false, shown_at);
+        assert_eq!(m.client.queued_priority(&screen), Some(entry::SHOWN));
+        m.impls[0].interest = 0.0;
+
+        // A new scan expires history once, then visiting demotes the existing
+        // request even though its version was already asked.
+        let expired = shown_at + RECENTLY_SHOWN + Duration::from_millis(1);
+        m.expire_visibility(expired);
+        m.note_shown(expired);
+        m.visit(&w, idx, &|_| false, expired);
+        assert_eq!(m.client.queued_priority(&screen), Some(entry::WORLD));
+
+        let hud = Uuid::from_u128(0x2260);
+        m.client.request(hud, "cap", false, entry::HUD);
+        assert_eq!(m.client.next_due_object(expired, |_| Some((0.0, 1.0))), Some(hud));
+    }
+
+    #[test]
+    fn a_failed_fetch_waits_for_the_next_media_change() {
+        let (mut w, screen) = world();
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let set_url = |w: &mut World, v: u32| {
+            if let Some(o) = w.objects.get_mut(idx) {
+                o.media_url = format!("x-mv:{v:010}/{}", Uuid::from_u128(7));
+            }
+        };
+        set_url(&mut w, 3);
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen));
+        // the simulator stayed busy past the retries: the client gave up
+        m.client.clear();
+        for later in 1..4 {
+            let at = m.last_refresh + Duration::from_millis(600 * later);
+            m.track_objects(&mut w, &|_| false, at);
+            assert!(!m.client.is_queued(&screen), "same version: not asked again");
+        }
+        // the script changes the screen: its new data is asked for
+        set_url(&mut w, 4);
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen));
+        assert_eq!(m.objects.get(&screen).and_then(|e| e.asked_version), Some(4));
+    }
+
+    #[test]
     fn fetch_waits_for_the_capability_without_a_full_pass() {
         let (mut w, screen) = world();
         let main = w.main_region.expect("demo region");
@@ -1273,9 +1545,39 @@ mod tests {
         // in the world
         track(&mut m, &mut w);
         assert!(!trusted_by_filter(&m.objects, key, &on));
-        // worn by us, as an attachment or a HUD
+        // worn by us, its item not known yet (or a temporary attachment,
+        // worn from no item): trusted
         parent_to(&mut w, own);
+        let item = Uuid::from_u128(0x17e3);
+        if let Some(o) = w.objects.get_mut(idx) {
+            o.name_values = format!("AttachItemID STRING RW SV {item}");
+        }
         track(&mut m, &mut w);
+        assert!(m.objects.get(&screen).is_some_and(|e| e.on_own_avatar));
+        assert!(trusted_by_filter(&m.objects, key, &on), "creator unknown");
+        // whoever made the item: a HUD bought from someone else is trusted
+        // as one we made
+        let made_by = |w: &mut World, creator: Uuid| {
+            w.inventory.add_items(vec![aurora_net::inventory::InvItem {
+                id: item,
+                name: "Screen".into(),
+                creator,
+                owner: w.agent_id,
+                ..Default::default()
+            }]);
+        };
+        // the item arrives later: seen at the next refresh
+        let refresh = |m: &mut MediaManager, w: &mut World| {
+            let later = m.last_refresh + Duration::from_millis(600);
+            m.track_objects(w, &|_| false, later);
+        };
+        made_by(&mut w, Uuid::from_u128(0x5747));
+        refresh(&mut m, &mut w);
+        assert!(trusted_by_filter(&m.objects, key, &on), "made by someone else");
+        assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks");
+        // made by us, as an attachment or a HUD
+        made_by(&mut w, crate::demo::DEMO_AGENT);
+        refresh(&mut m, &mut w);
         assert!(trusted_by_filter(&m.objects, key, &on));
         assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks again");
         m.track_objects(&mut w, &|_| true, m.last_refresh);

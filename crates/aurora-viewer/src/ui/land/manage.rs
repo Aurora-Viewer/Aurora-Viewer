@@ -982,15 +982,9 @@ fn visibility(
         lock_line(ui, p, &m);
     }
     srow(ui, p, aurora_i18n::tr!("ui-land-manage-name"), "", 340.0, |ui| {
-        s.name.sync(&parcel.name);
-        let r = editable(ui, can_identity, |ui| {
-            widgets::restricted_text_field(ui, true, &mut s.name.text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
-                egui::TextEdit::singleline(b).desired_width(330.0)
-            })
-        });
-        if let Some(name) = s.name.after(&r) {
-            world.land.update(|u| u.name = name);
-        }
+        let r = editable(ui, can_identity, |ui| super::parcel_name_field(ui, true, &mut s.name, 330.0));
+        let pending = s.name.after(&r);
+        s.apply_name(world, pending);
     });
     line(ui, p);
     srow(ui, p, aurora_i18n::tr!("ui-land-overview-description"), "", 340.0, |ui| {
@@ -1035,6 +1029,7 @@ fn visibility(
                 s.texture_snapshot = true;
                 s.texture.open(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
             }
+            s.texture.drop_target_slot(ui, rect, false, can_identity, 1);
         },
     );
 }
@@ -1364,6 +1359,7 @@ fn parcel_media(
                 s.texture_snapshot = false;
                 s.texture.open(aurora_i18n::tr!("ui-land-media-media-texture"), id);
             }
+            s.texture.drop_target_slot(ui, rect, false, can, 0);
         },
     );
     line(ui, p);
@@ -1926,6 +1922,7 @@ mod tests {
             handle: 0,
             region: None,
             agent,
+            god: false,
             groups,
             same_region: true,
             now: 0,

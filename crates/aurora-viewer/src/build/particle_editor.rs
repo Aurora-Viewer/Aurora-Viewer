@@ -350,17 +350,21 @@ impl Params {
 
     /// The llParticleSystem script of these settings for the prim `object`
     /// (createScript): the target is llGetKey() unless another object or
-    /// avatar is set, the texture empty for the default image.
-    pub fn script(&self, object: Uuid) -> String {
+    /// avatar is set, the texture empty for the default image. Without
+    /// `texture_key` (the asset id rule does not allow the texture's id) the
+    /// texture key is left empty with a comment for the user to fill.
+    pub fn script(&self, object: Uuid, texture_key: bool) -> String {
         let target = if self.target.is_nil() || self.target == object {
             "llGetKey()".to_owned()
         } else {
             format!("(key) \"{}\"", self.target)
         };
-        let texture = if self.texture.is_nil() {
-            String::new()
+        let (texture, texture_note) = if self.texture.is_nil() {
+            (String::new(), "")
+        } else if texture_key {
+            (self.texture.to_string(), "")
         } else {
-            self.texture.to_string()
+            (String::new(), " // paste the texture key here")
         };
         let flags: String = SCRIPT_FLAG_ORDER
             .iter()
@@ -392,7 +396,7 @@ impl Params {
              \x20           PSYS_PART_BLEND_FUNC_DEST,{blend_dest},\n\
              \x20           PSYS_PART_START_SCALE,{start_scale},\n\
              \x20           PSYS_PART_END_SCALE,{end_scale},\n\
-             \x20           PSYS_SRC_TEXTURE,\"{texture}\",\n\
+             \x20           PSYS_SRC_TEXTURE,\"{texture}\",{texture_note}\n\
              \x20           PSYS_SRC_MAX_AGE,{source_max_age},\n\
              \x20           PSYS_PART_MAX_AGE,{part_max_age},\n\
              \x20           PSYS_SRC_BURST_RATE,{burst_rate},\n\
@@ -500,7 +504,7 @@ mod tests {
 
     #[test]
     fn the_default_script_matches_the_legacy_template() {
-        let script = Params::default().script(Uuid::from_u128(7));
+        let script = Params::default().script(Uuid::from_u128(7), true);
         let expected = "default\n{\n    state_entry()\n    {\n        llParticleSystem(\n        [\n\
             \x20           PSYS_SRC_PATTERN,PSYS_SRC_PATTERN_EXPLODE,\n\
             \x20           PSYS_SRC_BURST_RADIUS,0,\n\
@@ -552,7 +556,7 @@ mod tests {
         ] {
             p.set(mask, true);
         }
-        let script = p.script(object);
+        let script = p.script(object, true);
         assert!(script.contains("PSYS_SRC_PATTERN,PSYS_SRC_PATTERN_ANGLE_CONE,\n"));
         assert!(script.contains(&format!("PSYS_SRC_TARGET_KEY,(key) \"{target}\",\n")));
         assert!(script.contains(&format!("PSYS_SRC_TEXTURE,\"{texture}\",\n")));
@@ -563,7 +567,21 @@ mod tests {
         ));
         // the prim itself as target is llGetKey()
         p.target = object;
-        assert!(p.script(object).contains("PSYS_SRC_TARGET_KEY,llGetKey(),\n"));
+        assert!(p.script(object, true).contains("PSYS_SRC_TARGET_KEY,llGetKey(),\n"));
+    }
+
+    #[test]
+    fn a_texture_key_the_rule_does_not_allow_is_left_for_the_user() {
+        let texture = Uuid::from_u128(11);
+        let p = Params {
+            texture,
+            ..Default::default()
+        };
+        let script = p.script(Uuid::from_u128(7), false);
+        assert!(!script.contains(&texture.to_string()));
+        assert!(script.contains("PSYS_SRC_TEXTURE,\"\", // paste the texture key here\n"));
+        let default = Params::default().script(Uuid::from_u128(7), false);
+        assert!(default.contains("PSYS_SRC_TEXTURE,\"\",\n"), "the default image needs no key");
     }
 
     #[test]
@@ -601,8 +619,8 @@ mod tests {
         assert_eq!(d.part_accel, Vec3::new(0.0, 0.0, -1.0));
         assert_eq!(d.angular_velocity, Vec3::new(0.0, 0.0, 2.0));
         // the script keeps the value typed
-        assert!(p.script(Uuid::nil()).contains("PSYS_SRC_BURST_RATE,0,\n"));
-        assert!(p.script(Uuid::nil()).contains("PSYS_SRC_BURST_PART_COUNT,600,\n"));
+        assert!(p.script(Uuid::nil(), true).contains("PSYS_SRC_BURST_RATE,0,\n"));
+        assert!(p.script(Uuid::nil(), true).contains("PSYS_SRC_BURST_PART_COUNT,600,\n"));
     }
 
     #[test]

@@ -28,8 +28,24 @@ pub struct ScriptTarget {
 #[derive(Debug, Clone)]
 pub struct ScriptSaved {
     pub asset: Uuid,
+    /// No compile error. Also true when the grid did not compile it.
     pub compiled: bool,
+    /// The grid compiled it. OpenSim does not compile a script saved in
+    /// the agent's inventory: its reply (LLSDAssetUploadComplete,
+    /// UpdateItemAsset.cs) has no `compiled`, which is no failure.
+    pub checked: bool,
     pub errors: Vec<String>,
+}
+
+/// A save's reply holds no compile failure: `compiled` is true, or absent
+/// with no `errors` (a grid that did not compile the script, see
+/// [`ScriptSaved::checked`]). A reply that lists errors is a failure even
+/// without `compiled`.
+pub fn compile_ok(ack: &Llsd) -> bool {
+    match &ack["compiled"] {
+        Llsd::Undef => ack["errors"].as_array().is_empty(),
+        _ => ack["compiled"].as_bool(),
+    }
 }
 
 pub fn upload_body(target: ScriptTarget, mono: bool, running: bool, experience: Option<Uuid>) -> Llsd {
@@ -49,7 +65,8 @@ fn saved_reply(ack: &Llsd) -> Result<ScriptSaved, String> {
     let errors = ack["errors"].as_array().iter().map(Llsd::to_string_value).collect();
     Ok(ScriptSaved {
         asset: ack["new_asset"].as_uuid(),
-        compiled: ack["compiled"].as_bool(),
+        compiled: compile_ok(ack),
+        checked: !matches!(ack["compiled"], Llsd::Undef),
         errors,
     })
 }
@@ -225,5 +242,24 @@ mod tests {
         assert!(!result.compiled);
         assert_eq!(result.errors, ["(4, 8) : ERROR : Syntax error"]);
         assert!(saved_reply(&llsd_map! { "state" => "complete", "compiled" => true }).is_err());
+        assert!(result.checked);
+    }
+
+    #[test]
+    fn an_inventory_save_the_grid_did_not_compile_is_no_failure() {
+        // OpenSim's reply to UpdateScriptAgent (LLSDAssetUploadComplete):
+        // no `compiled` and no `errors`
+        let asset = Uuid::from_u128(43);
+        let ack = llsd_map! { "state" => "complete", "new_asset" => asset, "new_inventory_item" => Uuid::from_u128(44) };
+        let result = saved_reply(&ack).expect("source saved");
+        assert_eq!(result.asset, asset);
+        assert!(result.compiled && !result.checked && result.errors.is_empty());
+        assert!(compile_ok(&ack));
+        assert!(!compile_ok(&llsd_map! { "compiled" => false }));
+        assert!(compile_ok(&llsd_map! { "compiled" => true }));
+        // errors without `compiled` stay a failure
+        assert!(!compile_ok(
+            &llsd_map! { "errors" => Llsd::Array(vec!["(4, 8) : ERROR : Syntax error".into()]) }
+        ));
     }
 }

@@ -23,10 +23,12 @@ if (Test-AlreadyReleased $here) {
 $tag = Get-NextBetaTag $tags ([datetime]::UtcNow)
 $message = @("Aurora Viewer $($tag.TrimStart('v')) (nightly beta)")
 $stable = Get-LatestStable $tags
-if ($stable) {
-    $policy = Get-PolicyLine @(git -C $repo for-each-ref '--format=%(contents)' "refs/tags/$($stable.Tag)") $tag.TrimStart('v')
-    if ($policy) { $message += '', $policy }
-}
+$stableMessage = if ($stable) { @(git -C $repo for-each-ref '--format=%(contents)' "refs/tags/$($stable.Tag)") } else { @() }
+# the thresholds of the commit tagged, as a release would take them
+$json = git -C $repo show 'HEAD:update-policy.json'
+if ($LASTEXITCODE -ne 0) { throw 'update-policy.json not found in the commit to tag.' }
+$policy = Get-PolicyLine $stableMessage $tag.TrimStart('v') (($json -join "`n") | ConvertFrom-Json)
+if ($policy) { $message += '', $policy }
 Write-Host "Next beta: $tag"
 if ($DryRun) { $message | ForEach-Object { Write-Host "  $_" }; exit 0 }
 

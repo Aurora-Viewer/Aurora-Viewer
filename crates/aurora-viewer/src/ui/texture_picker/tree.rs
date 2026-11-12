@@ -75,12 +75,22 @@ impl Tree {
             if let Some(item) = item {
                 let mut id = item.parent;
                 let mut seen = HashSet::new();
+                let mut complete = false;
                 while seen.insert(id) {
                     self.state.expand_folder(id, 0);
+                    if id == root || id == inv.root || id == inv.lib_root {
+                        complete = true;
+                        break;
+                    }
                     let Some(parent) = inv.folders.get(&id) else { break };
                     id = parent.info.parent;
                 }
-                self.reveal = None;
+                // Item metadata can arrive before its ancestors. Newly loaded
+                // folders start collapsed, so reveal again until the path is
+                // known rather than losing the current item on first opening.
+                if complete {
+                    self.reveal = None;
+                }
             }
         }
         self.state.prepare(&self.view, root, usize::from(!query.trim().is_empty()), true);
@@ -211,6 +221,19 @@ mod tests {
         tree.state.expand_folder(id(91), 0);
         tree.prepare(&mut inv, id(99), false, "");
         assert!(rows(&tree).contains(&id(92)), "library textures keep their hierarchy");
+    }
+
+    #[test]
+    fn current_item_is_revealed_when_its_parent_folders_arrive_later() {
+        let mut inv = fixture();
+        inv.folders.remove(&id(2));
+        let mut tree = Tree::default();
+        tree.opened(id(110));
+        tree.prepare(&mut inv, id(99), false, "");
+        assert!(!rows(&tree).contains(&id(10)));
+        folder(&mut inv, 2, 1, "Textures");
+        tree.prepare(&mut inv, id(99), false, "");
+        assert!(rows(&tree).contains(&id(10)), "late ancestors must open around the current item");
     }
 
     #[test]

@@ -6,9 +6,15 @@
 //! opens the list once the burst has folded in, `history` shows its
 //! History tab after answering a few cards. `group-notice` (and
 //! `legacy-group-notice`) sends two group notices, one with its group's
-//! insignia and an attachment; `group-notice-saved` saves that attachment.
+//! insignia and an attachment; `group-notice-saved` saves that attachment,
+//! `group-notice-chat` closes both cards and shows the Aurora Builders
+//! chat, where its notice left a line.
 //! `purchase` delivers a Marketplace purchase: the grid's notice in the
 //! nearby chat; `purchase-open` then clicks its Received Items link.
+//! `fees` sends a group invitation with a membership fee and a question
+//! asking to take L$; `fees-answered` then accepts the invitation (the
+//! cost is confirmed) and denies the question (its nearby chat line);
+//! `fees-short` asks a fee the demo balance cannot pay.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
@@ -110,12 +116,52 @@ fn group_notice(agent: Uuid, group: Uuid, from: (Uuid, &str), subject: &str, bod
 /// Frame at which `group-notice-saved` saves the attachment.
 pub const SAVE_AT: u64 = 850;
 
+/// Frame at which `group-notice-chat` closes the cards and shows the
+/// Aurora Builders chat, with its notice's line.
+pub const CHAT_AT: u64 = 760;
+
+/// Frame at which `fees-answered` and `fees-short` answer the cards.
+pub const FEES_ANSWER_AT: u64 = 850;
+
+/// `fees`, `fees-answered`, `fees-short`: an invitation to a group with a
+/// membership fee (invite_bucket_t) and a tip jar asking to take L$
+/// (ScriptQuestionCaution), at frame 700. `fees-short` asks a fee above
+/// the demo balance.
+fn fee_samples(agent: Uuid, short: bool) -> Vec<NetEvent> {
+    use crate::world::notifications::im as d;
+    let fee: i32 = if short { 5000 } else { 50 };
+    let mut bucket = fee.to_be_bytes().to_vec();
+    bucket.extend_from_slice(Uuid::nil().as_bytes());
+    vec![
+        im(
+            agent,
+            // a group we are not in: ours would not show (FSShowJoinedGroupInvitations)
+            Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0020),
+            "Lagoon Sailing Club",
+            d::GROUP_INVITATION,
+            Uuid::from_u128(0x6170_0000_0000_0000_0000_0000_0000_3000),
+            aurora_i18n::tr!("demo-notifs-fee-group-invitation"),
+            &bucket,
+        ),
+        NetEvent::ScriptQuestion {
+            task_id: Uuid::from_u128(0x6170_0000_0000_0000_0000_0000_0000_3001),
+            item_id: Uuid::from_u128(0x6170_0000_0000_0000_0000_0000_0000_3002),
+            object_name: aurora_i18n::tr!("demo-notifs-fee-object").into(),
+            owner_name: "Tess Touch".into(),
+            // take L$, and animate the avatar beside it
+            questions: 0x2 | 0x10,
+            experience: Uuid::nil(),
+            region: 0,
+        },
+    ]
+}
+
 /// The events of `frame`.
 pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_NOVA, DEMO_TESS};
     // two group notices at frame 700: Aurora Builders (no insignia) without
     // an attachment, Northern Wolves (an insignia) with one
-    if mode().is_some_and(|m| m.ends_with("group-notice") || m == "group-notice-saved") {
+    if mode().is_some_and(|m| m.ends_with("group-notice") || m == "group-notice-saved" || m == "group-notice-chat") {
         return if frame == 700 {
             vec![
                 group_notice(
@@ -136,6 +182,13 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
                     Some((aurora_i18n::tr!("demo-group-notice-workshop-kit"), 6)),
                 ),
             ]
+        } else {
+            Vec::new()
+        };
+    }
+    if let Some(mode) = mode().filter(|m| m.starts_with("fees")) {
+        return if frame == 700 {
+            fee_samples(agent, mode == "fees-short")
         } else {
             Vec::new()
         };

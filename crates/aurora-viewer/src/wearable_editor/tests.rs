@@ -97,8 +97,8 @@ fn texture_edits_are_dirty_preserve_other_slots_and_require_real_inventory_right
 }
 
 #[test]
-fn local_wearable_textures_preview_without_becoming_server_assets() {
-    for kind in [1, 4, 13, 14, 16] {
+fn local_wearable_textures_save_their_references_and_failed_saves_keep_the_draft() {
+    for kind in (1..=14).chain([16]) {
         let (mut world, mut state, _) = fixture(kind);
         let local = Uuid::new_v4();
         let material = Uuid::new_v4();
@@ -110,9 +110,20 @@ fn local_wearable_textures_preview_without_becoming_server_assets() {
             assert!(state.set_texture(&world, slot, local));
         }
         assert!(state.draft.as_ref().expect("draft").dirty());
-        assert!(state.save(&world, None).is_none());
-        assert!(state.save(&world, Some("Local copy".into())).is_none());
-        assert_eq!(state.message, aurora_i18n::tr!("wearable-local-preview"));
+        for name in [None, Some(String::from("Local copy"))] {
+            let NetCommand::SaveWearable {
+                request, data, copy_name, ..
+            } = state.save(&world, name.clone()).expect("local save")
+            else {
+                panic!("wearable save")
+            };
+            assert_eq!(copy_name, name);
+            let encoded = Wearable::parse(&data).unwrap();
+            assert_eq!(encoded.kind, kind);
+            assert!(slots(kind).iter().all(|slot| encoded.textures.get(slot) == Some(&local)));
+            assert!(state.saved(&mut world, request, Err("Save failed".into())).is_none());
+            assert!(state.draft.as_ref().unwrap().dirty());
+        }
         assert!(state.draft.as_ref().expect("draft").pending.is_none());
         if kind == 13 {
             let slot = slots(kind)[0];
@@ -137,6 +148,59 @@ fn local_wearable_textures_preview_without_becoming_server_assets() {
         assert_eq!(state.draft.as_ref().expect("draft").edited.textures, original);
         assert!(state.save(&world, None).is_some(), "removing the local file restores savable slots");
     }
+}
+
+#[test]
+fn saved_local_skin_and_layer_references_reopen_and_removed_files_fall_back() {
+    for kind in [1, 14, 16] {
+        let (mut world, mut state, item) = fixture(kind);
+        let local = Uuid::new_v4();
+        world.local_assets.insert(local, ("Local texture".into(), false));
+        for slot in slots(kind) {
+            assert!(state.set_texture(&world, *slot, local));
+        }
+        let NetCommand::SaveWearable { request, data, .. } = state.save(&world, None).unwrap() else {
+            panic!("save")
+        };
+        let mut updated = world.inventory.items[&item].clone();
+        updated.asset_id = Uuid::new_v4();
+        let asset = updated.asset_id;
+        assert_eq!(state.saved(&mut world, request, Ok(updated)), Some((item, item)));
+        assert!(!state.draft.as_ref().unwrap().dirty());
+        state.close(&mut world);
+        assert!(state.open_item(&mut world, item).is_some());
+        assert!(state.loaded(&mut world, item, asset, &Ok(data)));
+        assert!(has_local_textures(&world, state.draft.as_ref().unwrap()));
+        world.local_assets.remove(&local);
+        state.update(&mut world);
+        let draft = state.draft.as_ref().unwrap();
+        assert!(draft.edited.textures.values().all(|texture| *texture != local));
+        assert!(state.save(&world, None).is_some());
+    }
+}
+
+#[test]
+fn removing_a_local_file_during_save_preserves_the_acknowledged_asset() {
+    let (mut world, mut state, item) = fixture(14);
+    let local = Uuid::new_v4();
+    world.local_assets.insert(local, ("Local texture".into(), false));
+    let slot = slots(14)[0];
+    assert!(state.set_texture(&world, slot, local));
+    let NetCommand::SaveWearable { request, data, .. } = state.save(&world, None).unwrap() else {
+        panic!("save")
+    };
+    world.local_assets.remove(&local);
+    state.update(&mut world);
+    assert_eq!(state.draft.as_ref().unwrap().edited.textures[&slot], local);
+    let mut updated = world.inventory.items[&item].clone();
+    updated.asset_id = Uuid::new_v4();
+    assert_eq!(state.saved(&mut world, request, Ok(updated)), Some((item, item)));
+    state.update(&mut world);
+    let draft = state.draft.as_ref().unwrap();
+    assert_eq!(draft.original.textures, Wearable::parse(&data).unwrap().textures);
+    assert_ne!(draft.edited.textures[&slot], local);
+    assert!(draft.dirty(), "the removal still needs to be saved after the first reply");
+    assert!(state.save(&world, None).is_some());
 }
 
 #[test]

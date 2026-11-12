@@ -12,7 +12,7 @@ use crate::theme::Palette;
 use crate::ui::sheet::{self, GAUGE_W, PICTURE, PageTab, fact, icon_at};
 use crate::ui::{presence, widgets};
 use crate::world::World;
-use crate::world::land::{PrimRoom, PrimUsage};
+use crate::world::land::{PrimRoom, PrimUsage, powers};
 use aurora_net::ParcelInfo;
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Rect, RichText, Sense, Shape, Vec2};
@@ -159,6 +159,7 @@ fn picture(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, parcel: &Pa
             icon_at(ui, "mountain-filled", rect.center(), 48.0, p.muted_dim);
         }
     }
+    s.texture.drop_target_slot(ui, rect, false, overview::can_change_picture(v), 1);
     if overview::can_change_picture(v) {
         let slot = Rect::from_min_size(rect.right_bottom() - Vec2::splat(8.0 + 28.0), Vec2::splat(28.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(slot));
@@ -281,7 +282,14 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
     // name, rating and category
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.add(egui::Label::new(semibold(ui, &parcel.name, 19.0, p.ink)).truncate());
+        if v.can(powers::LAND_CHANGE_IDENTITY) {
+            let width = (ui.available_width() * 0.6).min(330.0);
+            let r = super::parcel_name_field(ui, true, &mut s.name, width).on_hover_text(aurora_i18n::tr!("common-name-2"));
+            let pending = s.name.after(&r);
+            s.apply_name(world, pending);
+        } else {
+            ui.add(egui::Label::new(semibold(ui, &parcel.name, 19.0, p.ink)).truncate());
+        }
         if let Some(r) = v.region.as_ref() {
             widgets::maturity_badge_of(ui, p, r.sim_access, 15.0);
         }
@@ -364,6 +372,8 @@ pub(super) fn show(
     has_xp: bool,
 ) -> bool {
     let mut streams_changed = false;
+    let page_before = s.page;
+    let view_as_visitor_before = s.view_as_visitor;
     let role = manager_role(v);
     if role.is_none() {
         s.view_as_visitor = false;
@@ -381,6 +391,7 @@ pub(super) fn show(
         accent: false,
     });
     sheet::page_tabs(ui, p, &tabs, &mut s.page, role, &mut s.view_as_visitor);
+    s.commit_name_for_transition(page_before, view_as_visitor_before, world);
     ui.add_space(8.0);
     let Some(parcel) = v.parcel.clone() else {
         super::no_selection(ui, p);
@@ -457,6 +468,7 @@ mod tests {
             handle: 0,
             region: None,
             agent: me,
+            god: false,
             groups: vec![aurora_net::GroupMembership {
                 id: group,
                 name: String::new(),

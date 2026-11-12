@@ -48,12 +48,18 @@ pub fn classify(url: &str) -> Request {
         None
     };
     if let Some(app) = app {
-        let command = app["secondlife:///app/".len()..].split(['/', '?', '#']).next().unwrap_or("");
+        // what follows "secondlife:///app/"; `get` and `strip_prefix` keep a
+        // short or odd link from cutting a character or the end
+        let rest = app.get("secondlife:///app/".len()..).unwrap_or("");
+        let command = rest.split(['/', '?', '#']).next().unwrap_or("");
         if command.eq_ignore_ascii_case("teleport") || command.eq_ignore_ascii_case("region") {
             return crate::slurl::parse(&app).map_or(Request::Ignored, Request::Place);
         }
         if command.eq_ignore_ascii_case("agent") {
-            let mut tokens = app["secondlife:///app/agent/".len()..]
+            let mut tokens = rest
+                .get(command.len()..)
+                .and_then(|tail| tail.strip_prefix('/'))
+                .unwrap_or("")
                 .split(['?', '#'])
                 .next()
                 .unwrap_or("")
@@ -195,6 +201,54 @@ mod tests {
             "",
         ] {
             assert_eq!(classify(url), Request::Ignored, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_short_agent_link_is_no_profile() {
+        for url in [
+            "secondlife:///app/agent",
+            "secondlife://app/agent",
+            "SECONDLIFE:///APP/AGENT",
+            "secondlife:///app/agent?",
+            "secondlife:///app/agent#é",
+            "secondlife:///app/agent/",
+            "secondlife:///app/agent/é",
+        ] {
+            assert!(!matches!(classify(url), Request::Profile(_)), "{url}");
+        }
+    }
+
+    /// Every prefix of the SLURL forms, cut at each character, with odd
+    /// characters after it: `classify` answers without a panic.
+    #[test]
+    fn no_prefix_of_a_slurl_panics() {
+        let id = "0e346d8b-4433-4d66-a6b0-fd37083abc4c";
+        let forms = [
+            format!("secondlife:///app/agent/{id}/about"),
+            format!("secondlife://app/agent/{id}/inspect/"),
+            format!("secondlife:///app/group/{id}/about"),
+            "secondlife:///app/teleport/Aurora%20D%C3%A9mo/12/34/56".to_owned(),
+            "secondlife://app/region/Région/1/2/3".to_owned(),
+            "secondlife:///app/worldmap/Ahern/1/2/3".to_owned(),
+            "secondlife:///app/chat/5/hello".to_owned(),
+            "secondlife:///app/wear_folder/?folder_id=x".to_owned(),
+            "secondlife:///secondlife/Ahern/1/2/3".to_owned(),
+            "secondlife://Aurora%20D%C3%A9mo/12/34/56/".to_owned(),
+            "hop://grid.example:8002/Region/12/34/56".to_owned(),
+            "x-grid-location-info://grid.example:8002/Region/1/2/3".to_owned(),
+            "https://maps.secondlife.com/secondlife/Ahern/1/2/3".to_owned(),
+            "http://slurl.com/secondlife/Ahern/1/2/3?title=x".to_owned(),
+        ];
+        for form in &forms {
+            for variant in [form.clone(), form.to_ascii_uppercase()] {
+                for (end, _) in variant.char_indices().chain([(variant.len(), ' ')]) {
+                    let prefix = &variant[..end];
+                    for tail in ["", "é", "日", "/", "//", "?", "#", "%", "%C3", "/-1/x/99999999999"] {
+                        let _ = classify(&format!("{prefix}{tail}"));
+                    }
+                }
+            }
         }
     }
 

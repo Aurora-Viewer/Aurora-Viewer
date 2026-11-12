@@ -13,8 +13,32 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_WORN") else {
             return;
         };
+        if mode == "animated" {
+            if self.frame_count == 600 {
+                for event in crate::demo::worn::animated_events() {
+                    self.world.apply(event);
+                }
+                self.scene.anims.insert(
+                    crate::demo::worn::POINT_ANIMATION,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(
+                        crate::demo::worn::point_animation(),
+                        &self.scene.avatar_lib.rig,
+                    )),
+                );
+                self.world.apply(NetEvent::AvatarAnimations {
+                    sources: Vec::new(),
+                    avatar: self.world.agent_id,
+                    anims: vec![(crate::demo::worn::POINT_ANIMATION, 1)],
+                });
+            }
+            return;
+        }
         if matches!(mode.as_str(), "temporary-detach" | "temporary-drop") {
             self.demo_temporary_detach_steps(mode == "temporary-detach");
+            return;
+        }
+        if mode == "derender-part" {
+            self.demo_worn_derender_part_steps();
             return;
         }
         if matches!(mode.as_str(), "temporary" | "temporary-outfit") {
@@ -83,6 +107,67 @@ impl App {
                     );
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// AURORA_DEMO_WORN=derender-part (#3384): Edit on the backpack, "Edit
+    /// linked parts", its child prim selected and right-clicked, then
+    /// "Derender": only that prim goes; "Clear temporary" brings it back.
+    fn demo_worn_derender_part_steps(&mut self) {
+        let region = self.world.main_region.unwrap_or_default();
+        let root = ObjKey {
+            region,
+            local_id: crate::demo::worn::ROOT,
+        };
+        let child = ObjKey {
+            region,
+            local_id: crate::demo::worn::CHILD,
+        };
+        let log_state = |app: &Self, step: &str| {
+            log::info!(
+                "demo worn derender-part: {step}: root present={} child present={}",
+                app.world.objects.index_of(&root).is_some(),
+                app.world.objects.index_of(&child).is_some()
+            );
+        };
+        match self.frame_count {
+            700 => self.on_ctx_action(CtxAction::EditAttachment(root)),
+            720 => {
+                self.build.set_edit_linked(&mut self.world, &mut self.settings.build, true);
+                if let Some(idx) = self.world.objects.index_of(&child) {
+                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                    self.flush_build();
+                }
+            }
+            // the right click on the child prim, where it is drawn
+            740 => {
+                if let Some(idx) = self.world.objects.index_of(&child)
+                    && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+                    && let Some(cursor) = self.build.cam.project_px(pos)
+                {
+                    self.cursor_pos = cursor;
+                    self.open_context_menu();
+                }
+            }
+            780 => {
+                let id = self
+                    .world
+                    .objects
+                    .index_of(&child)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.full_id);
+                self.context_menu = None;
+                if let Some(id) = id {
+                    self.on_ctx_action(CtxAction::Derender { id, permanent: false });
+                }
+                log_state(self, "derendered");
+            }
+            900 => {
+                self.world.clear_temporary_derenders();
+                self.send_derender_requests();
+            }
+            960 => log_state(self, "cleared"),
             _ => {}
         }
     }

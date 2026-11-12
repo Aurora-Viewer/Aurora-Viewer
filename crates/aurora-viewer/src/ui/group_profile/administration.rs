@@ -113,7 +113,7 @@ pub fn roles_now(d: &GroupData, changes: &BTreeMap<Uuid, RoleUpdate>, owner_role
     let mut ids: Vec<Uuid> = d.roles.keys().copied().collect();
     ids.extend(changes.keys().filter(|id| !d.roles.contains_key(id)));
     let mut v: Vec<GroupRole> = ids.iter().filter_map(|id| role_now(d, changes, id)).collect();
-    v.sort_by_cached_key(|r| (!r.id.is_nil(), r.id != owner_role, role_name(&r.name).to_lowercase()));
+    v.sort_by_cached_key(|r| (!r.id.is_nil(), r.id != owner_role, crate::natural_order::key(&role_name(&r.name))));
     v
 }
 
@@ -789,7 +789,7 @@ fn identity(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
                 charter_limit: 1023,
                 insignia_card: true,
             };
-            if identity_cards(ui, c, info, Rating::Switch, fields) {
+            if identity_cards(ui, c, info, Rating::Switch, fields, &mut st.admin.texture) {
                 st.admin.texture.open(aurora_i18n::tr!("ui-group-admin-insignia"), info.insignia);
             }
         });
@@ -848,7 +848,14 @@ pub(super) struct IdentityFields {
 /// The cards of a group's identity (LLPanelGroupGeneral's editable part,
 /// the creation panel's fields): the insignia, the charter, then search,
 /// rating, enrollment and fee. True when "Change the insignia" was clicked.
-pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInfo, rating: Rating, fields: IdentityFields) -> bool {
+pub(super) fn identity_cards(
+    ui: &mut egui::Ui,
+    c: &mut Ctx,
+    info: &mut GroupInfo,
+    rating: Rating,
+    fields: IdentityFields,
+    picker: &mut TexturePicker,
+) -> bool {
     let p = c.p;
     let IdentityFields {
         ident,
@@ -872,7 +879,8 @@ pub(super) fn identity_cards(ui: &mut egui::Ui, c: &mut Ctx, info: &mut GroupInf
                     if !info.insignia.is_nil() {
                         c.wanted_images.insert(info.insignia);
                     }
-                    widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
+                    let picture = widgets::picture(ui, p, c.images.get(&info.insignia), Vec2::splat(96.0), "users-group", "");
+                    picker.drop_target(ui, picture.rect, false, ident);
                     ui.vertical(|ui| {
                         change = widgets::action_button_if(
                             ui,
@@ -1077,7 +1085,7 @@ fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v:
     let ability = catalogue.iter().flat_map(|s| s.abilities.iter()).find(|a| a.bit == bit);
     let roles: Vec<&GroupRole> = {
         let mut v: Vec<&GroupRole> = d.roles.values().filter(|r| r.powers & power != 0).collect();
-        v.sort_by_cached_key(|r| role_name(&r.name).to_lowercase());
+        v.sort_by_cached_key(|r| crate::natural_order::key(&role_name(&r.name)));
         v
     };
     view::card(
@@ -1118,7 +1126,7 @@ fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v:
         })
         .map(|m| (m.id, c.world.social.display_name_of(&m.id)))
         .collect();
-    members.sort_by_cached_key(|m| m.1.to_lowercase());
+    members.sort_by_cached_key(|m| crate::natural_order::key(&m.1));
     let title = aurora_i18n::tr!("ui-group-admin-members-with", count = members.len() as i64);
     view::card(&mut r, p, "users", p.muted_dim, &title, None, |ui| {
         egui::ScrollArea::vertical()

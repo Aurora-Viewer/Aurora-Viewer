@@ -84,7 +84,7 @@ fn particle_gpu_blends_glow_and_optional_intersection_fade_match_reference_equat
     );
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: u64::from(STRIDE * HEIGHT),
+        size: crate::readback::readback_size(u64::from(STRIDE * HEIGHT)),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -567,7 +567,7 @@ fn ordered_particle_commands_match_reference_pixels_after_data_and_binding_chang
             }
             let readback = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size: 128 * 64 * 4,
+                size: crate::readback::readback_size(128 * 64 * 4),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });

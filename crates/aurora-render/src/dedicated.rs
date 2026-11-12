@@ -1,5 +1,7 @@
-//! Texture pages in video memory of their own: one `VkDeviceMemory` each,
-//! given back to the driver the moment the page is destroyed.
+//! Texture pages in dedicated allocations: one `VkDeviceMemory` each,
+//! given back to the driver the moment the page is destroyed. Prefer
+//! device-local memory; on integrated GPUs only, retry a full local heap in
+//! a separate host-visible system heap.
 //!
 //! wgpu's allocator carves its textures out of blocks of 128 to 256 MB and
 //! hands a block back to the driver only once nothing is left in it. Pages
@@ -38,7 +40,7 @@ pub fn bytes() -> u64 {
 
 /// A texture in memory of its own. None when this path does not apply (the
 /// caller creates the texture through wgpu), Err when the driver refused it.
-pub fn texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor) -> Option<Result<wgpu::Texture, String>> {
+pub fn texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor, integrated: bool) -> Option<Result<wgpu::Texture, String>> {
     let format = vk_format(desc.format)?;
     let (usage, hal_usage) = usages(desc.usage)?;
     if desc.dimension != wgpu::TextureDimension::D2 || desc.sample_count != 1 || !desc.view_formats.is_empty() {
@@ -119,27 +121,44 @@ pub fn texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor) -> Option<
     };
     // SAFETY: the image was just created on this device.
     let needs = unsafe { raw.get_image_memory_requirements(image) };
-    let Some(type_index) = memory_type(&memory, needs.memory_type_bits) else {
+    let local_type = memory_type(&memory, needs.memory_type_bits);
+    let local_heap = local_type.map(|i| memory.memory_types_as_slice()[i as usize].heap_index);
+    let shared_type = || shared_memory_type(&memory, needs.memory_type_bits, local_heap);
+    let Some(type_index) = local_type.or_else(|| integrated.then(shared_type).flatten()) else {
         // SAFETY: the image is not used anywhere yet.
         unsafe { raw.destroy_image(image, None) };
         return None;
     };
     let mut own = vk::MemoryDedicatedAllocateInfo::default().image(image);
-    let alloc = vk::MemoryAllocateInfo::default()
-        .allocation_size(needs.size)
-        .memory_type_index(type_index)
-        .push_next(&mut own);
-    // SAFETY: allocation and binding of memory the driver sized for this
-    // image (core since Vulkan 1.1, which wgpu requires); undone on failure.
-    let bound = unsafe {
-        raw.allocate_memory(&alloc, None)
-            .and_then(|mem| match raw.bind_image_memory(image, mem, 0) {
-                Ok(()) => Ok(mem),
-                Err(e) => {
-                    raw.free_memory(mem, None);
-                    Err(e)
-                }
-            })
+    let mut allocate = |type_index| {
+        let alloc = vk::MemoryAllocateInfo::default()
+            .allocation_size(needs.size)
+            .memory_type_index(type_index)
+            .push_next(&mut own);
+        // SAFETY: allocation and binding use memory types Vulkan says are
+        // compatible with this image; failures leave the image unbound.
+        unsafe {
+            raw.allocate_memory(&alloc, None)
+                .and_then(|mem| match raw.bind_image_memory(image, mem, 0) {
+                    Ok(()) => Ok(mem),
+                    Err(e) => {
+                        raw.free_memory(mem, None);
+                        Err(e)
+                    }
+                })
+        }
+    };
+    let bound = match allocate(type_index) {
+        Err(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY) if integrated && local_type.is_some() => {
+            let Some(shared_type) = shared_type() else {
+                // SAFETY: the image is still unbound.
+                unsafe { raw.destroy_image(image, None) };
+                return Some(Err("device-local heap is full and no separate shared heap is available".into()));
+            };
+            log::debug!("integrated GPU texture page: device-local heap is full; retrying in shared system memory");
+            allocate(shared_type)
+        }
+        result => result,
     };
     let mem = match bound {
         Ok(mem) => mem,
@@ -208,9 +227,9 @@ fn usages(usage: wgpu::TextureUsages) -> Option<(vk::ImageUsageFlags, wgpu::Text
     Some((vk_usage, hal))
 }
 
-/// The memory type for a page among those `bits` allows: the card's own
-/// memory not visible to the CPU first (where wgpu's allocator puts its
-/// textures), else any device-local type with no special property.
+/// The device-local memory type for a page among those `bits` allows: an
+/// exact device-local type first (where wgpu's allocator puts its textures),
+/// else a device-local type without unusual flags.
 fn memory_type(memory: &vk::PhysicalDeviceMemoryProperties, bits: u32) -> Option<u32> {
     let plain = vk::MemoryPropertyFlags::DEVICE_LOCAL
         | vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -227,6 +246,34 @@ fn memory_type(memory: &vk::PhysicalDeviceMemoryProperties, bits: u32) -> Option
     };
     find(&|f| f == vk::MemoryPropertyFlags::DEVICE_LOCAL)
         .or_else(|| find(&|f| f.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL) && plain.contains(f)))
+}
+
+/// A distinct host-visible system heap for an integrated GPU. Discrete cards
+/// never call this fallback; a unified local heap is already tried first.
+fn shared_memory_type(memory: &vk::PhysicalDeviceMemoryProperties, bits: u32, exclude_heap: Option<u32>) -> Option<u32> {
+    use vk::MemoryPropertyFlags as F;
+    let plain = F::DEVICE_LOCAL | F::HOST_VISIBLE | F::HOST_COHERENT | F::HOST_CACHED;
+    let types = memory.memory_types_as_slice();
+    let heaps = memory.memory_heaps_as_slice();
+    types
+        .iter()
+        .enumerate()
+        .filter(|(i, ty)| {
+            bits & (1 << i) != 0
+                && ty.property_flags.contains(F::HOST_VISIBLE)
+                && plain.contains(ty.property_flags)
+                && Some(ty.heap_index) != exclude_heap
+                && heaps.get(ty.heap_index as usize).is_some()
+        })
+        // coherent first, and uncached among those: a cached (snooped)
+        // type is slower for the GPU to sample
+        .max_by_key(|(_, ty)| {
+            (
+                ty.property_flags.contains(F::HOST_COHERENT),
+                !ty.property_flags.contains(F::HOST_CACHED),
+            )
+        })
+        .map(|(i, _)| i as u32)
 }
 
 #[cfg(test)]
@@ -253,10 +300,77 @@ mod tests {
         assert_eq!(memory_type(&p, 0b111), Some(2));
         // only the CPU-visible one allowed (an integrated GPU)
         assert_eq!(memory_type(&p, 0b011), Some(1));
+        assert_eq!(shared_memory_type(&p, 0b111, Some(0)), None);
         // never system memory, nor a type with a special property
         assert_eq!(memory_type(&p, 0b001), None);
         let q = props(&[F::DEVICE_LOCAL | F::LAZILY_ALLOCATED, F::DEVICE_LOCAL | F::PROTECTED]);
         assert_eq!(memory_type(&q, 0b11), None);
+    }
+
+    #[test]
+    fn integrated_pages_can_fall_back_to_a_separate_shared_heap() {
+        use vk::MemoryPropertyFlags as F;
+        let mut p = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 2,
+            memory_type_count: 4,
+            ..Default::default()
+        };
+        p.memory_heaps[0].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        p.memory_heaps[1].flags = vk::MemoryHeapFlags::empty();
+        p.memory_types[0].heap_index = 0;
+        p.memory_types[0].property_flags = F::DEVICE_LOCAL;
+        p.memory_types[1].heap_index = 0;
+        p.memory_types[1].property_flags = F::DEVICE_LOCAL | F::HOST_VISIBLE | F::HOST_COHERENT;
+        p.memory_types[2].heap_index = 1;
+        p.memory_types[2].property_flags = F::HOST_VISIBLE | F::HOST_COHERENT;
+        p.memory_types[3].heap_index = 1;
+        p.memory_types[3].property_flags = F::HOST_VISIBLE | F::PROTECTED;
+
+        assert_eq!(memory_type(&p, 0b111), Some(0));
+        assert_eq!(shared_memory_type(&p, 0b111, Some(0)), Some(2));
+        assert_eq!(memory_type(&p, 0b110), Some(1));
+        assert_eq!(shared_memory_type(&p, 0b110, Some(0)), Some(2));
+    }
+
+    #[test]
+    fn integrated_fallback_prefers_an_uncached_coherent_type() {
+        use vk::MemoryPropertyFlags as F;
+        let mut p = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 2,
+            memory_type_count: 3,
+            ..Default::default()
+        };
+        p.memory_heaps[0].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        p.memory_types[0].heap_index = 0;
+        p.memory_types[0].property_flags = F::DEVICE_LOCAL;
+        // AMD's GTT: write-combined first, then the cached (snooped) type
+        p.memory_types[1].heap_index = 1;
+        p.memory_types[1].property_flags = F::HOST_VISIBLE | F::HOST_COHERENT;
+        p.memory_types[2].heap_index = 1;
+        p.memory_types[2].property_flags = F::HOST_VISIBLE | F::HOST_COHERENT | F::HOST_CACHED;
+        assert_eq!(shared_memory_type(&p, 0b111, Some(0)), Some(1));
+        // only the cached one allowed: it is still taken
+        assert_eq!(shared_memory_type(&p, 0b101, Some(0)), Some(2));
+    }
+
+    #[test]
+    fn integrated_fallback_can_use_a_distinct_device_local_host_visible_heap() {
+        use vk::MemoryPropertyFlags as F;
+        let mut p = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 2,
+            memory_type_count: 2,
+            ..Default::default()
+        };
+        p.memory_heaps[0].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        p.memory_heaps[1].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        p.memory_types[0].heap_index = 0;
+        p.memory_types[0].property_flags = F::DEVICE_LOCAL;
+        p.memory_types[1].heap_index = 1;
+        p.memory_types[1].property_flags = F::DEVICE_LOCAL | F::HOST_VISIBLE | F::HOST_COHERENT;
+
+        assert_eq!(memory_type(&p, 0b11), Some(0));
+        assert_eq!(shared_memory_type(&p, 0b11, Some(0)), Some(1));
+        assert_eq!(shared_memory_type(&p, 0b11, Some(1)), None);
     }
 
     #[test]

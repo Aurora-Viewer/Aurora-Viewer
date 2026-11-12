@@ -33,7 +33,7 @@ pub(super) fn allowed(world: &World, id: Uuid) -> bool {
         && !world.mutes.is_muted_id(&id)
         && Scene::skeleton_owner(world, index).is_some_and(|(owner, root)| owner == id && root == index)
 }
-fn subject_name(world: &World, id: Uuid) -> String {
+pub(super) fn subject_name(world: &World, id: Uuid) -> String {
     if id == world.agent_id {
         return aurora_i18n::tr!("poser-you").to_string();
     }
@@ -43,6 +43,19 @@ fn subject_name(world: &World, id: Uuid) -> String {
         return format!("{} {}", aurora_i18n::text("poser-animesh"), object.key.local_id);
     }
     poser_consent::name(world, id)
+}
+/// The short name of a subject, for a narrow place (the compact window's
+/// head, a picture's initials): a resident's display name alone, without
+/// the account that `subject_name` adds.
+pub(super) fn subject_short_name(world: &World, id: Uuid) -> String {
+    if id == world.agent_id {
+        return world.own_name();
+    }
+    let names = &world.social.avatar_names;
+    names
+        .get(&id)
+        .map(|n| n.display(&names.options))
+        .unwrap_or_else(|| subject_name(world, id))
 }
 impl Editor {
     pub(in crate::ik_edit) fn editor_frame(&self, world: &World) -> Option<Frame> {
@@ -61,6 +74,9 @@ impl Editor {
         if !allowed(world, self.poser.subject) {
             self.poser.subject = world.agent_id;
             self.selected = None;
+            // a click beside on them must not leave you with none
+            self.poser.unselected = false;
+            self.poser.together.clear();
             self.refresh = true;
         }
         if !self.poser.sessions.contains_key(&self.poser.subject)
@@ -76,12 +92,30 @@ impl Editor {
             .map(|(id, s)| (*id, s.pose.clone()))
             .collect()
     }
+    /// Who else a click can pose: those already posed, and the nearby
+    /// avatars who accepted, before they are chosen once in the menu.
+    pub(super) fn poseable_others(&self, world: &World) -> Vec<Uuid> {
+        let mut ids: Vec<Uuid> = self.poser.sessions.keys().copied().collect();
+        ids.extend(
+            world
+                .objects
+                .avatars()
+                .map(|(_, o)| o.full_id)
+                .filter(|id| *id != world.agent_id && allowed(world, *id)),
+        );
+        ids.sort_unstable();
+        ids.dedup();
+        ids.retain(|id| *id != self.poser.subject);
+        ids
+    }
     pub(super) fn pick_subject(&mut self, world: &World, id: Uuid) {
         if !allowed(world, id) {
             return;
         }
         self.poser.subject = id;
         self.selected = None;
+        self.poser.unselected = false;
+        self.poser.together.clear();
         self.refresh = true;
         self.drag = None;
         self.gizmo.cancel();
@@ -89,6 +123,8 @@ impl Editor {
     }
     pub(in crate::ik_edit) fn commit_poser_manipulation(&mut self, rig: &Rig, frame: &Frame, rotate: bool) -> bool {
         let Some(bone) = self.selected else { return false };
+        let followers = self.followers();
+        let selected = self.selected;
         let rotation = Quat::from_euler(
             EulerRot::ZYX,
             self.degrees.z.to_radians(),
@@ -116,11 +152,30 @@ impl Editor {
         } else if !edited.move_joint(rig, bone, self.position) {
             return true;
         }
+        // the joints this drag changed itself (the leader, the followers and
+        // the chains their moves bend): Mirror reflects them onto their
+        // counterparts but never writes over one of them, so a selected pair
+        // keeps its own solves while an unpaired follower still mirrors, as
+        // with the sliders
+        let mut dragged = vec![false; rig.len()];
+        if !followers.is_empty() {
+            let mut start = (*session.pose).clone();
+            start.rotations.clone_from(&before.rotations);
+            start.positions.clone_from(&before.positions);
+            let change = if rotate { together::Change::Rotate } else { together::Change::Move };
+            together::follow(rig, &start, &mut edited, bone, &followers, change);
+            for (joint, dragged) in dragged.iter_mut().enumerate() {
+                *dragged = edited.rotations[joint] != before.rotations[joint] || joint == bone || followers.contains(&joint);
+            }
+        }
         if self.symmetry {
             let rotations = edited.rotations.clone();
             for (changed, rotation) in rotations.into_iter().enumerate() {
+                // a joint selected with the others takes their change, not a reflection
                 if rotation != before.rotations[changed]
                     && let Some(other) = self.mirrors.counterpart(changed)
+                    && Some(other) != selected
+                    && !dragged[other]
                 {
                     edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
                     edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);
@@ -188,12 +243,18 @@ impl Editor {
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
         }
         crate::ui::menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-            ui.set_min_width(340.0);
             self.subject_menu(ui, p, world);
         });
     }
-    fn subject_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
+    /// The subject menu, in the People list's look (its rows: the round
+    /// picture, the name over the account name, the face lit under the
+    /// pointer): you and your animesh, then the nearby avatars with their
+    /// distance and a square button for the consent (Ask, Asked, Accepted,
+    /// Refused), and the privacy setting.
+    pub(super) fn subject_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
         use crate::world::poser_consent::Status;
+        ui.set_width(MENU_W);
+        let now = ui.input(|i| i.time);
         let edited = |editor: &Self, id: Uuid| {
             editor
                 .poser
@@ -203,90 +264,129 @@ impl Editor {
         };
         menu::section(ui, p, aurora_i18n::text("poser-subject-hint"));
         let mut pick = None;
+        let own = world.own_name();
         let you = aurora_i18n::tr!("poser-edited-count", count = edited(self, world.agent_id)).to_string();
-        if menu::item_detail(ui, p, "user-filled", aurora_i18n::text("poser-you"), &you) {
+        let picture = self.picture(world.agent_id, now);
+        let current = self.poser.subject == world.agent_id;
+        let you = Detail { text: you, end: None };
+        if person_row(
+            ui,
+            p,
+            world.agent_id,
+            Avatar::Picture(picture.as_ref(), &own),
+            aurora_i18n::text("poser-you"),
+            &you,
+            current,
+            None,
+        )
+        .0
+        {
             pick = Some(world.agent_id);
         }
         for (_, object) in world.objects.iter() {
             if object.full_id != world.agent_id && !object.is_avatar() && allowed(world, object.full_id) {
                 let count = aurora_i18n::tr!("poser-edited-count", count = edited(self, object.full_id)).to_string();
-                if menu::item_detail(ui, p, "accessible-filled", &subject_name(world, object.full_id), &count) {
+                let current = self.poser.subject == object.full_id;
+                let name = subject_name(world, object.full_id);
+                let count = Detail { text: count, end: None };
+                if person_row(
+                    ui,
+                    p,
+                    object.full_id,
+                    Avatar::Icon("accessible-filled"),
+                    &name,
+                    &count,
+                    current,
+                    None,
+                )
+                .0
+                {
                     pick = Some(object.full_id);
                 }
             }
         }
-        menu::separator(ui, p);
+        ui.add_space(4.0);
         menu::section(ui, p, aurora_i18n::text("poser-nearby-section"));
-        let mut any = false;
-        for (_, object) in world.objects.avatars() {
-            let peer = object.full_id;
-            if peer == world.agent_id || !poser_consent::nearby(world, peer) {
-                continue;
-            }
-            any = true;
+        let mut peers: Vec<(Uuid, f32)> = world
+            .objects
+            .avatars()
+            .map(|(_, o)| o.full_id)
+            .filter(|id| *id != world.agent_id && poser_consent::nearby(world, *id))
+            .map(|id| (id, poser_consent::distance(world, id).unwrap_or(f32::MAX)))
+            .collect();
+        // nearest first, as Near you
+        peers.sort_by(|a, b| a.1.total_cmp(&b.1));
+        for (peer, distance) in &peers {
+            let peer = *peer;
             let status = world.poser_consent.status(peer);
-            ui.horizontal(|ui| {
-                ui.set_min_height(30.0);
-                ui.add_space(8.0);
-                ui.label(poser_consent::name(world, peer));
-                if let Some(distance) = poser_consent::distance(world, peer) {
-                    ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("poser-distance", distance = format!("{distance:.0}")))
-                            .size(11.0)
-                            .color(p.muted_dim),
-                    );
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(6.0);
-                    let size = egui::vec2(0.0, 24.0);
-                    match status {
-                        Status::Ask => {
-                            if widgets::action_button_if(
-                                ui,
-                                p,
-                                "user-plus",
-                                aurora_i18n::text("poser-consent-ask"),
-                                widgets::ActionKind::Flat,
-                                size,
-                                self.poser.bridge == QueryState::Ready,
-                            )
-                            .clicked()
-                            {
-                                self.poser.requests.push(Request::Ask(peer));
-                            }
-                        }
-                        Status::Pending => {
-                            if widgets::flat_button(ui, p, aurora_i18n::text("poser-consent-pending")).clicked() {
-                                self.poser.requests.push(Request::Cancel(peer));
-                            }
-                        }
-                        Status::Accepted => {
-                            if widgets::action_button(
-                                ui,
-                                p,
-                                "check",
-                                aurora_i18n::text("poser-consent-ready"),
-                                widgets::ActionKind::Primary,
-                                size,
-                            )
-                            .clicked()
-                            {
-                                pick = Some(peer);
-                            }
-                        }
-                        Status::Refused | Status::NoAnswer => {
-                            let key = if status == Status::Refused {
-                                "poser-consent-refused"
-                            } else {
-                                "poser-consent-no-answer"
-                            };
-                            ui.label(egui::RichText::new(aurora_i18n::text(key)).size(11.0).color(p.muted));
-                        }
-                    }
-                });
-            });
+            let names = &world.social.avatar_names;
+            let name = names
+                .get(&peer)
+                .map_or_else(|| poser_consent::name(world, peer), |n| n.display(&names.options));
+            let account = names.get(&peer).map(|n| n.username.clone()).filter(|u| *u != name);
+            let away = aurora_i18n::tr!("poser-distance", distance = aurora_i18n::number(f64::from(*distance), 1)).to_string();
+            let detail = Detail {
+                text: account.unwrap_or_default(),
+                end: Some((away, range_color(p, *distance))),
+            };
+            let ready = self.poser.bridge == QueryState::Ready;
+            let consent = match status {
+                Status::Ask => Consent {
+                    icon: "user-plus",
+                    label: aurora_i18n::text("poser-consent-ask"),
+                    tip: aurora_i18n::text("poser-ask-tip"),
+                    accent: false,
+                    enabled: ready,
+                },
+                Status::Pending => Consent {
+                    icon: "hourglass-filled",
+                    label: aurora_i18n::text("poser-asked"),
+                    tip: aurora_i18n::text("poser-consent-pending"),
+                    accent: false,
+                    enabled: true,
+                },
+                Status::Accepted => Consent {
+                    icon: "check",
+                    label: aurora_i18n::text("poser-accepted"),
+                    tip: aurora_i18n::text("poser-consent-ready"),
+                    accent: true,
+                    enabled: true,
+                },
+                Status::Refused => Consent {
+                    icon: "x",
+                    label: aurora_i18n::text("poser-refused"),
+                    tip: aurora_i18n::text("poser-consent-refused"),
+                    accent: false,
+                    enabled: false,
+                },
+                Status::NoAnswer => Consent {
+                    icon: "clock-filled",
+                    label: aurora_i18n::text("poser-no-answer"),
+                    tip: aurora_i18n::text("poser-consent-no-answer"),
+                    accent: false,
+                    enabled: false,
+                },
+            };
+            let picture = self.picture(peer, now);
+            let current = self.poser.subject == peer;
+            let (row, button) = person_row(
+                ui,
+                p,
+                peer,
+                Avatar::Picture(picture.as_ref(), &name),
+                &name,
+                &detail,
+                current,
+                Some(consent),
+            );
+            match status {
+                Status::Ask if button => self.poser.requests.push(Request::Ask(peer)),
+                Status::Pending if button => self.poser.requests.push(Request::Cancel(peer)),
+                Status::Accepted if button || row => pick = Some(peer),
+                _ => {}
+            }
         }
-        if !any {
+        if peers.is_empty() {
             menu::info(ui, p, "users", aurora_i18n::text("poser-nearby-none"));
         } else {
             // Say why Ask waits: a worn bridge whose query script is silent
@@ -317,4 +417,124 @@ impl Editor {
             ui.close();
         }
     }
+}
+
+/// The subject menu's width: a People row's.
+pub(super) const MENU_W: f32 = 270.0;
+/// A row's height and the gap between two, as Near you's rich rows.
+const ROW_H: f32 = 42.0;
+const ROW_GAP: f32 = 3.0;
+/// The consent button: square-ish, over both lines of the row.
+const CONSENT: egui::Vec2 = egui::vec2(58.0, 34.0);
+
+/// What a row's left shows: a resident's picture (initials without it) or
+/// an object's symbol.
+enum Avatar<'a> {
+    Picture(Option<&'a egui::TextureHandle>, &'a str),
+    Icon(&'a str),
+}
+
+/// A row's second line: the account name (or the joints edited), and the
+/// distance kept whole at its right end, the text cut before it.
+struct Detail {
+    text: String,
+    end: Option<(String, egui::Color32)>,
+}
+
+/// The distance's colour, as Near you's figures (`people::nearby::Band`):
+/// turquoise within a whisper, green within the chat, amber within a shout.
+fn range_color(p: &Palette, distance: f32) -> egui::Color32 {
+    match distance {
+        d if d <= 10.0 => p.teal,
+        d if d <= 20.0 => p.success,
+        d if d <= 100.0 => p.amber,
+        _ => p.muted,
+    }
+}
+
+/// The consent button of a nearby avatar's row.
+struct Consent<'a> {
+    icon: &'a str,
+    label: &'a str,
+    tip: &'a str,
+    /// Accepted: the accent's face.
+    accent: bool,
+    enabled: bool,
+}
+
+/// One row in People's look (`ui::people::rows`: the face, the 30 px
+/// picture, the semibold name over the muted detail); `current` gets the
+/// accent's wash of a selected row. Returns (row clicked, button clicked).
+#[allow(clippy::too_many_arguments)]
+fn person_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: Uuid,
+    avatar: Avatar,
+    name: &str,
+    detail: &Detail,
+    current: bool,
+    consent: Option<Consent>,
+) -> (bool, bool) {
+    let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width(), ROW_H));
+    ui.add_space(ROW_GAP - ui.spacing().item_spacing.y);
+    let row = ui.interact(rect, ui.scope_id().with(("poser-person-row", id)), Sense::click());
+    let button_rect = consent
+        .as_ref()
+        .map(|_| egui::Rect::from_center_size(egui::pos2(rect.right() - 4.0 - CONSENT.x * 0.5, rect.center().y), CONSENT));
+    let button = button_rect.map(|r| ui.interact(r, ui.scope_id().with(("poser-consent", id)), Sense::click()));
+    let on_button = button.as_ref().is_some_and(|b| b.hovered());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let fill = if current {
+        p.violet.gamma_multiply(0.18)
+    } else if row.hovered() && !on_button {
+        p.raised.gamma_multiply(0.45)
+    } else {
+        p.field
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    let disc = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + 15.0, rect.center().y), egui::Vec2::splat(30.0));
+    match avatar {
+        Avatar::Picture(pic, initials) => widgets::avatar_disc(ui, p, disc, pic, initials, false),
+        Avatar::Icon(icon) => {
+            ui.painter().circle_filled(disc.center(), 15.0, p.raised);
+            crate::ui::viewfinder::icon(
+                ui.painter(),
+                icon,
+                egui::Rect::from_center_size(disc.center(), egui::Vec2::splat(16.0)),
+                p.muted,
+            );
+        }
+    }
+    let left = disc.right() + 10.0;
+    let mut right = button_rect.map_or(rect.right() - 8.0, |b| b.left() - 8.0);
+    // the distance, centred on the row at its right as Near you's
+    if let Some((end, color)) = &detail.end {
+        let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(
+            end.clone(),
+            crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 13.0, *color),
+        ));
+        let width = galley.size().x;
+        widgets::paint_row_text(ui.painter(), galley, right - width, rect.center().y, *color);
+        right -= width + 10.0;
+    }
+    let width = (right - left).max(0.0);
+    let title = egui::FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx()));
+    let cut = widgets::paint_elided(ui, name, egui::pos2(left, rect.center().y - 8.0), width, title, p.ink);
+    let small = egui::FontId::proportional(11.0);
+    let detail_cut = widgets::paint_elided(ui, &detail.text, egui::pos2(left, rect.center().y + 9.0), width, small, p.muted);
+    let mut clicked_button = false;
+    if let (Some(consent), Some(b), Some(at)) = (consent, button, button_rect) {
+        widgets::paint_tile_button(ui, p, at, consent.icon, consent.label, consent.accent, consent.enabled, b.hovered());
+        b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, consent.enabled, consent.label));
+        clicked_button = consent.enabled && b.on_hover_text(consent.tip).clicked();
+    }
+    row.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, current, name));
+    // a cut name or account shows whole under the pointer
+    let row = if cut || detail_cut {
+        row.on_hover_text(format!("{name}\n{}", detail.text))
+    } else {
+        row
+    };
+    (row.clicked() && !on_button, clicked_button)
 }
