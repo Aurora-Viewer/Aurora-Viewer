@@ -2752,9 +2752,10 @@ fn shadow_anchor(center: Vec3, radius: f32) -> Vec3 {
 }
 
 /// Farthest a held anchor may lie from its cascade's centre: beyond it the
-/// texel grid is anchored where float rounding eats into a texel (a
-/// centimetre texel at a kilometre is 1/20 000 of the coordinate), so a new
-/// one is taken, once per kilometre walked.
+/// texel grid's phase is computed from coordinates far apart, where float
+/// rounding starts to show (an f32 near a kilometre resolves about 0.06 mm,
+/// a few thousandths of the finest texel), so a new one is taken, once per
+/// kilometre walked.
 const SHADOW_ANCHOR_REACH: f32 = 1024.0;
 
 /// Whether the cascades hold their anchor while the light is still
@@ -5935,7 +5936,7 @@ impl Backend {
             // sun moves); from the cell it is 20-80 times slower, a slow
             // glide like the Legacy Viewer (which does not snap). While the light
             // does not move the anchor is held (`CascadeAnchors`): the grid
-            // then has one phase for good, and the shadow edges do not hop
+            // keeps one phase for as long as the light is still, and the shadow edges do not hop
             // when the camera crosses a cell.
             let anchor = self.cascade_anchors.pick(i, center, radius, self.shadow_size, light_dir);
             out[i] = cascade_matrix(center, radius, light_dir, anchor, self.shadow_size);

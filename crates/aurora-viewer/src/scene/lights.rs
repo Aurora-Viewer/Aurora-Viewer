@@ -27,9 +27,9 @@ const MAX_LIGHTS: usize = 64;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
-/// Retain a shadow map until a challenger of its tier scores 20 % more (linear
-/// on the score, about what the old margin on the squared angle, hence the
-/// area, was).
+/// Retain a shadow map until a challenger of its tier scores 20 % more: on
+/// light at the camera, which falls with the square of the distance, that is
+/// about a 10 % margin in distance.
 const SHADOW_AREA_RETENTION: f32 = 1.2;
 /// A projector that held a shadow map while it was on screen keeps it for
 /// this long after it left the view, so that turning back shows its shadow
