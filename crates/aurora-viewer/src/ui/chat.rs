@@ -152,6 +152,9 @@ pub struct ChatUi {
     pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
+    /// The chat bar's channel menu is open: it keeps an autohidden bar shown
+    /// while the pointer goes into the menu, as `bar_emoji_open` does.
+    pub bar_channel_open: bool,
     /// The lines' style of the settings, given every frame by the app
     /// (`set_style`).
     pub style: crate::settings::ChatStyle,
@@ -217,6 +220,10 @@ pub struct ChatUi {
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
+    /// The selector's channel (the Legacy Viewer's `ChatChannel` spinner):
+    /// one for every nearby chat field, kept from one message to the next
+    /// for the session, used when the text has no `/n` (`channel::resolve`).
+    pub chat_channel: i32,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
@@ -468,7 +475,13 @@ impl ChatUi {
         if self.bar_hidden {
             return self.focus_request;
         }
-        !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
+        !self.autohide
+            || self.has_focus
+            || self.focus_request
+            || !self.input.trim().is_empty()
+            || self.bar_emoji_open
+            || self.bar_channel_open
+            || self.bar_hovered
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -3498,7 +3511,7 @@ fn classic_pane(
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
             if show_channel {
-                channel::show(ui, p, &mut draft, sidebar::control_id("box-channel"));
+                channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
             }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
@@ -3578,7 +3591,7 @@ fn classic_pane(
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
             match st.selected {
                 None => {
-                    let (channel, message) = parse_channel(&text);
+                    let (channel, message) = channel::resolve(&text, st.show_channel.then_some(st.chat_channel));
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
@@ -4337,9 +4350,7 @@ pub(crate) fn bar_input(
                 &mut st.suggest,
                 suggest::Scope::Nearby(gestures),
             );
-            if show_channel {
-                channel::show(ui, p, &mut st.input, bar_channel_id());
-            }
+            st.bar_channel_open = show_channel && channel::show(ui, p, &mut st.chat_channel, bar_channel_id());
             output
         })
         .inner;
@@ -4383,7 +4394,7 @@ pub(crate) fn bar_input(
         if send == SendKey::Ooc {
             text = ooc(&text);
         }
-        let (channel, message) = parse_channel(&text);
+        let (channel, message) = channel::resolve(&text, st.show_channel.then_some(st.chat_channel));
         out = Some(OutgoingChat {
             message,
             channel,

@@ -1624,17 +1624,20 @@ fn the_field_acts() {
             ),
             "{style:?}: /5 without the chip"
         );
-        // shown by the preferences: "/5" opening the text, back to 0 from it
+        // shown by the preferences: its own channel, back to 0 from its menu,
+        // the draft untouched
         h.st.show_channel = true;
+        h.st.chat_channel = 5;
         h.open(None);
-        h.type_text("/5 secret");
+        h.type_text("secret");
         assert!(
             h.shown(control_id("box-channel")).is_some(),
             "{style:?}: the chip shows the channel"
         );
         h.press(control_id("box-channel"));
         h.press_text(aurora_i18n::tr!("ui-chat-channel-reset"));
-        assert_eq!(h.st.draft_mut(None), "secret", "{style:?}: channel reset");
+        assert_eq!(h.st.chat_channel, 0, "{style:?}: channel reset");
+        assert_eq!(h.st.draft_mut(None), "secret", "{style:?}: the draft stays");
         // shout from the volume's menu, then say what was typed
         assert!(h.painted(aurora_i18n::tr!("ui-chat-volume-say")), "{style:?}: the volume named");
         h.press(control_id("box-volume"));
@@ -1703,16 +1706,64 @@ fn the_channel_selector_works_in_every_conversation_style() {
         assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: hidden by default");
 
         h.st.show_channel = true;
+        h.st.chat_channel = 5;
         h.open(None);
-        h.type_text("/5 secret");
         assert!(h.shown(control_id("box-channel")).is_some(), "{style:?}: shown when enabled");
+        // the selector's channel, kept for the next message (the Legacy spinner)
+        for line in ["secret", "again"] {
+            h.st.conv_focus_request = true;
+            h.settle();
+            h.type_text(line);
+            h.enter(Default::default());
+            assert!(
+                has(
+                    &h.take(),
+                    |a| matches!(a, ConvAction::Local(c) if c.channel == 5 && c.message == line)
+                ),
+                "{style:?}: {line} sent on the selected channel"
+            );
+        }
+        // a typed "/n" wins over the selector
+        h.st.conv_focus_request = true;
+        h.settle();
+        h.type_text("/7 typed");
         h.enter(Default::default());
         assert!(
             has(
                 &h.take(),
-                |a| matches!(a, ConvAction::Local(c) if c.channel == 5 && c.message == "secret")
+                |a| matches!(a, ConvAction::Local(c) if c.channel == 7 && c.message == "typed")
             ),
-            "{style:?}: the selected channel is sent"
+            "{style:?}: the typed channel"
+        );
+        // Alt+Enter wraps the text first, then the selector's channel applies
+        h.st.conv_focus_request = true;
+        h.settle();
+        h.type_text("brb");
+        h.enter(egui::Modifiers::ALT);
+        assert!(
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::Local(c) if c.channel == 5 && c.message == "(( brb ))")
+            ),
+            "{style:?}: OOC on the selected channel"
+        );
+        // the chip's menu sets it back to 0
+        h.press(control_id("box-channel"));
+        h.press_text(aurora_i18n::tr!("ui-chat-channel-reset"));
+        assert_eq!(h.st.chat_channel, 0, "{style:?}: reset from the chip");
+        // hidden, the selector's channel no longer applies
+        h.st.chat_channel = 5;
+        h.st.show_channel = false;
+        h.st.conv_focus_request = true;
+        h.settle();
+        h.type_text("plain");
+        h.enter(Default::default());
+        assert!(
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::Local(c) if c.channel == 0 && c.message == "plain")
+            ),
+            "{style:?}: hidden selector, channel 0"
         );
     }
 }
@@ -1737,7 +1788,8 @@ fn the_chat_bar_channel_selector_is_visible_and_keeps_the_channel_on_send() {
     h.bar_frame(vec![button(value, true)]);
     h.bar_frame(vec![egui::Event::PointerMoved(value + egui::vec2(25.0, 0.0))]);
     h.bar_frame(vec![button(value + egui::vec2(25.0, 0.0), false)]);
-    assert_eq!(super::parse_channel(&h.st.input).0, 5, "the selector chooses channel 5");
+    assert_eq!(h.st.chat_channel, 5, "the selector chooses channel 5");
+    assert_eq!(h.st.input, "hello", "the draft is not rewritten");
     let input = h.shown(super::bar_input_id()).expect("the local chat input is visible");
     h.bar_at(input.center());
 
@@ -1752,6 +1804,26 @@ fn the_chat_bar_channel_selector_is_visible_and_keeps_the_channel_on_send() {
         sent.is_some_and(|chat| chat.channel == 5 && chat.message == "hello"),
         "the selected channel and text are sent from the chat bar"
     );
+    assert_eq!(h.st.chat_channel, 5, "the channel is kept for the next message");
+}
+
+/// With "Autohide the chat bar" on and an empty bar, the channel's menu keeps
+/// the bar shown once the pointer leaves the bar for the menu.
+#[test]
+fn an_autohidden_bar_stays_while_its_channel_menu_is_open() {
+    let mut h = H::new(ChatStyle::Aurora);
+    h.st.show_channel = true;
+    h.st.autohide = true;
+    h.st.focus_request = true;
+    h.bar_frame(Vec::new());
+    let chip = h.shown(super::bar_channel_id()).expect("the nearby chat bar shows the selector");
+    h.bar_at(chip.center());
+    assert!(h.st.bar_channel_open, "the chip's menu is open");
+    // the click on the chip took the keyboard from the empty field, and the
+    // pointer is in the menu, off the bar
+    h.st.has_focus = false;
+    h.st.bar_hovered = false;
+    assert!(h.st.bar_shown(), "the open menu keeps the bar");
 }
 
 /// Inventory dragged with an IM shown (#627): its messages fade behind

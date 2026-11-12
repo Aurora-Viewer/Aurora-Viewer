@@ -8,7 +8,7 @@
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
-use super::{ChatUi, ConvAction, OutgoingChat, SendKey, ooc, parse_channel, send_enter, sidebar, suggest, typing};
+use super::{ChatUi, ConvAction, OutgoingChat, SendKey, ooc, send_enter, sidebar, suggest, typing};
 use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
@@ -184,7 +184,7 @@ pub(super) fn show(
                         suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
                         // `chip` is only for the nearby chat
                         if chip {
-                            super::channel::show(ui, p, &mut draft, sidebar::control_id("box-channel"));
+                            super::channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
@@ -254,7 +254,7 @@ pub(super) fn show(
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
                     match st.selected {
                         None => {
-                            let (channel, message) = parse_channel(&text);
+                            let (channel, message) = super::channel::resolve(&text, st.show_channel.then_some(st.chat_channel));
                             let volume = st.volume.chat_type();
                             actions.push(ConvAction::Local(OutgoingChat {
                                 message,

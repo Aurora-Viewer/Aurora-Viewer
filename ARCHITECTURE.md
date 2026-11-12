@@ -606,9 +606,10 @@ Shift+Enter whispers only in nearby chat; other conversations consume it
 before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
-`ui/chat/channel.rs` shares the nearby-chat `/n` selector across all
-conversation layouts and both local chat bars; edits to the selected channel
-stay in the draft and use the existing channel parser when sending.
+`ui/chat/channel.rs` shares the nearby-chat channel selector across all
+conversation layouts and both local chat bars. Its channel (`ChatUi::chat_channel`)
+stays outside the draft, like the Legacy spinner; `channel::resolve` applies it
+when the text, OOC-wrapped first, has no `/n`.
 
 The night sky (`aurora-render/src/stars.rs`, `sky_stars` in `shaders/env.wgsl`)
 draws the 8,795 naked-eye stars of `assets/stars/stars.bin` (Tycho-2,
