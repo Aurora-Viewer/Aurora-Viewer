@@ -114,10 +114,10 @@ Japanese, beyond the plural:
   projected texture), メタル (metal), ＨＤ画像 (the paid HD picture of an
   outfit), ベイク (bake) and 再ベイク (rebake), 樹木 (a tree), 水面 (water:
   the water settings, a water preset, swimming in it; underwater fog is
-  水中のフォグ);
+  水中のフォグ), 飛行カメラ (flycam);
   look an existing one up in `ja.ftl` before choosing a new one. Never
   持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, モニタ,
-  ベーク, リベーク nor ライト or ライティング for a light: they are the
+  ベーク, リベーク, フライカム nor ライト or ライティング for a light: they are the
   variants these replace (ハイライト,
   スポットライト and the residents' フェイスライト stay). 建築 stays only in the
   residents' own words of the demo (今夜は広場を建築するよ), never for the
