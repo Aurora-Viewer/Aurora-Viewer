@@ -135,6 +135,7 @@ mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
 mod scripts;
+mod selection_turn;
 mod settings_backup;
 mod shape_editor;
 mod shortcuts;
@@ -608,6 +609,9 @@ pub struct App {
     double_click: crate::autopilot::DoubleClickDetector,
     double_press: bool,
     autopilot: Option<crate::autopilot::AutoPilot>,
+    /// The yaw the avatar turns to, facing what it selected
+    /// (FSTurnAvatarToSelectedObject, app/selection_turn.rs).
+    selection_turn: Option<f32>,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     /// Build › Edit particles (ParticleEditor).
@@ -1711,6 +1715,7 @@ impl App {
             double_click: Default::default(),
             double_press: false,
             autopilot: None,
+            selection_turn: None,
             autopilot_flags: 0,
             autopilot_stop_pending: false,
             mic_on: false,
@@ -7473,6 +7478,16 @@ impl App {
             mods,
         );
         self.flush_build();
+        // LLToolSelect::handleObjectSelection turns the avatar to what the
+        // Edit tool's click selected (lltoolcomp.cpp: move, rotate, stretch;
+        // not Create, Grab or Land) (app/selection_turn.rs)
+        if let Some(idx) = target
+            && self.build.tool == crate::build::Tool::Edit
+            && !self.build.selection.is_empty()
+            && let Some(bounds) = self.build.bounds(&self.world, Instant::now())
+        {
+            self.turn_to_selection(idx, bounds.center);
+        }
         if used {
             self.left_down = true;
         }
@@ -9925,6 +9940,7 @@ impl App {
             self.input = input;
         }
         self.update_autopilot(dt);
+        self.update_selection_turn(dt);
         self.vr_update_body_follow(typing, dt);
         if self.in_world() && self.settings.automatic_land {
             self.world.auto_land(&self.input);
@@ -13198,6 +13214,11 @@ impl App {
             if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
                 self.world.media_filter.answer(&url, true, crate::media::filter::Remember::Once);
             }
+        }
+        // AURORA_DEMO_TURN_SELECT=1: the camera off the avatar, then an
+        // object to its side selected (app/selection_turn.rs)
+        if self.demo && (300..=480).contains(&self.frame_count) && std::env::var_os("AURORA_DEMO_TURN_SELECT").is_some() {
+            self.demo_selection_turn();
         }
         // AURORA_DEMO_CONTACTS: contact sets and aliases to show, once logged in
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {

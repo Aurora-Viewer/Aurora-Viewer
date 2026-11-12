@@ -1326,6 +1326,10 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Selecting an object, or right-clicking it, while the camera is off the
+    /// avatar turns the avatar to face it (the Legacy Viewer's
+    /// FSTurnAvatarToSelectedObject, on; app/selection_turn.rs).
+    pub turn_to_selected: bool,
     /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
     /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
     /// only).
@@ -2334,6 +2338,7 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            turn_to_selected: true,
             avatar_turn_speed: 0.0,
             automatic_fly: true,
             automatic_land: true,
