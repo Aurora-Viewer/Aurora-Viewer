@@ -11,9 +11,33 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 
-const MAX_RESENDS: u8 = 4;
+/// Resends of an ordinary reliable packet before it is given up.
+/// `LL_DEFAULT_RELIABLE_RETRIES` (indra/llmessage/message.h): three resends,
+/// then one more wait (`LLCircuitData::resendUnackedPackets`).
+const MAX_RESENDS: u8 = 3;
 const DEDUPE_WINDOW: usize = 2048;
 const ACK_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Wait before an ordinary reliable packet is resent.
+///
+/// `LLMessageSystem::sendReliable` (indra/llmessage/message.cpp) uses
+/// `max(LL_MINIMUM_RELIABLE_TIMEOUT_SECONDS, LL_RELIABLE_TIMEOUT_FACTOR *
+/// getPingDelayAveraged())`. `LLCircuitData::getPingDelayAveraged`
+/// (indra/llmessage/llcircuit.cpp) is the smoothed ping, at least the time
+/// the oldest ping has been unanswered, and at most `LL_AVERAGED_PING_MAX`
+/// (2 s, llcircuit.h). A 1 s average therefore waits 5 s. There is no
+/// separate ceiling on the wait. The 100 ms ping floor
+/// (`LL_AVERAGED_PING_MIN`) cannot change this: five times 100 ms is under
+/// the 1 s minimum. `averaged` is already smoothed in `on_ping_reply`, not
+/// a raw sample.
+fn reliable_timeout(averaged: Duration, ping_out: Option<Duration>) -> Duration {
+    /// `LL_AVERAGED_PING_MAX`.
+    const PING_MAX: Duration = Duration::from_secs(2);
+    /// `LL_MINIMUM_RELIABLE_TIMEOUT_SECONDS`.
+    const MINIMUM: Duration = Duration::from_secs(1);
+    let delay = ping_out.unwrap_or_default().max(averaged).min(PING_MAX);
+    (delay * 5).max(MINIMUM)
+}
 
 /// Resend policy of a reliable packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +248,11 @@ impl Circuit {
         if lost > 0 {
             stats.packets_lost.fetch_add(lost, Ordering::Relaxed);
         }
-        let ping_timeout = (self.rtt * 3).clamp(Duration::from_millis(500), Duration::from_secs(3));
+        // Ordinary reliable packets wait as `LLMessageSystem::sendReliable` does.
+        // `ping_out` stands in for `getPingInTransitTime`. A fixed policy (the
+        // login circuit code) keeps its own timeout.
+        let ping_out = self.ping_wait_started.map(|at| now.saturating_duration_since(at));
+        let ping_timeout = reliable_timeout(self.rtt, ping_out);
         let mut to_resend = Vec::new();
         let mut to_drop = Vec::new();
         for (seq, u) in &self.unacked {
@@ -246,6 +274,7 @@ impl Circuit {
                 continue;
             };
             u.retries += 1;
+            // New expiration, as `resendUnackedPackets` sets after each resend.
             u.sent = now;
             let mut buf = std::mem::take(&mut self.buf);
             build_raw(&u.payload, u.zerocoded, seq, true, true, &[], &mut buf);
@@ -430,5 +459,142 @@ mod tests {
         assert!(!c.is_unacked(login));
         assert_eq!(c.take_dropped(), vec![login]);
         assert!(c.take_dropped().is_empty());
+    }
+
+    #[test]
+    fn reliable_timeout_matches_the_legacy_formula() {
+        assert_eq!(reliable_timeout(Duration::from_millis(1), None), Duration::from_secs(1));
+        assert_eq!(reliable_timeout(Duration::from_millis(400), None), Duration::from_secs(2));
+        assert_eq!(reliable_timeout(Duration::from_secs(1), None), Duration::from_secs(5));
+        // The averaged ping stops at 2 s, so five times that is 10 s.
+        assert_eq!(reliable_timeout(Duration::from_secs(3), None), Duration::from_secs(10));
+        assert_eq!(
+            reliable_timeout(Duration::from_millis(1), Some(Duration::from_millis(400))),
+            Duration::from_secs(2)
+        );
+        // An unanswered ping is also capped at 2 s.
+        assert_eq!(
+            reliable_timeout(Duration::from_millis(1), Some(Duration::from_secs(9))),
+            Duration::from_secs(10)
+        );
+    }
+
+    fn rewind(c: &mut Circuit, age: Duration) {
+        let sent = Instant::now() - age;
+        for packet in c.unacked.values_mut() {
+            packet.sent = sent;
+        }
+    }
+
+    async fn bound() -> UdpSocket {
+        UdpSocket::bind("127.0.0.1:0").await.expect("bind")
+    }
+
+    fn one_reliable(c: &mut Circuit, sock: &UdpSocket, stats: &NetStats) -> u32 {
+        let message = aurora_msg::msgs::UseCircuitCode::default();
+        c.send(sock, stats, &message, true)
+    }
+
+    /// A 1 ms ping used to resend at 0.5 s (`rtt * 3` clamped up to 500 ms).
+    /// The wait is at least 1 s, and a resend starts that wait again.
+    #[tokio::test]
+    async fn lan_ping_does_not_resend_a_reliable_packet_before_one_second() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(1);
+        let seq = one_reliable(&mut c, &sock, &stats);
+        rewind(&mut c, Duration::from_millis(600));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "a 1 ms ping still waits out the 1 s minimum");
+        rewind(&mut c, Duration::from_millis(1_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+        // Same moment: the resend's clock was just started.
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1, "a resend starts its wait again");
+        rewind(&mut c, Duration::from_millis(600));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+    }
+
+    /// 400 ms × 5 = 2 s. 1 s × 5 = 5 s, past the old 3 s cap.
+    /// A ping above 2 s is capped there first, so the wait is 10 s.
+    #[tokio::test]
+    async fn averaged_ping_sets_the_reliable_resend_wait() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(400);
+        let seq = one_reliable(&mut c, &sock, &stats);
+        rewind(&mut c, Duration::from_millis(1_999));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "a 400 ms average waits 2 s");
+        rewind(&mut c, Duration::from_millis(2_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+
+        let mut c = circuit();
+        c.rtt = Duration::from_secs(1);
+        let seq = one_reliable(&mut c, &sock, &stats);
+        rewind(&mut c, Duration::from_millis(3_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "a 1 s average is not cut at 3 s");
+        rewind(&mut c, Duration::from_millis(4_999));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0);
+        rewind(&mut c, Duration::from_millis(5_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+
+        let mut c = circuit();
+        c.rtt = Duration::from_secs(3);
+        let seq = one_reliable(&mut c, &sock, &stats);
+        rewind(&mut c, Duration::from_millis(5_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "an averaged ping stops at 2 s, so this waits 10 s");
+        rewind(&mut c, Duration::from_millis(10_001));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+    }
+
+    /// `getPingDelayAveraged` is at least the time the oldest ping has been out.
+    #[tokio::test]
+    async fn an_unanswered_ping_lengthens_the_reliable_resend_wait() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(1);
+        let seq = one_reliable(&mut c, &sock, &stats);
+        // 400 ms unanswered → 5 × 400 ms = 2 s, above the 1 s floor.
+        c.ping_wait_started = Some(Instant::now() - Duration::from_millis(400));
+        rewind(&mut c, Duration::from_millis(1_500));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 0, "an unanswered ping raises the wait above 1 s");
+        c.ping_wait_started = Some(Instant::now() - Duration::from_millis(400));
+        rewind(&mut c, Duration::from_millis(2_500));
+        c.tick(&sock, &stats);
+        assert_eq!(c.unacked[&seq].retries, 1);
+    }
+
+    /// `LL_DEFAULT_RELIABLE_RETRIES` is 3: three resends, then one more wait, then give up.
+    #[tokio::test]
+    async fn three_resends_then_the_reliable_packet_is_given_up() {
+        let sock = bound().await;
+        let stats = NetStats::default();
+        let mut c = circuit();
+        c.rtt = Duration::from_millis(1);
+        let seq = one_reliable(&mut c, &sock, &stats);
+        for n in 1..=3 {
+            rewind(&mut c, Duration::from_millis(1_001));
+            c.tick(&sock, &stats);
+            assert_eq!(c.unacked[&seq].retries, n);
+        }
+        rewind(&mut c, Duration::from_millis(1_001));
+        c.tick(&sock, &stats);
+        assert!(!c.is_unacked(seq), "given up after the third resend's wait");
+        assert_eq!(c.take_dropped(), vec![seq]);
+        assert_eq!(stats.resent.load(Ordering::Relaxed), 3);
     }
 }
