@@ -48,7 +48,7 @@ impl super::World {
         self.crossing = false;
         let reason = aurora_i18n::tr!("world-arrival-not-confirmed");
         if self.teleporting {
-            self.apply(NetEvent::TeleportFailed { reason: reason.into() });
+            self.apply(NetEvent::viewer_teleport_failed(reason));
         } else {
             self.system_notice(reason, super::notice_topics::Topic::Teleport);
         }

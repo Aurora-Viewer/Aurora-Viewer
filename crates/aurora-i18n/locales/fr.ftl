@@ -14130,3 +14130,26 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
+
+## Teleport failures (world/teleport_failure.rs; teleport_strings.xml "errors")
+teleport-failed-title = Échec de la téléportation.
+teleport-error-invalid-tport = Les tentatives de téléportation sont limitées à 6 par minute. En cas de difficulté, attendez une minute et réessayez. Si le problème persiste, déconnectez-vous puis reconnectez-vous.
+teleport-error-invalid-region-handoff = Un problème est survenu lors du passage d'une région à l'autre. Vous devrez peut-être vous reconnecter avant de pouvoir changer de région.
+teleport-error-blocked-tport = Désolé, la téléportation est bloquée pour le moment. Réessayez dans un instant. Si vous ne pouvez toujours pas vous téléporter, déconnectez-vous puis reconnectez-vous pour résoudre le problème.
+teleport-error-nolandmark-tport = Désolé, le système n'a pas pu trouver la destination du repère.
+teleport-error-timeout-tport = Désolé, le système n'a pas pu établir la connexion de téléportation. Réessayez dans un instant.
+teleport-error-no-help-island = Vous ne pouvez pas retourner sur Welcome Island.
+teleport-error-noaccess-tport = Désolé, vous n'avez pas accès à cette destination.
+teleport-error-missing-attach-tport = Vos objets portés ne sont pas encore arrivés. Patientez quelques secondes, ou déconnectez-vous puis reconnectez-vous, avant de vous téléporter.
+teleport-error-too-many-uploads-tport = La file des ressources de cette région est saturée, votre téléportation ne pourra donc pas aboutir à temps. Réessayez dans quelques minutes ou rendez-vous dans un lieu moins fréquenté.
+teleport-error-expired-tport = Désolé, le système n'a pas pu terminer votre téléportation à temps. Réessayez dans quelques minutes.
+teleport-error-expired-region-handoff = Désolé, le système n'a pas pu terminer votre passage de région à temps. Réessayez dans quelques minutes.
+teleport-error-preexisting-tport = Désolé, le système n'a pas pu lancer votre téléportation. Réessayez dans quelques minutes.
+teleport-error-no-host = Destination introuvable. Elle est peut-être indisponible pour le moment ou n'existe plus. Réessayez dans quelques minutes.
+teleport-error-no-inventory-host = L'inventaire est indisponible pour le moment.
+teleport-error-must-get-age-region = Vous devez avoir 18 ans ou plus pour entrer dans cette région.
+teleport-error-special-usage-blocked = Impossible d'entrer dans la région. « { $region } » est une région de jeux d'adresse, dont l'entrée est soumise à certaines conditions.
+teleport-hint-hypergrid-home-refused = Votre grille d'origine a refusé votre retour. Cela vient en général de son adresse Hypergrid, qui ne correspond pas à celle que les autres grilles utilisent pour elle. Contactez les responsables de votre grille ; en attendant, une nouvelle connexion vous ramène chez vous.
+teleport-hint-hypergrid-unreachable = L'autre grille n'a pas pu être jointe. Elle est peut-être hors ligne, ou le lien pointe vers une ancienne adresse.
+teleport-hint-hypergrid-visitors-refused = Cette grille n'accepte que les résidents de certaines grilles.
+teleport-hint-hypergrid-destination-gone = La région de destination n'existe plus ou a été déplacée. Les repères et les liens vers d'autres grilles peuvent devenir obsolètes.

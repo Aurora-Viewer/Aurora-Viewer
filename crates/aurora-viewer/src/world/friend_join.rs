@@ -607,9 +607,7 @@ mod tests {
                 0 => w.social.friends[0].rights_has = 0,
                 1 => w.social.friends[0].online = false,
                 2 => {
-                    w.apply(NetEvent::TeleportFailed {
-                        reason: "Offline test".into(),
-                    });
+                    w.apply(NetEvent::viewer_teleport_failed("Offline test"));
                 }
                 3 => w.begin_teleport(false), // includes accepting a lure
                 4 => w.map.clear_track(),
@@ -975,9 +973,7 @@ mod tests {
             w.agent.flying = true;
             w.begin_teleport(false);
             w.defer_friend_join_flight(friend(), true, true);
-            w.apply(NetEvent::TeleportFailed {
-                reason: "Offline test".into(),
-            });
+            w.apply(NetEvent::viewer_teleport_failed("Offline test"));
             assert!(w.map.friend_join_flight.is_none());
             w.begin_teleport(false);
             w.agent.flying = true;
@@ -1087,9 +1083,7 @@ mod tests {
             match cancel {
                 0 => w.begin_teleport(false),
                 1 => {
-                    w.apply(NetEvent::TeleportFailed {
-                        reason: "Offline test".into(),
-                    });
+                    w.apply(NetEvent::viewer_teleport_failed("Offline test"));
                 }
                 2 => w.cancel_friend_join_flight(),
                 3 => {

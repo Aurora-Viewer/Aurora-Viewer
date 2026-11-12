@@ -776,8 +776,14 @@ pub enum NetEvent {
     VoiceModerationFailed {
         everyone: bool,
     },
+    /// A teleport refused or failed (`teleport_failed.rs`): `reason` is the
+    /// simulator's text, `code` the id the viewer looks up for its own
+    /// wording (AlertInfo's Message, else the reason), `region` its
+    /// REGION_NAME. The viewer's own failures leave `code` empty.
     TeleportFailed {
         reason: String,
+        code: String,
+        region: String,
     },
     Alert {
         message: String,
@@ -2543,5 +2549,17 @@ mod opensim_extras_tests {
         assert_eq!(OpenSimExtras::from_llsd(&huge).say_range, Some(MAX_REGION_FIGURE));
         // Second Life: no OpenSimExtras at all
         assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
+    }
+}
+
+impl NetEvent {
+    /// A teleport failure of the viewer's own (blocked, offline, given up):
+    /// no simulator code, so no Legacy popup, only the notice.
+    pub fn viewer_teleport_failed(reason: impl Into<String>) -> Self {
+        NetEvent::TeleportFailed {
+            reason: reason.into(),
+            code: String::new(),
+            region: String::new(),
+        }
     }
 }
