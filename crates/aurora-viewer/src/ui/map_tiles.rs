@@ -40,7 +40,9 @@ pub fn tile_origin(gx: u32, gy: u32, level: u32) -> (u32, u32) {
 enum Tile {
     Queued,
     Loading,
-    Ready(egui::TextureHandle, Arc<egui::ColorImage>),
+    /// The pixels are kept only for a tile a region picture asked for
+    /// (`Entry::keep`): the world map's tiles need the texture alone.
+    Ready(egui::TextureHandle, Option<Arc<egui::ColorImage>>),
     Missing(Instant),
 }
 
@@ -52,6 +54,8 @@ struct Picture {
 struct Entry {
     tile: Tile,
     used: Instant,
+    /// A region picture stitches this tile: keep its pixels.
+    keep: bool,
 }
 
 type Key = (u32, u32, u32);
@@ -115,7 +119,7 @@ impl MapTiles {
     /// download when `load` and unknown (LLWorldMipmap::getObjectsTile).
     /// `Err(true)` = settled without an image (missing), `Err(false)` = pending.
     pub fn get(&mut self, level: u32, x: u32, y: u32, load: bool) -> Result<egui::TextureHandle, bool> {
-        self.touch(level, x, y, load).map(|(tex, _)| tex)
+        self.touch(level, x, y, load, false).map(|(tex, _)| tex)
     }
 
     /// Level-1 tiles of one region, north up, as a single texture.
@@ -142,8 +146,18 @@ impl MapTiles {
         let mut pending = false;
         for dy in 0..cells_y {
             for dx in 0..cells_x {
-                match self.touch(1, gx + dx, gy + dy, true) {
-                    Ok((_, image)) => images.push(((dx, dy), image)),
+                match self.touch(1, gx + dx, gy + dy, true, true) {
+                    Ok((_, Some(image))) => images.push(((dx, dy), image)),
+                    // shown on the world map before, without its pixels:
+                    // read again (disk cache first) and kept this time
+                    Ok((_, None)) => {
+                        let key = (1, gx + dx, gy + dy);
+                        if let Some(e) = self.tiles.get_mut(&key) {
+                            e.tile = Tile::Queued;
+                            self.queue.push_back(key);
+                        }
+                        pending = true;
+                    }
                     Err(false) => pending = true,
                     Err(true) => {}
                 }
@@ -180,13 +194,21 @@ impl MapTiles {
         Ok(tex)
     }
 
-    fn touch(&mut self, level: u32, x: u32, y: u32, load: bool) -> Result<(egui::TextureHandle, Arc<egui::ColorImage>), bool> {
+    fn touch(
+        &mut self,
+        level: u32,
+        x: u32,
+        y: u32,
+        load: bool,
+        keep: bool,
+    ) -> Result<(egui::TextureHandle, Option<Arc<egui::ColorImage>>), bool> {
         let now = Instant::now();
         let key = (level, x, y);
         if let Some(e) = self.tiles.get_mut(&key) {
             e.used = now;
+            e.keep |= keep;
             return match &e.tile {
-                Tile::Ready(tex, image) => Ok((tex.clone(), Arc::clone(image))),
+                Tile::Ready(tex, image) => Ok((tex.clone(), image.clone())),
                 Tile::Missing(at) if load && now.duration_since(*at) > MISSING_RETRY => {
                     e.tile = Tile::Queued;
                     self.queue.push_back(key);
@@ -204,6 +226,7 @@ impl MapTiles {
             Entry {
                 tile: Tile::Queued,
                 used: now,
+                keep,
             },
         );
         self.queue.push_back(key);
@@ -219,12 +242,8 @@ impl MapTiles {
             };
             e.tile = match img {
                 Some(ci) => {
-                    let image = Arc::new(ci);
-                    let tex = ctx.load_texture(
-                        format!("map-{}-{}-{}", key.0, key.1, key.2),
-                        (*image).clone(),
-                        egui::TextureOptions::LINEAR,
-                    );
+                    let image = e.keep.then(|| Arc::new(ci.clone()));
+                    let tex = ctx.load_texture(format!("map-{}-{}-{}", key.0, key.1, key.2), ci, egui::TextureOptions::LINEAR);
                     Tile::Ready(tex, image)
                 }
                 None => Tile::Missing(Instant::now()),
@@ -312,6 +331,29 @@ pub fn region_pin(x: f32, y: f32, size_x: f32, size_y: f32) -> (f32, f32) {
 /// North-up composite. `tiles` are `(dx, dy)` with `dy` 0 at the south edge.
 /// Image row 0 is the north row, so `(gx, gy + cells_y - 1)` is the top-left
 /// cell, as `LLNetMap` draws the higher grid Y further north.
+/// Longest side of a stitched region picture, in pixels.
+const MAX_PICTURE: usize = 1024;
+
+/// The cell's pixel at `(x, y)` of an `out_w` x `out_h` cell: a copy at
+/// full size, else the average of its source footprint's four corners.
+fn sample(image: &egui::ColorImage, x: usize, y: usize, out_w: usize, out_h: usize) -> egui::Color32 {
+    let [src_w, src_h] = image.size;
+    if out_w == src_w && out_h == src_h {
+        return image.pixels[y * src_w + x];
+    }
+    let (x0, x1) = (
+        x * src_w / out_w,
+        ((x + 1) * src_w / out_w).saturating_sub(1).max(x * src_w / out_w),
+    );
+    let (y0, y1) = (
+        y * src_h / out_h,
+        ((y + 1) * src_h / out_h).saturating_sub(1).max(y * src_h / out_h),
+    );
+    let corners = [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].map(|(sx, sy)| image.pixels[sy.min(src_h - 1) * src_w + sx.min(src_w - 1)]);
+    let avg = |c: fn(&egui::Color32) -> u8| (corners.iter().map(|p| u32::from(c(p))).sum::<u32>() / 4) as u8;
+    egui::Color32::from_rgba_premultiplied(avg(|p| p.r()), avg(|p| p.g()), avg(|p| p.b()), avg(|p| p.a()))
+}
+
 pub fn compose_region(cells_x: u32, cells_y: u32, tiles: &[((u32, u32), &egui::ColorImage)]) -> Option<egui::ColorImage> {
     if cells_x == 0 || cells_y == 0 || tiles.is_empty() {
         return None;
@@ -321,8 +363,21 @@ pub fn compose_region(cells_x: u32, cells_y: u32, tiles: &[((u32, u32), &egui::C
     if cell_w == 0 || cell_h == 0 {
         return None;
     }
-    let width = cell_w * cells_x as usize;
-    let height = cell_h * cells_y as usize;
+    // The windows show the picture a few hundred pixels wide: a large
+    // region's cells are shrunk so the longest side stays within
+    // MAX_PICTURE (a 4096 m region would otherwise be 4096 x 4096).
+    let cells = cells_x.max(cells_y) as usize;
+    let scale = (MAX_PICTURE / cells).clamp(1, cell_w.max(cell_h));
+    let (out_w, out_h) = if cell_w.max(cell_h) * cells > MAX_PICTURE {
+        (
+            (cell_w * scale / cell_w.max(cell_h)).max(1),
+            (cell_h * scale / cell_w.max(cell_h)).max(1),
+        )
+    } else {
+        (cell_w, cell_h)
+    };
+    let width = out_w * cells_x as usize;
+    let height = out_h * cells_y as usize;
     // theme-guard: content — a missing map cell, painted into the picture
     let gap = egui::Color32::from_rgb(32, 48, 64);
     let mut pixels = vec![gap; width * height];
@@ -330,13 +385,15 @@ pub fn compose_region(cells_x: u32, cells_y: u32, tiles: &[((u32, u32), &egui::C
         if *dx >= cells_x || *dy >= cells_y {
             continue;
         }
-        let row0 = (cells_y as usize - 1 - *dy as usize) * cell_h;
-        let col0 = *dx as usize * cell_w;
-        let copy_w = image.size[0].min(cell_w);
-        let copy_h = image.size[1].min(cell_h);
-        for y in 0..copy_h {
-            for x in 0..copy_w {
-                pixels[(row0 + y) * width + col0 + x] = image.pixels[y * image.size[0] + x];
+        let row0 = (cells_y as usize - 1 - *dy as usize) * out_h;
+        let col0 = *dx as usize * out_w;
+        let [src_w, src_h] = image.size;
+        if src_w == 0 || src_h == 0 {
+            continue;
+        }
+        for y in 0..out_h {
+            for x in 0..out_w {
+                pixels[(row0 + y) * width + col0 + x] = sample(image, x, y, out_w, out_h);
             }
         }
     }
@@ -410,6 +467,37 @@ mod tests {
         tiles.configure("http://map.example/", rt.handle(), reqwest::Client::new());
         let _ = tiles.region_picture(&egui::Context::default(), 1000, 2000, 1, 1);
         assert_eq!(queued(&tiles), vec![(1, 1000, 2000)]);
+    }
+
+    /// A 4096 m region (16 x 16 cells of 256 px) is not stitched at
+    /// 4096 x 4096: the longest side stays at MAX_PICTURE.
+    #[test]
+    fn a_large_region_picture_is_capped() {
+        let cell = egui::ColorImage::filled([256, 256], egui::Color32::from_rgb(40, 80, 120));
+        let cells: Vec<((u32, u32), &egui::ColorImage)> =
+            (0..16).flat_map(|y| (0..16).map(move |x| (x, y))).map(|at| (at, &cell)).collect();
+        let image = compose_region(16, 16, &cells).expect("picture");
+        assert_eq!(image.size, [MAX_PICTURE, MAX_PICTURE]);
+        assert_eq!(image.pixels[0], cell.pixels[0], "a uniform cell keeps its colour when shrunk");
+        // a wide region keeps its shape: 16 x 4 cells
+        let wide: Vec<_> = (0..4).flat_map(|y| (0..16).map(move |x| (x, y))).map(|at| (at, &cell)).collect();
+        assert_eq!(compose_region(16, 4, &wide).expect("picture").size, [MAX_PICTURE, MAX_PICTURE / 4]);
+        // a 512 m region stays at full size
+        let small: Vec<_> = (0..2).flat_map(|y| (0..2).map(move |x| (x, y))).map(|at| (at, &cell)).collect();
+        assert_eq!(compose_region(2, 2, &small).expect("picture").size, [512, 512]);
+    }
+
+    /// The world map's tiles keep the texture only; a tile a region picture
+    /// asks for keeps its pixels.
+    #[test]
+    fn only_region_picture_tiles_keep_their_pixels() {
+        let mut tiles = MapTiles::new();
+        let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
+        tiles.configure("http://map.example/", rt.handle(), reqwest::Client::new());
+        let _ = tiles.get(1, 10, 10, true);
+        let _ = tiles.region_picture(&egui::Context::default(), 20, 20, 2, 1);
+        assert!(!tiles.tiles[&(1, 10, 10)].keep);
+        assert!(tiles.tiles[&(1, 20, 20)].keep && tiles.tiles[&(1, 21, 20)].keep);
     }
 
     #[test]
