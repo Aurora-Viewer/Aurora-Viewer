@@ -109,7 +109,8 @@ pub(crate) fn blocker_weight(gap: f32, accept: f32) -> f32 {
 }
 
 /// The mean gap, in metres, the search averages over its blockers: the
-/// point's own texels' (`local`) all count; the gathered ones (`gathered`)
+/// point's own texels' hits (`local`, a gap of 0 is a texel that is not
+/// one) all count; the gathered ones (`gathered`)
 /// weigh by [`blocker_weight`] against `NEAR_REACH` times the mean of the
 /// local gaps over `own` (the receiver's own surface reads that much nearer
 /// the light across a texel: not a caster) plus a floor of the larger of
@@ -125,7 +126,8 @@ pub(crate) fn mean_gap(local: &[f32], gathered: &[f32], own: f32, texel_m: f32) 
     };
     let accept = NEAR_REACH * near + (2.0 * texel_m).max(0.1);
     let mut sum: f32 = local.iter().sum();
-    let mut weight = local.len() as f32;
+    // only the local texels that are hits weigh, as `blockers` in the shader
+    let mut weight = local.iter().filter(|&&g| g > 0.0).count() as f32;
     for &g in gathered {
         let w = blocker_weight(g, accept);
         sum += g * w;
@@ -727,7 +729,7 @@ mod tests {
         // surface (nearer the light by a little): every hit weighs 1
         let roof = [3.0_f32; 28];
         let m = mean_gap(&[0.15, 0.15, 0.0, 0.0], &roof, own, texel_m);
-        assert!((m - 3.0 * 28.0 / 32.0 - 0.3 / 32.0).abs() < 1e-4);
+        assert!((m - (0.3 + 3.0 * 28.0) / 30.0).abs() < 1e-4);
         assert!(filter_radius(m, 1.0) > 0.05);
         // and over a point whose texels see the roof too: all of it stays
         assert!((mean_gap(&[3.0; 4], &roof, own, texel_m) - 3.0).abs() < 1e-5);
