@@ -928,6 +928,10 @@ pub struct App {
     /// Settings last applied to the engine and the authorized stream URL.
     applied_audio: Option<crate::settings::AudioSettings>,
     stream_url: String,
+    /// The parcel music's fade between stations (FSFadeAudioStream) and the
+    /// fade volume last given to the Music channel.
+    music_fade: parcel_music::Fade,
+    music_fade_gain: f32,
     /// The parcel music's title last told (ShowStreamMetadata).
     stream_title_said: Option<String>,
     /// Every sound is cut because the window is minimised (MuteWhenMinimized).
@@ -1900,6 +1904,8 @@ impl App {
             },
             applied_audio: None,
             stream_url: String::new(),
+            music_fade: Default::default(),
+            music_fade_gain: 1.0,
             stream_title_said: None,
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
@@ -3129,9 +3135,12 @@ impl App {
     fn back_to_login(&mut self, error: Option<String>) {
         self.parcel_music.enter(false);
         self.stream_url.clear();
+        self.music_fade.reset();
+        self.music_fade_gain = 1.0;
         self.music_status = Default::default();
         if let Some(engine) = &self.audio_engine {
             engine.stop_stream();
+            engine.set_volume(aurora_audio::Channel::Music, self.settings.audio.volume[4]);
         }
         // the next login's arrival steps again; steps under way end with
         // the session, the user's draw distance back
@@ -6156,14 +6165,26 @@ impl App {
         if !self.settings.audio.enabled[4] {
             engine.set_enabled(aurora_audio::Channel::Music, false);
         }
-        if want != self.stream_url {
-            if want.is_empty() {
-                engine.stop_stream();
-            } else {
-                log::info!("parcel music: {want}");
-                engine.play_stream(&want);
+        // A change of station fades (FSFadeAudioStream); a stop by hand, the
+        // channel turned off or leaving the world cuts at once.
+        let smooth = in_world && self.settings.audio.enabled[4] && self.parcel_music.requested();
+        let times = parcel_music::FadeTimes {
+            on: self.settings.audio.music_fade,
+            fade_in: self.settings.audio.music_fade_in,
+            fade_out: self.settings.audio.music_fade_out,
+        };
+        let (change, gain) = self.music_fade.step(&want, smooth, times, Instant::now());
+        match change {
+            Some(parcel_music::StreamChange::Play(url)) => {
+                log::info!("parcel music: {url}");
+                engine.play_stream(&url);
+                self.stream_url = url;
             }
-            self.stream_url = want;
+            Some(parcel_music::StreamChange::Stop) => {
+                engine.stop_stream();
+                self.stream_url.clear();
+            }
+            None => {}
         }
         if self.applied_audio.as_ref() != Some(&self.settings.audio) {
             let a = &self.settings.audio;
@@ -6174,11 +6195,18 @@ impl App {
             }
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
-                engine.set_volume(*ch, a.volume[i]);
+                let fade = if *ch == aurora_audio::Channel::Music { gain } else { 1.0 };
+                engine.set_volume(*ch, a.volume[i] * fade);
                 engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute.active));
                 engine.set_enabled(*ch, i == 0 || a.enabled[i]);
             }
             self.applied_audio = Some(a.clone());
+            self.music_fade_gain = gain;
+        }
+        if gain != self.music_fade_gain {
+            // the mixer smooths each change (no zipper noise)
+            engine.set_volume(aurora_audio::Channel::Music, self.settings.audio.volume[4] * gain);
+            self.music_fade_gain = gain;
         }
         let status = engine.stream_status();
         self.music_status = ui::audio::MusicStatus::read(
@@ -8586,6 +8614,12 @@ impl App {
             ContactsAction::GroupTitles => {
                 ui::widgets::toggle_floater(&self.egui_ctx, ui::group_titles::WINDOW, &mut self.panels.group_titles);
             }
+            ContactsAction::Conference(ids) => self.on_ctx_action(ui::context::CtxAction::Conference(ids)),
+            ContactsAction::SearchGroups => {
+                self.panels.search = true;
+                self.search_ui.open_tab(crate::world::search::Tab::Groups);
+            }
+            ContactsAction::GroupInvite(group) => self.group_profile_ui.invite.show_for_group(group),
             ContactsAction::ToggleTornOff => {
                 let torn_off = !self.settings.contacts.torn_off;
                 self.settings.contacts.torn_off = torn_off;
@@ -9680,6 +9714,7 @@ impl App {
             };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
+            self.world.show_back_slurl = self.settings.show_back_slurl;
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
@@ -13149,12 +13184,36 @@ impl App {
         if self.demo && self.frame_count == 60 && std::env::var("AURORA_DEMO_STATUSMENU").is_ok_and(|v| v == "invisible") {
             self.world.status.invisible.on = true;
         }
+        // AURORA_DEMO_MUSIC=fade: the radio on at frame 300, the parcel's
+        // station changed at frame 600 (the log gives the fade out, then in);
+        // the media filter's question about each station is answered "allow
+        // once", as a click on it would
+        if self.demo && (300..=900).contains(&self.frame_count) && std::env::var("AURORA_DEMO_MUSIC").as_deref() == Ok("fade") {
+            if self.frame_count == 300 && !self.parcel_music.requested() {
+                self.parcel_music.toggle();
+            }
+            if let Some(parcel) = self.world.parcel.as_mut().filter(|_| self.frame_count == 600) {
+                std::sync::Arc::make_mut(parcel).music_url = format!("{}next", crate::demo::land::MUSIC_URL);
+            }
+            if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
+                self.world.media_filter.answer(&url, true, crate::media::filter::Remember::Once);
+            }
+        }
         // AURORA_DEMO_CONTACTS: contact sets and aliases to show, once logged in
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
             crate::demo::seed_contact_sets(&mut self.world);
             if std::env::var("AURORA_DEMO_CONTACTS").as_deref() == Ok("empty") {
                 self.world.social.friends.clear();
             }
+        }
+        // AURORA_DEMO_CONTACTS=conference|map|invite: what the buttons need
+        // selected, once the friends and groups are in
+        if self.demo
+            && self.frame_count == 600
+            && let Ok(mode) = std::env::var("AURORA_DEMO_CONTACTS")
+        {
+            let (friends, group) = ui::contacts::demo_selection(&self.world, &mode);
+            self.contacts_ui.demo_select(friends, group);
         }
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {
@@ -20144,7 +20203,7 @@ impl ApplicationHandler for App {
                 self.chat_ui.contacts = true;
                 self.settings.show_contacts_tab = v != "hidden";
                 self.settings.contacts.tab = match v.as_str() {
-                    "groups" | "groupes" => 1,
+                    "groups" | "groupes" | "invite" => 1,
                     "sets" | "cercles" => 2,
                     _ => 0,
                 };
