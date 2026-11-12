@@ -3828,6 +3828,7 @@ impl App {
                 item_id,
                 running,
                 mono,
+                luau,
             } => {
                 self.build.contents.running.insert((object_id, item_id), (running, mono));
                 self.script_editors.running(
@@ -3837,6 +3838,7 @@ impl App {
                     },
                     running,
                     mono,
+                    luau,
                 );
             }
             NetEvent::PhysicsProperties(list) => {
