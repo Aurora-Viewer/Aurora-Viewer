@@ -347,6 +347,7 @@ fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> R
             loop_in: 0.0,
             loop_out: duration,
             looping: false,
+            ends_after: None,
             ease_in: 0.3,
             ease_out: 0.3,
             hand_pose: 1,

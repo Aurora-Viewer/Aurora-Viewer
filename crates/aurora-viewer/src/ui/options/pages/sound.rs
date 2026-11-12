@@ -60,13 +60,33 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-audio-output"),
             tr!("ui-options-speakers-or-headset-used-by-the-viewer"),
             &field!(audio.output_device),
-            |ui, s, st, _| device_combo(ui, "audio_out", &mut s.audio.output_device, &st.output_devices, SLIDER_W + 40.0).0,
+            |ui, s, st, _| {
+                device_combo(
+                    ui,
+                    "audio_out",
+                    &mut s.audio.output_device,
+                    &st.output_devices,
+                    SLIDER_W + 40.0,
+                    st.devices_listing,
+                )
+                .0
+            },
         );
         cx.row_with(
             tr!("ui-options-microphone"),
             tr!("ui-options-input-used-for-voice"),
             &field!(audio.input_device),
-            |ui, s, st, _| device_combo(ui, "audio_in", &mut s.audio.input_device, &st.input_devices, SLIDER_W + 40.0).0,
+            |ui, s, st, _| {
+                device_combo(
+                    ui,
+                    "audio_in",
+                    &mut s.audio.input_device,
+                    &st.input_devices,
+                    SLIDER_W + 40.0,
+                    st.devices_listing,
+                )
+                .0
+            },
         );
         cx.row_with(tr!("ui-options-device-list"), "", &Nothing, |ui, _, _, r| {
             if widgets::flat_button(ui, &p, tr!("ui-options-refresh-list")).clicked() {
@@ -155,6 +175,30 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-play-parcel-music-when-entering"),
             &field!(audio.music_autoplay),
         );
+        // FSFadeAudioStream, FSAudioMusicFadeIn / FSAudioMusicFadeOut
+        // (panel_preferences_sound.xml: 0 to 10 s)
+        cx.toggle(
+            tr!("ui-options-music-fade"),
+            tr!("ui-options-music-fade-help"),
+            &field!(audio.music_fade),
+        );
+        let off = !cx.s.audio.music_fade;
+        cx.subs(off, |cx| {
+            cx.slider(
+                tr!("ui-options-music-fade-in"),
+                tr!("ui-options-music-fade-in-help"),
+                &field!(audio.music_fade_in),
+                0.0..=10.0,
+                " s",
+            );
+            cx.slider(
+                tr!("ui-options-music-fade-out"),
+                tr!("ui-options-music-fade-out-help"),
+                &field!(audio.music_fade_out),
+                0.0..=10.0,
+                " s",
+            );
+        });
         // Legacy Viewer › Sound & Media: ShowStreamMetadata,
         // StreamMetadataAnnounceToChat / StreamMetadataAnnounceChannel
         use crate::settings::StreamTitleShow;

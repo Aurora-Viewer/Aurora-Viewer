@@ -143,7 +143,7 @@ fn mesh_import_parity_more_than_256_instances_and_deep_gltf_hierarchy() {
     let scene = gltf::parse(&document, &crate::Skeleton::default()).expect("deep hierarchy and many instances");
     assert_eq!(scene.instances.len(), 300);
     let visual = (0..300).map(|_| "<node><instance_geometry url=\"#a\"/></node>").collect::<String>();
-    let dae = super::tests::collada_objects(&visual, false);
+    let dae = super::tests::collada_objects(&visual, false, false, false);
     let scene = collada::parse(dae.as_bytes(), &crate::Skeleton::default()).expect("many DAE instances");
     assert_eq!(scene.instances.len(), 300);
 }
@@ -244,6 +244,8 @@ fn mesh_import_parity_rigged_dae_keeps_authored_binds_and_bone_offsets_for_each_
         let dae = super::tests::collada_objects(
             "<node sid=\"mPelvis\" type=\"JOINT\"><translate sid=\"location\">1 2 3</translate></node>",
             true,
+            false,
+            false,
         )
         .replace("Z_UP", axis);
         let scene = collada::parse(dae.as_bytes(), &rig).expect("rigged DAE");

@@ -37,7 +37,7 @@ impl LibraryUi {
                     .inventory
                     .items
                     .get(id)
-                    .is_some_and(|item| matches!(item.asset_type, 0 | 15) && item.owner_mask & full == full)
+                    .is_some_and(|item| matches!(item.asset_type, 0 | 15) && rules::held(&world.inventory, item) & full == full)
             })
             .collect();
         if items.len() == 1 {
@@ -79,7 +79,7 @@ impl LibraryUi {
                 .inventory
                 .items
                 .get(&job.item)
-                .is_none_or(|item| item.asset_id != job.asset || item.owner_mask & full != full)
+                .is_none_or(|item| item.asset_id != job.asset || rules::held(&world.inventory, item) & full != full)
             {
                 return false;
             }
@@ -101,7 +101,12 @@ impl LibraryUi {
             let Some((id, folder, png)) = self.export_queue.pop_front() else {
                 break;
             };
-            let Some(item) = world.inventory.items.get(&id).filter(|item| item.owner_mask & full == full) else {
+            let Some(item) = world
+                .inventory
+                .items
+                .get(&id)
+                .filter(|item| rules::held(&world.inventory, item) & full == full)
+            else {
                 continue;
             };
             let name: String = item
@@ -151,7 +156,12 @@ impl LibraryUi {
             editor.message = message;
         }
     }
-    pub(crate) fn demo_preview_controls(&mut self, mode: &str) {
+    pub(crate) fn forget_local_asset(&mut self, id: Uuid) {
+        for editor in self.windows.iter_mut().filter_map(|window| window.editor.as_mut()) {
+            editor.forget_local_asset(id);
+        }
+    }
+    pub(crate) fn demo_preview_controls(&mut self, mode: &str, world: &mut World) {
         for window in &mut self.windows {
             window.texture.display.keep_ratio = !mode.ends_with("stretch");
             if let Some(editor) = &mut window.editor {
@@ -166,6 +176,15 @@ impl LibraryUi {
                 draft.metallic_factor = 0.35;
                 draft.roughness_factor = 0.6;
                 draft.double_sided = true;
+                if matches!(
+                    mode,
+                    "preview-controls-local"
+                        | "preview-controls-local-picker"
+                        | "preview-controls-local-apply"
+                        | "preview-controls-local-narrow"
+                ) {
+                    editor.demo_local_map(world, mode.ends_with("-picker"));
+                }
             }
         }
     }
@@ -194,6 +213,14 @@ impl LibraryUi {
         self.windows
             .iter()
             .any(|window| window.editor.as_ref().is_some_and(|editor| editor.saving == Some(request)))
+    }
+    pub(crate) fn demo_material_draft(&self, item: Uuid) -> Option<aurora_assets::PbrMaterial> {
+        self.windows
+            .iter()
+            .find(|window| window.id == item)?
+            .editor
+            .as_ref()
+            .map(|editor| (*editor.draft).clone())
     }
     pub(crate) fn begin_material_save(&mut self, item: Uuid, request: Uuid) -> bool {
         let Some(editor) = self.windows.iter_mut().find(|w| w.id == item).and_then(|w| w.editor.as_mut()) else {
@@ -353,15 +380,29 @@ impl LibraryUi {
                 }
             } else {
                 self.wanted_images.insert(asset);
-                if item.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) != rules::COPY | rules::MODIFY | rules::TRANSFER {
+                if rules::held(&world.inventory, &item) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                    != rules::COPY | rules::MODIFY | rules::TRANSFER
+                {
                     window.texture.export = None;
                     window.texture.export_path = None;
                 }
                 window.texture.prepare(ctx, asset, scene);
+                let copy_uuid = window
+                    .texture
+                    .copy_uuid_allowed(&world.inventory, item.asset_id, world.god_level > 0);
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
-                texture_view::toolbar(ui, p, &item, dimensions, &mut window.texture.display, actions);
+                texture_view::toolbar(
+                    ui,
+                    p,
+                    &item,
+                    &world.inventory,
+                    copy_uuid,
+                    dimensions,
+                    &mut window.texture.display,
+                    actions,
+                );
                 // the picture in exactly the room the description, the
                 // buttons and the notes leave
                 let (mut view, foot) = widgets::above_footer(ui);
@@ -439,7 +480,7 @@ impl LibraryUi {
                         }
                     });
                     ui.label(
-                        RichText::new(if item.owner_mask & rules::COPY != 0 {
+                        RichText::new(if rules::held(&world.inventory, &item) & rules::COPY != 0 {
                             aurora_i18n::tr!("texture-library-copy")
                         } else {
                             aurora_i18n::tr!("texture-library-no-copy")

@@ -87,6 +87,8 @@ fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
     match n.data {
         Data::Presence { .. } => TOAST_TIP,
         Data::Message { .. } => message_seconds,
+        // ShowMyComplexityChanges (the notice's expiry)
+        Data::Complexity { seconds } => f64::from(seconds),
         _ if n.interactive() => TOAST_OFFER,
         _ => TOAST_INFO,
     }
@@ -282,8 +284,9 @@ pub(super) fn person_card(
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                 });
-                if !n.body.is_empty() {
-                    let text = message_excerpt(world, &n.body);
+                let shown = world.notification_body(n);
+                if !shown.is_empty() {
+                    let text = message_excerpt(world, &shown);
                     name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links));
                 }
             });
@@ -355,7 +358,13 @@ pub(super) fn card(
     aurora: bool,
 ) -> Option<Response> {
     let mut out = None;
-    let (icon, accent) = kind_style(p, n.kind);
+    // a new version: the updates' icon (the menu's "Check for updates")
+    let update = matches!(n.data, Data::Update { .. });
+    let (icon, accent) = if update {
+        ("download-filled", p.violet)
+    } else {
+        kind_style(p, n.kind)
+    };
     let insignia = match &n.data {
         Data::GroupNotice { group, .. } => super::chat::group_insignia(world, group),
         _ => None,
@@ -408,7 +417,12 @@ pub(super) fn card(
                 let time = super::chat::hhmm(n.time);
                 let w = (ui.available_width() - 34.0 - time_width(ui, &time)).max(40.0);
                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                    text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
+                    if update && aurora {
+                        let title = super::notification_center::aurora::title(ui, p, &n.title, 12.5);
+                        ui.add(egui::Label::new(title).wrap());
+                    } else {
+                        text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
+                    }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
@@ -438,18 +452,19 @@ pub(super) fn card(
                     ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                 });
             });
-            if !n.body.is_empty() {
+            let shown = world.notification_body(n);
+            if !shown.is_empty() {
                 ui.add_space(2.0);
                 // selectable: Firestorm shows the body in a read-only
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_links(ui, p, world, &n.body, &n.name_links, 12.0, p.ink);
+                        super::chat::text_with_links(ui, p, world, &shown, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_links(ui, p, world, &n.body, &n.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, &shown, &n.name_links, 12.0, p.muted);
                     });
                 }
             }
@@ -457,7 +472,12 @@ pub(super) fn card(
             match &n.data {
                 // drawn by `person_card`; the restart's live card by
                 // `region_restart::bell_card`, its text alone here
-                Data::None | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart | Data::RegionMessage { .. } => {}
+                Data::None
+                | Data::Presence { .. }
+                | Data::Message { .. }
+                | Data::RegionRestart
+                | Data::RegionMessage { .. }
+                | Data::Complexity { .. } => {}
                 // the attachment as in the group's Notices tab, saved from
                 // here (LLToastGroupNotifyPanel::onClickAttachment)
                 Data::GroupNotice { attachment: Some(a), .. } => {
@@ -645,6 +665,17 @@ pub(super) fn card(
                 Data::Delivery { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-show-in-inventory").into(), Response::Open, true));
                 }
+                // Update downloads it in the update window; once downloaded,
+                // Install opens that window, which says what installing does
+                Data::Update { ready, .. } => {
+                    let primary = if *ready {
+                        aurora_i18n::tr!("update-notice-install")
+                    } else {
+                        aurora_i18n::tr!("update-install")
+                    };
+                    buttons.push((primary.into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("update-later").into(), Response::Decline, false));
+                }
                 Data::Dialog {
                     buttons: b, own_object, ..
                 } => {
@@ -679,16 +710,18 @@ pub(super) fn card(
                     });
                 }
                 Data::TextBox { .. } => {
+                    // LLToastScriptTextbox (panel_notify_textbox.xml): a
+                    // multi-line editor three lines tall that scrolls beyond
+                    // them. Enter starts a new line; only the button sends.
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut n.text)
-                                .hint_text(aurora_i18n::tr!("ui-notifications-reply"))
-                                .desired_width(ui.available_width() - 82.0),
-                        );
-                        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if button(ui, p, aurora_i18n::tr!("common-send"), true).clicked() || enter {
+                        text_box_field(ui, n.id, &mut n.text);
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(indent);
+                        if button(ui, p, aurora_i18n::tr!("common-send"), true).clicked() {
                             out = Some(Response::SendText);
                         }
                     });
@@ -740,6 +773,84 @@ pub(super) fn card(
             .show(ui, body);
     }
     out
+}
+
+/// Script prompts are windows for Close All in both notification styles.
+/// Dismissing one uses the existing ignore-without-reply response.
+pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification) -> bool {
+    if !matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. }) {
+        return false;
+    }
+    let id = egui::Id::NULL.with(("script_prompt", n.id));
+    super::close_key::shown_extra(ctx, id);
+    super::close_key::take(ctx, id)
+}
+
+/// Lines of an llTextBox reply shown before it scrolls: the 50 pixels of the
+/// "message" editor of panel_notify_textbox.xml.
+const TEXT_BOX_ROWS: usize = 3;
+
+/// The reply field of an llTextBox prompt, as wide as the card: as high as
+/// [`TEXT_BOX_ROWS`] lines, then the text scrolls inside the field, its
+/// scroll bar within the frame, like LLTextEditor. The frame is the theme's
+/// own text field face (`theme::FieldSize`, hover and focus included), drawn
+/// around the scroll area so that it never scrolls away with the text. The
+/// text is kept within what the Legacy Viewer's editor accepts
+/// (`clamp_text_box_reply`). Returns the frame's rectangle and the editor.
+///
+/// The field's place is set first, from the card's width, and the field is
+/// drawn in a child that does not size the card: the scroll area's content
+/// can run a fraction of a point past its width, which grew the card on
+/// some frames, and a toast anchored to the right then shimmered sideways.
+fn text_box_field(ui: &mut egui::Ui, id: u64, text: &mut String) -> (egui::Rect, egui::Response) {
+    let edit_id = egui::Id::unique(("script_text_box", id));
+    let style: egui::widget_style::TextEditStyle = ui.widget_style(edit_id, &egui::class::Classes::default());
+    let frame = style.atom_layout.frame;
+    // a line as TextEdit lays it out: the font's row plus the theme's spacing
+    let row = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style()))) + ui.spacing().extra_text_line_spacing;
+    let rows = row * TEXT_BOX_ROWS as f32;
+    let size = Vec2::new(ui.available_width(), rows + frame.total_margin().sum().y);
+    let (place, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // a paste reaches the editor cleaned as LLTextEditor::pasteHelper does it,
+    // before egui inserts it, so the cursor lands after the cleaned text
+    let focused = ui.memory(|m| m.has_focus(edit_id));
+    ui.input_mut(|i| {
+        for event in &mut i.events {
+            match event {
+                egui::Event::Paste(pasted) if focused => crate::world::notifications::clean_text_box_paste(pasted),
+                egui::Event::MiddleClickPaste { pos, text } if place.contains(*pos) => {
+                    crate::world::notifications::clean_text_box_paste(text)
+                }
+                _ => {}
+            }
+        }
+    });
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(place)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    let shown = frame.show(&mut child, |ui| {
+        ui.set_width(ui.available_width());
+        egui::ScrollArea::vertical()
+            .id_salt(edit_id)
+            .min_scrolled_height(rows)
+            .max_height(rows)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(text)
+                        .id(edit_id)
+                        .frame(egui::Frame::NONE)
+                        .hint_text(aurora_i18n::tr!("ui-notifications-reply"))
+                        .desired_rows(TEXT_BOX_ROWS)
+                        .desired_width(ui.available_width()),
+                )
+            })
+            .inner
+    });
+    crate::world::notifications::clamp_text_box_reply(text);
+    (place, shown.inner)
 }
 
 fn button(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool) -> egui::Response {
@@ -930,6 +1041,10 @@ pub fn show(
                                 ui.spacing_mut().item_spacing.y = 4.0;
                                 // newest first
                                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
+                                    if close_script_prompt(ctx, n) {
+                                        answers.push((n.id, Response::Dismiss));
+                                        continue;
+                                    }
                                     let r = if matches!(n.data, Data::Message { .. }) {
                                         person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, false)
                                     } else {
@@ -963,6 +1078,11 @@ pub fn show(
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
+                        if close_script_prompt(ctx, n) {
+                            answers.push((id, Response::Dismiss));
+                            nui.toasts.retain(|(t, _)| *t != id);
+                            continue;
+                        }
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                             person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
                         } else {
@@ -1023,6 +1143,131 @@ mod tests {
         assert!(on.dnd);
         assert_eq!(crate::world::status::StatusModes { dnd: false, ..on }, away);
         assert_eq!(bell_dnd_toggled(on), away);
+    }
+
+    /// #2832: the llTextBox field holds several lines, shows three, then
+    /// scrolls instead of growing the card; Enter starts a new line.
+    #[test]
+    fn script_text_box_shows_three_lines_then_scrolls() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let height = |text: &str| {
+            let mut text = text.to_owned();
+            let mut h = 0.0;
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(Default::default(), |ui| {
+                    ui.set_width(300.0);
+                    // the frame, which holds still while the text scrolls
+                    h = text_box_field(ui, 7, &mut text).0.height();
+                });
+                out.textures_delta.clear();
+            }
+            h
+        };
+        let empty = height("");
+        let three = height("Line 1\nLine 2\nLine 3");
+        let six = height("1\n2\n3\n4\n5\n6");
+        assert!((empty - three).abs() < 0.5, "three lines fit an empty field: {empty} / {three}");
+        assert!((six - three).abs() < 0.5, "more lines scroll: {six} / {three}");
+
+        let mut text = String::from("Line 1");
+        let typed = |text: &mut String, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    text_box_field(ui, 7, text).1.request_focus();
+                },
+            );
+            out.textures_delta.clear();
+        };
+        typed(&mut text, Vec::new());
+        typed(&mut text, Vec::new());
+        typed(
+            &mut text,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Text("Line 2".into()),
+            ],
+        );
+        assert_eq!(text, "Line 1\nLine 2");
+        // a paste is cleaned before it is inserted: a tab as four spaces
+        typed(&mut text, vec![egui::Event::Paste("\tTab\r\nEnd".into())]);
+        assert_eq!(text, "Line 1\nLine 2    Tab\nEnd");
+    }
+
+    /// #2832: the llTextBox toast holds still from one frame to the next:
+    /// its field, scrolling past three lines, ran a fraction of a point
+    /// past the card on some frames, and the toast, anchored to the right,
+    /// shimmered sideways. Toasts are the Legacy card (`aurora: false`); the
+    /// Aurora card takes the width of the notification center's list.
+    #[test]
+    fn script_text_box_toast_keeps_its_place() {
+        let aurora = false;
+        for lines in ["a", "1\n2\n3\n4\n5", "1\n2\n3\n4\n5\n6\n7\n8\n9"] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut list = Notifications::default();
+            list.push(
+                Kind::Script,
+                "Shop sign",
+                "Write your name for the guest book",
+                Data::TextBox {
+                    sender: ([127, 0, 0, 1], 13000).into(),
+                    object: Uuid::from_u128(3),
+                    channel: -42,
+                },
+            );
+            list.list[0].text = lines.into();
+            let mut rects = Vec::new();
+            for frame in 0..8 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(frame as f64 * 0.016),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let area = egui::Area::new(egui::Id::unique("toast_test"))
+                            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-10.0, 60.0))
+                            .show(ui.ctx(), |ui| {
+                                card(
+                                    ui,
+                                    &p,
+                                    &icons,
+                                    &world,
+                                    &HashMap::new(),
+                                    &mut HashSet::new(),
+                                    &mut list.list[0],
+                                    true,
+                                    aurora,
+                                );
+                            });
+                        rects.push(area.response.rect);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let settled = &rects[3..];
+            assert!(
+                settled
+                    .windows(2)
+                    .all(|w| (w[0].min - w[1].min).length() < 0.01 && (w[0].size() - w[1].size()).length() < 0.01),
+                "{lines:?}: {rects:?}"
+            );
+        }
     }
 
     #[test]

@@ -1,12 +1,15 @@
 //! The keyboard of the Conversations window's tabs (#651).
 //!
-//! Alt + Up or Left shows the conversation above in the list, Alt + Down or
-//! Right the one below, round the list, while the keyboard is in the window
-//! (LLFloaterIMContainer::handleKeyHere, indra/newview/llfloaterimcontainer.cpp;
-//! LLTabContainer::handleKeyHere and selectNextTab, which goes round,
-//! indra/llui/lltabcontainer.cpp, originally LGPL 2.1). Its field takes the
-//! keyboard, so the next press goes on; elsewhere these keys stay the
-//! camera's. Contacts is not a conversation and is left out.
+//! Ctrl + Tab shows the conversation below in the list, Ctrl + Shift + Tab
+//! the one above, round the list, while the keyboard is in the window.
+//! Alt + Up / Left and Alt + Down / Right do the same, as in the Legacy
+//! Viewer (LLFloaterIMContainer::handleKeyHere,
+//! indra/newview/llfloaterimcontainer.cpp; LLTabContainer::handleKeyHere
+//! and selectNextTab, which goes round, indra/llui/lltabcontainer.cpp,
+//! originally LGPL 2.1). On macOS Option + Left / Right stay in the field
+//! to move by word, so only Option + Up / Down keep cycling there. Its field
+//! takes the keyboard, so the next press goes on; elsewhere these keys stay
+//! the camera's. Contacts is not a conversation and is left out.
 //!
 //! Ctrl+W, the window being the frontmost (`close_key`), closes the
 //! conversation shown, and the window itself when that tab cannot be closed
@@ -54,6 +57,30 @@ pub(super) fn after_close(order: &[Tab], closed: Uuid) -> Tab {
         .flatten()
 }
 
+/// Whether a pressed key cycles the conversations, and which way: `true`
+/// goes to the one below in the list, `false` to the one above.
+///
+/// Ctrl + Tab and Ctrl + Shift + Tab work everywhere. The arrows are the
+/// Legacy Viewer's: Alt + Up / Left and Alt + Down / Right. On macOS
+/// Option + Left / Right belong to the text field (word moves), so only
+/// Option + Up / Down keep cycling there.
+pub(super) fn cycle(key: egui::Key, modifiers: egui::Modifiers, mac: bool) -> Option<bool> {
+    if key == egui::Key::Tab && modifiers.ctrl && !modifiers.alt && !modifiers.mac_cmd {
+        // Ctrl+Tab next, Ctrl+Shift+Tab previous.
+        return Some(!modifiers.shift);
+    }
+    if modifiers.alt && !modifiers.ctrl && !modifiers.shift && !modifiers.command && !modifiers.mac_cmd {
+        return match key {
+            egui::Key::ArrowUp => Some(false),
+            egui::Key::ArrowDown => Some(true),
+            egui::Key::ArrowLeft if !mac => Some(false),
+            egui::Key::ArrowRight if !mac => Some(true),
+            _ => None,
+        };
+    }
+    None
+}
+
 /// The keys of this frame, before the window's field reads them. `order`:
 /// the conversations as the list shows them.
 pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], actions: &mut Vec<ConvAction>) {
@@ -80,22 +107,25 @@ pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], action
         return;
     }
     // (held down, each repeat goes one further, as in a list)
-    let forward = [
-        (egui::Key::ArrowUp, false),
-        (egui::Key::ArrowLeft, false),
-        (egui::Key::ArrowDown, true),
-        (egui::Key::ArrowRight, true),
-    ]
-    .into_iter()
-    .find(|(key, _)| {
-        let alone = ctx.input(|i| {
-            i.events.iter().any(|e| {
-                matches!(e, egui::Event::Key { key: k, pressed: true, modifiers, .. } if k == key && modifiers.matches_exact(egui::Modifiers::ALT))
-            })
+    let mac = cfg!(target_os = "macos");
+    let mut forward = None;
+    ctx.input_mut(|i| {
+        i.events.retain(|event| {
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+                && let Some(next) = cycle(*key, *modifiers, mac)
+            {
+                forward.get_or_insert(next);
+                false
+            } else {
+                true
+            }
         });
-        alone && ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, *key))
-    })
-    .map(|(_, forward)| forward);
+    });
     if let Some(tab) = forward.and_then(|forward| step(order, current, forward)) {
         st.select_tab(tab);
         st.reveal = tab;
@@ -116,6 +146,37 @@ mod tests {
     const A: Uuid = Uuid::from_u128(1);
     const B: Uuid = Uuid::from_u128(2);
     const C: Uuid = Uuid::from_u128(3);
+
+    #[test]
+    fn ctrl_tab_cycles_everywhere_and_option_left_right_only_off_mac() {
+        use egui::Modifiers;
+        let ctrl = Modifiers::CTRL;
+        let ctrl_shift = ctrl | Modifiers::SHIFT;
+        let alt = Modifiers::ALT;
+        let cmd = Modifiers::COMMAND;
+        // Physical Control on macOS reaches egui as Ctrl + Command.
+        let mac_ctrl = Modifiers {
+            ctrl: true,
+            command: true,
+            ..Modifiers::NONE
+        };
+        for mac in [true, false] {
+            assert_eq!(cycle(egui::Key::Tab, ctrl, mac), Some(true));
+            assert_eq!(cycle(egui::Key::Tab, ctrl_shift, mac), Some(false));
+            assert_eq!(cycle(egui::Key::Tab, mac_ctrl, mac), Some(true));
+            assert_eq!(cycle(egui::Key::Tab, cmd, mac), None, "Command+Tab is the system's");
+            assert_eq!(cycle(egui::Key::ArrowUp, alt, mac), Some(false));
+            assert_eq!(cycle(egui::Key::ArrowDown, alt, mac), Some(true));
+        }
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt, true), None, "Option+Left moves by word");
+        assert_eq!(cycle(egui::Key::ArrowRight, alt, true), None, "Option+Right moves by word");
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt, false), Some(false));
+        assert_eq!(cycle(egui::Key::ArrowRight, alt, false), Some(true));
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt | Modifiers::SHIFT, true), None);
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt | Modifiers::SHIFT, false), None);
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt | ctrl, false), None);
+        assert_eq!(cycle(egui::Key::Tab, ctrl | alt, true), None);
+    }
 
     #[test]
     fn alt_arrows_go_round_the_list() {

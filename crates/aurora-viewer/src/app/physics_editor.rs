@@ -133,7 +133,7 @@ impl App {
             cof_version: 0,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         });
         appearance.visual_params = self
             .world

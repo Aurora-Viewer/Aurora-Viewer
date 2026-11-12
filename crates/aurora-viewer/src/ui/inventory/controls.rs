@@ -45,6 +45,8 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         aurora_i18n::tr!("ui-inventory-controls-show-library"),
         &mut prefs.show_library,
     );
+    // Separate switches (#3008): pictures on hover must work with tooltips off.
+    changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-tooltips"), &mut prefs.show_hover_tooltips);
     changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
     changed |= check(ui, p, aurora_i18n::tr!("inventory-folder-colors"), &mut prefs.folder_colors_enabled);
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
@@ -60,6 +62,12 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         p,
         aurora_i18n::tr!("ui-inventory-controls-favorites-tab"),
         &mut prefs.show_favorites,
+    );
+    changed |= check(
+        ui,
+        p,
+        aurora_i18n::tr!("inventory-favorites-show-parent-folders"),
+        &mut prefs.favorites_show_parent_folders,
     );
     changed |= check(
         ui,
@@ -159,10 +167,11 @@ pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut
     });
 }
 
-/// A window starts with the filters kept by default.
+/// Each tab starts with its own saved finder defaults.
 pub fn init_filters(st: &mut InventoryUi, prefs: &InventoryPreferences) {
     if !st.filters_initialized {
-        st.filters.clone_from(&prefs.filter_defaults);
+        st.filters.clone_from(prefs.filters_for(st.tab));
+        st.advanced = st.filters.smart.is_some();
         st.filters_initialized = true;
     }
 }
@@ -327,10 +336,11 @@ pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: 
 /// Once a search is emptied (`searching` it was before the field), the
 /// plain list goes back to where it was, and to the selection.
 pub fn after_search(inv: &Inventory, st: &mut InventoryUi, searching: bool) {
-    if searching && st.search.trim().is_empty() {
-        // The plain list shares its scroll area with the results: it goes back
-        // to its place from before the search, unless a selection it shows is
-        // revealed below (that reveal's offset wins).
+    // The plain list shares its scroll area with the results: it goes back to
+    // its place from before the search, unless a selection it shows is
+    // revealed below (that reveal's offset wins). A tab that still shows its
+    // results (Recent, Worn, Favorites, Received, or a filter) keeps its own.
+    if searching && st.search.trim().is_empty() && !st.result_view() {
         st.plain_scroll_restore = Some(st.plain_scroll);
     }
     if searching
@@ -521,7 +531,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                         *f = Filters::default();
                     }
                     if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked() {
-                        prefs.filter_defaults.clone_from(f);
+                        prefs.filters_for_mut(st.tab).clone_from(f);
                     }
                 });
                 let note = match prefs.recent_hours {

@@ -143,7 +143,7 @@ impl Demo {
                 label,
                 ..
             } if *object_id == world.agent_id
-                && *channel == DISCOVERY_CHANNEL
+                && *channel == private_channel(bridge.object)
                 && *index == 0
                 && *label == format!("auroraHello|{}", bridge.object) =>
             {
@@ -156,7 +156,7 @@ impl Demo {
                         .collect(),
                 )
             }
-            NetCommand::ScriptDialogReply { channel: ik::CONTROL, .. } => Some(Vec::new()),
+            NetCommand::ScriptDialogReply { label, .. } if label.starts_with("auroraIKRelay|") => Some(Vec::new()),
             NetCommand::AgentAnimationChanges { changes } if !world.agent_id.is_nil() => {
                 let mut anims: Vec<_> = world
                     .animations
@@ -287,6 +287,7 @@ impl Demo {
                     result: Ok(aurora_net::scripts::ScriptSaved {
                         asset: Uuid::new_v4(),
                         compiled: !failed,
+                        checked: true,
                         errors: if failed {
                             vec!["Synthetic compilation error".into()]
                         } else {
@@ -370,6 +371,7 @@ impl Demo {
                     item_id: *item_id,
                     running: self.installed,
                     mono: Some(true),
+                    luau: aurora_net::scripts::Luau::Off,
                 }])
             }
             _ => None,

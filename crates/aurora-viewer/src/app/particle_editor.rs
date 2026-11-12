@@ -40,6 +40,8 @@ pub(super) struct Inject {
 struct Pending {
     object: Uuid,
     source: String,
+    /// The script leaves the texture key for the user (`texture_key`).
+    texture_left_out: bool,
     step: Step,
     since: Instant,
 }
@@ -111,10 +113,16 @@ impl App {
         }
         match action {
             Some(Action::Copy) => {
+                let key = self.particle_texture_key();
                 let editor = &mut self.particle_editor;
-                ctx.copy_text(editor.params.script(editor.object));
+                ctx.copy_text(editor.params.script(editor.object, key));
+                let text = if key {
+                    aurora_i18n::tr!("particle-editor-copied")
+                } else {
+                    aurora_i18n::tr!("particle-editor-copied-without-texture")
+                };
                 editor.notice = Some(Notice {
-                    text: aurora_i18n::tr!("particle-editor-copied").into(),
+                    text: text.into(),
                     error: false,
                 });
             }
@@ -140,15 +148,25 @@ impl App {
         }
     }
 
+    /// Whether the script may carry the texture's key: the default image, or
+    /// a texture the asset id rule allows (`AssetIds::shown`). The Legacy
+    /// Viewer writes any key; others are left for the user to paste.
+    fn particle_texture_key(&self) -> bool {
+        let texture = self.particle_editor.params.texture;
+        texture.is_nil() || crate::world::inventory::asset_ids::AssetIds::of(&self.world).shown(&texture)
+    }
+
     /// onInjectButtonClicked: our folder, made when missing.
     fn particle_inject_start(&mut self) {
         if self.particle_inject.busy() {
             return;
         }
         let object = self.particle_editor.object;
+        let key = self.particle_texture_key();
         let pending = |step| Pending {
             object,
-            source: self.particle_editor.params.script(object),
+            source: self.particle_editor.params.script(object, key),
+            texture_left_out: !key,
             step,
             since: Instant::now(),
         };
@@ -253,6 +271,7 @@ impl App {
             handle: self.world.main_region.unwrap_or_default(),
             options: ScriptOptions {
                 mono: true,
+                luau: aurora_net::scripts::Luau::Off,
                 running: true,
                 experience: Uuid::nil(),
             },
@@ -291,8 +310,13 @@ impl App {
         self.flush_build();
         self.build.contents_changed(p.object);
         self.particle_editor.busy = false;
+        let text = if p.texture_left_out {
+            aurora_i18n::tr!("particle-editor-injected-without-texture")
+        } else {
+            aurora_i18n::tr!("particle-editor-injected")
+        };
         self.particle_editor.notice = Some(Notice {
-            text: aurora_i18n::tr!("particle-editor-injected").into(),
+            text: text.into(),
             error: false,
         });
     }

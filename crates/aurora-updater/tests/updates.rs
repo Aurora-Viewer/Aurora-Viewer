@@ -145,6 +145,8 @@ fn release(server: &Server, size: usize) -> Release {
         notes: "Changes".into(),
         url: format!("{}/release", server.base),
         required: false,
+        minimum: None,
+        grace: aurora_updater::feed::DEFAULT_GRACE,
         maintenance: Default::default(),
         archive: Some(Asset {
             name: "package.zip".into(),
@@ -579,6 +581,35 @@ fn release_filter_ignores_assets_drafts_prereleases_and_retrieves_minimum_versio
     assert_eq!(result.version, "0.3.0");
     assert_eq!(result.notes, "Real notes");
     assert!(result.required);
+    assert_eq!(result.minimum.as_deref(), Some("0.2.1"));
+    assert_eq!(result.grace, aurora_updater::feed::DEFAULT_GRACE);
+}
+
+#[test]
+fn the_policy_sets_the_grace_period_below_a_new_minimum() {
+    let check = |grace: &str| {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let list = serde_json::json!([
+            {"tag_name":"v0.3.0","html_url":format!("{base}/release"),"assets":[{"name":"aurora-update-policy.json","size":100,"browser_download_url":format!("{base}/policy")}]}
+        ])
+        .to_string();
+        let policy = format!("{{\"schema\":1,\"version\":\"0.3.0\",\"minimum_supported_version\":\"0.3.0\"{grace}}}");
+        let server = serve(listener, vec![list, policy]);
+        let result = run(Source::local(&format!("{base}/releases"))
+            .expect("feed")
+            .check("0.2.0", Channel::Stable));
+        server.join().expect("server");
+        result.map(|r| r.map(|r| (r.required, r.grace)))
+    };
+    let hours = |h: u64| std::time::Duration::from_secs(h * 3600);
+    // a release that cannot wait blocks at once
+    assert_eq!(check(",\"grace_hours\":0").expect("check"), Some((true, hours(0))));
+    assert_eq!(check(",\"grace_hours\":24").expect("check"), Some((true, hours(24))));
+    // a policy written before grace periods existed gets the default one
+    assert_eq!(check("").expect("check"), Some((true, aurora_updater::feed::DEFAULT_GRACE)));
+    // more than three days is refused, like any invalid policy
+    assert!(check(",\"grace_hours\":100").is_err());
 }
 
 /// One answer per request, in order, on a loopback feed.
@@ -632,4 +663,43 @@ fn the_beta_channel_takes_betas_and_moves_on_to_the_stable_of_the_same_number() 
     assert_eq!(check("0.7.7-beta.20261025.1", Channel::Beta, true).as_deref(), Some("0.7.7"));
     // Back on Stable, a beta waits for the next stable instead of a downgrade.
     assert_eq!(check("0.7.7-beta.20261025.1", Channel::Stable, false), None);
+}
+
+#[test]
+fn a_periodic_check_asks_whether_the_list_changed_and_keeps_it_on_not_modified() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+    let base = format!("http://{}", listener.local_addr().expect("address"));
+    let body = serde_json::json!([
+        {"tag_name":"v0.4.0-beta.20261106.1","prerelease":true,"html_url":format!("{base}/beta")},
+        {"tag_name":"v0.3.0","html_url":format!("{base}/release")}
+    ])
+    .to_string();
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        for answer in 0..3 {
+            let (mut socket, _) = listener.accept().expect("request");
+            let mut request = [0; 4096];
+            let n = socket.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]).to_ascii_lowercase();
+            let _ = seen_tx.send(request.contains("if-none-match: \"list-1\""));
+            let reply = if answer == 0 {
+                format!(
+                    "HTTP/1.1 200 OK\r\nETag: \"list-1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            } else {
+                "HTTP/1.1 304 Not Modified\r\nETag: \"list-1\"\r\nConnection: close\r\n\r\n".to_owned()
+            };
+            socket.write_all(reply.as_bytes()).expect("response");
+        }
+    });
+    let source = Source::local(&format!("{base}/releases")).expect("feed");
+    let version = |channel| run(source.check("0.2.0", channel)).expect("check").map(|r| r.version);
+    assert_eq!(version(Channel::Stable).as_deref(), Some("0.3.0"));
+    // unchanged: the kept list answers, for either channel
+    assert_eq!(version(Channel::Stable).as_deref(), Some("0.3.0"));
+    assert_eq!(version(Channel::Beta).as_deref(), Some("0.4.0-beta.20261106.1"));
+    server.join().expect("server");
+    let sent: Vec<bool> = seen_rx.try_iter().collect();
+    assert_eq!(sent, [false, true, true]);
 }
