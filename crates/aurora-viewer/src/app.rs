@@ -7256,7 +7256,7 @@ impl App {
             let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
             let cpu_target = self
                 .scene
-                .left_edit_ray_hits(
+                .face_edit_ray_hits(
                     &self.world,
                     ray,
                     false,

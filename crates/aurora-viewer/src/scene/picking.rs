@@ -74,8 +74,10 @@ pub(super) enum FacePick {
     /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
     LeftBlend,
-    /// Build face tool: include the visible faces of worn unrigged meshes.
-    /// World left-clicks still use only their invisible clickers (`only_hidden`).
+    /// Build face tool: like `Left` (fully transparent world Blend texels
+    /// let the click through), and the visible faces of worn unrigged
+    /// meshes count. World left-clicks still use only their invisible
+    /// clickers (`only_hidden`).
     Edit,
 }
 
@@ -581,10 +583,23 @@ impl Scene {
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
     pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool, select_probes: bool, select_limit: Option<f32>) -> Vec<usize> {
-        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Edit)
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Surface)
     }
 
     pub fn left_edit_ray_hits(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        hud: bool,
+        select_probes: bool,
+        select_limit: Option<f32>,
+    ) -> Vec<usize> {
+        self.edit_ray_hits_mode(world, ray, hud, select_probes, select_limit, FacePick::Left)
+    }
+
+    /// The build face tool's hits (LLToolFace): `left_edit_ray_hits`, plus
+    /// the visible faces of worn unrigged meshes.
+    pub fn face_edit_ray_hits(
         &self,
         world: &World,
         ray: (Vec3, Vec3),
@@ -931,7 +946,7 @@ impl Scene {
                 indices: &f.indices,
             })
         });
-        if matches!(mode, FacePick::Left | FacePick::LeftBlend) && !g.hud && g.owner_avatar.is_none() {
+        if matches!(mode, FacePick::Left | FacePick::LeftBlend | FacePick::Edit) && !g.hud && g.owner_avatar.is_none() {
             // LLVolume::lineSegmentIntersect rejects back faces. After a
             // texture hole, an invisible exit face must not reclaim the
             // click from the surface the GPU actually drew (#1574).
@@ -1216,7 +1231,7 @@ impl Scene {
             }
             let Some(f) = f else { continue };
             let two_sided = mode == FacePick::Geometry || self.face_double_sided(world, o, face);
-            let mask = if matches!(mode, FacePick::Left | FacePick::LeftBlend)
+            let mask = if matches!(mode, FacePick::Left | FacePick::LeftBlend | FacePick::Edit)
                 && !g.hud
                 && g.owner_avatar.is_none()
                 && self.blend_face_mode(world, o, g, face, true)
@@ -2451,8 +2466,8 @@ pub(crate) mod tests {
                 .face_hit_mode(&world, front, ray, Instant::now(), true, FacePick::Edit)
                 .is_some()
         );
-        assert_eq!(scene.edit_ray_hits(&world, ray, false, false, None), [front, back]);
-        assert_eq!(scene.left_edit_ray_hits(&world, ray, false, false, None), [front, back]);
+        assert_eq!(scene.face_edit_ray_hits(&world, ray, false, false, None), [front, back]);
+        assert_eq!(scene.left_edit_ray_hits(&world, ray, false, false, None), [back]);
         assert!(scene.edit_touch_surface(&world, front, ray).is_some());
         assert!(scene.left_touch_surface(&world, front, ray).is_none());
         assert!(scene.edit_hit_point(&world, front, ray).is_some());
@@ -4030,6 +4045,12 @@ pub(crate) mod tests {
                 );
                 assert_eq!(scene.point_behind_rigged(&world, ray, 0.0, 100.0, None), Some(expected));
                 assert_eq!(scene.left_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);
+                // the build face tool clicks through the same texels
+                assert_eq!(scene.edit_touch_surface(&world, front, ray).is_some(), texel_alpha > 32);
+                assert_eq!(
+                    scene.face_edit_ray_hits(&world, ray, false, false, None),
+                    scene.left_edit_ray_hits(&world, ray, false, false, None)
+                );
                 assert!(scene.touch_surface(&world, front, ray).is_some());
                 for action in [
                     crate::interaction::code::NONE,
