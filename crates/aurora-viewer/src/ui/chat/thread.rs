@@ -30,17 +30,21 @@ use std::collections::HashSet;
 pub(super) const GUTTER: f32 = 56.0;
 const AVATAR: f32 = 36.0;
 /// The time column of the compact rows: "23:59", or "12:59 PM" in 12 hours
-/// (`time_w`).
+/// (`time_w`), wider with the seconds: "23:59:59", "12:59:59 PM".
 const TIME_W: f32 = 40.0;
 const TIME_W_12: f32 = 62.0;
+const TIME_W_S: f32 = 56.0;
+const TIME_W_12_S: f32 = 82.0;
 
 /// The width of the compact rows' time column, as the chat writes its times;
 /// it grows with the chat's text size, like the time it holds.
 fn time_w(ctx: &egui::Context) -> f32 {
-    let w = if crate::ui::bars::clock::chat_twelve_hours() {
-        TIME_W_12
-    } else {
-        TIME_W
+    use crate::ui::bars::clock::{chat_seconds, chat_twelve_hours};
+    let w = match (chat_twelve_hours(), chat_seconds()) {
+        (true, true) => TIME_W_12_S,
+        (true, false) => TIME_W_12,
+        (false, true) => TIME_W_S,
+        (false, false) => TIME_W,
     };
     w * chat_size(ctx, 1.0)
 }
@@ -693,7 +697,14 @@ mod tests {
             let ctx = egui::Context::default();
             crate::ui::fonts::apply(&ctx, font);
             ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
-            for (text, column) in [("00:00", TIME_W), ("12:58 PM", TIME_W_12), ("12:58 午後", TIME_W_12)] {
+            for (text, column) in [
+                ("00:00", TIME_W),
+                ("12:58 PM", TIME_W_12),
+                ("12:58 午後", TIME_W_12),
+                ("00:00:00", TIME_W_S),
+                ("12:58:58 PM", TIME_W_12_S),
+                ("12:58:58 午後", TIME_W_12_S),
+            ] {
                 let w = ctx
                     .fonts_mut(|f| f.layout_no_wrap(text.into(), egui::FontId::proportional(10.5), egui::Color32::PLACEHOLDER))
                     .size()

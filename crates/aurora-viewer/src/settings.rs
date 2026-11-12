@@ -826,6 +826,10 @@ pub struct Settings {
     /// The times of the conversations' lines, private and group
     /// (FSShowTimestampsIM, on; Preferences › Chat › Conversations).
     pub chat_timestamps_im: bool,
+    /// Seconds in the times of the nearby chat and of the conversations,
+    /// "14:05:09" (Firestorm's FSSecondsinChatTimestamps, off; Preferences ›
+    /// Chat › Nearby chat), whatever the bars' clock shows (#502).
+    pub chat_time_seconds: bool,
     /// The former single switch, read once: its choice goes to both.
     #[serde(rename = "chat_timestamps", skip_serializing)]
     pub(crate) former_chat_timestamps: Option<bool>,
@@ -2163,6 +2167,7 @@ impl Default for Settings {
             chat_font_scale: 1.0,
             chat_timestamps_nearby: true,
             chat_timestamps_im: true,
+            chat_time_seconds: false,
             former_chat_timestamps: None,
             show_chat_channel: false,
             show_recent_emojis: false,

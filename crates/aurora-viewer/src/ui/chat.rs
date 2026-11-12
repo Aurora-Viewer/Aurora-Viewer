@@ -872,25 +872,39 @@ fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> C
 
 /// Time of a chat line, in Second Life time as the Legacy Viewer shows it
 /// and as the transcripts have it ("hour,datetime,slt"), in 12 or 24 hours
-/// as the bars' clock (`clock::chat_twelve_hours`). Empty for a line whose
-/// time is unknown (history without a timestamp).
+/// as the bars' clock (`clock::chat_twelve_hours`), with the seconds when
+/// Preferences › Chat asks for them (`clock::chat_seconds`). Empty for a
+/// line whose time is unknown (history without a timestamp).
 pub(crate) fn hhmm(t: std::time::SystemTime) -> String {
-    hhmm_in(t, super::bars::clock::chat_twelve_hours())
+    hhmm_in(t, super::bars::clock::chat_twelve_hours(), super::bars::clock::chat_seconds())
+}
+
+/// `hhmm` without the seconds of the chat: the notifications' times.
+pub(crate) fn hhmm_minutes(t: std::time::SystemTime) -> String {
+    hhmm_in(t, super::bars::clock::chat_twelve_hours(), false)
 }
 
 /// `hhmm` in 24 hours whatever the clock, where the Legacy Viewer keeps 24
 /// hours: the money tracker's times (FSMoneyTracker::getTime) and the
 /// "(Saved at …)" of an offline group message (formatted_time).
 pub(crate) fn hhmm_24(t: std::time::SystemTime) -> String {
-    hhmm_in(t, false)
+    hhmm_in(t, false, false)
 }
 
-fn hhmm_in(t: std::time::SystemTime, twelve: bool) -> String {
+fn hhmm_in(t: std::time::SystemTime, twelve: bool, seconds: bool) -> String {
     if t == std::time::UNIX_EPOCH {
         return String::new();
     }
+    // Second Life time is a whole number of hours from UTC: the seconds are
+    // those of the Unix time
+    let secs = if seconds {
+        let s = t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() % 60);
+        format!(":{s:02}")
+    } else {
+        String::new()
+    };
     let t = Slt::of(t);
-    super::bars::clock::hour_text(t.hour, t.minute, "", twelve)
+    super::bars::clock::hour_text(t.hour, t.minute, &secs, twelve)
 }
 
 /// Color of the name and text of a history line: Firestorm greys what comes
@@ -4421,6 +4435,17 @@ pub(crate) fn bar_input(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chat_times_with_and_without_their_seconds() {
+        // 2026-01-15 22:05:09 UTC, 14:05:09 in Second Life time (PST)
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_768_514_709);
+        assert_eq!(super::hhmm_in(t, false, false), "14:05");
+        assert_eq!(super::hhmm_in(t, false, true), "14:05:09");
+        assert_eq!(super::hhmm_in(t, true, true), "2:05:09 PM");
+        // a line without a time stays without one
+        assert_eq!(super::hhmm_in(std::time::UNIX_EPOCH, false, true), "");
+    }
+
     #[test]
     fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
         let alt = egui::Modifiers::ALT;

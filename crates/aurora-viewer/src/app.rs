@@ -16263,7 +16263,7 @@ impl App {
             &self.ui_images,
         );
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
-        ui::bars::clock::set_chat_format(self.system_island().clock_format);
+        ui::bars::clock::set_chat_format(self.system_island().clock_format, self.settings.chat_time_seconds);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
