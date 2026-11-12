@@ -82,6 +82,18 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-fly-after-teleport-help"),
             &field!(fly_after_teleport),
         );
+        // FSAlwaysShowTPCancel (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-always-show-teleport-cancel"),
+            tr!("ui-options-always-show-teleport-cancel-help"),
+            &field!(always_show_tp_cancel),
+        );
+        // FSShowBackSLURL (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-show-back-slurl"),
+            tr!("ui-options-show-back-slurl-help"),
+            &field!(show_back_slurl),
+        );
         friends_only_row(cx);
         friends_only_keep_row(cx);
         cx.link(

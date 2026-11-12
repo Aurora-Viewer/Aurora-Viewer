@@ -231,7 +231,20 @@ impl App {
         }
     }
 
-    pub(super) fn submit_inventory_change(&mut self, mut change: aurora_net::inventory::operations::Mutation) {
+    pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
+        self.submit_inventory_edit(change, None);
+    }
+
+    pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
+        self.inventory_ui.consume_clipboard = false;
+        self.submit_inventory_edit(deletion.change, Some(deletion.selection));
+    }
+
+    fn submit_inventory_edit(
+        &mut self,
+        mut change: aurora_net::inventory::operations::Mutation,
+        selection: Option<ui::inventory::DeleteSelection>,
+    ) {
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
             return;
@@ -250,6 +263,9 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        if let Some(selection) = selection {
+            self.inventory_ui.begin_delete(request, selection);
+        }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
         self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
             if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
@@ -295,6 +311,11 @@ impl App {
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
             InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Delete(deletion) => {
+                if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
+                    self.submit_inventory_delete(deletion);
+                }
+            }
             InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent) {
@@ -478,6 +499,13 @@ impl App {
                         request,
                         item,
                         asset_type: kind,
+                        lua: kind == 10
+                            && self
+                                .world
+                                .inventory
+                                .items
+                                .get(&item)
+                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,
@@ -632,6 +660,8 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        self.inventory_ui
+            .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());
         if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
             self.inventory_ui.moves_queued_notice();
