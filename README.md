@@ -118,8 +118,7 @@ while rethinking the user interface.
     <td width="50%" valign="top">
       <h3>Building, like the Legacy Viewer</h3>
       Edit Face selects the faces of what you wear again, and Derender
-      with Edit linked parts hides only the selected part, handy for the
-      DEMO signs of a worn demo.
+      with Edit linked parts hides only the selected part.
     </td>
     <td width="50%" valign="top">
       <h3>Chat and voice</h3>
