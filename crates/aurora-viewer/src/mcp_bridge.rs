@@ -1959,6 +1959,18 @@ impl App {
                 );
                 let _ = reply_tx.send(resp);
             }
+            ViewerRequest::ViewerShutdown => {
+                let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
+                    "status": "shutting_down",
+                    "message": "Viewer clean shutdown initiated."
+                }))));
+                if crate::cli::get().headless {
+                    self.shutdown_headless();
+                } else {
+                    self.exit_prompt.request();
+                    self.confirm_exit(crate::ui::exit::Action::Quit);
+                }
+            }
             // ---- Phase 7: Physics Flags, Metadata, Animations & Economy ----
             ViewerRequest::PrimSetPhysicsProperties {
                 local_id,

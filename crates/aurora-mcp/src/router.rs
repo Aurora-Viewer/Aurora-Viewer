@@ -2063,6 +2063,18 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            "viewer_shutdown" => {
+                let lease_id = args.get("lease_id").and_then(Value::as_str).map(str::to_owned);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ViewerShutdown,
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             // ---- Phase 7: Physics Flags, Metadata, Animations & Economy ----
             "prim_set_physics_properties" => {
                 let local_id = args
@@ -3930,6 +3942,17 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             in_compact_profile: true,
         },
         ToolDefinition {
+            name: "viewer_shutdown".into(),
+            description: "Gracefully shut down and exit the viewer process. Flushes settings, inventories, layout caches, disconnects cleanly from the simulator, and signals the watchdog for a clean exit without triggering crash reports.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lease_id": { "type": "string", "description": "Optional active lease ID" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "prim_set_physics_properties".into(),
             description: "Modify physics flags (physical, temporary, phantom) and simulator physics collision shape parameters (prim, convex hull, none, density, friction, restitution) for a primitive or linkset.".into(),
             input_schema: json!({
@@ -4227,7 +4250,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 110, "expected 110 total tools (43 Legacy + 67 Aurora-native)");
+        assert_eq!(defs.len(), 111, "expected 111 total tools (43 Legacy + 68 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -4325,6 +4348,7 @@ mod tests {
             "notecard_write",
             "prim_set_particles",
             "viewer_login",
+            "viewer_shutdown",
             "prim_set_physics_properties",
             "prim_set_metadata",
             "avatar_animation_play",

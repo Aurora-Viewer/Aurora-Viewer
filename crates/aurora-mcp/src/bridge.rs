@@ -509,6 +509,7 @@ pub enum ViewerRequest {
         location: Option<String>,
         mfa_token: Option<String>,
     },
+    ViewerShutdown,
 
     // Phase 7: Physics Flags, Metadata, Animations & Economy
     PrimSetPhysicsProperties {
@@ -679,6 +680,7 @@ impl ViewerRequest {
             | ViewerRequest::UiListMenus { .. }
             | ViewerRequest::NotecardRead { .. }
             | ViewerRequest::ViewerLogin { .. }
+            | ViewerRequest::ViewerShutdown
             | ViewerRequest::AvatarAnimationsList
             | ViewerRequest::EconomyGetBalance
             | ViewerRequest::ParcelInfoQuery
