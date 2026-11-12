@@ -38,6 +38,7 @@ pub mod probe;
 pub mod profile;
 pub mod region_restart;
 pub mod release_notes;
+pub mod render_info;
 pub mod script_controls;
 pub mod scripts;
 pub mod search;
@@ -109,6 +110,8 @@ pub struct NetClient {
     /// The viewer's part of Linden Lab's viewer statistics (viewer_stats.rs).
     viewer_stats: Arc<Mutex<viewer_stats::ViewerSide>>,
     viewer_stats_posts: Arc<viewer_stats::PostsInFlight>,
+    /// The avatars the viewer sees, for the regions' render info (render_info.rs).
+    seen_avatars: Arc<Mutex<Vec<render_info::SeenAvatar>>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -184,7 +187,16 @@ impl NetClient {
         let http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
             .connect_timeout(std::time::Duration::from_secs(15))
+            .tls_certs_merge(ll_ca.clone())
+            .build()
+            .map_err(|e| NetError::Http(e.to_string()))?;
+        // The login request itself: the same, with redirects to the same
+        // server only (login::next_server decides on the others).
+        let login_http = reqwest::Client::builder()
+            .user_agent(aurora_version::user_agent())
+            .connect_timeout(std::time::Duration::from_secs(15))
             .tls_certs_merge(ll_ca)
+            .redirect(login::redirect_policy())
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
         // Capabilities / assets: Linden Lab's CA for any simulator name (as
@@ -206,6 +218,7 @@ impl NetClient {
         let agent_language = Arc::new(Mutex::new((aurora_i18n::language().to_owned(), true)));
         let viewer_stats = Arc::new(Mutex::new(viewer_stats::ViewerSide::default()));
         let viewer_stats_posts = Arc::new(viewer_stats::PostsInFlight::default());
+        let seen_avatars = Arc::new(Mutex::new(Vec::new()));
         // Asset GETs (ViewerAsset, bake service): same trust as the caps,
         // but like Firestorm's llcorehttp GET (curl without
         // CURLOPT_ENCODING): no Accept-Encoding and no transparent
@@ -231,6 +244,7 @@ impl NetClient {
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {
             http,
+            login_http,
             caps_http,
             events: EventSender(ev_tx),
             controls: controls.clone(),
@@ -240,6 +254,7 @@ impl NetClient {
             bandwidth_kbps: bandwidth_kbps.clone(),
             viewer_stats: viewer_stats.clone(),
             viewer_stats_posts: viewer_stats_posts.clone(),
+            seen_avatars: seen_avatars.clone(),
         };
         rt.spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -269,6 +284,7 @@ impl NetClient {
             caps_http: shared_caps_http,
             viewer_stats,
             viewer_stats_posts,
+            seen_avatars,
         })
     }
 
@@ -284,6 +300,13 @@ impl NetClient {
     /// (viewer_stats.rs).
     pub fn set_viewer_stats(&self, side: viewer_stats::ViewerSide) {
         *self.viewer_stats.lock() = side;
+    }
+
+    /// The avatars the viewer sees, refreshed every few seconds: the
+    /// session reports them to their regions on its own schedule
+    /// (render_info.rs).
+    pub fn set_seen_avatars(&self, avatars: Vec<render_info::SeenAvatar>) {
+        *self.seen_avatars.lock() = avatars;
     }
 
     /// Directory for the per-region object caches (None disables them);

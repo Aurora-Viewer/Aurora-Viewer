@@ -198,11 +198,9 @@ impl BuildTool {
         self.tool == Tool::Edit
             && s.edit_linked
             && self.selection.len() == 1
-            && self
-                .selection
-                .first()
-                .and_then(|k| world.objects.index_of(k))
-                .is_some_and(|i| family(world, root_of(world, i)).len() > 1)
+            && self.selection.first().and_then(|k| world.objects.index_of(k)).is_some_and(|i| {
+                self.can_modify(world, i) && self.replacement_can_modify(world, i) && family(world, root_of(world, i)).len() > 1
+            })
     }
 
     pub fn replacement_active(&self) -> bool {

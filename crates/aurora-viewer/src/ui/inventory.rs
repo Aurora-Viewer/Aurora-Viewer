@@ -30,6 +30,8 @@ mod controls;
 pub(crate) use controls::recent_period;
 pub(crate) mod default_permissions;
 mod delete;
+pub use delete::DeleteRequest;
+pub(crate) use delete::DeleteSelection;
 pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;
@@ -66,7 +68,8 @@ pub use aurora::{DEMO_FOLDER_WINDOW as AURORA_DEMO_FOLDER_WINDOW, demo_place as 
 /// A demo scenario written for the Legacy Viewer's window (its tabs, its
 /// footer): every `AURORA_DEMO_INVENTORY` mode but Aurora's own.
 pub fn legacy_demo() -> bool {
-    delete::demo_enabled() || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| !mode.starts_with("aurora"))
+    (delete::demo_enabled() && !aurora::demo_active())
+        || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| !mode.starts_with("aurora"))
 }
 
 /// Aurora's own demo scenarios show its window whatever the preference.
@@ -141,6 +144,8 @@ pub enum InvAction {
     CopyLandmarkSlurl(Uuid),
     ShowLandmarkOnMap(Uuid),
     Edit(Mutation),
+    /// A deletion's selection advances only on this request's success.
+    Delete(Box<DeleteRequest>),
     /// The same change from a drag dropped on a folder: the listings ask
     /// some questions for a drag only (LLFolderBridge::dragCategoryIntoFolder).
     Drop(Mutation),
@@ -554,9 +559,12 @@ pub struct InventoryUi {
     keyboard_selection: bool,
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
+    pending_delete: Option<Box<delete::PendingDelete>>,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
+    /// Which row order the list drew last, for the work done outside it.
+    shown_order: keyboard::ShownOrder,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -2120,6 +2128,9 @@ pub fn show(
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
     clipboard::prepare(st);
+    if !*open {
+        st.pending_delete = None;
+    }
     st.focus_search = *open && (st.focus_search || !st.was_open);
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
@@ -2300,6 +2311,9 @@ pub fn show(
     let mut windows = std::mem::take(&mut st.windows);
     let mut spawned = Vec::new();
     for w in &mut windows {
+        if !w.open {
+            w.state.pending_delete = None;
+        }
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
