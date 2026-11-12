@@ -267,13 +267,7 @@ impl Session<'_> {
     fn moderate_text(&mut self, session: uuid::Uuid, agent: uuid::Uuid, allow: bool) {
         let Some(url) = self.main_cap("ChatSessionRequest") else {
             log::warn!("ChatSessionRequest: no capability (mute update)");
-            emit(
-                self.sh,
-                NetEvent::SessionModerationFailed {
-                    session,
-                    forbidden: false,
-                },
-            );
+            emit(self.sh, NetEvent::SessionModerationFailed { session, forbidden: false });
             return;
         };
         let http = self.sh.caps_http.clone();

@@ -56,10 +56,7 @@ pub fn can_eject(d: Option<&GroupData>, powers: u64, member: Uuid, me: Uuid) -> 
     let Some(m) = d.members.get(&member) else {
         return false;
     };
-    if d.roles_complete
-        && d.role_members_complete
-        && d.member_roles.get(&member).is_some_and(|r| r.iter().any(|r| !r.is_nil()))
-    {
+    if d.roles_complete && d.role_members_complete && d.member_roles.get(&member).is_some_and(|r| r.iter().any(|r| !r.is_nil())) {
         return false;
     }
     !m.is_owner
@@ -104,7 +101,11 @@ pub fn menu(ui: &mut egui::Ui, p: &Palette, world: &World, session: Uuid, id: Uu
     let data = world.group_data.get(&session);
     if moderator {
         menu::separator(ui, p);
-        demo_mark(&ctx, DemoMark::Submenu, egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 20.0)));
+        demo_mark(
+            &ctx,
+            DemoMark::Submenu,
+            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 20.0)),
+        );
         menu::submenu(ui, p, "shield-filled", aurora_i18n::tr!("ui-chat-moderator-options"), true, |ui| {
             if menu::item_if(
                 ui,
@@ -142,13 +143,7 @@ pub fn menu(ui: &mut egui::Ui, p: &Palette, world: &World, session: Uuid, id: Uu
     }
     if ban {
         menu::separator(ui, p);
-        if menu::item_if(
-            ui,
-            p,
-            "ban",
-            aurora_i18n::tr!("ui-chat-ban-member"),
-            can_ban(data, powers, id, me),
-        ) {
+        if menu::item_if(ui, p, "ban", aurora_i18n::tr!("ui-chat-ban-member"), can_ban(data, powers, id, me)) {
             request(&ctx, CtxAction::GroupChatBan { group: session, agent: id });
         }
     }
@@ -209,7 +204,10 @@ pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
             }]
         }
         730..=760 => match at(DemoMark::Submenu) {
-            Some(r) => vec![egui::Event::PointerMoved(egui::pos2(r.left() + 40.0 + (frame - 730) as f32 * 0.1, r.center().y))],
+            Some(r) => vec![egui::Event::PointerMoved(egui::pos2(
+                r.left() + 40.0 + (frame - 730) as f32 * 0.1,
+                r.center().y,
+            ))],
             None => Vec::new(),
         },
         _ => Vec::new(),

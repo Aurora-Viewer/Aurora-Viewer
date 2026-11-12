@@ -357,7 +357,11 @@ impl GroupMgr {
         let g = self.data(group);
         if !g.loaded() {
             g.pending_ban = Some((member, me));
-            let (members, roles, pairs) = (g.members_complete && !g.members.is_empty(), g.roles_complete, g.role_members_complete);
+            let (members, roles, pairs) = (
+                g.members_complete && !g.members.is_empty(),
+                g.roles_complete,
+                g.role_members_complete,
+            );
             if !members {
                 self.request_members(group);
             }
@@ -1117,8 +1121,11 @@ mod tests {
     }
 
     fn banned_and_ejected(cmds: &[NetCommand], who: Uuid) -> bool {
-        cmds.iter().any(|c| matches!(c, NetCommand::GroupBans { action: Some(a), ids, .. } if *a == aurora_net::groups::ban::CREATE && ids == &[who]))
-            && cmds.iter().any(|c| matches!(c, NetCommand::EjectGroupMembers { members, .. } if members == &[who]))
+        cmds.iter().any(
+            |c| matches!(c, NetCommand::GroupBans { action: Some(a), ids, .. } if *a == aurora_net::groups::ban::CREATE && ids == &[who]),
+        ) && cmds
+            .iter()
+            .any(|c| matches!(c, NetCommand::EjectGroupMembers { members, .. } if members == &[who]))
     }
 
     #[test]
@@ -1140,7 +1147,12 @@ mod tests {
         let mut mgr = GroupMgr::default();
         mgr.ban_member(G, Uuid::from_u128(12), me);
         let cmds = answer(&mut mgr, &[(1, false), (10, false), (12, true)]);
-        assert!(!cmds.iter().any(|c| matches!(c, NetCommand::GroupBans { .. } | NetCommand::EjectGroupMembers { .. })), "{cmds:?}");
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, NetCommand::GroupBans { .. } | NetCommand::EjectGroupMembers { .. })),
+            "{cmds:?}"
+        );
         mgr.ban_member(G, me, me);
         assert!(mgr.take_commands().is_empty());
         // not in the list: asked once more, then given up
