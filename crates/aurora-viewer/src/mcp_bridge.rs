@@ -697,6 +697,17 @@ impl App {
                 } else {
                     "Offline".to_string()
                 };
+                let region_info = self
+                    .world
+                    .main_region
+                    .and_then(|h| self.world.regions.get(&h))
+                    .and_then(|r| r.info.as_ref());
+                let is_estate_manager = region_info
+                    .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
+                    || self.world.god_level > 0;
+                let is_region_owner = region_info
+                    .is_some_and(|i| i.owner == self.world.agent_id);
+                let region_owner_id = region_info.map(|i| i.owner.to_string());
                 let pos = self.world.agent.position;
                 let rot = self.world.agent.body_rotation();
                 let vel = self.world.agent.velocity;
@@ -716,6 +727,10 @@ impl App {
                     "agent_id": self.world.agent_id.to_string(),
                     "display_name": self.world.social.display_name_of(&self.world.agent_id),
                     "region_name": region_name,
+                    "is_estate_manager": is_estate_manager,
+                    "is_region_owner": is_region_owner,
+                    "region_owner_id": region_owner_id,
+                    "can_manage_estate": is_estate_manager,
                     "parcel_name": self.world.parcel_name,
                     "position": [pos.x, pos.y, pos.z],
                     "rotation_quat": [rot.x, rot.y, rot.z, rot.w],
@@ -5009,10 +5024,29 @@ impl App {
             return Err(McpError::NotInWorld);
         };
 
-        let can_build = (p.flags & aurora_net::parcel_flags::CREATE_OBJECTS != 0)
-            || (p.owner_id == self.world.agent_id);
-        let can_run_scripts = (p.flags & aurora_net::parcel_flags::ALLOW_OTHER_SCRIPTS != 0)
-            || (p.owner_id == self.world.agent_id);
+        let region_info = self
+            .world
+            .main_region
+            .and_then(|h| self.world.regions.get(&h))
+            .and_then(|r| r.info.as_ref());
+        let is_estate_manager = region_info
+            .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
+            || self.world.god_level > 0;
+        let is_region_owner = region_info
+            .is_some_and(|i| i.owner == self.world.agent_id);
+        let is_parcel_owner = p.owner_id == self.world.agent_id;
+        let is_parcel_group_member = (p.group_id != Uuid::nil()) && (self.world.groups.active == p.group_id);
+
+        let can_build = is_estate_manager
+            || is_parcel_owner
+            || (p.flags & aurora_net::parcel_flags::CREATE_OBJECTS != 0)
+            || (is_parcel_group_member && (p.flags & aurora_net::parcel_flags::CREATE_GROUP_OBJECTS != 0));
+
+        let can_run_scripts = is_estate_manager
+            || is_parcel_owner
+            || (p.flags & aurora_net::parcel_flags::ALLOW_OTHER_SCRIPTS != 0)
+            || (is_parcel_group_member && (p.flags & aurora_net::parcel_flags::ALLOW_GROUP_SCRIPTS != 0));
+
         let ground_height_at_avatar = self.world.ground_height(self.world.agent.position);
 
         Ok(ViewerResponse::Json(json!({
@@ -5022,6 +5056,12 @@ impl App {
             "owner_id": p.owner_id.to_string(),
             "group_id": p.group_id.to_string(),
             "is_group_owned": p.is_group_owned,
+            "is_parcel_owner": is_parcel_owner,
+            "is_parcel_group_member": is_parcel_group_member,
+            "is_estate_manager": is_estate_manager,
+            "is_region_owner": is_region_owner,
+            "can_manage_estate": is_estate_manager,
+            "can_manage_parcel": is_estate_manager || is_parcel_owner,
             "area_m2": p.area,
             "max_prims": p.max_prims,
             "total_prims": p.total_prims,
