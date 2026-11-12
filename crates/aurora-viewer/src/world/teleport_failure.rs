@@ -61,7 +61,7 @@ fn legacy(code: &str, region: &str) -> Option<String> {
         "no_inventory_host" => tr!("teleport-error-no-inventory-host"),
         "MustGetAgeRegion" => tr!("teleport-error-must-get-age-region"),
         "RegionTPSpecialUsageBlocked" => {
-            return Some(tr!("teleport-error-special-usage-blocked", region = region.to_owned()).into());
+            return Some(tr!("teleport-error-special-usage-blocked", region = region.to_owned()));
         }
         _ => return None,
     };

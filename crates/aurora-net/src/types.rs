@@ -2484,6 +2484,18 @@ pub struct ExperienceLogEvent {
     pub attachment: bool,
 }
 
+impl NetEvent {
+    /// A teleport failure of the viewer's own (blocked, offline, given up):
+    /// no simulator code, so no Legacy popup, only the notice.
+    pub fn viewer_teleport_failed(reason: impl Into<String>) -> Self {
+        NetEvent::TeleportFailed {
+            reason: reason.into(),
+            code: String::new(),
+            region: String::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod opensim_extras_tests {
     use super::{MAX_REGION_FIGURE, OpenSimExtras};
@@ -2549,17 +2561,5 @@ mod opensim_extras_tests {
         assert_eq!(OpenSimExtras::from_llsd(&huge).say_range, Some(MAX_REGION_FIGURE));
         // Second Life: no OpenSimExtras at all
         assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
-    }
-}
-
-impl NetEvent {
-    /// A teleport failure of the viewer's own (blocked, offline, given up):
-    /// no simulator code, so no Legacy popup, only the notice.
-    pub fn viewer_teleport_failed(reason: impl Into<String>) -> Self {
-        NetEvent::TeleportFailed {
-            reason: reason.into(),
-            code: String::new(),
-            region: String::new(),
-        }
     }
 }
