@@ -9,6 +9,7 @@
 use super::jobs::AlphaKind;
 use super::{FaceDraw, GeomState, GpuGeom, ObjGpu, Pass, Scene, avatar, classify, legacy_mat, te_invisible};
 use crate::world::World;
+use crate::world::inventory::asset_ids::AssetIds;
 use crate::world::objects::Object;
 use aurora_prim::te::{TRANSPARENT_TEXTURE, TextureFace};
 use aurora_render::Renderer;
@@ -235,15 +236,15 @@ impl Scene {
     /// The worn part of a press: the selected linksets face by face, then
     /// the attachments of the avatars of `scope` face by face; with an empty
     /// scope, those of the avatars within [`WORN_RADIUS`] summed up.
-    pub fn describe_worn(&self, world: &World, renderer: &Renderer, scope: &DescribeScope, names: Names) {
+    pub fn describe_worn(&self, world: &World, renderer: &Renderer, scope: &DescribeScope, names: Names, ids: &AssetIds) {
         log::info!("{}", scope.summary(world.agent_id));
         let mut budget = PRIMS_PER_PRESS;
         for &root in &scope.selected {
-            self.log_selected(world, renderer, root, names, &mut budget);
+            self.log_selected(world, renderer, root, names, ids, &mut budget);
         }
         // the Dev Toolbox's "My avatar": ours, which `avatars_near` leaves out
         if scope.avatars.contains(&world.agent_id) {
-            self.log_attachments(world, world.agent_id, renderer, names, Some(&mut budget));
+            self.log_attachments(world, world.agent_id, renderer, names, ids, Some(&mut budget));
         }
         for (_, id) in Self::avatars_near(world, WORN_RADIUS) {
             let detail = scope.avatars.contains(&id);
@@ -251,21 +252,21 @@ impl Scene {
             if !detail && !scope.is_empty() {
                 continue;
             }
-            self.log_attachments(world, id, renderer, names, detail.then_some(&mut budget));
+            self.log_attachments(world, id, renderer, names, ids, detail.then_some(&mut budget));
         }
     }
 
     /// Diagnostic: [`Self::log_attachments`] of the other avatars within
     /// `radius` m of ours, the nearest first, without the faces.
-    pub fn log_attachments_near(&self, world: &World, radius: f32, renderer: &Renderer) {
+    pub fn log_attachments_near(&self, world: &World, radius: f32, renderer: &Renderer, ids: &AssetIds) {
         for (_, id) in Self::avatars_near(world, radius) {
-            self.log_attachments(world, id, renderer, &|_| None, None);
+            self.log_attachments(world, id, renderer, &|_| None, ids, None);
         }
     }
 
     /// A selected linkset, face by face: as an attachment of its wearer, or
     /// as an object of the world.
-    fn log_selected(&self, world: &World, renderer: &Renderer, root: usize, names: Names, budget: &mut usize) {
+    fn log_selected(&self, world: &World, renderer: &Renderer, root: usize, names: Names, ids: &AssetIds, budget: &mut usize) {
         let Some(o) = world.objects.get(root) else {
             return;
         };
@@ -277,7 +278,7 @@ impl Scene {
         match wearer {
             Some(av) => {
                 log::info!("selected: worn by {}", Self::avatar_label(world, av));
-                self.log_attachment(world, renderer, root, names, Some(budget));
+                self.log_attachment(world, renderer, root, names, ids, Some(budget));
             }
             None => {
                 let prims = linkset(world, root);
@@ -291,7 +292,7 @@ impl Scene {
                     .iter()
                     .filter_map(|&i| {
                         let o = world.objects.get(i)?;
-                        Some((o.full_id, self.prim_faces_body(world, renderer, o, self.gpu.get(i)?)))
+                        Some((o.full_id, self.prim_faces_body(world, renderer, o, self.gpu.get(i)?, ids)))
                     })
                     .collect();
                 Self::log_prim_lines(&merge_alike(lines), Some(budget));
@@ -314,7 +315,15 @@ impl Scene {
     /// then the faces whose base texture does not show (not loaded, slot
     /// not the streamer's, or the renderer still holding the placeholder).
     /// `detail`: every prim's faces too, within that many prim lines left.
-    pub fn log_attachments(&self, world: &World, avatar: Uuid, renderer: &Renderer, names: Names, mut detail: Option<&mut usize>) {
+    pub fn log_attachments(
+        &self,
+        world: &World,
+        avatar: Uuid,
+        renderer: &Renderer,
+        names: Names,
+        ids: &AssetIds,
+        mut detail: Option<&mut usize>,
+    ) {
         let Some(aidx) = world.objects.index_of_uuid(&avatar) else {
             return;
         };
@@ -333,19 +342,30 @@ impl Scene {
             world.avatar_shape_dz.get(&avatar).copied().unwrap_or(0.0) + world.appearance_hover(&avatar),
             world.visual_params(&avatar).map(|v| v.len()).unwrap_or(0)
         );
+        // issue #2747: an avatar in its system body, as if nothing it wears
+        // came; the list tells which of the simulator's never arrived
+        if let Some(worn) = world.worn_vs_listed(aidx) {
+            log::info!("  {}", worn.line());
+        }
         for (te, name, _) in avatar::BAKES {
             if let Some(t) = world.bake_texture(aidx, te) {
-                log::info!("  bake {name}: {t} — {}", self.textures.describe(&t));
+                // our own bakes are ours; those of the others follow the rule
+                let shown = if avatar == world.agent_id {
+                    t.to_string()
+                } else {
+                    ids.id(t).to_string()
+                };
+                log::info!("  bake {name}: {shown} — {}", self.textures.describe(&t));
             }
         }
         for &att in world.objects.children_of(&av.key) {
-            self.log_attachment(world, renderer, att, names, detail.as_deref_mut());
+            self.log_attachment(world, renderer, att, names, ids, detail.as_deref_mut());
         }
     }
 
     /// One attachment: its summary line, then its prims face by face when
     /// `detail` is given or when it shows the head bake.
-    fn log_attachment(&self, world: &World, renderer: &Renderer, att: usize, names: Names, detail: Option<&mut usize>) {
+    fn log_attachment(&self, world: &World, renderer: &Renderer, att: usize, names: Names, ids: &AssetIds, detail: Option<&mut usize>) {
         let Some(root) = world.objects.get(att).filter(|o| !o.is_avatar()) else {
             return;
         };
@@ -414,16 +434,16 @@ impl Scene {
                 if classify(f, a) != Pass::Hidden {
                     shown += 1;
                 }
-                let gltf = self.gltf_face_desc(world, o, fi);
+                let gltf = self.gltf_face_desc(world, o, fi, ids);
                 if let Some(why) = self.textures.face_problem(&f.tex_id, f.base_slot, table) {
                     suspects.push(format!(
                         "  face {} #{fi}: {why} — tex {} ({}), slot {} = {}, maps {:?}, {}",
                         o.full_id,
-                        f.tex_id,
+                        ids.id(f.tex_id),
                         self.textures.describe(&f.tex_id),
                         f.base_slot,
                         table.describe(f.base_slot),
-                        f.aux_tex,
+                        f.aux_tex.map(|t| ids.id(t)),
                         gltf.as_deref().unwrap_or("no glTF material")
                     ));
                 }
@@ -434,10 +454,10 @@ impl Scene {
                         fi,
                         format!(
                             "{desc}, drawn with base {} ({}), maps {:?}, texture entry {} unused",
-                            f.tex_id,
+                            ids.id(f.tex_id),
                             self.textures.describe(&f.tex_id),
-                            f.aux_tex,
-                            tf.texture
+                            f.aux_tex.map(|t| ids.id(t)),
+                            ids.id(tf.texture)
                         ),
                     ));
                 }
@@ -446,7 +466,7 @@ impl Scene {
                 far = far.max(g.center.distance(apos));
             }
             if head_set || detail.is_some() {
-                prim_lines.push((o.full_id, self.prim_faces_body(world, renderer, o, g)));
+                prim_lines.push((o.full_id, self.prim_faces_body(world, renderer, o, g, ids)));
             }
         }
         log::info!(
@@ -473,11 +493,11 @@ impl Scene {
                     if let Some(lm) = self.legacy_mats.peek(&f.material_id) {
                         log::info!(
                             "  material {}: normal {} ({}) x{:.2?}, specular {} ({}) x{:.2?}, color {:?} exp {} env {} alpha mode {}",
-                            f.material_id,
-                            lm.normal_map,
+                            ids.id(f.material_id),
+                            ids.id(lm.normal_map),
                             self.textures.describe(&lm.normal_map),
                             &lm.normal_st[..2],
-                            lm.specular_map,
+                            ids.id(lm.specular_map),
                             self.textures.describe(&lm.specular_map),
                             &lm.specular_st[..2],
                             lm.specular_color,
@@ -577,12 +597,12 @@ impl Scene {
 
     /// A texture for the log: a bake slot by name, the transparent texture
     /// called so, else its id and state.
-    fn texture_label(&self, id: &Uuid) -> String {
+    fn texture_label(&self, id: &Uuid, ids: &AssetIds) -> String {
         if let Some((_, name)) = avatar::bake_slot_for(id) {
             return format!("bake:{name}");
         }
         let transparent = if *id == TRANSPARENT_TEXTURE { "transparent texture, " } else { "" };
-        format!("{id} ({transparent}{})", self.textures.describe(id))
+        format!("{} ({transparent}{})", ids.id(*id), self.textures.describe(id))
     }
 
     /// One prim, every face of its texture entry: drawn (with everything
@@ -590,7 +610,7 @@ impl Scene {
     /// missing part can be told from a creator's choice.
     /// The line after the prim's id (see [`merge_alike`]); the faces that
     /// read the same are written once (see [`grouped_faces`]).
-    fn prim_faces_body(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+    fn prim_faces_body(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu, ids: &AssetIds) -> String {
         let geom = self.ready_geom(g);
         let te_faces = o.te.as_ref().map_or(0, |t| t.faces.len());
         let count = geom.map_or(te_faces, |geom| geom.faces.len());
@@ -612,7 +632,7 @@ impl Scene {
                 if pass == Pass::Hidden {
                     hidden += 1;
                 }
-                faces.push((fi, self.drawn_face(world, renderer, o, fi, &tf, f, a, pass)));
+                faces.push((fi, self.drawn_face(world, renderer, o, fi, &tf, f, a, pass, ids)));
                 continue;
             }
             let why = match geom.map(|geom| geom.faces[fi].is_some()) {
@@ -633,14 +653,14 @@ impl Scene {
             let legacy = if tf.material_id.is_nil() {
                 "-".to_string()
             } else {
-                tf.material_id.to_string()
+                ids.id(tf.material_id).to_string()
             };
-            let gltf = o.visual_material(fi).map_or_else(|| "-".to_string(), |id| id.to_string());
+            let gltf = o.visual_material(fi).map_or_else(|| "-".to_string(), |id| ids.id(id).to_string());
             faces.push((
                 fi,
                 format!(
                     "left out: {why}, tex {}, rgba {}, legacy material {legacy}, glTF material {gltf}",
-                    self.texture_label(&tf.texture),
+                    self.texture_label(&tf.texture, ids),
                     rgba(tf.color)
                 ),
             ));
@@ -650,11 +670,14 @@ impl Scene {
             "ready" => String::new(),
             state => format!(", geometry {state}"),
         };
-        let head = format!("({kind}, lod {}{geometry})", g.lod);
+        let mut head = format!("({kind}, lod {}{geometry})", g.lod);
         if count > 0 && zero == count {
             // a prim a body HUD hid whole: one short line, merged with the
             // others alike (see `merge_alike`)
             return format!("{head}: all {count} faces left out for texture-entry alpha 0");
+        }
+        if g.hud {
+            head.push_str(&self.hud_geometry(world, renderer, o, g));
         }
         let mut counts = vec![if g.faces.is_empty() {
             "no faces drawn".to_string()
@@ -673,6 +696,76 @@ impl Scene {
         format!("{head}: {}:{}", counts.join(", "), grouped_faces(&faces))
     }
 
+    /// Read the actual HUD draw matrices without changing its placement.
+    /// Four vertices per face identify the edges of small panel meshes;
+    /// bounding this sample also keeps the live inspector inexpensive.
+    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+        use std::fmt::Write as _;
+
+        let mut text = format!(
+            "\n    HUD geometry: local position {:.8?}, rotation xyzw {:.8?}, reported size {:.8?}, visual size {:.8?}",
+            o.position.to_array(),
+            o.rotation.to_array(),
+            o.scale.to_array(),
+            o.visual_scale_at(Instant::now()).to_array()
+        );
+        if let Some(sculpt) = o.visual_volume().sculpt {
+            let _ = write!(text, ", asset {}", sculpt.texture);
+        }
+        if let Some(idx) = world.objects.index_of_uuid(&o.full_id)
+            && crate::build::root_of(world, idx) == idx
+        {
+            let _ = write!(
+                text,
+                "\n    HUD edit: effective flags {:#010x}, whole move {}, whole rotate {}, stretch {}, linked move {}",
+                o.update_flags,
+                crate::build::can_transform(world, idx, false, crate::build::EditMode::Move),
+                crate::build::can_transform(world, idx, false, crate::build::EditMode::Rotate),
+                crate::build::can_transform(world, idx, false, crate::build::EditMode::Stretch),
+                crate::build::can_transform(world, idx, true, crate::build::EditMode::Move)
+            );
+        }
+        let Some(geom) = self.ready_geom(g) else { return text };
+        let _ = write!(
+            text,
+            "\n    HUD local bounds: {:.8?} .. {:.8?}",
+            geom.min.to_array(),
+            geom.max.to_array()
+        );
+        let Some(view) = self.lists.hud_view else { return text };
+        let scale = world.objects.index_of_uuid(&o.full_id).map_or(1.0, |idx| world.hud_scale(idx));
+        let _ = write!(
+            text,
+            "\n    HUD projection: window {:.0}x{:.0}, area {:.4?}, pixels per unit {:.8}, view zoom {:.8}, object zoom {:.8}",
+            view.width,
+            view.height,
+            view.area,
+            view.unit(),
+            view.zoom,
+            scale
+        );
+        for (fi, face) in geom.pick_faces.iter().enumerate().take(64) {
+            let Some(face) = face else { continue };
+            let record = g
+                .faces
+                .iter()
+                .find(|draw| usize::from(draw.te_index) == fi)
+                .and_then(|draw| renderer.records.get(draw.record));
+            let Some(record) = record else { continue };
+            let model = glam::Mat4::from_cols_array_2d(&record.model);
+            let _ = write!(
+                text,
+                "\n    HUD face {fi}: model {:.8?}, vertex samples local -> pixel",
+                record.model
+            );
+            for p in face.positions.iter().take(4) {
+                let pixel = view.pixel(model.transform_point3(Vec3::from_array(*p)));
+                let _ = write!(text, " [{p:.8?} -> {pixel:.8?}]");
+            }
+        }
+        text
+    }
+
     /// A drawn face: texture entry as received, what the draw record holds,
     /// the material's alpha mode, the texture's alpha class, the pass.
     #[allow(clippy::too_many_arguments)]
@@ -686,10 +779,11 @@ impl Scene {
         f: &FaceDraw,
         tex_alpha: AlphaKind,
         pass: Pass,
+        ids: &AssetIds,
     ) -> String {
-        let mut tex = self.texture_label(&tf.texture);
+        let mut tex = self.texture_label(&tf.texture, ids);
         if f.tex_id != tf.texture && !f.tex_id.is_nil() {
-            tex.push_str(&format!(" drawn with {} ({})", f.tex_id, self.textures.describe(&f.tex_id)));
+            tex.push_str(&format!(" drawn with {} ({})", ids.id(f.tex_id), self.textures.describe(&f.tex_id)));
         }
         let record = renderer.records.get(f.record);
         // the alpha the shader multiplies by: the glTF base color factor's,
@@ -704,18 +798,18 @@ impl Scene {
             Some(mode) => format!(
                 "glTF {} cutoff {cutoff:.2} ({})",
                 gltf_mode(mode),
-                self.gltf_face_desc(world, o, fi).unwrap_or_default()
+                self.gltf_face_desc(world, o, fi, ids).unwrap_or_default()
             ),
             None if tf.material_id.is_nil() => "no material".to_string(),
             None => match self.legacy_mats.peek(&tf.material_id) {
                 Some(lm) => format!(
                     "legacy {} alpha {} cutoff {}{}",
-                    tf.material_id,
+                    ids.id(tf.material_id),
                     legacy_mode(lm.diffuse_alpha_mode),
                     lm.alpha_cutoff,
                     if f.legacy_alpha.is_none() { " (not loaded when built)" } else { "" }
                 ),
-                None => format!("legacy {} not loaded", tf.material_id),
+                None => format!("legacy {} not loaded", ids.id(tf.material_id)),
             },
         };
         let cached = if f.pass != pass {
@@ -732,7 +826,7 @@ impl Scene {
 
     /// Diagnostic: the glTF material of a face (id, loading state, the
     /// override's base color), None for a Blinn-Phong face.
-    fn gltf_face_desc(&self, world: &World, o: &Object, fi: usize) -> Option<String> {
+    fn gltf_face_desc(&self, world: &World, o: &Object, fi: usize, ids: &AssetIds) -> Option<String> {
         let mid = o
             .extra
             .render_materials
@@ -751,20 +845,20 @@ impl Scene {
                 let tex = if tex.is_nil() {
                     "-".to_string()
                 } else {
-                    format!("{tex} ({})", self.textures.describe(&tex))
+                    format!("{} ({})", ids.id(tex), self.textures.describe(&tex))
                 };
                 format!("override base tex {tex} factor {:?}", ov.base_color_factor)
             }
             None => "no override".into(),
         };
-        Some(format!("glTF material {mid} ({}), {ov}", self.materials.describe(&mid)))
+        Some(format!("glTF material {} ({}), {ov}", ids.id(mid), self.materials.describe(&mid)))
     }
 
     /// Diagnostic: the objects (not avatars nor their attachments) within
     /// `radius` m of `center`: lights and every face's texture entry, as
     /// the build floater would show them. Distances only, never a position:
     /// a tester pastes these lines in public (docs/DEV_TOOLBOX.md).
-    pub fn log_nearby(&self, world: &World, center: Vec3, radius: f32) {
+    pub fn log_nearby(&self, world: &World, center: Vec3, radius: f32, ids: &AssetIds) {
         let alpha = &self.textures.alpha_by_slot;
         let mut n = 0;
         for (idx, o) in world.objects.iter() {
@@ -801,7 +895,7 @@ impl Scene {
                 let pbr = o.extra.render_materials.iter().find(|(t, _)| *t as usize == fi).map(|(_, id)| *id);
                 log::info!(
                     "  face {fi}: tex {} ({}), color {:.2?}, glow {:.2}, fullbright {}, shiny {}, bump {}, planar {}, repeats {:.2}x{:.2}, material {}, pbr {:?}, pass {:?}",
-                    tf.texture,
+                    ids.id(tf.texture),
                     self.textures.describe(&tf.texture),
                     tf.color,
                     tf.glow,
@@ -811,8 +905,8 @@ impl Scene {
                     tf.planar(),
                     tf.scale_s,
                     tf.scale_t,
-                    tf.material_id,
-                    pbr,
+                    ids.id(tf.material_id),
+                    pbr.map(|id| ids.id(id)),
                     classify(f, a)
                 );
                 if !tf.material_id.is_nil() && !mats.contains(&tf.material_id) {
@@ -823,31 +917,33 @@ impl Scene {
                 }
             }
             // a map of a PBR material with its load state, as a face's texture
-            let map = |t: Option<Uuid>| t.map_or_else(|| "none".to_string(), |t| format!("{t} ({})", self.textures.describe(&t)));
+            let map = |t: Option<Uuid>| t.map_or_else(|| "none".to_string(), |t| format!("{} ({})", ids.id(t), self.textures.describe(&t)));
             for id in pbr_mats {
+                let shown = ids.id(id);
                 match self.materials.peek(&id) {
                     Some(m) => log::info!(
-                        "  pbr {id}: base {}, normal {}, orm {}, emissive {}, transforms (scale, offset, rotation) {:?}",
+                        "  pbr {shown}: base {}, normal {}, orm {}, emissive {}, transforms (scale, offset, rotation) {:?}",
                         map(m.base_color_texture),
                         map(m.normal_texture),
                         map(m.metallic_roughness_texture),
                         map(m.emissive_texture),
                         m.transforms.map(|t| (t.scale, t.offset, t.rotation))
                     ),
-                    None => log::info!("  pbr {id}: {} (drawn with the default material)", self.materials.describe(&id)),
+                    None => log::info!("  pbr {shown}: {} (drawn with the default material)", self.materials.describe(&id)),
                 }
             }
             for (face, ov) in world.gltf_overrides.get(&o.key).iter().flat_map(|s| s.iter()) {
-                log::info!("  pbr override face {face}: {ov:?}");
+                log::info!("  pbr override face {face}: {}", override_text(ov, ids));
             }
             for id in mats {
+                let shown = ids.id(id);
                 match self.legacy_mats.peek(&id) {
                     Some(lm) => log::info!(
-                        "  material {id}: normal {} x{:.2?} rot {:.2}, specular {} x{:.2?} rot {:.2}, color {:?} exp {} env {} alpha mode {}",
-                        lm.normal_map,
+                        "  material {shown}: normal {} x{:.2?} rot {:.2}, specular {} x{:.2?} rot {:.2}, color {:?} exp {} env {} alpha mode {}",
+                        ids.id(lm.normal_map),
                         &lm.normal_st[..2],
                         lm.normal_rot,
-                        lm.specular_map,
+                        ids.id(lm.specular_map),
                         &lm.specular_st[..2],
                         lm.specular_rot,
                         lm.specular_color,
@@ -855,7 +951,7 @@ impl Scene {
                         lm.env_intensity,
                         lm.diffuse_alpha_mode
                     ),
-                    None => log::info!("  material {id}: not loaded"),
+                    None => log::info!("  material {shown}: not loaded"),
                 }
             }
         }
@@ -893,7 +989,7 @@ impl Scene {
                     "  worn glow: '{item}' prim {} face {fi}: glow {:.2}, tex {} ({}, {:?}, alpha channel {}), color {:.2?}, fullbright {}, material {} legacy alpha {:?}, pass {:?}, two sided {}",
                     o.full_id,
                     tf.glow,
-                    tf.texture,
+                    ids.id(tf.texture),
                     self.textures.describe(&tf.texture),
                     a,
                     self.textures
@@ -903,7 +999,7 @@ impl Scene {
                         .unwrap_or(false),
                     tf.color,
                     tf.fullbright(),
-                    tf.material_id,
+                    ids.id(tf.material_id),
                     f.legacy_alpha,
                     classify(f, a),
                     f.two_sided
@@ -911,6 +1007,22 @@ impl Scene {
             }
         }
     }
+}
+
+/// A glTF override for the log, its textures written by the asset id rule.
+fn override_text(ov: &aurora_assets::material::PbrOverride, ids: &AssetIds) -> String {
+    format!(
+        "textures {:?}, base color {:?}, emissive {:?}, metallic {:?}, roughness {:?}, alpha mode {:?} cutoff {:?}, double sided {:?}, transforms {:?}",
+        ov.textures.map(|t| ids.id(t)),
+        ov.base_color_factor,
+        ov.emissive_factor,
+        ov.metallic_factor,
+        ov.roughness_factor,
+        ov.alpha_mode,
+        ov.alpha_cutoff,
+        ov.double_sided,
+        ov.transforms
+    )
 }
 
 /// One attachment of an avatar, for the Dev Toolbox's L2.
@@ -929,12 +1041,12 @@ pub struct WornRow {
 impl Scene {
     /// The Dev Toolbox's L1: one prim, every face, as "Debug to log" writes
     /// it for a detailed prim.
-    pub fn describe_prim(&self, world: &World, renderer: &Renderer, idx: usize) -> Option<String> {
+    pub fn describe_prim(&self, world: &World, renderer: &Renderer, idx: usize, ids: &AssetIds) -> Option<String> {
         let o = world.objects.get(idx)?;
         Some(format!(
             "prim {} {}",
             o.full_id,
-            self.prim_faces_body(world, renderer, o, self.gpu.get(idx)?)
+            self.prim_faces_body(world, renderer, o, self.gpu.get(idx)?, ids)
         ))
     }
 

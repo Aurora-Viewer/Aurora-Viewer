@@ -9,7 +9,7 @@
 
 use super::App;
 use crate::camera::presets::{self, Anchor, AnchorKind, Include, Lens, Light};
-use crate::camera::{CameraShot, FreeCamera};
+use crate::camera::{CameraPreset, CameraShot, FreeCamera};
 use crate::world::notifications::{Data, Kind};
 use std::time::Instant;
 use uuid::Uuid;
@@ -99,6 +99,52 @@ impl App {
         presets::store(&mut self.settings.camera_shots, shot);
         self.settings.save();
         Ok(())
+    }
+
+    /// Rear, Front, Side or Shoulder view, as the user saved it or as its
+    /// template (LLFloaterCamera::switchToPreset): the Controls window, the
+    /// system island's menu.
+    pub(super) fn switch_camera_view(&mut self, view: CameraPreset) {
+        self.settings.camera.apply_view(view, &self.settings.camera_views);
+        self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+        self.settings.save();
+    }
+
+    /// The camera where it is becomes `view`, kept for the next sessions
+    /// (LLFloaterSaveCameraPreset::onBtnSave over "Front View.xml", issue
+    /// #2755): the position and the focus point in the avatar's frame, as a
+    /// position saved by name.
+    pub(super) fn save_camera_view(&mut self, view: CameraPreset) {
+        if self.world.rlva.camera_preset_locked(Uuid::nil()) {
+            self.camera_preset_message(aurora_i18n::tr!("camera-preset-locked").to_owned());
+            return;
+        }
+        let (camera, focus) = self.camera.current_offsets(&self.world.agent);
+        let saved = self
+            .settings
+            .camera
+            .save_view(view, camera.to_array(), focus.to_array(), &mut self.settings.camera_views);
+        if !saved {
+            self.camera_preset_message(aurora_i18n::tr!("controls-view-not-saved", view = view.label()));
+            return;
+        }
+        log::info!("camera view saved: {view:?} at {camera:.2?}, focus {focus:.2?}");
+        self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
+        self.settings.save();
+    }
+
+    /// `view` back to its template (LLPresetsManager::resetCameraPreset):
+    /// shown again at once when it is the view in use.
+    pub(super) fn restore_camera_view(&mut self, view: CameraPreset) {
+        if !self.settings.camera_views.restore(view) {
+            return;
+        }
+        log::info!("camera view restored: {view:?}");
+        if self.settings.camera.preset == view {
+            self.switch_camera_view(view);
+        } else {
+            self.settings.save();
+        }
     }
 
     pub(super) fn delete_camera_preset(&mut self, i: usize) {

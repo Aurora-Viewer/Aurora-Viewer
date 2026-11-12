@@ -234,6 +234,75 @@ pub async fn set_favorite(
 }
 
 pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, String> {
+    send_detailed(req, body).await.map_err(|refusal| refusal.message)
+}
+
+/// A failed AIS request. AISAPI::InvokeAISCommandCoro logs the refused
+/// reply; here only its `error_code` / `error_description` are kept, for the
+/// log alone: the message shown to the user never carries the server's text.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Refusal {
+    pub message: String,
+    pub status: Option<u16>,
+    pub code: String,
+    pub description: String,
+}
+
+impl Refusal {
+    fn new(message: String) -> Self {
+        Self {
+            message,
+            ..Default::default()
+        }
+    }
+}
+
+/// A reply field fit for the log: no URL path or query (a capability), no
+/// control character, bounded.
+fn logged(value: &Llsd) -> String {
+    let text = crate::fetch::redact_urls(&value.to_string_value());
+    let mut safe = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("://") {
+            // Absolute URLs already have their paths removed above.
+            safe.push_str("://");
+            rest = after;
+        } else if rest.starts_with('/') {
+            // A server can echo a capability as a path or a scheme-relative
+            // URL. Hide any such path, not just those under /CAPS/.
+            let end = rest
+                .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
+                .unwrap_or(rest.len());
+            safe.push('…');
+            rest = &rest[end..];
+        } else {
+            let c = rest.chars().next().expect("nonempty remainder");
+            safe.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    safe.chars().map(|c| if c.is_control() { ' ' } else { c }).take(256).collect()
+}
+
+/// Error text is optional. Cap the decoded body before buffering or XML
+/// parsing, including replies whose size is unknown (chunked or compressed).
+async fn refusal_reply(mut response: reqwest::Response) -> Option<Llsd> {
+    const LIMIT: usize = 64 * 1024;
+    if response.content_length().is_some_and(|len| len > LIMIT as u64) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > LIMIT - bytes.len() {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    aurora_llsd::from_xml(&bytes).ok()
+}
+
+pub(crate) async fn send_detailed(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, Refusal> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
@@ -241,24 +310,131 @@ pub(crate) async fn send(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Ll
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").to_owned())?;
-    if !response.status().is_success() {
-        return Err(aurora_i18n::tr!(
-            "outfits-the-server-rejected-the-operation-http",
-            value0 = format!("{}", response.status().as_u16())
-        ));
+        .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").into()))?;
+    let status = response.status();
+    if !status.is_success() {
+        let reply = refusal_reply(response).await.unwrap_or_default();
+        return Err(Refusal {
+            message: aurora_i18n::tr!(
+                "outfits-the-server-rejected-the-operation-http",
+                value0 = format!("{}", status.as_u16())
+            ),
+            status: Some(status.as_u16()),
+            code: logged(&reply["error_code"]),
+            description: logged(&reply["error_description"]),
+        });
     }
     let bytes = response
         .bytes()
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-interrupted-inventory-response").to_owned())?;
-    aurora_llsd::from_xml(&bytes).map_err(|_| aurora_i18n::tr!("outfits-unreadable-inventory-response").into())
+        .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-interrupted-inventory-response").into()))?;
+    aurora_llsd::from_xml(&bytes).map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-unreadable-inventory-response").into()))
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn refusal_fields_redact_relative_capabilities() {
+        for value in [
+            "Rejected /CAPS/private-token/item/x?secret=1",
+            "Rejected //sim.example/CAPS/private-token/item/x?secret=1",
+            "Rejected '/caps/private-token/item/x?secret=1' again",
+            "Rejected /inventory/private-token?secret=1",
+            "Rejected (/CAPS/private-token/item/x?secret=1)",
+        ] {
+            let safe = logged(&Llsd::String(value.into()));
+            assert!(safe.starts_with("Rejected "), "{safe}");
+            assert!(!safe.contains("private-token") && !safe.contains("secret=1"), "{safe}");
+        }
+        assert_eq!(
+            logged(&Llsd::String("Invalid field desc\ntry again".into())),
+            "Invalid field desc try again"
+        );
+        assert_eq!(logged(&Llsd::String("é".repeat(300))).chars().count(), 256);
+    }
+
+    // Exercise the real HTTP reader with a length, EOF framing and chunked
+    // framing. Oversized replies must discard even valid diagnostic fields.
+    async fn refusal_from_body(body: Vec<u8>, framing: &str) -> Refusal {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
+        let address = listener.local_addr().expect("local address");
+        let header = match framing {
+            "length" => format!("Content-Length: {}\r\n", body.len()),
+            "chunked" => "Transfer-Encoding: chunked\r\n".into(),
+            _ => String::new(),
+        };
+        let chunked = framing == "chunked";
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("request");
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 4096];
+                let read = socket.read(&mut buffer).await.expect("read request");
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(format!("HTTP/1.1 400 Bad Request\r\n{header}Connection: close\r\n\r\n").as_bytes())
+                .await
+                .expect("header");
+            for part in body.chunks(4096) {
+                if chunked && socket.write_all(format!("{:x}\r\n", part.len()).as_bytes()).await.is_err() {
+                    return;
+                }
+                if socket.write_all(part).await.is_err() {
+                    return; // The bounded reader can close before the body ends.
+                }
+                if chunked && socket.write_all(b"\r\n").await.is_err() {
+                    return;
+                }
+            }
+            if chunked {
+                let _ = socket.write_all(b"0\r\n\r\n").await;
+            }
+            crate::test_http::finish(socket);
+        });
+        let refusal = send_detailed(
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("client")
+                .get(format!("http://{address}")),
+            &Llsd::new_map(),
+        )
+        .await
+        .expect_err("HTTP 400");
+        task.await.expect("server");
+        refusal
+    }
+
+    #[tokio::test]
+    async fn refusal_body_is_bounded_with_and_without_a_content_length() {
+        for framing in ["length", "eof", "chunked"] {
+            for size in [64 * 1024, 64 * 1024 + 1, 2 * 1024 * 1024] {
+                let mut body = aurora_llsd::to_xml(&llsd_map! {
+                    "error_code" => 400, "error_description" => "Invalid field desc",
+                });
+                // Trailing XML whitespace leaves a valid document, including
+                // valid fields before the limit: no partial parse is allowed.
+                body.resize(size, b' ');
+                let refusal = refusal_from_body(body, framing).await;
+                assert_eq!(refusal.status, Some(400));
+                assert!(refusal.message.contains("400") && !refusal.message.contains("Invalid"));
+                if size == 64 * 1024 {
+                    assert_eq!(refusal.code, "400", "{framing}");
+                    assert_eq!(refusal.description, "Invalid field desc", "{framing}");
+                } else {
+                    assert!(refusal.code.is_empty() && refusal.description.is_empty(), "{framing}: {refusal:?}");
+                }
+            }
+        }
+    }
 
     fn folder_reply(folder: Uuid, children: &[Uuid], links: &[Uuid]) -> Llsd {
         let categories = children

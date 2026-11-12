@@ -67,8 +67,10 @@ pub mod object_flags {
     /// Attachment point marked invisible in first person by avatar_lad.xml.
     pub const FIRST_PERSON_HIDDEN: u32 = 64;
     /// Left out of the photo by its isolation (the viewer's
-    /// `snapshot::isolate`): not drawn, casting no shadow, in no reflection.
-    pub const PHOTO_HIDDEN: u32 = 128;
+    /// `snapshot::isolate`) or by a hidden rendering type
+    /// (`scene::render_types`): not drawn, casting no shadow, in no
+    /// reflection.
+    pub const HIDDEN: u32 = 128;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -81,8 +83,10 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 30;
+pub const BINS: usize = 31;
 pub const BIN_WATER_EXCLUSION: usize = 29;
+/// Shadow casters of the probe being captured, drawn with the alpha test.
+pub const BIN_PROBE_SHADOW: usize = 30;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -113,9 +117,43 @@ pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
 const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
+/// After the shadow statistics (`COUNT_SHADOW` .. `+ SHADOW_STATS`).
+const COUNT_CLAMPED: usize = 51;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
-const COUNTS: usize = 52;
+const COUNTS: usize = 53;
+
+/// Keep the whole indirect index range inside the bound u16 index buffer.
+/// Invalid face metadata skips the draw rather than exposing an out-of-range
+/// GPU index read; the returned first index is always safe, even for an empty
+/// buffer.
+pub fn bound_index_range(first_index: u32, index_count: u32, index_limit: u32) -> (u32, u32, bool) {
+    let safe_first = first_index.min(index_limit);
+    let valid = first_index <= index_limit && index_count <= index_limit - safe_first;
+    (safe_first, if valid { index_count } else { 0 }, !valid)
+}
+
+/// True when `count` clamped faces is more than any count logged before
+/// (then remembered): a bad face that goes in and out of view logs once,
+/// not at every readback that sees it again.
+fn new_clamped_max(logged: &mut u32, count: u32) -> bool {
+    if count <= *logged {
+        return false;
+    }
+    *logged = count;
+    true
+}
+
+/// The same bound for a CPU-built indirect draw (`Backend::render_view`'s
+/// lists, drawn with `draw_indexed_indirect` without wgpu's indirect
+/// validation): an out-of-range draw becomes a zero-count draw. True when
+/// it was clamped.
+pub(crate) fn bound_cpu_draw(d: &mut crate::types::DrawIndexedIndirect, index_limit: u32) -> bool {
+    let (first, count, clamped) = bound_index_range(d.first_index, d.index_count, index_limit);
+    d.first_index = first;
+    d.index_count = count;
+    clamped
+}
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -131,6 +169,8 @@ pub mod frame_flags {
     /// Every caster drawn with the alpha test, none depth only
     /// (AURORA_SHADOW_LEGACY).
     pub const SHADOW_ALPHA_ALL: u32 = 128;
+    /// The shadow map of the probe being captured is drawn this frame.
+    pub const PROBE_SHADOW: u32 = 256;
     /// Projector shadow map 0 is drawn (map 1: the next bit).
     pub const SPOT: u32 = 1 << 16;
     /// Exterior refraction shares the water bin, with a union of frustums.
@@ -333,9 +373,14 @@ pub struct CullFrame {
     pub water_air: [[f32; 4]; 6],
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
+    /// The probe capture's origin and how far it draws objects
+    /// (`ProbeCapture::reach`).
+    pub probe_eye: [f32; 4],
     /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
     pub spots: [[[f32; 4]; 6]; SPOT_SHADOWS],
     pub cascades: [[[f32; 4]; 4]; 3],
+    /// Shadow map of the probe being captured (`frame_flags::PROBE_SHADOW`).
+    pub probe_shadow: [[f32; 4]; 4],
     /// Per cascade: planes around what can cast a shadow the main view
     /// samples in it (`caster_planes`).
     pub shadow_planes: [[[f32; 4]; SHADOW_PLANES]; 3],
@@ -348,7 +393,8 @@ pub struct CullFrame {
     pub dist: [f32; 4],
     /// Faces, objects, slots per bin, `frame_flags`.
     pub sizes: [u32; 4],
-    /// Classify workgroups; y is first-person avatar index + 1 (0: none).
+    /// x classify workgroups, y first-person avatar index + 1 (0: none),
+    /// z bound index-buffer length in u16 indices.
     pub groups: [u32; 4],
 }
 
@@ -366,9 +412,13 @@ impl CullFrame {
         merge_size: f32,
         [water, mirror, probe]: [Mat4; 3],
         spots: [Option<Mat4>; SPOT_SHADOWS],
+        probe_shadow: Option<Mat4>,
         mut flags: u32,
     ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
+        if probe_shadow.is_some() {
+            flags |= frame_flags::PROBE_SHADOW;
+        }
         if let Some((_, show)) = view.first_person {
             flags |= frame_flags::FIRST_PERSON;
             if show {
@@ -386,10 +436,12 @@ impl CullFrame {
             water_air: planes(Mat4::IDENTITY),
             mirror: planes(mirror),
             probe: planes(probe),
+            probe_eye: [0.0; 4],
             // (a depth of 0 to 1: the fifth plane is the far one, and
             // nothing is left out for being before the near one)
             spots: spots.map(|s| planes(s.unwrap_or(Mat4::IDENTITY))),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
+            probe_shadow: probe_shadow.unwrap_or(Mat4::IDENTITY).to_cols_array_2d(),
             shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, merge_size],
@@ -456,7 +508,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let o = objects[f.object as usize];
-    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::PHOTO_HIDDEN) != 0 {
+    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::HIDDEN) != 0 {
         return (0, false);
     }
     let is_avatar = o.flags & object_flags::AVATAR != 0;
@@ -476,17 +528,25 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let fl = frame.sizes[3];
-    let in_view = sphere_in(&frame.planes, c, r)
+    let viewed = sphere_in(&frame.planes, c, r)
         && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
-    let casts = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
-    let reflects = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
-    if !in_view && !casts && !reflects {
+    let shadow_reach = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
+    let reflect_reach = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
+    // a capture measures from its probe, not from the camera
+    let captured = fl & frame_flags::REFLECTIONS != 0
+        && fl & frame_flags::PROBE != 0
+        && o.flags & object_flags::NO_PROBE == 0
+        && (c - Vec3::new(frame.probe_eye[0], frame.probe_eye[1], frame.probe_eye[2])).length() - r < frame.probe_eye[3]
+        && sphere_in(&frame.probe, c, r);
+    if !viewed && !shadow_reach && !reflect_reach && !captured {
         return (0, false);
     }
-    let px = r * frame.dist[2] / d.max(0.1);
-    if px < 1.5 && !is_avatar {
+    // small object culling is the camera's too
+    let large = r * frame.dist[2] / d.max(0.1) >= 1.5 || is_avatar;
+    if !large && !captured {
         return (0, false);
     }
+    let (in_view, casts, reflects) = (viewed && large, shadow_reach && large, reflect_reach && large);
     let visible = in_view && f.bits & FACE_FIRST != 0;
     let p = f.bits & pass::BITS;
     if p == pass::HIDDEN {
@@ -519,6 +579,14 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
             }
         }
     }
+    if reflects
+        && fl & frame_flags::PROBE_SHADOW != 0
+        && o.flags & object_flags::NO_PROBE == 0
+        && (p != pass::BLEND || fl & frame_flags::BLEND_CASTS != 0)
+        && in_cascade(&Mat4::from_cols_array_2d(&frame.probe_shadow), c, r)
+    {
+        m |= 1 << BIN_PROBE_SHADOW;
+    }
     let solid = (pass::OPAQUE..=pass::MASK_2S).contains(&p);
     if reflects && solid {
         if (fl & frame_flags::WATER != 0 && sphere_in(&frame.water, c, r))
@@ -529,9 +597,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         if fl & frame_flags::MIRROR != 0 && sphere_in(&frame.mirror, c, r) {
             m |= 1 << BIN_REFL_MIRROR;
         }
-        if fl & frame_flags::PROBE != 0 && o.flags & object_flags::NO_PROBE == 0 && sphere_in(&frame.probe, c, r) {
-            m |= 1 << BIN_PROBE;
-        }
+    }
+    if captured && solid {
+        m |= 1 << BIN_PROBE;
     }
     if in_view && solid {
         m |= 1 << (p - pass::OPAQUE);
@@ -790,6 +858,9 @@ pub struct CullCounts {
     pub triangles: u32,
     /// Main-bin draws hidden by the occlusion.
     pub hidden: u32,
+    /// Faces drawn this frame whose index range was past the index buffer
+    /// (drawn with no index, each counted once).
+    pub clamped_faces: u32,
     /// With `frame_flags::SHADOW_STATS`, per cascade: triangles of its
     /// casters, its rigged casters (avatars and rigged meshes) and their
     /// triangles.
@@ -901,6 +972,8 @@ pub struct GpuCull {
     copied: std::cell::Cell<Option<usize>>,
     /// Last counts read back.
     pub last: CullCounts,
+    /// Largest clamped-face count logged this session (`new_clamped_max`).
+    clamped_logged: u32,
     max_groups: u32,
     /// World sphere of each object this frame (`cs_spheres`), and the
     /// objects it has room for.
@@ -1038,6 +1111,7 @@ impl GpuCull {
             readback: Vec::new(),
             copied: std::cell::Cell::new(None),
             last: CullCounts::default(),
+            clamped_logged: 0,
             max_groups: device.limits().max_compute_workgroups_per_dimension,
             spheres: Self::make_storage(device, "cull spheres", 4096 * 16),
             sphere_cap: 4096,
@@ -1049,7 +1123,7 @@ impl GpuCull {
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("cull readback"),
-                    size: (COUNTS * 4) as u64,
+                    size: crate::readback::readback_size((COUNTS * 4) as u64),
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1088,8 +1162,17 @@ impl GpuCull {
 
     /// Size the buffers for `faces` face slots and upload the frame
     /// parameters (`frame.sizes` and `groups` are filled in here); `objects`:
-    /// entries of the scene's object table this frame.
-    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, faces: usize, objects: usize, mut frame: CullFrame) {
+    /// entries of the scene's object table this frame. `index_count` is the
+    /// bound geometry index buffer's length in u16 indices.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        faces: usize,
+        objects: usize,
+        index_count: u32,
+        mut frame: CullFrame,
+    ) {
         let limits = device.limits();
         let faces = faces.min(face_capacity(&limits) as usize) as u32;
         let now = std::time::Instant::now();
@@ -1164,6 +1247,7 @@ impl GpuCull {
         frame.sizes[1] = objects;
         frame.sizes[2] = self.cap;
         frame.groups[0] = self.groups;
+        frame.groups[2] = index_count;
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
     }
 
@@ -1287,16 +1371,23 @@ impl GpuCull {
         for (buf, ready, pending) in self.readback.iter_mut() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let n: &[u32] = bytemuck::cast_slice(&view[..COUNTS * 4]);
+                    let n = crate::readback::u32_array::<COUNTS>(&view[..COUNTS * 4]);
                     let mut c = CullCounts::default();
                     c.bins.copy_from_slice(&n[..BINS]);
                     c.visible_objects = n[COUNT_VISIBLE];
                     c.triangles = n[COUNT_TRIANGLES];
                     c.hidden = n[COUNT_HIDDEN];
+                    c.clamped_faces = n[COUNT_CLAMPED];
                     let stat = |i: usize| std::array::from_fn(|k| n[COUNT_SHADOW + i * 3 + k]);
                     c.shadow_triangles = stat(0);
                     c.shadow_rigged = stat(1);
                     c.shadow_rigged_triangles = stat(2);
+                    if new_clamped_max(&mut self.clamped_logged, c.clamped_faces) {
+                        log::warn!(
+                            "GPU culling: {} faces had an index range past the index buffer and were skipped (most this session)",
+                            c.clamped_faces
+                        );
+                    }
                     self.last = c;
                 }
                 buf.unmap();
@@ -1333,6 +1424,47 @@ impl GpuCull {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_face_going_in_and_out_of_view_logs_once() {
+        let mut logged = 0;
+        let seen: Vec<bool> = [0, 1, 0, 1, 0, 1, 2, 1, 2, 0]
+            .iter()
+            .map(|&n| new_clamped_max(&mut logged, n))
+            .collect();
+        assert_eq!(seen, [false, true, false, false, false, false, true, false, false, false]);
+        assert_eq!(logged, 2);
+    }
+
+    #[test]
+    fn cpu_built_draws_are_bounded_like_the_gpu_ones() {
+        let mut ok = crate::types::DrawIndexedIndirect {
+            index_count: 6,
+            instance_count: 1,
+            first_index: 4,
+            base_vertex: 0,
+            first_instance: 7,
+        };
+        assert!(!bound_cpu_draw(&mut ok, 10));
+        assert_eq!((ok.first_index, ok.index_count, ok.first_instance), (4, 6, 7));
+        let mut bad = crate::types::DrawIndexedIndirect {
+            index_count: 2,
+            first_index: 9,
+            ..ok
+        };
+        assert!(bound_cpu_draw(&mut bad, 10));
+        assert_eq!((bad.first_index, bad.index_count, bad.first_instance), (9, 0, 7));
+    }
+
+    #[test]
+    fn indirect_index_ranges_are_safe_or_zeroed() {
+        assert_eq!(bound_index_range(4, 6, 10), (4, 6, false));
+        assert_eq!(bound_index_range(10, 0, 10), (10, 0, false));
+        assert_eq!(bound_index_range(9, 2, 10), (9, 0, true));
+        assert_eq!(bound_index_range(11, 1, 10), (10, 0, true));
+        assert_eq!(bound_index_range(u32::MAX, u32::MAX, 10), (10, 0, true));
+        assert_eq!(bound_index_range(0, 1, 0), (0, 0, true));
+    }
 
     #[test]
     fn cull_capacity_respects_the_whole_binding_and_occlusion_dispatch() {
@@ -1382,10 +1514,10 @@ mod tests {
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
         // Main, water reflection/exterior, mirror, probe and spot frusta;
-        // then 3 matrices, 3 x 12 shadow planes and 4 vectors.
+        // the capture's origin; then 4 matrices, 3 x 12 shadow planes and 4 vectors.
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            (5 + SPOT_SHADOWS) * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (5 + SPOT_SHADOWS) * 6 * 16 + 16 + 4 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
@@ -1395,8 +1527,10 @@ mod tests {
                 "water_air",
                 "mirror",
                 "probe",
+                "probe_eye",
                 "spots",
                 "cascades",
+                "probe_shadow",
                 "shadow_planes",
                 "eye",
                 "dist",
@@ -1406,7 +1540,9 @@ mod tests {
         );
         assert!(src.contains(&format!("shadow_planes: array<vec4<f32>, {}>,", 3 * SHADOW_PLANES)));
         assert!(src.contains(&format!("counts: array<atomic<u32>, {COUNTS}>;")));
+        assert!(src.contains(&format!("const COUNT_CLAMPED: u32 = {COUNT_CLAMPED}u;")));
         const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNTS && COUNT_PRE2 + MAIN_BINS <= COUNT_SHADOW) };
+        const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNT_CLAMPED && COUNT_CLAMPED < COUNTS) };
     }
 
     #[test]
@@ -1499,7 +1635,8 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 47] = [
+        let pairs: [(&str, u32); 49] = [
+            ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
             ("OBJ_FIRST_PERSON_HIDDEN", object_flags::FIRST_PERSON_HIDDEN),
@@ -1522,6 +1659,7 @@ mod tests {
             ("BIN_REFL_WATER", BIN_REFL_WATER as u32),
             ("BIN_REFL_MIRROR", BIN_REFL_MIRROR as u32),
             ("BIN_PROBE", BIN_PROBE as u32),
+            ("BIN_PROBE_SHADOW", BIN_PROBE_SHADOW as u32),
             ("REGION_PRE1", REGION_PRE1 as u32),
             ("REGION_PRE2", REGION_PRE2 as u32),
             ("COUNT_VISIBLE", COUNT_VISIBLE as u32),
@@ -1541,7 +1679,7 @@ mod tests {
             ("OBJ_HUD", object_flags::HUD),
             ("OBJ_NO_PROBE", object_flags::NO_PROBE),
             ("OBJ_POSED", object_flags::POSED),
-            ("OBJ_PHOTO_HIDDEN", object_flags::PHOTO_HIDDEN),
+            ("OBJ_HIDDEN", object_flags::HIDDEN),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
             ("AV_TOO_COMPLEX", avatar_state::TOO_COMPLEX),
@@ -1674,8 +1812,10 @@ mod tests {
             water_air: planes,
             mirror: planes,
             probe: planes,
+            probe_eye: [0.0; 4],
             spots: [planes; SPOT_SHADOWS],
             cascades: [cascade.to_cols_array_2d(); 3],
+            probe_shadow: cascade.to_cols_array_2d(),
             shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
             eye: [0.0, 0.0, 0.0, 64.0],
             dist: [64.0, 32.0, 1000.0 / 0.5, 0.0],
@@ -1737,6 +1877,45 @@ mod tests {
         let (mask, visible) = face_bins(&frame, &faces, &objects, &spheres, 0);
         assert_ne!(mask & (1 << BIN_REFL_WATER), 0, "offscreen exterior must reach its render pass");
         assert!(!visible, "exterior visibility must not make the object visible in the main view");
+    }
+
+    #[test]
+    fn a_probe_capture_measures_from_its_probe() {
+        let mut frame = frame_for_tests();
+        frame.sizes[3] |= frame_flags::PROBE;
+        let bin = 1 << BIN_PROBE;
+        let object = |radius: f32| CullObject {
+            sphere: [50.0, 0.0, 0.0, radius],
+            flags: object_flags::ACTIVE,
+            ..CullObject::NONE
+        };
+        let faces = [CullFace {
+            index_count: 30,
+            object: 0,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        }];
+        let bins = |frame: &CullFrame, radius: f32| {
+            let objects = [object(radius)];
+            let spheres = world_spheres(&objects, &[], &[], &[]);
+            face_bins(frame, &faces, &objects, &spheres, 0)
+        };
+        // 50 m from the camera, past its reflection distance of 32 m, and in
+        // reach of a probe beside it
+        frame.probe_eye = [45.0, 0.0, 0.0, 64.0];
+        assert_ne!(bins(&frame, 1.0).0 & bin, 0);
+        assert_eq!(bins(&frame, 1.0).0 & (1 << BIN_REFL_WATER), 0);
+        // out of the probe's reach, near as the camera is
+        frame.probe_eye = [45.0, 0.0, 0.0, 2.0];
+        assert_eq!(bins(&frame, 1.0).0 & bin, 0);
+        frame.dist[1] = 64.0;
+        assert_eq!(bins(&frame, 1.0).0 & bin, 0);
+        // too small for the camera: in the capture and nowhere else
+        frame.probe_eye = [45.0, 0.0, 0.0, 64.0];
+        assert_eq!(bins(&frame, 0.01), (bin, false));
+        // and no capture this frame: not drawn at all
+        frame.sizes[3] &= !frame_flags::PROBE;
+        assert_eq!(bins(&frame, 0.01), (0, false));
     }
 
     #[test]
@@ -1990,7 +2169,7 @@ mod tests {
         assert!(GpuCull::fits(&device, 4097, 0));
         assert!(!GpuCull::fits(&device, 4353, 0), "larger scenes must select the CPU lists");
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        cull.prepare(&device, &queue, 4097, 0, CullFrame::zeroed());
+        cull.prepare(&device, &queue, 4097, 0, u32::MAX, CullFrame::zeroed());
         let error = pollster::block_on(validation.pop());
         assert!(error.is_none(), "growth installed an invalid GPU buffer: {error:?}");
         assert!(cull.cap() >= 4097, "all faces still fit");
@@ -2017,14 +2196,14 @@ mod tests {
         let mut cull = GpuCull::new(&device);
         let size = cull.args().size();
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        cull.prepare(&device, &queue, 4097, 4097, CullFrame::zeroed());
+        cull.prepare(&device, &queue, 4097, 4097, u32::MAX, CullFrame::zeroed());
         assert_eq!(cull.cap(), 4096);
         assert_eq!(cull.sphere_cap, 4096);
         assert_eq!(cull.args().size(), size);
         assert_eq!((cull.faces, cull.objects), (4096, 4096));
         assert!(cull.face_backoff.waiting() && cull.sphere_backoff.waiting());
         // Existing scene entries remain usable while the excess waits.
-        cull.prepare(&device, &queue, 1024, 1024, CullFrame::zeroed());
+        cull.prepare(&device, &queue, 1024, 1024, u32::MAX, CullFrame::zeroed());
         assert_eq!((cull.faces, cull.objects), (1024, 1024));
         assert!(pollster::block_on(validation.pop()).is_none());
     }
@@ -2173,7 +2352,7 @@ mod tests {
             "some object is posed"
         );
         let n_faces = 70_000usize;
-        let faces: Vec<CullFace> = (0..n_faces)
+        let mut faces: Vec<CullFace> = (0..n_faces)
             .map(|_| {
                 if rand(20) == 0 {
                     return CullFace::NONE;
@@ -2188,6 +2367,15 @@ mod tests {
                 }
             })
             .collect();
+        // This visible opaque face deliberately points beyond the bound
+        // index buffer, while the surrounding draws remain valid.
+        faces[1] = CullFace {
+            index_count: 3,
+            first_index: 200_001,
+            object: 1,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        };
         let mut table = GpuTable::new(&device, "faces", 16, CullFace::NONE);
         for (i, f) in faces.iter().enumerate() {
             table.set(i, *f);
@@ -2244,7 +2432,8 @@ mod tests {
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
         )
         .map(|p| p.to_array());
-        cull.prepare(&device, &queue, n_faces, tables.objects.len(), frame);
+        frame.probe_eye = [0.0, 40.0, 0.0, 40.0];
+        cull.prepare(&device, &queue, n_faces, tables.objects.len(), 200_000, frame);
         let mut f = frame;
         f.sizes[0] = n_faces as u32;
         f.sizes[1] = n_obj;
@@ -2266,7 +2455,7 @@ mod tests {
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size,
+                size: crate::readback::readback_size(size),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
@@ -2280,18 +2469,21 @@ mod tests {
         counts_read.map_async(wgpu::MapMode::Read, .., |_| {});
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
         let args = args_read.get_mapped_range(..).expect("args mapped");
-        let args: &[u32] = bytemuck::cast_slice(&args);
+        let args = crate::readback::u32s(&args[..size as usize]);
         let counts = counts_read.get_mapped_range(..).expect("counts mapped");
-        let counts: &[u32] = bytemuck::cast_slice(&counts[..COUNTS * 4]);
+        let counts = crate::readback::u32s(&counts[..COUNTS * 4]);
+        // a face past the index buffer is counted once and its triangles left out
+        let fits = |i: usize| !bound_index_range(faces[i].first_index, faces[i].index_count, 200_000).2;
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
-        let (mut visible, mut tris) = (0, 0);
+        let (mut visible, mut tris, mut clamped_faces) = (0, 0, 0);
         for i in 0..n_faces {
             let (m, v) = face_bins(&f, &faces, &objects, &spheres, i);
             visible += v as u32;
+            clamped_faces += (m != 0 && !fits(i)) as u32;
             for (b, e) in expect.iter_mut().enumerate() {
                 if (m >> b) & 1 != 0 {
                     e.push(i as u32);
-                    if b < MAIN_BINS {
+                    if b < MAIN_BINS && fits(i) {
                         tris += faces[i].index_count / 3;
                     }
                 }
@@ -2319,7 +2511,13 @@ mod tests {
             let casters = || expect[BIN_SHADOW + k].iter().chain(&expect[BIN_SHADOW_ALPHA + k]);
             let rigged =
                 |rec: &&u32| objects[faces[**rec as usize].object as usize].flags & (object_flags::RIGGED | object_flags::AVATAR) != 0;
-            let tris = |rec: &u32| faces[*rec as usize].index_count / 3;
+            let tris = |rec: &u32| {
+                if fits(*rec as usize) {
+                    faces[*rec as usize].index_count / 3
+                } else {
+                    0
+                }
+            };
             assert_eq!(counts[COUNT_SHADOW + k], casters().map(tris).sum::<u32>(), "cascade {k} triangles");
             assert_eq!(
                 counts[COUNT_SHADOW + 3 + k],
@@ -2330,17 +2528,16 @@ mod tests {
         }
         assert_eq!(counts[COUNT_VISIBLE], visible);
         assert_eq!(counts[COUNT_TRIANGLES], tris);
+        assert!(clamped_faces > 0, "the invalid face should be drawn somewhere");
+        assert_eq!(counts[COUNT_CLAMPED], clamped_faces, "each clamped face counted once");
         let cap = cull.cap() as usize;
         for (b, e) in expect.iter().enumerate() {
             assert_eq!(counts[b] as usize, e.len(), "bin {b} size");
             for (j, &rec) in e.iter().enumerate() {
                 let a = &args[(b * cap + j) * 5..(b * cap + j) * 5 + 5];
                 let fc = &faces[rec as usize];
-                assert_eq!(
-                    a,
-                    [fc.index_count, 1, fc.first_index, fc.base_vertex as u32, rec],
-                    "bin {b} slot {j}"
-                );
+                let (first_index, index_count, _) = bound_index_range(fc.first_index, fc.index_count, 200_000);
+                assert_eq!(a, [index_count, 1, first_index, fc.base_vertex as u32, rec], "bin {b} slot {j}");
             }
             if b < MAIN_BINS {
                 // phase 1 prepass list: the bin's draws visible last frame, any order

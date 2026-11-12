@@ -22,17 +22,78 @@ pub fn set_plugins_status(ctx: &egui::Context, state: PackState) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(PLUGINS_STATUS), state));
 }
 
-/// What a page without plugins shows while the pack is on its way; `None`
-/// when no pack is coming.
-fn waiting_for_plugins(ctx: &egui::Context) -> Option<String> {
-    match ctx.data(|d| d.get_temp::<PackState>(egui::Id::unique(PLUGINS_STATUS)))? {
-        PackState::Downloading(p) if p.preparing => Some(aurora_i18n::tr!("media-plugins-installing").to_owned()),
-        PackState::Downloading(p) => Some(aurora_i18n::tr!(
+const PLUGINS_DOWNLOAD: &str = "media_plugins_pack_download";
+
+/// What a place without plugins shows instead of the web or the media.
+enum Waiting {
+    /// The pack is on its way, or its download failed.
+    Text(String),
+    /// Not downloaded (never asked, or "Not now"): a Download button.
+    Offer,
+}
+
+/// `None` when no pack is coming nor can be downloaded.
+fn waiting_for_plugins(ctx: &egui::Context) -> Option<Waiting> {
+    let text = match ctx.data(|d| d.get_temp::<PackState>(egui::Id::unique(PLUGINS_STATUS)))? {
+        PackState::Idle => return Some(Waiting::Offer),
+        PackState::Downloading(p) if p.preparing => aurora_i18n::tr!("media-plugins-installing").to_owned(),
+        PackState::Downloading(p) => aurora_i18n::tr!(
             "media-plugins-page-waiting",
             percent = (p.received * 100 / p.total.max(1)).to_string()
-        )),
-        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Idle | PackState::Ready => None,
-        PackState::Failed(_) => Some(aurora_i18n::tr!("media-plugins-page-failed").to_owned()),
+        ),
+        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Ready => return None,
+        PackState::Failed(_) => aurora_i18n::tr!("media-plugins-page-failed").to_owned(),
+    };
+    Some(Waiting::Text(text))
+}
+
+/// A Download button was pressed this frame (taken by the app, which
+/// records the answer and starts the download).
+pub fn take_plugins_download(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(PLUGINS_DOWNLOAD)))
+        .unwrap_or(false)
+}
+
+/// The pack's size in whole megabytes, as the consent card says it.
+pub fn pack_megabytes() -> String {
+    aurora_i18n::integer(aurora_updater::media_pack::PACK.size.div_ceil(1024 * 1024) as i64)
+}
+
+/// "Web pages and media need …" and its Download button, where the web or a
+/// media would show without plugins.
+fn plugins_offer(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(aurora_i18n::tr!("media-plugins-page-offer", size = pack_megabytes()))
+                .size(12.0)
+                .color(pal.muted),
+        )
+        .wrap(),
+    );
+    let download = super::widgets::action_button(
+        ui,
+        pal,
+        "download-filled",
+        aurora_i18n::tr!("media-plugins-download"),
+        super::widgets::ActionKind::Flat,
+        Vec2::new(0.0, 26.0),
+    );
+    if download.clicked() {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(PLUGINS_DOWNLOAD), true));
+    }
+}
+
+/// The line of the media controls (`ui/media.rs`) when no plugins are
+/// found: where the pack stands, or its Download button.
+pub fn plugins_notice(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+    match waiting_for_plugins(ui.ctx()) {
+        Some(Waiting::Offer) => {
+            ui.horizontal(|ui| plugins_offer(ui, pal));
+        }
+        Some(Waiting::Text(text)) => {
+            ui.label(egui::RichText::new(text).size(11.0).color(pal.muted));
+        }
+        None => {}
     }
 }
 
@@ -58,6 +119,8 @@ pub struct WebView {
     pub load_secs: Option<f32>,
     cursor: String,
     scratch: Vec<Color32>,
+    /// The sign-in cookie was handed to the running browser.
+    cookie_set: bool,
     /// Address of the page shown, as the browser reports it (it follows the
     /// links clicked in the page).
     pub location: String,
@@ -101,6 +164,7 @@ impl WebView {
         self.profile = None;
         self.texture = None;
         self.focused = false;
+        self.cookie_set = false;
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
@@ -162,17 +226,33 @@ impl WebView {
         if self.plugin.is_none()
             && self.failed.is_none()
             && paths.is_none()
-            && let Some(text) = waiting_for_plugins(ui.ctx())
+            && let Some(waiting) = waiting_for_plugins(ui.ctx())
         {
             // the page starts by itself once the pack is installed
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(12.0),
-                pal.muted,
-            );
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            match waiting {
+                Waiting::Text(text) => {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        egui::FontId::proportional(12.0),
+                        pal.muted,
+                    );
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                }
+                Waiting::Offer => {
+                    // the text and its button, in the middle of the page
+                    let room = rect.shrink(16.0);
+                    let width = room.width().min(360.0);
+                    let block = egui::Rect::from_center_size(room.center(), Vec2::new(width, room.height().min(72.0)));
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(block)
+                            .layout(egui::Layout::top_down(egui::Align::Center)),
+                        |ui| plugins_offer(ui, pal),
+                    );
+                }
+            }
             return resp;
         }
         if self.plugin.is_none() && self.failed.is_none() && !self.url.is_empty() {
@@ -206,6 +286,7 @@ impl WebView {
                         // LLViewerMedia::getOpenIDCookie before the first page
                         if let Some(c) = cookie {
                             p.set_cookie(c);
+                            self.cookie_set = true;
                         }
                         self.plugin = Some(p);
                         self.size = px;
@@ -240,6 +321,16 @@ impl WebView {
         if self.size != px {
             p.set_size(px.0, px.1);
             self.size = px;
+        }
+        // a cookie that arrived after the browser started (the sign-in takes a
+        // moment): install it, and reload the page that went out without it
+        let late_cookie = !self.cookie_set && cookie.is_some();
+        if let Some(c) = cookie.filter(|_| late_cookie) {
+            p.set_cookie(c);
+            self.cookie_set = true;
+            if !self.nav_pending && !self.url.is_empty() {
+                p.browse_reload(false);
+            }
         }
         if std::mem::take(&mut self.nav_pending) {
             p.load_uri(&self.url);

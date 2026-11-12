@@ -104,7 +104,12 @@ fn rows(view: &View) -> Vec<Row> {
             })
         })
         .collect();
-    rest.sort_by_cached_key(|r| (r.target.title.to_lowercase(), r.target.group_name.to_lowercase()));
+    rest.sort_by_cached_key(|r| {
+        (
+            crate::natural_order::key(&r.target.title),
+            crate::natural_order::key(&r.target.group_name),
+        )
+    });
     out.extend(rest);
     out
 }
@@ -175,6 +180,7 @@ impl GroupTitlesUi {
         for (row, regions) in shown {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
             let key = (row.target.group, row.target.role);
+            widgets::reveal_search_selection(ui, &resp, self.selected == Some(key));
             if resp.clicked() || resp.secondary_clicked() {
                 self.selected = Some(key);
             }
@@ -511,7 +517,7 @@ impl GroupTitlesUi {
         floater.show(ctx, p, open, |ui| {
             let w = ui.available_width();
             ui.allocate_ui_with_layout(Vec2::new(w, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                widgets::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("group-titles-filter"), w);
+                widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("group-titles-filter"), w);
             });
             ui.add_space(6.0);
             let shown: Vec<(Row, String)> = all

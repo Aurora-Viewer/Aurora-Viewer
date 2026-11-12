@@ -294,7 +294,8 @@ fn yielding_to_a_scripted_seat_does_not_restart_the_stock_sit_over_its_pose() {
     let sit = signal(State::Sitting, now);
     let mut runtime = Runtime::default();
     let (_, changes) = runtime.update(Some(&set), frame(&[sit]), now, |_| true, |_| 0);
-    assert!(changes.contains(&(sit.id, false)));
+    // the stock sit stays to the simulator, as with the Legacy AO (#2700)
+    assert!(!changes.iter().any(|(id, _)| *id == sit.id));
     let chair = PlayingAnimation::from_signal(Uuid::from_u128(28002), 1, now + Duration::from_millis(20), None);
     let raw = [chair];
     let mut f = frame(&raw);

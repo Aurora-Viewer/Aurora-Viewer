@@ -20,6 +20,7 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,
 //! originally LGPL 2.1.
 
+mod file_picker;
 pub mod media;
 pub mod message;
 pub mod process;
@@ -28,7 +29,7 @@ mod shm;
 mod stream_volume;
 
 pub use media::{
-    BrowserSettings, Cookie, Frame, KeyEvent, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, Priority, Rect,
+    BrowserSettings, Cookie, EditCommand, Frame, KeyEvent, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, Priority, Rect,
     TIME_MEDIA_PLUGIN, mime_from_scheme, next_power_of_2, plugin_for_mime,
 };
 pub use message::PluginMessage;

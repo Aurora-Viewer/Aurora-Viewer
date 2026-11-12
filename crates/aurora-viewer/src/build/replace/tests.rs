@@ -143,7 +143,7 @@ impl Harness {
         }
         if let Some(event) = self.world.apply(event) {
             match event {
-                NetEvent::ObjectProperties(props) => self.tool.on_properties(props),
+                NetEvent::ObjectProperties(props) => self.tool.on_properties(&self.world, props),
                 NetEvent::TaskInventory {
                     object,
                     serial,
@@ -169,6 +169,7 @@ impl Harness {
                     item_id,
                     running,
                     mono,
+                    ..
                 } => {
                     self.tool.contents.running.insert((object_id, item_id), (running, mono));
                 }
@@ -525,7 +526,7 @@ fn failed_link_after_contents_copy_removes_only_added_contents() {
     assert_eq!(h.run(), Stage::Failed);
     assert_eq!(h.ids(demo::ROOT), original);
     assert!(h.tool.contents.objects[&demo::id(demo::SOURCE)].items.is_empty());
-    assert_eq!(h.tool.contents.objects[&demo::id(demo::TARGET)].items.len(), 3);
+    assert_eq!(h.tool.contents.objects[&demo::id(demo::TARGET)].items.len(), 4);
 }
 
 #[test]
@@ -730,13 +731,16 @@ fn full_candidate_permissions_override_missing_update_ownership_and_keep_real_re
         let object = h.world.objects.get_mut(source).unwrap();
         object.owner_id = Uuid::nil();
         object.update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
-        h.tool.on_properties(vec![aurora_net::build::ObjectProps {
-            object_id: demo::id(demo::SOURCE),
-            full: true,
-            owner_id: if mine { h.world.agent_id } else { Uuid::from_u128(123) },
-            owner_mask: if modifiable { u32::MAX } else { !perm::MODIFY },
-            ..Default::default()
-        }]);
+        h.tool.on_properties(
+            &h.world,
+            vec![aurora_net::build::ObjectProps {
+                object_id: demo::id(demo::SOURCE),
+                full: true,
+                owner_id: if mine { h.world.agent_id } else { Uuid::from_u128(123) },
+                owner_mask: if modifiable { u32::MAX } else { !perm::MODIFY },
+                ..Default::default()
+            }],
+        );
         let draft = h.tool.replacement.draft.as_mut().unwrap();
         draft.source = None;
         draft.picking = true;
@@ -857,7 +861,14 @@ fn a_full_256_prim_set_links_in_confirmed_tail_then_head_batches() {
     assert_eq!(expected.len(), 256);
     expected[8] = demo::id(demo::SOURCE);
     let batches = super::transaction::link_batches(&expected);
-    assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 255]);
+    assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 254]);
+    for batch in &batches {
+        assert_eq!(
+            aurora_net::build::link_batches(batch).len(),
+            1,
+            "an acknowledged step cannot be split again by the network layer"
+        );
+    }
     assert_eq!(h.run(), Stage::Done);
     assert_eq!(h.ids(demo::ROOT), expected);
 }

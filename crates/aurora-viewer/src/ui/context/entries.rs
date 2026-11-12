@@ -593,11 +593,13 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::ObjectInfo(f.object.id),
     );
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        // Object.EnableDerender of menu_attachment_self.xml: never while
+        // RLVa is on (enable_derender_object, FIRE-10082)
         derender_items(
             ui,
             f.object.id,
             aurora_i18n::tr!("ui-context-derender-temporarily"),
-            !f.object.id.is_nil(),
+            !f.object.id.is_nil() && !f.rlva_enabled,
         );
         particles_submenu(ui, f);
     });
@@ -752,6 +754,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         });
     }
     avatar_moderation(ui, f, id);
+    avatar_admin(ui, f, id);
     let display = f
         .complexity
         .map(|(c, silhouette)| {
@@ -801,6 +804,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
         },
     );
+    reload_avatar_item(ui, id);
     ui.submenu("restore", aurora_i18n::tr!("ui-context-reset-options"), true, |ui| {
         reset_skeleton_items(ui, id);
         ui.item(
@@ -853,10 +857,33 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
     });
 }
 
+/// Admin, while the region keeps our god level: GodKickUser anywhere on the
+/// grid (the Legacy Viewer's Kick, and Freeze / Unfreeze at a distance of
+/// menu_inspect_avatar_gear.xml and the profile).
+fn avatar_admin(ui: &mut Builder, f: &Facts, id: Uuid) {
+    use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+    if !f.god || id == f.me {
+        return;
+    }
+    ui.submenu("crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        ui.item("logout", aurora_i18n::tr!("admin-kick-menu"), CtxAction::GodKick(id, KICK_DEFAULT));
+        ui.item(
+            "snowflake",
+            aurora_i18n::tr!("admin-freeze-menu"),
+            CtxAction::GodKick(id, KICK_FREEZE),
+        );
+        ui.item(
+            "sun-filled",
+            aurora_i18n::tr!("admin-unfreeze-menu"),
+            CtxAction::GodKick(id, KICK_UNFREEZE),
+        );
+    });
+}
+
 /// Visible only with the corresponding land/nearby-voice moderation rights.
 fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     let voice = f.voice_volume.and_then(|v| v.moderated);
-    if !f.moderation.allowed && voice.is_none() {
+    if !f.moderation.allowed && !f.moderation.estate && voice.is_none() {
         return;
     }
     ui.submenu("shield-filled", aurora_i18n::tr!("ui-context-moderation-options"), true, |ui| {
@@ -883,11 +910,27 @@ fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     });
 }
 
-/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's land.
+/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's
+/// land, then the estate's Avatar.TeleportHome / Avatar.Kick /
+/// Avatar.EstateBan, visible to its owner and managers
+/// (menu_fs_radar.xml's entries, the estate's from the mildest to the
+/// strongest: sent home, out of the estate, kept out).
 fn moderation_items(ui: &mut Builder, f: &Facts, id: Uuid) {
     if f.moderation.allowed {
         ui.item("snowflake", aurora_i18n::tr!("ui-context-freeze"), CtxAction::Freeze(id));
         ui.item("player-eject-filled", aurora_i18n::tr!("ui-context-eject"), CtxAction::Eject(id));
+    }
+    if f.moderation.estate {
+        if f.moderation.allowed {
+            ui.separator();
+        }
+        ui.item(
+            "home-filled",
+            aurora_i18n::tr!("ui-context-estate-teleport-home"),
+            CtxAction::EstateTeleportHome(id),
+        );
+        ui.item("door-exit", aurora_i18n::tr!("ui-context-estate-kick"), CtxAction::EstateKick(id));
+        ui.item("ban", aurora_i18n::tr!("ui-context-estate-ban"), CtxAction::EstateBan(id));
     }
 }
 
@@ -918,6 +961,7 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     sit_stand(ui, f);
     take_off_submenu(ui, f);
     appearance_submenu(ui, f);
+    reload_avatar_item(ui, id);
     community_submenu(ui, id);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
     ui.item(
@@ -1026,6 +1070,12 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             f.worn_shape.is_some(),
             CtxAction::EditWorn(f.worn_shape.unwrap_or_default()),
         );
+        ui.item_if(
+            "file-export",
+            aurora_i18n::tr!("ui-context-export-shape-xml"),
+            f.worn_shape.is_some() && f.shape_xml_export,
+            CtxAction::ExportShapeXml(f.worn_shape.unwrap_or_default()),
+        );
         ui.item(
             "pencil-filled",
             aurora_i18n::tr!("ui-context-edit-outfit"),
@@ -1072,6 +1122,16 @@ fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
             CtxAction::NewContactSet(vec![id]),
         );
     });
+}
+
+/// "Reload avatar" (`app/avatar_reload.rs`), ours or another's: not in the
+/// Legacy Viewer's menus, which spread its steps over several entries.
+fn reload_avatar_item(ui: &mut Builder, avatar: Uuid) {
+    ui.item(
+        "refresh-dot",
+        aurora_i18n::tr!("ui-context-reload-avatar"),
+        CtxAction::ReloadAvatar(avatar),
+    );
 }
 
 /// Avatar.ResetSkeleton / Avatar.ResetSkeletonAndAnimations: enabled for
@@ -1291,6 +1351,78 @@ mod tests {
     }
 
     #[test]
+    fn reload_avatar_is_offered_on_ourselves_and_on_others() {
+        let id = Uuid::from_u128(7);
+        for own in [true, false] {
+            for attachment in [None, Some(ID)] {
+                let target = Target::Avatar { id, own, attachment };
+                let entries = world_menu(&target, &Facts::default(), Vec3::ZERO);
+                assert!(
+                    entries
+                        .iter()
+                        .any(|e| matches!(e.kind, Kind::Action(CtxAction::ReloadAvatar(a)) if a == id)),
+                    "a top-level row, own {own}, attachment {attachment:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_estate_entries_follow_the_estate_right_alone() {
+        let id = Uuid::from_u128(7);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        for (land, estate) in [(false, true), (true, true), (true, false)] {
+            let mut facts = Facts::default();
+            facts.moderation.allowed = land;
+            facts.moderation.estate = estate;
+            let group = world_menu(&target, &facts, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("ui-context-moderation-options"));
+            let actions = rows(group.into_iter().collect());
+            let has = |want: fn(&CtxAction) -> bool| actions.iter().any(|e| matches!(&e.kind, Kind::Action(a) if want(a)));
+            assert_eq!(has(|a| matches!(a, CtxAction::Freeze(_))), land);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateKick(_))), estate);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateTeleportHome(_))), estate);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateBan(_))), estate);
+        }
+    }
+
+    #[test]
+    fn a_god_kicks_freezes_and_unfreezes_others_from_the_admin_group() {
+        use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(7));
+        let admin = |id: Uuid, god: bool| {
+            let facts = Facts {
+                me,
+                god,
+                ..Facts::default()
+            };
+            let target = Target::Avatar {
+                id,
+                own: id == me,
+                attachment: None,
+            };
+            world_menu(&target, &facts, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("admin-menu"))
+        };
+        assert!(admin(other, false).is_none());
+        assert!(admin(me, true).is_none(), "not on ourselves");
+        let flags: Vec<u32> = rows(admin(other, true).into_iter().collect())
+            .iter()
+            .filter_map(|e| match e.kind {
+                Kind::Action(CtxAction::GodKick(who, flags)) if who == other => Some(flags),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flags, [KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE]);
+    }
+
+    #[test]
     fn avatar_moderation_group_tracks_land_and_voice_rights_independently() {
         let id = Uuid::from_u128(7);
         let target = Target::Avatar {
@@ -1464,6 +1596,7 @@ mod tests {
             expected.extend(tr(&[
                 "ui-context-display-options>",
                 "ui-context-information-options>",
+                "ui-context-reload-avatar",
                 "ui-context-reset-options>",
                 "ui-context-disturbance>",
             ]));
@@ -1568,6 +1701,41 @@ mod tests {
             assert!(matches!(entry.kind, Kind::Action(CtxAction::EditWorn(id)) if id == item));
             assert!(!find(&Facts::default()).enabled);
         }
+    }
+
+    #[test]
+    fn the_worn_shape_exports_to_xml_only_when_the_rule_allows_it() {
+        let item = Uuid::from_u128(43);
+        let target = Target::Avatar {
+            id: Uuid::nil(),
+            own: true,
+            attachment: None,
+        };
+        let find = |facts: &Facts| {
+            world_menu(&target, facts, Vec3::ZERO)
+                .into_iter()
+                .find_map(|entry| {
+                    let Kind::Submenu(entries) = entry.kind else { return None };
+                    entries
+                        .into_iter()
+                        .find(|entry| entry.label == aurora_i18n::tr!("ui-context-export-shape-xml"))
+                })
+                .expect("export action")
+        };
+        let allowed = Facts {
+            worn_shape: Some(item),
+            shape_xml_export: true,
+            ..Default::default()
+        };
+        let entry = find(&allowed);
+        assert!(entry.enabled);
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::ExportShapeXml(id)) if id == item));
+        let refused = Facts {
+            shape_xml_export: false,
+            ..allowed
+        };
+        assert!(!find(&refused).enabled, "no modify rights");
+        assert!(!find(&Facts::default()).enabled, "no worn shape");
     }
 
     #[test]
@@ -2061,5 +2229,24 @@ mod rlva_sit_tests {
         assert!(!enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
         f.ground_sit_blocked = false;
         assert!(enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
+    }
+
+    #[test]
+    fn rlva_greys_derender_on_our_own_attachments() {
+        let worn = Target::Attachment {
+            key: ObjKey { region: 1, local_id: 2 },
+        };
+        let temporary = aurora_i18n::tr!("ui-context-derender-temporarily");
+        let blacklist = aurora_i18n::tr!("ui-context-derender-blacklist");
+        let mut f = Facts {
+            me: Uuid::from_u128(1),
+            ..Facts::default()
+        };
+        f.object.id = Uuid::from_u128(2);
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
+        f.rlva_enabled = true;
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
     }
 }

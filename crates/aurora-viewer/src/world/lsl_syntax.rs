@@ -71,6 +71,7 @@ mod tests {
         w.ensure_region(handle, (256, 256));
         w.apply(NetEvent::SimulatorFeatures {
             handle,
+            animated_object_max_tris: 0,
             voice_server_type: String::new(),
             avatar_hover_height: false,
             materials_rate: None,

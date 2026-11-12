@@ -19,7 +19,7 @@ fn row_management_preserves_the_open_project_and_uses_the_named_project_data() {
     for action in [
         Management::Rename("Eyewear".into()),
         Management::Duplicate("Eyewear copy".into()),
-        Management::Notecard,
+        Management::Notecard(Default::default()),
     ] {
         let output = execute(
             &root,
@@ -62,7 +62,9 @@ fn row_management_preserves_the_open_project_and_uses_the_named_project_data() {
         .unwrap();
     let exported = Document::decode(Notecard::decode(data).unwrap().text.as_bytes()).unwrap();
     assert_eq!(exported.project.unwrap().id, glasses_id);
-    assert_eq!(exported.animations, glasses.animations);
+    let mut expected = glasses.clone();
+    expected.name_assets(|_| None);
+    assert_eq!(exported.animations, expected.animations, "demo layers have no inventory item");
     let output = execute(
         &root,
         editor.project_document(),
@@ -79,8 +81,8 @@ fn row_management_preserves_the_open_project_and_uses_the_named_project_data() {
     for action in [
         Management::Rename("Missing".into()),
         Management::Duplicate("Missing copy".into()),
-        Management::File,
-        Management::Notecard,
+        Management::File(Default::default()),
+        Management::Notecard(Default::default()),
         Management::Delete,
     ] {
         assert!(
@@ -95,5 +97,49 @@ fn row_management_preserves_the_open_project_and_uses_the_named_project_data() {
             .is_err()
         );
     }
+    cleanup(&root);
+}
+
+#[test]
+fn exports_of_a_catalogue_project_name_the_asset_of_full_permission_items_only() {
+    let (mut world, _, mut editor) = fixture();
+    let root = root();
+    let mut items = Vec::new();
+    for (id, owner_mask) in [
+        (0x21, crate::world::inventory::actions::FULL),
+        (0x22, crate::world::inventory::actions::MODIFY),
+    ] {
+        let it = InvItem {
+            id: Uuid::from_u128(id),
+            asset_type: 20,
+            asset_id: Uuid::from_u128(id << 8),
+            name: format!("Layer {id}"),
+            owner_mask,
+            ..Default::default()
+        };
+        world.inventory.items.insert(it.id, it.clone());
+        editor.animations.add(&world.inventory, it.id);
+        items.push(it);
+    }
+    // Saved unchanged, like a catalogue file of an earlier version.
+    let moto = run(&root, editor.project_document(), Command::Rename("Moto".into()));
+    let id = moto.project.as_ref().unwrap().id;
+    let current = Document {
+        project: None,
+        ..moto.clone()
+    };
+    let shared = animations::SharedAssets::new(&world.inventory);
+    let Output::LibraryNotecard(bytes) =
+        execute(&root, current, id, Management::Notecard(shared), "Draft".into(), "Default".into()).unwrap()
+    else {
+        panic!("notecard export")
+    };
+    let exported = Document::decode(&bytes).unwrap();
+    let rows = &exported.animations[exported.profile].rows;
+    assert_eq!(
+        rows.iter().map(|r| (r.item, r.asset)).collect::<Vec<_>>(),
+        [(Some(items[0].id), Some(items[0].asset_id)), (Some(items[1].id), None),]
+    );
+    assert!(!String::from_utf8(bytes).unwrap().contains(&items[1].asset_id.to_string()));
     cleanup(&root);
 }
