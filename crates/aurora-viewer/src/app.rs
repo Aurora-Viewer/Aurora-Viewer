@@ -15729,10 +15729,12 @@ impl App {
                         self.login_form.error = None;
                         self.start_login();
                     } else if crate::cli::get().autologin {
+                        self.sync_remembered_password();
                         let key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
                         if self.login_form.stored.is_none() && self.login_form.password.is_empty() {
                             self.login_form.stored = crate::credentials::load(&key.0, &key.1);
                         }
+                        self.sync_remembered_mfa(&key);
                         self.login_form.editing = false;
                         self.login_form.show_mfa = false;
                         self.login_form.error = None;
