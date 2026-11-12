@@ -29,6 +29,7 @@ pub mod lsl_syntax;
 pub mod message_split;
 pub mod objcache;
 pub mod objects;
+mod offer_hosts;
 pub mod offline_im;
 pub mod outfits;
 mod packet_loss;
