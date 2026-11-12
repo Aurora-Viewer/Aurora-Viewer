@@ -101,6 +101,9 @@ pub(crate) const NEAR_REACH: f32 = 3.0;
 /// limit is `accept`: 1 up to it, 0 from twice it, a smoothstep between.
 #[cfg(test)]
 pub(crate) fn blocker_weight(gap: f32, accept: f32) -> f32 {
+    if !accept.is_finite() {
+        return 1.0;
+    }
     let t = ((gap - accept) / accept).clamp(0.0, 1.0);
     1.0 - t * t * (3.0 - 2.0 * t)
 }
