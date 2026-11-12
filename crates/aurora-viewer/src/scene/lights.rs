@@ -722,7 +722,7 @@ mod tests {
             light_at_camera(&projector(Vec3::new(2.0, 0.0, 0.0), 2.0, Vec3::splat(f32::NAN), 0.0), eye),
             0.0
         );
-        assert_eq!(apparent_size(&projector(Vec3::ZERO, f32::INFINITY, Vec3::ONE, 0.0), eye), 0.0);
+        assert_eq!(apparent_size(&projector(Vec3::ZERO, f32::NAN, Vec3::ONE, 0.0), eye), 0.0);
     }
 
     /// Apparent size orders the projectors on screen beyond their reach.
