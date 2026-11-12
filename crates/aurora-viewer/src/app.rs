@@ -473,17 +473,6 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
-    /// The pages (their plugin's process id) that cut or copied, each with
-    /// the system clipboard's text at its last cut or copy: the cut stays
-    /// in that page's own clipboard under Wayland
-    /// (keys::paste_through_viewer). The latest last, at most
-    /// `keys::PAGE_COPIES`; empty under X11, where no page cuts
-    /// (keys::page_cuts).
-    page_copy: Vec<(u32, Option<String>)>,
-    /// What the last Paste press gave the page (`media_clipboard`), which
-    /// its key repeats give again without reading the clipboard each time;
-    /// told every key event (keys::HeldPaste).
-    held_paste: crate::media::keys::HeldPaste,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -1643,8 +1632,6 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
-            page_copy: Vec::new(),
-            held_paste: Default::default(),
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -14122,7 +14109,6 @@ impl App {
                     false,
                     k.is_multiple_of(2).then_some(ch),
                     mods,
-                    None,
                 );
             }
             // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
@@ -14131,7 +14117,8 @@ impl App {
             // first: a cut that does nothing leaves "stalestale", not a pass
             // from an earlier run's clipboard. `paste`: the clipboard holds
             // "pasted", set by the viewer as another program would, then
-            // Ctrl+V, so the field reads "aurorapasted".
+            // Ctrl+V, so the field reads "aurorapasted" where the page reads
+            // the system clipboard (not on Linux: keys::edit).
             let edit = v.split(',').any(|s| s.trim() == "edit");
             let paste = v.split(',').any(|s| s.trim() == "paste");
             if (edit || paste) && f == 864 {
@@ -14153,9 +14140,7 @@ impl App {
                     command: cfg!(target_os = "macos"),
                     ..Default::default()
                 };
-                let clipboard = self.media_clipboard(None, code, pressed, false, mods);
-                self.media
-                    .on_key(&self.world, None, code, 0, pressed, false, None, mods, clipboard.as_deref());
+                self.media.on_key(&self.world, None, code, 0, pressed, false, None, mods);
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -15552,51 +15537,6 @@ impl App {
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
             || self.destinations_ui.web_has_focus(self.panels.destinations)
-    }
-
-    /// The text a Paste puts into a page by script on Linux
-    /// (keys::paste_through_viewer), read from the system clipboard; None
-    /// lets the page paste from its own clipboard: for any other key, and
-    /// when the clipboard has not changed since this page's last cut or
-    /// copy. Another page's copy never reaches this one, so it goes by script.
-    /// A held Paste repeats the press's text without reading again.
-    fn media_clipboard(
-        &mut self,
-        letter: Option<char>,
-        code: KeyCode,
-        pressed: bool,
-        repeat: bool,
-        mods: aurora_media::Modifiers,
-    ) -> Option<String> {
-        use crate::media::keys;
-        if !pressed || !keys::paste_through_viewer() {
-            return None;
-        }
-        let cmd = keys::edit_shortcut(letter, code, mods)?;
-        // the page that gets the key: a web window first, as the key handler
-        let page = match self.focused_web() {
-            Some(p) => p.pid(),
-            None => self.media.focused_pid(),
-        };
-        let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
-        match cmd {
-            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat && keys::page_cuts() => {
-                if let Some(pid) = page {
-                    let text = read();
-                    keys::record_copy(&mut self.page_copy, pid, text);
-                }
-                None
-            }
-            aurora_media::EditCommand::Paste => {
-                if !repeat {
-                    let at_copy = self.page_copy.iter().find(|(pid, _)| Some(*pid) == page);
-                    let text = keys::paste_text(at_copy.map(|(_, text)| text), read());
-                    self.held_paste.press(code, text);
-                }
-                self.held_paste.text(code)
-            }
-            _ => None,
-        }
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -22042,13 +21982,6 @@ impl ApplicationHandler for App {
         {
             return;
         }
-        // a held Paste keeps its text only while its key stays down: told
-        // every key, wherever it goes next (keys::HeldPaste)
-        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
-            && let PhysicalKey::Code(code) = ke.physical_key
-        {
-            self.held_paste.on_key(code, ke.state == ElementState::Pressed, ke.repeat);
-        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
@@ -22429,21 +22362,12 @@ impl ApplicationHandler for App {
                         command: self.command,
                     };
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
-                    // Paste on Linux: the viewer reads the clipboard
-                    // and pastes it into the page by script (keys::paste_through_viewer)
-                    // only for a key the page gets: a media face skips a press egui took
-                    let page_keys = !typing && (self.focused_web().is_some() || (self.media.focus.is_some() && !resp.consumed));
-                    let clipboard = if page_keys {
-                        self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)
-                    } else {
-                        None
-                    };
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods, clipboard.as_deref())
+                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
                             || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
                             || pressed
                         {
@@ -22460,17 +22384,10 @@ impl ApplicationHandler for App {
                             shift: self.shift,
                             command: self.command,
                         };
-                        if self.media.on_key(
-                            &self.world,
-                            letter,
-                            code,
-                            scancode,
-                            pressed,
-                            ke.repeat,
-                            ke.text.as_deref(),
-                            mods,
-                            clipboard.as_deref(),
-                        ) && pressed
+                        if self
+                            .media
+                            .on_key(&self.world, letter, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
+                            && pressed
                         {
                             return;
                         }
