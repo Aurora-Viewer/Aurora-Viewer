@@ -513,6 +513,13 @@ pub enum NetEvent {
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
     },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
+    },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
     /// Answer of a voice call request: the body, or the HTTP status of the
@@ -1606,6 +1613,13 @@ pub enum NetCommand {
     ChatSession {
         method: crate::social::SessionMethod,
         session: Uuid,
+    },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
     },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.

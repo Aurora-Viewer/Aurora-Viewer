@@ -385,6 +385,23 @@ pub enum CtxAction {
     RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// A group chat's moderator allows or forbids a member's text
+    /// (LLIMSpeakerMgr::allowTextChat).
+    ModerateGroupText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
+    /// "Eject from group" / "Ban member" of a group chat's members, asked
+    /// first (`ui::chat::moderation`).
+    GroupChatEject {
+        group: Uuid,
+        agent: Uuid,
+    },
+    GroupChatBan {
+        group: Uuid,
+        agent: Uuid,
+    },
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
     /// LLSpeakerVolumeStorage).
     SetVoiceVolume(Uuid, f32),
