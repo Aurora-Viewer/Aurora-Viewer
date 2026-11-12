@@ -1382,6 +1382,14 @@ when unfocused") is ignored during a screenshot.
   behind the avatar (`true`); with `remote` both come back, like the
   Legacy Viewer. Capture at frame 400 (`AURORA_DEMO_TP="60,60,30"`) to see
   it.
+- **Alt+click on an ignored object (#3288)**, on a grid: set a prim's
+  Click to: Ignore Object and put another prim, or the ground, behind it.
+  Alt+click the ignored prim: the camera orbits the prim behind it, or
+  focuses the ground when that is what the click meets. Open the build
+  tools and Alt+click again: the camera orbits the ignored prim. An
+  ignored prim with nothing behind it focuses nothing. The Focus tool
+  (build tools already open) still focuses the ignored prim. There is no
+  offline demo for this; the click action belongs to a rezzed prim.
 - **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
   before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
   2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting

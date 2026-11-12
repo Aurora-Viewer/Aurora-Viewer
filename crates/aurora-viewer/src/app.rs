@@ -5084,6 +5084,7 @@ impl App {
             return;
         }
         let alt = self.alt || self.object_view;
+        let now = Instant::now();
         // a rigged mesh with nothing to do with the click lets it through
         let depth = if alt || self.build.open {
             depth
@@ -5091,8 +5092,28 @@ impl App {
             self.scene
                 .touch_depth(&self.world, &picked.drawn, ray, depth, self.settings.draw_distance)
         };
-        let hit = if alt {
-            picked.visible_point()
+        // Alt+click (LLToolCamera::pickAsync) skips Ignore Object unless
+        // the build tools are open. An empty drawn answer in the diagnostic
+        // wait mode still uses the older depth.
+        let alt_focus = alt.then(|| {
+            self.scene.alt_focus_target(
+                &self.world,
+                &picked.drawn,
+                ray,
+                picked.visible_point(),
+                self.build.open,
+                self.settings.draw_distance,
+                now,
+            )
+        });
+        let hit = if let Some((point, _)) = alt_focus {
+            point.or_else(|| {
+                if picked.drawn.blend.is_none() && picked.drawn.opaque.is_none() {
+                    picked.visible_point()
+                } else {
+                    None
+                }
+            })
         } else {
             self.scene
                 .action_point(&self.world, ray, depth, self.build.open, self.settings.draw_distance)
@@ -5149,7 +5170,6 @@ impl App {
         } else {
             self.media.unfocus();
         }
-        let now = Instant::now();
         let own_idx = self.world.objects.index_of_uuid(&self.world.agent_id);
         if self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!(
@@ -5219,12 +5239,14 @@ impl App {
             // (our avatar too, to look at a part of it closely); keep holding
             // to zoom, Ctrl to orbit, Ctrl+Shift to pan
             if let (Some(p), Some(ray)) = (hit, ray) {
-                let idx = match picked.drawn.blend.or(picked.drawn.opaque) {
-                    // Terrain has no object: do not bind the camera to an
-                    // invisible prim whose box happens to enclose its point.
-                    Some(d) => self.scene.record_object(d.record).map(|(idx, _)| idx),
-                    None if on_avatar => own_idx,
-                    None => self.scene.interaction_at(&self.world, p, now, self.build.open),
+                let idx = match alt_focus {
+                    // The face kept above, or the surface traced past an
+                    // ignored one. Terrain has no object: do not bind the
+                    // camera to an invisible prim whose box encloses it.
+                    Some((_, Some(idx))) => Some(idx),
+                    Some((Some(_), None)) => None,
+                    _ if on_avatar => own_idx,
+                    _ => self.scene.interaction_at(&self.world, p, now, self.build.open),
                 };
                 let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
