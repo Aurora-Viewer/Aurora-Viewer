@@ -3716,6 +3716,7 @@ impl App {
                 selected: select,
                 remove,
                 source_folder,
+                from_task: Uuid::nil(),
             },
         ))));
         self.progress_mcp_state_machines(renderer);
