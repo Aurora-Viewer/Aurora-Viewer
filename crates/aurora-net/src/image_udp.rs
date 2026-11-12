@@ -15,6 +15,11 @@
 //! (`mCancelQueue`) in those cases and asks again. Cancelling drops bytes
 //! that are already arriving. A transfer the viewer no longer wants is
 //! still cancelled with `DiscardLevel` -1.
+//!
+//! The simulator's numbers are bounded: an image larger than
+//! [`MAX_IMAGE_BYTES`], a packet count that does not fit, or a packet index
+//! past that size is ignored, so a broken or hostile simulator cannot make the
+//! viewer keep or reserve unbounded memory.
 
 use aurora_msg::msgs::{self, RequestImage};
 use std::collections::BTreeMap;
@@ -35,6 +40,11 @@ const SIM_LAZY_FLUSH: Duration = Duration::from_secs(10);
 /// (`FIRST_PACKET_SIZE`, `MAX_IMG_PACKET_SIZE` in `llimage.h`).
 const FIRST_PACKET_SIZE: usize = 600;
 const MAX_IMG_PACKET_SIZE: usize = 1000;
+/// Largest image accepted over UDP. A 1024×1024 bake is far below this.
+pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Packets of a [`MAX_IMAGE_BYTES`] image: the 600-byte first packet, then
+/// 1000 bytes each.
+const MAX_PACKETS: usize = 1 + (MAX_IMAGE_BYTES - FIRST_PACKET_SIZE).div_ceil(MAX_IMG_PACKET_SIZE);
 
 /// `IMG_TYPE` (`llimage.h`). A host bake is `TYPE_AVATAR_BAKE`
 /// (`LLTextureFetchWorker::mType` when the host is set).
@@ -110,6 +120,11 @@ impl Fetch {
         for w in wants {
             if let Some(slot) = self.slots.get_mut(&w.image) {
                 slot.seen = true;
+                if slot.missing && slot.region != w.region {
+                    // Another simulator may have it: the avatar moved, or we did.
+                    *slot = Slot::new(w);
+                    continue;
+                }
                 if slot.missing {
                     continue;
                 }
@@ -121,16 +136,24 @@ impl Fetch {
                 self.slots.insert(w.image, Slot::new(w));
             }
         }
-        let cancel: Vec<(u64, Uuid)> = self
+        // A cancel still waiting for an image wanted again is dropped
+        // (`LLTextureFetch::addToNetworkQueue` erases it from mCancelQueue),
+        // else it would leave after the new request and stop it.
+        self.cancels.retain(|(_, id)| !wants.iter().any(|w| w.image == *id));
+        // A finished transfer is left alone (`removeFromNetworkQueue(worker,
+        // false)`); only one still in flight is cancelled.
+        let dropped: Vec<(u64, Uuid, bool)> = self
             .slots
             .iter()
             .filter(|(_, slot)| !slot.seen && !slot.missing)
-            .map(|(id, slot)| (slot.region, *id))
+            .map(|(id, slot)| (slot.region, *id, slot.done))
             .collect();
-        for (_, id) in &cancel {
-            self.slots.remove(id);
+        for (region, id, done) in dropped {
+            self.slots.remove(&id);
+            if !done {
+                self.cancels.push((region, id));
+            }
         }
-        self.cancels.extend(cancel);
     }
 
     /// Requests and cancels that are due at `now`. Empty when the last send
@@ -198,6 +221,9 @@ impl Fetch {
         if data.len() != FIRST_PACKET_SIZE && data.len() != size as usize {
             return None;
         }
+        if size as usize > MAX_IMAGE_BYTES || usize::from(packets) != packet_count(size as usize) {
+            return None;
+        }
         slot.header = true;
         slot.total = packets;
         slot.size = size;
@@ -219,6 +245,9 @@ impl Fetch {
         if slot.header && !packet_fits(num, slot.total, &data) {
             return None;
         }
+        if usize::from(num) >= MAX_PACKETS || data.len() > MAX_IMG_PACKET_SIZE {
+            return None;
+        }
         if slot.parts.contains_key(&num) {
             return None;
         }
@@ -229,21 +258,18 @@ impl Fetch {
 
     /// `ImageNotInDatabase` (`LLViewerTextureList` sets the image missing).
     /// Sticky: there is no retry timer.
-    pub fn not_in_database(&mut self, id: Uuid) {
-        let slot = self.slots.entry(id).or_insert_with(|| {
-            Slot::new(&Want {
-                region: 0,
-                image: id,
-                discard: 0,
-                priority: 0.0,
-                bake: false,
-            })
-        });
+    /// An image we never asked for is ignored, as the Legacy Viewer marks
+    /// only an image `findImage` knows.
+    pub fn not_in_database(&mut self, id: Uuid) -> bool {
+        let Some(slot) = self.slots.get_mut(&id) else {
+            return false;
+        };
         slot.missing = true;
         slot.seen = true;
         slot.parts.clear();
         slot.header = false;
         slot.done = false;
+        true
     }
 
     pub fn is_missing(&self, id: &Uuid) -> bool {
@@ -309,6 +335,16 @@ fn packet_fits(index: u16, total: u16, data: &[u8]) -> bool {
     }
 }
 
+/// Packets the simulator sends for an image of `size` bytes
+/// (`LLImageJ2C` over UDP: 600 bytes, then 1000 each).
+fn packet_count(size: usize) -> usize {
+    if size <= FIRST_PACKET_SIZE {
+        1
+    } else {
+        1 + (size - FIRST_PACKET_SIZE).div_ceil(MAX_IMG_PACKET_SIZE)
+    }
+}
+
 fn advance(slot: &mut Slot) {
     if !slot.header || slot.total == 0 {
         return;
@@ -323,10 +359,19 @@ fn assemble(slot: &mut Slot) -> Option<Vec<u8>> {
     if slot.done || !slot.header || slot.total == 0 || slot.last < i32::from(slot.total) - 1 {
         return None;
     }
-    let mut bytes = Vec::with_capacity(slot.size as usize);
+    let mut bytes = Vec::with_capacity((slot.size as usize).min(MAX_IMAGE_BYTES));
     for index in 0..slot.total {
         bytes.extend_from_slice(slot.parts.get(&index)?);
     }
+    if bytes.len() < slot.size as usize {
+        // The packets do not add up to the header's size: ask again.
+        slot.parts.clear();
+        slot.header = false;
+        slot.last = -1;
+        slot.sent_discard = None;
+        return None;
+    }
+    bytes.truncate(slot.size as usize);
     slot.done = true;
     slot.parts.clear();
     Some(bytes)
@@ -478,5 +523,91 @@ mod tests {
                 type_: TYPE_NORMAL,
             }]
         );
+    }
+
+    #[test]
+    fn a_simulator_cannot_make_us_hold_unbounded_bytes() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(10);
+        fetch.sync(&[want(10)]);
+        let t0 = Instant::now();
+        // a packet index past the largest image accepted is not kept
+        assert!(fetch.packet(id, u16::MAX, vec![0u8; 1000], t0).is_none());
+        assert!(fetch.packet(id, 1, vec![0u8; MAX_IMG_PACKET_SIZE + 1], t0).is_none());
+        assert!(fetch.slots[&id].parts.is_empty());
+        // a size beyond the limit, or a packet count that does not match it
+        let head = vec![1u8; FIRST_PACKET_SIZE];
+        assert!(fetch.header(id, 2, u32::MAX, head.clone(), t0).is_none());
+        assert!(fetch.header(id, 60_000, 610, head.clone(), t0).is_none());
+        assert!(!fetch.slots[&id].header);
+        // a sane header is still taken
+        assert!(fetch.header(id, 2, 610, head, t0).is_none());
+        assert!(fetch.slots[&id].header);
+    }
+
+    #[test]
+    fn packets_short_of_the_header_size_are_asked_again() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(11);
+        fetch.sync(&[want(11)]);
+        let t0 = Instant::now();
+        fetch.take_outbound(t0);
+        // header says 2600 bytes in 3 packets; the last one comes short
+        let head = vec![1u8; FIRST_PACKET_SIZE];
+        assert!(fetch.header(id, 3, 2600, head, t0).is_none());
+        assert!(fetch.slots[&id].header);
+        assert!(fetch.packet(id, 1, vec![2u8; 1000], t0).is_none());
+        assert!(fetch.packet(id, 2, vec![4u8; 10], t0).is_none());
+        let again = fetch.take_outbound(t0 + REQUEST_DELTA);
+        assert_eq!(again[0].items[0].packet, 0, "{again:?}");
+    }
+
+    #[test]
+    fn an_image_wanted_again_is_not_cancelled_after_its_new_request() {
+        let mut fetch = Fetch::default();
+        fetch.sync(&[want(12)]);
+        let t0 = Instant::now();
+        fetch.take_outbound(t0);
+        fetch.sync(&[]);
+        fetch.sync(&[want(12)]);
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA);
+        let items: Vec<&ImageRequest> = out.iter().flat_map(|batch| &batch.items).collect();
+        assert_eq!(items.len(), 1, "{out:?}");
+        assert_eq!(items[0].discard, 3);
+    }
+
+    #[test]
+    fn a_finished_image_is_not_cancelled() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(13);
+        fetch.sync(&[want(13)]);
+        let t0 = Instant::now();
+        fetch.take_outbound(t0);
+        assert!(fetch.header(id, 1, 300, vec![5u8; 300], t0).is_some());
+        fetch.sync(&[]);
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA).is_empty());
+    }
+
+    #[test]
+    fn image_not_in_database_counts_only_for_an_image_we_asked_for() {
+        let mut fetch = Fetch::default();
+        assert!(!fetch.not_in_database(Uuid::from_u128(14)));
+        assert!(fetch.slots.is_empty());
+    }
+
+    #[test]
+    fn a_missing_bake_is_asked_of_the_avatars_new_region() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(15);
+        fetch.sync(&[want(15)]);
+        let t0 = Instant::now();
+        fetch.take_outbound(t0);
+        assert!(fetch.not_in_database(id));
+        let moved = Want { region: 8, ..want(15) };
+        fetch.sync(std::slice::from_ref(&moved));
+        assert!(!fetch.is_missing(&id));
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].region, 8);
     }
 }

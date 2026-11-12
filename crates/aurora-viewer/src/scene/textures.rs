@@ -2126,6 +2126,17 @@ impl TextureStreamer {
         e.unused_since = None;
         if e.source == TexSource::Asset && *source != TexSource::Asset {
             e.source = source.clone();
+        } else if let (TexSource::Host { region }, TexSource::Host { region: now }) = (&mut e.source, source) {
+            // The avatar's simulator changed (a teleport or a crossing): an
+            // unfinished bake is asked of the new one, and one the old region
+            // did not have may be there.
+            if *region != *now && !e.complete {
+                *region = *now;
+                if e.gone {
+                    e.gone = false;
+                    e.failures = 0;
+                }
+            }
         }
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         Some(e.slot)
@@ -2877,7 +2888,13 @@ impl TextureStreamer {
                         host_wants.push(aurora_net::image_udp::Want {
                             region,
                             image: id,
-                            discard: e.want as i8,
+                            // Always the whole file. A simulator stops at the
+                            // packet of the level asked (OpenSim J2KImage
+                            // m_stopPacket) while the header still counts every
+                            // packet, and the bytes here are decoded only once
+                            // complete. A bake is small; the Legacy Viewer's
+                            // partial levels are not kept for it.
+                            discard: 0,
                             priority: e.px_now(),
                             bake: true,
                         });
@@ -6011,6 +6028,7 @@ mod tests {
         let id = Uuid::from_u128(0x2860);
         let mut e = entry(None, 100.0);
         e.source = TexSource::Host { region: 42 };
+        e.want = 3;
         e.cache_state = 2;
         e.queued = true;
         b.s.entries.insert(id, e);
@@ -6025,6 +6043,9 @@ mod tests {
         assert_eq!(wants[0].region, 42);
         assert_eq!(wants[0].image, id);
         assert!(wants[0].bake);
+        // the whole file, whatever level the view wants: a simulator stops at
+        // the level asked and the bytes are decoded only once complete
+        assert_eq!(wants[0].discard, 0);
         b.s.note_host_image(id, None);
         let e = &b.s.entries[&id];
         assert!(e.gone);

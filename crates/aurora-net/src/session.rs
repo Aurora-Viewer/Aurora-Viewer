@@ -4199,8 +4199,9 @@ impl Session<'_> {
     fn on_image_missing(&mut self, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let message: ImageNotInDatabase = pkt.decode()?;
         let id = message.image_id.id;
-        self.images.not_in_database(id);
-        emit(self.sh, NetEvent::HostImage { id, bytes: None });
+        if self.images.not_in_database(id) {
+            emit(self.sh, NetEvent::HostImage { id, bytes: None });
+        }
         Ok(())
     }
 
