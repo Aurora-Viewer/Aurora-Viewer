@@ -222,6 +222,7 @@ impl App {
             // Account options remain accessible while region support loads.
             hover_height: w.login.is_some(),
             edit_linked: self.settings.build.edit_linked,
+            rlva_enabled: w.rlva.enabled(),
             property_lines: self.settings.world_overlays.property_lines,
             voice: self.settings.audio.voice_enabled,
             particle_sources: self.particle_menu_sources(),

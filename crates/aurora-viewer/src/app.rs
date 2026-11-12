@@ -66,6 +66,7 @@ mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
 mod admin_status;
+mod avatar_studio;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
@@ -132,6 +133,7 @@ mod revoke_on_sit;
 mod rlva;
 mod safe_graphics;
 mod script_clicks;
+mod script_recovery;
 mod scripts;
 mod settings_backup;
 mod shape_editor;
@@ -423,11 +425,25 @@ pub struct App {
     /// Throttle of the "sky frame" log line.
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
+    avatar_studio: crate::avatar_studio::Studio,
+    studio_transition: crate::avatar_studio::Transition,
+    studio_photo_session: Option<crate::avatar_studio::PhotoSession>,
     /// The desktop camera, and our avatar's yaw and pitch, before VR: put
     /// back when VR ends (the first-person entry turns the avatar to the
     /// view, as mouselook does).
-    vr_camera: Option<(Camera, f32, f32)>,
+    vr_camera: Option<Camera>,
+    vr_mode: Option<crate::camera::VrView>,
+    vr_rig_yaw: f32,
+    vr_head_rotation: glam::Quat,
+    vr_head_pose: Option<aurora_render::HeadPose>,
+    vr_body_follow: crate::camera::vr::BodyFollow,
+    vr_walk_override: crate::camera::vr::WalkOverride,
+    vr_follow_flags: Option<u32>,
+    vr_revision: u64,
+    vr_reference_generation: Option<u64>,
+    vr_focused: bool,
     vr_toggle: bool,
+    vr_requested_mode: crate::camera::VrView,
     /// Frames left before a first-person VR entry asks for the headset: the
     /// session anchors on the view of the frame it starts in, so the eye
     /// view must have been drawn first.
@@ -455,6 +471,17 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
+    /// The pages (their plugin's process id) that cut or copied, each with
+    /// the system clipboard's text at its last cut or copy: the cut stays
+    /// in that page's own clipboard under Wayland
+    /// (keys::paste_through_viewer). The latest last, at most
+    /// `keys::PAGE_COPIES`; empty under X11, where no page cuts
+    /// (keys::page_cuts).
+    page_copy: Vec<(u32, Option<String>)>,
+    /// What the last Paste press gave the page (`media_clipboard`), which
+    /// its key repeats give again without reading the clipboard each time;
+    /// told every key event (keys::HeldPaste).
+    held_paste: crate::media::keys::HeldPaste,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -1094,6 +1121,8 @@ pub struct App {
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     script_editors: ui::scripts::Editors,
+    /// The scripts an earlier session left unsaved (app/script_recovery.rs).
+    script_recovery: script_recovery::Recovery,
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
@@ -1573,8 +1602,22 @@ impl App {
             probes: Default::default(),
             sky_log: Default::default(),
             camera: Camera::default(),
+            avatar_studio: Default::default(),
+            studio_transition: Default::default(),
+            studio_photo_session: None,
             vr_camera: None,
+            vr_mode: None,
+            vr_rig_yaw: 0.0,
+            vr_head_rotation: glam::Quat::IDENTITY,
+            vr_head_pose: None,
+            vr_body_follow: crate::camera::vr::BodyFollow::default(),
+            vr_walk_override: crate::camera::vr::WalkOverride::default(),
+            vr_follow_flags: None,
+            vr_revision: 0,
+            vr_reference_generation: None,
+            vr_focused: false,
             vr_toggle: false,
+            vr_requested_mode: crate::cli::get().vr_mode,
             vr_start_in: 0,
             vr_restart_offer: false,
             vr_restart: false,
@@ -1588,6 +1631,8 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
+            page_copy: Vec::new(),
+            held_paste: Default::default(),
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -1970,6 +2015,7 @@ impl App {
             task_notecards: Default::default(),
             demo_documents: Default::default(),
             script_editors: Default::default(),
+            script_recovery: Default::default(),
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
@@ -2024,6 +2070,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if let NetCommand::SetAlwaysRun(run) = &mut cmd {
+            *run &= !self.vr_walk_override.active();
+        }
         // a region that does not bake: our own bakes stand for the server's
         if let NetCommand::RequestServerAppearance { cof_version } = cmd
             && self.world.bakes_locally()
@@ -2653,6 +2702,17 @@ impl App {
                     Ok(uuid::Uuid::new_v4())
                 };
                 self.task_notecard_saved(*request, *object, *item, result);
+                return;
+            }
+            if let NetCommand::CreateScriptItem {
+                request,
+                parent,
+                name,
+                description,
+                source,
+            } = &cmd
+            {
+                self.demo_create_script(*request, *parent, name, description, source);
                 return;
             }
             if let NetCommand::CreateInventoryItem {
@@ -3397,6 +3457,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.script_recovery_saved(request, item, &result) {
+                return;
+            }
             if self.ik_editor.project_saving(request) {
                 if let Ok(saved) = &result {
                     self.world.inventory.add_items(vec![saved.clone()]);
@@ -3765,6 +3828,7 @@ impl App {
                 item_id,
                 running,
                 mono,
+                luau,
             } => {
                 self.build.contents.running.insert((object_id, item_id), (running, mono));
                 self.script_editors.running(
@@ -3774,6 +3838,7 @@ impl App {
                     },
                     running,
                     mono,
+                    luau,
                 );
             }
             NetEvent::PhysicsProperties(list) => {
@@ -3890,6 +3955,7 @@ impl App {
                     )
                 };
                 self.load_region_titles(l.agent_id);
+                self.script_recovery_login(l.agent_id);
                 self.chat_ui.recent_emojis = if self.demo {
                     let mut recent = ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis());
                     if let Ok(favorites) = std::env::var("AURORA_DEMO_FAVORITE_EMOJIS") {
@@ -4025,7 +4091,11 @@ impl App {
                 ));
                 self.restore_local_environment();
             }
+            NetEvent::TeleportLocal { .. } | NetEvent::TeleportStarted { .. } => {
+                self.vr_rebase_after_travel();
+            }
             NetEvent::TeleportFinished { .. } => {
+                self.vr_rebase_after_travel();
                 self.stop_local_typing();
                 // (TeleportFinish is the arrival in another region)
                 self.start_draw_stepping("teleport");
@@ -4066,6 +4136,7 @@ impl App {
                 ));
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
+                    self.vr_rebase_after_travel();
                     let local = self.world.arrived_by_local_teleport;
                     self.camera.on_teleport_arrival(&self.settings.camera, local);
                     log::info!(
@@ -4083,7 +4154,14 @@ impl App {
                 camera_eye,
                 camera_at,
                 force_mouselook,
-            } => self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook),
+            } => {
+                self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook);
+                // VR ignores creator poses, but the saved desktop view must
+                // receive seats entered while the headset is active.
+                if let Some(camera) = &mut self.vr_camera {
+                    camera.on_sit_response(object, camera_eye, camera_at, force_mouselook);
+                }
+            }
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
             NetEvent::RegionRestart(notice) => self.on_region_restart(notice),
             NetEvent::RegionRestartCancelled => self.on_region_restart_cancelled(),
@@ -4256,6 +4334,10 @@ impl App {
     }
 
     fn toggle_mouselook(&mut self) {
+        if self.vr_mode.is_some() {
+            self.cycle_gamepad_view();
+            return;
+        }
         self.camera.toggle_mouselook(&mut self.world.agent, &self.settings.camera);
         let ml = self.camera.mouselook();
         self.set_mouselook_grab(ml);
@@ -4263,8 +4345,39 @@ impl App {
 
     /// Mouse motion: mouselook, camera drags (steering, Alt), right drag orbit.
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
-        // in VR the head turns the view; the mouse must not turn the avatar
-        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged()) {
+        if self.studio_transition.busy() {
+            return;
+        }
+        if self.avatar_studio.active && !self.viewfinder_on() {
+            if self.avatar_studio.panning_plane {
+                let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);
+                self.avatar_studio.pan_view(dx, dy, height);
+                return;
+            }
+            if self.avatar_studio.rotating {
+                self.avatar_studio.rotate(dx);
+            }
+            if self.avatar_studio.panning && self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
+                let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);
+                self.avatar_studio.pan_vertical(dy, height);
+            }
+            return;
+        }
+        let vr = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
+        if vr {
+            if self.settings.camera.vr.mouse_look {
+                let turn = -dx * self.settings.mouse_sensitivity * crate::camera::DRAG_RATE;
+                if self.vr_mode == Some(crate::camera::VrView::Avatar) {
+                    if self.focused && !self.egui_ctx.egui_wants_pointer_input() {
+                        self.camera
+                            .orbit_drag(dx, 0.0, self.settings.mouse_sensitivity, &mut self.world.agent);
+                    }
+                } else if let Some(cam) = &mut self.camera.flycam {
+                    cam.rotation = glam::Quat::from_rotation_z(turn) * cam.rotation;
+                } else if self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
+                    self.vr_rig_yaw += turn;
+                }
+            }
             return;
         }
         if self.clicks.waiting() {
@@ -4484,6 +4597,10 @@ impl App {
 
     /// Escape / "Reset camera" (handle_reset_view).
     fn reset_camera_view(&mut self) {
+        if self.vr_mode.is_some() {
+            self.reset_gamepad_view();
+            return;
+        }
         self.stop_autopilot(true);
         self.joystick.active = false;
         self.camera.clear_flycam();
@@ -4523,14 +4640,22 @@ impl App {
     /// 2 left, 3 right (turn keys only when they strafe).
     fn run_group(&self, input: &Input) -> Option<u8> {
         // steering with the left button: left / right slide
-        let strafe = self.mouse_mode == MouseMode::Steer || self.shift != self.settings.arrows_strafe;
+        if self.vr_mode == Some(crate::camera::VrView::Flycam) {
+            return None;
+        }
+        let first_person_vr = self.vr_mode == Some(crate::camera::VrView::FirstPerson);
+        let strafe = if first_person_vr {
+            self.settings.camera.vr.mouse_look
+        } else {
+            self.mouse_mode == MouseMode::Steer || self.shift != self.settings.arrows_strafe
+        };
         self.settings.keybinds.held_actions_of(input).into_iter().find_map(|a| match a {
             Action::Forward => Some(0),
             Action::Back => Some(1),
             Action::Left if strafe => Some(2),
             Action::Right if strafe => Some(3),
-            Action::StrafeLeft => Some(2),
-            Action::StrafeRight => Some(3),
+            Action::StrafeLeft if !first_person_vr || strafe => Some(2),
+            Action::StrafeRight if !first_person_vr || strafe => Some(3),
             _ => None,
         })
     }
@@ -4653,6 +4778,14 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
+        if (self.avatar_studio.active || self.studio_transition.busy())
+            && !self.viewfinder_on()
+            && pressed
+            && input == Input::key(winit::keyboard::KeyCode::Escape)
+        {
+            self.panels.avatar_studio = false;
+            return;
+        }
         let mods = self.binding_mods(matches!(input, Input::Mouse(_)));
         let action = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
         if let Some(group) = self.run_group(&input) {
@@ -6108,7 +6241,11 @@ impl App {
     /// frame and when the window's size changes, frames being rare while it
     /// is minimised.
     fn sync_minimized_mute(&mut self) {
-        let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized());
+        let minimized = self
+            .gfx
+            .as_ref()
+            .and_then(|g| g.window.is_minimized())
+            .map(|minimized| effective_window_state(self.focused, minimized, self.vr_camera.is_some()).1);
         if !self.minimized_mute.update(self.settings.audio.mute_when_minimized, minimized) {
             return;
         }
@@ -6261,6 +6398,9 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
+        // the copies of the script editors closed just before (ui/scripts/backup.rs)
+        self.script_editors.back_up();
+        crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
@@ -6269,7 +6409,7 @@ impl App {
         // restarted viewer reads them
         Settings::wait_saved(Duration::from_secs(5));
         if self.restart_into_vr {
-            restart_with_vr();
+            restart_with_vr(self.vr_requested_mode);
         }
         event_loop.exit();
     }
@@ -6945,6 +7085,7 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
         self.release_keys_demo_steps();
@@ -7212,6 +7353,7 @@ impl App {
         let hud = (self.build.tool == crate::build::Tool::Edit)
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
+        let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
         let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
             (Some(point), Some(idx), ray)
         } else if self.build.tool == crate::build::Tool::Create && !self.settings.build.copy_selection && !(self.shift || self.ctrl) {
@@ -7223,12 +7365,16 @@ impl App {
             self.scene.creation_preview.candidates = candidates;
             (surface.map(|s| s.0), surface.and_then(|s| s.1), ray)
         } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
-            // LLToolFace picks the current cursor ray. A delayed GPU depth
-            // sample can still point at the previous object during Shift clicks.
-            let ray = self.build.cam.ray(x, y);
-            let target = self
+            // LLToolFace: CPU ray for ordinary prims, then the drawn-face pick
+            // for worn / rigged mesh (same Build designate as the move tool),
+            // so a face click does not fall through to the world behind.
+            let Some(picked) = self.click_pick() else {
+                return false;
+            };
+            let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
+            let cpu_target = self
                 .scene
-                .left_edit_ray_hits(
+                .face_edit_ray_hits(
                     &self.world,
                     ray,
                     false,
@@ -7237,7 +7383,16 @@ impl App {
                 )
                 .first()
                 .copied();
-            (None, target, ray)
+            let cpu_point = cpu_target.and_then(|idx| self.scene.edit_hit_point(&self.world, idx, ray));
+            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point);
+            let (hit, target) = match drawn {
+                Some(d) => {
+                    face_drawn = Some(d);
+                    (Some(d.hit.point), Some(d.idx))
+                }
+                None => (cpu_point, cpu_target),
+            };
+            (hit, target, ray)
         } else {
             let Some(picked) = self.click_pick() else {
                 return false;
@@ -7257,7 +7412,7 @@ impl App {
                     picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
                 )
             };
-            // a rigged mesh is selected where it is shown (Firestorm: with
+            // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
@@ -7271,9 +7426,14 @@ impl App {
             alt: self.alt,
         };
         // the surface under the cursor: face tool, grab surface info
-        let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
-            _ => None,
+        let surface = if let Some(d) = face_drawn {
+            self.scene.drawn_surface(&self.world, &d)
+        } else {
+            match (self.build.tool, self.build.edit_mode, target) {
+                (crate::build::Tool::Edit, crate::build::EditMode::Face, Some(i)) => self.scene.edit_touch_surface(&self.world, i, ray),
+                (crate::build::Tool::Edit | crate::build::Tool::Grab, _, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
+                _ => None,
+            }
         };
         let used = self.build.mouse_down(
             &mut self.world,
@@ -7395,6 +7555,12 @@ impl App {
     /// Wheel clicks on the world (SL sign: positive zooms out): the held
     /// mouselook zoom's angle, or the camera's own use of the wheel.
     fn camera_wheel(&mut self, clicks: f32) {
+        if self.avatar_studio.active && !self.viewfinder_on() {
+            return;
+        }
+        if clicks > 0.0 && self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
+            return;
+        }
         let aspect = self.view_aspect();
         if self.camera.scroll_mouselook_zoom(clicks, aspect) {
             return;
@@ -7719,7 +7885,7 @@ impl App {
         }
         self.always_run = on;
         self.send(NetCommand::SetAlwaysRun(
-            self.always_run || self.temp_run.is_some() || self.joystick.running,
+            (self.always_run || self.temp_run.is_some() || self.joystick.running) && !self.vr_walk_override.active(),
         ));
         self.world.system_message(if self.always_run {
             aurora_i18n::tr!("app-always-run-enabled")
@@ -7911,17 +8077,80 @@ impl App {
         self.alt_codes.key_pressed(code, ke.repeat)
     }
 
-    fn update_move_input(&mut self, typing: bool, dt: f32) {
-        self.poll_joystick(dt);
-        if self.joystick_flycam_step(dt) {
+    /// The headset has no viewer UI yet. Restrict keyboard actions so an
+    /// accidental shortcut cannot open an invisible window or enter text.
+    fn vr_keyboard_input(&mut self, key: &winit::event::KeyEvent) {
+        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+        let PhysicalKey::Code(code) = key.physical_key else {
+            return;
+        };
+        let code = crate::keybinds::binding_code(code, &key.logical_key);
+        let input = Input::key(code);
+        let gesture = crate::gestures::keys::from_key(code, &key.key_without_modifiers());
+        if key.state == ElementState::Released {
+            self.down.remove(&input);
+            self.check_temp_run();
+            if let Some(key) = gesture {
+                self.gesture_state.manager.release(Some(key));
+            }
             return;
         }
+        if !self.in_world() || !self.vr_focused || self.exit_prompt.open {
+            return;
+        }
+        let mods = self.key_mods(key);
+        if !mods.alt
+            && let Some(gesture) = gesture
+            && (!key.repeat || crate::gestures::Manager::repeat_triggers(gesture))
+            && let Some(id) = self
+                .gesture_state
+                .manager
+                .key_trigger(gesture, u32::from(mods.ctrl) | if mods.shift { 4 } else { 0 })
+        {
+            self.gesture_play(id, Some(gesture));
+            return;
+        }
+        if !key.repeat && self.settings.keybinds.triggered(&input, mods) == Some(Action::Mouselook) {
+            self.toggle_mouselook();
+            return;
+        }
+        if !key.repeat
+            && self.settings.keybinds.held_actions_of(&input).iter().any(|action| {
+                matches!(
+                    action,
+                    Action::Forward
+                        | Action::Back
+                        | Action::Left
+                        | Action::Right
+                        | Action::StrafeLeft
+                        | Action::StrafeRight
+                        | Action::Up
+                        | Action::Down
+                )
+            })
+        {
+            let group = self.run_group(&input);
+            self.down.insert(input);
+            if let Some(group) = group {
+                self.walk_tap(group, true);
+            }
+        }
+    }
+
+    fn update_move_input(&mut self, typing: bool, dt: f32) {
+        if (self.avatar_studio.active && !self.viewfinder_on()) || self.studio_transition.busy() {
+            self.input = MoveInput::default();
+            return;
+        }
+        self.poll_joystick(dt);
         // (the photo reel's quick view holds the keys like a popup)
         let web_or_popup = self.media.focus.is_some()
             || self.web_has_focus()
             || egui::Popup::is_any_open(&self.egui_ctx)
             || self.snapshots.reel.quick.is_open();
-        let typing = typing || web_or_popup;
+        // The headset owns keyboard movement; desktop focus can remain on chat
+        // or a popup after sitting, but must not swallow VR vehicle controls.
+        let typing = self.vr_camera.is_none() && (typing || web_or_popup);
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
         // it (crate::keybinds::chat_bar_moves)
@@ -7985,9 +8214,39 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
-        let joystick_up = self.camera.free().is_none()
-            && self.settings.joystick.avatar_enabled
-            && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
+        if matches!(
+            self.vr_mode,
+            Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Flycam)
+        ) {
+            i.vr_lateral_keys(self.settings.camera.vr.mouse_look);
+        }
+        let now = Instant::now();
+        let turn_held = |since: &mut Option<Instant>, input: &MoveInput| {
+            if input.turn_left || input.turn_right {
+                since.get_or_insert(now).elapsed().as_secs_f32()
+            } else {
+                *since = None;
+                0.0
+            }
+        };
+        if self.joystick.active {
+            i.turn_held = turn_held(&mut self.turn_since, &i);
+            self.joystick_flycam_step(&i, dt);
+            return;
+        }
+        let joystick_up =
+            self.camera.free().is_none() && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
+        let player_movement_input = i.forward
+            || i.back
+            || i.strafe_left
+            || i.strafe_right
+            || i.turn_left
+            || i.turn_right
+            || i.up
+            || i.down
+            || self.joystick.motion.player_movement_input()
+            || (self.mouse_mode == MouseMode::Steer && self.right_drag);
+        i.down |= self.joystick.motion.crouch;
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
             self.world.agent.flying,
@@ -7996,6 +8255,10 @@ impl App {
             i.up || joystick_up,
         );
         self.joystick_avatar(&mut i);
+        if self.avatar_studio.active && self.camera.free().is_none() {
+            i = MoveInput::default();
+        }
+        let gamepad = self.joystick.motion.gamepad && self.joystick.motion.moving();
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -8032,7 +8295,6 @@ impl App {
             i.up = false;
         }
         // nudge phase: the first 0.25 s of a press makes small steps
-        let now = Instant::now();
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
             if !held {
                 *s = None;
@@ -8060,23 +8322,45 @@ impl App {
         {
             self.world.agent.flying = true;
         }
-        i.turn_held = if i.turn_left || i.turn_right {
-            self.turn_since.get_or_insert(now).elapsed().as_secs_f32()
-        } else {
-            self.turn_since = None;
-            0.0
-        };
+        i.turn_held = turn_held(&mut self.turn_since, &i);
         // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
         // resetView, FSResetCameraOnMovement): after an orbit the agent turns
         // to where the camera looks, the camera stays put
-        let moving = i.resets_camera(self.crouch_toggle.latched());
-        if moving && self.mouse_mode != MouseMode::FocusOrbit {
+        let moving = if gamepad {
+            // Right-stick yaw/pitch orbit the idle camera, so they do not
+            // count as locomotion when selecting the console camera mode.
+            i.forward
+                || i.back
+                || i.turn_left
+                || i.turn_right
+                || i.strafe_left
+                || i.strafe_right
+                || i.up
+                || (i.down && !self.crouch_toggle.latched())
+        } else {
+            i.resets_camera(self.crouch_toggle.latched())
+        };
+        let gamepad_movement = gamepad && self.joystick.motion.player_movement_input();
+        if self.vr_mode.is_none()
+            && moving
+            && !self.input.resets_camera(self.crouch_toggle.latched())
+            && let Some(yaw) = self.camera.gamepad_pan_movement_yaw()
+        {
+            self.world.agent.yaw = yaw;
+        }
+        if moving && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
-            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0;
+            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad_movement;
             let roll = self.camera.roll;
-            self.camera
-                .reset_view(&mut self.world.agent, &self.settings.camera, true, false, true, steering);
+            self.camera.reset_view(
+                &mut self.world.agent,
+                &self.settings.camera,
+                true,
+                false,
+                !gamepad_movement,
+                steering,
+            );
             // walking with the photo viewfinder open keeps its tilt: the shot
             // being framed is the viewfinder's, levelled only when it closes
             if self.viewfinder_on() {
@@ -8084,6 +8368,7 @@ impl App {
             }
         }
         self.input = i;
+        self.joystick_avatar_camera(moving, player_movement_input, dt);
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
         use crate::keybinds::Action as A;
         const CAMERA_KEYS: [A; 10] = [
@@ -8100,7 +8385,7 @@ impl App {
         ];
         let mut rate = [0.0f32; 10];
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
-            let key = !typing && self.settings.keybinds.held(a, &self.down, m);
+            let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
             if self.in_world() && (key || self.controls_held.contains(&a)) {
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
@@ -8127,7 +8412,17 @@ impl App {
             pan_down: rate[9],
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
-        self.camera.joystick_pitch(i.joystick_pitch, dt);
+        self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
+        if gamepad
+            && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
+            && self.mouse_mode != MouseMode::FocusOrbit
+        {
+            self.camera
+                .joystick_orbit_yaw(self.joystick.motion.axes[5], dt, &mut self.world.agent);
+            if moving && let Some(yaw) = self.camera.gamepad_pan_movement_yaw() {
+                self.world.agent.yaw = yaw;
+            }
+        }
     }
 
     // ------------------------------------------------------------------ frame
@@ -8980,11 +9275,14 @@ impl App {
         // time to the screen starts here (Performance › latency, pacing.rs)
         if let Some(g) = &mut self.gfx {
             g.renderer.mark_input(Instant::now());
+            self.vr_focused = g.renderer.vr_focused();
         }
         self.sync_minimized_mute();
         // a window behind gives its textures back (texture_budget::Background)
         let minimized = self.gfx.as_ref().and_then(|g| g.window.is_minimized()).unwrap_or(false);
-        self.scene.textures.set_window_state(self.focused, minimized);
+        let presenting = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
+        let (focused, minimized) = effective_window_state(self.focused, minimized, presenting);
+        self.scene.textures.set_window_state(focused, minimized);
         // (a demo or a timed run neither publishes nor reads, instances.rs)
         let timed = self.capture.is_some() || self.frame_profile.enabled();
         // the busy card's switch, the same in every viewer (instances.rs)
@@ -9166,12 +9464,7 @@ impl App {
         self.mouselook_alt_cursor();
         // (not under a first-person VR entry, mouselook only underneath:
         // the cursor would stay hidden after VR ends)
-        if !self.exit_prompt.open
-            && self.camera.mouselook()
-            && self.vr_camera.is_none()
-            && self.focused
-            && !self.cursor_hold.held()
-            && !self.alt_cursor.free()
+        if !self.exit_prompt.open && self.mouselook_capture_enabled() && self.focused && !self.cursor_hold.held() && !self.alt_cursor.free()
         {
             self.set_mouselook_grab(true);
         }
@@ -9288,6 +9581,9 @@ impl App {
         let shift = self.world.take_origin_shift();
         if shift != Vec3::ZERO {
             self.camera.shift(shift);
+            if let Some(session) = &mut self.studio_photo_session {
+                session.camera.shift(shift);
+            }
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
@@ -9520,6 +9816,30 @@ impl App {
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
+        self.options_ui.vr_default_resolution = gfx.renderer.vr_default_resolution();
+        if let Some(pose) = gfx.renderer.vr_head_pose() {
+            if self.vr_reference_generation.is_some_and(|previous| previous != pose.generation) {
+                self.vr_rebase_reference(false);
+            }
+            self.vr_reference_generation = Some(pose.generation);
+            self.vr_head_pose = Some(pose);
+        }
+        let pose = self.vr_head_pose.filter(|p| p.fresh() && p.origin == self.world.main_region);
+        self.vr_focused = gfx.renderer.vr_focused() && pose.is_some();
+        if let Some(pose) = pose {
+            self.vr_head_rotation = pose.rotation;
+        } else {
+            self.vr_head_rotation = glam::Quat::IDENTITY;
+        }
+        self.camera
+            .vr_tracking(pose.filter(|p| self.vr_focused && p.revision == self.vr_revision));
+        if gfx.renderer.vr_engaged() && self.vr_mode.is_none() {
+            self.apply_vr_mode(self.vr_requested_mode);
+        }
+        if let Some(pose) = self.vr_head_pose {
+            self.vr_body_follow.reference(pose.generation, self.world.main_region);
+            self.camera.vr_body_offset(self.vr_body_follow.offset());
+        }
         self.apply_local_imports(&mut gfx.renderer);
         self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
         for command in self.local_bakes.update(&self.world, &mut self.scene) {
@@ -9537,8 +9857,10 @@ impl App {
         self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
         self.photo_update(&gfx.renderer);
+        self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.photo_isolate_frame(&mut gfx.renderer);
+        self.studio_frame(&mut gfx.renderer, dt);
         let photo = self.photo_frame(&mut gfx.renderer);
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
@@ -9553,7 +9875,14 @@ impl App {
 
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
+        let vr_body_yaw = self.world.agent.yaw;
+        if self.vr_camera.is_some() && !self.world.agent.is_sitting() {
+            self.world.agent.yaw = self.vr_rig_yaw;
+        }
         self.update_move_input(typing, dt);
+        if self.vr_camera.is_some() {
+            self.vr_locomotion(vr_body_yaw, dt);
+        }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             && let Some(input) = crate::demo::grounding::scripted_input(&mode, self.frame_count)
@@ -9561,6 +9890,7 @@ impl App {
             self.input = input;
         }
         self.update_autopilot(dt);
+        self.vr_update_body_follow(typing, dt);
         if self.in_world() && self.settings.automatic_land {
             self.world.auto_land(&self.input);
         }
@@ -9575,7 +9905,10 @@ impl App {
             self.update_attention();
         }
         if self.in_world() {
-            let ml = self.camera.mouselook();
+            let ml = self
+                .studio_photo_session
+                .as_ref()
+                .map_or_else(|| self.camera.mouselook(), |session| session.camera.mouselook());
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
             let build = &self.build;
@@ -9609,7 +9942,15 @@ impl App {
             }
             self.update_own_prediction(ml, dt);
             let camera_distance = self.camera.position.distance(self.world.agent.position);
+            let yaw_before_update = self.world.agent.yaw;
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            if self.vr_camera.is_some() && self.world.agent.is_sitting() {
+                // Seated keys drive the vehicle script, not a second local turn.
+                self.world.agent.yaw = yaw_before_update;
+            } else if self.vr_camera.is_some() {
+                let delta = self.world.agent.yaw - yaw_before_update;
+                self.vr_rig_yaw += (delta + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            }
             if self.demo
                 && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             {
@@ -9648,7 +9989,13 @@ impl App {
                 // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
             } else {
-                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                if self.vr_camera.is_some() {
+                    self.camera
+                        .update_vr(&mut self.world, &self.settings.camera, &frame, self.vr_rig_yaw);
+                    self.vr_counter_body_motion();
+                } else {
+                    self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                }
             }
             if self.demo
                 && let Some((eye, target)) = crate::demo::projector_camera(self.frame_count)
@@ -9657,7 +10004,10 @@ impl App {
                 self.camera.target = target;
                 self.interface.set_hidden(&self.egui_ctx, true);
             }
-            let at = self.camera.forward();
+            let at = self
+                .studio_photo_session
+                .as_ref()
+                .map_or_else(|| self.camera.forward(), |session| session.camera.forward());
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
@@ -9669,9 +10019,32 @@ impl App {
             self.trace_own_motion();
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
-            let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+            let mut c = self.studio_agent_controls();
+            if self.vr_mode.is_some() && self.world.agent.is_sitting() {
+                // Vehicle scripts need the original digital turn controls,
+                // rather than desktop mouselook's turn-to-strafe conversion.
+                c.control_flags = self.world.agent.control_flags(&self.input, false) | (c.control_flags & control::MOUSELOOK);
+            }
             // the walk to a double-clicked point (src/autopilot.rs)
             c.control_flags = self.autopilot_controls(c.control_flags);
+            if let Some(flags) = self.vr_follow_flags {
+                let linear = control::AT_POS
+                    | control::AT_NEG
+                    | control::LEFT_POS
+                    | control::LEFT_NEG
+                    | control::UP_POS
+                    | control::UP_NEG
+                    | control::FAST_AT
+                    | control::FAST_LEFT
+                    | control::FAST_UP
+                    | control::NUDGE_AT_POS
+                    | control::NUDGE_AT_NEG
+                    | control::NUDGE_LEFT_POS
+                    | control::NUDGE_LEFT_NEG
+                    | control::NUDGE_UP_POS
+                    | control::NUDGE_UP_NEG;
+                c.control_flags = (c.control_flags & !linear) | flags;
+            }
             c.control_flags = crate::movement::controls(
                 c.control_flags,
                 self.movement_runtime.state,
@@ -9902,19 +10275,39 @@ impl App {
         }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
-            && let Some((camera, yaw, pitch)) = self.vr_camera.take()
+            && let Some(camera) = self.vr_camera.take()
         {
+            self.vr_mode = None;
+            self.down.clear();
+            self.check_temp_run();
+            self.last_tap = None;
+            self.vr_focused = false;
+            self.joystick.active = false;
             self.camera = camera;
-            self.world.agent.yaw = yaw;
-            self.world.agent.pitch = pitch;
+            self.release_cursor(false);
             gfx.renderer.cut_motion_history();
         }
-        let mut view = self.camera.view();
-        let mut proj = frame_proj(&self.camera);
+        let studio_view = self.studio_view(aspect);
+        let render_eye = studio_view.map_or(self.camera.position, |v| v.eye);
+        let render_fov = if studio_view.is_some() && self.studio_photo_session.is_none() {
+            crate::avatar_studio::FOV
+        } else {
+            self.camera.fov_y
+        };
+        let mut view = match studio_view {
+            Some(v) => v.view,
+            None if gfx.renderer.vr_engaged() => self.camera.vr_view(self.vr_rig_yaw),
+            None => self.camera.view(),
+        };
+        let mut proj = if self.studio_photo_session.is_some() {
+            frame_proj(&self.camera)
+        } else {
+            studio_view.map_or_else(|| frame_proj(&self.camera), |v| photo_tile * v.proj)
+        };
         let mut vp = proj * view;
         let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
-        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
-            self.camera.forward(),
+        let mut cull = CullView::new(vp, render_eye, lod_height as f32, render_fov).with_texture_camera(
+            studio_view.map_or_else(|| self.camera.forward(), |v| (v.target - v.eye).normalize()),
             aspect,
             camera_fast,
         );
@@ -10025,6 +10418,17 @@ impl App {
             }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            // the avatar whose part the poser shows, drawn from its meshes
+            // (the joints go with the frame's parameters), or whose part
+            // under the cursor it asks (part_pick.rs): its faces listed
+            let pick = gfx.renderer.take_part_pick();
+            self.ik_editor.set_poser_mesh_pick(pick);
+            self.scene.poser_part = self
+                .ik_editor
+                .poser_part_overlay()
+                .map(|(id, _)| id)
+                .or(self.ik_editor.poser_pick_subject())
+                .and_then(|id| self.world.objects.index_of_uuid(&id));
             if self.world.teleporting {
                 self.ik_editor.stop_editing();
             }
@@ -10124,10 +10528,10 @@ impl App {
             // this in UI preparation let an older simulator echo reach the GPU
             // for one frame, before the manipulator restored the current size.
             self.build.cam = crate::build::geom::Cam::new(
-                self.camera.position,
-                self.camera.target,
+                render_eye,
+                studio_view.map_or(self.camera.target, |v| v.target),
                 vp,
-                self.camera.fov_y,
+                render_fov,
                 w as f32,
                 h as f32,
                 self.egui_ctx.pixels_per_point(),
@@ -10138,13 +10542,14 @@ impl App {
             {
                 self.build.cam = crate::build::geom::Cam::for_hud(view, self.egui_ctx.pixels_per_point());
             }
-            let pan = if self.build.open && self.build.tool == crate::build::Tool::Edit && self.camera.third_person() {
-                self.build
-                    .manip
-                    .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
-            } else {
-                Vec3::ZERO
-            };
+            let pan =
+                if studio_view.is_none() && self.build.open && self.build.tool == crate::build::Tool::Edit && self.camera.third_person() {
+                    self.build
+                        .manip
+                        .camera_pan(&self.settings.build, &self.build.cam, self.cursor_pos, dt)
+                } else {
+                    Vec3::ZERO
+                };
             let panned = self.camera.pan_edit(pan, &mut self.world.agent, &self.settings.camera);
             if panned {
                 self.build.cam = crate::build::geom::Cam::new(
@@ -10223,11 +10628,17 @@ impl App {
                 if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                     frame.now = now;
                 }
-                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                if self.vr_camera.is_some() {
+                    self.camera
+                        .update_vr(&mut self.world, &self.settings.camera, &frame, self.vr_rig_yaw);
+                    self.vr_counter_body_motion();
+                } else {
+                    self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                }
                 if let Some(controls) = late_controls {
                     // AgentUpdate must describe the displayed eye and aim,
                     // keeping the movement, script and RLVa flags prepared above.
-                    let current = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+                    let current = self.studio_agent_controls();
                     self.net.set_controls(aurora_net::AgentControls {
                         control_flags: (controls.control_flags & !control::MOUSELOOK) | (current.control_flags & control::MOUSELOOK),
                         state: controls.state,
@@ -10239,12 +10650,16 @@ impl App {
             }
             // every change of the viewing angle goes to the simulator, as
             // LLViewerCamera::setView (the end of a zoom's easing excepted)
-            if (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
+            if self.studio_photo_session.is_none() && (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
                 self.sent_fov = self.camera.fov_y;
                 self.net.send(NetCommand::SetFov(self.sent_fov));
             }
-            if camera_changed {
-                view = self.camera.view();
+            if camera_changed && (studio_view.is_none() || self.studio_photo_session.is_some()) {
+                view = if gfx.renderer.vr_engaged() {
+                    self.camera.vr_view(self.vr_rig_yaw)
+                } else {
+                    self.camera.view()
+                };
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
                 cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
@@ -10271,6 +10686,9 @@ impl App {
             }
             self.scene.update_beacons(&mut self.world, &self.settings.beacons, &cull);
             self.scene.held_at = hold.map(|h| h.at);
+            if studio_view.is_some() {
+                self.scene.fov_y = render_fov;
+            }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -10284,7 +10702,7 @@ impl App {
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
                     agent_speed: self.world.agent.velocity.length(),
-                    window_focused: self.focused,
+                    window_focused: effective_window_state(self.focused, false, self.vr_camera.is_some()).0,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
                     language: aurora_i18n::language(),
@@ -10390,12 +10808,14 @@ impl App {
             self.scene
                 .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
             self.scene.set_first_person(
-                self.camera
-                    .first_person_view()
-                    .then_some(self.settings.camera.show_avatar_in_mouselook),
+                (self.camera.first_person_view() && studio_view.is_none()).then_some(self.settings.camera.show_avatar_in_mouselook),
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
+            // the poser's subject drawn as meshes or not (an impostor, a
+            // jelly doll, first person): its part falls back to the bones
+            self.ik_editor
+                .set_poser_meshes_drawn(self.scene.poser_part.map(|_| self.scene.poser_part_skinned));
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered
                 && !self.camera.mouselook()
@@ -10714,6 +11134,16 @@ impl App {
                 &sky_frame,
                 crate::world::env::colored_ambient_now(self.settings.colored_sky_ambient),
             );
+        if studio_view.is_some() && self.avatar_studio.lighting == crate::avatar_studio::Lighting::Studio {
+            env = Environment::from_eep(
+                &crate::world::eep::SkyFrame::with_sun(
+                    glam::Quat::from_rotation_z(self.avatar_studio.yaw) * Vec3::new(0.3, -0.4, 0.86).normalize(),
+                ),
+                &crate::world::eep::WaterFrame::default(),
+                glam::Vec2::ZERO,
+                64.0,
+            );
+        }
         if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
             env.sun_dir = sun;
         }
@@ -10813,7 +11243,7 @@ impl App {
             }
             t_part = Instant::now();
         }
-        let (lights, spot_shadows) = if in_world {
+        let (lights, spot_shadows) = if in_world && studio_view.is_none() {
             let view = crate::scene::lights::LightView {
                 eye: self.camera.position,
                 forward: self.camera.forward(),
@@ -10834,7 +11264,7 @@ impl App {
             (Vec::new(), [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS])
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
-        let probes = if in_world {
+        let probes = if in_world && studio_view.is_none() {
             let slots = gfx.renderer.fitted_probe_slots(self.settings.probe_count.clamp(8, 256));
             if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
                 self.probes.slots = slots;
@@ -10874,6 +11304,27 @@ impl App {
                 })
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
+            // the poser's hovered part, drawn from the subject's meshes
+            // none in a photo: the part is the poser's interface, not the
+            // scene (a photo without the interface must not carry it)
+            part_joints: self
+                .ik_editor
+                .poser_part_overlay()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map_or([0; 8], |(_, mask)| mask),
+            part_classes: self.ik_editor.poser_pick_classes(&self.world.avatar_lib.rig),
+            part_pick: self
+                .ik_editor
+                .poser_pick_subject()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .filter(|_| self.cursor_pos.0 >= 0.0 && self.cursor_pos.1 >= 0.0)
+                .map(|_| [self.cursor_pos.0 as u32, self.cursor_pos.1 as u32]),
+            // softer than a selection: the alpha scales the halo, its dark
+            // edge and the tint inside (PART_TINT)
+            part_color: {
+                let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
+                [r, g, b, 0.65]
+            },
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {
@@ -10906,15 +11357,28 @@ impl App {
                     .unwrap_or_else(|| self.scene.selection_pulse(Instant::now(), false))
             },
             selection_scale: self.egui_ctx.pixels_per_point(),
+            vr_origin: self.world.main_region,
+            vr_revision: self.vr_revision,
             view,
+            vr_rig: if self.camera.flycam.is_some() {
+                aurora_render::stereo_view::RigMode::Flycam
+            } else if self.vr_mode == Some(crate::camera::VrView::FirstPerson) {
+                aurora_render::stereo_view::RigMode::FirstPerson
+            } else {
+                aurora_render::stereo_view::RigMode::Avatar
+            },
             proj,
             photo_tile,
             photo_scale,
             photo_context,
-            camera_pos: self.camera.position,
-            near: self.camera.near,
+            camera_pos: render_eye,
+            near: if studio_view.is_some() {
+                crate::avatar_studio::NEAR
+            } else {
+                self.camera.near
+            },
             far: self.settings.draw_distance,
-            fov_y: self.camera.fov_y,
+            fov_y: render_fov,
             time: if self.demo {
                 crate::demo::water::inspection_time(world_clock())
             } else {
@@ -10977,6 +11441,9 @@ impl App {
             hide_sky: self.settings.debug.hidden_types.sky,
             look: None,
         };
+        if let Some(view) = studio_view {
+            self.studio_render(&mut gfx.renderer, &mut fp, view);
+        }
         // a photo's look, or the live view's in the photo mode
         let focus = fp.dof.as_ref().map(|d| d.focus);
         self.snapshots.look_focus = focus;
@@ -11219,17 +11686,29 @@ impl App {
             }
         }
         // AURORA_DEMO_POSER=compact-face: Ctrl held over the face while
-        // posing the Body, for its oval tint (`poser::world_hints`)
+        // posing the Body, for its oval tint; compact-body: over the chest
+        // while posing the Hands, for the body drawn from its mesh
+        // (`poser::world_hints`)
+        let hovered = std::env::var("AURORA_DEMO_POSER").ok().and_then(|mode| match mode.as_str() {
+            // the forehead: from the demo camera, behind, the nose falls on
+            // the head's marker, which takes the pointer first
+            "compact-face" => Some("mFaceForeheadCenter"),
+            "compact-body" => Some("mChest"),
+            _ => None,
+        });
         if self.demo
             && self.frame_count >= 560
-            && std::env::var("AURORA_DEMO_POSER").is_ok_and(|mode| mode == "compact-face")
+            && let Some(joint) = hovered
             && let Some(pos) = self
                 .ik_editor
-                .poser_focus(&self.world, "mFaceNoseBase")
+                .poser_focus(&self.world, joint)
                 .and_then(|point| self.build.cam.project(point))
         {
             raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
             raw.events.push(egui::Event::PointerMoved(pos));
+            // the renderer's part pick reads at the app's cursor
+            let ppp = ctx.pixels_per_point();
+            self.cursor_pos = (pos.x * ppp, pos.y * ppp);
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -11332,6 +11811,7 @@ impl App {
             // gets no input events: what the first pass clicked must survive
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+            self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
@@ -11571,6 +12051,7 @@ impl App {
             log::info!("GPU recovery: egui's textures sent again ({} KB)", self.egui_shadow.bytes() >> 10);
             textures = self.egui_shadow.replay(textures);
         }
+        self.studio_fade(&ctx, &mut full.shapes);
         let egui_frame = self
             .egui_hand_over
             .frame(&ctx, std::mem::take(&mut full.shapes), textures, full.pixels_per_point);
@@ -11660,10 +12141,11 @@ impl App {
             // otherwise
             if !engaged
                 && self.vr_camera.is_none()
-                && self.settings.camera.vr_view == crate::camera::VrView::FirstPerson
+                && self.vr_requested_mode == crate::camera::VrView::FirstPerson
                 && self.settings.camera.enable_mouselook
             {
-                self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                self.vr_camera = Some(self.camera.clone());
+                self.vr_rig_yaw = self.world.agent.yaw;
                 self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, false);
                 // straight to the eyes, without the position smoothing; one
                 // more frame for the render thread's packet in flight
@@ -11683,7 +12165,8 @@ impl App {
                         head.z
                     );
                     if self.vr_camera.is_none() {
-                        self.vr_camera = Some((self.camera.clone(), self.world.agent.yaw, self.world.agent.pitch));
+                        self.vr_camera = Some(self.camera.clone());
+                        self.vr_rig_yaw = self.world.agent.yaw;
                     }
                     self.down.clear();
                     self.drop_clicks();
@@ -11796,6 +12279,7 @@ impl App {
             if let Some(old) = self.retired_window.take() {
                 old.set_visible(false);
             }
+            crate::splash::shown();
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
             crate::crash::demo_thread_death();
@@ -11833,6 +12317,7 @@ impl App {
         let cap = frame_cap(
             &self.settings,
             self.focused,
+            gfx.renderer.vr_engaged(),
             self.in_world(),
             monitor_hz,
             timed,
@@ -13544,13 +14029,47 @@ impl App {
                 let mods = aurora_media::Modifiers::default();
                 self.media.on_key(
                     &self.world,
+                    ch.chars().next(),
                     code,
                     0x1E,
                     k.is_multiple_of(2),
                     false,
                     k.is_multiple_of(2).then_some(ch),
                     mods,
+                    None,
                 );
+            }
+            // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
+            // the field reads "auroraaurora" when the shortcuts reach the page
+            // and the cut reaches the clipboard. The clipboard holds "stale"
+            // first: a cut that does nothing leaves "stalestale", not a pass
+            // from an earlier run's clipboard. `paste`: the clipboard holds
+            // "pasted", set by the viewer as another program would, then
+            // Ctrl+V, so the field reads "aurorapasted".
+            let edit = v.split(',').any(|s| s.trim() == "edit");
+            let paste = v.split(',').any(|s| s.trim() == "paste");
+            if (edit || paste) && f == 864 {
+                self.egui_ctx.copy_text(if paste { "pasted" } else { "stale" }.to_owned());
+            }
+            let keys = if edit {
+                &[KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][..]
+            } else if paste {
+                &[KeyCode::KeyV][..]
+            } else {
+                &[][..]
+            };
+            if (870..870 + 2 * keys.len() as u64).contains(&f) {
+                let k = (f - 870) as usize;
+                let code = keys[k / 2];
+                let pressed = k.is_multiple_of(2);
+                let mods = aurora_media::Modifiers {
+                    control: !cfg!(target_os = "macos"),
+                    command: cfg!(target_os = "macos"),
+                    ..Default::default()
+                };
+                let clipboard = self.media_clipboard(None, code, pressed, false, mods);
+                self.media
+                    .on_key(&self.world, None, code, 0, pressed, false, None, mods, clipboard.as_deref());
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -14284,7 +14803,16 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
-            BarAction::ToggleVr => self.vr_toggle = true,
+            BarAction::VrView(mode) => {
+                if self.vr_mode.is_some() {
+                    if self.vr_mode != Some(mode) {
+                        self.apply_vr_mode(mode);
+                    }
+                } else {
+                    self.vr_requested_mode = mode;
+                    self.vr_toggle = true;
+                }
+            }
             BarAction::ToggleImmersive => self.toggle_immersive(),
             BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
@@ -14940,6 +15468,51 @@ impl App {
             || self.destinations_ui.web_has_focus(self.panels.destinations)
     }
 
+    /// The text a Paste puts into a page by script on Linux
+    /// (keys::paste_through_viewer), read from the system clipboard; None
+    /// lets the page paste from its own clipboard: for any other key, and
+    /// when the clipboard has not changed since this page's last cut or
+    /// copy. Another page's copy never reaches this one, so it goes by script.
+    /// A held Paste repeats the press's text without reading again.
+    fn media_clipboard(
+        &mut self,
+        letter: Option<char>,
+        code: KeyCode,
+        pressed: bool,
+        repeat: bool,
+        mods: aurora_media::Modifiers,
+    ) -> Option<String> {
+        use crate::media::keys;
+        if !pressed || !keys::paste_through_viewer() {
+            return None;
+        }
+        let cmd = keys::edit_shortcut(letter, code, mods)?;
+        // the page that gets the key: a web window first, as the key handler
+        let page = match self.focused_web() {
+            Some(p) => p.pid(),
+            None => self.media.focused_pid(),
+        };
+        let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
+        match cmd {
+            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat && keys::page_cuts() => {
+                if let Some(pid) = page {
+                    let text = read();
+                    keys::record_copy(&mut self.page_copy, pid, text);
+                }
+                None
+            }
+            aurora_media::EditCommand::Paste => {
+                if !repeat {
+                    let at_copy = self.page_copy.iter().find(|(pid, _)| Some(*pid) == page);
+                    let text = keys::paste_text(at_copy.map(|(_, text)| text), read());
+                    self.held_paste.press(code, text);
+                }
+                self.held_paste.text(code)
+            }
+            _ => None,
+        }
+    }
+
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
     /// receives keys before chat, gestures or viewer commands.
     fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
@@ -15436,7 +16009,7 @@ impl App {
         self.sync_appearance_camera();
         self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         if res.toggle_flycam {
-            self.toggle_joystick_flycam();
+            self.toggle_flycam_from_input(false);
         }
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)
@@ -16347,6 +16920,26 @@ impl App {
                         buttons.push(ui::skin::ToolButton {
                             icon: c.icon.into(),
                             command: c.id.into(),
+                            tooltip: String::new(),
+                        });
+                    }
+                    t.buttons = Some(buttons);
+                    demo_toolbar = Some(t);
+                }
+                if self.demo && std::env::var_os("AURORA_DEMO_AVATAR_STUDIO").is_some() {
+                    let layout = if classic_bars {
+                        layout.clone()
+                    } else {
+                        self.dock_layout.of(layout, autohide_chat_bar).clone()
+                    };
+                    let mut t = demo_toolbar
+                        .take()
+                        .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
+                    let mut buttons = t.buttons(&layout).to_vec();
+                    if !buttons.iter().any(|b| b.command == "avatar_studio") {
+                        buttons.push(ui::skin::ToolButton {
+                            icon: "man-filled".into(),
+                            command: "avatar_studio".into(),
                             tooltip: String::new(),
                         });
                     }
@@ -17594,6 +18187,7 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
+                self.show_script_recovery(&ctx, &p);
                 for action in ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
@@ -18654,6 +19248,7 @@ impl ApplicationHandler for App {
             Ok(w) => w,
             Err(e) => {
                 log::error!("cannot create window: {e}");
+                crate::splash::close();
                 graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
@@ -18674,6 +19269,7 @@ impl ApplicationHandler for App {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 };
                 eprintln!("{message}");
+                crate::splash::close();
                 // unlike a missing card this is a crash, and a report is the
                 // only way to hear of it (#1892)
                 if matches!(e, aurora_render::RenderError::DeviceLost) {
@@ -21365,17 +21961,29 @@ impl ApplicationHandler for App {
         {
             return;
         }
+        // a held Paste keeps its text only while its key stays down: told
+        // every key, wherever it goes next (keys::HeldPaste)
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && let PhysicalKey::Code(code) = ke.physical_key
+        {
+            self.held_paste.on_key(code, ke.state == ElementState::Pressed, ke.repeat);
+        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.state == ElementState::Pressed
+            && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+            && let Some(gfx) = &self.gfx
         {
-            if key.state == ElementState::Pressed
-                && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
-                && let Some(gfx) = &self.gfx
-            {
-                gfx.renderer.set_vr_enabled(false);
-                gfx.window.request_redraw();
-            }
+            gfx.renderer.set_vr_enabled(false);
+            gfx.window.request_redraw();
+            return;
+        }
+
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
+            && let WindowEvent::KeyboardInput { event: key, .. } = &event
+        {
+            self.vr_keyboard_input(key);
             return;
         }
 
@@ -21739,12 +22347,25 @@ impl ApplicationHandler for App {
                         shift: self.shift,
                         command: self.command,
                     };
+                    let letter = crate::media::keys::layout_letter(&ke.logical_key);
+                    // Paste on Linux: the viewer reads the clipboard
+                    // and pastes it into the page by script (keys::paste_through_viewer)
+                    // only for a key the page gets: a media face skips a press egui took
+                    let page_keys = !typing && (self.focused_web().is_some() || (self.media.focus.is_some() && !resp.consumed));
+                    let clipboard = if page_keys {
+                        self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)
+                    } else {
+                        None
+                    };
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods) || pressed {
+                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods, clipboard.as_deref())
+                            || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
+                            || pressed
+                        {
                             return;
                         }
                     }
@@ -21758,10 +22379,17 @@ impl ApplicationHandler for App {
                             shift: self.shift,
                             command: self.command,
                         };
-                        if self
-                            .media
-                            .on_key(&self.world, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
-                            && pressed
+                        if self.media.on_key(
+                            &self.world,
+                            letter,
+                            code,
+                            scancode,
+                            pressed,
+                            ke.repeat,
+                            ke.text.as_deref(),
+                            mods,
+                            clipboard.as_deref(),
+                        ) && pressed
                         {
                             return;
                         }
@@ -21888,6 +22516,9 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
+                if self.studio_scroll(steps) {
+                    return;
+                }
                 if self.on_build_scroll(steps) || self.on_hud_scroll(steps) || self.viewfinder_wheel(steps) {
                     return;
                 }
@@ -21988,7 +22619,24 @@ fn wait_until(until: Instant) {
 /// desktop compositor and makes the whole machine stutter on some setups.
 /// `timed` runs (AURORA_CAPTURE, AURORA_PROFILE) count or measure frames,
 /// often in a window that never had the focus: no background cap there.
-fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed: bool, fps_limit: Option<u32>) -> f32 {
+fn effective_window_state(window_focused: bool, minimized: bool, headset_presenting: bool) -> (bool, bool) {
+    (window_focused || headset_presenting, minimized && !headset_presenting)
+}
+
+fn frame_cap(
+    s: &Settings,
+    focused: bool,
+    headset_engaged: bool,
+    in_world: bool,
+    monitor_hz: f32,
+    timed: bool,
+    fps_limit: Option<u32>,
+) -> f32 {
+    // The OpenXR frame waiter paces VR. Desktop foreground/background limits
+    // must not throttle simulation while the headset is presenting.
+    if headset_engaged {
+        return fps_limit.map_or(0.0, |limit| limit as f32);
+    }
     let mut cap = if s.fps_cap { s.fps_limit as f32 } else { f32::INFINITY };
     if let Some(limit) = fps_limit {
         cap = cap.min(limit as f32);
@@ -22055,7 +22703,7 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
 /// Start this viewer again with `--vr`, as the process ends: the identity
 /// of this instance is kept (title, frame cap, language, grid), not the
 /// one-time login or start place.
-fn restart_with_vr() {
+fn restart_with_vr(mode: crate::camera::VrView) {
     let cli = crate::cli::get();
     let Ok(exe) = std::env::current_exe() else {
         log::warn!("restart into VR: the viewer's path is unknown");
@@ -22071,7 +22719,12 @@ fn restart_with_vr() {
     if let Some(language) = &cli.language {
         command.arg("--language").arg(language);
     }
-    command.arg("--vr");
+    let mode = match mode {
+        crate::camera::VrView::FirstPerson => "first-person",
+        crate::camera::VrView::Avatar => "avatar",
+        crate::camera::VrView::Flycam => "flycam",
+    };
+    command.arg("--vr").arg(format!("--vr-mode={mode}"));
     match command.spawn() {
         Ok(_) => log::info!("restarting into VR"),
         Err(e) => log::warn!("restart into VR failed: {e}"),
@@ -22359,9 +23012,39 @@ mod tests {
             super::apply_test_fps_limit(&mut settings, value);
             assert_eq!((settings.fps_cap, settings.fps_limit), (enabled, limit), "{value}");
             if !enabled {
-                assert_eq!(frame_cap(&settings, false, true, 144.0, true, None), 0.0);
+                assert_eq!(frame_cap(&settings, false, false, true, 144.0, true, None), 0.0);
             }
         }
+    }
+
+    #[test]
+    fn vr_runtime_visibility_keeps_textures_resident_with_a_minimized_mirror() {
+        use super::effective_window_state;
+        use std::time::{Duration, Instant};
+        let mut background = crate::scene::texture_budget::Background::default();
+        let now = Instant::now();
+        let (front, minimized) = effective_window_state(false, true, false);
+        assert!(background.update(now, front, minimized, true));
+        assert!(background.paused());
+        let (front, minimized) = effective_window_state(false, true, true);
+        assert!(!background.update(now + Duration::from_secs(120), front, minimized, true));
+        assert!(!background.paused());
+        let (front, minimized) = effective_window_state(false, true, false);
+        assert!(background.update(now + Duration::from_secs(121), front, minimized, true));
+    }
+
+    #[test]
+    fn vr_runtime_focus_uses_headset_pacing_without_desktop_focus() {
+        let settings = Settings {
+            fps_cap: true,
+            fps_limit: 30,
+            background_fps_cap: true,
+            background_fps_limit: 15,
+            ..Settings::default()
+        };
+        assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, None), 0.0);
+        assert_eq!(frame_cap(&settings, false, false, true, 60.0, false, None), 15.0);
+        assert_eq!(frame_cap(&settings, false, true, true, 60.0, false, Some(120)), 120.0);
     }
 
     #[test]
@@ -22372,10 +23055,10 @@ mod tests {
             ..Settings::default()
         };
         // in world: free unless the user asks for a cap
-        assert_eq!(frame_cap(&free, true, true, 144.0, false, None), 0.0);
-        assert_eq!(frame_cap(&free, false, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap(&free, true, false, true, 144.0, false, None), 0.0);
+        assert_eq!(frame_cap(&free, false, false, true, 144.0, false, None), 0.0);
         // outside the world (login): never above the screen rate
-        assert_eq!(frame_cap(&free, true, false, 144.0, false, None), 144.0);
+        assert_eq!(frame_cap(&free, true, false, false, 144.0, false, None), 144.0);
         let capped = Settings {
             fps_cap: true,
             fps_limit: 90,
@@ -22383,27 +23066,27 @@ mod tests {
             background_fps_limit: 15,
             ..Settings::default()
         };
-        assert_eq!(frame_cap(&capped, true, true, 144.0, false, None), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 144.0, false, None), 90.0);
-        assert_eq!(frame_cap(&capped, true, false, 60.0, false, None), 60.0);
+        assert_eq!(frame_cap(&capped, true, false, true, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, false, 144.0, false, None), 90.0);
+        assert_eq!(frame_cap(&capped, true, false, false, 60.0, false, None), 60.0);
         // not focused: the lower of the two caps
-        assert_eq!(frame_cap(&capped, false, true, 144.0, false, None), 15.0);
-        assert_eq!(frame_cap(&capped, false, false, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap(&capped, false, false, true, 144.0, false, None), 15.0);
+        assert_eq!(frame_cap(&capped, false, false, false, 144.0, false, None), 15.0);
         // captures and profiles keep their pace without the focus
-        assert_eq!(frame_cap(&capped, false, true, 144.0, true, None), 90.0);
-        assert_eq!(frame_cap(&free, false, false, 144.0, true, None), 144.0);
-        assert_eq!(frame_cap(&free, true, true, 144.0, true, None), 0.0);
-        assert_eq!(frame_cap(&free, true, true, 144.0, false, Some(500)), 500.0);
+        assert_eq!(frame_cap(&capped, false, false, true, 144.0, true, None), 90.0);
+        assert_eq!(frame_cap(&free, false, false, false, 144.0, true, None), 144.0);
+        assert_eq!(frame_cap(&free, true, false, true, 144.0, true, None), 0.0);
+        assert_eq!(frame_cap(&free, true, false, true, 144.0, false, Some(500)), 500.0);
         // A process cap survives preferences, capture mode and loss of focus.
         for focused in [false, true] {
             for in_world in [false, true] {
                 for timed in [false, true] {
-                    assert_eq!(frame_cap(&free, focused, in_world, 144.0, timed, Some(60)), 60.0);
-                    assert!(frame_cap(&capped, focused, in_world, 144.0, timed, Some(60)) <= 60.0);
+                    assert_eq!(frame_cap(&free, focused, false, in_world, 144.0, timed, Some(60)), 60.0);
+                    assert!(frame_cap(&capped, focused, false, in_world, 144.0, timed, Some(60)) <= 60.0);
                 }
             }
         }
-        assert_eq!(frame_cap(&capped, true, true, 144.0, false, Some(30)), 30.0);
+        assert_eq!(frame_cap(&capped, true, false, true, 144.0, false, Some(30)), 30.0);
     }
 
     #[test]
