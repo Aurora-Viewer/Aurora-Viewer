@@ -7235,6 +7235,7 @@ impl App {
         let hud = (self.build.tool == crate::build::Tool::Edit)
             .then(|| self.scene.hud_edit_pick(&self.world, (x, y)))
             .flatten();
+        let mut face_drawn: Option<crate::scene::drawn::DrawnObject> = None;
         let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
             (Some(point), Some(idx), ray)
         } else if self.build.tool == crate::build::Tool::Create && !self.settings.build.copy_selection && !(self.shift || self.ctrl) {
@@ -7246,12 +7247,16 @@ impl App {
             self.scene.creation_preview.candidates = candidates;
             (surface.map(|s| s.0), surface.and_then(|s| s.1), ray)
         } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
-            // LLToolFace picks the current cursor ray. A delayed GPU depth
-            // sample can still point at the previous object during Shift clicks.
-            let ray = self.build.cam.ray(x, y);
-            let target = self
+            // LLToolFace: CPU ray for ordinary prims, then the drawn-face pick
+            // for worn / rigged mesh (same Build designate as the move tool),
+            // so a face click does not fall through to the world behind.
+            let Some(picked) = self.click_pick() else {
+                return false;
+            };
+            let ray = picked.ray.unwrap_or_else(|| self.build.cam.ray(x, y));
+            let cpu_target = self
                 .scene
-                .left_edit_ray_hits(
+                .face_edit_ray_hits(
                     &self.world,
                     ray,
                     false,
@@ -7260,7 +7265,16 @@ impl App {
                 )
                 .first()
                 .copied();
-            (None, target, ray)
+            let cpu_point = cpu_target.and_then(|idx| self.scene.edit_hit_point(&self.world, idx, ray));
+            let drawn = self.designate(crate::scene::drawn::Gesture::Build, &picked, cpu_point);
+            let (hit, target) = match drawn {
+                Some(d) => {
+                    face_drawn = Some(d);
+                    (Some(d.hit.point), Some(d.idx))
+                }
+                None => (cpu_point, cpu_target),
+            };
+            (hit, target, ray)
         } else {
             let Some(picked) = self.click_pick() else {
                 return false;
@@ -7280,7 +7294,7 @@ impl App {
                     picked.depth.and_then(|p| self.scene.pick_at(&self.world, p, Instant::now())),
                 )
             };
-            // a rigged mesh is selected where it is shown (Firestorm: with
+            // a rigged mesh is selected where it is shown (Legacy Viewer: with
             // the move tool only, LLToolCompTranslate)
             let (hit, target) = match self.designate(crate::scene::drawn::Gesture::Build, &picked, hit) {
                 Some(d) => (Some(d.hit.point), Some(d.idx)),
@@ -7294,9 +7308,14 @@ impl App {
             alt: self.alt,
         };
         // the surface under the cursor: face tool, grab surface info
-        let surface = match (self.build.tool, target) {
-            (crate::build::Tool::Edit | crate::build::Tool::Grab, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
-            _ => None,
+        let surface = if let Some(d) = face_drawn {
+            self.scene.drawn_surface(&self.world, &d)
+        } else {
+            match (self.build.tool, self.build.edit_mode, target) {
+                (crate::build::Tool::Edit, crate::build::EditMode::Face, Some(i)) => self.scene.edit_touch_surface(&self.world, i, ray),
+                (crate::build::Tool::Edit | crate::build::Tool::Grab, _, Some(i)) => self.scene.left_touch_surface(&self.world, i, ray),
+                _ => None,
+            }
         };
         let used = self.build.mouse_down(
             &mut self.world,
@@ -10092,6 +10111,17 @@ impl App {
             }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            // the avatar whose part the poser shows, drawn from its meshes
+            // (the joints go with the frame's parameters), or whose part
+            // under the cursor it asks (part_pick.rs): its faces listed
+            let pick = gfx.renderer.take_part_pick();
+            self.ik_editor.set_poser_mesh_pick(pick);
+            self.scene.poser_part = self
+                .ik_editor
+                .poser_part_overlay()
+                .map(|(id, _)| id)
+                .or(self.ik_editor.poser_pick_subject())
+                .and_then(|id| self.world.objects.index_of_uuid(&id));
             if self.world.teleporting {
                 self.ik_editor.stop_editing();
             }
@@ -10463,6 +10493,10 @@ impl App {
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
+            // the poser's subject drawn as meshes or not (an impostor, a
+            // jelly doll, first person): its part falls back to the bones
+            self.ik_editor
+                .set_poser_meshes_drawn(self.scene.poser_part.map(|_| self.scene.poser_part_skinned));
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered
                 && !self.camera.mouselook()
@@ -10941,6 +10975,27 @@ impl App {
                 })
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
+            // the poser's hovered part, drawn from the subject's meshes
+            // none in a photo: the part is the poser's interface, not the
+            // scene (a photo without the interface must not carry it)
+            part_joints: self
+                .ik_editor
+                .poser_part_overlay()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map_or([0; 8], |(_, mask)| mask),
+            part_classes: self.ik_editor.poser_pick_classes(&self.world.avatar_lib.rig),
+            part_pick: self
+                .ik_editor
+                .poser_pick_subject()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .filter(|_| self.cursor_pos.0 >= 0.0 && self.cursor_pos.1 >= 0.0)
+                .map(|_| [self.cursor_pos.0 as u32, self.cursor_pos.1 as u32]),
+            // softer than a selection: the alpha scales the halo, its dark
+            // edge and the tint inside (PART_TINT)
+            part_color: {
+                let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
+                [r, g, b, 0.65]
+            },
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {
@@ -11286,17 +11341,29 @@ impl App {
             }
         }
         // AURORA_DEMO_POSER=compact-face: Ctrl held over the face while
-        // posing the Body, for its oval tint (`poser::world_hints`)
+        // posing the Body, for its oval tint; compact-body: over the chest
+        // while posing the Hands, for the body drawn from its mesh
+        // (`poser::world_hints`)
+        let hovered = std::env::var("AURORA_DEMO_POSER").ok().and_then(|mode| match mode.as_str() {
+            // the forehead: from the demo camera, behind, the nose falls on
+            // the head's marker, which takes the pointer first
+            "compact-face" => Some("mFaceForeheadCenter"),
+            "compact-body" => Some("mChest"),
+            _ => None,
+        });
         if self.demo
             && self.frame_count >= 560
-            && std::env::var("AURORA_DEMO_POSER").is_ok_and(|mode| mode == "compact-face")
+            && let Some(joint) = hovered
             && let Some(pos) = self
                 .ik_editor
-                .poser_focus(&self.world, "mFaceNoseBase")
+                .poser_focus(&self.world, joint)
                 .and_then(|point| self.build.cam.project(point))
         {
             raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
             raw.events.push(egui::Event::PointerMoved(pos));
+            // the renderer's part pick reads at the app's cursor
+            let ppp = ctx.pixels_per_point();
+            self.cursor_pos = (pos.x * ppp, pos.y * ppp);
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -11863,6 +11930,7 @@ impl App {
             if let Some(old) = self.retired_window.take() {
                 old.set_visible(false);
             }
+            crate::splash::shown();
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
             crate::crash::demo_thread_death();
@@ -18725,6 +18793,7 @@ impl ApplicationHandler for App {
             Ok(w) => w,
             Err(e) => {
                 log::error!("cannot create window: {e}");
+                crate::splash::close();
                 graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
@@ -18745,6 +18814,7 @@ impl ApplicationHandler for App {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 };
                 eprintln!("{message}");
+                crate::splash::close();
                 // unlike a missing card this is a crash, and a report is the
                 // only way to hear of it (#1892)
                 if matches!(e, aurora_render::RenderError::DeviceLost) {

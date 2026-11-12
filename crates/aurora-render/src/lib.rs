@@ -40,6 +40,7 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+mod part_pick;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]

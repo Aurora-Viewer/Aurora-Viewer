@@ -2,18 +2,17 @@
 //! it, then a wide box with the emoji, the volume of the nearby chat (a
 //! menu of whisper, say, shout, kept at every width: Ctrl+Enter shouts and
 //! Shift+Enter whispers whatever is chosen, like the chat bar), the text, the
-//! channel of the nearby chat (when the preferences show it,
-//! FSShowChatChannel) and send. The gestures are played from their
+//! channel of the nearby chat (when Preferences show its selector) and send.
+//! The gestures are played from their
 //! window, their keys or their trigger typed in the nearby chat.
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
-use super::{ChatUi, ConvAction, OutgoingChat, SendKey, ooc, parse_channel, send_enter, sidebar, suggest, typing};
+use super::{ChatUi, ConvAction, OutgoingChat, SendKey, ooc, send_enter, sidebar, suggest, typing};
 use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
 use aurora_net::ChatType;
-use egui::RichText;
 
 /// The line of who is typing, and the least height of the box.
 const TYPING_H: f32 = 18.0;
@@ -152,11 +151,10 @@ pub(super) fn show(
                             volume_button(ui, p, st, roomy);
                         }
                         // the right end first: what it takes fixes the field's width
-                        let (channel, _) = parse_channel(&draft);
-                        // the channel's chip: when the preferences show it, not
-                        // in the narrow layout ("/n" before the text still works)
-                        let chip = local && roomy && st.show_channel;
-                        let chip_w = if chip { 34.0 } else { 0.0 };
+                        // The Legacy Viewer's selector remains available at
+                        // every width; `/n` also works when it is hidden.
+                        let chip = local && st.show_channel;
+                        let chip_w = if chip { super::channel::RESERVED_WIDTH } else { 0.0 };
                         let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = super::input::hint(
                             ui,
@@ -186,7 +184,7 @@ pub(super) fn show(
                         suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
                         // `chip` is only for the nearby chat
                         if chip {
-                            channel_chip(ui, p, &mut draft, channel);
+                            super::channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
@@ -263,7 +261,7 @@ pub(super) fn show(
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
                     match st.selected {
                         None => {
-                            let (channel, message) = parse_channel(&text);
+                            let (channel, message) = super::channel::resolve(&text, st.selector_channel());
                             let volume = st.volume.chat_type();
                             actions.push(ConvAction::Local(OutgoingChat {
                                 message,
@@ -291,7 +289,7 @@ pub(super) fn show(
                 sent,
             });
             if local {
-                let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
+                let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
                 st.local_field(&resp, said, sent);
             }
             if !draft.is_empty() {
@@ -417,42 +415,6 @@ fn volume_button(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, named: bool) {
             if menu::check(ui, p, v.icon(), v.label(), st.volume == v, true) {
                 st.volume = v;
             }
-        }
-    });
-}
-
-/// The nearby chat's channel ("/0"): a click opens its number, which
-/// rewrites the "/n" opening the text.
-fn channel_chip(ui: &mut egui::Ui, p: &Palette, draft: &mut String, channel: i32) {
-    let text = format!("/{channel}");
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 22.0), egui::Sense::hover());
-    let resp = ui.interact(rect, sidebar::control_id("box-channel"), egui::Sense::click());
-    ui.painter().rect_filled(
-        rect,
-        ui.visuals().widgets.inactive.corner_radius,
-        if resp.hovered() { p.field.gamma_multiply(1.3) } else { p.field },
-    );
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        text,
-        egui::FontId::proportional(11.0),
-        if channel == 0 { p.muted } else { p.amber },
-    );
-    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-chat-channel-tip"));
-    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-        ui.set_min_width(170.0);
-        ui.label(RichText::new(aurora_i18n::tr!("ui-chat-channel")).size(11.5).color(p.muted));
-        let mut n = channel;
-        ui.add(egui::DragValue::new(&mut n).range(-2_147_483_648..=2_147_483_647).speed(0.2));
-        if n != channel {
-            let (_, message) = parse_channel(draft);
-            *draft = if n == 0 { message } else { format!("/{n} {message}") };
-        }
-        if channel != 0 && menu::item(ui, p, "x", aurora_i18n::tr!("ui-chat-channel-reset")) {
-            let (_, message) = parse_channel(draft);
-            *draft = message;
-            ui.close();
         }
     });
 }

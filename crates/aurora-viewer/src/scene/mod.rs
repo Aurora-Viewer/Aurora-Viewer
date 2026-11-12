@@ -877,6 +877,13 @@ pub struct Scene {
     /// The avatars and linksets chosen for the photo, every prim and
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
+    /// The avatar whose part the poser shows (its object index): its body
+    /// and what it wears go to `part_faces`, the part kept on its skinned
+    /// faces by the frame's `part_joints`.
+    pub poser_part: Option<usize>,
+    /// Whether the last lists drew any of that avatar's skinned faces (its
+    /// body or a rigged mesh): without, the poser keeps the bone outline.
+    pub poser_part_skinned: bool,
     /// The avatar an inventory drag would give to, and what it wears,
     /// outlined like the photo's (`mark_give_target`, #991).
     give_marks: (Option<usize>, std::collections::HashSet<usize>),
@@ -1572,6 +1579,8 @@ impl Scene {
             hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
+            poser_part: None,
+            poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
@@ -3783,9 +3792,21 @@ impl Scene {
         }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
-        let rig_order = skeleton_owner
-            .filter(|_| rigged)
-            .map(|(_, skeleton)| blend_order::RigOrder::of(world, idx, skeleton));
+        let rig_order = skeleton_owner.filter(|_| rigged).map(|(_, skeleton)| {
+            // eyelashes, brows: the joints of a nonzero weight all of the face
+            let skin = match geom_key {
+                GeomKey::Mesh { id, .. } => self.meshes.meta(&id).and_then(|m| m.skin),
+                _ => None,
+            };
+            let face_detail = skin.is_some_and(|skin| {
+                blend_order::face_detail(
+                    geom.joint_bounds
+                        .iter()
+                        .filter_map(|b| skin.joint_names.get(b.joint as usize).map(String::as_str)),
+                )
+            });
+            blend_order::RigOrder::of(world, idx, skeleton, face_detail)
+        });
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
@@ -4771,6 +4792,8 @@ impl Scene {
             let debug = debug_alpha.is_some() || pass_view;
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
+            // the poser's hovered part: its avatar and what it wears
+            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -4786,6 +4809,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
+                        || self.gpu.get(i).is_some_and(|g| posed(g, i))
                     {
                         visit.push((i, usage));
                     }
@@ -4805,6 +4829,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || captured(g, i)
+                        || posed(g, i)
                     {
                         visit.push((i, usage));
                     }
@@ -4830,6 +4855,7 @@ impl Scene {
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
+        let poser_part = self.poser_part;
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
@@ -4858,6 +4884,8 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            part_faces: Vec<DrawCmd>,
+            part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
@@ -4882,6 +4910,8 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            part_faces: Vec::new(),
+            part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
@@ -5043,6 +5073,14 @@ impl Scene {
                     {
                         l.select_faces.push(cmd);
                     }
+                    // the poser's hovered part: the subject's body and what it
+                    // wears (the shader keeps the part's own skinned
+                    // triangles; an unrigged worn object is coverage alone,
+                    // so the halo does not cross it)
+                    if poser_part.is_some() && avatar == poser_part && pass != Pass::Hidden {
+                        l.part_faces.push(cmd);
+                        l.part_skinned += usize::from(g.rigged || g.is_avatar);
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5145,6 +5183,8 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.part_faces.append(&mut b.part_faces);
+            a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -5191,6 +5231,11 @@ impl Scene {
             _ => blend_order::rig_runs,
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Layers {
+            blend_order::quiet_runs(&self.blend_tmp, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
+        } else {
+            self.lists.blend_depth_quiet.clear();
+        }
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         // under the water: back to front, the rigged first
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
@@ -5206,6 +5251,8 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.part_faces = result.part_faces;
+        self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
