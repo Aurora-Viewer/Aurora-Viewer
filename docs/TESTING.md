@@ -3785,6 +3785,10 @@ access to a grid.
 - `inspect`: "Inspect" at frame 740: the window lists the root and the
   linked prim, their figures and the totals; the prim of the highlighted
   row is outlined in yellow, the others in blue.
+- `detach-delete`: "Detach and Delete" (the trash icon of the menu's
+  bottom bar) at frame 740: Inventory's "Detach and Delete" confirmation
+  opens over the world and the Inventory window does not change. Capture
+  at frame 760.
 - `derender-part` (#3384): "Edit" on the backpack at frame 700, "Edit
   linked parts" ticked and its linked prim selected at 720, right click on
   that prim at 740, "Derender temporarily" at 780: only the linked prim
