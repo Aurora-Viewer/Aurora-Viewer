@@ -167,18 +167,29 @@ fn main() -> anyhow::Result<()> {
     }
     // a link opened while a viewer runs goes to it, before this one opens
     // anything (LLAppViewer::initConfiguration, SLURLPassToOtherInstance)
-    if let Some(url) = cli::get().url.as_deref()
+    if !cli::get().headless
+        && let Some(url) = cli::get().url.as_deref()
         && external_url::classify(url) != external_url::Request::Ignored
         && slurl_handoff::hand_off(url)
     {
         return Ok(());
     }
+    #[cfg(windows)]
+    if cli::get().headless {
+        unsafe {
+            windows_sys::Win32::System::Console::AttachConsole(u32::MAX);
+        }
+    }
     // on screen at once, while the renderer prepares (splash/)
-    splash::start();
+    if !cli::get().headless {
+        splash::start();
+    }
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
-    splash::settings();
+    if !cli::get().headless {
+        splash::settings();
+    }
     // The loader scans the layer manifests (and may call their pre-instance
     // hooks): on a thread of its own, like the crash report's list of layers
     // (crash/mod.rs), so the window never waits for this log line
@@ -223,7 +234,11 @@ fn main() -> anyhow::Result<()> {
     // they are named in the log when they arrive
     overlay_hooks::start();
 
-    let result = run_viewer();
+    let result = if cli::get().headless {
+        run_headless()
+    } else {
+        run_viewer()
+    };
     if let Err(error) = &result {
         crash::failure(&format!("Viewer startup / event loop error: {error:#}"));
     }
@@ -273,6 +288,68 @@ fn process_elevation() -> &'static str {
 #[cfg(not(windows))]
 fn process_elevation() -> &'static str {
     "not applicable"
+}
+
+fn run_headless() -> anyhow::Result<()> {
+    machine_id::start();
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads.saturating_sub(1).max(2))
+        .thread_name(|i| format!("aurora-worker-{i}"))
+        .build_global();
+    cache_location::init();
+
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = running.clone();
+    if let Err(e) = ctrlc_handler(r) {
+        log::warn!("headless ctrl-c handler not installed: {e}");
+    }
+
+    let mut app = app::App::new()?;
+    if cli::get().offscreen_gpu {
+        app.init_offscreen_gfx()?;
+    }
+    log::info!(
+        "Aurora headless mode started (offscreen_gpu={}, mcp_port={})",
+        cli::get().offscreen_gpu,
+        cli::get().mcp_port.unwrap_or(3847)
+    );
+    while running.load(std::sync::atomic::Ordering::Relaxed) && app.tick_headless() {
+        std::thread::sleep(std::time::Duration::from_millis(33));
+    }
+    app.shutdown_headless();
+    slurl_handoff::release();
+    aurora_render::pipeline_cache::flush(std::time::Duration::from_secs(2));
+    settings::Settings::wait_saved(std::time::Duration::from_secs(5));
+    drop(app);
+    Ok(())
+}
+
+fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::{AtomicPtr, Ordering};
+        static FLAG: AtomicPtr<std::sync::atomic::AtomicBool> = AtomicPtr::new(std::ptr::null_mut());
+        FLAG.store(std::sync::Arc::into_raw(running) as *mut _, Ordering::SeqCst);
+        unsafe extern "system" fn handler(_ctrl_type: u32) -> i32 {
+            let ptr = FLAG.load(Ordering::SeqCst);
+            if !ptr.is_null() {
+                unsafe { (*ptr).store(false, Ordering::SeqCst) };
+            }
+            1
+        }
+        unsafe {
+            if windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handler), 1) == 0 {
+                return Err("SetConsoleCtrlHandler failed".into());
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = running;
+        Ok(())
+    }
 }
 
 fn run_viewer() -> anyhow::Result<()> {

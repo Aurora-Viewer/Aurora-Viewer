@@ -6,16 +6,16 @@ impl App {
     pub(super) fn camera_aspect(&self) -> f32 {
         self.gfx
             .as_ref()
-            .map(|g| g.window.inner_size())
-            .filter(|size| size.width > 0 && size.height > 0)
-            .map_or(1.0, |size| size.width as f32 / size.height as f32)
+            .map(|g| g.renderer.size())
+            .filter(|&(w, h)| w > 0 && h > 0)
+            .map_or(1.0, |(w, h)| w as f32 / h as f32)
     }
     pub(super) fn rlva_overlay_blocks(&self) -> bool {
-        let size = self.gfx.as_ref().map(|g| g.window.inner_size());
-        let Some(size) = size.filter(|s| s.width > 0 && s.height > 0) else {
+        let size = self.gfx.as_ref().map(|g| g.renderer.size());
+        let Some((w, h)) = size.filter(|&(w, h)| w > 0 && h > 0) else {
             return false;
         };
-        let (u, v) = (self.cursor_pos.0 / size.width as f32, self.cursor_pos.1 / size.height as f32);
+        let (u, v) = (self.cursor_pos.0 / w as f32, self.cursor_pos.1 / h as f32);
         self.world
             .rlva_overlay_frames(Instant::now())
             .iter()

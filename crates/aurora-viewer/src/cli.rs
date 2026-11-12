@@ -39,6 +39,10 @@ pub struct Cli {
     pub mcp_port: Option<u16>,
     /// `--autologin`: log in immediately using the active saved account.
     pub autologin: bool,
+    /// `--headless`: run without a window or GPU renderer (implies `--mcp`).
+    pub headless: bool,
+    /// `--offscreen-gpu`: run headless with a windowless offscreen GPU renderer for screenshots.
+    pub offscreen_gpu: bool,
     help: bool,
     version: bool,
 }
@@ -129,6 +133,13 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
                 _ => crate::camera::VrView::FirstPerson,
             };
         } else if a == "--mcp" {
+            cli.mcp = true;
+        } else if a == "--headless" {
+            cli.headless = true;
+            cli.mcp = true;
+        } else if a == "--offscreen-gpu" {
+            cli.headless = true;
+            cli.offscreen_gpu = true;
             cli.mcp = true;
         } else if a == "--autologin" || a == "-autologin" {
             cli.autologin = true;

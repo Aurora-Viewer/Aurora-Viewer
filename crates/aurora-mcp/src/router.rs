@@ -1345,6 +1345,11 @@ impl McpRouter {
 
             "lsl_listen_script_output" => {
                 let object_id = parse_opt_uuid(args, "object_id")?;
+                let local_id = args
+                    .get("local_id")
+                    .or_else(|| args.get("object_local_id"))
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u32);
                 let duration_ms = args
                     .get("duration_ms")
                     .and_then(Value::as_u64)
@@ -1358,6 +1363,7 @@ impl McpRouter {
                         None,
                         ViewerRequest::LslListenScriptOutput {
                             object_id,
+                            local_id,
                             duration_ms,
                         },
                         5000,
@@ -1894,7 +1900,10 @@ impl McpRouter {
                     .or_else(|| args.get("local_id"))
                     .and_then(Value::as_u64)
                     .map(|v| v as u32);
-                let target_uuid = parse_opt_uuid(args, "target_uuid")?;
+                let target_uuid = match parse_opt_uuid(args, "target_uuid")? {
+                    Some(u) => Some(u),
+                    None => parse_opt_uuid(args, "object_id")?,
+                };
                 let offset = parse_vec3(args, "offset").ok();
                 let resp = self
                     .send_to_viewer(
@@ -3470,10 +3479,11 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "lsl_listen_script_output".into(),
-            description: "Capture llOwnerSay, llSay, and DEBUG_CHANNEL script output from a target prim.".into(),
+            description: "Capture llOwnerSay, llSay, and DEBUG_CHANNEL script output from a target prim (by local_id or object_id UUID).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "local_id": { "type": "integer" },
                     "object_id": { "type": "string" },
                     "duration_ms": { "type": "integer", "default": 500 }
                 }
@@ -3830,13 +3840,15 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "avatar_sit".into(),
-            description: "Sit on a target in-world object (by local_id or uuid) or stand up.".into(),
+            description: "Sit on a target in-world object (by local_id / target_local_id or target_uuid / object_id) or stand up.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": { "type": "string", "enum": ["sit", "stand"], "default": "sit" },
+                    "local_id": { "type": "integer" },
                     "target_local_id": { "type": "integer" },
                     "target_uuid": { "type": "string" },
+                    "object_id": { "type": "string" },
                     "offset": { "type": "array", "items": { "type": "number" } }
                 }
             }),

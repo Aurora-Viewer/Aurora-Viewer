@@ -674,7 +674,7 @@ impl App {
                 }
             }
             Action::Paste(target) => {
-                if let Some(text) = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()) {
+                if let Some(text) = self.gfx.as_mut().and_then(|g| g.egui_state.as_mut()?.clipboard_text()) {
                     self.script_editors.paste(&self.egui_ctx, target, &text);
                 }
             }

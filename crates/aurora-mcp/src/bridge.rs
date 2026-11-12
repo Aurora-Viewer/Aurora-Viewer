@@ -344,6 +344,7 @@ pub enum ViewerRequest {
     },
     LslListenScriptOutput {
         object_id: Option<Uuid>,
+        local_id: Option<u32>,
         duration_ms: u64,
     },
     LsdInspect {

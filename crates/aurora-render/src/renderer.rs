@@ -804,11 +804,13 @@ pub enum RenderError {
 /// `gpu_alloc::buffer_init` no longer panics there). Nothing fails on its
 /// own: a lost device takes every call without a word. As in `Backend`'s
 /// `Drop` (#1650), the surface is left to the process.
-fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surface<'static>>) -> Result<(), RenderError> {
+fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Option<Arc<wgpu::Surface<'static>>>) -> Result<(), RenderError> {
     if !lost.get() {
         return Ok(());
     }
-    std::mem::forget(surface.clone());
+    if let Some(surface) = surface {
+        std::mem::forget(surface.clone());
+    }
     Err(RenderError::DeviceLost)
 }
 
@@ -1584,8 +1586,8 @@ impl FrameTarget {
 pub(crate) struct Backend {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// Destroyed by hand in `Drop`, unless the device is lost.
-    surface: std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>,
+    /// Destroyed by hand in `Drop`, unless the device is lost (None in offscreen mode).
+    surface: Option<std::mem::ManuallyDrop<Arc<wgpu::Surface<'static>>>>,
     config: wgpu::SurfaceConfiguration,
     external: bool,
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -1812,7 +1814,9 @@ impl Drop for Backend {
         }
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
+        if let Some(surface) = &mut self.surface {
+            unsafe { std::mem::ManuallyDrop::drop(surface) };
+        }
     }
 }
 
@@ -1851,7 +1855,7 @@ struct XrWorld {
 pub(crate) struct BackendInit {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub surface: Arc<wgpu::Surface<'static>>,
+    pub surface: Option<Arc<wgpu::Surface<'static>>>,
     pub external: bool,
     pub vr: Arc<crate::vr_control::Control>,
     pub output_format: Option<wgpu::TextureFormat>,
@@ -2980,30 +2984,39 @@ impl Backend {
             lost,
             gpu_frames,
         } = init;
-        let caps = surface.get_capabilities(&adapter);
-        let format = output_format
-            .or_else(|| {
-                caps.formats
-                    .iter()
-                    .copied()
-                    .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
-                    .or_else(|| caps.formats.first().copied())
-            })
-            .ok_or_else(|| RenderError::Surface("no surface formats".into()))?;
+        let (format, present_modes, present_mode, surface_usage, alpha_mode) = if let Some(surface) = &surface {
+            let caps = surface.get_capabilities(&adapter);
+            let format = output_format
+                .or_else(|| {
+                    caps.formats
+                        .iter()
+                        .copied()
+                        .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
+                        .or_else(|| caps.formats.first().copied())
+                })
+                .ok_or_else(|| RenderError::Surface("no surface formats".into()))?;
+            let present_modes = caps.present_modes.clone();
+            let present_mode = crate::present::choose(&present_modes, vsync, crate::present::forced());
+            let mut surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+            if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
+                surface_usage |= wgpu::TextureUsages::COPY_SRC;
+            }
+            let alpha_mode = caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto);
+            (format, present_modes, present_mode, surface_usage, alpha_mode)
+        } else {
+            let format = output_format.unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
+            let present_modes = vec![wgpu::PresentMode::Fifo];
+            let present_mode = wgpu::PresentMode::Fifo;
+            let surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+            (format, present_modes, present_mode, surface_usage, wgpu::CompositeAlphaMode::Opaque)
+        };
         let surface_srgb = format.is_srgb();
-        // one rule for the creation and for later vsync switches (present.rs)
-        let present_modes = caps.present_modes.clone();
-        let present_mode = crate::present::choose(&present_modes, vsync, crate::present::forced());
         log::info!(
             "presentation: {} (vsync {}, surface supports {:?})",
             crate::present::name(present_mode),
             if vsync { "on" } else { "off" },
             present_modes
         );
-        let mut surface_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        if caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
-            surface_usage |= wgpu::TextureUsages::COPY_SRC;
-        }
         let config = wgpu::SurfaceConfiguration {
             usage: surface_usage,
             format,
@@ -3012,11 +3025,11 @@ impl Backend {
             height: height.max(1),
             present_mode,
             desired_maximum_frame_latency: 2,
-            alpha_mode: caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto),
+            alpha_mode,
             view_formats: vec![],
         };
-        if !external {
-            crate::present::configure(&surface, &device, &config);
+        if !external && let Some(surface) = &surface {
+            crate::present::configure(surface, &device, &config);
         }
 
         // ---- layouts
@@ -3514,7 +3527,7 @@ impl Backend {
         let mut r = Backend {
             device,
             queue,
-            surface: std::mem::ManuallyDrop::new(surface),
+            surface: surface.map(std::mem::ManuallyDrop::new),
             config,
             external,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -5405,8 +5418,8 @@ impl Backend {
         }
         self.config.width = width;
         self.config.height = height;
-        if !self.external {
-            crate::present::configure(&self.surface, &self.device, &self.config);
+        if !self.external && let Some(surface) = &self.surface {
+            crate::present::configure(surface, &self.device, &self.config);
         }
         self.rebuild_targets();
     }
@@ -5796,8 +5809,8 @@ impl Backend {
             return;
         }
         self.config.present_mode = mode;
-        if !self.external {
-            crate::present::configure(&self.surface, &self.device, &self.config);
+        if !self.external && let Some(surface) = &self.surface {
+            crate::present::configure(surface, &self.device, &self.config);
         }
     }
 
@@ -6235,7 +6248,9 @@ impl Backend {
                 log::info!("XR world ended: {e}");
                 self.vr.finish(false);
                 self.motion_cut = true;
-                crate::present::configure(&self.surface, &self.device, &self.config);
+                if let Some(surface) = &self.surface {
+                    crate::present::configure(surface, &self.device, &self.config);
+                }
                 return Err(Box::new(packet));
             }
         };
@@ -6333,20 +6348,26 @@ impl Backend {
         if let Some(grading) = grading.as_ref() {
             grading.encode(&self.device, &self.queue, &eyes.textures, grade);
         }
-        first.stats.presented = world.mirror.present(
-            &self.device,
-            &self.queue,
-            &self.surface,
-            &sources[0],
-            (mirror_size.0, mirror_size.1),
-            &mut self.egui,
-            mirror_ui.as_ref(),
-        );
+        first.stats.presented = if let Some(surface) = &self.surface {
+            world.mirror.present(
+                &self.device,
+                &self.queue,
+                surface,
+                &sources[0],
+                (mirror_size.0, mirror_size.1),
+                &mut self.egui,
+                mirror_ui.as_ref(),
+            )
+        } else {
+            false
+        };
         if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
             self.vr.finish(true);
             self.motion_cut = true;
-            crate::present::configure(&self.surface, &self.device, &self.config);
+            if let Some(surface) = &self.surface {
+                crate::present::configure(surface, &self.device, &self.config);
+            }
         } else {
             self.xr_world = Some(world);
         }
@@ -6643,17 +6664,33 @@ impl Backend {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })))
-        } else {
-            match self.surface.get_current_texture() {
+        } else if let Some(surface) = &self.surface {
+            match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Some(FrameTarget::Surface(t)),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     if !self.external {
-                        crate::present::configure(&self.surface, &self.device, &self.config);
+                        crate::present::configure(surface, &self.device, &self.config);
                     }
                     None
                 }
                 _ => None,
             }
+        } else {
+            // Headless offscreen GPU mode: render into an offscreen texture, never presented.
+            Some(FrameTarget::Offscreen(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("headless_offscreen"),
+                size: wgpu::Extent3d {
+                    width: self.config.width,
+                    height: self.config.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })))
         };
         // (before the skip: a frame without a surface image, as in a resize,
         // must not take the notice away)

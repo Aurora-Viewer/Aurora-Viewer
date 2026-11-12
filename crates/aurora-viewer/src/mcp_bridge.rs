@@ -421,11 +421,11 @@ impl App {
     }
 
     /// Drains queued MCP requests and progresses multi-frame state machines within `1.5ms`.
-    pub(super) fn update_mcp_bridge(&mut self, renderer: &mut Renderer) {
+    pub(super) fn update_mcp_bridge(&mut self, mut renderer: Option<&mut Renderer>) {
         self.init_mcp_bridge();
         let start = Instant::now();
 
-        self.progress_mcp_state_machines(renderer);
+        self.progress_mcp_state_machines(renderer.as_deref_mut());
 
         while start.elapsed() < MCP_FRAME_BUDGET {
             let Some(rx) = self.mcp_bridge.rx.as_mut() else {
@@ -434,10 +434,12 @@ impl App {
             let Ok(envelope) = rx.try_recv() else {
                 break;
             };
-            self.handle_mcp_envelope(envelope, renderer);
+            self.handle_mcp_envelope(envelope, renderer.as_deref_mut());
         }
 
-        self.progress_mcp_captures(renderer);
+        if let Some(r) = renderer {
+            self.progress_mcp_captures(r);
+        }
     }
 
     fn progress_mcp_captures(&mut self, renderer: &mut Renderer) {
@@ -460,7 +462,7 @@ impl App {
         }
     }
 
-    fn progress_mcp_state_machines(&mut self, _renderer: &mut Renderer) {
+    fn progress_mcp_state_machines(&mut self, _renderer: Option<&mut Renderer>) {
         let now = Instant::now();
 
         // 1. Progress pending PrimRezNew transactions
@@ -682,7 +684,7 @@ impl App {
         }
     }
 
-    fn handle_mcp_envelope(&mut self, envelope: McpRequestEnvelope, renderer: &mut Renderer) {
+    fn handle_mcp_envelope(&mut self, envelope: McpRequestEnvelope, mut renderer: Option<&mut Renderer>) {
         let McpRequestEnvelope {
             lease_id: _,
             request,
@@ -698,9 +700,11 @@ impl App {
                 let pos = self.world.agent.position;
                 let rot = self.world.agent.body_rotation();
                 let vel = self.world.agent.velocity;
-                let (w, h) = renderer.size();
+                let (w, h) = renderer.as_deref().map_or((0, 0), |r| r.size());
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
                     "connected": self.in_world(),
+                    "headless": crate::cli::get().headless,
+                    "offscreen_gpu": crate::cli::get().offscreen_gpu,
                     "screen": format!("{:?}", self.screen),
                     "login_state": {
                         "error": self.login_form.error.as_deref(),
@@ -1391,16 +1395,22 @@ impl App {
                     let frame = self.compute_normalized_depth_frame(
                         max_dimensions.0,
                         max_dimensions.1,
-                        renderer,
+                        renderer.as_deref(),
                     );
                     let _ = reply_tx.send(Ok(ViewerResponse::FrameCaptured(frame)));
                 }
                 CaptureBufferType::ColorRgb => {
-                    self.mcp_bridge.pending_captures.push_back(PendingCapture {
-                        include_ui,
-                        dispatched_to_renderer: false,
-                        reply_tx,
-                    });
+                    if renderer.is_none() {
+                        let _ = reply_tx.send(Err(McpError::Internal(
+                            "viewport_capture ColorRgb is unavailable in CPU --headless mode; restart with --offscreen-gpu".into(),
+                        )));
+                    } else {
+                        self.mcp_bridge.pending_captures.push_back(PendingCapture {
+                            include_ui,
+                            dispatched_to_renderer: false,
+                            reply_tx,
+                        });
+                    }
                 }
             },
             ViewerRequest::InventoryBrowse {
@@ -1491,7 +1501,7 @@ impl App {
                 };
                 self.send(NetCommand::Build(BuildCmd::Add(Box::new(prim))));
                 // Immediately check if synchronous DemoSim already added the prim
-                self.progress_mcp_state_machines(renderer);
+                self.progress_mcp_state_machines(renderer.as_deref_mut());
             }
             ViewerRequest::PrimTransform { transforms } => {
                 let resp = self.handle_mcp_prim_transform(transforms);
@@ -1554,9 +1564,10 @@ impl App {
             }
             ViewerRequest::LslListenScriptOutput {
                 object_id,
+                local_id,
                 duration_ms: _,
             } => {
-                let resp = self.handle_mcp_lsl_listen_output(object_id);
+                let resp = self.handle_mcp_lsl_listen_output(object_id, local_id);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::LsdInspect {
@@ -2296,11 +2307,11 @@ impl App {
         &self,
         width: u32,
         height: u32,
-        renderer: &Renderer,
+        renderer: Option<&Renderer>,
     ) -> RawCapturedFrame {
         let w = width.clamp(32, 1024);
         let h = height.clamp(32, 1024);
-        let (win_w, win_h) = renderer.size();
+        let (win_w, win_h) = renderer.map_or((1280, 720), |r| r.size());
         let aspect = win_w.max(1) as f32 / win_h.max(1) as f32;
         let view_proj = self.camera.proj(aspect) * self.camera.view();
         let inv_vp = view_proj.inverse();
@@ -3207,10 +3218,19 @@ impl App {
     fn handle_mcp_lsl_listen_output(
         &self,
         object_id: Option<Uuid>,
+        local_id: Option<u32>,
     ) -> Result<ViewerResponse, McpError> {
+        let resolved_object_id = if object_id.is_some() {
+            object_id
+        } else if let Some(lid) = local_id {
+            let (_, uuid) = self.resolve_prim_by_local_id(lid)?;
+            Some(uuid)
+        } else {
+            None
+        };
         let mut lines = Vec::new();
         for line in self.world.script_debug.lines.iter().rev() {
-            if let Some(filter_id) = object_id
+            if let Some(filter_id) = resolved_object_id
                 && line.source != filter_id
             {
                 continue;
@@ -3232,7 +3252,7 @@ impl App {
             ) {
                 continue;
             }
-            if let Some(filter_id) = object_id
+            if let Some(filter_id) = resolved_object_id
                 && line.source != filter_id
             {
                 continue;
@@ -3647,7 +3667,7 @@ impl App {
         position: [f32; 3],
         select: bool,
         reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
-        renderer: &mut Renderer,
+        renderer: Option<&mut Renderer>,
     ) {
         let Some(handle) = self.world.main_region else {
             let _ = reply_tx.send(Err(McpError::NotInWorld));
@@ -4988,6 +5008,12 @@ impl App {
             return Err(McpError::NotInWorld);
         };
 
+        let can_build = (p.flags & aurora_net::parcel_flags::CREATE_OBJECTS != 0)
+            || (p.owner_id == self.world.agent_id);
+        let can_run_scripts = (p.flags & aurora_net::parcel_flags::ALLOW_OTHER_SCRIPTS != 0)
+            || (p.owner_id == self.world.agent_id);
+        let ground_height_at_avatar = self.world.ground_height(self.world.agent.position);
+
         Ok(ViewerResponse::Json(json!({
             "local_id": p.local_id,
             "name": p.name,
@@ -4998,6 +5024,11 @@ impl App {
             "area_m2": p.area,
             "max_prims": p.max_prims,
             "total_prims": p.total_prims,
+            "parcel_prim_capacity": p.max_prims,
+            "parcel_prims_used": p.total_prims,
+            "can_build": can_build,
+            "can_run_scripts": can_run_scripts,
+            "ground_height_at_avatar": ground_height_at_avatar,
             "owner_prims": p.owner_prims,
             "group_prims": p.group_prims,
             "other_prims": p.other_prims,

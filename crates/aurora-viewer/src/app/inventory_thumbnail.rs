@@ -304,13 +304,13 @@ impl App {
         self.inventory_images.copied = if clipboard {
             None
         } else {
-            let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
+            let text = self.gfx.as_mut().and_then(|g| g.egui_state.as_mut()?.clipboard_text()).unwrap_or_default();
             Some((asset, text))
         };
     }
     pub(super) fn poll_inventory_images(&mut self) {
         while let Some(request) = self.inventory_images.paste.pop_front() {
-            let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
+            let text = self.gfx.as_mut().and_then(|g| g.egui_state.as_mut()?.clipboard_text()).unwrap_or_default();
             match pasted_image(self.inventory_images.copied.as_ref(), &text) {
                 Ok(asset) => self.fetch_inventory_image(request, asset, false),
                 Err(_) => self.finish_inventory_image(

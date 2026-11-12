@@ -200,20 +200,23 @@ impl App {
         let Some(old) = self.gfx.take() else {
             return false;
         };
+        let Some(old_win) = old.window else {
+            return false;
+        };
         let started = Instant::now();
         let plan = WindowPlan {
-            size: old.window.inner_size().into(),
-            position: old.window.outer_position().ok(),
-            active: old.window.has_focus(),
-            fullscreen: old.window.fullscreen(),
+            size: old_win.inner_size().into(),
+            position: old_win.outer_position().ok(),
+            active: old_win.has_focus(),
+            fullscreen: old_win.fullscreen(),
         };
-        let maximized = old.window.is_maximized();
-        let Gfx { mut renderer, window, .. } = old;
+        let maximized = old_win.is_maximized();
+        let mut renderer = old.renderer;
         self.forget_gpu_scene(&mut renderer);
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
         drop(renderer);
-        self.retired_window = Some(window);
+        self.retired_window = Some(old_win);
         if safe {
             self.safe_graphics_after_losses();
         }
@@ -238,8 +241,8 @@ impl App {
         let egui_state = self.egui_state_for(&window, &renderer);
         self.gfx = Some(Gfx {
             renderer,
-            egui_state,
-            window,
+            egui_state: Some(egui_state),
+            window: Some(window),
             shown: false,
             maximize_on_show: maximized,
         });
