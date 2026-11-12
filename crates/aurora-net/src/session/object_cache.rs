@@ -334,6 +334,7 @@ mod tests {
             login,
             sims: addrs.map(|addr| (addr, Sim::new(addr, 10))).into(),
             main: Some(addrs[0]),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,

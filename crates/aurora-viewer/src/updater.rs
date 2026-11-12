@@ -562,6 +562,15 @@ impl Updater {
         let tx = self.tx.clone();
         self.state = State::Handoff;
         std::thread::spawn(move || {
+            // the user's click gave this viewer the foreground: its helper's
+            // update window (`splash/`) may take it once this one closes
+            #[cfg(windows)]
+            // SAFETY: no pointer; a refusal only leaves that window behind.
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+                    windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+                );
+            }
             let result = work.handoff(&version, maintenance).map_err(|e| {
                 log::warn!("update handoff: {e:#}");
                 Failure::Startup

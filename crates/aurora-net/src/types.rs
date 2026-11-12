@@ -1402,6 +1402,8 @@ pub enum NetEvent {
         item_id: Uuid,
         running: bool,
         mono: Option<bool>,
+        /// The event queue's Luau and LuauLanguage flags; `Off` when absent.
+        luau: crate::scripts::Luau,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -2269,6 +2271,9 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        /// A script (asset type 10) written in Lua ([`crate::scripts::lua_source`]):
+        /// compiled for "luau", never "mono".
+        lua: bool,
         data: Vec<u8>,
     },
     /// Create a named notecard, then upload its text after the matching

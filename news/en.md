@@ -26,6 +26,13 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-12 — Aurora 0.9.8: fixes for building, chat and AMD cards
+Select face picks the faces of what you wear again, and Derender with Edit linked parts hides only the selected part. The channel selector shows by every nearby chat input and keeps the channel you chose. On AMD cards, tree leaves are no longer drawn as squares and mesh hair has no more streaks, and blended eyelashes stay visible behind mesh hair. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)
+
+## 2026-11-12 — Startup, voice and the poser
+A small Aurora window now shows while the viewer starts and after an update's restart. Nearby voice connects on slow, high-latency links, invisible HUD buttons take a left click again, and the avatar complexity notice no longer repeats (off by default, Preferences › Graphics › Avatars › Complexity notices). In the poser, holding Ctrl highlights the part of the avatar's meshes that Ctrl + click selects. Thanks to Bruica, iGao, KanikaBreed, Nowalski and Odessa-Draekavik.
+
 ## 2026-11-12 — Aurora 0.9.7: a rethought Build window, script recovery and Destinations
 The Build window is reorganised: the selection sits in a header that folds away, the options form columns above the tabs that you arrange as you like with Organize options…, position, size and rotation keep the full width, and Contents gets its own display menu. After a crash or a lost connection, Script recovery brings back the unsaved changes of your scripts at the next login, in Lost And Found. Destinations opens Aurora's own window on the Destination Guide: search, categories, ratings and a one-click teleport. Your cache and settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.7)
