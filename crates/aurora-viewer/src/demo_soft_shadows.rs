@@ -12,6 +12,10 @@
 //!   AURORA_SHADOW_SOFTNESS=<x> compare). Add AURORA_DEMO_CROWD=1 for a
 //!   standing avatar.
 //!
+//! - `slope`: `near` plus a ramp tilted 35 degrees away from the sun with a thin
+//!   post on it, for the contact shadow on a face the light skims even at a
+//!   high sun.
+//!
 //! From the start position, or AURORA_DEMO_POS="x,y".
 
 use super::{HANDLE, height, prim, shape, te};
@@ -27,7 +31,7 @@ const FIRST_ID: u32 = 87_000;
 
 /// Whether the scenario is asked for.
 pub fn enabled() -> bool {
-    std::env::var("AURORA_DEMO_SOFT_SHADOWS").is_ok_and(|v| matches!(v.trim(), "1" | "near"))
+    std::env::var("AURORA_DEMO_SOFT_SHADOWS").is_ok_and(|v| matches!(v.trim(), "1" | "near" | "slope"))
 }
 
 /// The sun the scenario stands in, 35 degrees up, in front of the start view so that the shadows fall towards it
@@ -59,7 +63,8 @@ pub fn events() -> Vec<NetEvent> {
     }
     // `near`: the same things at 0.4 of the distance, for the contact
     // under the table and at the foot of the pole
-    let near = std::env::var("AURORA_DEMO_SOFT_SHADOWS").is_ok_and(|v| v.trim() == "near");
+    let mode = std::env::var("AURORA_DEMO_SOFT_SHADOWS").unwrap_or_default();
+    let near = matches!(mode.trim(), "near" | "slope");
     let scale = if near { 0.4 } else { 1.0 };
     let look = Vec3::new(0.8, 0.4, 0.0).normalize();
     let across = Vec3::new(-look.y, look.x, 0.0);
@@ -167,6 +172,27 @@ pub fn events() -> Vec<NetEvent> {
         Vec3::new(0.09, 0.09, 3.5),
         wood,
     ));
+    // `slope`: a second thin post on a ramp tilted 35 degrees away from the
+    // sun, whose face the light all but skims even at a high sun
+    if mode.trim() == "slope" {
+        let sun = super::sun_override().unwrap_or(Vec3::new(0.0, 1.0, 1.0)).normalize();
+        let away = -Vec3::new(sun.x, sun.y, 0.0).normalize_or_zero();
+        let tilt = Quat::from_axis_angle(Vec3::Z.cross(away).normalize(), 35.0_f32.to_radians());
+        let centre = ground(eye + (look * 6.0 + across * 2.5) * scale);
+        let top = centre + Vec3::Z * 1.3;
+        objects.push(prim(
+            next(),
+            top,
+            tilt,
+            Vec3::new(4.0, 4.0, 0.15),
+            shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+            te(white, 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        // (the face is 0.075 m above the ramp's middle along its normal)
+        objects.push(block(next(), top + tilt * Vec3::Z * 0.075, Vec3::new(0.09, 0.09, 1.5), wood));
+    }
     log::info!("demo soft shadows: {} prims", objects.len());
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }

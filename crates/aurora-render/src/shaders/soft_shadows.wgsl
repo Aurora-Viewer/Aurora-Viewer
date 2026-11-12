@@ -193,6 +193,10 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
     let facing = dot(n, to_light);
     let slope = 2.0 * radius * depth_per_metre * facing / max(facing * facing, 1e-6);
     var gradient = vec2<f32>(-dot(n, row_x * radius), dot(n, row_y * radius)) * slope;
+    // how far nearer the light the receiver's own surface can read over one
+    // texel, at any angle (the 1 / facing of a face the light skims is capped
+    // at a facing of 0.05, 3 degrees)
+    let own = texel * (abs(gradient.x) + abs(gradient.y)) * min(1.0, abs(facing) / 0.05);
     gradient *= smoothstep(0.10, 0.20, abs(facing));
 
     // the texel in metres, and the half width the filter of before spans
@@ -222,6 +226,8 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         let block = f32(4u << level) * texel;
         var separation = 0.0;
         var blockers = 0.0;
+        var near_sum = 0.0;
+        var near_n = 0.0;
         {
             let local = clamp(uv, vec2<f32>(texel), vec2<f32>(1.0 - texel));
             let d = textureGather(shadow_map, point_sampler, (local + tile) * tile_scale);
@@ -230,19 +236,25 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected));
             separation += dot(gap, hit);
             blockers += dot(hit, vec4<f32>(1.0));
+            // (the texels of the receiver's own surface, nearer the light by
+            // up to `own`, are not the casters the gathers are held to)
+            let casters = hit * select(vec4<f32>(0.0), vec4<f32>(1.0), gap > vec4<f32>(own));
+            near_sum += dot(gap, casters);
+            near_n += dot(casters, vec4<f32>(1.0));
         }
-        // The gathers' blockers count by how far they are from the receiver,
-        // and a far one can be the receiver's own surface: at a grazing sun
-        // a block of the minimum depths reaches the face's sunward end, a
-        // few metres nearer the light than the point, whatever the plane
-        // says. Averaged with a thin caster's true gap there (a post at its
-        // foot: centimetres), such hits drowned it, the penumbra came out
-        // wide and the shadow faded in over a metre from the contact. So
-        // when the point's own texels see a caster, only gathered blockers
-        // within a few times its gap (and 10 cm) count: a caster is about as
-        // far from the point across the search as at the point.
-        let near_gap = select(1e30, separation / blockers, blockers > 0.0);
-        let accept = vec4<f32>(NEAR_REACH * near_gap + 0.1 * depth_per_metre);
+        // The mean gap of the blockers sets the penumbra, and the search can
+        // fill with casters much farther from the receiver than the thin one
+        // at the point (at a low light, in the measured demo, a post at its
+        // foot): averaged in, their metres widened the penumbra at the contact
+        // and the shadow faded in from the post. So where the point's own
+        // texels see a caster, a gathered blocker weighs 1 up to `accept`
+        // (`NEAR_REACH` times that caster's gap plus a floor of 10 cm or two
+        // texels in the cascade) and falls to 0 at twice it, smoothly so that
+        // no edge or ridge follows the limit; a point whose texels see none
+        // takes every hit. `blockers` counts them all, weighted or not.
+        let near_gap = select(1e30, near_sum / near_n, near_n > 0.0);
+        let accept = NEAR_REACH * near_gap + max(0.1, 2.0 * texel_m) * depth_per_metre;
+        var weight = blockers;
         let gathers = u32(p.light.w);
         for (var i = 0u; i < gathers; i++) {
             let o = rot * DISK[(i * 32u) / gathers] * search;
@@ -252,8 +264,10 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             // depth is taken at the far side of the block
             let expected = q.z + dot(gradient, local - uv) - bias - 0.5 * block * (abs(gradient.x) + abs(gradient.y));
             let gap = max(vec4<f32>(expected) - d, vec4<f32>(0.0));
-            let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected) & gap <= accept);
-            separation += dot(gap, hit);
+            let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected));
+            let near = hit * (vec4<f32>(1.0) - smoothstep(vec4<f32>(accept), vec4<f32>(2.0 * accept), gap));
+            separation += dot(gap, near);
+            weight += dot(near, vec4<f32>(1.0));
             blockers += dot(hit, vec4<f32>(1.0));
         }
         // no caster within the search: lit, unless one stands within the
@@ -273,7 +287,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         {
             // the light's half width seen from the receiver, at the blockers'
             // mean distance; the least is the floor
-            let reach = separation / blockers / depth_per_metre * p.light.x;
+            let reach = separation / max(weight, 1e-3) / depth_per_metre * p.light.x;
             filter_m = clamp(reach, FILTER_FLOOR, max(p.light.y, FILTER_FLOOR));
             // the rotated taps span at least 3/4 of a texel: it is that
             // footprint that is compared with the filter of before

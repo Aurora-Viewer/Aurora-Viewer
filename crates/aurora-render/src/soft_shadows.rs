@@ -92,27 +92,43 @@ pub(crate) fn filter_radius(gap: f32, softness: f32) -> f32 {
 }
 
 /// How many times the gap of the casters at the point itself a gathered
-/// blocker may be from the receiver and still count (`NEAR_REACH` in
+/// blocker may be from the receiver and still weigh 1 (`NEAR_REACH` in
 /// soft_shadows.wgsl).
 #[cfg(test)]
 pub(crate) const NEAR_REACH: f32 = 3.0;
 
-/// The mean gap, in metres, the search averages over its blockers, the
-/// point's own texels first (`local`: their gaps) then the gathered ones
-/// (`gathered`), which count only within `NEAR_REACH` times the mean of the
-/// local ones and 10 cm, when the local ones found a caster. Mirrored by
-/// `cascade_soft` in soft_shadows.wgsl (the tests state the model).
+/// The weight of a gathered blocker `gap` metres from the receiver when the
+/// limit is `accept`: 1 up to it, 0 from twice it, a smoothstep between.
 #[cfg(test)]
-pub(crate) fn mean_gap(local: &[f32], gathered: &[f32]) -> f32 {
-    let near = if local.is_empty() {
+pub(crate) fn blocker_weight(gap: f32, accept: f32) -> f32 {
+    let t = ((gap - accept) / accept).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// The mean gap, in metres, the search averages over its blockers: the
+/// point's own texels' (`local`) all count; the gathered ones (`gathered`)
+/// weigh by [`blocker_weight`] against `NEAR_REACH` times the mean of the
+/// local gaps over `own` (the receiver's own surface reads that much nearer
+/// the light across a texel: not a caster) plus a floor of 10 cm or two
+/// texels (`texel_m`). With no such caster at the point every hit weighs 1.
+/// Mirrored by `cascade_soft` in soft_shadows.wgsl (the tests state the model).
+#[cfg(test)]
+pub(crate) fn mean_gap(local: &[f32], gathered: &[f32], own: f32, texel_m: f32) -> f32 {
+    let casters: Vec<f32> = local.iter().copied().filter(|&g| g > own).collect();
+    let near = if casters.is_empty() {
         f32::INFINITY
     } else {
-        local.iter().sum::<f32>() / local.len() as f32
+        casters.iter().sum::<f32>() / casters.len() as f32
     };
-    let accept = NEAR_REACH * near + 0.1;
-    let kept = local.iter().copied().chain(gathered.iter().copied().filter(|&g| g <= accept));
-    let (sum, n) = kept.fold((0.0, 0), |(s, n), g| (s + g, n + 1));
-    if n == 0 { 0.0 } else { sum / n as f32 }
+    let accept = NEAR_REACH * near + (2.0 * texel_m).max(0.1);
+    let mut sum: f32 = local.iter().sum();
+    let mut weight = local.len() as f32;
+    for &g in gathered {
+        let w = blocker_weight(g, accept);
+        sum += g * w;
+        weight += w;
+    }
+    sum / weight.max(1e-3)
 }
 
 /// Half the width, in metres, the filter of before spans in a cascade whose
@@ -688,36 +704,59 @@ mod tests {
         assert!((filter_radius(10.0, 0.23) - 0.046).abs() < 1e-4);
     }
 
-    /// A thin post's contact shadow: at its foot the true gap is centimetres,
-    /// but at a grazing sun the blocks of minimum depths also return the
-    /// receiver's own sunward ground, metres nearer the light. Those hits
-    /// used to drown the contact gap, the penumbra widened there and a thin
-    /// shadow faded in over a metre from the post (softer at the contact
-    /// than away from it).
+    /// A thin post's contact shadow: casters much farther from the receiver
+    /// than the post (metres, against its centimetres at the foot) used to
+    /// drown its gap in the mean, the penumbra widened there and a thin shadow
+    /// faded in from the post, lighter at the contact than away from it.
     #[test]
-    fn a_contact_shadow_is_not_widened_by_the_ground_the_search_sees() {
-        let (local, ground) = ([0.01_f32; 4], [3.0_f32; 24]);
-        // without the rule the mean is metres: a filter three times the floor
-        let all = local.iter().chain(&ground).sum::<f32>() / 28.0;
-        assert!(filter_radius(all, 1.0) > 3.0 * FILTER_FLOOR);
-        // with it the ground is out and the contact keeps the floor
-        let kept = mean_gap(&local, &ground);
-        assert!((kept - 0.01).abs() < 1e-6);
+    fn a_contact_shadow_is_not_widened_by_far_blockers() {
+        let (own, texel_m) = (0.2, 0.02);
+        let far = [3.0_f32; 24];
+        // past the receiver's own texel slope, the post's gap is the mean
+        let kept = mean_gap(&[0.3; 4], &far, own, texel_m);
+        assert!((kept - 0.3).abs() < 1e-5);
         assert_eq!(filter_radius(kept, 1.0), FILTER_FLOOR);
-        // away from the post the local gap is large and the same hits stay
-        let far = [2.9_f32; 4];
-        assert!(mean_gap(&far, &ground) > 2.9);
-        // a point whose texels see no caster (a penumbra) takes every hit
-        assert_eq!(mean_gap(&[], &ground), 3.0);
-        // the darkness a thin stripe keeps never grows towards the caster:
-        // the filter along a contact shadow only widens with the gap
-        let mut last = 0.0;
-        for k in 0..=100 {
-            let d = 0.01 + 0.05 * k as f32;
-            let r = filter_radius(mean_gap(&[d; 4], &ground), 1.0);
-            assert!(r >= last - 1e-6, "monotonic at {d} m");
-            last = r;
+        // in it the texels cannot tell the post from the receiver's own
+        // surface, so nothing is held back: the filter of before's own fade
+        // (a texel's slope along the ground) is all that is left there
+        assert!(mean_gap(&[0.1; 4], &far, own, texel_m) > 2.0);
+        // a tall caster's penumbra over a point whose texels see only its own
+        // surface (nearer the light by a little): every hit weighs 1
+        let roof = [3.0_f32; 28];
+        let m = mean_gap(&[0.15, 0.15, 0.0, 0.0], &roof, own, texel_m);
+        assert!((m - 3.0 * 28.0 / 32.0 - 0.3 / 32.0).abs() < 1e-4);
+        assert!(filter_radius(m, 1.0) > 0.05);
+        // and over a point whose texels see the roof too: all of it stays
+        assert!((mean_gap(&[3.0; 4], &roof, own, texel_m) - 3.0).abs() < 1e-5);
+        // a caster a little farther than the one at the point stays whole
+        assert!((mean_gap(&[0.3; 4], &[0.5; 8], own, texel_m) - 5.2 / 12.0).abs() < 1e-5);
+    }
+
+    /// Along a contact shadow the mean gap, and so the filter and the share of
+    /// the filter of before, follow the post's gap with no jump: the limit
+    /// between the casters that count and those that do not is a smoothstep.
+    #[test]
+    fn the_mean_gap_has_no_jump_along_a_contact_shadow() {
+        let (own, texel_m) = (0.2_f32, 0.02_f32);
+        let far = [3.0_f32; 24];
+        let hard = |d: f32| {
+            let accept = NEAR_REACH * d + 0.1;
+            let kept: Vec<f32> = far.iter().copied().filter(|&g| g <= accept).collect();
+            (4.0 * d + kept.iter().sum::<f32>()) / (4.0 + kept.len() as f32)
+        };
+        let (mut last, mut worst, mut hard_worst) = (mean_gap(&[0.25; 4], &far, own, texel_m), 0.0_f32, 0.0_f32);
+        let mut hard_last = hard(0.25);
+        let mut prev_mean = 0.0_f32;
+        for k in 0..=600 {
+            let d = 0.25 + 0.01 * k as f32;
+            let m = mean_gap(&[d; 4], &far, own, texel_m);
+            worst = worst.max((m - last).abs());
+            hard_worst = hard_worst.max((hard(d) - hard_last).abs());
+            assert!(m >= prev_mean - 1e-4, "the mean gap only grows with the post's gap ({d} m)");
+            (last, hard_last, prev_mean) = (m, hard(d), m);
         }
+        assert!(worst < 0.3, "no jump: {worst}");
+        assert!(hard_worst > 1.0, "the hard limit did jump: {hard_worst}");
     }
 
     #[test]
@@ -799,7 +838,14 @@ mod tests {
             assert!(shader.contains(text) && common.contains(text), "{text}");
         }
         assert!(shader.contains(&format!("const NEAR_REACH: f32 = {:?};", NEAR_REACH)));
-        assert!(shader.contains("let accept = vec4<f32>(NEAR_REACH * near_gap + 0.1 * depth_per_metre);"));
+        for text in [
+            "let accept = NEAR_REACH * near_gap + max(0.1, 2.0 * texel_m) * depth_per_metre;",
+            "smoothstep(vec4<f32>(accept), vec4<f32>(2.0 * accept), gap)",
+            "gap > vec4<f32>(own)",
+            "let reach = separation / max(weight, 1e-3) / depth_per_metre * p.light.x;",
+        ] {
+            assert!(shader.contains(text), "{text}");
+        }
         assert!(shader.contains("const SHADOW_PENUMBRA: f32 = 0.03;") && common.contains("const SHADOW_PENUMBRA: f32 = 0.03;"));
         // the normal offset and the receiver bias of `cascade_shadow`
         assert!(shader.contains("n * (0.02 + 0.04 * f32(cascade))"));
