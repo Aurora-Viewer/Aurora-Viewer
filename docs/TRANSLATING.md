@@ -96,8 +96,12 @@ Japanese, beyond the plural:
 - Terms: アバター, インベントリ, フレンド, グループ, 人物 (People, the
   window or tab; never 人々), 区画 (parcel),
   リージョン, 不動産 (estate), オブジェクト, 装着 (attach), 装着物
-  (attachment), アウトフィット, 容姿 (appearance), 所有者 (owner),
-  初期設定 (Preferences; a default value is デフォルト), 設定 (Aurora's
+  (attachment), アウトフィット, 外観 (appearance: an avatar's, which may
+  be a robot or an animal, and the interface's; never 容姿), 所有者
+  (owner),
+  初期設定 (Preferences only), デフォルト (a default value or setting:
+  デフォルトではオフ, デフォルトに戻す; never 既定, as residents already say
+  デフォルトアバター), 設定 (Aurora's
   own settings), 近くのチャット,
   テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ, ごみ箱,
   複製 (copy, the permission: 複製不可, 複製と譲渡の権限; and Duplicate),
@@ -105,11 +109,16 @@ Japanese, beyond the plural:
   (a display),
   ビルド (build: the tools, the window, the permission), 建物 (a building
   in the world), 体験 (experience), 自然環境 (environment, EEP), 露光
-  (exposure), 光源 (a light: a prim's Light, the local and worn lights),
-  射影テクスチャ (a light's projected texture), メタル (metal);
+  (exposure), 光源 (a light: a prim's Light, the local and worn lights,
+  and the lighting of a photo or a portrait), 射影テクスチャ (a light's
+  projected texture), メタル (metal), ＨＤ画像 (the paid HD picture of an
+  outfit), ベイク (bake) and 再ベイク (rebake), 樹木 (a tree), 水面 (water:
+  the water settings, a water preset, swimming in it; underwater fog is
+  水中のフォグ);
   look an existing one up in `ja.ftl` before choosing a new one. Never
-  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, モニタ
-  nor ライト for a light: they are the variants these replace (ハイライト,
+  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, モニタ,
+  ベーク, リベーク nor ライト or ライティング for a light: they are the
+  variants these replace (ハイライト,
   スポットライト and the residents' フェイスライト stay). 建築 stays only in the
   residents' own words of the demo (今夜は広場を建築するよ), never for the
   tools.
