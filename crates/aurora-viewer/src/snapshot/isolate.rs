@@ -190,6 +190,10 @@ impl Isolation {
 /// avatar itself even when seated. None for a HUD (interface, never
 /// isolated) or an object whose parent is not known yet.
 pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid)> {
+    root_including_huds(world, index, false)
+}
+
+fn root_including_huds(world: &crate::world::World, index: usize, huds: bool) -> Option<(usize, Uuid)> {
     let mut index = index;
     for _ in 0..64 {
         let object = world.objects.get(index)?;
@@ -198,7 +202,8 @@ pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid
         }
         // (the attachment point is the state of a worn root prim; a tree's
         // state is its species, hence the parent)
-        if (31..=38).contains(&object.attachment_point())
+        if !huds
+            && (31..=38).contains(&object.attachment_point())
             && world
                 .objects
                 .parent_of(object)
@@ -211,8 +216,11 @@ pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid
     None
 }
 
-/// Whether the object at `index` is drawn under the photo's isolation.
+/// Visibility in the local studio or the photo's independent isolation.
 pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
+    if world.avatar_studio {
+        return root_including_huds(world, index, true).is_some_and(|(_, root)| root == world.agent_id);
+    }
     let iso = &world.photo_isolation;
     !iso.applied()
         || root_of(world, index).is_none_or(|(at, root)| {
@@ -234,6 +242,48 @@ mod tests {
         iso.set_open(true);
         iso.set_own(id(9));
         iso
+    }
+
+    #[test]
+    fn studio_isolates_the_live_avatar_without_replacing_photo_choices() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(event);
+        }
+        world.photo_isolation = opened();
+        world.photo_isolation.set_mode(Mode::Chosen);
+        world.photo_isolation.toggle(id(99));
+        let version = world.photo_isolation.version;
+        let position = world.agent.position;
+        let yaw = world.agent.yaw;
+        let own = world.objects.index_of_uuid(&world.agent_id).expect("demo avatar");
+        world.avatar_studio = true;
+        assert!(object_visible(&world, own));
+        let hud = world
+            .objects
+            .index_of_uuid(&crate::demo::hud::object(31, false).full_id)
+            .expect("own HUD");
+        let other_hud = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == 8241)
+            .map(|(i, _)| i)
+            .expect("other HUD");
+        assert!(object_visible(&world, hud));
+        assert!(!object_visible(&world, other_hud));
+        let mut hidden = 0;
+        for (index, _) in world.objects.iter() {
+            if let Some((_, root)) = root_of(&world, index) {
+                assert_eq!(object_visible(&world, index), root == world.agent_id);
+                hidden += usize::from(root != world.agent_id);
+            }
+        }
+        assert!(hidden > 0, "demo world geometry is left out");
+        world.avatar_studio = false;
+        assert!(!object_visible(&world, own), "the original photo choice resumes");
+        assert_eq!(world.photo_isolation.version, version);
+        assert_eq!(world.photo_isolation.chosen(), &[id(99)]);
+        assert_eq!((world.agent.position, world.agent.yaw), (position, yaw));
     }
 
     #[test]

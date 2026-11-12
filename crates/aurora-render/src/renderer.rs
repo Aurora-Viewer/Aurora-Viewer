@@ -131,6 +131,7 @@ struct FrameU {
     /// 1/w, 1/h; 0: `screen`), for the reflections that keep the main
     /// view's `screen` but draw smaller.
     sky_star_pass: [f32; 4],
+    studio_aurora: [[f32; 4]; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
     /// The poser's hovered part: bit j for palette joint j (shaders'
@@ -5967,6 +5968,7 @@ impl Backend {
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
         u.sky_stars = s.stars.uniform();
         u.sky_star_pass = [0.0; 4];
+        u.studio_aurora = s.studio_aurora;
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         for (i, m) in cascades.iter().enumerate() {
