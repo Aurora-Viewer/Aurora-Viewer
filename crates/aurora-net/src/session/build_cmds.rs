@@ -871,6 +871,7 @@ impl Session<'_> {
                     item_id: m.script.item_id,
                     running: m.script.running,
                     mono: None,
+                    luau: crate::scripts::Luau::Off,
                 },
             );
         } else {
@@ -902,7 +903,8 @@ impl Session<'_> {
                     .collect();
                 emit(self.sh, NetEvent::PhysicsProperties(list));
             }
-            // the event queue form carries the Mono flag (LLLiveLSLEditor)
+            // the event queue form carries the Mono, Luau and LuauLanguage
+            // flags (LLLiveLSLEditor::processScriptRunningReply)
             "ScriptRunningReply" => {
                 let s = &b["Script"][0];
                 emit(
@@ -912,6 +914,7 @@ impl Session<'_> {
                         item_id: s["ItemID"].as_uuid(),
                         running: s["Running"].as_bool(),
                         mono: s.has("Mono").then(|| s["Mono"].as_bool()),
+                        luau: crate::scripts::Luau::from_running(s["Luau"].as_bool(), s["LuauLanguage"].as_bool()),
                     },
                 );
             }
