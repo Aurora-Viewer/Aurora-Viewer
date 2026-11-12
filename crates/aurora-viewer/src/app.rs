@@ -9686,6 +9686,7 @@ impl App {
             };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
+            self.world.show_back_slurl = self.settings.show_back_slurl;
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,

@@ -1345,6 +1345,9 @@ pub struct Settings {
     /// off). RLVa can still take it away; the simulator ignores the cancel of
     /// a teleport it will not cancel.
     pub always_show_tp_cancel: bool,
+    /// After a teleport to another region, "Teleport completed from <SLURL>"
+    /// in nearby chat (the Legacy Viewer's FSShowBackSLURL, on).
+    pub show_back_slurl: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
     /// Quickjump: jump and land without waiting for the pre-jump and landing
@@ -2327,6 +2330,7 @@ impl Default for Settings {
             automatic_land: true,
             fly_after_teleport: false,
             always_show_tp_cancel: false,
+            show_back_slurl: true,
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
