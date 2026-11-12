@@ -5932,9 +5932,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Preferences for the unobstructed baseline. These modes never contact a grid.
   Vision modes close Conversations and use the same fixed camera framing
   around the avatar so its body and attachments remain visible.
-  `baseline` shows the unobstructed scene directly. `textures`, `silhouette`,
-  `self` and `head` exercise forced world textures, distant avatar silhouettes
-  and own-avatar visibility. `resolution` sets the real 3D resolution divisor
+  `baseline` shows the unobstructed scene directly. `textures`, `textures-grey`,
+  `silhouette`, `self` and `head` exercise forced world textures, distant
+  avatar silhouettes and own-avatar visibility. `textures` substitutes the
+  demo gradient. `textures-grey` (`@setcam_textures=n`, the same as
+  `@camtextures=n`) paints world surfaces and particles the flat grey of
+  `IMG_DEFAULT` and leaves the avatar and its attachments textured (#3365).
+  Releasing (`textures-grey-released`) restores the surfaces. An explicit
+  texture id, and the restore on a grid, still need a grid: there is no
+  fake region for that. `resolution` sets the real 3D resolution divisor
   to 12: the scene becomes coarse while text, HUDs and controls stay sharp.
   Compare it with `baseline` and `resolution-released`; check scene clicks
   still address their visible surfaces. Append `-released` to an effect mode to disable

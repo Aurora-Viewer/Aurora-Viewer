@@ -198,7 +198,10 @@ impl App {
             if scenario == "baseline"
                 || scenario.starts_with("sphere-")
                 || scenario.starts_with("camera-")
-                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution")
+                || matches!(
+                    scenario,
+                    "overlay" | "textures" | "textures-grey" | "silhouette" | "self" | "head" | "resolution"
+                )
             {
                 // Keep the avatar and the world visible in offline visual
                 // comparisons; a conversation otherwise covers the subject.
@@ -391,10 +394,12 @@ impl App {
                     "@setoverlay=n,setoverlay_texture:{}=force,setoverlay_alpha:0.7=force,setoverlay_touch=n",
                     crate::demo::TEX_HOLES
                 )
-            } else if matches!(scenario, "textures" | "silhouette" | "self" | "head") {
+            } else if matches!(scenario, "textures" | "textures-grey" | "silhouette" | "self" | "head") {
                 self.panels.settings = false;
                 match scenario {
                     "textures" => format!("@setcam_textures:{}=n", crate::demo::TEX_GRADIENT),
+                    // Empty @setcam_textures is IMG_DEFAULT, the local flat grey.
+                    "textures-grey" => "@setcam_textures=n".to_owned(),
                     "silhouette" => "@camavdist:0=n".to_owned(),
                     "self" => "@showself=n".to_owned(),
                     _ => "@showselfhead=n".to_owned(),

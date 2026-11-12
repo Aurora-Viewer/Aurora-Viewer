@@ -1432,7 +1432,12 @@ non-strict behaviours keep permissive exceptions. Channel exclusions reuse
 that checker and require the native general restriction. Its `policy.rs` checks
 the common action boundary; `inventory.rs` resolves #RLV paths and validates
 COF deltas, attachment/layer locks and scripted nostrip. `camera.rs` supplies
-temporary camera settings and exclusive ownership. `modifiers.rs` builds what
+temporary camera settings and exclusive ownership. An empty `@setcam_textures`
+(and its synonym `@camtextures`) substitutes `IMG_DEFAULT`
+(`aurora_prim::te::IMG_DEFAULT`), which is bound as the built-in 0x7f grey
+(`textures::MISSING`) and never fetched, as the Legacy Viewer paints that id
+locally (`LLViewerTextureManager::init`). Avatars and attachments keep their
+textures. An explicit texture id is still fetched. `modifiers.rs` builds what
 the RLVa tools list: behaviours, exceptions and the global modifiers (`ui/rlva.rs`
 draws them). `events.rs` handles
 permission/teleport consent, command notifications and stand returns.
