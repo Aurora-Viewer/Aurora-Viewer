@@ -64,10 +64,12 @@ GPL-3.0-or-later as described above.
 | OpenDyslexic, Regular and Bold, version 0.910.12 — Copyright 2012-2019 Abbie Gonzalez, Reserved Font Name OpenDyslexic (antijingoist/opendyslexic, release `v0.91.12`, unmodified) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-OpenDyslexic.txt](crates/aurora-viewer/assets/fonts/LICENSE-OpenDyslexic.txt)) |
 | Noto Color Emoji font, version 2.057 — Copyright 2022 Google Inc. (googlefonts/noto-emoji, tag `v2026-09-24-unicode18_0`, built into the executable) | `assets/emoji/` | SIL Open Font License 1.1 ([LICENSE-OFL.txt](assets/emoji/LICENSE-OFL.txt)) |
 | MIT KEMAR HRTF measurements, diffuse-field equalized set — Copyright 1994 MIT Media Laboratory, by Bill Gardner and Keith Martin (https://sound.media.mit.edu/resources/KEMAR.html: "provided free with no restrictions on use, provided the authors are cited"); turned into minimum-phase filters by `scripts/generate-hrtf.py` (built into the executable; origin, citation and changes in [README.md](assets/hrtf/README.md)) | `assets/hrtf/kemar.bin` | Free use with credit to the authors (their terms, quoted in the README) |
-| HYG star database v4.4 — David Nash (astronexus, https://codeberg.org/astronexus/hyg); the stars of magnitude 6.5 and brighter, rounded to fixed point by `scripts/generate-star-catalog.py` (built into the executable; origin and changes in [README.md](assets/stars/README.md)) | `assets/stars/stars.bin` | CC BY-SA 4.0 ([LICENSE-HYG.md](assets/stars/LICENSE-HYG.md)); the derived table is shared under the same licence |
+| Tycho-2 Catalogue — Høg E. et al. 2000 (A&A 355, L27; https://archive.eso.org/ASTROM/TYC-2/data/, CDS I/259); the naked-eye stars and a map of the fainter ones, made by `scripts/generate-star-catalog.py`, with V and B-V for its 50 brightest or colourless stars from the Hipparcos Catalogue (ESA 1997, ESA SP-1200) (built into the executable; origin and changes in [README.md](assets/stars/README.md)) | `assets/stars/stars.bin`, `assets/stars/milky_way.bin` | BSD-2-Clause, agreed by its lead author in 2015 ([LICENSE-TYCHO2.md](assets/stars/LICENSE-TYCHO2.md)) |
 | Aurora wolf logo and silhouette | `assets/branding/` | Part of Aurora Viewer, GPL-3.0-or-later |
 | Four modern native walk/run animations, Copyright Linden Research, Inc., unmodified from the Legacy Viewer's `indra/newview/app_settings/static_assets/` at revision `f9401764e4e98aa3800749044a152cb4dcf75437` (provenance in the directory's README) | `crates/aurora-viewer/assets/animations/locomotion/` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Photo filters of the Second Life viewer `indra/newview/app_settings/filters` (the 30 XML files unchanged, from the Legacy Viewer's sources at commit `8ffe7065`), made by Linden Lab | `crates/aurora-render/src/looks/legacy/` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
+| Photo LUTs by Czar Fenris (20 looks made in Adobe Premiere Pro and DaVinci Resolve), packed by `scripts/generate-photo-luts.py` (built into the executable; origin and changes in [README.md](assets/photo-luts/README.md)) | `assets/photo-luts/czar-fenris.bin` | Shared with the viewer and its users by their creator, Czar Fenris, who remains their author (agreed on 2026-11-10) |
+| Photo LUTs by Nanner Pudding (45 looks made in DaVinci Resolve), packed by `scripts/generate-photo-luts.py` (built into the executable; origin and changes in [README.md](assets/photo-luts/README.md)) | `assets/photo-luts/nanner-pudding.bin` | Shared with the viewer and its users by their creator, Nanner Pudding, who remains their author (agreed on 2026-11-10) |
 | LSL keyword names, signatures and help from Firestorm `indra/newview/app_settings/keywords_lsl_default.xml` | `crates/aurora-viewer/assets/lsl/keywords.json`, `reference.json` | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Windlight presets of Firestorm `indra/newview/app_settings/windlight` (`days`, `skies`, `water`; XML files unchanged, commit `c33bfee2`), made by Linden Lab and by Second Life residents for the Phoenix / Firestorm viewers (their names and tags are in the preset names); the files carry no notice of their own and are distributed in the Firestorm sources under its LGPL 2.1 (`LICENSE`, `doc/LICENSE-source.txt`) | `crates/aurora-viewer/assets/windlight/windlight.zip` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Hunspell spelling dictionaries of ten languages (wooorm/dictionaries, commit `8cfea406`, unchanged; built into the executable, the list and the origin of each in [README.md](crates/aurora-viewer/assets/dictionaries/README.md)) | `crates/aurora-viewer/assets/dictionaries/` | Their own licences, each next to its dictionary (`LICENSE.txt`) and shipped in `assets/dictionaries/`: MIT AND BSD (English), MPL-2.0 (French), GPL-2.0 OR GPL-3.0 (German), GPL-3.0 OR LGPL-3.0 OR MPL-1.1 (Spanish), GPL-3.0 OR LGPL-3.0 OR MPL-2.0 (Polish), LGPL-3.0 OR MPL-2.0 (Portuguese), BSD-3-Clause (Russian), GPL-2.0 OR LGPL-2.1 OR MPL-1.1 (Danish) |
@@ -76,6 +78,7 @@ GPL-3.0-or-later as described above.
 | Colour and dithering code of egui-wgpu's `egui.wgsl` — Copyright © Emil Ernerfeldt and the egui contributors | `crates/aurora-render/src/shaders/labels.wgsl` | MIT OR Apache-2.0, retained alongside this GPL-3.0-or-later adaptation |
 | Screen space shadows of Bend Studio (`bend_sss_gpu.h`, `bend_sss_cpu.h`, as shipped in Days Gone) — Copyright © 2023 Sony Interactive Entertainment, ported to WGSL and Rust | `crates/aurora-render/src/shaders/contact_shadows.wgsl`, `crates/aurora-render/src/contact_shadows.rs` | Apache-2.0, notice retained at the top of `contact_shadows.wgsl` |
 | Ground-truth ambient occlusion of Intel's XeGTAO (`XeGTAO.hlsli`, `vaGTAO.hlsl`, GameTechDev/XeGTAO), with its bent normals — Copyright © 2016-2021 Intel Corporation, ported to WGSL | `crates/aurora-render/src/shaders/gtao.wgsl`, `crates/aurora-render/src/gtao.rs` | MIT, notice retained at the top of `gtao.wgsl` |
+| AMD FidelityFX Super Resolution 3.1, the upscaler (FidelityFX SDK 1.1.4, `sdk/include/FidelityFX/gpu/fsr3upscaler/` and the RCAS of `gpu/fsr1/ffx_fsr1.h`) — Copyright © 2024 Advanced Micro Devices, Inc., ported to WGSL and Rust | `crates/aurora-render/src/shaders/fsr/`, `crates/aurora-render/src/fsr.rs` | MIT ([LICENSE-FidelityFX.txt](crates/aurora-render/src/shaders/fsr/LICENSE-FidelityFX.txt)), retained alongside this GPL-3.0-or-later adaptation |
 | Spherical caps' intersection and cone specular occlusion of Google's Filament (`sphericalCapsIntersection`, `specularAO_Cones`, google/filament) — Copyright © 2018 The Android Open Source Project, rewritten in WGSL | `crates/aurora-render/src/shaders/common.wgsl` (`spherical_caps_intersection`, `cone_specular_occlusion`) | Apache-2.0, retained alongside this GPL-3.0-or-later adaptation |
 
 Fonts keep their own license (the OFL allows bundling them with software under
@@ -211,3 +214,29 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## AMD FidelityFX CAS
+
+The world upscale in `crates/aurora-render/src/shaders/rlva_resolution.wgsl`
+is derived from FidelityFX CAS's `CasFilter` scaling path:
+<https://github.com/GPUOpen-Effects/FidelityFX-CAS/blob/master/ffx-cas/ffx_cas.h>.
+
+Copyright (c) 2017-2019 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

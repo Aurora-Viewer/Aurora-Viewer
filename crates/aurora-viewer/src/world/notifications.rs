@@ -304,6 +304,20 @@ pub enum Data {
     /// RegionRestartSeconds, show_toast="false"): pinned at the top of "To
     /// do" with the live count while the alert counts (`region_restart.rs`).
     RegionRestart,
+    /// A new version of Aurora, found by a periodic check (`updater.rs`):
+    /// its button opens the update window, `ready` once downloaded. Aurora
+    /// only (the Legacy Viewer checks at launch); its card wears the
+    /// aurora's colours in Aurora's notification center.
+    Update {
+        ready: bool,
+    },
+    /// Our avatar complexity, and how many people around may not see us
+    /// fully (AgentComplexity / AgentComplexityWithVisibility, notifytips
+    /// with no log): a toast only, for ShowMyComplexityChanges seconds
+    /// (`world/complexity_notice.rs`).
+    Complexity {
+        seconds: u32,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -569,6 +583,16 @@ pub struct Notifications {
 const MAX: usize = 100;
 
 impl Notifications {
+    /// Refresh an active notification's presentation, including the entry
+    /// snapshot used if it departs before the next history tick.
+    pub fn update_body(&mut self, id: u64, body: String) {
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.body.clone_from(&body);
+        }
+        if let Some((_, entry)) = self.seen.iter_mut().find(|(seen, _)| *seen == id) {
+            entry.body = body;
+        }
+    }
     /// The id of the last notification pushed (0 before the first).
     pub fn last_id(&self) -> u64 {
         self.next
@@ -674,6 +698,19 @@ impl Notifications {
         id
     }
 
+    /// The avatar complexity notice: it replaces the one still out (unique
+    /// "AgentComplexityNotice", combine "cancel_old"), a toast only. With
+    /// no text it only takes the old one away.
+    pub fn replace_complexity(&mut self, text: Option<(String, String)>, seconds: u32) -> Option<u64> {
+        self.list.retain(|n| !matches!(n.data, Data::Complexity { .. }));
+        let (title, body) = text?;
+        let id = self.push(Kind::Info, title, body, Data::Complexity { seconds });
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.transient = true;
+        }
+        Some(id)
+    }
+
     /// A message of a conversation out of sight: it replaces the entry of
     /// that conversation still waiting (a new toast, the count of messages
     /// since it was last read), so that a chatty friend fills one card.
@@ -708,6 +745,17 @@ impl Notifications {
     pub fn acknowledge_messages(&mut self, read: impl Fn(&Uuid) -> bool) {
         self.list
             .retain(|n| !matches!(n.data, Data::Message { session, .. } if read(&session)));
+    }
+
+    /// Close the script dialogs and text boxes that `closes` picks by their
+    /// object and channel, with no answer sent (LLNotificationsUtil::cancel,
+    /// for `script_dialog_limit.rs`). They leave no history entry, as any
+    /// script prompt.
+    pub fn close_script_prompts(&mut self, closes: impl Fn(Uuid, i32) -> bool) {
+        self.list.retain(|n| match n.data {
+            Data::Dialog { object, channel, .. } | Data::TextBox { object, channel, .. } => !closes(object, channel),
+            _ => true,
+        });
     }
 
     /// The listed entries (the toast-only ones left out).
@@ -940,12 +988,14 @@ impl Notifications {
                 }
             }
             (Data::TextBox { sender, object, channel }, Response::SendText) => {
+                let mut label = n.text.clone();
+                clamp_text_box_reply(&mut label);
                 out.push(NetCommand::ScriptDialogReply {
                     sender: Some(*sender),
                     object_id: *object,
                     channel: *channel,
                     index: 0,
-                    label: n.text.clone(),
+                    label,
                 });
             }
             (
@@ -993,6 +1043,35 @@ impl Notifications {
         } else {
             NetCommand::DeclineFriendship { transaction: tx }
         }
+    }
+}
+
+/// Longest llTextBox reply, in bytes: the `max_length` of the "message"
+/// editor of panel_notify_textbox.xml (LLTextBase::mMaxTextByteLength, a
+/// UTF-8 byte count), under the 255 bytes of ScriptDialogReply's ButtonLabel.
+pub const TEXT_BOX_MAX_BYTES: usize = 250;
+
+/// Keeps an llTextBox reply as the Legacy Viewer's multi-line editor would
+/// send it (LLToastScriptTextbox::onClickSubmit takes the editor's text):
+/// line ends as `\n`, cut at [`TEXT_BOX_MAX_BYTES`] on a character boundary
+/// (utf8str_truncate). Same as the Legacy Viewer, a pasted Windows `\r\n` is
+/// one line end: its clipboard read removes the CR first
+/// (LLWindowWin32::pasteTextFromClipboard, removeWindowsCR; removeCRLF on
+/// macOS), as egui-winit does, and a lone `\r` becomes `\n`
+/// (LLTextEditor::cleanStringForPaste).
+pub fn clamp_text_box_reply(text: &mut String) {
+    if text.contains('\r') {
+        *text = text.replace("\r\n", "\n").replace('\r', "\n");
+    }
+    text.truncate(text.floor_char_boundary(TEXT_BOX_MAX_BYTES));
+}
+
+/// A paste into the llTextBox reply, cleaned like
+/// LLTextEditor::cleanStringForPaste (indra/llui/lltexteditor.cpp): `\r\n`
+/// and `\r` line ends as `\n`, and a tab as four spaces (SPACES_PER_TAB).
+pub fn clean_text_box_paste(text: &mut String) {
+    if text.contains(['\r', '\t']) {
+        *text = text.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
     }
 }
 
@@ -1182,6 +1261,47 @@ mod tests {
         assert!(n.list.is_empty());
         assert!(n.take_departures().is_empty());
         assert!(n.outcomes.is_empty());
+    }
+
+    /// #2832: an llTextBox reply keeps its lines, with `\n` line ends, and
+    /// the 250 bytes of the Legacy Viewer's editor, cut on a character.
+    #[test]
+    fn text_box_reply_keeps_lines_within_the_legacy_limit() {
+        let clamp = |s: &str| {
+            let mut s = s.to_owned();
+            clamp_text_box_reply(&mut s);
+            s
+        };
+        assert_eq!(clamp("Lady\nof the\nManor"), "Lady\nof the\nManor");
+        assert_eq!(clamp("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(clamp(&"x".repeat(300)).len(), TEXT_BOX_MAX_BYTES);
+        // 249 bytes then a three-byte character: it does not fit, nor half of it
+        let cut = clamp(&format!("{}日本", "x".repeat(249)));
+        assert_eq!(cut, "x".repeat(249));
+        assert_eq!(clamp(&format!("{}é", "x".repeat(248))).len(), 250);
+        // a paste: tabs as four spaces, Windows and old Mac line ends as one `\n`
+        let mut pasted = String::from("Name:\tAda\r\nTitle:\tLady\rEnd");
+        clean_text_box_paste(&mut pasted);
+        assert_eq!(pasted, "Name:    Ada\nTitle:    Lady\nEnd");
+
+        let mut n = Notifications::default();
+        let id = n.push(
+            Kind::Script,
+            "Prompt",
+            "Your title",
+            Data::TextBox {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::new_v4(),
+                channel: -7,
+            },
+        );
+        n.list.iter_mut().find(|x| x.id == id).expect("text box").text = format!("Line 1\r\nLine 2\n{}", "x".repeat(400));
+        let (cmds, _) = n.respond(id, Response::SendText, |_| Uuid::nil(), Uuid::nil());
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { label, index: 0, .. }]
+                if label.starts_with("Line 1\nLine 2\nx") && label.len() == TEXT_BOX_MAX_BYTES),
+            "{cmds:?}"
+        );
     }
 
     #[test]

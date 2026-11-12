@@ -35,11 +35,26 @@ const STAR_CELL_TABLE: u32 = 3460u; // stars.rs CELL_TABLE
 const STAR_MARGIN: f32 = 0.025;     // stars.rs MARGIN (radians)
 // a cell holds about 6 stars, up to a few dozen in the Milky Way
 const STAR_MAX_PER_CELL: u32 = 96u;
+// the Milky Way's light at its brightest, and the size of its points
+// (sigma, pixels)
+const MW_GLOW: f32 = 0.12;
+const MW_GRAIN_SIGMA: f32 = 0.6;
+// the band's light left as a haze, the rest in points; points per lattice
+// cell at the band's brightest; the floor of the points' mean (see milky_way)
+const MW_HAZE: f32 = 0.45;
+const MW_POINTS: f32 = 2.0;
+const MW_POINT_MEAN_MIN: f32 = 0.6;
 
 struct GpuStar {
     pos: vec4<f32>,   // unit direction, peak intensity
     color: vec4<f32>, // linear colour, point size (pixels)
 };
+
+// The Milky Way map (stars.rs MILKY_WAY_*): galactic longitude -180° to
+// 180° across, latitude -MW_REACH to +MW_REACH down.
+const MW_WIDTH: u32 = 2048u;
+const MW_HEIGHT: u32 = 512u;
+const MW_REACH: f32 = 0.785398163; // 45°
 
 struct StarSky {
     cells: array<u32, 6920>, // 2 * STAR_CELL_TABLE: real sky, then the Legacy Viewer's
@@ -47,6 +62,9 @@ struct StarSky {
 };
 
 @group(0) @binding(24) var<storage, read> star_sky: StarSky;
+// The Milky Way map (stars.rs milky_way_texels), MW_WIDTH x MW_HEIGHT, one
+// packed texel per element (mw_texel)
+@group(0) @binding(25) var milky_way_map: texture_2d<u32>;
 
 // stars.rs cell_of
 fn star_cell(q: vec3<f32>) -> u32 {
@@ -122,89 +140,127 @@ fn pcg3(v0: vec3<u32>) -> vec3<u32> {
     return v;
 }
 
-fn lattice_gradient(i: vec3<f32>) -> vec3<f32> {
-    let h = pcg3(vec3<u32>(vec3<i32>(i) + vec3<i32>(4096)));
-    return normalize(vec3<f32>(h & vec3<u32>(0xffffu)) / 32767.5 - 1.0 + vec3<f32>(1e-4));
+// One texel of the Milky Way map: glow (square root of the light), grain
+// (stars of V 6.5 to 9.5 per texel, x 16) and B-V colour (x 100), 0..255.
+fn mw_texel(x: i32, y: i32) -> vec3<f32> {
+    let xi = (x + i32(MW_WIDTH)) % i32(MW_WIDTH);
+    let yi = clamp(y, 0, i32(MW_HEIGHT) - 1);
+    let t = textureLoad(milky_way_map, vec2<i32>(xi, yi), 0).x;
+    return vec3<f32>(f32(t & 255u), f32((t >> 8u) & 255u), f32((t >> 16u) & 255u));
 }
 
-fn corner(i: vec3<f32>, f: vec3<f32>, o: vec3<f32>) -> f32 {
-    return dot(lattice_gradient(i + o), f - o);
+// The map between texel centres (`uv` in texels, centres on the integers).
+fn mw_bilinear(uv: vec2<f32>) -> vec3<f32> {
+    let i = vec2<i32>(floor(uv));
+    let f = uv - floor(uv);
+    return mix(mix(mw_texel(i.x, i.y), mw_texel(i.x + 1, i.y), f.x), mix(mw_texel(i.x, i.y + 1), mw_texel(i.x + 1, i.y + 1), f.x), f.y);
 }
 
-// Gradient noise in 0..1, quintic fade: no facets along the lattice (the
-// value noise it replaces drew straight edges across the Milky Way).
-fn gradient_noise(p: vec3<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    let x00 = mix(corner(i, f, vec3<f32>(0.0, 0.0, 0.0)), corner(i, f, vec3<f32>(1.0, 0.0, 0.0)), u.x);
-    let x10 = mix(corner(i, f, vec3<f32>(0.0, 1.0, 0.0)), corner(i, f, vec3<f32>(1.0, 1.0, 0.0)), u.x);
-    let x01 = mix(corner(i, f, vec3<f32>(0.0, 0.0, 1.0)), corner(i, f, vec3<f32>(1.0, 0.0, 1.0)), u.x);
-    let x11 = mix(corner(i, f, vec3<f32>(0.0, 1.0, 1.0)), corner(i, f, vec3<f32>(1.0, 1.0, 1.0)), u.x);
-    let n = mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
-    return clamp(0.5 + 0.75 * n, 0.0, 1.0);
+// The chance that a lattice cell holds a point, from the map's light and its
+// counted stars there.
+fn mw_occupancy(t: vec3<f32>) -> f32 {
+    let glow = (t.x / 255.0) * (t.x / 255.0);
+    return 1.0 - exp(-(glow * MW_POINTS + t.y / 16.0 / 4.0));
 }
 
-// `octaves` octaves, each turned by a fixed rotation so that the lattices
-// do not line up from one octave to the next.
-fn fbm3(p: vec3<f32>, octaves: i32) -> f32 {
-    let turn = mat3x3<f32>(
-        vec3<f32>(0.00, 0.80, 0.60),
-        vec3<f32>(-0.80, 0.36, -0.48),
-        vec3<f32>(-0.60, -0.48, 0.64),
-    );
-    var sum = 0.0;
-    var amp = 0.5;
-    var total = 0.0;
-    var q = turn * p;
-    for (var i = 0; i < octaves; i++) {
-        sum += gradient_noise(q) * amp;
-        total += amp;
-        q = turn * q * 2.03 + vec3<f32>(1.7, 9.2, 5.3);
-        amp *= 0.5;
-    }
-    return sum / total;
-}
-
-// The Milky Way at catalogue direction `q` (J2000 equatorial), linear.
-// Procedural, laid on the real galactic plane: a band a few degrees wide,
-// brighter and wider towards the centre (Sagittarius, l = 0), faint
-// towards the anticentre (Auriga), with the dark Great Rift from Cygnus to
-// Sagittarius just north of the plane, and mottling.
-fn milky_way(q: vec3<f32>) -> vec3<f32> {
-    // J2000 equatorial to galactic (IAU 1958, Hipparcos values)
-    let g = vec3<f32>(
-        dot(vec3<f32>(-0.0548756, -0.8734371, -0.4838350), q),
-        dot(vec3<f32>(0.4941094, -0.4448296, 0.7469822), q),
-        dot(vec3<f32>(-0.8676661, -0.1980764, 0.4559838), q),
-    );
-    let l = atan2(g.y, g.x);
+// The Milky Way at catalogue direction `q` (J2000 equatorial), linear,
+// from the map of the real stars too faint for the naked eye (stars.rs,
+// Tycho-2): their glow, with its clouds and dark lanes, and their grain,
+// faint points scattered as densely as the counted stars, fixed in the
+// sky. `ax`, `ay`: the pixel's footprint across and down (catalogue
+// frame), `pixel` its angle (radians).
+fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32> {
+    // J2000 equatorial to galactic (IAU 1958, Hipparcos values; the same
+    // rows as scripts/generate-star-catalog.py)
+    let m0 = vec3<f32>(-0.0548756, -0.8734371, -0.4838350);
+    let m1 = vec3<f32>(0.4941094, -0.4448296, 0.7469822);
+    let m2 = vec3<f32>(-0.8676661, -0.1980764, 0.4559838);
+    let g = vec3<f32>(dot(m0, q), dot(m1, q), dot(m2, q));
     let b = asin(clamp(g.z, -1.0, 1.0));
-    let centre = exp(-l * l / (0.5 * 0.5));
-    let width = 0.075 + 0.1 * centre;
-    let along = 0.3 + 0.7 * (0.5 + 0.5 * cos(l));
-    let band = exp(-(b * b) / (width * width)) * along;
-    let bulge = exp(-(l * l + 2.4 * b * b) / (0.2 * 0.2));
-    // most of the sky is far from the band: no noise there
-    if (band + bulge < 0.004) {
+    if (abs(b) >= MW_REACH) {
         return vec3<f32>(0.0);
     }
-    let coarse = fbm3(g * 5.0, 4);
-    let fine = fbm3(g * 21.0 + vec3<f32>(7.1, 3.3, 1.9), 3);
-    // star clouds: the band is patchy, not a smooth stripe
-    let clouds = smoothstep(0.3, 0.75, coarse) * (0.45 + 0.75 * fine);
-    var light = band * (0.15 + 1.2 * clouds) + bulge * (0.6 + 0.6 * fine);
-    // the Great Rift: l from -10° to 90°, centred a little north of the plane
-    // (1 - smoothstep: reversed edges are undefined in SPIR-V's and
-    // Metal's smoothstep)
-    let rift_l = smoothstep(-0.35, -0.1, l) * (1.0 - smoothstep(1.3, 1.75, l));
-    let rift_b = (b - 0.025 - 0.02 * sin(l * 3.0)) / 0.035;
-    let rift_shape = exp(-rift_b * rift_b) * rift_l;
-    if (rift_shape > 0.01) {
-        light *= 1.0 - 0.8 * rift_shape * (0.55 + 0.45 * fbm3(g * 13.0 + vec3<f32>(2.0), 3));
+    let l = atan2(g.y, g.x);
+    // texel coordinates, centres on the integers
+    let uv = vec2<f32>((l / 6.28318531 + 0.5) * f32(MW_WIDTH), (b / MW_REACH * 0.5 + 0.5) * f32(MW_HEIGHT)) - 0.5;
+    let t = mw_bilinear(uv);
+    if (t.x + t.y < 0.5) {
+        return vec3<f32>(0.0);
     }
-    let tint = mix(vec3<f32>(0.80, 0.86, 1.0), vec3<f32>(1.0, 0.86, 0.68), clamp(centre * 0.7 + bulge, 0.0, 1.0));
-    return tint * light * 0.09;
+    let glow = (t.x / 255.0) * (t.x / 255.0);
+    // dust reddens the light towards the centre; the eye sees little colour
+    let warm = clamp((t.z / 100.0 - 0.45) / 0.9, 0.0, 1.0);
+    let tint = mix(vec3<f32>(0.82, 0.88, 1.0), vec3<f32>(1.0, 0.87, 0.70), warm);
+    let light = tint * glow * MW_GLOW;
+
+    // The band is made of stars: part of its light stays a haze (the stars
+    // too faint to tell apart), the rest is gathered into faint points on a
+    // lattice fixed in the sky, two cells per texel each way, each holding a
+    // star or none, as many as the map's light and its counted stars say at
+    // the cell's centre (so every pixel that sees a point agrees whether it
+    // is there). The points keep the band's mean light; where a pixel covers
+    // more than a cell (wide views, reflection probes) they would shimmer,
+    // and give way to that mean.
+    let cell = MW_REACH * 2.0 / f32(MW_HEIGHT * 2u);
+    let sparkle = 1.0 - smoothstep(0.8 * cell, 1.6 * cell, pixel);
+    if (sparkle <= 0.0) {
+        return light;
+    }
+    // the chance here, for the field's expected mean below
+    let p = mw_occupancy(t);
+    // the pixel's footprint along longitude (east) and latitude (north),
+    // and back: a point's offset in pixels
+    let east = vec3<f32>(-sin(l), cos(l), 0.0);
+    let north = vec3<f32>(-sin(b) * cos(l), -sin(b) * sin(l), cos(b));
+    let gx = vec3<f32>(dot(m0, ax), dot(m1, ax), dot(m2, ax));
+    let gy = vec3<f32>(dot(m0, ay), dot(m1, ay), dot(m2, ay));
+    let j = mat2x2<f32>(vec2<f32>(dot(east, gx), dot(north, gx)), vec2<f32>(dot(east, gy), dot(north, gy)));
+    let det = j[0].x * j[1].y - j[1].x * j[0].y;
+    if (abs(det) < 1e-20) {
+        return light;
+    }
+    let inv = mat2x2<f32>(vec2<f32>(j[1].y, -j[0].y), vec2<f32>(-j[1].x, j[0].x)) * (1.0 / det);
+    let c = uv * 2.0 + 0.5; // cell coordinates
+    // the pixel's cell and its eight neighbours: a point of any other cell
+    // is at least a cell away, where each point has faded to nothing
+    // (`reach`), so none is cut off as the sky turns
+    let base = vec2<i32>(floor(c)) - 1;
+    let reach = cell * max(cos(b), 0.1) / max(pixel, 1e-9);
+    var field = vec3<f32>(0.0);
+    for (var k = 0; k < 9; k++) {
+        let ci = base + vec2<i32>(k % 3, k / 3);
+        let h = pcg3(vec3<u32>(u32((ci.x + i32(MW_WIDTH * 2u)) % i32(MW_WIDTH * 2u)), u32(ci.y + 4), 0x5717u));
+        let r = vec3<f32>(h & vec3<u32>(0xffffu)) / 65535.0;
+        // the cell's centre is at c = ci + 0.5, so uv = ci / 2
+        if (r.z >= mw_occupancy(mw_bilinear(vec2<f32>(ci) * 0.5))) {
+            continue;
+        }
+        let d = (vec2<f32>(ci) + r.xy - c) * vec2<f32>(cell * cos(b), cell);
+        let px = inv * d;
+        let r2 = dot(px, px) / (MW_GRAIN_SIGMA * MW_GRAIN_SIGMA);
+        let fade = 1.0 - smoothstep(0.5 * reach, reach, sqrt(dot(px, px)));
+        if (r2 < 9.0 && fade > 0.0) {
+            // brightness: the faint ones the more numerous (star counts
+            // grow about 2.5 times a magnitude over three magnitudes), mean 1
+            let u = mix(0.0316, 1.0, f32(h.z >> 16u) / 65535.0);
+            let w = 0.518 * pow(u, -0.6);
+            // a little colour of its own, bluer or redder than the band
+            let hue = f32((h.x >> 16u) & 255u) / 255.0 - 0.5;
+            field += w * fade * exp(-0.5 * r2) * (vec3<f32>(1.0) + vec3<f32>(0.12, 0.0, -0.12) * hue);
+        }
+    }
+    // the field's mean over a pixel: occupied cells per pixel times a
+    // point's area (within its fade, about). The points are scaled by it, but
+    // never by less than a floor, so that zooming in shows separate points
+    // rather than ever brighter ones; the light the floor holds back stays as
+    // haze, so the band keeps its mean light at every zoom.
+    let cells = pixel * pixel / (cell * cell * max(cos(b), 0.1));
+    let kept = 0.75 * reach / MW_GRAIN_SIGMA;
+    let area = 6.2831853 * MW_GRAIN_SIGMA * MW_GRAIN_SIGMA * (1.0 - exp(-0.5 * kept * kept));
+    let expected = p * area * cells;
+    let mean = max(expected, MW_POINT_MEAN_MIN);
+    let points = mix(vec3<f32>(1.0), field / mean + vec3<f32>(1.0 - expected / mean), sparkle);
+    return light * (MW_HAZE + (1.0 - MW_HAZE) * points);
 }
 
 // Stars and Milky Way in region direction `d` (unit), linear, before the
@@ -275,7 +331,7 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
     // Preferences › "Star brightness" (1 for the Legacy Viewer's stars)
     var col = sum * max(frame.sky_stars[2].w, 0.0);
     if (frame.sky_stars[1].w > 0.0) {
-        col += milky_way(q) * frame.sky_stars[1].w;
+        col += milky_way(q, ax, ay, pixel) * frame.sky_stars[1].w;
     }
     return col * gain * extinction * glare;
 }
@@ -387,6 +443,21 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
     // from the camera, not region positions minus the camera: those rounded
     // differently each frame and the sky shook as it moved (#1059)
     let dir = sky_ray(in.ndc);
+    // Under the rim of the dome a probe's capture has no sky: LLVOWLSky::calcPhi
+    // ends the dome at pi/8 from its apex, and LLDrawPoolWLSky::renderDome
+    // lowers it by the dome offset (about 5.4 degrees under the horizon by
+    // default). The Legacy Viewer's captures draw the water there; Aurora's have
+    // no water pass, so this stands in for the open sea around the terrain: the
+    // sky in the mirror, by a Fresnel term. Haze here lit the sides of everything
+    // outdoors; black left a band the Legacy Viewer does not have.
+    if ((frame.light_mode.z & PROBE_CAPTURE_DOME) != 0u) {
+        let rim_up = 0.92387953 - frame.sky_misc.x;
+        let d = normalize(dir);
+        if (d.z < rim_up / sqrt(0.14644661 + rim_up * rim_up)) {
+            let fresnel = 0.02 + 0.98 * pow(1.0 - min(abs(d.z), 1.0), 5.0);
+            return vec4<f32>(sky_color(vec3<f32>(d.x, d.y, abs(d.z))) * fresnel, 1.0);
+        }
+    }
     var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
@@ -460,7 +531,7 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
@@ -478,10 +549,10 @@ fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainPbrOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
-    let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
+    let raw = vec4<f32>(terrain_tangent(in.weights), in.normal.w);
     out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
     out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
     out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
@@ -535,13 +606,13 @@ fn terrain_weights(c: f32) -> vec4<f32> {
 // used by the old approximation above. Slot 6 is reserved by TextureTable.
 // Its decoded image is top-down; LLSurfacePatch::eval supplies GL coordinates.
 fn terrain_noise_weights(c: f32, noise: f32, dx: vec2<f32>, dy: vec2<f32>, clamp_sampler: sampler) -> vec4<f32> {
-    let ramp_loc = tex_loc[6u];
+    let ramp_loc = tex_loc.values[6u];
     let uv = vec2<f32>(c, 1.0 - noise);
     let gx = dx * vec2<f32>(1.0, -1.0);
     let gy = dy * vec2<f32>(1.0, -1.0);
-    let a = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv, ramp_loc & 0xffffu, gx, gy).r;
-    let b = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv - vec2<f32>(2.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
-    let f = textureSampleGrad(tex_pages[ramp_loc >> 16u], clamp_sampler, uv - vec2<f32>(1.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
+    let a = textureSampleGrad(tex_pages[texture_page_index(ramp_loc)], clamp_sampler, uv, ramp_loc & 0xffffu, gx, gy).r;
+    let b = textureSampleGrad(tex_pages[texture_page_index(ramp_loc)], clamp_sampler, uv - vec2<f32>(2.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
+    let f = textureSampleGrad(tex_pages[texture_page_index(ramp_loc)], clamp_sampler, uv - vec2<f32>(1.0, 0.0), ramp_loc & 0xffffu, gx, gy).r;
     return vec4<f32>(f * a, f * (1.0 - a), (1.0 - f) * b, (1.0 - f) * (1.0 - b));
 }
 
@@ -551,10 +622,10 @@ fn terrain_mix_weights(in: TerrainPbrOut, dx: vec3<f32>, dy: vec3<f32>, blend_dx
         // LLTerrainPaintMap stores slots 2..4 in linear RGB; slot 1 is the
         // remainder. No height/noise threshold is applied to a paintmap.
         let slot = rec.flags.z;
-        let loc = tex_loc[slot];
+        let loc = tex_loc.values[slot];
         // Clamp each mip level at region edges; detail maps use repeat.
         let uv = in.region_pos.xy / rec.mat_uv.xy;
-        var other = max(textureSampleGrad(tex_pages[loc >> 16u], clamp_sampler, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
+        var other = max(textureSampleGrad(tex_pages[texture_page_index(loc)], clamp_sampler, uv, loc & 0xffffu, dx.xy / rec.mat_uv.xy, dy.xy / rec.mat_uv.xy).rgb, vec3<f32>(0.0));
         other /= max(1.0, dot(other, vec3<f32>(1.0)));
         return vec4<f32>(max(0.0, 1.0 - dot(other, vec3<f32>(1.0))), other);
     }
@@ -584,8 +655,8 @@ fn terrain_uv(p: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
 }
 
 fn terrain_sample(slot: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[slot];
-    return textureSampleGrad(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, dx, dy);
+    let loc = tex_loc.values[slot];
+    return textureSampleGrad(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, dx, dy);
 }
 
 fn terrain_layer(rec: DrawRecord, p: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, n: vec3<f32>, tangent: vec4<f32>, planes: vec3<f32>, alpha_only: bool) -> TerrainMaterial {
@@ -873,7 +944,7 @@ fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool
     terrain_depth_mask(in);
     // the terrain stays put: the camera's motion alone
     let ep = vec4<f32>(in.world_pos - frame.eye.xyz, 1.0);
-    return depth_normal(in.normal, front, frame.motion_vp * ep, frame.motion_prev_vp * ep);
+    return depth_normal(in.normal, front, frame.motion_vp * ep, frame.motion_prev_vp * ep, 0.0);
 }
 
 // Picking gives the region metres as the surface coordinates of a hit (the

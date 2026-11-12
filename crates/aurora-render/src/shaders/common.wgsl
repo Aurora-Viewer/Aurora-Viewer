@@ -82,6 +82,11 @@ struct Frame {
     studio_aurora: array<vec4<f32>, 4>, // navy/enabled, teal/yaw, violet/time, indigo/white reveal
     anim_clock: vec4<u32>,      // effects clock (rez, portals): x ms (wrapping), y sub-ms fraction (f32 bits); zw the same for texture animations (held while the world is frozen)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
+    // the poser's hovered part (`fs_part_mask`): bit j of the skeleton's
+    // palette joint j, 256 joints in two vectors (word j >> 5)
+    part_joints: array<vec4<u32>, 2>,
+    // Eight four-bit part classes per word, summed before interpolation.
+    part_classes: array<vec4<u32>, 8>,
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
@@ -114,6 +119,7 @@ struct Frame {
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
+    tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -148,7 +154,12 @@ const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
-const FLAG_STUDIO_STAGE: u32 = 1073741824u; // flags.w, local scenery, not the avatar reveal
+const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+// flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
+const LAYER_RANK_SHIFT: u32 = 24u;
+const LAYER_RANK_MAX: u32 = 7u;
+const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
+const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -162,6 +173,11 @@ const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
 const FLAG_TEX_ANIM: u32 = 1024u;
+// Added to the x of the prepass's encoded normal (in 0..1, object.wgsl
+// depth_normal) where FSR's history cannot follow the surface, a running
+// texture animation: FSR's transparency and composition mask
+// (fsr/reactivity.wgsl); GTAO's oct_decode takes it off.
+const NORMAL_COMPOSITION: f32 = 2.0;
 const FLAG_DOUBLE_SIDED: u32 = 2048u;
 // placed by the GPU: model relative to the anchor matrix palettes[flags.y]
 // (worn objects); skinned: skeleton placed by its own anchor
@@ -190,6 +206,13 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
+// The probes of the frame's list at most (probes::MAX_PROBES).
+const MAX_PROBES: u32 = 256u;
+// A set of probes: bit i of word i / 32 for probe i of the list
+// (probes::ProbeSets; the lights' sets hold 64 and are two words).
+struct ProbeMask {
+    w: array<u32, 8>,
+};
 struct Probe {
     center_radius: vec4<f32>,
     // x ambiance scale, y radiance scale, z fade in, w kind (0 auto, 1 sphere, -1 box)
@@ -202,20 +225,17 @@ struct ProbeSet {
     max_lod: f32,
     enabled: u32,
     _pad: u32,
-    // the box probes (x: probes 0..31, y: 32..63), which sample_probes_pair
-    // looks through first
-    boxes: vec4<u32>,
+    // the box probes, which sample_probes_pair looks through first
+    boxes: ProbeMask,
     // the probes that cover each screen column, each screen row and each
-    // slice of depth of the main view (probes::tiles), laid out as the
-    // lights' sets of the frame: two sets per element, each its low then
-    // its high 32 probes
+    // slice of depth of the main view (probes::tiles): one set per element
     tile_grid: vec4<f32>,       // x, y: columns and rows per pixel
     tile_forward: vec4<f32>,    // camera forward axis (fragment depth)
     tile_mode: vec4<u32>,
-    tile_columns: array<vec4<u32>, 16>,
-    tile_rows: array<vec4<u32>, 16>,
-    tile_slices: array<vec4<u32>, 16>,
-    probes: array<Probe, 64>,
+    tile_columns: array<ProbeMask, 32>,
+    tile_rows: array<ProbeMask, 32>,
+    tile_slices: array<ProbeMask, 32>,
+    probes: array<Probe, MAX_PROBES>,
 };
 @group(0) @binding(9) var<storage, read> probe_set: ProbeSet;
 @group(0) @binding(10) var probe_tex: texture_cube_array<f32>;
@@ -240,7 +260,19 @@ struct SkinBind {
 // the page (high 16 bits) and its layer (low 16 bits).
 @group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
-@group(2) @binding(2) var<storage, read> tex_loc: array<u32>;
+struct TextureLocations {
+    page_count: u32,
+    values: array<u32>,
+}
+@group(2) @binding(2) var<storage, read> tex_loc: TextureLocations;
+
+// Stale or corrupt locations fall back to page 0, which always holds the
+// reserved textures. `TextureTable::build` binds at least that page.
+fn texture_page_index(loc: u32) -> u32 {
+    let page = loc >> 16u;
+    let last_bound_page = max(tex_loc.page_count, 1u) - 1u;
+    return select(page, 0u, page > last_bound_page);
+}
 
 // Local lights of a fragment (light_tiles.rs). In the main view, the lights
 // that cover its screen column, its screen row and its slice of depth at
@@ -273,21 +305,6 @@ fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
     return light_table_set(frame.light_columns[cell.x >> 1u], cell.x)
         & light_table_set(frame.light_rows[cell.y >> 1u], cell.y)
         & light_table_set(frame.light_slices[cell.z >> 1u], cell.z);
-}
-
-// Next member of a set, lowest first; -1 once it is empty.
-fn next_member(members: ptr<function, vec2<u32>>) -> i32 {
-    let lo = (*members).x;
-    if (lo != 0u) {
-        (*members).x = lo & (lo - 1u);
-        return i32(firstTrailingBit(lo));
-    }
-    let hi = (*members).y;
-    if (hi != 0u) {
-        (*members).y = hi & (hi - 1u);
-        return i32(32u + firstTrailingBit(hi));
-    }
-    return -1;
 }
 
 // The lights a fragment walks: the point lights left in `held` (bit i for
@@ -374,28 +391,58 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
+    let loc = tex_loc.values[idx];
+    return textureSampleBias(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
+}
+
+// Without the frame's mip bias: the shadow maps have their own size, and
+// their pass binds no frame uniform
+fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc.values[idx];
+    return textureSample(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu);
 }
 
 fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
+    let loc = tex_loc.values[idx];
+    return textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
 }
 
 fn in_reflection_pass() -> bool {
     return frame.misc.w > 0.5;
 }
 
-/// Planar reflection passes (water, mirror): a view mirrored by a plane.
+/// Reflection passes with a mirrored view: planar ones (water, mirror) and
+/// the faces of a probe (probes::face_view).
 fn mirrored_pass() -> bool {
     return frame.misc.w > 1.5;
 }
 
-// Probes are sampled in the main view only (captures see the sky instead,
-// a single bounce).
+// frame.light_mode.z, the capture of a probe that lights its surfaces with
+// the probes as LLReflectionMapManager::updateUniforms does: the radiance
+// capture with both, the irradiance capture (PROBE_CAPTURE_AMBIANCE too)
+// with no irradiance and half the radiance. A closed room then sees its own
+// dark surroundings in its captures, not the sky. probes::CaptureLighting.
+const PROBE_CAPTURE_LIT: u32 = 0x20000u;
+const PROBE_CAPTURE_AMBIANCE: u32 = 0x40000u;
+// frame.light_mode.z, any capture of a probe: the sea instead of the sky under
+// the rim of the Legacy Viewer's dome (sky_pixel in env.wgsl).
+// probes::capture_lighting::DOME.
+const PROBE_CAPTURE_DOME: u32 = 0x80000u;
+
+// Probes are sampled in the main view and in the captures of the probes
+// themselves (planar reflections and the sky-only default probe see the sky).
 fn probes_on() -> bool {
-    return probe_set.enabled != 0u && !in_reflection_pass();
+    return probe_set.enabled != 0u && (!in_reflection_pass() || (frame.light_mode.z & PROBE_CAPTURE_LIT) != 0u);
+}
+
+// What the pass multiplies the probes' irradiance by (refParams.x).
+fn probe_pass_ambiance() -> f32 {
+    return select(1.0, 0.0, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
+}
+
+// What the pass multiplies the probes' radiance by (refParams.y).
+fn probe_pass_radiance() -> f32 {
+    return select(1.0, 0.5, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
 }
 
 fn probe_max_lod() -> f32 {
@@ -442,28 +489,41 @@ const PROBE_TILES_NEAREST: f32 = 0.01;
 // triangle seen edge-on is shaded where the triangle's plane meets the
 // centre of its pixel, which can be behind the camera. The probes that
 // cover that point are those the whole list gives.
-fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
-    let forward = probe_set.tile_forward.xyz;
-    let cell = tile_cell(world_pos, frag, probe_set.tile_grid.xy, forward);
-    let held = light_table_set(probe_set.tile_columns[cell.x >> 1u], cell.x)
-        & light_table_set(probe_set.tile_rows[cell.y >> 1u], cell.y)
-        & light_table_set(probe_set.tile_slices[cell.z >> 1u], cell.z);
-    let in_front = dot(world_pos - frame.camera_pos.xyz, forward) >= PROBE_TILES_NEAREST;
-    return select(vec2<u32>(0xffffffffu), held, in_front);
+fn probe_tiles_apply(world_pos: vec3<f32>) -> bool {
+    return dot(world_pos - frame.camera_pos.xyz, probe_set.tile_forward.xyz) >= PROBE_TILES_NEAREST;
+}
+
+fn probe_tile_cell(world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<u32> {
+    return tile_cell(world_pos, frag, probe_set.tile_grid.xy, probe_set.tile_forward.xyz);
+}
+
+// Word `k` of a fragment's probes, with k * 32 < count: the first `count` of
+// the list and, with `tiles`, those of its sets. The words are read one at a
+// time and only the ones the list reaches, with no array of the eight on the
+// function's stack: at the default 32 probes a fragment reads one word of
+// each table. An integrated GPU's object pass went from 20.0 to 17.1 ms with
+// this walk (15.0 ms with the former sets of 64 probes).
+fn probe_word(k: u32, count: u32, tiles: bool, cell: vec3<u32>) -> u32 {
+    let left = count - k * 32u;
+    var held = 0xffffffffu;
+    if (left < 32u) {
+        held = (1u << left) - 1u;
+    }
+    if (tiles) {
+        held &= probe_set.tile_columns[cell.x].w[k] & probe_set.tile_rows[cell.y].w[k] & probe_set.tile_slices[cell.z].w[k];
+    }
+    return held;
 }
 
 // AURORA_PROBE_WALK=check: whether a probe of the list covers `pos` without
 // being in the fragment's sets. That never happens: the image is the one
 // the whole list gives.
 fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
-    let held = probe_tiles(pos, frag);
-    let count = min(probe_set.count, 64u);
+    let tiles = probe_tiles_apply(pos);
+    let cell = probe_tile_cell(pos, frag);
+    let count = min(probe_set.count, MAX_PROBES);
     for (var i = 1u; i < count; i++) {
-        var bit = held.x >> (i & 31u);
-        if (i >= 32u) {
-            bit = held.y >> (i & 31u);
-        }
-        if ((bit & 1u) != 0u) {
+        if (((probe_word(i >> 5u, count, tiles, cell) >> (i & 31u)) & 1u) != 0u) {
             continue;
         }
         if (probe_set.probes[i].params.w < 0.0) {
@@ -480,11 +540,11 @@ fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
         }
     }
     // (the default probe is in every set)
-    return count > 0u && (held.x & 1u) == 0u;
+    return count > 0u && (probe_word(0u, count, tiles, cell) & 1u) == 0u;
 }
 
 fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
-    let count = min(probe_set.count, 64u);
+    let count = min(probe_set.count, MAX_PROBES);
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
     for (var i = 1u; i < count; i++) {
@@ -651,7 +711,7 @@ fn probe_mix(col0_in: vec3<f32>, col1_in: vec3<f32>, w0: f32, w1: f32, dw1: f32,
 //
 // In the main view the walk is that of the probes which cover the
 // fragment's screen column, its screen row and its slice of depth at once
-// (`probe_tiles`; `frag` is the fragment's pixel and `pos` where it is in
+// (`probe_word`; `frag` is the fragment's pixel and `pos` where it is in
 // the world), in the list's order: a probe left out does not cover `pos`.
 // The walk of the list, 32 probes by default, was what the probes cost a
 // fragment, far more than the samples of the two or three that cover it.
@@ -670,23 +730,32 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
         }
         return out;
     }
+    if (walk == PROBE_WALK_CHECK && probe_tiles_miss(pos, frag)) {
+        out.a = vec4<f32>(4.0, 0.0, 4.0, 1.0);
+        out.b = out.a;
+        return out;
+    }
     // the probes of the fragment's sets or, without the sets, the list
-    var held = light_first(min(probe_set.count, 64u));
-    if (walk >= PROBE_WALK_TILES) {
-        if (walk == PROBE_WALK_CHECK && probe_tiles_miss(pos, frag)) {
-            out.a = vec4<f32>(4.0, 0.0, 4.0, 1.0);
-            out.b = out.a;
-            return out;
-        }
-        held &= probe_tiles(pos, frag);
+    let count = min(probe_set.count, MAX_PROBES);
+    let words = (count + 31u) >> 5u;
+    let tiles = walk >= PROBE_WALK_TILES && probe_tiles_apply(pos);
+    var cell = vec3<u32>(0u);
+    if (tiles) {
+        cell = probe_tile_cell(pos, frag);
     }
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
-    var boxes = probe_set.boxes.xy & held;
-    for (var n = next_member(&boxes); n >= 0; n = next_member(&boxes)) {
-        let lp = (probe_set.probes[n].box_inv * vec4<f32>(pos, 1.0)).xyz;
-        if (all(abs(lp) <= vec3<f32>(1.0))) {
-            sample_automatic = false;
+    for (var k = 0u; k < words; k++) {
+        var boxes = probe_set.boxes.w[k];
+        if (boxes != 0u) {
+            boxes &= probe_word(k, count, tiles, cell);
+        }
+        for (; boxes != 0u; boxes &= boxes - 1u) {
+            let n = k * 32u + firstTrailingBit(boxes);
+            let lp = (probe_set.probes[n].box_inv * vec4<f32>(pos, 1.0)).xyz;
+            if (all(abs(lp) <= vec3<f32>(1.0))) {
+                sample_automatic = false;
+            }
         }
     }
     var a0 = vec3<f32>(0.0);
@@ -696,67 +765,69 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
     var w0 = 0.0;
     var w1 = 0.0;
     var dw1 = 0.0;
-    for (var n = next_member(&held); n >= 0; n = next_member(&held)) {
-        let i = u32(n);
-        let kind = probe_set.probes[i].params.w;
-        let manual = kind != 0.0;
-        if (!manual && (!sample_automatic || (!automatic && i != 0u))) {
-            continue;
-        }
-        let sphere = probe_set.probes[i].center_radius;
-        let c = sphere.xyz;
-        var va: vec3<f32>;
-        var vb: vec3<f32>;
-        var w: f32;
-        var dw = 0.0;
-        if (kind < 0.0) {
-            // box influence volume with parallax correction
-            let box_inv = probe_set.probes[i].box_inv;
-            let lp = (box_inv * vec4<f32>(pos, 1.0)).xyz;
-            if (any(abs(lp) > vec3<f32>(1.0))) {
+    for (var k = 0u; k < words; k++) {
+        for (var held = probe_word(k, count, tiles, cell); held != 0u; held &= held - 1u) {
+            let i = k * 32u + firstTrailingBit(held);
+            let kind = probe_set.probes[i].params.w;
+            let manual = kind != 0.0;
+            if (!manual && (!sample_automatic || (!automatic && i != 0u))) {
                 continue;
             }
-            va = probe_box_exit(box_inv, lp, pos, a) - c;
-            if (want_b) {
-                vb = probe_box_exit(box_inv, lp, pos, b) - c;
-            }
-            w = max(1.0 - max(max(abs(lp.x), abs(lp.y)), abs(lp.z)), 0.001);
-        } else {
-            let r = sphere.w;
-            let delta = pos - c;
-            if (i != 0u && dot(delta, delta) > r * r) {
-                continue;
-            }
-            if (kind >= 1.0) {
-                // parallax for manual sphere probes only
-                va = probe_sphere_exit(c, r, pos, a.dir) - c;
-                vb = probe_sphere_exit(c, r, pos, b.dir) - c;
+            let sphere = probe_set.probes[i].center_radius;
+            let c = sphere.xyz;
+            var va: vec3<f32>;
+            var vb: vec3<f32>;
+            var w: f32;
+            var dw = 0.0;
+            if (kind < 0.0) {
+                // box influence volume with parallax correction
+                let box_inv = probe_set.probes[i].box_inv;
+                let lp = (box_inv * vec4<f32>(pos, 1.0)).xyz;
+                if (any(abs(lp) > vec3<f32>(1.0))) {
+                    continue;
+                }
+                va = probe_box_exit(box_inv, lp, pos, a) - c;
+                if (want_b) {
+                    vb = probe_box_exit(box_inv, lp, pos, b) - c;
+                }
+                w = max(1.0 - max(max(abs(lp.x), abs(lp.y)), abs(lp.z)), 0.001);
             } else {
-                va = a.dir;
-                vb = b.dir;
+                let r = sphere.w;
+                let delta = pos - c;
+                if (i != 0u && dot(delta, delta) > r * r) {
+                    continue;
+                }
+                if (kind >= 1.0) {
+                    // parallax for manual sphere probes only
+                    va = probe_sphere_exit(c, r, pos, a.dir) - c;
+                    vb = probe_sphere_exit(c, r, pos, b.dir) - c;
+                } else {
+                    va = a.dir;
+                    vb = b.dir;
+                }
+                // sphereWeight
+                let r1 = r * 0.5;
+                let d = max(length(delta), 0.001);
+                let atten = 1.0 - max(d - r1, 0.0) / max(r - r1, 0.001);
+                let base = probe_set.probes[i].params.z / d;
+                dw = base * atten * max(r, 1.0) * 4.0;
+                w = base * atten;
             }
-            // sphereWeight
-            let r1 = r * 0.5;
-            let d = max(length(delta), 0.001);
-            let atten = 1.0 - max(d - r1, 0.0) / max(r - r1, 0.001);
-            let base = probe_set.probes[i].params.z / d;
-            dw = base * atten * max(r, 1.0) * 4.0;
-            w = base * atten;
-        }
-        let ca = probe_tap(i, va, a, amblit) * w;
-        var cb = vec3<f32>(0.0);
-        if (want_b) {
-            cb = probe_tap(i, vb, b, amblit) * w;
-        }
-        if (manual) {
-            a1 += ca;
-            b1 += cb;
-            w1 += w;
-            dw1 += dw;
-        } else {
-            a0 += ca;
-            b0 += cb;
-            w0 += w;
+            let ca = probe_tap(i, va, a, amblit) * w;
+            var cb = vec3<f32>(0.0);
+            if (want_b) {
+                cb = probe_tap(i, vb, b, amblit) * w;
+            }
+            if (manual) {
+                a1 += ca;
+                b1 += cb;
+                w1 += w;
+                dw1 += dw;
+            } else {
+                a0 += ca;
+                b0 += cb;
+                w0 += w;
+            }
         }
     }
     out.a = probe_mix(a0, a1, w0, w1, dw1, sample_automatic);
@@ -1716,10 +1787,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         // occlusion only), in one walk of the probes
         let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
         if (s.a.w > 0.0) {
-            amb = s.a.rgb;
+            amb = s.a.rgb * probe_pass_ambiance();
         }
         if (s.b.w > 0.0) {
-            env = s.b.rgb;
+            env = s.b.rgb * probe_pass_radiance();
             occl = spec_ao;
         }
     }
@@ -1947,18 +2018,18 @@ fn ll_light_atten(d: f32, falloff: f32) -> f32 {
 
 // Last level of the projected texture's chain (LL's proj_lod).
 fn projector_levels(slot: u32) -> f32 {
-    let loc = tex_loc[slot];
-    return f32(textureNumLevels(tex_pages[loc >> 16u])) - 1.0;
+    let loc = tex_loc.values[slot];
+    return f32(textureNumLevels(tex_pages[texture_page_index(loc)])) - 1.0;
 }
 
 // The projected texture at `lod`, linear, kept inside the image (the
 // atlas sampler repeats; LL clamps).
 fn projector_sample(slot: u32, tc: vec2<f32>, lod: f32) -> vec4<f32> {
-    let loc = tex_loc[slot];
-    let size = vec2<f32>(textureDimensions(tex_pages[loc >> 16u]));
+    let loc = tex_loc.values[slot];
+    let size = vec2<f32>(textureDimensions(tex_pages[texture_page_index(loc)]));
     let half_texel = 0.5 * exp2(ceil(lod)) / size;
     let uv = clamp(vec2<f32>(tc.x, 1.0 - tc.y), half_texel, vec2<f32>(1.0) - half_texel);
-    let c = textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
+    let c = textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
     return vec4<f32>(srgb_to_linear(c.rgb), c.a);
 }
 

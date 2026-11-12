@@ -1,9 +1,11 @@
 // Aurora bridge IK relay: regional event discovery, no periodic polling.
 // Separate Mono memory from movement and read-only bridge services.
-string VERSION = "1.40";
+string VERSION = "1.41";
 string FOLDER = "__FOLDER__";
-integer HELLO_CHANNEL = -184735219;
-integer CONTROL_CHANNEL = -190018106;
+// Both derived as in world/bridge.rs private_channel: the hello from this
+// root's key, the viewer's commands from the random session.
+integer HELLO_CHANNEL;
+integer CONTROL_CHANNEL;
 integer IK_CHANNEL = -190018107;
 key owner;
 key session;
@@ -23,6 +25,34 @@ hello()
         llOwnerSay("<auroraBridgeIK>" + VERSION + "|" + FOLDER + "|" + (string)session + "</auroraBridgeIK>");
 }
 
+integer channelOf(key id)
+{
+    return -0x10000000 - (integer)("0x" + llGetSubString((string)id, 0, 6));
+}
+
+// Ask only the objects avatars sit on, and the wearer's own attachments,
+// never the whole region: a seat or worn creation already in use answers
+// with its auroraIKAvailable. Others' worn creations show at their next one.
+discover()
+{
+    string message = "auroraIKDiscover|" + (string)session;
+    list agents = llGetAgentList(AGENT_LIST_REGION, []);
+    list asked;
+    integer i;
+    for (i = 0; i < llGetListLength(agents) && llGetListLength(asked) < 64; ++i)
+    {
+        key agent = llList2Key(agents, i);
+        key root = llList2Key(llGetObjectDetails(agent, [OBJECT_ROOT]), 0);
+        if (root != NULL_KEY && root != agent && llListFindList(asked, [root]) == -1)
+        {
+            asked += [root];
+            llRegionSayTo(root, IK_CHANNEL, message);
+        }
+    }
+    // Addressed to the wearer, it reaches each of their attachments.
+    llRegionSayTo(owner, IK_CHANNEL, message);
+}
+
 initialize()
 {
     owner = llGetOwner();
@@ -36,6 +66,8 @@ initialize()
     llListenRemove(helloListener);
     llListenRemove(controlListener);
     llListenRemove(relayListener);
+    HELLO_CHANNEL = channelOf(llGetKey());
+    CONTROL_CHANNEL = channelOf(session);
     helloListener = llListen(HELLO_CHANNEL, "", owner, "auroraHello|" + (string)llGetKey());
     controlListener = llListen(CONTROL_CHANNEL, "", owner, "");
     relayListener = llListen(IK_CHANNEL, "", NULL_KEY, "");
@@ -67,7 +99,7 @@ default
                 {
                     started = TRUE;
                     nextDiscovery = llGetTime() + 5.0;
-                    llRegionSay(IK_CHANNEL, "auroraIKDiscover|" + (string)session);
+                    discover();
                 }
             }
             else if ((command == "observe" || command == "edit") && started && llGetListLength(fields) == 7)

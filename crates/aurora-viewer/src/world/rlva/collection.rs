@@ -41,7 +41,7 @@ pub(super) fn attachment_point(inv: &Inventory, id: Uuid, legacy: bool) -> Optio
         .get(&item.parent)
         .and_then(|f| naming::folder_point(&f.info.name, legacy));
     let name = naming::item_point(&item.name);
-    if item.owner_mask & actions::MODIFY != 0 {
+    if actions::held(inv, item) & actions::MODIFY != 0 {
         name.or(folder)
     } else {
         folder.or(name)

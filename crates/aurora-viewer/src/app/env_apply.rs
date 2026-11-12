@@ -17,7 +17,7 @@ use crate::world::eep;
 use crate::world::env_apply::{self, Target};
 use crate::world::env_day_edit::{self, DayDoc, LegacyError, LegacyFolder};
 use crate::world::env_select::SettingsKind;
-use crate::world::land::{AgentRights, EnvState};
+use crate::world::land::EnvState;
 use crate::world::notifications::{Data, Kind};
 use crate::world::windlight_presets;
 use aurora_llsd::Llsd;
@@ -80,12 +80,13 @@ impl App {
         };
         let title = aurora_i18n::tr!("ui-env-editor-apply-parcel");
         let Some(target) = self.apply_target(false, title) else { return };
+        let mask = crate::world::inventory::actions::held(&self.world.inventory, &item);
         let command = LandCommand::EnvironmentApply {
             local_id: target.local_id(),
             track: None,
             asset: item.asset_id,
             name: item.name,
-            flags: env_apply::apply_flags(Some(item.owner_mask), item.flags),
+            flags: env_apply::apply_flags(Some(mask), item.flags),
             day_length: -1,
             day_offset: -1,
         };
@@ -102,14 +103,16 @@ impl App {
                 .is_some_and(|r| r.caps.contains_key("ExtEnvironment"))
     }
 
-    /// LLAgent::canManageEstate (we are never godlike): an estate manager or
-    /// the region's owner.
+    /// LLViewerRegion::canManageEstate: a god, an estate manager or the
+    /// region's owner.
     pub(super) fn can_manage_estate(&self) -> bool {
-        self.world
-            .main_region
-            .and_then(|h| self.world.regions.get(&h))
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
+        self.world.god_level > 0
+            || self
+                .world
+                .main_region
+                .and_then(|h| self.world.regions.get(&h))
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
     }
 
     /// LLViewerParcelMgr::getAgentOrSelectedParcel: About Land's selection,
@@ -130,10 +133,7 @@ impl App {
                 || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
                     r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
                 });
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let extended = self.extended_environment();
         EditorAccess {
             inventory,
@@ -186,6 +186,8 @@ impl App {
             (self.settings.night_sky == crate::world::night_sky::NightSky::Real).then_some(crate::ui::environment::NightSkyPick {
                 place: self.settings.night_sky_place,
                 latitude: self.settings.night_sky_latitude,
+                longitude: self.settings.night_sky_longitude,
+                real_time: self.settings.night_sky_hour == crate::world::night_sky::StarHour::RealTime,
                 changed: false,
             });
         let reset = self.env_ui.show_lighting(ctx, p, &mut self.world.eep, &mut open);
@@ -197,6 +199,7 @@ impl App {
         if let Some(night) = self.env_ui.night.take().filter(|n| n.changed) {
             self.settings.night_sky_place = night.place;
             self.settings.night_sky_latitude = night.latitude;
+            self.settings.night_sky_longitude = night.longitude;
             self.settings.sync_night_sky();
             self.night_sky_unsaved = true;
         }
@@ -342,7 +345,11 @@ impl App {
         let title = self.fixed_title();
         let Some(target) = self.apply_target(region, title) else { return };
         let item = self.env_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
-        let flags = env_apply::apply_flags(item.as_ref().map(|i| i.owner_mask), doc.flags());
+        let flags = env_apply::apply_flags(
+            item.as_ref()
+                .map(|i| crate::world::inventory::actions::held(&self.world.inventory, i)),
+            doc.flags(),
+        );
         doc.set_flags(flags);
         let cmd = match item.filter(|_| !self.env_editor.dirty) {
             Some(it) => {
@@ -391,7 +398,11 @@ impl App {
         let title = aurora_i18n::tr!("ui-day-editor-title");
         let Some(target) = self.apply_target(region, title) else { return };
         let item = self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
-        let flags = env_apply::apply_flags(item.as_ref().map(|i| i.owner_mask), doc.flags());
+        let flags = env_apply::apply_flags(
+            item.as_ref()
+                .map(|i| crate::world::inventory::actions::held(&self.world.inventory, i)),
+            doc.flags(),
+        );
         doc.set_flags(flags);
         let cmd = match item.filter(|_| !self.day_editor.dirty) {
             Some(it) => {
@@ -510,7 +521,12 @@ impl App {
         }
         match day {
             Some(doc) => {
+                // the parcel's or region's day: the rights of its flags and
+                // its frames'; edited and committed back where it is, saved
+                // to the inventory only when they allow it
+                let rights = crate::world::env_edit::Rights::of_source(Some(doc.source_flags()));
                 self.day_editor.start_in(doc, context, timing);
+                self.day_editor.rights = rights;
                 self.show_day_edit();
             }
             None => self.day_editor.wait_default = true,
@@ -564,10 +580,7 @@ impl App {
         let (Some(local_id), EnvState::Ready(summary)) = (sel.local_id(), &sel.env) else {
             return;
         };
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let enabled = sel
             .parcel
             .as_ref()

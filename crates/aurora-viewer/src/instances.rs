@@ -24,6 +24,12 @@
 //!   drawing a busy scene at full rate kept the GPU so busy that frames took
 //!   73 ms before the driver gave up on it. The Legacy Viewer has neither: it
 //!   does not know that another viewer is running.
+//!
+//! The files also carry the switch of the busy card's pause
+//! (app/busy_pause.rs, [`Switch`]): the window that pauses is the one
+//! behind, and a tester who turned it off in the window in front saw the
+//! other one pause all the same, then write it back on when it closed last.
+//! Each viewer follows the newest change any of them made, on any card.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -52,6 +58,50 @@ pub struct Own {
     pub luid: u64,
 }
 
+/// The switch of the busy card's pause as a viewer last saw it changed, by
+/// its user or by following another viewer (app/busy_pause.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Switch {
+    pub on: bool,
+    /// Unix milliseconds of the change.
+    pub changed_ms: u64,
+}
+
+/// How a viewer follows the others' switches: `seen` the value of its last
+/// frame, `changed` the time of the newest change it knows.
+#[derive(Debug, Default)]
+pub struct SwitchFollow {
+    seen: Option<bool>,
+    changed: Option<u64>,
+}
+
+impl SwitchFollow {
+    /// One frame: `on` the setting, set to `newest`'s value when another
+    /// viewer changed it later than anything this one knows; `newest` the
+    /// newest change the others publish. Returns what to publish: nothing
+    /// until a change is known, so that a viewer just started from an old
+    /// settings file never overrides the others.
+    pub fn frame(&mut self, on: &mut bool, newest: Option<Switch>, now_ms: u64) -> Option<Switch> {
+        if self.seen.is_some_and(|seen| seen != *on) {
+            self.changed = Some(now_ms);
+        }
+        if let Some(n) = newest
+            && n.changed_ms > self.changed.unwrap_or(0)
+        {
+            if *on != n.on {
+                log::info!(
+                    "busy pause: the switch follows another viewer ({})",
+                    if n.on { "on" } else { "off" }
+                );
+            }
+            *on = n.on;
+            self.changed = Some(n.changed_ms);
+        }
+        self.seen = Some(*on);
+        self.changed.map(|changed_ms| Switch { on: *on, changed_ms })
+    }
+}
+
 /// The other viewers alive now, on this viewer's card.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Peers {
@@ -74,7 +124,11 @@ impl Peers {
 
 struct State {
     own: Own,
+    /// This viewer's switch, once a change is known ([`SwitchFollow`]).
+    switch: Option<Switch>,
     peers: Peers,
+    /// The newest switch the others publish, on any card.
+    newest: Option<Switch>,
     stop: bool,
 }
 
@@ -104,7 +158,9 @@ impl Instances {
             shared: Arc::new((
                 Mutex::new(State {
                     own: Own::default(),
+                    switch: None,
                     peers: Peers::default(),
+                    newest: None,
                     stop: false,
                 }),
                 Condvar::new(),
@@ -117,11 +173,15 @@ impl Instances {
     /// read while `enabled` is false (demo and timed runs: a viewer that
     /// shows a fake world or measures must not take room from the one on the
     /// grid, nor have its own figures skewed by it).
-    pub fn tick(&mut self, enabled: bool, own: Own) {
+    pub fn tick(&mut self, enabled: bool, own: Own, switch: Option<Switch>) {
         if !enabled {
             return;
         }
-        lock(&self.shared).own = own;
+        {
+            let mut state = lock(&self.shared);
+            state.own = own;
+            state.switch = switch;
+        }
         if std::mem::replace(&mut self.started, true) {
             return;
         }
@@ -139,6 +199,12 @@ impl Instances {
         lock(&self.shared).peers.clone()
     }
 
+    /// The newest change of the busy card's switch the others publish, as
+    /// of the last pass (None in a demo or a timed run: nothing is read).
+    pub fn newest_switch(&self) -> Option<Switch> {
+        lock(&self.shared).newest
+    }
+
     /// The viewer closes: its file goes, the others do not wait for it to
     /// turn stale.
     pub fn leave(&self) {
@@ -154,14 +220,14 @@ impl Instances {
 fn run(dir: &Path, file: &Path, shared: &Shared) {
     let mut count = 0;
     loop {
-        let own = {
+        let (own, switch) = {
             let state = lock(shared);
             if state.stop {
                 return;
             }
-            state.own
+            (state.own, state.switch)
         };
-        let peers = pass(dir, file, own, unix_secs());
+        let (peers, newest) = pass(dir, file, own, switch, unix_secs());
         let mut state = lock(shared);
         // (a viewer that closed meanwhile removed its file: written again
         // here it would only turn stale)
@@ -177,6 +243,7 @@ fn run(dir: &Path, file: &Path, shared: &Shared) {
             );
         }
         state.peers = peers;
+        state.newest = newest;
         let (state, _) = shared
             .1
             .wait_timeout_while(state, PERIOD, |s| !s.stop)
@@ -187,15 +254,17 @@ fn run(dir: &Path, file: &Path, shared: &Shared) {
     }
 }
 
-/// One pass: publish `own`, read the others on the same card.
-fn pass(dir: &Path, file: &Path, own: Own, secs: u64) -> Peers {
+/// One pass: publish `own` and `switch`, read the others on the same card,
+/// and the newest switch of all of them.
+fn pass(dir: &Path, file: &Path, own: Own, switch: Option<Switch>, secs: u64) -> (Peers, Option<Switch>) {
     if std::fs::create_dir_all(dir).is_ok() {
+        let mut text = format!("{secs} {} {} {:x}", own.usage, u8::from(own.active), own.luid);
+        if let Some(s) = switch {
+            text.push_str(&format!(" {} {}", u8::from(s.on), s.changed_ms));
+        }
         // (a failed write leaves the others without us: the next pass tries
         // again)
-        if let Err(e) = crate::atomic_file::publish(
-            file,
-            format!("{secs} {} {} {:x}", own.usage, u8::from(own.active), own.luid).as_bytes(),
-        ) {
+        if let Err(e) = crate::atomic_file::publish(file, text.as_bytes()) {
             log::debug!("instances: could not publish {}: {e}", file.display());
         }
     }
@@ -215,23 +284,38 @@ fn pass(dir: &Path, file: &Path, own: Own, secs: u64) -> Peers {
             }
         }
     }
-    alive(&entries, secs, own.luid)
+    let newest = entries
+        .iter()
+        .filter(|(stamp, _, _)| secs.saturating_sub(*stamp) <= STALE_AFTER)
+        .filter_map(|&(_, _, s)| s)
+        .max_by_key(|s| s.changed_ms);
+    let entries: Vec<(u64, Own)> = entries.into_iter().map(|(stamp, o, _)| (stamp, o)).collect();
+    (alive(&entries, secs, own.luid), newest)
 }
 
 fn unix_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// `"<unix seconds> <bytes> <1 if in front> <card, hexadecimal>"`; the last
-/// two are optional (a viewer that does not say is taken as in front on a
-/// card unknown).
-fn parse(text: &str) -> Option<(u64, Own)> {
+/// Unix milliseconds, the time of a [`Switch`] change.
+pub fn unix_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// `"<unix seconds> <bytes> <1 if in front> <card, hexadecimal> <1 if the
+/// busy card's pause is on> <unix ms of its change>"`; all but the first two
+/// are optional (a viewer that does not say is taken as in front on a card
+/// unknown, with no switch change to follow).
+fn parse(text: &str) -> Option<(u64, Own, Option<Switch>)> {
     let mut parts = text.split_whitespace();
     let stamp = parts.next()?.parse().ok()?;
     let usage = parts.next()?.parse().ok()?;
     let active = parts.next().is_none_or(|a| a != "0");
     let luid = parts.next().and_then(|l| u64::from_str_radix(l, 16).ok()).unwrap_or(0);
-    Some((stamp, Own { usage, active, luid }))
+    let on = parts.next().map(|o| o != "0");
+    let changed_ms = parts.next().and_then(|c| c.parse().ok());
+    let switch = on.zip(changed_ms).map(|(on, changed_ms)| Switch { on, changed_ms });
+    Some((stamp, Own { usage, active, luid }, switch))
 }
 
 /// The viewers still alive at `now` on the card `luid` (0: unknown, every
@@ -371,11 +455,11 @@ mod tests {
         let own = |usage, active, luid| Own { usage, active, luid };
         assert_eq!(
             parse("1700000000 3130000000 1 1095e"),
-            Some((1_700_000_000, own(3_130_000_000, true, 0x1095e)))
+            Some((1_700_000_000, own(3_130_000_000, true, 0x1095e), None))
         );
-        assert_eq!(parse("1700000000 5 0 0"), Some((1_700_000_000, own(5, false, 0))));
+        assert_eq!(parse("1700000000 5 0 0"), Some((1_700_000_000, own(5, false, 0), None)));
         // the fields a viewer may leave out
-        assert_eq!(parse("1700000000 5"), Some((1_700_000_000, own(5, true, 0))));
+        assert_eq!(parse("1700000000 5"), Some((1_700_000_000, own(5, true, 0), None)));
         assert_eq!(parse("17000"), None);
         assert_eq!(parse(""), None);
         assert_eq!(parse("a b"), None);
@@ -431,15 +515,62 @@ mod tests {
             luid: 7,
         };
         let t0 = unix_secs();
-        pass(&root, &file(1), own(2000, true), t0);
-        let seen_by_b = pass(&root, &file(2), own(3000, false), t0);
+        pass(&root, &file(1), own(2000, true), None, t0);
+        let off = Switch { on: false, changed_ms: 5 };
+        let (seen_by_b, newest_for_b) = pass(&root, &file(2), own(3000, false), Some(off), t0);
         // a published before b existed: it sees b on its next pass
-        let seen_by_a = pass(&root, &file(1), own(2000, true), t0 + 2);
+        let (seen_by_a, newest_for_a) = pass(&root, &file(1), own(2000, true), None, t0 + 2);
         assert_eq!(seen_by_a.list, vec![own(3000, false)]);
         assert_eq!(seen_by_b.list, vec![own(2000, true)]);
+        // b turned the busy card's pause off; a published no change
+        assert_eq!((newest_for_a, newest_for_b), (Some(off), None));
         // b closes
         let _ = std::fs::remove_file(file(2));
-        assert!(pass(&root, &file(1), own(2000, true), t0 + 4).list.is_empty());
+        let (peers, newest) = pass(&root, &file(1), own(2000, true), None, t0 + 4);
+        assert!(peers.list.is_empty());
+        assert_eq!(newest, None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_old_file_without_the_switch_still_reads() {
+        let (_, own, switch) = parse("100 2048 0 a").expect("old line");
+        assert_eq!((own.usage, own.active, own.luid, switch), (2048, false, 0xa, None));
+        let (_, _, switch) = parse("100 2048 1 a 0 1234").expect("new line");
+        let off = Switch {
+            on: false,
+            changed_ms: 1234,
+        };
+        assert_eq!(switch, Some(off));
+    }
+
+    #[test]
+    fn the_switch_follows_the_newest_change_of_any_viewer() {
+        let (mut a, mut b) = (SwitchFollow::default(), SwitchFollow::default());
+        let (mut a_on, mut b_on) = (true, true);
+        // both started from the settings file: nothing to publish
+        assert_eq!(a.frame(&mut a_on, None, 10), None);
+        assert_eq!(b.frame(&mut b_on, None, 10), None);
+        // turned off in a (in front)
+        a_on = false;
+        let from_a = a.frame(&mut a_on, None, 20);
+        let off = Switch { on: false, changed_ms: 20 };
+        assert_eq!(from_a, Some(off));
+        // b (behind) follows, and publishes it in turn
+        assert_eq!(b.frame(&mut b_on, from_a, 22), from_a);
+        assert!(!b_on);
+        // a sees its own change back from b: nothing moves
+        assert_eq!(a.frame(&mut a_on, from_a, 24), from_a);
+        assert!(!a_on);
+        // turned on again in b later: a follows
+        b_on = true;
+        let from_b = b.frame(&mut b_on, from_a, 30);
+        a.frame(&mut a_on, from_b, 32);
+        assert!(a_on);
+        // a viewer started later from an old file takes the newest change
+        let mut c = SwitchFollow::default();
+        let mut c_on = false;
+        assert_eq!(c.frame(&mut c_on, from_b, 40), from_b);
+        assert!(c_on);
     }
 }

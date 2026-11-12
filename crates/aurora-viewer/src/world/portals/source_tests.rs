@@ -71,21 +71,27 @@ fn portals_show_friends_by_default_and_our_own_whatever_the_setting() {
     );
 
     // Nobody: other residents' portals go, ours and our returns stay.
-    assert!(state.create(
-        Portal {
-            id: Uuid::from_u128(9),
-            ..portal()
-        },
-        world.agent.position,
-        Instant::now(),
-        1000
-    ));
+    assert!(
+        state
+            .create(
+                Portal {
+                    id: Uuid::from_u128(9),
+                    ..portal()
+                },
+                BuildRight::Allowed,
+                world.agent.position,
+                Instant::now(),
+                1000
+            )
+            .is_ok()
+    );
     assert!(state.share_return(
         Portal {
             id: Uuid::from_u128(10),
             ..portal()
         },
         stranger,
+        BuildRight::Allowed,
         world.agent.position,
         Instant::now(),
         1000
@@ -244,7 +250,11 @@ fn a_relayed_creator_claim_never_names_us_unless_it_joins_our_portal() {
     open(&mut state, &world, relay, claimed(8, world.agent_id));
     assert!(state.entries.is_empty(), "nobody else can announce a portal as ours");
     // A traveler sharing our own same-region portal joins it.
-    assert!(state.create(portal(), world.agent.position, Instant::now(), 1000));
+    assert!(
+        state
+            .create(portal(), BuildRight::Allowed, world.agent.position, Instant::now(), 1000)
+            .is_ok()
+    );
     let mut ours = portal().announcement();
     ours.creator = Some(world.agent_id);
     open(&mut state, &world, relay, ours);

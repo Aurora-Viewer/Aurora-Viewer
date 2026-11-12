@@ -283,6 +283,16 @@ fn links(text: &str) -> Vec<String> {
     out
 }
 
+/// Who wrote a line, for its previews: what an object or a script says,
+/// its IMs and the viewer's notices wait for a click (`lp::Sender`).
+fn sender(line: &ChatLine) -> lp::Sender {
+    if line.kind.is_automated() {
+        lp::Sender::Object
+    } else {
+        lp::Sender::Resident
+    }
+}
+
 /// One preview of one message.
 fn key(line: &ChatLine, url: &str) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -550,7 +560,7 @@ impl Previews {
         let w = self.settings.size.width();
         links(text)
             .iter()
-            .filter_map(|url| lp::decide(&self.settings, self.place, url).map(|(target, _)| (url, target)))
+            .filter_map(|url| lp::decide(&self.settings, self.place, sender(line), url).map(|(target, _)| (url, target)))
             .map(|(url, target)| match target {
                 // a Gyazo page may lead to a video capture
                 Target::Picture | Target::Page(_) if !matches!(self.cache.get(url).map(|c| &c.entry), Some(Entry::Video { .. })) => w,
@@ -687,7 +697,7 @@ pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, wi
     let ready: Vec<String> = links(text)
         .into_iter()
         .filter(|url| {
-            let Some((_, start)) = lp::decide(&pv.settings, pv.place, url) else {
+            let Some((_, start)) = lp::decide(&pv.settings, pv.place, sender(line), url) else {
                 return false;
             };
             let k = key(line, url);
@@ -736,7 +746,7 @@ pub(super) fn cards(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, text:
     }
     let p = env.p;
     for url in links(text) {
-        let Some((target, start)) = lp::decide(&pv.settings, pv.place, &url) else {
+        let Some((target, start)) = lp::decide(&pv.settings, pv.place, sender(line), &url) else {
             continue;
         };
         let k = key(line, &url);

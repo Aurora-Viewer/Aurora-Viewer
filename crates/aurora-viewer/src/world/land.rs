@@ -29,6 +29,8 @@ pub mod powers {
     pub const LAND_EDIT: u64 = 1 << 21;
     pub const LAND_OPTIONS: u64 = 1 << 22;
     pub const LAND_ALLOW_FLY: u64 = 1 << 24;
+    /// Create and edit objects on the group's land whatever its options.
+    pub const LAND_ALLOW_CREATE: u64 = 1 << 25;
     pub const LAND_MANAGE_ALLOWED: u64 = 1 << 29;
     pub const LAND_MANAGE_BANNED: u64 = 1 << 30;
     /// Eject and freeze residents on the group's land.
@@ -68,6 +70,8 @@ const GRID_STEP: f32 = 4.0;
 pub struct AgentRights<'a> {
     pub id: Uuid,
     pub groups: &'a [GroupMembership],
+    /// The region gave us a god level (Advanced › Request Admin Status).
+    pub god: bool,
 }
 
 impl AgentRights<'_> {
@@ -81,9 +85,10 @@ impl AgentRights<'_> {
     }
 }
 
-/// LLViewerParcelMgr::isParcelOwnedByAgent (we are never godlike).
+/// LLViewerParcelMgr::isParcelOwnedByAgent.
 pub fn owned_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
-    if p.owner_id == a.id {
+    // gods can always assume ownership
+    if a.god || p.owner_id == a.id {
         return true;
     }
     // only gods can assume ownership of public land
@@ -93,10 +98,86 @@ pub fn owned_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
     a.has_power(&p.owner_id, power)
 }
 
+/// LLViewerParcelMgr::allowAgentBuild with LLParcel::allowModifyBy: public
+/// land, our own, land open to everyone, land open to its group we belong
+/// to, or a group role allowed to create there. "Belong to" rather than the
+/// active group: objects are rezzed under the land's group when we are in
+/// it (`group_for_rez`, RezUnderLandGroup, on by default in both viewers).
+/// Admin status also permits building anywhere; estate managers get
+/// nothing more here.
+pub fn agent_can_build(p: &ParcelInfo, a: &AgentRights) -> bool {
+    if a.god {
+        return true;
+    }
+    let owner = p.owner_id.is_nil() || (!p.is_group_owned && p.owner_id == a.id);
+    let group = a.in_group(&p.group_id) && p.flags & pf::CREATE_GROUP_OBJECTS != 0;
+    owner || p.flags & pf::CREATE_OBJECTS != 0 || group || a.has_power(&p.group_id, powers::LAND_ALLOW_CREATE)
+}
+
+/// Whether the agent may build at a place, when its parcel may not be
+/// known yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildRight {
+    Allowed,
+    Denied,
+    /// The parcel there is not known: never read as allowed.
+    Unknown,
+}
+
+impl BuildRight {
+    pub fn of(parcel: Option<&ParcelInfo>, a: &AgentRights) -> Self {
+        match parcel {
+            Some(p) if agent_can_build(p, a) => Self::Allowed,
+            Some(_) => Self::Denied,
+            None => Self::Unknown,
+        }
+    }
+}
+
+impl super::World {
+    /// The parcel holding `local` of region `handle`, among those the viewer
+    /// knows: ours, About Land's and `known`, one the caller holds (the
+    /// hover tips' parcels).
+    pub fn known_parcel_at<'a>(&'a self, handle: RegionHandle, local: Vec3, known: Option<&'a ParcelInfo>) -> Option<&'a ParcelInfo> {
+        let origin = aurora_net::handle_to_origin(handle);
+        let global = glam::DVec3::new(
+            f64::from(origin.0) + f64::from(local.x),
+            f64::from(origin.1) + f64::from(local.y),
+            0.0,
+        );
+        let ours = self.parcel.as_deref().filter(|_| self.main_region == Some(handle));
+        let selected = self
+            .land
+            .sel
+            .as_ref()
+            .filter(|s| s.handle == handle)
+            .and_then(|s| s.parcel.as_deref());
+        [ours, selected, known]
+            .into_iter()
+            .flatten()
+            .find(|p| super::landmarks::in_parcel(&p.bitmap, origin, global))
+    }
+
+    fn build_rights(&self) -> AgentRights<'_> {
+        self.agent_rights()
+    }
+
+    /// allowAgentBuild on the parcel we stand on (mAgentParcel).
+    pub fn build_right_here(&self) -> BuildRight {
+        BuildRight::of(self.parcel.as_deref(), &self.build_rights())
+    }
+
+    /// allowAgentBuild on the parcel holding `local` of region `handle`.
+    pub fn build_right_at(&self, handle: RegionHandle, local: Vec3, known: Option<&ParcelInfo>) -> BuildRight {
+        BuildRight::of(self.known_parcel_at(handle, local, known), &self.build_rights())
+    }
+}
+
 /// LLViewerParcelMgr::isParcelModifiableByAgent: our own land must be
-/// leased (a purchase waiting for approval cannot be changed).
+/// leased (a purchase waiting for approval cannot be changed), unless we
+/// are a god.
 pub fn modifiable_by_agent(p: &ParcelInfo, a: &AgentRights, power: u64) -> bool {
-    owned_by_agent(p, a, power) && !(p.owner_id == a.id && p.status != land::OS_LEASED)
+    owned_by_agent(p, a, power) && !(p.owner_id == a.id && !a.god && p.status != land::OS_LEASED)
 }
 
 /// LLViewerParcelMgr::canAgentBuyParcel; `can_access` tells if the
@@ -445,6 +526,14 @@ impl Selection {
     }
 }
 
+impl Selection {
+    /// The rectangle asked (west, south, east, north), region metres:
+    /// Admin › Parcel › Claim Public Land claims it.
+    pub fn rect(&self) -> (f32, f32, f32, f32) {
+        self.rect
+    }
+}
+
 /// Context of the agent the selection logic needs from the world.
 pub struct SelectionContext {
     /// Region the agent is in.
@@ -475,6 +564,11 @@ impl ScriptInfo {
 #[derive(Default)]
 pub struct Land {
     pub sel: Option<Selection>,
+    /// Parcels the viewer asked about under the pointer or a resident
+    /// (LLViewerParcelMgr's hover parcel, HOVERED_PARCEL_SEQ_ID), the
+    /// latest last: the land moderation rule reads them for every menu
+    /// alike (world/land_moderation.rs).
+    pub seen_parcels: Vec<(RegionHandle, std::sync::Arc<ParcelInfo>)>,
     pub covenant: Option<Covenant>,
     covenant_asked: Option<(RegionHandle, Instant)>,
     pub experience_names: HashMap<Uuid, String>,
@@ -1150,7 +1244,11 @@ mod tests {
     #[test]
     fn modify_rules_follow_ownership_and_powers() {
         let groups = [group(50, powers::LAND_OPTIONS)];
-        let a = AgentRights { id: me(), groups: &groups };
+        let a = AgentRights {
+            id: me(),
+            groups: &groups,
+            god: false,
+        };
         let mut p = ParcelInfo {
             owner_id: me(),
             ..Default::default()
@@ -1172,8 +1270,112 @@ mod tests {
     }
 
     #[test]
+    fn building_needs_our_land_open_land_or_its_group() {
+        let member = [group(50, powers::NONE)];
+        let creator = [group(50, powers::LAND_ALLOW_CREATE)];
+        let stranger = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
+        let mut p = ParcelInfo {
+            owner_id: me(),
+            group_id: Uuid::from_u128(50),
+            ..Default::default()
+        };
+        // owner, and public land
+        assert!(agent_can_build(&p, &stranger));
+        p.owner_id = Uuid::nil();
+        assert!(agent_can_build(&p, &stranger));
+        // someone else's land with no build: nobody but its group's creators
+        p.owner_id = Uuid::from_u128(9);
+        assert!(!agent_can_build(&p, &stranger));
+        assert!(!agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &member,
+                god: false
+            }
+        ));
+        assert!(agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &creator,
+                god: false,
+            }
+        ));
+        // group building: members only
+        p.flags = pf::CREATE_GROUP_OBJECTS;
+        assert!(!agent_can_build(&p, &stranger));
+        assert!(agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &member,
+                god: false
+            }
+        ));
+        // building for everyone
+        p.flags = pf::CREATE_OBJECTS;
+        assert!(agent_can_build(&p, &stranger));
+        // group-owned land is not ours because our id matches nothing there
+        p.flags = 0;
+        p.owner_id = Uuid::from_u128(50);
+        p.is_group_owned = true;
+        assert!(!agent_can_build(&p, &stranger));
+        assert!(!agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &member,
+                god: false
+            }
+        ));
+        assert!(agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &creator,
+                god: false,
+            }
+        ));
+        assert!(agent_can_build(
+            &p,
+            &AgentRights {
+                id: me(),
+                groups: &[],
+                god: true
+            }
+        ));
+    }
+
+    #[test]
+    fn an_unknown_parcel_is_never_open() {
+        let a = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
+        assert_eq!(BuildRight::of(None, &a), BuildRight::Unknown);
+        let open = ParcelInfo {
+            owner_id: Uuid::from_u128(9),
+            flags: pf::CREATE_OBJECTS,
+            ..Default::default()
+        };
+        assert_eq!(BuildRight::of(Some(&open), &a), BuildRight::Allowed);
+        let closed = ParcelInfo { flags: 0, ..open };
+        assert_eq!(BuildRight::of(Some(&closed), &a), BuildRight::Denied);
+    }
+
+    #[test]
     fn buying_needs_a_sale_for_us() {
-        let a = AgentRights { id: me(), groups: &[] };
+        let a = AgentRights {
+            id: me(),
+            groups: &[],
+            god: false,
+        };
         let mut p = ParcelInfo {
             owner_id: Uuid::from_u128(9),
             ..Default::default()

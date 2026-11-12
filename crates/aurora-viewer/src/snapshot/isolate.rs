@@ -7,7 +7,7 @@
 //! and the photo keeps its alpha: a PNG with nothing around the subject.
 //!
 //! The scene flags what is left out for the GPU lists
-//! (`object_flags::PHOTO_HIDDEN`); the particles, name plates and water
+//! (`object_flags::HIDDEN`); the particles, name plates and water
 //! effects read [`object_visible`]. While choosing in the scene everything
 //! is drawn, the chosen ones outlined, so that anything can be clicked.
 
@@ -23,6 +23,9 @@ pub enum Mode {
     Own,
     /// The avatars and objects chosen.
     Chosen,
+    /// Everything but the other avatars (and what they wear): the outfit
+    /// portrait in its region (`snapshot::portrait`).
+    OthersHidden,
 }
 
 /// The isolation of the photo session.
@@ -73,8 +76,9 @@ impl Isolation {
         self.applied() && self.transparent
     }
 
-    /// Whether the avatar or linkset whose root is `root` is drawn.
-    pub fn root_visible(&self, root: &Uuid) -> bool {
+    /// Whether the avatar or linkset whose root is `root` is drawn;
+    /// `avatar`: that root is an avatar.
+    pub fn root_visible(&self, root: &Uuid, avatar: bool) -> bool {
         if !self.applied() {
             return true;
         }
@@ -82,6 +86,7 @@ impl Isolation {
             Mode::Off => true,
             Mode::Own => *root == self.own,
             Mode::Chosen => self.chosen.contains(root),
+            Mode::OthersHidden => !avatar || *root == self.own,
         }
     }
 
@@ -137,7 +142,7 @@ impl Isolation {
     pub fn set_own(&mut self, own: Uuid) {
         if self.own != own {
             self.own = own;
-            if self.applied() && self.mode == Mode::Own {
+            if self.applied() && matches!(self.mode, Mode::Own | Mode::OthersHidden) {
                 self.bump();
             }
         }
@@ -217,7 +222,11 @@ pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
         return root_including_huds(world, index, true).is_some_and(|(_, root)| root == world.agent_id);
     }
     let iso = &world.photo_isolation;
-    !iso.applied() || root_of(world, index).is_none_or(|(_, root)| iso.root_visible(&root))
+    !iso.applied()
+        || root_of(world, index).is_none_or(|(at, root)| {
+            let avatar = world.objects.get(at).is_some_and(|o| o.is_avatar());
+            iso.root_visible(&root, avatar)
+        })
 }
 
 #[cfg(test)]
@@ -280,25 +289,36 @@ mod tests {
     #[test]
     fn own_shows_our_avatar_alone_and_chosen_the_choices() {
         let mut iso = opened();
-        assert!(iso.root_visible(&id(1)), "off: everything drawn");
+        assert!(iso.root_visible(&id(1), true), "off: everything drawn");
         iso.set_mode(Mode::Own);
-        assert!(iso.root_visible(&id(9)));
-        assert!(!iso.root_visible(&id(1)));
+        assert!(iso.root_visible(&id(9), true));
+        assert!(!iso.root_visible(&id(1), true));
         assert!(iso.empty_background());
         iso.set_mode(Mode::Chosen);
-        assert!(!iso.root_visible(&id(9)), "chosen, nothing chosen: nothing drawn");
+        assert!(!iso.root_visible(&id(9), true), "chosen, nothing chosen: nothing drawn");
         assert!(iso.toggle(id(1)));
         assert!(iso.toggle(id(2)));
-        assert!(iso.root_visible(&id(1)) && iso.root_visible(&id(2)));
+        assert!(iso.root_visible(&id(1), true) && iso.root_visible(&id(2), true));
         assert!(!iso.toggle(id(1)), "a second click removes");
-        assert!(!iso.root_visible(&id(1)));
+        assert!(!iso.root_visible(&id(1), true));
         assert_eq!(iso.chosen(), &[id(2)]);
         iso.set_picking(true);
-        assert!(iso.root_visible(&id(1)), "choosing shows everything");
+        assert!(iso.root_visible(&id(1), true), "choosing shows everything");
         assert!(!iso.empty_background());
         iso.set_transparent(false);
         iso.set_picking(false);
         assert!(!iso.empty_background(), "the sky and the ground kept");
+    }
+
+    #[test]
+    fn others_hidden_keeps_the_scene_and_our_avatar() {
+        let mut iso = opened();
+        iso.set_transparent(false);
+        iso.set_mode(Mode::OthersHidden);
+        assert!(iso.root_visible(&id(9), true), "our avatar");
+        assert!(!iso.root_visible(&id(1), true), "another avatar");
+        assert!(iso.root_visible(&id(2), false), "a linkset of the region");
+        assert!(!iso.empty_background());
     }
 
     #[test]
@@ -321,7 +341,7 @@ mod tests {
         assert_eq!(iso.version, 6);
         iso.set_open(false);
         assert!(
-            iso.root_visible(&id(4)) && iso.root_visible(&id(5)),
+            iso.root_visible(&id(4), true) && iso.root_visible(&id(5), true),
             "photo mode closed: everything drawn"
         );
         assert_eq!(

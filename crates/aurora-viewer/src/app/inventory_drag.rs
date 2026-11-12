@@ -22,6 +22,8 @@ pub(super) struct InventoryDrag {
     /// whether the object under the pointer takes the cargo into its contents
     contents: contents_drop::PlanCheck,
     pub cursor: Option<egui::CursorIcon>,
+    /// another resident is this pass's target (`avatar_give_input`)
+    pub giving: bool,
 }
 
 impl InventoryDrag {
@@ -130,7 +132,7 @@ fn remove_on_rez(inv: &Inventory, item: &InvItem, agent: Uuid, on_object: bool) 
 
 /// The avatar an object is, or is worn by: an attachment counts as its
 /// wearer (LLVOAvatar::findAvatarFromAttachment).
-fn wearer(world: &World, idx: usize) -> Option<usize> {
+pub(super) fn wearer(world: &World, idx: usize) -> Option<usize> {
     let mut current = idx;
     for _ in 0..64 {
         let o = world.objects.get(current)?;
@@ -224,6 +226,7 @@ impl App {
             self.inventory_drag.checked = None;
         }
         let give = self.avatar_give_input(ctx, renderer);
+        self.inventory_drag.giving = give.is_some();
         self.scene.mark_give_target(&self.world, give);
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return Vec::new();
@@ -503,16 +506,13 @@ impl App {
     /// conversations and profiles, for every entry carried; the Legacy
     /// Viewer gives a single entry, at once (#991). While they are the
     /// target, their avatar's object index, outlined by the scene. Our own
-    /// avatar is left to the rez rules.
+    /// avatar is left to the rez rules. Textures and materials too, a
+    /// texture library card included (DAD_TEXTURE / DAD_MATERIAL on
+    /// DT_AVATAR → dad3dGiveInventory): `texture_library_drag_input` yields
+    /// while they are the target.
     fn avatar_give_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<usize> {
         let ids = ui::inventory::drag::carried_ids(ctx)?;
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open || ctx.is_pointer_over_egui() {
-            return None;
-        }
-        // the texture library's cards are not inventory to give
-        if egui::DragAndDrop::payload::<InvDrag>(ctx)
-            .is_some_and(|drag| crate::ui::texture_library::catalogue::resource(&self.world.inventory, drag.0).is_some())
-        {
             return None;
         }
         let (pos, released) = ctx.input(|i| Some((i.pointer.interact_pos()?, i.pointer.button_released(egui::PointerButton::Primary))))?;
@@ -556,6 +556,9 @@ impl App {
             self.build.edit_inventory_rez(&self.world);
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
+        if rez {
+            self.build.forget_new_defaults();
+        }
         if let BuildCmd::RezInventory(item) = &drop.command {
             self.record_library_use(item.item.id);
         }
@@ -866,6 +869,8 @@ mod tests {
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                max_link_children: None,
+                animated_object_max_tris: 0,
             },
         );
         let r = rez(prepare(

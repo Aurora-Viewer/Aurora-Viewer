@@ -164,12 +164,18 @@ impl Asset {
         entry.local_saved = Some(self.clone());
     }
     pub fn restore(&self, prefs: &Preferences) -> Result<Entry, String> {
-        let options = import_texture::Options {
+        let mut options = import_texture::Options {
             max_width: self.size[0],
             max_height: self.size[1],
             lossless_small: self.lossless,
             strip_alpha: self.strip_alpha,
         };
+        // A material saved before its maps kept 2K holds the 1024 default
+        // (#2425): restored, it takes the same maximum as a new row.
+        if matches!(self.parameters, Some(Parameters::Material { .. })) {
+            options.max_width = super::MATERIAL_MAP_MAX;
+            options.max_height = super::MATERIAL_MAP_MAX;
+        }
         let prefs = Preferences {
             local_assume_meters: self.meters,
             ..prefs.clone()
@@ -956,6 +962,56 @@ mod tests {
     }
 
     #[test]
+    fn saved_material_local_maps_resolve_to_the_same_files_after_restart() {
+        let files = Files::new();
+        let path = files.0.join(FILE);
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let account = profile(Uuid::from_u128(10), "grid-one");
+        let mut imports = restored(path.clone(), &account, &jobs);
+        for slot in 0..4 {
+            let name = format!("saved-map-{slot}.png");
+            image::save_buffer(files.0.join(&name), &[20 + slot as u8, 40, 80, 255], 1, 1, image::ColorType::Rgba8).expect("map file");
+            let mut entry = files.entry(&name);
+            entry.local_published = true;
+            imports.entries.push(entry);
+        }
+        let ids: Vec<_> = imports.entries.iter().map(|entry| entry.id).collect();
+        let material = PbrMaterial {
+            base_color_texture: Some(ids[0]),
+            normal_texture: Some(ids[1]),
+            metallic_roughness_texture: Some(ids[2]),
+            emissive_texture: Some(ids[3]),
+            ..Default::default()
+        };
+        let saved = material.encode_asset().expect("saved inventory material");
+        imports.flush_local_registry();
+        drop(imports);
+        let restarted = restored(path, &account, &jobs);
+        let saved = aurora_assets::parse_material_asset(&saved).expect("reopened material");
+        for (slot, id) in maps::ids(&saved).into_iter().enumerate() {
+            let entry = restarted
+                .entries
+                .iter()
+                .find(|entry| Some(entry.id) == id)
+                .expect("restored local ID");
+            let Some(Source::Texture(pixels)) = &entry.source else {
+                panic!("restored texture")
+            };
+            assert_eq!(pixels.data[0], 20 + slot as u8);
+            assert!(entry.local_restore_active, "publish the same local ID after login");
+        }
+        image::save_buffer(files.0.join("saved-map-0.png"), &[200, 40, 80, 255], 1, 1, image::ColorType::Rgba8).expect("edit map");
+        let reloaded = Asset::capture(&restarted.entries[0])
+            .restore(&Preferences::default())
+            .expect("reload file");
+        assert_eq!(Some(reloaded.id), saved.base_color_texture);
+        let Some(Source::Texture(pixels)) = reloaded.source else {
+            panic!("reloaded texture")
+        };
+        assert_eq!(pixels.data[0], 200, "file edits keep the material's texture ID");
+    }
+
+    #[test]
     fn restart_preserves_all_types_settings_and_bindings_and_removal_never_deletes_sources() {
         let files = Files::new();
         let path = files.0.join(FILE);
@@ -986,6 +1042,9 @@ mod tests {
         map.path = Some(custom.clone());
         images[0] = Some(map);
         material.local_published = true;
+        // saved by a build that gave material rows the 1024 texture default
+        material.options.max_width = 1024;
+        material.options.max_height = 1024;
         let mut mesh = files.entry("mesh-demo.dae");
         mesh.local_published = true;
         mesh.local_use_scale = true;
@@ -1031,6 +1090,11 @@ mod tests {
         assert_eq!(value.roughness_factor, 0.8);
         assert_eq!(images[0].as_ref().expect("custom map").path.as_ref(), Some(&custom));
         assert!(restarted.entries[1].watch.as_ref().expect("watch").paths.contains(&custom));
+        assert_eq!(
+            (restarted.entries[1].options.max_width, restarted.entries[1].options.max_height),
+            (super::super::MATERIAL_MAP_MAX, super::super::MATERIAL_MAP_MAX),
+            "a material saved with the old 1024 default uploads its maps at 2K once restored"
+        );
         let Some(Source::Mesh(draft)) = &restarted.entries[2].source else {
             panic!("restored mesh")
         };

@@ -113,7 +113,7 @@ pub fn role_checks(d: &GroupData, me: &Me, selected: &[Uuid], staged: &[RoleChan
         (
             !r.id.is_nil(),
             r.id != me.owner_role,
-            super::members::role_name(&r.name).to_lowercase(),
+            crate::natural_order::key(&super::members::role_name(&r.name)),
         )
     });
     roles

@@ -1,16 +1,17 @@
-//! Freezing and ejecting a resident from our land: who may (the resident
-//! menus show "Freeze" and "Eject" only then), whether the eject may also
-//! ban them, and where they stand for the message.
+//! Freezing and ejecting a resident from our land, and kicking, sending
+//! home or banning them from our estate: who may (the resident menus show
+//! the entries only then), whether the eject may also ban them, and where
+//! they stand for the message.
 //!
-//! Port of LLAvatarActions::canLandFreezeOrEjectMultiple and the parcel
-//! part of landEjectMultiple (indra/newview/llavataractions.cpp,
-//! originally LGPL 2.1).
+//! Port of LLAvatarActions::canLandFreezeOrEjectMultiple,
+//! canEstateKickOrTeleportHomeMultiple and the parcel part of
+//! landEjectMultiple (indra/newview/llavataractions.cpp, originally LGPL
+//! 2.1).
 
 use super::World;
 use super::land::{AgentRights, owned_by_agent, powers};
-use super::landmarks::in_parcel;
 use aurora_net::{ParcelInfo, RegionHandle};
-use glam::{DVec3, Vec3};
+use glam::Vec3;
 use uuid::Uuid;
 
 /// The ownership of a ParcelOverlay cell (its low three bits, PARCEL_* of
@@ -29,6 +30,10 @@ pub struct Rights {
     /// "Eject and Ban": the parcel under them is ours with the ban list
     /// (isParcelOwnedByAgent with GP_LAND_MANAGE_BANNED).
     pub ban: bool,
+    /// "Estate kick", "Estate teleport home" and "Estate ban"
+    /// (Avatar.VisibleKickTeleportHome): the region they stand in is ours or
+    /// we manage its estate.
+    pub estate: bool,
 }
 
 /// What the rule reads of the place a resident stands in.
@@ -42,16 +47,21 @@ pub struct Place<'a> {
     pub parcel: Option<&'a ParcelInfo>,
 }
 
-/// canLandFreezeOrEjectMultiple for one resident (we are never godlike):
-/// the region's owner, an estate manager, the owner of the parcel under
-/// them, or a member of the group owning it with "Eject and freeze".
+/// canLandFreezeOrEjectMultiple and canEstateKickOrTeleportHomeMultiple
+/// for one resident (a god counts as an estate manager, `moderation_place`,
+/// so both "gods can always kick"). Freeze and eject: the region's
+/// owner, an estate manager, the owner of the parcel under them, or a
+/// member of the group owning it with "Eject and freeze". The estate
+/// entries: the region's owner or an estate manager.
 pub fn rights(place: &Place, agent: &AgentRights) -> Rights {
     let ownership = place.overlay.map(|cell| cell & OWNERSHIP_MASK);
     let group_admin = ownership == Some(PARCEL_GROUP) && place.parcel.is_some_and(|p| agent.has_power(&p.owner_id, powers::LAND_ADMIN));
-    let allowed = place.region_owner == agent.id || place.estate_manager || ownership == Some(PARCEL_SELF) || group_admin;
+    let estate = place.region_owner == agent.id || place.estate_manager;
+    let allowed = estate || ownership == Some(PARCEL_SELF) || group_admin;
     Rights {
         allowed,
         ban: allowed && place.parcel.is_some_and(|p| owned_by_agent(p, agent, powers::LAND_MANAGE_BANNED)),
+        estate,
     }
 }
 
@@ -60,6 +70,9 @@ pub fn rights(place: &Place, agent: &AgentRights) -> Rights {
 pub fn needs_parcel(place: &Place) -> bool {
     place.parcel.is_none() && place.overlay.map(|cell| cell & OWNERSHIP_MASK) == Some(PARCEL_GROUP)
 }
+
+/// Parcels kept for the moderation rule (as the hover keeps its own).
+const SEEN_PARCELS: usize = 16;
 
 impl World {
     /// getRegionAndPosGlobalFromAgentID: the region a resident stands in
@@ -85,36 +98,72 @@ impl World {
             let (i, j) = ((local.x / CELL).max(0.0) as u32, (local.y / CELL).max(0.0) as u32);
             (i < *cx && j < *cy).then(|| data.get((j * cx + i) as usize).copied()).flatten()
         });
+        Some(Place {
+            region_owner: info.owner,
+            // LLViewerRegion::canManageEstate counts a god
+            estate_manager: info.is_estate_manager || self.god_level > 0,
+            overlay,
+            parcel: self.known_parcel_at(handle, local, known),
+        })
+    }
+
+    /// The rights on `id` from what the world knows of where they stand,
+    /// the parcels asked about included: one rule for the world menu and
+    /// the lists' menus (menu_fs_radar.xml, menu_mini_map.xml), which the
+    /// Legacy Viewer enables through canLandFreezeOrEjectMultiple.
+    pub fn resident_rights(&self, id: Uuid) -> Rights {
+        self.resident_place(id)
+            .and_then(|(handle, local)| self.moderation_place(handle, local, self.seen_parcel_at(handle, local)))
+            .map_or_else(Rights::default, |place| rights(&place, &self.moderation_agent()))
+    }
+
+    /// `id` stands on group land the viewer does not know yet: the group's
+    /// powers decide, so its parcel must be asked for (selectParcelAt,
+    /// which canLandFreezeOrEjectMultiple calls for each resident).
+    pub fn resident_needs_parcel(&self, id: Uuid) -> bool {
+        self.resident_place(id)
+            .and_then(|(handle, local)| self.moderation_place(handle, local, self.seen_parcel_at(handle, local)))
+            .is_some_and(|place| needs_parcel(&place))
+    }
+
+    /// The parcel asked about holding `local` of region `handle`.
+    pub fn seen_parcel_at(&self, handle: RegionHandle, local: Vec3) -> Option<&ParcelInfo> {
         let origin = aurora_net::handle_to_origin(handle);
-        let global = DVec3::new(
+        let pos = glam::DVec3::new(
             f64::from(origin.0) + f64::from(local.x),
             f64::from(origin.1) + f64::from(local.y),
             0.0,
         );
-        let ours = self.parcel.as_deref().filter(|_| self.main_region == Some(handle));
-        let selected = self
-            .land
-            .sel
-            .as_ref()
-            .filter(|s| s.handle == handle)
-            .and_then(|s| s.parcel.as_deref());
-        let parcel = [ours, selected, known]
-            .into_iter()
-            .flatten()
-            .find(|p| in_parcel(&p.bitmap, origin, global));
-        Some(Place {
-            region_owner: info.owner,
-            estate_manager: info.is_estate_manager,
-            overlay,
-            parcel,
-        })
+        self.land
+            .seen_parcels
+            .iter()
+            .rev()
+            .find(|(h, p)| *h == handle && super::landmarks::in_parcel(&p.bitmap, origin, pos))
+            .map(|(_, p)| p.as_ref())
+    }
+
+    /// A parcel asked about came (the hover's or a menu's), kept for the
+    /// moderation rule; the oldest of [`SEEN_PARCELS`] goes.
+    pub fn note_seen_parcel(&mut self, handle: RegionHandle, parcel: std::sync::Arc<ParcelInfo>) {
+        let seen = &mut self.land.seen_parcels;
+        seen.retain(|(h, p)| !(*h == handle && p.local_id == parcel.local_id));
+        seen.push((handle, parcel));
+        if seen.len() > SEEN_PARCELS {
+            seen.remove(0);
+        }
     }
 
     /// Who we are, for the rule.
     pub fn moderation_agent(&self) -> AgentRights<'_> {
+        self.agent_rights()
+    }
+
+    /// Who we are for the land rules: our groups and our god level.
+    pub fn agent_rights(&self) -> AgentRights<'_> {
         AgentRights {
             id: self.agent_id,
             groups: &self.groups.groups,
+            god: self.god_level > 0,
         }
     }
 }
@@ -159,23 +208,59 @@ mod tests {
 
     #[test]
     fn region_owner_and_estate_managers_moderate_any_land() {
-        let agent = AgentRights { id: ME, groups: &[] };
+        let agent = AgentRights {
+            id: ME,
+            groups: &[],
+            god: false,
+        };
         let mut p = place(1, None);
-        assert!(!rights(&p, &agent).allowed, "someone else's parcel");
+        assert_eq!(rights(&p, &agent), Rights::default(), "someone else's parcel and region");
         p.region_owner = ME;
-        assert!(rights(&p, &agent).allowed);
+        assert_eq!(
+            rights(&p, &agent),
+            Rights {
+                allowed: true,
+                ban: false,
+                estate: true
+            }
+        );
         p.region_owner = OTHER;
         p.estate_manager = true;
-        assert_eq!(rights(&p, &agent), Rights { allowed: true, ban: false });
+        assert_eq!(
+            rights(&p, &agent),
+            Rights {
+                allowed: true,
+                ban: false,
+                estate: true
+            }
+        );
     }
 
     #[test]
     fn our_parcel_by_the_overlay_and_its_ban_list() {
-        let agent = AgentRights { id: ME, groups: &[] };
+        let agent = AgentRights {
+            id: ME,
+            groups: &[],
+            god: false,
+        };
         // PARCEL_SELF with the border bits of the overlay cell
-        assert_eq!(rights(&place(3 | 0xC0, None), &agent), Rights { allowed: true, ban: false });
+        assert_eq!(
+            rights(&place(3 | 0xC0, None), &agent),
+            Rights {
+                allowed: true,
+                ban: false,
+                estate: false
+            }
+        );
         let ours = parcel(ME);
-        assert_eq!(rights(&place(3, Some(&ours)), &agent), Rights { allowed: true, ban: true });
+        assert_eq!(
+            rights(&place(3, Some(&ours)), &agent),
+            Rights {
+                allowed: true,
+                ban: true,
+                estate: false
+            }
+        );
         assert!(!rights(&place(0, None), &agent).allowed, "public land");
         assert!(!rights(&place(4, None), &agent).allowed, "for sale");
     }
@@ -184,22 +269,99 @@ mod tests {
     fn group_land_needs_the_eject_and_freeze_power() {
         let land = parcel(GROUP);
         let groups = member(powers::LAND_ADMIN);
-        let agent = AgentRights { id: ME, groups: &groups };
+        let agent = AgentRights {
+            id: ME,
+            groups: &groups,
+            god: false,
+        };
         assert!(needs_parcel(&place(2, None)));
         assert!(!rights(&place(2, None), &agent).allowed, "the parcel is not known yet");
         assert!(!needs_parcel(&place(2, Some(&land))));
-        assert_eq!(rights(&place(2, Some(&land)), &agent), Rights { allowed: true, ban: false });
+        assert_eq!(
+            rights(&place(2, Some(&land)), &agent),
+            Rights {
+                allowed: true,
+                ban: false,
+                estate: false
+            }
+        );
         let groups = member(powers::LAND_ADMIN | powers::LAND_MANAGE_BANNED);
-        let agent = AgentRights { id: ME, groups: &groups };
-        assert_eq!(rights(&place(2, Some(&land)), &agent), Rights { allowed: true, ban: true });
+        let agent = AgentRights {
+            id: ME,
+            groups: &groups,
+            god: false,
+        };
+        assert_eq!(
+            rights(&place(2, Some(&land)), &agent),
+            Rights {
+                allowed: true,
+                ban: true,
+                estate: false
+            }
+        );
         let groups = member(powers::LAND_MANAGE_BANNED);
-        let agent = AgentRights { id: ME, groups: &groups };
+        let agent = AgentRights {
+            id: ME,
+            groups: &groups,
+            god: false,
+        };
         assert!(!rights(&place(2, Some(&land)), &agent).allowed, "banning alone is not ejecting");
+    }
+
+    /// The lists' menus read the same rule as the world menu: a resident on
+    /// group land needs its parcel asked for, then Freeze / Eject appear for
+    /// a member with the group's "Eject and freeze" power.
+    #[test]
+    fn list_menus_ask_for_group_land_and_then_allow_freeze_and_eject() {
+        let lib = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(lib);
+        for ev in crate::demo::events() {
+            world.apply(ev);
+        }
+        let resident = world
+            .objects
+            .iter()
+            .map(|(_, o)| o.full_id)
+            .find(|id| *id != world.agent_id && crate::autopilot::avatar_position(&world, *id).is_some())
+            .expect("a demo resident");
+        let (handle, local) = world.resident_place(resident).expect("where they stand");
+        // their cell is group land, not ours
+        let (cx, cy) = (64u32, 64u32);
+        let mut overlay = vec![0u8; (cx * cy) as usize];
+        let cell = ((local.y / CELL) as u32 * cx + (local.x / CELL) as u32) as usize;
+        overlay[cell] = PARCEL_GROUP;
+        world.map.overlays.insert(handle, (cx, cy, overlay));
+        if let Some(info) = world.regions.get_mut(&handle).and_then(|r| r.info.as_mut()) {
+            let info = std::sync::Arc::make_mut(info);
+            info.owner = OTHER;
+            info.is_estate_manager = false;
+        }
+        world.groups.groups = member(powers::LAND_ADMIN);
+        // the demo's own parcel covers the region: not the land under test
+        world.parcel = None;
+        world.land.sel = None;
+        assert!(world.moderation_place(handle, local, None).is_some(), "the region is known");
+        assert!(world.resident_needs_parcel(resident), "group land not known yet: ask for it");
+        assert!(!world.resident_rights(resident).allowed);
+        let land = ParcelInfo {
+            bitmap: vec![0xFF; 512],
+            local_id: 7,
+            ..parcel(GROUP)
+        };
+        world.note_seen_parcel(handle, std::sync::Arc::new(land));
+        assert!(!world.resident_needs_parcel(resident));
+        assert!(world.resident_rights(resident).allowed, "the group's power allows it");
+        world.groups.groups = member(0);
+        assert!(!world.resident_rights(resident).allowed, "without the power, not");
     }
 
     #[test]
     fn no_overlay_yet_leaves_only_the_region_rights() {
-        let agent = AgentRights { id: ME, groups: &[] };
+        let agent = AgentRights {
+            id: ME,
+            groups: &[],
+            god: false,
+        };
         let p = Place {
             region_owner: OTHER,
             estate_manager: false,

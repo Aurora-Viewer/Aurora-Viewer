@@ -77,6 +77,9 @@ pub struct GroupChats {
     /// FSShowJoinedGroupInvitations: show the invitations to a group we are
     /// already in (from the settings).
     pub show_joined_invitations: bool,
+    /// FSGroupNoticesToIMLog / FSBetterGroupNoticesToIMLog (from the
+    /// settings): the line a group notice writes in its group's chat.
+    pub notices_in_chat: NoticesInChat,
     /// Group list asked (AgentDataUpdateRequest).
     requested: bool,
     /// Our active group (AgentDataUpdate; nil = none) and its title.
@@ -93,6 +96,45 @@ pub struct GroupChats {
     /// the new group is listed under it until the list comes back.
     pub creating: Option<String>,
     pub out: Vec<NetCommand>,
+}
+
+/// Whether a group notice also writes a line in its group's chat, and what
+/// the line holds (LLHandlerUtil::logGroupNoticeToIMGroup,
+/// indra/newview/llnotificationhandlerutil.cpp, originally LGPL 2.1). Both
+/// on, as the Legacy Viewer's defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoticesInChat {
+    /// FSGroupNoticesToIMLog.
+    pub on: bool,
+    /// FSBetterGroupNoticesToIMLog: "Group Notice Sent by: <sender>" and
+    /// the subject before the text.
+    pub subjects: bool,
+}
+
+impl Default for NoticesInChat {
+    fn default() -> Self {
+        Self { on: true, subjects: true }
+    }
+}
+
+/// The text of a group notice's line in its group's chat: "Group Notice
+/// Sent by: <sender>", the subject and the text on three lines with
+/// `subjects`, else the text alone (the two formats of
+/// logGroupNoticeToIMGroup). An empty part leaves no empty line; None when
+/// nothing is left to write.
+pub fn notice_chat_text(sender: &str, subject: &str, body: &str, subjects: bool) -> Option<String> {
+    let body = body.trim_end();
+    if !subjects {
+        return (!body.trim().is_empty()).then(|| body.to_owned());
+    }
+    let mut text = aurora_i18n::tr!("world-groups-notice-in-chat", sender = sender.to_string());
+    for part in [subject.trim(), body] {
+        if !part.trim().is_empty() {
+            text.push('\n');
+            text.push_str(part);
+        }
+    }
+    Some(text)
 }
 
 impl GroupChats {
@@ -225,6 +267,47 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
     }
 }
 
+/// The presentation layout of a groups list given the member groups and a search filter.
+///
+/// Shared rule across Contacts › Groups, People › Groups (Legacy look),
+/// and People › Groups (Aurora look):
+/// - "None (no group tag)" stays visible while filtering whenever the resident
+///   has at least one group (`count > 0`, like LLGroupList::refresh), so they
+///   can always clear their active tag while searching (#2788).
+/// - If a filter matches no groups, the "none" row stays visible on top and
+///   the empty filter notice shows below it with the typed query.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GroupListPlan<'a, T> {
+    /// Whether to display the "None (no group tag)" entry on top.
+    pub show_none: bool,
+    /// When a filter is set and matches no groups, contains the query string to display in the notice.
+    pub no_match: Option<String>,
+    /// The groups matching the filter.
+    pub items: Vec<&'a T>,
+}
+
+/// Compute the display plan for a groups list against an active filter query.
+pub fn plan_group_list<'a, T>(groups: &'a [T], filter: &str, name_of: impl Fn(&T) -> &str) -> GroupListPlan<'a, T> {
+    let trimmed = filter.trim();
+    let filter_lc = trimmed.to_lowercase();
+    let show_none = !groups.is_empty();
+    let items: Vec<&'a T> = if filter_lc.is_empty() {
+        groups.iter().collect()
+    } else {
+        groups.iter().filter(|g| name_of(g).to_lowercase().contains(&filter_lc)).collect()
+    };
+    let no_match = if !groups.is_empty() && !trimmed.is_empty() && items.is_empty() {
+        Some(trimmed.to_string())
+    } else {
+        None
+    };
+    GroupListPlan {
+        show_none,
+        no_match,
+        items,
+    }
+}
+
 impl World {
     /// Group used by LLToolPlacer::addObject, LLToolDragAndDrop::dropObject
     /// and cmdline_rezplat: FSCommon::getGroupForRezzing
@@ -295,6 +378,33 @@ impl World {
             line(String::new(), text.into(), ChatKind::System, Uuid::nil(), SystemTime::now()),
             false,
         );
+    }
+
+    /// A group notice also told in its group's chat
+    /// (LLHandlerUtil::logGroupNoticeToIMGroup, called by
+    /// LLGroupHandler::processNotification as the notice's toast shows):
+    /// only for one of our groups (gAgent.getGroupData), in the group's
+    /// session (its id is the group's) when one is open, without counting
+    /// as unread (logToIM restores the counters) and without opening one;
+    /// else only in the group's transcript. A blocked or snoozed group chat
+    /// has no open session: the line goes to the transcript, as there. A
+    /// system line here, where the Legacy Viewer writes it under the
+    /// sender's name: it is no message of theirs, and the subjects format
+    /// names them.
+    pub(super) fn group_notice_to_chat(&mut self, group: Uuid, sender: &str, subject: &str, body: &str) {
+        let cfg = self.groups.notices_in_chat;
+        if !cfg.on || !self.groups.is_member(&group) {
+            return;
+        }
+        let Some(text) = notice_chat_text(sender, subject, body, cfg.subjects) else {
+            return;
+        };
+        let l = line(String::new(), text, ChatKind::System, Uuid::nil(), SystemTime::now());
+        if self.social.has_session(&group) {
+            self.session_push(group, l, false);
+        } else {
+            self.transcript_only(group, &l);
+        }
     }
 
     pub(super) fn info_mut(&mut self, session: Uuid, name: &str) -> &mut SessionInfo {
@@ -553,8 +663,14 @@ impl World {
             NetEvent::ActiveGroup { id, name, title } => {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
-                self.groups.active_title = title;
+                self.groups.active_title = title.clone();
                 self.groups.active_received = true;
+                let active_title = (!id.is_nil() && !title.is_empty()).then_some(title.as_str());
+                if let Some(i) = self.objects.index_of_uuid(&self.agent_id)
+                    && let Some(o) = self.objects.get_mut(i)
+                {
+                    o.set_group_title(active_title);
+                }
             }
             NetEvent::GroupDropped(id) => {
                 self.cancel_saved_im(id);
@@ -1172,5 +1288,58 @@ mod tests {
         assert!(w.on_group_event(reply(true)).is_none());
         assert_eq!(lines(&w), Some(2), "the session no longer exists");
         assert!(w.groups.sessions[&group].closed);
+    }
+
+    #[test]
+    fn group_list_plan_keeps_none_row_and_detects_empty_filters() {
+        let empty: [GroupMembership; 0] = [];
+        let plan = plan_group_list(&empty, "", |g| &g.name);
+        assert!(!plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert!(plan.items.is_empty());
+
+        let plan = plan_group_list(&empty, "foo", |g| &g.name);
+        assert!(!plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert!(plan.items.is_empty());
+
+        let g1 = GroupMembership {
+            id: Uuid::from_u128(1),
+            name: "Builders Club".to_string(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let g2 = GroupMembership {
+            id: Uuid::from_u128(2),
+            name: "Marketplace Sellers".to_string(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let list = [g1.clone(), g2.clone()];
+
+        // No filter: shows "None" and both groups
+        let plan = plan_group_list(&list, "", |g| &g.name);
+        assert!(plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert_eq!(plan.items.len(), 2);
+
+        // Matching filter: shows "None" and matching group
+        let plan = plan_group_list(&list, "market", |g| &g.name);
+        assert!(plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].name, "Marketplace Sellers");
+
+        // Non-matching filter: keeps "None" row and preserves raw case in no_match
+        let plan = plan_group_list(&list, "  ZzzzZ  ", |g| &g.name);
+        assert!(plan.show_none);
+        assert_eq!(plan.no_match.as_deref(), Some("ZzzzZ"));
+        assert!(plan.items.is_empty());
     }
 }

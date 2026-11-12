@@ -81,7 +81,9 @@ fn standard_texture(id: Uuid) -> bool {
 /// the export back.
 fn item_lets_export(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
     allows_export(item.base_mask, item.everyone_mask)
-        || (item.creator == agent && item.base_mask & perm::EXPORT != 0 && item.owner_mask & perm::EXPORT != 0)
+        || (item.creator == agent
+            && item.base_mask & perm::EXPORT != 0
+            && crate::world::inventory::actions::agent_mask(item, agent) & perm::EXPORT != 0)
 }
 
 /// Whether the agent may tick Export (LLPanelPermissions::refresh, FS:CR):
@@ -276,6 +278,54 @@ pub(crate) fn property_dialogs(ctx: &egui::Context, p: &Palette, tool: &mut Buil
     }
 }
 
+fn name_description_fields(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, props: &[ObjectProps], modify: bool) {
+    let legacy = super::legacy::active(ui);
+    for (field, title, limit, description) in [
+        ("name", aurora_i18n::tr!("common-name-2"), 63, false),
+        ("desc", aurora_i18n::tr!("common-description"), 127, true),
+    ] {
+        let current = if props.len() == 1 {
+            if description {
+                props[0].description.clone()
+            } else {
+                props[0].name.clone()
+            }
+        } else {
+            String::new()
+        };
+        let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
+        row(ui, p, title, if legacy { 100.0 } else { LABEL_W - 30.0 }, |ui| {
+            let hint = if props.len() > 1 {
+                aurora_i18n::tr!("build-ui-general-multiple-selection")
+            } else {
+                ""
+            };
+            let width = ui.available_width();
+            // Read only without the modify right, still selectable.
+            let r =
+                crate::ui::widgets::restricted_text_field(ui, modify, &mut v, crate::ui::widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint)
+                });
+            if description {
+                r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
+            } else {
+                r.clone()
+                    .on_hover_text(aurora_i18n::tr!("build-ui-general-63-characters-maximum-printable-ascii-excluding"));
+            }
+            if r.changed() {
+                tool.ui.edits.insert(field, v.clone());
+            }
+            let end = super::common::field_end(ui, &r);
+            if end != super::common::FieldEnd::Open {
+                tool.ui.edits.remove(field);
+            }
+            if end == super::common::FieldEnd::Commit && modify && v != current && (description || !v.trim().is_empty()) {
+                tool.set_name(world, &v, description);
+            }
+        });
+    }
+}
+
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, permissions: bool) {
     let legacy = super::legacy::active(ui);
     let identity_width = if legacy { 90.0 } else { LABEL_W };
@@ -340,53 +390,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     };
     let can_transfer = owner.0 & perm::TRANSFER != 0;
     if !permissions {
-        // ---- name, description
-        for (field, title, limit, description) in [
-            ("name", aurora_i18n::tr!("common-name-2"), 63, false),
-            ("desc", aurora_i18n::tr!("common-description"), 127, true),
-        ] {
-            let current = if count == 1 {
-                if description {
-                    first.description.clone()
-                } else {
-                    first.name.clone()
-                }
-            } else {
-                String::new()
-            };
-            let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
-            row(ui, p, title, if legacy { 100.0 } else { LABEL_W - 30.0 }, |ui| {
-                let hint = if count > 1 {
-                    aurora_i18n::tr!("build-ui-general-multiple-selection")
-                } else {
-                    ""
-                };
-                let width = ui.available_width();
-                // read only without the modify right, still selectable
-                let r = crate::ui::widgets::restricted_text_field(
-                    ui,
-                    modify,
-                    &mut v,
-                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
-                    |b, _| egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint),
-                );
-                if description {
-                    r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
-                } else {
-                    r.clone()
-                        .on_hover_text(aurora_i18n::tr!("build-ui-general-63-characters-maximum-printable-ascii-excluding"));
-                }
-                if r.changed() {
-                    tool.ui.edits.insert(field, v.clone());
-                }
-                if r.lost_focus() {
-                    tool.ui.edits.remove(field);
-                    if modify && v != current && (description || !v.trim().is_empty()) {
-                        tool.set_name(world, &v, description);
-                    }
-                }
-            });
-        }
+        name_description_fields(ui, p, tool, world, &props, modify);
         ui.add_space(4.0);
 
         // ---- creator, owner, previous owner, group
@@ -451,8 +455,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         });
 
         // ---- share with group, deed
-        ui.horizontal(|ui| {
-            ui.add_space(identity_width);
+        let mut share_deed = |ui: &mut egui::Ui| {
             if let Some(v) = check(ui, p, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
                 tool.set_perm(world, perm_field::GROUP, v, share_bits);
             }
@@ -467,18 +470,18 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             {
                 tool.ui.confirm = Some(Confirm::Deed(first.group_id));
             }
-        });
+        };
+        if legacy {
+            ui.horizontal(|ui| {
+                ui.add_space(identity_width);
+                share_deed(ui);
+            });
+        } else {
+            permission_row(ui, p, "", share_deed);
+        }
 
         if !legacy {
-            small(
-                ui,
-                p,
-                if modify {
-                    aurora_i18n::tr!("build-ui-general-you-can-edit-this-object")
-                } else {
-                    aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object")
-                },
-            );
+            crate::ui::widgets::divider(ui, p);
             ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
             crate::ui::widgets::divider(ui, p);
         }
@@ -511,63 +514,76 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 .unwrap_or((for_sale_n > 0, sale_type_now, first.sale_price.max(0)));
         let mut draft_changed = false;
         let mut commit_now = false;
-        egui::Frame::new()
-            .stroke(egui::Stroke::new(
-                1.0,
-                if tool.ui.sale_draft.is_some() { p.violet } else { p.raised },
-            ))
-            .corner_radius(ui.visuals().window_corner_radius)
-            .inner_margin(4)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if let Some(v) = check(
-                        ui,
-                        p,
-                        for_sale,
-                        sale_mixed,
-                        aurora_i18n::tr!("common-for-sale"),
-                        sale_ok && (can_transfer || for_sale_n > 0),
-                    ) {
-                        for_sale = v;
+        let sale_frame = if legacy {
+            egui::Frame::new()
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    if tool.ui.sale_draft.is_some() { p.violet } else { p.raised },
+                ))
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(4)
+        } else {
+            crate::ui::widgets::divider(ui, p);
+            egui::Frame::new()
+        };
+        sale_frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(v) = check(
+                    ui,
+                    p,
+                    for_sale,
+                    sale_mixed,
+                    aurora_i18n::tr!("common-for-sale"),
+                    sale_ok && (can_transfer || for_sale_n > 0),
+                ) {
+                    for_sale = v;
+                    draft_changed = true;
+                    // unticking commits at once (onCommitSaleInfo)
+                    commit_now = !v;
+                }
+                if let Some(t) = combo(
+                    ui,
+                    "sale_type",
+                    Some(sale_type),
+                    &sale_types(),
+                    110.0,
+                    sale_ok && can_transfer && for_sale && !price_mixed,
+                ) {
+                    sale_type = t;
+                    draft_changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                label(
+                    ui,
+                    p,
+                    if legacy {
+                        aurora_i18n::currency()
+                    } else {
+                        aurora_i18n::tr!("search-col-price")
+                    },
+                );
+                ui.add_enabled_ui(sale_ok && can_transfer && for_sale && !sale_mixed, |ui| {
+                    let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
+                    if e.changed {
                         draft_changed = true;
-                        // unticking commits at once (onCommitSaleInfo)
-                        commit_now = !v;
                     }
-                    if let Some(t) = combo(
-                        ui,
-                        "sale_type",
-                        Some(sale_type),
-                        &sale_types(),
-                        110.0,
-                        sale_ok && can_transfer && for_sale && !price_mixed,
-                    ) {
-                        sale_type = t;
-                        draft_changed = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    label(ui, p, aurora_i18n::currency());
-                    ui.add_enabled_ui(sale_ok && can_transfer && for_sale && !sale_mixed, |ui| {
-                        let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
-                        if e.changed {
-                            draft_changed = true;
-                        }
-                        // a typed price commits when "For sale" is ticked
-                        if e.commit && for_sale {
-                            commit_now = true;
-                        }
-                    });
-                    if ui
-                        .add_enabled(
-                            sale_ok && valid_sale(for_sale, sale_type, owner.0) && (tool.ui.sale_draft.is_some() || draft_changed),
-                            egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
-                        )
-                        .clicked()
-                    {
+                    // a typed price commits when "For sale" is ticked
+                    if e.commit && for_sale {
                         commit_now = true;
                     }
                 });
+                if ui
+                    .add_enabled(
+                        sale_ok && valid_sale(for_sale, sale_type, owner.0) && (tool.ui.sale_draft.is_some() || draft_changed),
+                        egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
+                    )
+                    .clicked()
+                {
+                    commit_now = true;
+                }
             });
+        });
         if draft_changed {
             tool.ui.sale_draft = Some((for_sale, sale_type, price));
         }
@@ -590,6 +606,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
 
         // ---- key, search
+        if !legacy {
+            crate::ui::widgets::divider(ui, p);
+        }
         ui.horizontal(|ui| {
             if legacy && ui.button(aurora_i18n::tr!("build-legacy-copy-keys")).clicked() {
                 tool.ui.requests.push(Request::CopyKeys);
@@ -668,31 +687,31 @@ fn ownership_permissions(
     // ---- everyone / next owner
     let everyone = perm_state(&refs, |x| x.everyone_mask);
     let next = perm_state(&refs, |x| x.next_owner_mask);
-    label(ui, p, aurora_i18n::tr!("build-ui-general-anyone"));
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        let (v, t) = bit(everyone, perm::MOVE);
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t,
-            aurora_i18n::tr!("common-move"),
-            can_manipulate && owner.0 & perm::MOVE != 0,
-        ) {
-            tool.set_perm(world, perm_field::EVERYONE, n, perm::MOVE);
-        }
-        let (v, t) = bit(everyone, perm::COPY);
-        let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t || !copy_ok,
-            aurora_i18n::tr!("common-copy-2"),
-            can_manipulate && copy_ok,
-        ) {
-            tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
+    let first_column_width = (!super::legacy::active(ui)).then(|| {
+        let text_width = [aurora_i18n::tr!("common-move"), aurora_i18n::tr!("common-edit")]
+            .into_iter()
+            .map(|caption| {
+                egui::WidgetText::from(RichText::new(caption).size(12.0))
+                    .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Button)
+                    .size()
+                    .x
+            })
+            .fold(0.0, f32::max);
+        (ui.spacing().icon_width + ui.spacing().icon_spacing + text_width).max(ui.spacing().interact_size.y)
+    });
+    permission_row(ui, p, aurora_i18n::tr!("build-ui-general-anyone"), |ui| {
+        for mask in [perm::MOVE, perm::COPY] {
+            let (v, t) = bit(everyone, mask);
+            let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
+            let (caption, tentative, enabled) = if mask == perm::MOVE {
+                (aurora_i18n::tr!("common-move"), t, can_manipulate && owner.0 & perm::MOVE != 0)
+            } else {
+                (aurora_i18n::tr!("common-copy-2"), t || !copy_ok, can_manipulate && copy_ok)
+            };
+            let width = first_column_width.filter(|_| mask == perm::MOVE);
+            if let Some(n) = permission_check(ui, p, v, tentative, caption, enabled, width) {
+                tool.set_perm(world, perm_field::EVERYONE, n, mask);
+            }
         }
         // OpenSim's export permission, only where the region honours it
         if world.export_supported() {
@@ -703,39 +722,72 @@ fn ownership_permissions(
             }
         }
     });
-    label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
+    permission_row(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"), |ui| {
         let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
-        let (v, t) = bit(next, perm::MODIFY);
-        if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
-            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
-        }
-        let (v, t) = bit(next, perm::COPY);
         let can_copy = owner.0 & perm::COPY != 0;
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t || !can_copy,
-            aurora_i18n::tr!("common-copy-2"),
-            next_ok && base.0 & perm::COPY != 0,
-        ) {
-            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::COPY);
-        }
-        let (v, t) = bit(next, perm::TRANSFER);
-        // enabled by the next owner's copy bit (sic, LLPanelPermissions)
-        if let Some(n) = check(
-            ui,
-            p,
-            v,
-            t || !can_transfer,
-            aurora_i18n::tr!("common-transfer"),
-            next_ok && next.0 & perm::COPY != 0,
-        ) {
-            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::TRANSFER);
+        for mask in [perm::MODIFY, perm::COPY, perm::TRANSFER] {
+            let (v, t) = bit(next, mask);
+            // Transfer remains enabled by the next owner's Copy bit (LLPanelPermissions).
+            let (caption, tentative, enabled) = match mask {
+                perm::MODIFY => (aurora_i18n::tr!("common-edit"), t, next_ok && base.0 & perm::MODIFY != 0),
+                perm::COPY => (
+                    aurora_i18n::tr!("common-copy-2"),
+                    t || !can_copy,
+                    next_ok && base.0 & perm::COPY != 0,
+                ),
+                _ => (
+                    aurora_i18n::tr!("common-transfer"),
+                    t || !can_transfer,
+                    next_ok && next.0 & perm::COPY != 0,
+                ),
+            };
+            let width = first_column_width.filter(|_| mask == perm::MODIFY);
+            if let Some(n) = permission_check(ui, p, v, tentative, caption, enabled, width) {
+                tool.set_perm(world, perm_field::NEXT_OWNER, n, mask);
+            }
         }
     });
+}
+
+/// Reserve the same first cell for Move and Edit so both Copy controls align.
+fn permission_check(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    value: bool,
+    tentative: bool,
+    caption: &str,
+    enabled: bool,
+    width: Option<f32>,
+) -> Option<bool> {
+    if let Some(width) = width {
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(width);
+                check(ui, p, value, tentative, caption, enabled)
+            },
+        )
+        .inner
+    } else {
+        check(ui, p, value, tentative, caption, enabled)
+    }
+}
+
+fn permission_row(ui: &mut egui::Ui, p: &Palette, caption: &str, body: impl FnOnce(&mut egui::Ui)) {
+    if super::legacy::active(ui) {
+        label(ui, p, caption);
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            body(ui);
+        });
+    } else {
+        row(ui, p, caption, LABEL_W, |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().icon_spacing = 2.0;
+            body(ui);
+        });
+    }
 }
 
 #[cfg(test)]
