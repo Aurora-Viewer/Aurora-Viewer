@@ -395,9 +395,17 @@ impl Editor {
     /// Route editor accelerators before the viewer's global keybindings see
     /// them. This keeps timeline commands such as Home and Ctrl+S from also
     /// changing flight or resynchronizing avatar animations.
+    ///
+    /// True only when a command ran, and only while the timeline is shown:
+    /// a key that would do nothing here (nothing to undo, no key to delete,
+    /// no bone to key, an empty clipboard, a save while one is under way)
+    /// keeps its global action, as a disabled menu accelerator does
+    /// (LLMenuItemCallGL::handleAcceleratorKey, indra/llui/llmenugl.cpp).
     pub(crate) fn handle_timeline_shortcut(&mut self, ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) -> bool {
         if !self.clip.active
             || !self.open
+            || !self.clip.timeline_open
+            || self.clip.document.is_none()
             || self.clip.waiting_source()
             || ctx.egui_wants_keyboard_input()
             || egui::Popup::is_any_open(ctx)
@@ -408,31 +416,79 @@ impl Editor {
         let Some(shortcut) = timeline_shortcut(key, modifiers) else {
             return false;
         };
-        match shortcut {
-            TimelineShortcut::PlayPause => self.studio_toggle_clip_playback(),
+        let ran = match shortcut {
+            // The transport always acts on the playhead, clamped to the
+            // range: an arrow held at the last frame stays the timeline's.
+            TimelineShortcut::PlayPause => {
+                self.studio_toggle_clip_playback();
+                true
+            }
             TimelineShortcut::Rewind => {
                 if let Some(start) = self.clip.document.as_ref().map(|document| document.start) {
                     self.clip_seek(start);
                 }
+                true
             }
-            TimelineShortcut::PreviousFrame => self.step_timeline_frame(false),
-            TimelineShortcut::NextFrame => self.step_timeline_frame(true),
-            TimelineShortcut::KeyBone => {
-                if let Some(bone) = self.selected {
+            TimelineShortcut::PreviousFrame => {
+                self.step_timeline_frame(false);
+                true
+            }
+            TimelineShortcut::NextFrame => {
+                self.step_timeline_frame(true);
+                true
+            }
+            TimelineShortcut::CopyPose => {
+                self.studio_copy_clip_keyframe();
+                true
+            }
+            TimelineShortcut::KeyBone => match self.selected {
+                Some(bone) => {
                     self.clip.capture = Some(Capture::Bone(bone));
+                    true
                 }
+                None => false,
+            },
+            TimelineShortcut::Undo if !self.clip.undo.is_empty() => {
+                self.studio_clip_undo();
+                true
             }
-            TimelineShortcut::Undo if !self.clip.undo.is_empty() => self.studio_clip_undo(),
-            TimelineShortcut::Redo if !self.clip.redo.is_empty() => self.studio_clip_redo(),
-            TimelineShortcut::CopyPose => self.studio_copy_clip_keyframe(),
-            TimelineShortcut::PastePose if !self.clip.clipboard.is_empty() => self.studio_paste_clip_keyframe(),
+            TimelineShortcut::Redo if !self.clip.redo.is_empty() => {
+                self.studio_clip_redo();
+                true
+            }
+            TimelineShortcut::PastePose if !self.clip.clipboard.is_empty() => {
+                self.studio_paste_clip_keyframe();
+                true
+            }
             TimelineShortcut::DeleteKey if self.selected.is_some_and(|bone| self.clip.has_authored_key(bone, self.clip.frame)) => {
                 self.studio_delete_selected_clip_bone_keyframe();
+                true
             }
-            TimelineShortcut::SaveProject if !self.clip.busy => self.queue_studio_file_action(files::Action::SaveProject),
-            _ => {}
+            TimelineShortcut::SaveProject if !self.clip.busy => {
+                self.queue_studio_file_action(files::Action::SaveProject);
+                true
+            }
+            TimelineShortcut::Undo
+            | TimelineShortcut::Redo
+            | TimelineShortcut::PastePose
+            | TimelineShortcut::DeleteKey
+            | TimelineShortcut::SaveProject => false,
+        };
+        if ran {
+            // egui holds the same press for its next pass: the build tools
+            // must not also delete an object or undo an edit with it
+            if self.clip.taken_keys.len() >= 16 {
+                self.clip.taken_keys.remove(0);
+            }
+            self.clip.taken_keys.push((key, modifiers));
         }
-        true
+        ran
+    }
+
+    /// The presses the timeline acted on since the last pass, for the caller
+    /// to take out of egui's input before the build tools read it.
+    pub(crate) fn take_timeline_keys(&mut self) -> Vec<(egui::Key, egui::Modifiers)> {
+        std::mem::take(&mut self.clip.taken_keys)
     }
 
     /// Step the playhead one frame (Left and Right arrows), within the range.
@@ -531,6 +587,8 @@ impl Editor {
 
     pub(in crate::ik_edit) fn studio_timeline_overlay(&mut self, ctx: &egui::Context, palette: &Palette, world: &World) {
         if !self.clip.active || !self.open || self.clip.waiting_source() || !self.clip.timeline_open {
+            // a key drag ends with the lanes that showed it
+            self.clip.drag_key = None;
             return;
         }
         let Some((start, end)) = self.clip.document.as_ref().map(|document| (document.start, document.end)) else {
@@ -864,6 +922,7 @@ impl Editor {
     /// The file actions and the rarer, wider edits, in one menu.
     fn timeline_file_menu(&mut self, ui: &mut egui::Ui, palette: &Palette) {
         let busy = self.clip.busy;
+        let can_open = self.clip.file_action_allowed(files::Action::Load);
         let frame_keyed = self.clip.has_key(None, self.clip.frame);
         let button = widgets::action_menu_button(
             ui,
@@ -876,10 +935,18 @@ impl Editor {
         let mut action = None;
         let mut delete_frame_keys = false;
         menu::dropdown(&button, palette, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            if menu::item_if(ui, palette, "file-import", aurora_i18n::tr!("anim-edit-open-file"), !busy) {
+            // greyed out with the drafts full, like Create: opening would
+            // have to drop the current document
+            if menu::item_if(ui, palette, "file-import", aurora_i18n::tr!("anim-edit-open-file"), can_open) {
                 action = Some(files::Action::Load);
             }
-            if menu::item_if(ui, palette, "folder-open-filled", aurora_i18n::tr!("anim-edit-open-project"), !busy) {
+            if menu::item_if(
+                ui,
+                palette,
+                "folder-open-filled",
+                aurora_i18n::tr!("anim-edit-open-project"),
+                can_open,
+            ) {
                 action = Some(files::Action::LoadProject);
             }
             if menu::item_tip(

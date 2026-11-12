@@ -19,6 +19,10 @@ pub use files::Prepared;
 /// The animation editor's window: its own, narrower than IK contacts'.
 pub(super) const WINDOW: &str = "animation-editor";
 
+/// Drafts kept beside the current one. Creating, opening and importing all
+/// stop here: a draft is never dropped to make room for another.
+pub(super) const MAX_DRAFTS: usize = 15;
+
 #[derive(Clone, Copy)]
 pub(super) enum Capture {
     Bone(usize),
@@ -81,6 +85,8 @@ pub(super) struct State {
     redo: Vec<Arc<Document>>,
     clipboard: Vec<document::Keyframe>,
     drag_key: Option<(usize, u32, u32)>,
+    /// Presses the timeline's shortcuts acted on, until egui's next pass.
+    taken_keys: Vec<(egui::Key, egui::Modifiers)>,
     timeline_zoom: f32,
     timeline_start: u32,
     pub(super) auto_key_pending: bool,
@@ -136,6 +142,7 @@ impl Default for State {
             redo: Vec::new(),
             clipboard: Vec::new(),
             drag_key: None,
+            taken_keys: Vec::new(),
             timeline_zoom: 1.0,
             timeline_start: 0,
             auto_key_pending: false,
@@ -268,8 +275,43 @@ impl State {
     fn clear_undo_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.drag_key = None;
+    }
+    /// Whether another document would push the current one out of the
+    /// drafts. With no current document there is nothing to lose.
+    pub(in crate::ik_edit::clip) fn drafts_full(&self) -> bool {
+        self.document.is_some() && self.history.len() >= MAX_DRAFTS
+    }
+    /// Whether a file action can start. Opening a file with the drafts full
+    /// is refused before its dialog opens, like creating a draft.
+    pub(in crate::ik_edit::clip) fn file_action_allowed(&self, action: files::Action) -> bool {
+        !self.busy && !(action.loads() && self.drafts_full())
+    }
+    /// The queued file action and the document it works on, once per
+    /// request. Opening a file needs no document: it is how a first one
+    /// arrives. Saving or exporting without one has nothing to do, and
+    /// frees the buttons again.
+    fn take_file_action(&mut self) -> Option<(files::Action, Option<Arc<Document>>)> {
+        let action = self.export.take()?;
+        if action.loads() {
+            return Some((action, None));
+        }
+        if self.document.is_none() {
+            self.busy = false;
+            return None;
+        }
+        Some((action, self.document.clone()))
+    }
+    /// The editor stops being Avatar Studio's, unless an upload it prepared
+    /// still has to bring it back there.
+    pub(super) fn forget_avatar_studio(&mut self) {
+        if !self.return_after_upload {
+            self.from_avatar_studio = false;
+        }
     }
     fn undo(&mut self) -> bool {
+        // a key drag belongs to the document it started on
+        self.drag_key = None;
         let Some(previous) = self.undo.pop() else { return false };
         if let Some(current) = self.document.replace(previous) {
             self.redo.push(current);
@@ -278,6 +320,7 @@ impl State {
         true
     }
     fn redo(&mut self) -> bool {
+        self.drag_key = None;
         let Some(next) = self.redo.pop() else { return false };
         if let Some(current) = self.document.replace(next) {
             self.undo.push(current);
@@ -379,11 +422,16 @@ impl State {
                 }
                 files::Output::Loaded(document) => {
                     self.busy = false;
-                    if let Some(current) = self.document.replace(Arc::new(document))
-                        && self.history.len() < 15
-                    {
+                    // The drafts filled while the dialog was open: keep the
+                    // current document, never drop it for the loaded one.
+                    if self.drafts_full() {
+                        self.error = Some(aurora_i18n::text("anim-edit-drafts-full").to_owned());
+                        continue;
+                    }
+                    if let Some(current) = self.document.replace(Arc::new(document)) {
                         self.history.push(current);
                     }
+                    self.auto_key_retime_from = None;
                     let start = self.document.as_ref().map_or(0, |document| document.start);
                     self.frame = start;
                     self.cursor = f64::from(start);
@@ -401,6 +449,12 @@ impl State {
                     self.error = Some(error);
                 }
             }
+        }
+        if let Some((action, document)) = self.take_file_action() {
+            let import_skeleton = matches!(action, files::Action::Load)
+                .then(|| skeleton.cloned().map(Arc::new))
+                .flatten();
+            files::start(jobs, ctx, self.tx.clone(), document, action, rig.clone(), import_skeleton);
         }
         if let Some(document) = &self.document {
             if !self.building && self.preview_revision != Some(self.revision) {
@@ -420,12 +474,6 @@ impl State {
                     });
                     ctx.request_repaint();
                 });
-            }
-            if let Some(action) = self.export.take() {
-                let import_skeleton = matches!(action, files::Action::Load)
-                    .then(|| skeleton.cloned().map(Arc::new))
-                    .flatten();
-                files::start(jobs, ctx, self.tx.clone(), document.clone(), action, rig.clone(), import_skeleton);
             }
             let now = Instant::now();
             let dt = self.at.map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f64());
@@ -483,6 +531,11 @@ fn next_auto_key_frame(document: &mut Document, frame: u32) -> Option<u32> {
 
 impl Editor {
     pub(in crate::ik_edit::clip) fn queue_studio_file_action(&mut self, action: files::Action) {
+        if action.loads() && self.clip.drafts_full() {
+            self.clip.error = Some(aurora_i18n::text("anim-edit-drafts-full").to_owned());
+            self.clip.message = None;
+            return;
+        }
         self.clip.export = Some(action);
         self.clip.busy = true;
         self.clip.error = None;
@@ -534,6 +587,13 @@ impl Editor {
             self.clip.error = Some(aurora_i18n::text(key).to_owned());
             return;
         }
+        // The rest pose is the hidden baseline of a fresh draft, as in
+        // `new_clip`: left authored, every bone would be exported and freeze
+        // the whole body over the other animations.
+        for track in &mut document.tracks {
+            track.authored = false;
+        }
+        self.clip.drag_key = None;
         self.clip.checkpoint();
         self.clip.document = Some(Arc::new(document));
         self.clip.auto_key_retime_from = None;
@@ -826,7 +886,7 @@ impl Editor {
         })
     }
     fn new_clip(&mut self, world: &World, frame: &Frame) {
-        if self.clip.history.len() >= 15 {
+        if self.clip.history.len() >= MAX_DRAFTS {
             return;
         }
         let rig = &world.avatar_lib.rig;
@@ -937,6 +997,7 @@ impl Editor {
         self.clip.active = false;
         self.clip.playing = false;
         self.clip.capture = None;
+        self.clip.drag_key = None;
         self.clip.auto_key_pending = false;
         self.clip.modified.clear();
         self.clip.translations.clear();

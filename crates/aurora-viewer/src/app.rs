@@ -17103,6 +17103,12 @@ impl App {
                         ctrl: self.ctrl,
                         alt: self.alt,
                     };
+                    // A press the animation timeline acted on is its alone:
+                    // egui holds the same event, and the build tools would
+                    // delete the selected object or undo an edit with it.
+                    for (key, modifiers) in self.ik_editor.take_timeline_keys() {
+                        ctx.input_mut(|input| input.consume_key(modifiers, key));
+                    }
                     // Focused web/media pages already received the native
                     // keys; their history must not also change world objects.
                     if self.media.focus.is_none() && !self.web_has_focus() {

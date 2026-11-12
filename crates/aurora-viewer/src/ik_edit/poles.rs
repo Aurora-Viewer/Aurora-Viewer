@@ -127,7 +127,7 @@ impl Editor {
                     } else {
                         pointer
                     };
-                    self.start_drag(proj, frame, origin, rotate, ctx.input(|i| i.modifiers.shift));
+                    self.start_drag(proj, frame, origin, rotate, self.fine_drag(ctx.input(|i| i.modifiers)));
                 }
                 self.drag_to(proj, frame, rig, pointer);
             }

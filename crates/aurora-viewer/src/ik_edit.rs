@@ -131,11 +131,8 @@ impl Frame {
         if hud {
             return None;
         }
-        let model = world
-            .avatar_models
-            .get(&subject)
-            .copied()
-            .unwrap_or_else(|| Mat4::from_rotation_translation(q, p) * Mat4::from_translation(-world.avatar_lib.pelvis));
+        let stored = world.avatar_models.get(&subject).copied();
+        let mut model = stored.unwrap_or_else(|| Mat4::from_rotation_translation(q, p) * Mat4::from_translation(-world.avatar_lib.pelvis));
         let poses = world.avatar_poses.get(&subject)?;
         let rig = &world.avatar_lib.rig;
         if poses.len() < rig.len() {
@@ -146,6 +143,15 @@ impl Frame {
             .zip(&rig.default_world_inv)
             .map(|(p, inverse)| model * *p * inverse.inverse())
             .collect();
+        // Avatar Studio's Hover Height lifts the stored pose for display
+        // only. Carry the lift on the model instead: the joints stay where
+        // the avatar shows, and everything read back in model space (bone
+        // positions, IK targets, recorded pelvis keys) is free of it.
+        if subject == world.agent_id
+            && let Some(lift) = stored.and_then(|model| crate::scene::avatar_studio::display_lift(model, world.avatar_studio_lift))
+        {
+            model *= Mat4::from_translation(lift);
+        }
         Some(Self { model, joints, at })
     }
 }
@@ -231,6 +237,26 @@ impl Editor {
     }
     fn gizmo_visible(&self, modifiers: egui::Modifiers) -> bool {
         self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift
+    }
+
+    /// The drag scale of the shared move and rotate handles. The Poser's
+    /// Posing sensitivity is the Poser's setting: in the IK editor, on the
+    /// virtual bones and in the animation editor a handle follows the
+    /// pointer one to one, whatever was saved there.
+    fn gizmo_sensitivity(&self) -> f32 {
+        if self.poser.active {
+            self.poser.sensitivity
+        } else {
+            gizmo::DEFAULT_SENSITIVITY
+        }
+    }
+
+    /// Whether a free rotation drag is ten times finer. Shift does that in
+    /// the Poser, which says so on its trackball. Elsewhere Shift only
+    /// enables dragging a point (`point_drag_enabled`), so that Ctrl+Shift
+    /// keeps the rotation rate it always had.
+    fn fine_drag(&self, modifiers: egui::Modifiers) -> bool {
+        self.poser.active && modifiers.shift
     }
 
     fn bone_overlays_visible(&self) -> bool {
@@ -922,7 +948,7 @@ impl Editor {
         let picking_parts = self.poser_ctrl_picks(modifiers) && !self.gizmo.dragging();
         let (owns, change) = self
             .gizmo
-            .show(ctx, palette, geometry, pose, !point_hit && !picking_parts, self.poser.sensitivity);
+            .show(ctx, palette, geometry, pose, !point_hit && !picking_parts, self.gizmo_sensitivity());
         let owns = owns && !picking_parts;
         if let Some((pose, tool)) = change {
             if self.limb_controls
@@ -1152,7 +1178,7 @@ impl Editor {
                             } else {
                                 pointer
                             };
-                            self.start_drag(proj, &frame, origin, rotate, ctx.input(|i| i.modifiers.shift));
+                            self.start_drag(proj, &frame, origin, rotate, self.fine_drag(ctx.input(|i| i.modifiers)));
                         }
                         self.drag_to(proj, &frame, rig, pointer);
                     }
@@ -1175,6 +1201,10 @@ impl Editor {
         }
         if !self.open {
             self.leave_clip();
+            // Closed with its own button: the editor is no longer Avatar
+            // Studio's. Resumed later from IK Edit it needs its timeline and
+            // its way back, which Studio would have drawn.
+            self.clip.forget_avatar_studio();
             self.cancel_link_pick();
             self.drag = None;
             self.gizmo.cancel();

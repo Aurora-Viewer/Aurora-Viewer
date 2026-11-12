@@ -40,6 +40,14 @@ One toolbar sits above the tracks and stays in place while they scroll:
 - **File**: import an animation, open or save an editor project (Ctrl+S), and
   delete every key of the current frame.
 
+The shortcuts belong to the timeline while its window is shown. A shortcut with
+nothing to do keeps its usual action in the viewer: Ctrl+Z with nothing to
+undo, Ctrl+Y with nothing to redo, Ctrl+V with no copied pose, Delete when the
+selected bone has no key on the frame, K with no bone selected, Ctrl+S while a
+file action is under way. With the timeline window closed, every key is the
+viewer's again. A press the timeline acts on is not also given to the build
+tools, so Delete or Ctrl+Z never changes a selected object at the same time.
+
 The frame ruler shares the lanes' scale: click or drag it to scrub. Left and
 Right step one frame, and keep stepping while held. Keys are diamonds on each
 bone's lane: drag one to move it, click an empty spot to go to that frame. A
@@ -73,7 +81,8 @@ you pause, leaving a clean preview without changing the Display visibility
 settings.
 The local avatar's nameplate is hidden while Animate is active. **Hover Height**
 in the Studio toolbar moves only the displayed avatar in 1 cm increments; it
-does not change the animation or world position. Its fixed-width toolbar button
+does not change the animation or world position: bone positions, IK targets
+and recorded pelvis keys are read without the lift. Its fixed-width toolbar button
 and wrapped, padded slider panel stay in place while the value changes.
 Zoom and pan there to work on closely spaced keys in a long clip, or choose
 **Fit** to see the full range. Use **Save editor project** to preserve an
@@ -90,10 +99,13 @@ In animation mode, the Bone page exposes rotation and position only because nati
 Second Life animation files cannot store joint scale. Entering the editor
 temporarily switches a scale-mode Poser to rotation and restores the selected
 Poser tool when you return to posing.
-The Poser settings' **Posing sensitivity** control scales the move, rotation and
-scale gizmos as well as the trackball. Its default of 0.5 keeps the existing
-drag response; lower it for smaller changes per drag, and the choice is saved
-with the other Poser settings.
+The Poser settings' **Posing sensitivity** control scales the Poser's move,
+rotation and scale gizmos as well as its trackball. Its default of 0.5 keeps
+the existing drag response; lower it for smaller changes per drag, and the
+choice is saved with the other Poser settings. It is the Poser's setting only:
+in the animation editor, in IK Edit and on the virtual bones a handle follows
+the pointer one to one. Holding Shift for a ten times finer rotation is the
+Poser's as well.
 
 ## Record keys
 
@@ -183,14 +195,19 @@ controls. In Animations, choose the destination **Frame (.anim)** and
 to the current draft. This bakes the real skeletal pose; the LSL companion
 supplies live target following during play.
 
-Creating another animation retains the previous draft in the draft selector.
-Up to sixteen drafts remain available during the viewer session, including
-after closing/reopening IK Edit. Save `.anim` files to keep exported clips
+Creating another animation, or opening a file, retains the previous draft in
+the draft selector. Up to sixteen drafts remain available during the viewer
+session, including after closing/reopening IK Edit. With all sixteen in use,
+Create, Import and Open project are greyed out: a draft is never dropped to
+make room for another. Opening a file needs no draft, so Import and Open
+project also work before the first animation is created. Save `.anim` files to keep exported clips
 before leaving the viewer. Outside trimmed keys and disabled tracks remain
 in the session draft; an exported file contains the selected active clip.
 Editable `.auroraanim` projects preserve the full timeline and keys, use a
 64 MiB file-size limit, and reject an oversized save rather than writing a
-project that cannot be reopened.
+project that cannot be reopened. Projects and `.anim` files are written to a
+temporary file beside the target and renamed over it, so a failed save leaves
+the previous file whole.
 Opening `.anim`, `.bvh` or `.auroraanim` files reads at most 64 MiB before
 decoding, matching the parser limits.
 
@@ -208,6 +225,11 @@ to the current avatar rig, avoiding a partial animation; the general BVH
 importer keeps its existing behavior. Project files with unknown or duplicate
 bone tracks are rejected instead of opening an ambiguous draft.
 Zero-duration native pose clips open as one editable timeline frame.
+Values a native file may hold but the editor has no control for are brought
+into its ranges when the file opens: a base priority of -1 becomes 0, a joint
+priority above 6 becomes 6, and hand pose 14 becomes the first hand pose. The
+joint constraints of an imported `.anim` are not kept: the editor's export
+writes none.
 **Prepare .anim import** opens Aurora's existing animation import inspector
 with the same native bytes. Review its preview, destination, name and
 permissions, then use the normal upload action. Preparing the inspector does

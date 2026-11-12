@@ -16,6 +16,12 @@ pub(super) enum Action {
     Save { last_key_only: bool },
     Import { last_key_only: bool },
 }
+impl Action {
+    /// Opening a file brings a document in and needs none to start from.
+    pub(super) fn loads(self) -> bool {
+        matches!(self, Self::Load | Self::LoadProject)
+    }
+}
 pub(super) enum Output {
     Preview {
         revision: u64,
@@ -63,6 +69,18 @@ pub(super) fn load_document(
     };
     Document::from_animation(animation, rig).map_err(|key| aurora_i18n::text(key).to_owned())
 }
+/// Write through a temporary file beside the target, then rename it over:
+/// a failed or interrupted save leaves the previous file whole.
+pub(super) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+    let result = std::fs::write(&temp, bytes)
+        .and_then(|()| std::fs::rename(&temp, path))
+        .map_err(|error| error.to_string());
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+    result
+}
 pub fn basename(name: &str) -> String {
     let name: String = name
         .chars()
@@ -79,7 +97,7 @@ pub(super) fn start(
     jobs: &Jobs,
     ctx: &egui::Context,
     tx: crossbeam_channel::Sender<Output>,
-    document: Arc<Document>,
+    document: Option<Arc<Document>>,
     action: Action,
     rig: Arc<Rig>,
     skeleton: Option<Arc<aurora_assets::Skeleton>>,
@@ -111,6 +129,8 @@ pub(super) fn start(
                     .map(Output::Loaded)
                     .map_err(|key| aurora_i18n::text(key).to_owned());
             }
+            // every action below saves or exports the current document
+            let document = document.ok_or_else(|| aurora_i18n::text("anim-edit-invalid").to_owned())?;
             if matches!(action, Action::SaveProject) {
                 let Some(path) = rfd::FileDialog::new()
                     .add_filter(aurora_i18n::tr!("anim-edit-project-filter"), &["auroraanim"])
@@ -119,8 +139,8 @@ pub(super) fn start(
                 else {
                     return Ok(Output::Cancelled);
                 };
-                std::fs::write(&path, document.project_json().map_err(|key| aurora_i18n::text(key).to_owned())?)
-                    .map_err(|e| e.to_string())?;
+                let bytes = document.project_json().map_err(|key| aurora_i18n::text(key).to_owned())?;
+                write_atomic(&path, &bytes)?;
                 return Ok(Output::Saved(path));
             }
             let last_key_only = match action {
@@ -149,7 +169,7 @@ pub(super) fn start(
                     else {
                         return Ok(Output::Cancelled);
                     };
-                    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+                    write_atomic(&path, &bytes)?;
                     Output::Saved(path)
                 }
             })

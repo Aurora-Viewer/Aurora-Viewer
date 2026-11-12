@@ -619,6 +619,9 @@ pub struct World {
     pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// Local dressing-room visibility; independent of photo choices.
     pub avatar_studio: bool,
+    /// Avatar Studio's display-only hover height (metres) that our avatar's
+    /// entry of `avatar_poses` carries, as the scene last posed it.
+    pub avatar_studio_lift: f32,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -956,6 +959,7 @@ impl World {
             parcel_visibility: Default::default(),
             photo_isolation: Default::default(),
             avatar_studio: false,
+            avatar_studio_lift: 0.0,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),

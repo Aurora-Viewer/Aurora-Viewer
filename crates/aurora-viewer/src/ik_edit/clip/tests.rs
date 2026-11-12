@@ -569,7 +569,10 @@ fn arrow_keys_step_one_frame_within_the_range_and_k_keys_the_selected_bone() {
     assert!(matches!(editor.clip.capture, Some(Capture::Bone(7))));
     editor.clip.capture = None;
     editor.selected = None;
-    press(&mut editor, egui::Key::K);
+    assert!(
+        !editor.handle_timeline_shortcut(&ctx, egui::Key::K, egui::Modifiers::NONE),
+        "K without a selected bone is not the timeline's"
+    );
     assert!(editor.clip.capture.is_none(), "K keys nothing without a selected bone");
 }
 
@@ -2792,4 +2795,529 @@ fn creation_bakes_the_contacts_the_user_set_on_the_rest_skeleton() {
     assert!(key(elbow).dot(solved.rotations[elbow]).abs() > 0.9999, "and is in the key");
     let head = rig.names["mHead"];
     assert!(key(head).dot(rig.local_rot[head]).abs() > 0.9999, "the played head is not");
+}
+
+/// A world with our avatar standing in its rest pose, as the scene stores it.
+fn agent_world(lib: &Arc<AvatarLibrary>) -> World {
+    let mut world = World::new(lib.clone());
+    world.agent_id = demo::DEMO_AGENT;
+    world.main_region = Some(1);
+    world.apply(NetEvent::ObjectUpdates {
+        handle: 1,
+        objects: vec![demo::action_avatar(false)],
+    });
+    let rig = &lib.rig;
+    world.avatar_poses.insert(
+        world.agent_id,
+        rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale)
+            .iter()
+            .zip(&rig.default_world_inv)
+            .map(|(pose, inverse)| *pose * *inverse)
+            .collect(),
+    );
+    world
+}
+
+fn rotation_track(rig: &Rig, bone: usize, frames: &[u32]) -> document::Track {
+    document::Track {
+        bone,
+        enabled: true,
+        authored: true,
+        motion: aurora_assets::anim::JointMotion {
+            joint_name: rig.canonical_names[bone].clone(),
+            priority: 3,
+            rot_keys: frames
+                .iter()
+                .map(|frame| aurora_assets::anim::RotKey {
+                    time: *frame as f32 / FPS,
+                    rotation: Quat::from_rotation_z(*frame as f32 / 100.0),
+                })
+                .collect(),
+            pos_keys: Vec::new(),
+        },
+        interpolation: document::Interpolation::Linear,
+        curve: document::Curve::default(),
+        base_position: rig.local_pos[bone],
+    }
+}
+
+fn native_animation(joints: Vec<aurora_assets::anim::JointMotion>) -> aurora_assets::Animation {
+    aurora_assets::Animation {
+        base_priority: 3,
+        duration: 2.0,
+        emote_name: String::new(),
+        loop_in: 0.0,
+        loop_out: 2.0,
+        looping: true,
+        ends_after: None,
+        ease_in: 0.0,
+        ease_out: 0.0,
+        hand_pose: 0,
+        joints,
+    }
+}
+
+#[test]
+fn resetting_the_animation_keeps_the_rest_pose_out_of_the_export() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let world = agent_world(&lib);
+    let rig = &lib.rig;
+    let mut editor = Editor::default();
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip.drag_key = Some((0, 0, 5));
+
+    editor.reset_animation_from_studio(&world);
+
+    let document = editor.clip.document.clone().expect("the reset leaves a document");
+    assert!(document.tracks.len() > 100, "every bone keeps its rest baseline for the preview");
+    assert!(
+        document.tracks.iter().all(|track| !track.authored),
+        "the rest pose of a reset is the hidden baseline of a fresh draft"
+    );
+    assert!(!document.has_exportable_tracks());
+    assert!(matches!(document.animation(), Err("anim-edit-no-bones")));
+    assert_eq!(editor.clip.drag_key, None, "a key drag does not outlive the document it started on");
+    assert_eq!(editor.clip.undo.len(), 1, "the reset can be undone");
+
+    // key one arm: the export carries that joint only, not the frozen body
+    let elbow = rig.names["mElbowLeft"];
+    let mut rotations = rig.local_rot.clone();
+    rotations[elbow] = Quat::from_rotation_y(0.6) * rotations[elbow];
+    let mut keyed = Document::clone(&document);
+    keyed
+        .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), 30, &[elbow], &[])
+        .unwrap();
+    let exported = keyed.animation().expect("one authored track exports");
+    assert_eq!(exported.joints.len(), 1);
+    assert_eq!(exported.joints[0].joint_name, "mElbowLeft");
+}
+
+#[test]
+fn opening_a_file_with_every_draft_in_use_keeps_the_current_document() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let current = Arc::new(Document::new());
+    let mut loaded = Document::new();
+    loaded.name = "Opened".into();
+    let mut state = State {
+        document: Some(current.clone()),
+        history: (0..MAX_DRAFTS).map(|_| Arc::new(Document::new())).collect(),
+        busy: true,
+        preview_revision: Some(0),
+        ..Default::default()
+    };
+    state.checkpoint();
+    assert!(state.drafts_full());
+    assert!(!state.file_action_allowed(files::Action::Load));
+    assert!(!state.file_action_allowed(files::Action::LoadProject));
+    state.tx.send(files::Output::Loaded(loaded.clone())).unwrap();
+
+    let (jobs, _) = Jobs::new();
+    let context = egui::Context::default();
+    state.tick(&jobs, &context, lib.rig.clone(), lib.skeleton.as_ref());
+
+    assert!(
+        Arc::ptr_eq(state.document.as_ref().unwrap(), &current),
+        "the unsaved current document is never dropped for the opened file"
+    );
+    assert_eq!(state.history.len(), MAX_DRAFTS);
+    assert_eq!(state.undo.len(), 1, "and its undo history stays");
+    assert!(!state.busy);
+    assert_eq!(state.error.as_deref(), Some(aurora_i18n::text("anim-edit-drafts-full")));
+
+    // with one place left, the current document becomes a draft
+    state.history.pop();
+    state.error = None;
+    assert!(state.file_action_allowed(files::Action::Load));
+    state.tx.send(files::Output::Loaded(loaded)).unwrap();
+    state.tick(&jobs, &context, lib.rig.clone(), lib.skeleton.as_ref());
+    assert_eq!(state.document.as_ref().unwrap().name, "Opened");
+    assert_eq!(state.history.len(), MAX_DRAFTS);
+    assert!(Arc::ptr_eq(state.history.last().unwrap(), &current));
+    assert!(state.error.is_none());
+
+    // and the buttons refuse before the file dialog opens
+    let mut editor = Editor {
+        clip: state,
+        ..Default::default()
+    };
+    editor.clip.message = Some("Saved".into());
+    editor.queue_studio_file_action(files::Action::LoadProject);
+    assert!(editor.clip.export.is_none());
+    assert!(!editor.clip.busy);
+    assert!(editor.clip.message.is_none());
+    assert_eq!(editor.clip.error.as_deref(), Some(aurora_i18n::text("anim-edit-drafts-full")));
+    editor.queue_studio_file_action(files::Action::SaveProject);
+    assert!(editor.clip.busy, "saving is not concerned by the draft limit");
+}
+
+#[test]
+fn opening_a_file_needs_no_draft_and_a_save_without_one_frees_the_buttons() {
+    for action in [files::Action::Load, files::Action::LoadProject] {
+        let mut editor = Editor::default();
+        assert!(editor.clip.document.is_none());
+        assert!(editor.clip.file_action_allowed(action));
+        editor.queue_studio_file_action(action);
+        assert!(editor.clip.busy);
+
+        let (taken, document) = editor.clip.take_file_action().expect("the dialog opens with no draft");
+        assert!(taken.loads());
+        assert!(document.is_none());
+        assert!(
+            editor.clip.export.is_none(),
+            "the request runs once, not later when a draft appears"
+        );
+        assert!(editor.clip.busy, "busy until the dialog answers");
+        assert!(editor.clip.take_file_action().is_none());
+    }
+
+    let mut editor = Editor::default();
+    editor.queue_studio_file_action(files::Action::SaveProject);
+    assert!(editor.clip.take_file_action().is_none(), "nothing to save");
+    assert!(!editor.clip.busy, "and the buttons are not left greyed out");
+    assert!(editor.clip.export.is_none());
+
+    let document = Arc::new(Document::new());
+    editor.clip.document = Some(document.clone());
+    editor.queue_studio_file_action(files::Action::Save { last_key_only: false });
+    let (taken, saved) = editor.clip.take_file_action().expect("a save has its document");
+    assert!(!taken.loads());
+    assert!(Arc::ptr_eq(&saved.unwrap(), &document));
+}
+
+#[test]
+fn keying_a_loaded_pelvis_track_without_position_keys_keeps_the_avatar_on_the_ground() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let pelvis = rig.pelvis;
+    let rotation_only = || aurora_assets::anim::JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: 3,
+        rot_keys: [0.0, 2.0]
+            .into_iter()
+            .map(|time| aurora_assets::anim::RotKey {
+                time,
+                rotation: rig.local_rot[pelvis],
+            })
+            .collect(),
+        pos_keys: Vec::new(),
+    };
+    let imported = Document::from_animation(native_animation(vec![rotation_only()]), rig).unwrap();
+    let reopened = Document::from_project_json(&imported.project_json().unwrap(), rig).unwrap();
+    assert!(rig.local_pos[pelvis].z > 0.5, "the fixture's pelvis rests well above the root");
+
+    let mut positions = rig.local_pos.clone();
+    positions[pelvis].z += 0.1;
+    let posed = frame(&lib, &rig.local_rot, &positions, &rig.scale);
+    for (source, mut document) in [("anim", imported), ("project", reopened)] {
+        document.record(rig, &posed, 30, &[pelvis], &[pelvis]).unwrap();
+        let track = document.tracks.iter().find(|track| track.bone == pelvis).unwrap();
+        let keys = &track.motion.pos_keys;
+        assert_eq!(keys.len(), 2, "{source}: a start key and the recorded one");
+        assert_eq!(keys[0].time, 0.0);
+        assert!(
+            keys[0].position.abs_diff_eq(Vec3::ZERO, 1e-5),
+            "{source}: the start key is no offset, not the pelvis rest height ({:?})",
+            keys[0].position
+        );
+        assert!(keys[1].position.abs_diff_eq(Vec3::new(0.0, 0.0, 0.1), 1e-4), "{source}");
+        let animation = document.animation().unwrap();
+        assert!(
+            animation.joints[0]
+                .pos_keys
+                .iter()
+                .all(|key| key.position.abs().max_element() < 0.11),
+            "{source}: the exported pelvis never jumps by its rest height"
+        );
+    }
+
+    // every other joint still starts from its rest position under its parent
+    let head = rig.names["mHead"];
+    let other = Document::from_animation(
+        native_animation(vec![aurora_assets::anim::JointMotion {
+            joint_name: "mHead".into(),
+            ..rotation_only()
+        }]),
+        rig,
+    )
+    .unwrap();
+    assert_eq!(other.tracks[0].base_position, rig.local_pos[head]);
+}
+
+#[test]
+fn retiming_scales_around_a_clip_start_after_frame_zero() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let chest = rig.names["mChest"];
+    let mut document = Document::new();
+    // the hidden rest key of a fresh draft at frame 0, then the clip's keys
+    document.tracks.push(rotation_track(rig, head, &[0, 30, 45, 60]));
+    document.tracks.push(document::Track {
+        authored: false,
+        ..rotation_track(rig, chest, &[0])
+    });
+    document.range(30, 60);
+
+    assert!(
+        document.retime_keys_to_step(0.5, 1.0),
+        "a key before the clip start does not fail the retime"
+    );
+    assert_eq!(document.frames(Some(head)), vec![0, 30, 60, 90], "scaled around frame 30");
+    assert_eq!(document.frames(Some(chest)), vec![0], "the rest key stays at frame 0");
+    assert_eq!((document.start, document.end), (30, 90), "the range grows with the last key");
+
+    // a real collision is still refused, without partial changes
+    let before = document.frames(Some(head));
+    assert!(!document.retime_keys_to_step(1.0, 0.01));
+    assert_eq!(document.frames(Some(head)), before);
+}
+
+#[test]
+fn timeline_shortcuts_that_do_nothing_leave_their_key_to_the_viewer() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    document
+        .record(rig, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale), 10, &[head], &[])
+        .unwrap();
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    let none = egui::Modifiers::NONE;
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    let ctrl_shift = egui::Modifiers {
+        ctrl: true,
+        shift: true,
+        ..Default::default()
+    };
+    editor.clip_seek(10);
+    let untouched = editor.clip.document.clone().unwrap();
+
+    for (key, modifiers, what) in [
+        (egui::Key::Z, ctrl, "nothing to undo"),
+        (egui::Key::Y, ctrl, "nothing to redo"),
+        (egui::Key::Z, ctrl_shift, "nothing to redo"),
+        (egui::Key::V, ctrl, "an empty clipboard"),
+        (egui::Key::Delete, none, "no selected bone"),
+        (egui::Key::K, none, "no bone to key"),
+    ] {
+        assert!(!editor.handle_timeline_shortcut(&ctx, key, modifiers), "{what}");
+    }
+    editor.selected = Some(head);
+    editor.clip_seek(11);
+    assert!(
+        !editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, none),
+        "the selected bone has no key on this frame"
+    );
+    editor.clip.busy = true;
+    assert!(
+        !editor.handle_timeline_shortcut(&ctx, egui::Key::S, ctrl),
+        "a save is already under way"
+    );
+    editor.clip.busy = false;
+    assert!(Arc::ptr_eq(editor.clip.document.as_ref().unwrap(), &untouched));
+    assert!(editor.clip.capture.is_none() && editor.clip.export.is_none());
+    assert!(editor.take_timeline_keys().is_empty(), "no press was taken from egui either");
+
+    // without its timeline the editor takes no key at all: outside Avatar
+    // Studio the arrows walk, Home flies and Ctrl+S resynchronizes
+    editor.clip.timeline_open = false;
+    for (key, modifiers) in [
+        (egui::Key::ArrowLeft, none),
+        (egui::Key::ArrowRight, none),
+        (egui::Key::Home, none),
+        (egui::Key::Space, none),
+        (egui::Key::S, ctrl),
+    ] {
+        assert!(
+            !editor.handle_timeline_shortcut(&ctx, key, modifiers),
+            "{key:?} with the timeline closed"
+        );
+    }
+    assert_eq!(editor.clip.frame, 11);
+    assert!(!editor.clip.playing && editor.clip.export.is_none());
+    editor.clip.timeline_open = true;
+
+    // the same keys are the timeline's once they have something to do
+    editor.clip_seek(10);
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::C, ctrl));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, none));
+    assert!(editor.clip.document.as_ref().unwrap().frames(Some(head)).is_empty());
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Z, ctrl));
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![10]);
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Y, ctrl));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::V, ctrl));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::K, none));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::S, ctrl));
+    assert!(editor.clip.busy);
+    assert_eq!(
+        editor.take_timeline_keys(),
+        vec![
+            (egui::Key::C, ctrl),
+            (egui::Key::Delete, none),
+            (egui::Key::Z, ctrl),
+            (egui::Key::Y, ctrl),
+            (egui::Key::V, ctrl),
+            (egui::Key::K, none),
+            (egui::Key::S, ctrl),
+        ],
+        "each press that ran is taken out of egui's input, away from the build tools"
+    );
+    assert!(editor.take_timeline_keys().is_empty());
+}
+
+#[test]
+fn a_key_drag_ends_with_the_document_it_started_on() {
+    let document = Arc::new(Document::new());
+    let dragging = || State {
+        active: true,
+        document: Some(document.clone()),
+        drag_key: Some((3, 10, 20)),
+        ..Default::default()
+    };
+
+    let mut state = dragging();
+    state.checkpoint();
+    assert!(state.undo());
+    assert_eq!(state.drag_key, None, "undo");
+    state.drag_key = Some((3, 10, 20));
+    assert!(state.redo());
+    assert_eq!(state.drag_key, None, "redo");
+
+    let mut state = dragging();
+    state.clear_undo_history();
+    assert_eq!(state.drag_key, None, "another draft or an opened file");
+
+    let mut editor = Editor {
+        open: true,
+        clip: dragging(),
+        ..Default::default()
+    };
+    editor.leave_clip();
+    assert_eq!(editor.clip.drag_key, None, "leaving the editor");
+    let before = editor.clip.document.clone().unwrap();
+    editor.finish_timeline_key_drag(false);
+    assert!(
+        Arc::ptr_eq(editor.clip.document.as_ref().unwrap(), &before),
+        "no key moves on the next timeline draw"
+    );
+    assert!(editor.clip.undo.is_empty());
+}
+
+#[test]
+fn an_editor_closed_with_its_own_button_is_no_longer_avatar_studios() {
+    let mut state = State {
+        from_avatar_studio: true,
+        ..Default::default()
+    };
+    state.forget_avatar_studio();
+    assert!(
+        !state.from_avatar_studio,
+        "resumed from IK Edit, it draws its own timeline and Return"
+    );
+
+    let mut state = State {
+        from_avatar_studio: true,
+        return_after_upload: true,
+        ..Default::default()
+    };
+    state.forget_avatar_studio();
+    assert!(state.from_avatar_studio, "an upload under way still returns to Avatar Studio");
+}
+
+#[test]
+fn native_values_outside_the_editor_ranges_import_as_editable_ones() {
+    let lib = AvatarLibrary::load();
+    let mut animation = native_animation(vec![aurora_assets::anim::JointMotion {
+        joint_name: "mHead".into(),
+        priority: 7,
+        rot_keys: vec![aurora_assets::anim::RotKey {
+            time: 0.0,
+            rotation: Quat::IDENTITY,
+        }],
+        pos_keys: Vec::new(),
+    }]);
+    animation.base_priority = -1;
+    animation.hand_pose = 14;
+
+    let document = Document::from_animation(animation, &lib.rig).unwrap();
+
+    assert_eq!(document.meta.base_priority, 0);
+    assert_eq!(document.meta.hand_pose, 0);
+    assert_eq!(document.tracks[0].motion.priority, 6);
+    assert!(document.preview().is_ok(), "the clip previews as opened");
+    let exported = document.animation().expect("and exports without an edit");
+    assert!(aurora_assets::import_animation::encode(&exported).is_ok());
+}
+
+#[test]
+fn saving_replaces_the_file_whole_and_leaves_no_temporary_file() {
+    let folder = std::env::temp_dir().join(format!("aurora-anim-save-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("wave.auroraanim");
+    std::fs::write(&path, b"previous project").unwrap();
+
+    files::write_atomic(&path, b"new project").unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), b"new project");
+    let names: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("wave.auroraanim")]);
+
+    // a save that cannot land leaves the previous file as it was
+    let missing = folder.join("missing").join("wave.auroraanim");
+    assert!(files::write_atomic(&missing, b"lost").is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"new project");
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn studio_hover_height_stays_out_of_the_frame_the_editors_read() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let mut world = agent_world(&lib);
+    let rig = &lib.rig;
+    let model = Mat4::from_rotation_translation(Quat::from_rotation_z(0.8), Vec3::new(120.0, 90.0, 25.0));
+    world.avatar_models.insert(world.agent_id, model);
+    let grounded = Frame::new(&world).unwrap();
+
+    // what the scene stores with Hover Height at 0.35 m
+    let lift = crate::scene::avatar_studio::display_lift(model, 0.35).unwrap();
+    for pose in world.avatar_poses.get_mut(&world.agent_id).unwrap() {
+        *pose = Mat4::from_translation(lift) * *pose;
+    }
+    world.avatar_studio = true;
+    world.avatar_studio_lift = 0.35;
+    let hovering = Frame::new(&world).unwrap();
+
+    let pelvis = rig.pelvis;
+    let shown = hovering.joints[pelvis].w_axis.truncate() - grounded.joints[pelvis].w_axis.truncate();
+    assert!(shown.abs_diff_eq(Vec3::Z * 0.35, 1e-4), "the handles draw on the lifted avatar");
+    for bone in [pelvis, rig.names["mHead"], rig.names["mWristLeft"]] {
+        let authored = hovering.model.inverse() * hovering.joints[bone];
+        let expected = grounded.model.inverse() * grounded.joints[bone];
+        assert!(
+            authored.abs_diff_eq(expected, 1e-4),
+            "the pose read back in model space has no hover in it"
+        );
+    }
+
+    // so a pelvis key recorded while hovering holds no translation
+    let mut document = Document::new();
+    document.record(rig, &hovering, 10, &[pelvis], &[pelvis]).unwrap();
+    let keys = &document.tracks[0].motion.pos_keys;
+    assert!(keys.iter().all(|key| key.position.abs_diff_eq(Vec3::ZERO, 1e-4)), "{keys:?}");
 }

@@ -59,19 +59,24 @@ pub(super) fn write_inspection_pose(
     }
 }
 
+/// The Studio's hover height as a translation in the avatar's skeleton
+/// space, or `None` when there is nothing to lift. Whoever reads the stored
+/// pose back as an authored one (the pose and animation editors' `Frame`)
+/// takes the same translation out again.
+pub fn display_lift(model: Mat4, height: f32) -> Option<Vec3> {
+    if !model.is_finite() || model.determinant().abs() <= 1e-8 || !height.is_finite() || height.abs() < f32::EPSILON {
+        return None;
+    }
+    let local_lift = model.inverse().transform_vector3(Vec3::Z * height);
+    local_lift.is_finite().then_some(local_lift)
+}
+
 /// Lift the Studio's displayed skeleton and worn attachment anchors without
 /// changing its object transform or any animation data.
 pub(super) fn lift_display_pose(model: Option<Mat4>, height: f32, out: &mut [[[f32; 4]; 4]]) {
-    let Some(model) = model.filter(|model| model.is_finite() && model.determinant().abs() > 1e-8) else {
+    let Some(local_lift) = model.and_then(|model| display_lift(model, height)) else {
         return;
     };
-    if !height.is_finite() || height.abs() < f32::EPSILON {
-        return;
-    }
-    let local_lift = model.inverse().transform_vector3(Vec3::Z * height);
-    if !local_lift.is_finite() {
-        return;
-    }
     for matrix in out.iter_mut().take(super::anim::ANCHOR_BASE) {
         let mut transform = Mat4::from_cols_array_2d(matrix);
         transform.w_axis += local_lift.extend(0.0);

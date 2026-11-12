@@ -1111,7 +1111,7 @@ impl Editor {
                         || ctx
                             .input(|i| i.pointer.interact_pos())
                             .is_some_and(|p| self.point_owns_pointer(ctx, &world.avatar_lib.rig, p));
-                    let (o, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit, self.poser.sensitivity);
+                    let (o, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit, self.gizmo_sensitivity());
                     gizmo_owns |= o;
                     owns |= o;
                     if let Some((pose, _)) = change {
@@ -1181,7 +1181,7 @@ impl Editor {
                         frame,
                         ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer),
                         rotate,
-                        ctx.input(|i| i.modifiers.shift),
+                        self.fine_drag(ctx.input(|i| i.modifiers)),
                     );
                 }
                 owns = true;

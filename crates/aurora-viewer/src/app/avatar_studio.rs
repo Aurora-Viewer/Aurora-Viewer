@@ -666,7 +666,7 @@ fn studio_hover_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, hover_height:
             egui::Slider::new(hover_height, 0.0..=1.0)
                 .step_by(0.01)
                 .fixed_decimals(2)
-                .suffix(" m"),
+                .suffix(aurora_i18n::tr!("avatar-studio-hover-height-suffix")),
         );
         ui.add_space(6.0);
         studio_hover_reset_row(ui, hover_height);

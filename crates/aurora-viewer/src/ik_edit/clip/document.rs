@@ -9,6 +9,9 @@ pub const FPS: f32 = 30.0;
 pub const MAX_DURATION: f32 = 60.0;
 pub const MAX_FRAME: u32 = (MAX_DURATION as u32) * 60;
 pub(super) const MAX_ANIM_KEYS: usize = 16_384;
+/// The last hand pose of the editor's list (LLHandMotion::NUM_HAND_POSES is
+/// 14, indra/llcharacter/llhandmotion.h).
+const MAX_HAND_POSE: u32 = 13;
 const ANIM_EXPORT_SAMPLE_RATE: u32 = 60;
 pub const MAX_PROJECT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -340,19 +343,29 @@ impl Document {
         let mut meta = animation;
         // A valid zero-duration native pose is editable as one timeline frame.
         meta.duration = end as f32 / fps as f32;
+        // The file format holds values the editor has no control for: a
+        // base priority of -1, joint priorities above 6 (ADDITIVE_PRIORITY)
+        // and hand pose 14. Bring them into the editor's ranges here, or the
+        // clip could be neither previewed nor exported until the user found
+        // and changed the value.
+        meta.base_priority = meta.base_priority.clamp(0, 6);
+        if meta.hand_pose > MAX_HAND_POSE {
+            meta.hand_pose = 0;
+        }
         let joints = std::mem::take(&mut meta.joints);
         let mut tracks = Vec::new();
         let mut unsupported = false;
-        for motion in joints {
+        for mut motion in joints {
             let Some(&bone) = rig.names.get(&motion.joint_name) else {
                 unsupported = true;
                 continue;
             };
+            motion.priority = motion.priority.clamp(-1, 6);
             tracks.push(Track {
                 bone,
                 enabled: true,
                 authored: true,
-                base_position: rig.local_pos[bone],
+                base_position: base_position(rig, bone),
                 motion,
                 interpolation: Interpolation::Linear,
                 curve: Curve::default(),
@@ -491,7 +504,7 @@ impl Document {
                 bone,
                 enabled: source.enabled,
                 authored: source.authored,
-                base_position: rig.local_pos[bone],
+                base_position: base_position(rig, bone),
                 motion,
                 interpolation: source.interpolation,
                 curve: source.curve.normalized(),
@@ -520,7 +533,7 @@ impl Document {
             },
         };
         if !(0..=6).contains(&document.meta.base_priority)
-            || document.meta.hand_pose > 13
+            || document.meta.hand_pose > MAX_HAND_POSE
             || ![
                 document.meta.loop_in,
                 document.meta.loop_out,
@@ -550,6 +563,9 @@ impl Document {
     /// Scale every existing key's time around the clip start by the ratio of
     /// the new and old auto-advance steps. Values are quantized to the current
     /// FPS; reject collisions or durations beyond the native 60-second limit.
+    /// A key before the clip start stays where it is: it is outside the clip
+    /// (the hidden rest key at frame 0 of a clip that starts later), and
+    /// scaled around the start it would land before frame 0.
     pub fn retime_keys_to_step(&mut self, old_step: f32, new_step: f32) -> bool {
         if !old_step.is_finite() || !new_step.is_finite() || old_step <= 0.0 || new_step <= 0.0 {
             return false;
@@ -569,7 +585,13 @@ impl Document {
                         if !time.is_finite() {
                             return None;
                         }
-                        let frame_value = (start as f32 + (time * fps as f32 - start as f32) * ratio).round();
+                        let offset = time * fps as f32 - start as f32;
+                        let before_start = offset < -0.5;
+                        let frame_value = if before_start {
+                            (time * fps as f32).round()
+                        } else {
+                            (start as f32 + offset * ratio).round()
+                        };
                         if !(0.0..=max_frame as f32).contains(&frame_value) {
                             return None;
                         }
@@ -578,6 +600,9 @@ impl Document {
                             return None;
                         }
                         previous = Some(frame);
+                        if before_start {
+                            return Some(time);
+                        }
                         latest = latest.max(frame);
                         Some(frame as f32 / fps as f32)
                     })
@@ -829,7 +854,10 @@ impl Document {
             .any(|track| track.enabled && track.authored && (!track.motion.rot_keys.is_empty() || !track.motion.pos_keys.is_empty()))
     }
     fn build(&self, allow_empty: bool) -> Result<Animation, &'static str> {
-        if self.start >= self.end || self.end > self.max_frame() || !(0..=6).contains(&self.meta.base_priority) || self.meta.hand_pose > 13
+        if self.start >= self.end
+            || self.end > self.max_frame()
+            || !(0..=6).contains(&self.meta.base_priority)
+            || self.meta.hand_pose > MAX_HAND_POSE
         {
             return Err("anim-edit-invalid");
         }
@@ -936,6 +964,15 @@ impl Document {
         }
         Ok(animation)
     }
+}
+
+/// The position a track's keys start from when its first position key is
+/// recorded after frame 0. `Document::record` stores the pelvis as an offset
+/// from its rest position and every other joint as its position under its
+/// parent, so a loaded track takes the same: no offset for the pelvis (its
+/// rest height here would lift the avatar by it), the rest position else.
+fn base_position(rig: &Rig, bone: usize) -> Vec3 {
+    if bone == rig.pelvis { Vec3::ZERO } else { rig.local_pos[bone] }
 }
 
 /// A key belongs to the frame its time rounds to, exactly as the timeline

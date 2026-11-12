@@ -80,27 +80,37 @@ impl Editor {
             self.drafts_ui(ui, current, None);
         }
         ui.horizontal_wrapped(|ui| {
+            // This page belongs to IK Edit: an editor entered from here is
+            // not Avatar Studio's, whatever opened the previous one, and
+            // gets its own timeline, Timeline button and Return.
             if self.clip.document.is_some() && ui.button(aurora_i18n::tr!("anim-edit-resume")).clicked() {
+                self.clip.from_avatar_studio = false;
                 self.enter_clip(world, frame);
             }
             if ui
                 .add_enabled(
-                    self.clip.history.len() < 15,
+                    self.clip.history.len() < MAX_DRAFTS,
                     egui::Button::new(aurora_i18n::tr!("anim-edit-create")),
                 )
                 .on_hover_text(aurora_i18n::tr!("anim-edit-drafts-hint"))
                 .clicked()
             {
+                self.clip.from_avatar_studio = false;
                 self.new_clip(world, frame);
             }
+            // Opening is refused with the drafts full, like Create: the
+            // current document would have nowhere to go.
+            let can_open = self.clip.file_action_allowed(files::Action::Load);
             if ui
-                .add_enabled(!self.clip.busy, egui::Button::new(aurora_i18n::tr!("anim-edit-open-file")))
+                .add_enabled(can_open, egui::Button::new(aurora_i18n::tr!("anim-edit-open-file")))
+                .on_disabled_hover_text(aurora_i18n::tr!("anim-edit-drafts-hint"))
                 .clicked()
             {
                 self.queue_studio_file_action(files::Action::Load);
             }
             if ui
-                .add_enabled(!self.clip.busy, egui::Button::new(aurora_i18n::tr!("anim-edit-open-project")))
+                .add_enabled(can_open, egui::Button::new(aurora_i18n::tr!("anim-edit-open-project")))
+                .on_disabled_hover_text(aurora_i18n::tr!("anim-edit-drafts-hint"))
                 .clicked()
             {
                 self.queue_studio_file_action(files::Action::LoadProject);
@@ -135,6 +145,7 @@ impl Editor {
                     self.clip.seek(at);
                 }
                 if ui.button(aurora_i18n::tr!("anim-edit-capture-ik")).clicked() {
+                    self.clip.from_avatar_studio = false;
                     self.capture_ik_clip(world, frame);
                 }
             });
