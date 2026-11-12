@@ -651,6 +651,9 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    /// The poser subject's skinned faces, while a part is hovered: the part
+    /// is kept on them by its joints (`FrameParams::part_joints`).
+    pub part_faces: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -723,6 +726,7 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.part_faces.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -774,6 +778,7 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.part_faces.clone_from(&src.part_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -827,6 +832,7 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.part_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -1347,6 +1353,18 @@ pub struct FrameParams {
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
     pub selection_scale: f32,
+    /// The poser's hovered part (Aurora's own): bit j for the skeleton's
+    /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
+    /// as a selection's halo with a light tint inside.
+    pub part_joints: [u32; 8],
+    pub part_color: [f32; 4],
+    /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
+    /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
+    /// each part's weights and interpolates them before picking a part.
+    pub part_classes: [u32; 32],
+    /// The pixel whose visible part of `part_faces` to read back
+    /// (part_pick.rs): the cursor while Ctrl hovers the subject.
+    pub part_pick: Option<[u32; 2]>,
     pub view: Mat4,
     pub proj: Mat4,
     /// A photo drawn in tiles: the part of it this frame draws, `proj`

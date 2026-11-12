@@ -245,6 +245,8 @@ pub struct Renderer {
     /// The same for the faces drawn under a pixel (`request_drawn`).
     drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
     drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
+    /// The poser's part pick read back last (`take_part_pick`).
+    part_pick: Option<(u32, [u32; 2])>,
     /// Frames handed over.
     frames: u64,
     /// The renderer's side of the last frame result, and whether it came
@@ -740,6 +742,7 @@ impl Renderer {
             pick_ticket: 0,
             drawn_requests: Vec::new(),
             drawn_answers: Vec::new(),
+            part_pick: None,
             frames: 0,
             last_stats: RenderStats::default(),
             fresh: false,
@@ -1229,6 +1232,9 @@ impl Renderer {
         }
         self.pick_answers.append(&mut r.picks);
         self.drawn_answers.append(&mut r.drawn);
+        if let Some(joint) = r.part_pick {
+            self.part_pick = Some(joint);
+        }
         // (the answer of a click given up while it was in flight is never
         // taken: the next ones push it out)
         const KEPT: usize = 16;
@@ -1684,6 +1690,15 @@ impl Renderer {
         }
         let i = self.drawn_answers.iter().position(|(t, _)| *t == ticket)?;
         Some(self.drawn_answers.swap_remove(i).1)
+    }
+
+    /// The poser's part under the cursor read back since the last call
+    /// (part_pick.rs, asked with `FrameParams::part_pick`), with the window
+    /// pixel it was read at: 0 when nothing of the subject is there,
+    /// a part class otherwise.
+    pub fn take_part_pick(&mut self) -> Option<(u32, [u32; 2])> {
+        self.collect();
+        self.part_pick.take()
     }
 
     /// Give up a [`Self::request_drawn`] nobody waits for any more.
