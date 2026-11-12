@@ -361,6 +361,142 @@ pub enum ViewerRequest {
     LocalMeshAutoReload {
         enabled: bool,
     },
+
+    // Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials
+    LiveMeshControl {
+        action: String,
+        source_id: Option<Uuid>,
+    },
+    AssetUpload {
+        action: String,
+        paths: Vec<String>,
+        choice: Option<String>,
+        include_textures: Option<bool>,
+    },
+    InventoryRezObject {
+        item_id: Uuid,
+        position: [f32; 3],
+        select: bool,
+    },
+    ObjectTakeOrDerez {
+        local_id: u32,
+        action: String,
+        folder_id: Option<Uuid>,
+    },
+    PrimSetMaterial {
+        local_id: u32,
+        face: Option<i32>,
+        texture_id: Option<Uuid>,
+        material_id: Option<Uuid>,
+        color: Option<[f32; 4]>,
+        repeats: Option<[f32; 2]>,
+        offsets: Option<[f32; 2]>,
+        rotation_rad: Option<f32>,
+        glow: Option<f32>,
+        fullbright: Option<bool>,
+        alpha_mode: Option<u8>,
+        bump_shiny: Option<u8>,
+    },
+
+    // Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity)
+    MeshUploadOpen,
+    MeshUploadStatus,
+    NativeFileDialogs,
+    NativeFileChoose {
+        dialog_id: i64,
+        filename: String,
+    },
+    UiInspect {
+        path: String,
+    },
+    UiFind {
+        query: String,
+        under: String,
+        search_in: String,
+        match_mode: String,
+        max_depth: Option<usize>,
+        include_info: bool,
+        offset: usize,
+        limit: usize,
+    },
+    UiClick {
+        path: String,
+        button: String,
+        floater: Option<String>,
+        observe_path: Option<String>,
+    },
+    UiGetValue {
+        path: String,
+    },
+    UiSetText {
+        path: String,
+        text: String,
+    },
+    UiSelect {
+        path: String,
+        value: Value,
+    },
+    UiPressKey {
+        path: String,
+        keysym: String,
+        modifiers: Vec<String>,
+        observe_path: Option<String>,
+    },
+    UiListMenus {
+        query: String,
+    },
+    UiInvokeMenu {
+        name: String,
+    },
+
+    // Phase 6: Suite 3 — In-World Object Interaction, Notecards & Particle System
+    ObjectTouch {
+        local_id: u32,
+        face: i32,
+        uv: [f32; 2],
+        st: [f32; 2],
+        hold_ms: u64,
+    },
+    AvatarSit {
+        action: String,
+        target_local_id: Option<u32>,
+        target_uuid: Option<Uuid>,
+        offset: Option<[f32; 3]>,
+    },
+    NotecardRead {
+        item_id: Uuid,
+        object_local_id: Option<u32>,
+    },
+    NotecardWrite {
+        item_id: Option<Uuid>,
+        object_local_id: Option<u32>,
+        name: Option<String>,
+        body: String,
+    },
+    PrimSetParticles {
+        local_id: u32,
+        clear: bool,
+        pattern: Option<String>,
+        texture_id: Option<Uuid>,
+        start_color: Option<[f32; 4]>,
+        end_color: Option<[f32; 4]>,
+        start_scale: Option<[f32; 2]>,
+        end_scale: Option<[f32; 2]>,
+        particle_max_age: Option<f32>,
+        burst_rate: Option<f32>,
+        burst_part_count: Option<u32>,
+        burst_radius: Option<f32>,
+        burst_speed_min: Option<f32>,
+        burst_speed_max: Option<f32>,
+        accel: Option<[f32; 3]>,
+        omega: Option<[f32; 3]>,
+        follow_src: Option<bool>,
+        follow_velocity: Option<bool>,
+        interp_color: Option<bool>,
+        interp_scale: Option<bool>,
+        emissive: Option<bool>,
+        ribbon: Option<bool>,
+    },
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -425,7 +561,19 @@ impl ViewerRequest {
             | ViewerRequest::LslReadScript { .. }
             | ViewerRequest::LslListenScriptOutput { .. }
             | ViewerRequest::LsdInspect { .. }
-            | ViewerRequest::LocalMeshStatus => false,
+            | ViewerRequest::LocalMeshStatus
+            | ViewerRequest::MeshUploadStatus
+            | ViewerRequest::NativeFileDialogs
+            | ViewerRequest::UiInspect { .. }
+            | ViewerRequest::UiFind { .. }
+            | ViewerRequest::UiGetValue { .. }
+            | ViewerRequest::UiListMenus { .. }
+            | ViewerRequest::NotecardRead { .. } => false,
+
+            ViewerRequest::LiveMeshControl { action, .. }
+            | ViewerRequest::AssetUpload { action, .. } => {
+                !action.eq_ignore_ascii_case("status")
+            }
 
             ViewerRequest::ViewerCall { api, operation, .. } => {
                 // Read-only LEAP / viewer queries do not require a lease.
@@ -453,7 +601,21 @@ impl ViewerRequest {
             | ViewerRequest::LslWriteAndCompile { .. }
             | ViewerRequest::LsdMutate { .. }
             | ViewerRequest::LocalMeshOpen { .. }
-            | ViewerRequest::LocalMeshAutoReload { .. } => true,
+            | ViewerRequest::LocalMeshAutoReload { .. }
+            | ViewerRequest::InventoryRezObject { .. }
+            | ViewerRequest::ObjectTakeOrDerez { .. }
+            | ViewerRequest::PrimSetMaterial { .. }
+            | ViewerRequest::MeshUploadOpen
+            | ViewerRequest::NativeFileChoose { .. }
+            | ViewerRequest::UiClick { .. }
+            | ViewerRequest::UiSetText { .. }
+            | ViewerRequest::UiSelect { .. }
+            | ViewerRequest::UiPressKey { .. }
+            | ViewerRequest::UiInvokeMenu { .. }
+            | ViewerRequest::ObjectTouch { .. }
+            | ViewerRequest::AvatarSit { .. }
+            | ViewerRequest::NotecardWrite { .. }
+            | ViewerRequest::PrimSetParticles { .. } => true,
         }
     }
 }

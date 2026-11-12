@@ -1604,6 +1604,257 @@ impl App {
                     "restored_count": restored,
                 }))));
             }
+            // ---- Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials ----
+            ViewerRequest::LiveMeshControl { action, source_id } => {
+                let resp = self.handle_mcp_livemesh_control(&action, source_id);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::AssetUpload {
+                action,
+                paths,
+                choice,
+                include_textures,
+            } => {
+                let resp =
+                    self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::InventoryRezObject {
+                item_id,
+                position,
+                select,
+            } => {
+                self.handle_mcp_inventory_rez_object(item_id, position, select, reply_tx, renderer);
+            }
+            ViewerRequest::ObjectTakeOrDerez {
+                local_id,
+                action,
+                folder_id,
+            } => {
+                let resp = self.handle_mcp_object_take_or_derez(local_id, &action, folder_id);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::PrimSetMaterial {
+                local_id,
+                face,
+                texture_id,
+                material_id,
+                color,
+                repeats,
+                offsets,
+                rotation_rad,
+                glow,
+                fullbright,
+                alpha_mode,
+                bump_shiny,
+            } => {
+                let resp = self.handle_mcp_prim_set_material(
+                    local_id,
+                    face,
+                    texture_id,
+                    material_id,
+                    color,
+                    repeats,
+                    offsets,
+                    rotation_rad,
+                    glow,
+                    fullbright,
+                    alpha_mode,
+                    bump_shiny,
+                );
+                let _ = reply_tx.send(resp);
+            }
+            // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools ----
+            ViewerRequest::MeshUploadOpen => {
+                self.imports.open(crate::imports::Choice::Mesh);
+                self.imports.open = true;
+                let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
+                    "ok": true,
+                    "open": true,
+                    "choice": "mesh",
+                }))));
+            }
+            ViewerRequest::MeshUploadStatus => {
+                let resp = self.handle_mcp_mesh_upload_status();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::NativeFileDialogs => {
+                let dialogs = self.handle_mcp_native_file_dialogs();
+                let _ = reply_tx.send(Ok(ViewerResponse::Json(dialogs)));
+            }
+            ViewerRequest::NativeFileChoose {
+                dialog_id,
+                filename,
+            } => {
+                let resp = self.handle_mcp_native_file_choose(dialog_id, &filename);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiInspect { path } => {
+                let resp = self.handle_mcp_ui_inspect(&path);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiFind {
+                query,
+                under,
+                search_in,
+                match_mode,
+                max_depth,
+                include_info,
+                offset,
+                limit,
+            } => {
+                let resp = self.handle_mcp_ui_find(
+                    &query,
+                    &under,
+                    &search_in,
+                    &match_mode,
+                    max_depth,
+                    include_info,
+                    offset,
+                    limit,
+                );
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiClick {
+                path,
+                button,
+                floater,
+                observe_path,
+            } => {
+                let resp = self.handle_mcp_ui_click(
+                    &path,
+                    &button,
+                    floater.as_deref(),
+                    observe_path.as_deref(),
+                );
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiGetValue { path } => {
+                let resp = self.handle_mcp_ui_get_value(&path);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiSetText { path, text } => {
+                let resp = self.handle_mcp_ui_set_text(&path, &text);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiSelect { path, value } => {
+                let resp = self.handle_mcp_ui_select(&path, value);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiPressKey {
+                path,
+                keysym,
+                modifiers,
+                observe_path,
+            } => {
+                let resp = self.handle_mcp_ui_press_key(
+                    &path,
+                    &keysym,
+                    &modifiers,
+                    observe_path.as_deref(),
+                );
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiListMenus { query } => {
+                let resp = self.handle_mcp_ui_list_menus(&query);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::UiInvokeMenu { name } => {
+                let resp = self.handle_mcp_ui_invoke_menu(&name);
+                let _ = reply_tx.send(resp);
+            }
+            // ---- Phase 6: Suite 3 — In-World Object Interaction, Notecards & Particles ----
+            ViewerRequest::ObjectTouch {
+                local_id,
+                face,
+                uv,
+                st,
+                hold_ms,
+            } => {
+                let resp = self.handle_mcp_object_touch(local_id, face, uv, st, hold_ms);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::AvatarSit {
+                action,
+                target_local_id,
+                target_uuid,
+                offset,
+            } => {
+                let resp =
+                    self.handle_mcp_avatar_sit(&action, target_local_id, target_uuid, offset);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::NotecardRead {
+                item_id,
+                object_local_id,
+            } => {
+                let resp = self.handle_mcp_notecard_read(item_id, object_local_id);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::NotecardWrite {
+                item_id,
+                object_local_id,
+                name,
+                body,
+            } => {
+                let resp = self.handle_mcp_notecard_write(
+                    item_id,
+                    object_local_id,
+                    name.as_deref(),
+                    &body,
+                );
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::PrimSetParticles {
+                local_id,
+                clear,
+                pattern,
+                texture_id,
+                start_color,
+                end_color,
+                start_scale,
+                end_scale,
+                particle_max_age,
+                burst_rate,
+                burst_part_count,
+                burst_radius,
+                burst_speed_min,
+                burst_speed_max,
+                accel,
+                omega,
+                follow_src,
+                follow_velocity,
+                interp_color,
+                interp_scale,
+                emissive,
+                ribbon,
+            } => {
+                self.handle_mcp_prim_set_particles(
+                    local_id,
+                    clear,
+                    pattern.as_deref(),
+                    texture_id,
+                    start_color,
+                    end_color,
+                    start_scale,
+                    end_scale,
+                    particle_max_age,
+                    burst_rate,
+                    burst_part_count,
+                    burst_radius,
+                    burst_speed_min,
+                    burst_speed_max,
+                    accel,
+                    omega,
+                    follow_src,
+                    follow_velocity,
+                    interp_color,
+                    interp_scale,
+                    emissive,
+                    ribbon,
+                    reply_tx,
+                );
+            }
         }
     }
 
@@ -2938,6 +3189,1260 @@ impl App {
             "name": key,
             "open": open,
         })))
+    }
+
+    // ---- Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials ----
+
+    fn handle_mcp_livemesh_control(
+        &mut self,
+        action: &str,
+        source_id: Option<Uuid>,
+    ) -> Result<ViewerResponse, McpError> {
+        let act = action.trim().to_ascii_lowercase();
+        match act.as_str() {
+            "start" => {
+                self.blender_live.open = true;
+                self.blender_live.start_requested = true;
+            }
+            "stop" => {
+                self.blender_live.stop();
+                self.clear_blender_preview();
+            }
+            "remove_meshes" | "clear" => {
+                if let Some(snapshot) = &self.blender_live.snapshot {
+                    let ids: Vec<Uuid> = snapshot.sources.iter().map(|s| s.id).collect();
+                    for id in ids {
+                        self.blender_live
+                            .set_state(id, crate::blender_live::SourceState::Removed);
+                    }
+                }
+                self.clear_blender_preview();
+            }
+            "import_to_uploader" | "import" => {
+                let target_id = source_id.or_else(|| {
+                    self.blender_live
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| s.sources.first().map(|src| src.id))
+                });
+                let Some(id) = target_id else {
+                    return Err(McpError::InvalidParams(
+                        "No synced Blender LiveMesh source available to import".into(),
+                    ));
+                };
+                self.blender_live.upload_requested = Some(id);
+            }
+            "status" => {}
+            other => {
+                return Err(McpError::InvalidParams(format!(
+                    "Unknown livemesh_control action '{other}'. Use status, start, stop, import_to_uploader, or remove_meshes."
+                )));
+            }
+        }
+
+        let sources: Vec<Value> = self
+            .blender_live
+            .snapshot
+            .as_ref()
+            .map(|snap| {
+                snap.sources
+                    .iter()
+                    .map(|s| {
+                        json!({
+                            "id": s.id.to_string(),
+                            "name": s.name,
+                            "state": format!("{:?}", self.blender_live.state(s.id)),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(ViewerResponse::Json(json!({
+            "action": act,
+            "open": self.blender_live.open,
+            "running": self.blender_live.running(),
+            "port": self.blender_live.port,
+            "revision": self.blender_live.revision,
+            "triangles": self.blender_live.triangles,
+            "preview_objects_count": self.blender_live.objects.len(),
+            "sources": sources,
+            "import_message": self.blender_live.import.message,
+        })))
+    }
+
+    fn handle_mcp_asset_upload(
+        &mut self,
+        action: &str,
+        paths: Vec<String>,
+        choice_str: Option<&str>,
+        include_textures: Option<bool>,
+    ) -> Result<ViewerResponse, McpError> {
+        let act = action.trim().to_ascii_lowercase();
+        let parse_choice = |s: Option<&str>, first_path: Option<&str>| -> crate::imports::Choice {
+            match s.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+                "mesh" => crate::imports::Choice::Mesh,
+                "texture" | "image" => crate::imports::Choice::Texture,
+                "sound" | "audio" => crate::imports::Choice::Sound,
+                "animation" | "anim" | "bvh" => crate::imports::Choice::Animation,
+                "material" | "pbr" => crate::imports::Choice::Material,
+                "local" => crate::imports::Choice::Local,
+                "bulk" => crate::imports::Choice::Bulk,
+                _ => {
+                    let ext = first_path
+                        .and_then(|p| std::path::Path::new(p).extension())
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    match ext.as_str() {
+                        "dae" | "glb" | "gltf" => crate::imports::Choice::Mesh,
+                        "png" | "jpg" | "jpeg" | "tga" | "bmp" | "j2c" | "jp2" => {
+                            crate::imports::Choice::Texture
+                        }
+                        "wav" => crate::imports::Choice::Sound,
+                        "bvh" | "anim" => crate::imports::Choice::Animation,
+                        _ => crate::imports::Choice::Bulk,
+                    }
+                }
+            }
+        };
+
+        match act.as_str() {
+            "stage" | "load" => {
+                if paths.is_empty() {
+                    return Err(McpError::InvalidParams(
+                        "Provide at least one file path in 'paths' or 'path'".into(),
+                    ));
+                }
+                let path_bufs: Vec<std::path::PathBuf> =
+                    paths.iter().map(std::path::PathBuf::from).collect();
+                for p in &path_bufs {
+                    if !p.exists() {
+                        return Err(McpError::InvalidParams(format!(
+                            "File does not exist: {}",
+                            p.display()
+                        )));
+                    }
+                }
+                let choice = parse_choice(choice_str, paths.first().map(String::as_str));
+                let local = choice == crate::imports::Choice::Local;
+                self.imports.open(choice);
+                self.imports.open = true;
+                self.imports.load_paths(
+                    &self.scene.jobs,
+                    &self.egui_ctx,
+                    self.settings.imports.texture(),
+                    choice,
+                    local,
+                    path_bufs,
+                );
+            }
+            "quote" | "calculate_fees" => {
+                let inc_tex = include_textures.unwrap_or(true);
+                let mut ids = Vec::new();
+                for entry in &mut self.imports.entries {
+                    if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
+                        draft.options.textures = inc_tex;
+                        ids.push(entry.id);
+                    }
+                }
+                let rights = self
+                    .settings
+                    .imports
+                    .permissions_for(aurora_net::inventory::upload::Kind::Mesh);
+                for id in ids {
+                    self.imports.quote_mesh(
+                        id,
+                        &self.egui_ctx,
+                        &self.scene.jobs,
+                        &self.world,
+                        &self.settings.inventory,
+                        rights,
+                    );
+                }
+            }
+            "upload" | "start" => {
+                if let Some(inc_tex) = include_textures {
+                    for entry in &mut self.imports.entries {
+                        if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
+                            draft.options.textures = inc_tex;
+                        }
+                    }
+                }
+                let prices = if self.demo {
+                    aurora_net::inventory::upload::Prices {
+                        texture: Some(10),
+                        large_texture: Some(40),
+                        sound: Some(10),
+                        animation: Some(10),
+                    }
+                } else {
+                    self.world
+                        .login
+                        .as_ref()
+                        .map(|l| aurora_net::inventory::upload::Prices::from_login(&l.raw))
+                        .unwrap_or_default()
+                }
+                .with_fallback(self.world.upload_cost);
+                self.imports.start_confirmed(
+                    &self.world,
+                    &self.settings.inventory,
+                    &self.settings.imports,
+                    &prices,
+                );
+            }
+            "status" => {}
+            other => {
+                return Err(McpError::InvalidParams(format!(
+                    "Unknown asset_upload action '{other}'. Use status, stage, quote, or upload."
+                )));
+            }
+        }
+
+        self.handle_mcp_mesh_upload_status()
+    }
+
+    fn handle_mcp_inventory_rez_object(
+        &mut self,
+        item_id: Uuid,
+        position: [f32; 3],
+        select: bool,
+        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+        renderer: &mut Renderer,
+    ) {
+        let Some(handle) = self.world.main_region else {
+            let _ = reply_tx.send(Err(McpError::NotInWorld));
+            return;
+        };
+        let Some(item) = self.world.inventory.items.get(&item_id).cloned() else {
+            let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                "Inventory item {item_id} not found"
+            ))));
+            return;
+        };
+        let known_local_ids: HashSet<u32> = self
+            .world
+            .objects
+            .iter()
+            .map(|(_, o)| o.key.local_id)
+            .collect();
+        let pos_vec = Vec3::from_array(position);
+        let item_name = item.name.clone();
+        let remove = (item.owner_mask & crate::world::inventory::actions::COPY) == 0;
+        let source_folder = if crate::world::inventory::actions::library(&self.world.inventory, item.id)
+            || self.world.inventory.in_folder_type(item.id, 14)
+        {
+            Uuid::nil()
+        } else {
+            item.parent
+        };
+
+        self.mcp_bridge.build_tx_mgr.register_rez(
+            position,
+            Some(item_name),
+            known_local_ids,
+            reply_tx,
+        );
+
+        self.send(NetCommand::Build(BuildCmd::RezInventory(Box::new(
+            aurora_net::inventory::rez::RezInventory {
+                handle,
+                group: self
+                    .world
+                    .group_for_rez(self.settings.build.rez_under_land_group),
+                item,
+                ray_start: self.camera.position,
+                ray_end: pos_vec,
+                target: Uuid::nil(),
+                selected: select,
+                remove,
+                source_folder,
+            },
+        ))));
+        self.progress_mcp_state_machines(renderer);
+    }
+
+    fn handle_mcp_object_take_or_derez(
+        &mut self,
+        local_id: u32,
+        action: &str,
+        folder_id: Option<Uuid>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let _ = self.resolve_prim_by_local_id(local_id)?;
+        let act = action.trim().to_ascii_lowercase();
+        let destination = match act.as_str() {
+            "take" => aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY,
+            "take_copy" | "copy" => aurora_net::build::derez::ACQUIRE_TO_AGENT_INVENTORY,
+            "delete" | "trash" => aurora_net::build::derez::TRASH,
+            "return" => aurora_net::build::derez::RETURN_TO_OWNER,
+            other => {
+                return Err(McpError::InvalidParams(format!(
+                    "Unknown object_take_or_derez action '{other}'. Use take, take_copy, delete, or return."
+                )));
+            }
+        };
+        let destination_id = folder_id.unwrap_or_else(|| {
+            if destination == aurora_net::build::derez::TRASH {
+                self.world
+                    .inventory
+                    .folders
+                    .values()
+                    .find(|f| f.info.type_default == 14)
+                    .map(|f| f.info.id)
+                    .unwrap_or(self.world.inventory.root)
+            } else {
+                self.world
+                    .inventory
+                    .folders
+                    .values()
+                    .find(|f| f.info.type_default == 6)
+                    .map(|f| f.info.id)
+                    .unwrap_or(self.world.inventory.root)
+            }
+        });
+        let group_id = self
+            .world
+            .group_for_rez(self.settings.build.rez_under_land_group);
+        self.send(NetCommand::Build(BuildCmd::DeRez {
+            handle,
+            local_ids: vec![local_id],
+            destination,
+            destination_id,
+            group_id,
+        }));
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "local_id": local_id,
+            "action": act,
+            "destination_folder": destination_id.to_string(),
+        })))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_mcp_prim_set_material(
+        &mut self,
+        local_id: u32,
+        face: Option<i32>,
+        texture_id: Option<Uuid>,
+        material_id: Option<Uuid>,
+        color: Option<[f32; 4]>,
+        repeats: Option<[f32; 2]>,
+        offsets: Option<[f32; 2]>,
+        rotation_rad: Option<f32>,
+        glow: Option<f32>,
+        fullbright: Option<bool>,
+        alpha_mode: Option<u8>,
+        bump_shiny: Option<u8>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let (idx, _) = self.resolve_prim_by_local_id(local_id)?;
+        self.check_object_modify_permission(idx)?;
+
+        let num_faces = self.build.num_faces(&self.world, idx);
+        let obj = self.world.objects.get_mut(idx).unwrap();
+        let mut te = obj.te.as_deref().cloned().unwrap_or_default();
+
+        let target_indices: Vec<usize> = match face {
+            Some(f) if f >= 0 => vec![(f as usize).min(te.faces.len().saturating_sub(1))],
+            _ => (0..te.faces.len()).collect(),
+        };
+
+        for &fi in &target_indices {
+            if let Some(tf) = te.faces.get_mut(fi) {
+                if let Some(tex) = texture_id {
+                    tf.texture = tex;
+                }
+                if let Some(mat) = material_id {
+                    tf.material_id = mat;
+                }
+                if let Some(rgba) = color {
+                    tf.color = rgba;
+                }
+                if let Some([sx, sy]) = repeats {
+                    tf.scale_s = sx;
+                    tf.scale_t = sy;
+                }
+                if let Some([ox, oy]) = offsets {
+                    tf.offset_s = ox;
+                    tf.offset_t = oy;
+                }
+                if let Some(rot) = rotation_rad {
+                    tf.rotation = rot;
+                }
+                if let Some(g) = glow {
+                    tf.glow = g.clamp(0.0, 1.0);
+                }
+                if let Some(bs) = bump_shiny {
+                    let fb_bit = tf.bump_shiny_fullbright & 0x20;
+                    tf.bump_shiny_fullbright = (bs & !0x20) | fb_bit;
+                }
+                if let Some(fb) = fullbright {
+                    if fb {
+                        tf.bump_shiny_fullbright |= 0x20;
+                    } else {
+                        tf.bump_shiny_fullbright &= !0x20;
+                    }
+                }
+                if let Some(am) = alpha_mode {
+                    tf.media_flags = (tf.media_flags & !0x06) | ((am & 0x03) << 1);
+                }
+            }
+        }
+
+        let packed = aurora_prim::te::pack_texture_entry(&te, num_faces);
+        let media_url = obj.media_url.clone();
+        obj.te = Some(Arc::new(te));
+        obj.material_dirty = true;
+        self.send(NetCommand::Build(BuildCmd::SetTextures {
+            handle,
+            local_id,
+            media_url,
+            texture_entry: packed,
+        }));
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "local_id": local_id,
+            "face": face.unwrap_or(-1),
+            "num_faces": num_faces,
+        })))
+    }
+
+    // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
+
+    fn handle_mcp_mesh_upload_status(&self) -> Result<ViewerResponse, McpError> {
+        let mut entries_json = Vec::new();
+        for entry in &self.imports.entries {
+            let mut item = json!({
+                "id": entry.id.to_string(),
+                "name": entry.name,
+                "path": entry.path.display().to_string(),
+                "local": entry.local,
+                "selected": entry.selected,
+                "status": format!("{:?}", entry.status),
+                "error": match &entry.status {
+                    crate::imports::Status::Error(e) => Some(e.as_str()),
+                    _ => None,
+                },
+            });
+            if let Some(crate::imports::Source::Mesh(draft)) = &entry.source
+                && let Some(obj) = item.as_object_mut()
+            {
+                let lod_counts: Vec<Value> = draft
+                    .lods
+                    .iter()
+                    .enumerate()
+                    .map(|(level, lod)| {
+                        json!({
+                            "level": level,
+                            "source": format!("{:?}", lod.source),
+                            "triangles": lod.triangles,
+                            "error": lod.error,
+                        })
+                    })
+                    .collect();
+                obj.insert("lods".into(), json!(lod_counts));
+                obj.insert("scale".into(), json!(draft.options.scale));
+                obj.insert("include_textures".into(), json!(draft.options.textures));
+                obj.insert("warnings".into(), json!(draft.scene.warnings));
+                if let Some(quote) = &draft.quote {
+                    obj.insert(
+                        "quote".into(),
+                        json!({
+                            "upload_price_l$": quote.cost,
+                            "land_impact": quote.data.get("resource_cost").as_f64(),
+                            "download_weight": quote.data.get("model_streaming_cost").as_f64(),
+                            "physics_weight": quote.data.get("physics_cost").as_f64(),
+                            "server_weight": quote.data.get("simulation_cost").as_f64(),
+                        }),
+                    );
+                }
+            }
+            entries_json.push(item);
+        }
+
+        Ok(ViewerResponse::Json(json!({
+            "open": self.imports.open,
+            "busy": self.imports.busy(),
+            "choice": format!("{:?}", self.imports.choice),
+            "pending_files": self.imports.pending_files.is_some(),
+            "entries_count": entries_json.len(),
+            "entries": entries_json,
+        })))
+    }
+
+    fn handle_mcp_native_file_dialogs(&self) -> Value {
+        let mut dialogs = Vec::new();
+        if self.imports.open || self.imports.pending_files.is_some() {
+            dialogs.push(json!({
+                "dialog_id": 1,
+                "title": "Import",
+                "choice": format!("{:?}", self.imports.choice),
+                "ready_for_path": !self.imports.busy(),
+            }));
+        }
+        json!({
+            "count": dialogs.len(),
+            "dialogs": dialogs,
+        })
+    }
+
+    fn handle_mcp_native_file_choose(
+        &mut self,
+        dialog_id: i64,
+        filename: &str,
+    ) -> Result<ViewerResponse, McpError> {
+        let path = std::path::PathBuf::from(filename);
+        if !path.exists() {
+            return Err(McpError::InvalidParams(format!(
+                "File does not exist: {}",
+                path.display()
+            )));
+        }
+        let choice = self.imports.choice;
+        let local = choice == crate::imports::Choice::Local;
+        self.imports.open = true;
+        self.imports.load_paths(
+            &self.scene.jobs,
+            &self.egui_ctx,
+            self.settings.imports.texture(),
+            choice,
+            local,
+            vec![path.clone()],
+        );
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "dialog_id": dialog_id,
+            "filename": path.display().to_string(),
+            "choice": format!("{choice:?}"),
+        })))
+    }
+
+    fn collect_virtual_ui_nodes(&self) -> Vec<(String, String, bool, bool, Value)> {
+        let mut nodes = vec![(
+            "/main_view".to_string(),
+            "main_view".to_string(),
+            true,
+            true,
+            Value::Null,
+        )];
+        for f in self.collect_floater_list() {
+            let name = f["name"].as_str().unwrap_or("");
+            let open = f["open"].as_bool().unwrap_or(false);
+            nodes.push((
+                format!("/main_view/floaters/{name}"),
+                name.to_string(),
+                open,
+                true,
+                json!(open),
+            ));
+        }
+        // Blender Live controls
+        let bl_open = self.blender_live.open;
+        for (ctrl, enabled, val) in [
+            ("start", !self.blender_live.running(), json!(self.blender_live.running())),
+            ("stop", self.blender_live.running(), json!(self.blender_live.running())),
+            ("remove_meshes", !self.blender_live.objects.is_empty(), json!(self.blender_live.objects.len())),
+            ("import", self.blender_live.snapshot.is_some(), json!(self.blender_live.triangles)),
+        ] {
+            nodes.push((
+                format!("/main_view/floaters/blender_live/{ctrl}"),
+                ctrl.to_string(),
+                bl_open,
+                enabled,
+                val,
+            ));
+        }
+        // Importer controls
+        let imp_open = self.imports.open;
+        for (ctrl, enabled) in [
+            ("add_files", !self.imports.busy()),
+            ("calculate_fees", !self.imports.entries.is_empty() && !self.imports.busy()),
+            ("import", !self.imports.entries.is_empty() && !self.imports.busy()),
+            ("cancel", true),
+        ] {
+            nodes.push((
+                format!("/main_view/floaters/local_mesh/{ctrl}"),
+                ctrl.to_string(),
+                imp_open,
+                enabled,
+                json!(self.imports.entries.len()),
+            ));
+        }
+        nodes
+    }
+
+    fn handle_mcp_ui_inspect(&self, path: &str) -> Result<ViewerResponse, McpError> {
+        let norm = path.trim().trim_end_matches('/');
+        let target = if norm.is_empty() { "/main_view" } else { norm };
+        let nodes = self.collect_virtual_ui_nodes();
+        if let Some((p, name, visible, enabled, val)) =
+            nodes.iter().find(|(p, ..)| p.eq_ignore_ascii_case(target))
+        {
+            let children: Vec<String> = nodes
+                .iter()
+                .filter(|(cp, ..)| {
+                    cp.len() > p.len()
+                        && cp.starts_with(p.as_str())
+                        && cp[p.len()..].starts_with('/')
+                        && !cp[p.len() + 1..].contains('/')
+                })
+                .map(|(cp, ..)| cp.clone())
+                .collect();
+            return Ok(ViewerResponse::Json(json!({
+                "path": p,
+                "name": name,
+                "visible": visible,
+                "enabled": enabled,
+                "value": val,
+                "children": children,
+            })));
+        }
+        Err(McpError::InvalidParams(format!(
+            "UI path '{target}' not found. Use ui_find to discover available paths."
+        )))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_mcp_ui_find(
+        &self,
+        query: &str,
+        under: &str,
+        search_in: &str,
+        match_mode: &str,
+        max_depth: Option<usize>,
+        include_info: bool,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ViewerResponse, McpError> {
+        let q = query.trim().to_ascii_lowercase();
+        let prefix = under.trim().trim_end_matches('/').to_ascii_lowercase();
+        let nodes = self.collect_virtual_ui_nodes();
+        let mut matches = Vec::new();
+        for (p, name, visible, enabled, val) in nodes {
+            let p_low = p.to_ascii_lowercase();
+            if !prefix.is_empty() && !p_low.starts_with(&prefix) {
+                continue;
+            }
+            if let Some(md) = max_depth {
+                let rel = if prefix.is_empty() {
+                    p_low.as_str()
+                } else {
+                    &p_low[prefix.len()..]
+                };
+                let depth = rel.matches('/').count();
+                if depth > md {
+                    continue;
+                }
+            }
+            let hay = if search_in.eq_ignore_ascii_case("name") {
+                name.to_ascii_lowercase()
+            } else {
+                p_low
+            };
+            let matched = match match_mode {
+                "exact" => hay == q,
+                "prefix" => hay.starts_with(&q),
+                _ => q.is_empty() || hay.contains(&q),
+            };
+            if matched {
+                if include_info {
+                    matches.push(json!({
+                        "path": p,
+                        "name": name,
+                        "visible": visible,
+                        "enabled": enabled,
+                        "value": val,
+                    }));
+                } else {
+                    matches.push(json!(p));
+                }
+            }
+        }
+        let total = matches.len();
+        let paged: Vec<Value> = matches.into_iter().skip(offset).take(limit).collect();
+        Ok(ViewerResponse::Json(json!({
+            "total": total,
+            "offset": offset,
+            "count": paged.len(),
+            "results": paged,
+        })))
+    }
+
+    fn handle_mcp_ui_click(
+        &mut self,
+        path: &str,
+        button: &str,
+        floater: Option<&str>,
+        observe_path: Option<&str>,
+    ) -> Result<ViewerResponse, McpError> {
+        if let Some(f) = floater {
+            let _ = self.set_floater_open(f, true);
+        }
+        let p = path.trim().to_ascii_lowercase();
+        if p.ends_with("/blender_live/remove_meshes") || p == "remove_meshes" {
+            let _ = self.handle_mcp_livemesh_control("remove_meshes", None)?;
+        } else if p.ends_with("/blender_live/import") {
+            let _ = self.handle_mcp_livemesh_control("import_to_uploader", None)?;
+        } else if p.ends_with("/blender_live/start") {
+            let _ = self.handle_mcp_livemesh_control("start", None)?;
+        } else if p.ends_with("/blender_live/stop") {
+            let _ = self.handle_mcp_livemesh_control("stop", None)?;
+        } else if p.ends_with("/calculate_fees") {
+            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None)?;
+        } else if p.ends_with("/local_mesh/import") {
+            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None)?;
+        } else if p.ends_with("/local_mesh/cancel") {
+            self.imports.cancel_remaining();
+        } else if let Some(floater_name) = p.strip_prefix("/main_view/floaters/")
+            && !floater_name.contains('/')
+        {
+            let _ = self.set_floater_open(floater_name, true)?;
+        }
+
+        let observed = observe_path
+            .and_then(|op| self.handle_mcp_ui_inspect(op).ok())
+            .map(|r| match r {
+                ViewerResponse::Json(v) => v,
+                _ => Value::Null,
+            });
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "clicked": path,
+            "button": button,
+            "observed": observed,
+        })))
+    }
+
+    fn handle_mcp_ui_get_value(&self, path: &str) -> Result<ViewerResponse, McpError> {
+        self.handle_mcp_ui_inspect(path)
+    }
+
+    fn handle_mcp_ui_set_text(&mut self, path: &str, text: &str) -> Result<ViewerResponse, McpError> {
+        let p = path.trim().to_ascii_lowercase();
+        if p.contains("chat") {
+            self.chat_ui.input = text.to_owned();
+        }
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "path": path,
+            "text": text,
+        })))
+    }
+
+    fn handle_mcp_ui_select(&mut self, path: &str, value: Value) -> Result<ViewerResponse, McpError> {
+        if (path.contains("local_mesh") || path.contains("import"))
+            && let Some(choice_str) = value.as_str()
+        {
+            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None);
+        }
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "path": path,
+            "selected": value,
+        })))
+    }
+
+    fn handle_mcp_ui_press_key(
+        &mut self,
+        path: &str,
+        keysym: &str,
+        modifiers: &[String],
+        observe_path: Option<&str>,
+    ) -> Result<ViewerResponse, McpError> {
+        let observed = observe_path
+            .and_then(|op| self.handle_mcp_ui_inspect(op).ok())
+            .map(|r| match r {
+                ViewerResponse::Json(v) => v,
+                _ => Value::Null,
+            });
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "path": path,
+            "keysym": keysym,
+            "modifiers": modifiers,
+            "observed": observed,
+        })))
+    }
+
+    fn handle_mcp_ui_list_menus(&self, query: &str) -> Result<ViewerResponse, McpError> {
+        let q = query.trim().to_ascii_lowercase();
+        let all_menus = [
+            "world.new_prim",
+            "world.sit_down",
+            "world.stand_up",
+            "world.set_home",
+            "world.teleport_home",
+            "build.open",
+            "build.edit_particles",
+            "build.link",
+            "build.unlink",
+            "file.import_mesh",
+            "file.import_texture",
+            "file.import_sound",
+            "file.import_animation",
+            "file.blender_live",
+            "file.snapshot",
+            "avatar.poser",
+            "avatar.ao",
+            "avatar.appearance",
+            "avatar.reset_skeleton",
+        ];
+        let matched: Vec<&str> = all_menus
+            .into_iter()
+            .filter(|m| q.is_empty() || m.contains(&q))
+            .collect();
+        Ok(ViewerResponse::Json(json!({
+            "count": matched.len(),
+            "menus": matched,
+        })))
+    }
+
+    fn handle_mcp_ui_invoke_menu(&mut self, name: &str) -> Result<ViewerResponse, McpError> {
+        let key = name.trim().to_ascii_lowercase();
+        match key.as_str() {
+            "file.import_mesh" => {
+                self.imports.open(crate::imports::Choice::Mesh);
+                self.imports.open = true;
+            }
+            "file.import_texture" => {
+                self.imports.open(crate::imports::Choice::Texture);
+                self.imports.open = true;
+            }
+            "file.import_sound" => {
+                self.imports.open(crate::imports::Choice::Sound);
+                self.imports.open = true;
+            }
+            "file.import_animation" => {
+                self.imports.open(crate::imports::Choice::Animation);
+                self.imports.open = true;
+            }
+            "file.blender_live" => {
+                self.blender_live.open = true;
+            }
+            "file.snapshot" => {
+                self.panels.snapshot = true;
+            }
+            "build.open" => {
+                self.build.open = true;
+            }
+            "build.edit_particles" => {
+                self.open_particle_editor();
+            }
+            "avatar.poser" => {
+                self.ik_editor.open = true;
+            }
+            "avatar.ao" => {
+                self.panels.ao = true;
+            }
+            "avatar.appearance" => {
+                self.panels.appearance = true;
+            }
+            "avatar.reset_skeleton" => {
+                self.scene.reset_skeleton(self.world.agent_id, false);
+            }
+            "world.stand_up" => {
+                self.world.agent.seated = false;
+                self.world.agent.ground_sit = false;
+            }
+            "world.teleport_home" => {
+                self.send(NetCommand::TeleportHome);
+            }
+            other => {
+                return Err(McpError::InvalidParams(format!(
+                    "Unknown menu '{other}'. Call ui_list_menus to inspect valid menu entries."
+                )));
+            }
+        }
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "invoked": key,
+        })))
+    }
+
+    // ---- Phase 6: Suite 3 — In-World Object Interaction, Notecards & Particles ----
+
+    fn handle_mcp_object_touch(
+        &mut self,
+        local_id: u32,
+        face: i32,
+        uv: [f32; 2],
+        st: [f32; 2],
+        hold_ms: u64,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let (idx, _) = self.resolve_prim_by_local_id(local_id)?;
+        let obj = self.world.objects.get(idx).unwrap();
+        let pos = obj.position;
+        let surface = aurora_net::TouchSurface {
+            uv: Vec3::new(uv[0], uv[1], 0.0),
+            st: Vec3::new(st[0], st[1], 0.0),
+            face,
+            position: pos,
+            normal: Vec3::Z,
+            binormal: Vec3::Y,
+        };
+        self.send(NetCommand::ObjectGrab {
+            handle,
+            local_id,
+            offset: Vec3::ZERO,
+            surface,
+        });
+        self.send(NetCommand::ObjectRelease {
+            handle,
+            local_id,
+            surface,
+        });
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "local_id": local_id,
+            "face": face,
+            "uv": uv,
+            "st": st,
+            "hold_ms": hold_ms,
+        })))
+    }
+
+    fn handle_mcp_avatar_sit(
+        &mut self,
+        action: &str,
+        target_local_id: Option<u32>,
+        target_uuid: Option<Uuid>,
+        offset: Option<[f32; 3]>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let act = action.trim().to_ascii_lowercase();
+        if act == "stand" || act == "stand_up" {
+            self.world.agent.seated = false;
+            self.world.agent.ground_sit = false;
+            self.send(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
+            return Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "action": "stand",
+            })));
+        }
+        let target = if let Some(uuid) = target_uuid {
+            uuid
+        } else if let Some(lid) = target_local_id {
+            let (idx, _) = self.resolve_prim_by_local_id(lid)?;
+            self.world.objects.get(idx).unwrap().full_id
+        } else {
+            return Err(McpError::InvalidParams(
+                "Provide 'target_local_id' or 'target_uuid' when action is 'sit'".into(),
+            ));
+        };
+        let off = offset.map(Vec3::from_array).unwrap_or(Vec3::ZERO);
+        self.send(NetCommand::RequestSit {
+            handle,
+            target,
+            offset: off,
+        });
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "action": "sit",
+            "target_uuid": target.to_string(),
+        })))
+    }
+
+    fn handle_mcp_notecard_read(
+        &mut self,
+        item_id: Uuid,
+        object_local_id: Option<u32>,
+    ) -> Result<ViewerResponse, McpError> {
+        if self.world.rlva.has("viewnote") {
+            return Err(McpError::PermissionDenied(
+                "RLVa @viewnote restriction prevents reading notecards".into(),
+            ));
+        }
+        if let Some(lid) = object_local_id {
+            let (idx, _) = self.resolve_prim_by_local_id(lid)?;
+            let obj_uuid = self.world.objects.get(idx).unwrap().full_id;
+            let Some(meta) = self.task_notecard_item(obj_uuid, item_id) else {
+                return Err(McpError::InvalidParams(format!(
+                    "Task notecard {item_id} not found on object {lid}"
+                )));
+            };
+            if (meta.owner_mask & crate::world::inventory::actions::COPY) == 0 {
+                return Err(McpError::PermissionDenied(
+                    "Creator permissions forbid reading this task notecard (no Copy)".into(),
+                ));
+            }
+            self.open_task_notecard(obj_uuid, item_id);
+            let text = self
+                .task_notecards
+                .get(&(obj_uuid, item_id))
+                .and_then(|d| d.state.preview_text.as_ref())
+                .and_then(|res| res.as_ref().ok())
+                .cloned()
+                .unwrap_or_default();
+            return Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "item_id": item_id.to_string(),
+                "object_local_id": lid,
+                "name": meta.name,
+                "text": text,
+            })));
+        }
+
+        let Some(item) = self.world.inventory.items.get(&item_id) else {
+            return Err(McpError::InvalidParams(format!(
+                "Inventory notecard {item_id} not found"
+            )));
+        };
+        if (item.owner_mask & crate::world::inventory::actions::COPY) == 0
+            && self.world.god_level == 0
+        {
+            return Err(McpError::PermissionDenied(
+                "Creator permissions forbid reading this notecard (no Copy)".into(),
+            ));
+        }
+        let name = item.name.clone();
+        let text = if self.inventory_ui.preview == Some(item_id) {
+            self.inventory_ui
+                .preview_text
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "item_id": item_id.to_string(),
+            "name": name,
+            "text": text,
+        })))
+    }
+
+    fn handle_mcp_notecard_write(
+        &mut self,
+        item_id: Option<Uuid>,
+        object_local_id: Option<u32>,
+        name: Option<&str>,
+        body: &str,
+    ) -> Result<ViewerResponse, McpError> {
+        let encoded = aurora_net::inventory::notecard::Notecard::default()
+            .encode(body)
+            .map_err(McpError::InvalidParams)?;
+
+        if let Some(lid) = object_local_id {
+            let Some(handle) = self.world.main_region else {
+                return Err(McpError::NotInWorld);
+            };
+            let (idx, _) = self.resolve_prim_by_local_id(lid)?;
+            self.check_object_modify_permission(idx)?;
+            let obj_uuid = self.world.objects.get(idx).unwrap().full_id;
+            let Some(item_uuid) = item_id else {
+                return Err(McpError::InvalidParams(
+                    "item_id is required when updating a task notecard".into(),
+                ));
+            };
+            let Some(meta) = self.task_notecard_item(obj_uuid, item_uuid) else {
+                return Err(McpError::InvalidParams(format!(
+                    "Task notecard {item_uuid} not found on object {lid}"
+                )));
+            };
+            let req_mask =
+                crate::world::inventory::actions::COPY | crate::world::inventory::actions::MODIFY;
+            if (meta.owner_mask & req_mask) != req_mask {
+                return Err(McpError::PermissionDenied(
+                    "Task notecard requires both Copy and Modify permissions to edit".into(),
+                ));
+            }
+            let request = Uuid::new_v4();
+            self.send(NetCommand::SaveTaskNotecard {
+                request,
+                handle,
+                object: obj_uuid,
+                item: item_uuid,
+                data: encoded.clone(),
+            });
+            return Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "object_local_id": lid,
+                "item_id": item_uuid.to_string(),
+                "bytes": encoded.len(),
+            })));
+        }
+
+        let Some(item_uuid) = item_id else {
+            return Err(McpError::InvalidParams(
+                "Provide 'item_id' of an existing modifiable notecard".into(),
+            ));
+        };
+        if !crate::world::inventory::preview::can_edit(
+            &self.world.inventory,
+            item_uuid,
+            self.world.god_level,
+        ) {
+            return Err(McpError::PermissionDenied(
+                "Notecard is not modifiable or is in the Library".into(),
+            ));
+        }
+        let request = Uuid::new_v4();
+        self.send(NetCommand::SaveInventoryContent {
+            request,
+            item: item_uuid,
+            asset_type: 7, // LLAssetType::AT_NOTECARD
+            data: encoded.clone(),
+        });
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "item_id": item_uuid.to_string(),
+            "name": name,
+            "bytes": encoded.len(),
+        })))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_mcp_prim_set_particles(
+        &mut self,
+        local_id: u32,
+        clear: bool,
+        pattern: Option<&str>,
+        texture_id: Option<Uuid>,
+        start_color: Option<[f32; 4]>,
+        end_color: Option<[f32; 4]>,
+        start_scale: Option<[f32; 2]>,
+        end_scale: Option<[f32; 2]>,
+        particle_max_age: Option<f32>,
+        burst_rate: Option<f32>,
+        burst_part_count: Option<u32>,
+        burst_radius: Option<f32>,
+        burst_speed_min: Option<f32>,
+        burst_speed_max: Option<f32>,
+        accel: Option<[f32; 3]>,
+        omega: Option<[f32; 3]>,
+        follow_src: Option<bool>,
+        follow_velocity: Option<bool>,
+        interp_color: Option<bool>,
+        interp_scale: Option<bool>,
+        emissive: Option<bool>,
+        ribbon: Option<bool>,
+        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+    ) {
+        let (idx, _) = match self.resolve_prim_by_local_id(local_id) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = reply_tx.send(Err(e));
+                return;
+            }
+        };
+        if let Err(e) = self.check_object_modify_permission(idx) {
+            let _ = reply_tx.send(Err(e));
+            return;
+        }
+        let obj_uuid = self.world.objects.get(idx).unwrap().full_id;
+
+        if clear {
+            if let Some(obj) = self.world.objects.get_mut(idx) {
+                obj.particles = None;
+            }
+            let clear_lsl = "default {\n    state_entry() {\n        llParticleSystem([]);\n    }\n}\n".to_string();
+            self.handle_mcp_lsl_write(
+                local_id,
+                None,
+                "New Particle Script".to_string(),
+                clear_lsl,
+                true,
+                true,
+                reply_tx,
+            );
+            return;
+        }
+
+        let mut params = crate::build::particle_editor::Params::default();
+        if let Some(pat) = pattern {
+            params.pattern = match pat.trim().to_ascii_lowercase().as_str() {
+                "drop" => crate::build::particle_editor::Pattern::Drop,
+                "angle" => crate::build::particle_editor::Pattern::Angle,
+                "angle_cone" | "cone" => crate::build::particle_editor::Pattern::AngleCone,
+                _ => crate::build::particle_editor::Pattern::Explode,
+            };
+        }
+        if let Some(tex) = texture_id {
+            params.texture = tex;
+        }
+        if let Some([r, g, b, a]) = start_color {
+            params.start_color = [r, g, b];
+            params.start_alpha = a;
+        }
+        if let Some([r, g, b, a]) = end_color {
+            params.end_color = [r, g, b];
+            params.end_alpha = a;
+            params.set(aurora_prim::particles::LL_PART_INTERP_COLOR_MASK, true);
+        }
+        if let Some([sx, sy]) = start_scale {
+            params.start_scale = glam::Vec2::new(sx, sy);
+        }
+        if let Some([ex, ey]) = end_scale {
+            params.end_scale = glam::Vec2::new(ex, ey);
+            params.set(aurora_prim::particles::LL_PART_INTERP_SCALE_MASK, true);
+        }
+        if let Some(age) = particle_max_age {
+            params.part_max_age = age;
+        }
+        if let Some(rate) = burst_rate {
+            params.burst_rate = rate;
+        }
+        if let Some(cnt) = burst_part_count {
+            params.burst_count = cnt;
+        }
+        if let Some(rad) = burst_radius {
+            params.burst_radius = rad;
+        }
+        if let Some(smin) = burst_speed_min {
+            params.speed_min = smin;
+        }
+        if let Some(smax) = burst_speed_max {
+            params.speed_max = smax;
+        }
+        if let Some(a) = accel {
+            params.acceleration = Vec3::from_array(a);
+        }
+        if let Some(w) = omega {
+            params.omega = Vec3::from_array(w);
+        }
+        if let Some(v) = follow_src {
+            params.set(aurora_prim::particles::LL_PART_FOLLOW_SRC_MASK, v);
+        }
+        if let Some(v) = follow_velocity {
+            params.set(aurora_prim::particles::LL_PART_FOLLOW_VELOCITY_MASK, v);
+        }
+        if let Some(v) = interp_color {
+            params.set(aurora_prim::particles::LL_PART_INTERP_COLOR_MASK, v);
+        }
+        if let Some(v) = interp_scale {
+            params.set(aurora_prim::particles::LL_PART_INTERP_SCALE_MASK, v);
+        }
+        if let Some(v) = emissive {
+            params.set(aurora_prim::particles::LL_PART_EMISSIVE_MASK, v);
+        }
+        if let Some(v) = ribbon {
+            params.set(aurora_prim::particles::LL_PART_RIBBON_MASK, v);
+        }
+
+
+        let script_source = params.script(obj_uuid, false);
+        self.handle_mcp_lsl_write(
+            local_id,
+            None,
+            "New Particle Script".to_string(),
+            script_source,
+            true,
+            true,
+            reply_tx,
+        );
     }
 }
 

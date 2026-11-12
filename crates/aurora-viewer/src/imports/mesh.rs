@@ -15,7 +15,7 @@ use aurora_llsd::{Llsd, llsd_map};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodSource {
     File,
     Auto,

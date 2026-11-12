@@ -800,6 +800,18 @@ impl Imports {
             self.load_files(jobs, ctx, options, choice, false, Selection::Paths(vec![path]));
         }
     }
+    /// Loads explicit file `paths` on the background job pool without opening a native file dialog.
+    pub(crate) fn load_paths(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+        choice: Choice,
+        local: bool,
+        paths: Vec<PathBuf>,
+    ) {
+        self.load_files(jobs, ctx, options, choice, local, Selection::Paths(paths));
+    }
     /// Loads `paths`, or the files chosen in a dialog filtered on `choice`.
     fn load_files(
         &mut self,

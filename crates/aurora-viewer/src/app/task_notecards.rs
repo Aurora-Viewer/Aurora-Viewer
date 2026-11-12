@@ -60,7 +60,7 @@ impl TaskNotecard {
 }
 
 impl App {
-    fn task_notecard_item(&self, object: Uuid, item: Uuid) -> Option<InvItem> {
+    pub(crate) fn task_notecard_item(&self, object: Uuid, item: Uuid) -> Option<InvItem> {
         let idx = self.world.objects.index_of_uuid(&object)?;
         let metadata = self
             .build

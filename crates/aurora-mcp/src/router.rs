@@ -1481,6 +1481,559 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            // ---- Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials ----
+            "livemesh_control" => {
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("status")
+                    .to_owned();
+                let source_id = parse_opt_uuid(args, "source_id")?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::LiveMeshControl { action, source_id },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "asset_upload" => {
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("status")
+                    .to_owned();
+                let mut paths: Vec<String> = args
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(single) = args
+                    .get("path")
+                    .or_else(|| args.get("file_path"))
+                    .and_then(Value::as_str)
+                {
+                    paths.push(single.to_owned());
+                }
+                let choice = args
+                    .get("choice")
+                    .or_else(|| args.get("asset_type"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let include_textures = args.get("include_textures").and_then(Value::as_bool);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::AssetUpload {
+                            action,
+                            paths,
+                            choice,
+                            include_textures,
+                        },
+                        15_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "inventory_rez_object" => {
+                let item_id = parse_req_uuid(args, "item_id")?;
+                let position = parse_vec3(args, "position")?;
+                let select = args.get("select").and_then(Value::as_bool).unwrap_or(false);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::InventoryRezObject {
+                            item_id,
+                            position,
+                            select,
+                        },
+                        8000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "object_take_or_derez" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("take")
+                    .to_owned();
+                let folder_id = parse_opt_uuid(args, "folder_id")?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ObjectTakeOrDerez {
+                            local_id,
+                            action,
+                            folder_id,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_set_material" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let face = args.get("face").and_then(Value::as_i64).map(|v| v as i32);
+                let texture_id = parse_opt_uuid(args, "texture_id")?;
+                let material_id = parse_opt_uuid(args, "material_id")?;
+                let color = parse_vec4(args, "color").ok();
+                let repeats = parse_vec2(args, "repeats").ok();
+                let offsets = parse_vec2(args, "offsets").ok();
+                let rotation_rad = args
+                    .get("rotation_rad")
+                    .and_then(Value::as_f64)
+                    .map(|v| v as f32)
+                    .or_else(|| {
+                        args.get("rotation_deg")
+                            .and_then(Value::as_f64)
+                            .map(|d| (d as f32).to_radians())
+                    });
+                let glow = args.get("glow").and_then(Value::as_f64).map(|v| v as f32);
+                let fullbright = args.get("fullbright").and_then(Value::as_bool);
+                let alpha_mode = args
+                    .get("alpha_mode")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u8);
+                let bump_shiny = args
+                    .get("bump_shiny")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u8);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimSetMaterial {
+                            local_id,
+                            face,
+                            texture_id,
+                            material_id,
+                            color,
+                            repeats,
+                            offsets,
+                            rotation_rad,
+                            glow,
+                            fullbright,
+                            alpha_mode,
+                            bump_shiny,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
+            "mesh_upload_open" => {
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::MeshUploadOpen, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "mesh_upload_status" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::MeshUploadStatus, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "native_file_dialogs" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::NativeFileDialogs, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "native_file_choose" => {
+                let dialog_id = args.get("dialog_id").and_then(Value::as_i64).unwrap_or(1);
+                let filename = req_str(args, "filename")?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::NativeFileChoose {
+                            dialog_id,
+                            filename,
+                        },
+                        8000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_inspect" => {
+                let path = args
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("/main_view")
+                    .to_owned();
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::UiInspect { path }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_find" => {
+                let query = req_str(args, "query")?;
+                let under = args
+                    .get("under")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let search_in = args
+                    .get("search_in")
+                    .and_then(Value::as_str)
+                    .unwrap_or("path")
+                    .to_owned();
+                let match_mode = args
+                    .get("match")
+                    .and_then(Value::as_str)
+                    .unwrap_or("contains")
+                    .to_owned();
+                let max_depth = args
+                    .get("max_depth")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as usize);
+                let include_info = args
+                    .get("include_info")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let limit = args
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::UiFind {
+                            query,
+                            under,
+                            search_in,
+                            match_mode,
+                            max_depth,
+                            include_info,
+                            offset,
+                            limit,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_click" => {
+                let path = req_str(args, "path")?;
+                let button = args
+                    .get("button")
+                    .and_then(Value::as_str)
+                    .unwrap_or("LEFT")
+                    .to_owned();
+                let floater = args
+                    .get("floater")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let observe_path = args
+                    .get("observe_path")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::UiClick {
+                            path,
+                            button,
+                            floater,
+                            observe_path,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_get_value" => {
+                let path = req_str(args, "path")?;
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::UiGetValue { path }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_set_text" => {
+                let path = req_str(args, "path")?;
+                let text = req_str(args, "text")?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::UiSetText { path, text }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_select" => {
+                let path = req_str(args, "path")?;
+                let value = args
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| McpError::InvalidParams("missing 'value'".into()))?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::UiSelect { path, value }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_press_key" => {
+                let path = req_str(args, "path")?;
+                let keysym = req_str(args, "keysym")?;
+                let modifiers: Vec<String> = args
+                    .get("modifiers")
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let observe_path = args
+                    .get("observe_path")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::UiPressKey {
+                            path,
+                            keysym,
+                            modifiers,
+                            observe_path,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_list_menus" => {
+                let query = args
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::UiListMenus { query }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "ui_invoke_menu" => {
+                let name = req_str(args, "name")?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::UiInvokeMenu { name }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            // ---- Phase 6: Suite 3 — In-World Object Interaction, Notecards & Particles ----
+            "object_touch" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let face = args.get("face").and_then(Value::as_i64).unwrap_or(0) as i32;
+                let uv = parse_vec2(args, "uv").unwrap_or([0.5, 0.5]);
+                let st = parse_vec2(args, "st").unwrap_or([0.5, 0.5]);
+                let hold_ms = args
+                    .get("hold_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(50)
+                    .clamp(0, 5000);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ObjectTouch {
+                            local_id,
+                            face,
+                            uv,
+                            st,
+                            hold_ms,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "avatar_sit" => {
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("sit")
+                    .to_owned();
+                let target_local_id = args
+                    .get("target_local_id")
+                    .or_else(|| args.get("local_id"))
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u32);
+                let target_uuid = parse_opt_uuid(args, "target_uuid")?;
+                let offset = parse_vec3(args, "offset").ok();
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::AvatarSit {
+                            action,
+                            target_local_id,
+                            target_uuid,
+                            offset,
+                        },
+                        6000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "notecard_read" => {
+                let item_id = parse_req_uuid(args, "item_id")?;
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u32);
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::NotecardRead {
+                            item_id,
+                            object_local_id,
+                        },
+                        8000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "notecard_write" => {
+                let item_id = parse_opt_uuid(args, "item_id")?;
+                let object_local_id = args
+                    .get("object_local_id")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u32);
+                let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
+                let body = req_str(args, "body")?;
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::NotecardWrite {
+                            item_id,
+                            object_local_id,
+                            name,
+                            body,
+                        },
+                        8000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "prim_set_particles" => {
+                let local_id = args
+                    .get("local_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
+                    as u32;
+                let clear = args.get("clear").and_then(Value::as_bool).unwrap_or(false);
+                let pattern = args
+                    .get("pattern")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let texture_id = parse_opt_uuid(args, "texture_id")?;
+                let start_color = parse_vec4(args, "start_color").ok();
+                let end_color = parse_vec4(args, "end_color").ok();
+                let start_scale = parse_vec2(args, "start_scale").ok();
+                let end_scale = parse_vec2(args, "end_scale").ok();
+                let particle_max_age = args
+                    .get("particle_max_age")
+                    .and_then(Value::as_f64)
+                    .map(|v| v as f32);
+                let burst_rate = args
+                    .get("burst_rate")
+                    .and_then(Value::as_f64)
+                    .map(|v| v as f32);
+                let burst_part_count = args
+                    .get("burst_part_count")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as u32);
+                let burst_radius = args
+                    .get("burst_radius")
+                    .and_then(Value::as_f64)
+                    .map(|v| v as f32);
+                let burst_speed_min = args
+                    .get("burst_speed_min")
+                    .and_then(Value::as_f64)
+                    .map(|v| v as f32);
+                let burst_speed_max = args
+                    .get("burst_speed_max")
+                    .and_then(Value::as_f64)
+                    .map(|v| v as f32);
+                let accel = parse_vec3(args, "accel").ok();
+                let omega = parse_vec3(args, "omega").ok();
+                let follow_src = args.get("follow_src").and_then(Value::as_bool);
+                let follow_velocity = args.get("follow_velocity").and_then(Value::as_bool);
+                let interp_color = args.get("interp_color").and_then(Value::as_bool);
+                let interp_scale = args.get("interp_scale").and_then(Value::as_bool);
+                let emissive = args.get("emissive").and_then(Value::as_bool);
+                let ribbon = args.get("ribbon").and_then(Value::as_bool);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::PrimSetParticles {
+                            local_id,
+                            clear,
+                            pattern,
+                            texture_id,
+                            start_color,
+                            end_color,
+                            start_scale,
+                            end_scale,
+                            particle_max_age,
+                            burst_rate,
+                            burst_part_count,
+                            burst_radius,
+                            burst_speed_min,
+                            burst_speed_max,
+                            accel,
+                            omega,
+                            follow_src,
+                            follow_velocity,
+                            interp_color,
+                            interp_scale,
+                            emissive,
+                            ribbon,
+                        },
+                        10_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
         }
     }
@@ -2494,6 +3047,342 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: false,
         },
+        // ---- Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials ----
+        ToolDefinition {
+            name: "livemesh_control".into(),
+            description: "Programmatically inspect or control Aurora's LiveMesh (Blender Live) listener: status, start, stop, import_to_uploader, or remove_meshes.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["status", "start", "stop", "import_to_uploader", "remove_meshes"],
+                        "default": "status"
+                    },
+                    "source_id": { "type": "string" }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "asset_upload".into(),
+            description: "Programmatically stage local files (.glb, .dae, .png, .wav, .bvh/.anim) into Aurora's Importer without OS dialogs, request simulator upload fee quotes, or start confirmed uploads.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["status", "stage", "quote", "upload"],
+                        "default": "status"
+                    },
+                    "paths": { "type": "array", "items": { "type": "string" } },
+                    "path": { "type": "string" },
+                    "choice": {
+                        "type": "string",
+                        "enum": ["mesh", "texture", "sound", "animation", "material", "bulk", "local"]
+                    },
+                    "include_textures": { "type": "boolean", "default": true }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "inventory_rez_object".into(),
+            description: "Rez an object from Agent Inventory at an exact [x, y, z] world position without mouse drag-and-drop.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_id": { "type": "string" },
+                    "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+                    "select": { "type": "boolean", "default": false }
+                },
+                "required": ["item_id", "position"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "object_take_or_derez".into(),
+            description: "Take, take a copy, delete to trash, or return an in-world object by local_id.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer" },
+                    "action": {
+                        "type": "string",
+                        "enum": ["take", "take_copy", "delete", "return"],
+                        "default": "take"
+                    },
+                    "folder_id": { "type": "string" }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_set_material".into(),
+            description: "Set per-face (or all-sides) TextureEntry parameters (texture UUID, RGBA color, UV repeats/offsets/rotation, glow, fullbright, alpha_mode, bump_shiny) and PBR glTF material asset UUID on a prim.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer" },
+                    "face": { "type": "integer", "description": "0..N for a specific face, or -1 (or omitted) for all faces" },
+                    "texture_id": { "type": "string" },
+                    "material_id": { "type": "string" },
+                    "color": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+                    "repeats": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+                    "offsets": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+                    "rotation_rad": { "type": "number" },
+                    "rotation_deg": { "type": "number" },
+                    "glow": { "type": "number" },
+                    "fullbright": { "type": "boolean" },
+                    "alpha_mode": { "type": "integer" },
+                    "bump_shiny": { "type": "integer" }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
+        ToolDefinition {
+            name: "mesh_upload_open".into(),
+            description: "Open the standard mesh upload preview workflow. Does not submit an upload or authorize an upload fee.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "mesh_upload_status".into(),
+            description: "Read importer LOD files/counts, physics, dimensions, warnings, weights, displayed fee and visibility.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "native_file_dialogs".into(),
+            description: "List active or queued file selection dialogs in the viewer.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "native_file_choose".into(),
+            description: "Select a local file path for the viewer's importer without requiring manual OS dialog interaction.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "dialog_id": { "type": "integer", "default": 1 },
+                    "filename": { "type": "string" }
+                },
+                "required": ["dialog_id", "filename"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_inspect".into(),
+            description: "Read a known UI path's geometry and enabled/visible state without opening or focusing it.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "default": "/main_view" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_find".into(),
+            description: "Search UI paths or basenames, case-insensitively, within a narrow under path.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "under": { "type": "string", "default": "" },
+                    "search_in": { "type": "string", "enum": ["path", "name"], "default": "path" },
+                    "match": { "type": "string", "enum": ["contains", "exact", "prefix", "glob"], "default": "contains" },
+                    "max_depth": { "type": "integer" },
+                    "include_info": { "type": "boolean", "default": false },
+                    "offset": { "type": "integer", "default": 0 },
+                    "limit": { "type": "integer", "default": 50 }
+                },
+                "required": ["query"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_click".into(),
+            description: "Click a visible, enabled UI control by path and return before/after state.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "button": { "type": "string", "default": "LEFT" },
+                    "floater": { "type": "string" },
+                    "observe_path": { "type": "string" }
+                },
+                "required": ["path"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_get_value".into(),
+            description: "Read the current value of a discovered UI control.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_set_text".into(),
+            description: "Replace text in a discovered UI edit control and read back its value.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "text": { "type": "string" }
+                },
+                "required": ["path", "text"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_select".into(),
+            description: "Select a visible enabled combobox or tab item by value and return readback.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "value": {}
+                },
+                "required": ["path", "value"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_press_key".into(),
+            description: "Focus a UI path, press/release a key with optional modifiers, and read back state.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "keysym": { "type": "string" },
+                    "modifiers": { "type": "array", "items": { "type": "string" }, "default": [] },
+                    "observe_path": { "type": "string" }
+                },
+                "required": ["path", "keysym"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_list_menus".into(),
+            description: "List viewer menu entries and bar actions, optionally filtered by query.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "default": "" }
+                }
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "ui_invoke_menu".into(),
+            description: "Invoke a viewer menu entry or bar action by exact name.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }),
+            in_compact_profile: true,
+        },
+        // ---- Phase 6: Suite 3 — In-World Object Interaction, Notecards & Particles ----
+        ToolDefinition {
+            name: "object_touch".into(),
+            description: "Touch/grab an in-world prim at a specific face, UV, and ST coordinate (supports multi-button single-prim HUDs and panels).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer" },
+                    "face": { "type": "integer", "default": 0 },
+                    "uv": { "type": "array", "items": { "type": "number" }, "default": [0.5, 0.5] },
+                    "st": { "type": "array", "items": { "type": "number" }, "default": [0.5, 0.5] },
+                    "hold_ms": { "type": "integer", "default": 50 }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "avatar_sit".into(),
+            description: "Sit on a target in-world object (by local_id or uuid) or stand up.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["sit", "stand"], "default": "sit" },
+                    "target_local_id": { "type": "integer" },
+                    "target_uuid": { "type": "string" },
+                    "offset": { "type": "array", "items": { "type": "number" } }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "notecard_read".into(),
+            description: "Read the text of a notecard in Agent Inventory or inside an object's Task Inventory (enforces creator copy permissions and RLVa @viewnote).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_id": { "type": "string" },
+                    "object_local_id": { "type": "integer" }
+                },
+                "required": ["item_id"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "notecard_write".into(),
+            description: "Create or update a notecard in Agent Inventory or inside an object's Task Inventory (enforces creator modify permissions).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_id": { "type": "string" },
+                    "object_local_id": { "type": "integer" },
+                    "name": { "type": "string" },
+                    "body": { "type": "string" }
+                },
+                "required": ["body"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "prim_set_particles".into(),
+            description: "Configure or clear a Second Life particle emitter on an owned prim using Aurora's ParticleEditor LSL generator.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "local_id": { "type": "integer" },
+                    "clear": { "type": "boolean", "default": false },
+                    "pattern": { "type": "string", "enum": ["drop", "explode", "angle", "angle_cone"] },
+                    "texture_id": { "type": "string" },
+                    "start_color": { "type": "array", "items": { "type": "number" } },
+                    "end_color": { "type": "array", "items": { "type": "number" } },
+                    "start_scale": { "type": "array", "items": { "type": "number" } },
+                    "end_scale": { "type": "array", "items": { "type": "number" } },
+                    "particle_max_age": { "type": "number" },
+                    "burst_rate": { "type": "number" },
+                    "burst_part_count": { "type": "integer" },
+                    "burst_radius": { "type": "number" },
+                    "burst_speed_min": { "type": "number" },
+                    "burst_speed_max": { "type": "number" },
+                    "accel": { "type": "array", "items": { "type": "number" } },
+                    "omega": { "type": "array", "items": { "type": "number" } },
+                    "follow_src": { "type": "boolean" },
+                    "follow_velocity": { "type": "boolean" },
+                    "interp_color": { "type": "boolean" },
+                    "interp_scale": { "type": "boolean" },
+                    "emissive": { "type": "boolean" },
+                    "ribbon": { "type": "boolean" }
+                },
+                "required": ["local_id"]
+            }),
+            in_compact_profile: false,
+        },
     ]
 }
 
@@ -2504,8 +3393,9 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
+        assert_eq!(defs.len(), 85, "expected 85 total tools (43 Legacy + 42 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-        // Verify Legacy Viewer compatibility tools
+        // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
             "control_acquire",
             "control_release",
@@ -2537,13 +3427,26 @@ mod tests {
             "local_mesh_auto_reload",
             "floater_list",
             "floater_open",
+            "mesh_upload_open",
+            "mesh_upload_status",
+            "native_file_dialogs",
+            "native_file_choose",
+            "ui_inspect",
+            "ui_find",
+            "ui_click",
+            "ui_get_value",
+            "ui_set_text",
+            "ui_select",
+            "ui_press_key",
+            "ui_list_menus",
+            "ui_invoke_menu",
         ] {
             assert!(
                 names.contains(&legacy),
                 "missing Legacy Viewer MCP tool: {legacy}"
             );
         }
-        // Verify Aurora-native & LSD tools
+        // Verify all 42 Aurora-native & LSD tools
         for native in [
             "viewer_control_acquire",
             "viewer_control_release",
@@ -2577,6 +3480,16 @@ mod tests {
             "lsd_mutate",
             "lsd_stress_test",
             "asset_inspect_local",
+            "livemesh_control",
+            "asset_upload",
+            "inventory_rez_object",
+            "object_take_or_derez",
+            "prim_set_material",
+            "object_touch",
+            "avatar_sit",
+            "notecard_read",
+            "notecard_write",
+            "prim_set_particles",
         ] {
             assert!(
                 names.contains(&native),
