@@ -10,6 +10,29 @@ mod first_person_tests {
     use super::*;
 
     #[test]
+    fn vr_preferences_ignore_old_view_and_keep_comfort_options() {
+        let defaults: CameraSettings = serde_json::from_str("{}").expect("defaults");
+        assert!(!defaults.vr.mouse_look);
+        assert_eq!(defaults.vr.resolution, None);
+        assert!(serde_json::from_str::<CameraSettings>(r#"{"vr_view":"DesktopCamera"}"#).is_ok());
+        let saved = CameraSettings {
+            vr: VrSettings {
+                mouse_look: true,
+                resolution: Some([2048, 2304]),
+                resolution_custom: true,
+                gamma: 0.8,
+                vibrancy: 1.1,
+            },
+            ..defaults
+        };
+        let document = serde_json::to_value(&saved).expect("saved document");
+        assert_eq!(document["vr_resolution"], serde_json::json!([2048, 2304]));
+        let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&saved).expect("save")).expect("load");
+        assert!(loaded.vr.mouse_look && loaded.vr.resolution_custom);
+        assert_eq!(loaded.vr.resolution, Some([2048, 2304]));
+    }
+
+    #[test]
     fn first_person_options_default_off_and_keep_a_saved_choice() {
         let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
         assert!(!migrated.show_avatar_in_mouselook);
@@ -249,24 +272,50 @@ pub struct CameraSettings {
     /// mouselook; otherwise they go (LLAgent::changeCameraToMouselook) and
     /// the chat bar only shows with text in it.
     pub show_interface_in_mouselook: bool,
-    /// Where the headset view starts when VR is entered (Aurora-specific).
-    pub vr_view: VrView,
-    /// Set up VR at each start (Preferences › Camera › VR), so the VR
-    /// button enters it at once. Off by default: loading a VR runtime at
-    /// every start crashed PCs that never use VR (#2309); the first
-    /// "Restart in VR" turns it on.
     pub vr_at_start: bool,
+    /// Kept flat in the saved file for compatibility with earlier VR builds.
+    #[serde(flatten)]
+    pub vr: VrSettings,
 }
 
-/// Where the headset view starts on VR entry (Preferences › Camera › VR).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VrSettings {
+    #[serde(rename = "vr_mouse_look")]
+    pub mouse_look: bool,
+    #[serde(rename = "vr_resolution")]
+    pub resolution: Option<[u32; 2]>,
+    #[serde(rename = "vr_resolution_custom")]
+    pub resolution_custom: bool,
+    #[serde(rename = "vr_gamma")]
+    pub gamma: f32,
+    #[serde(rename = "vr_vibrancy")]
+    pub vibrancy: f32,
+}
+
+impl Default for VrSettings {
+    fn default() -> Self {
+        Self {
+            mouse_look: false,
+            resolution: None,
+            resolution_custom: false,
+            gamma: 1.0,
+            vibrancy: 1.0,
+        }
+    }
+}
+
+/// Headset camera mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum VrView {
     /// At the avatar's eyes, as in mouselook: the head and what is worn on
     /// it are hidden the same way.
     #[default]
     FirstPerson,
-    /// Where the desktop camera was when VR was entered.
-    DesktopCamera,
+    /// Native avatar orbit, pan and target travel with level headset viewing
+    /// and translation-only automatic framing.
+    Avatar,
+    Flycam,
 }
 
 impl Default for CameraSettings {
@@ -304,8 +353,8 @@ impl Default for CameraSettings {
             mouselook_alt_right_menu: false,
             show_mouselook_instructions: true,
             show_interface_in_mouselook: false,
-            vr_view: VrView::FirstPerson,
             vr_at_start: false,
+            vr: VrSettings::default(),
         }
     }
 }
