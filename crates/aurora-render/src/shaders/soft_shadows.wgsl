@@ -41,6 +41,13 @@ struct Params {
 // The least radius of the filter, in metres (soft_shadows.rs FILTER_FLOOR):
 // shadows are sharp where they touch what casts them.
 const FILTER_FLOOR: f32 = 0.015;
+// Where the penumbra is narrower than the filter of before (3 cm across,
+// `SHADOW_PENUMBRA` in common.wgsl), the shadow is that filter: its taps are
+// the same for every pixel, so a narrow penumbra shows no grain and no
+// pattern that crawls with the camera. The filter of the noisy taps takes
+// over by `LEGACY_FADE` times the floor, where its blur hides the noise.
+const SHADOW_PENUMBRA: f32 = 0.03;
+const LEGACY_FADE: f32 = 3.0;
 
 // Points of a disk of radius 1, spread evenly (a Poisson-like sequence):
 // every tap count takes each (32 / count)th, the same for every pixel.
@@ -122,6 +129,33 @@ fn blocks_at(at: vec2<f32>, level: u32) -> vec4<f32> {
         textureLoad(mm_in, b + vec2<i32>(1, 1), level).x);
 }
 
+// Taps per axis for a filter spanning `span` (tile coordinates): `shadow_taps`
+// of common.wgsl.
+fn legacy_taps(span: f32, texel: f32) -> u32 {
+    return clamp(u32(ceil(span / texel - 1e-3)) + 1u, 4u, 7u);
+}
+
+// The filter of `cascade_shadow` (common.wgsl), taps and spacing as they
+// are there, on the same receiver bias; `radius`: the cascade's half extent
+// in metres, `texel` its texel in tile coordinates.
+fn legacy_filter(uv: vec2<f32>, depth: f32, radius: f32, texel: f32, tile: vec2<f32>, tile_scale: vec2<f32>) -> f32 {
+    let half_uv = SHADOW_PENUMBRA * 0.5 / radius;
+    let spacing = clamp(half_uv * (2.0 / 3.0), 0.5 * texel, 2.0 * texel);
+    let span = 3.0 * spacing;
+    let taps = legacy_taps(span, texel);
+    let step = span / f32(taps - 1u);
+    let center = 0.5 * f32(taps - 1u);
+    var sum = 0.0;
+    for (var y = 0u; y < taps; y++) {
+        for (var x = 0u; x < taps; x++) {
+            let o = (vec2<f32>(f32(x), f32(y)) - center) * step;
+            let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * tile_scale, depth);
+        }
+    }
+    return sum / f32(taps * taps);
+}
+
 // Shadow of one cascade (1 lit, 0 shadowed) and the radius of its filter in
 // metres; the light is -1 outside its tile, so that the other cascade of a
 // blend can take over (`cascade_shadow`).
@@ -158,6 +192,9 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
     let angle = ign(frag, 0u) * 6.2831853;
     let rot = mat2x2<f32>(cos(angle), sin(angle), -sin(angle), cos(angle));
     var filter_m = FILTER_FLOOR;
+    // the share of the filter of before (1: all of it, no light size or a
+    // penumbra narrower than it)
+    var before = 1.0;
     if (p.light.x > 0.0) {
         // Blocker search: gathers over a rotated disk of the minimum depths
         // of blocks of 4, 8 or 16 texels (the larger the wider the disk, so
@@ -207,17 +244,25 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             // mean distance; the least is the floor (contact hardening)
             let reach = separation / blockers / depth_per_metre * p.light.x;
             filter_m = clamp(reach, FILTER_FLOOR, max(p.light.y, FILTER_FLOOR));
+            before = 1.0 - smoothstep(FILTER_FLOOR, LEGACY_FADE * FILTER_FLOOR, reach);
         }
     }
-    let half_uv = max(filter_m / (2.0 * radius), 0.75 * texel);
-    let taps = u32(p.light.z);
-    var sum = 0.0;
-    for (var i = 0u; i < taps; i++) {
-        let o = rot * DISK[(i * 32u) / taps] * half_uv;
-        let local = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (local + tile) * tile_scale, q.z + dot(gradient, local - uv) - bias);
+    var light = 0.0;
+    if (before > 0.0) {
+        light = before * legacy_filter(uv, q.z - bias, radius, texel, tile, tile_scale);
     }
-    return vec2<f32>(sum / f32(taps), filter_m);
+    if (before < 1.0) {
+        let half_uv = max(filter_m / (2.0 * radius), 0.75 * texel);
+        let taps = u32(p.light.z);
+        var sum = 0.0;
+        for (var i = 0u; i < taps; i++) {
+            let o = rot * DISK[(i * 32u) / taps] * half_uv;
+            let local = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (local + tile) * tile_scale, q.z + dot(gradient, local - uv) - bias);
+        }
+        light += (1.0 - before) * sum / f32(taps);
+    }
+    return vec2<f32>(light, filter_m);
 }
 
 // The sun's shadow at a point (`shadow_factor`): the cascade by the point's

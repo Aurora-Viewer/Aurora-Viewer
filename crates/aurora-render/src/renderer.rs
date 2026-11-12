@@ -1765,6 +1765,9 @@ pub(crate) struct Backend {
     /// Two threads that finish command encoders beside this one.
     finishers: Helpers<wgpu::CommandEncoder, wgpu::CommandBuffer>,
     msaa_samples: u32,
+    /// The scene's pipelines were compiled with the soft shadows' path
+    /// (`soft_path`): the mask is drawn and read only while they were.
+    soft_pipelines: bool,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
     vsync: bool,
@@ -2134,6 +2137,27 @@ fn begin_scene_b_on<'a>(
     })
 }
 
+/// Whether the scene's pipelines carry the soft shadows' path for `s`: the
+/// setting, or `AURORA_SOFT_SHADOWS` asking for the mask whatever it says.
+/// Off, the shaders are compiled without it (`common_shader_for`), so a frame
+/// that never reads the mask pays nothing for it.
+fn soft_path(s: &RenderSettings) -> bool {
+    crate::soft_shadows::Override::from_env().needed(s.soft_shadows)
+}
+
+const SOFT_PATH_ON: &str = "const SOFT_PATH: bool = true;";
+
+/// The common shader with the soft shadows' path (`SOFT_PATH`, common.wgsl)
+/// when `soft`, else without: the branches are folded away at compile time.
+fn common_shader_for(soft: bool) -> std::borrow::Cow<'static, str> {
+    let common = crate::common_shader_source();
+    if soft {
+        return common;
+    }
+    debug_assert!(common.contains(SOFT_PATH_ON), "common.wgsl lost its SOFT_PATH line");
+    common.replace(SOFT_PATH_ON, "const SOFT_PATH: bool = false;").into()
+}
+
 fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, d: PipeDesc) -> wgpu::RenderPipeline {
     let mesh_bufs = [Some(vertex_layout()), Some(skin_layout())];
     let part_bufs = [Some(particle_layout())];
@@ -2432,6 +2456,8 @@ type ImpostorPipelines = (
 struct PipelineBuild {
     samples: u32,
     ssr: bool,
+    /// Compiled with the soft shadows' path (`soft_path`).
+    soft: bool,
     started: std::time::Instant,
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
 }
@@ -2444,6 +2470,7 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
+        soft: bool,
     ) -> Impostors {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("impostor atlas"),
@@ -2503,7 +2530,7 @@ impl Impostors {
             mapped_at_creation: false,
         });
         let (capture_opaque, capture_blend, sprite, sprite_depth) =
-            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr);
+            Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr, soft);
         Impostors {
             layout,
             atlas,
@@ -2613,10 +2640,11 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
+        soft: bool,
     ) -> ImpostorPipelines {
         let src = format!(
             "{}\n{}\n{}",
-            crate::common_shader_source(),
+            common_shader_for(soft),
             crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
@@ -3365,6 +3393,7 @@ impl Backend {
             msaa_samples,
             format,
             settings.ssr,
+            soft_path(&settings),
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
@@ -3474,7 +3503,15 @@ impl Backend {
         let cull = GpuCull::new(&device);
         let motion_history = crate::motion_history::MotionHistory::new(&device);
         let motion_debug = crate::motion_debug::asked().then(|| crate::motion_debug::MotionDebug::new(&device, config.format));
-        let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
+        let impostors = Impostors::new(
+            &device,
+            &frame_layout,
+            &records_layout,
+            &tex_layout,
+            msaa_samples,
+            settings.ssr,
+            soft_path(&settings),
+        );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
             size: 4096 * std::mem::size_of::<ParticleInstance>() as u64,
@@ -3595,6 +3632,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            soft_pipelines: soft_path(&settings),
             vsync,
             present_modes,
             settings,
@@ -3681,10 +3719,11 @@ impl Backend {
         samples: u32,
         surface_format: wgpu::TextureFormat,
         ssr: bool,
+        soft: bool,
     ) -> Pipelines {
         let src = format!(
             "{}\n{}\n{}",
-            crate::common_shader_source(),
+            common_shader_for(soft),
             crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
@@ -4159,7 +4198,7 @@ impl Backend {
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
         let ssr_pipe = ssr.then(|| {
-            let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
+            let src = format!("{}\n{}", common_shader_for(soft), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ssr"),
                 source: wgpu::ShaderSource::Wgsl(src.into()),
@@ -5135,6 +5174,7 @@ impl Backend {
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         let secs = START.get_or_init(Instant::now).elapsed().as_secs();
         shadows
+            && self.soft_pipelines
             && self.soft.is_some()
             && self.targets.soft.is_some()
             && self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0
@@ -5428,18 +5468,20 @@ impl Backend {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
         };
-        if (samples, s.ssr) == (self.msaa_samples, self.settings.ssr) {
+        let soft = soft_path(&s);
+        if (samples, s.ssr, soft) == (self.msaa_samples, self.settings.ssr, self.soft_pipelines) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
             return;
         }
-        if self.pipeline_build.as_ref().is_none_or(|b| (b.samples, b.ssr) != (samples, s.ssr)) {
+        if self.pipeline_build.as_ref().is_none_or(|b| (b.samples, b.ssr, b.soft) != (samples, s.ssr, soft)) {
             log::info!(
-                "compiling the pipelines for {samples} sample(s), SSR {}",
-                if s.ssr { "on" } else { "off" }
+                "compiling the pipelines for {samples} sample(s), SSR {}, soft shadows {}",
+                if s.ssr { "on" } else { "off" },
+                if soft { "on" } else { "off" }
             );
-            self.pipeline_build = Some(self.start_pipeline_build(samples, s.ssr));
+            self.pipeline_build = Some(self.start_pipeline_build(samples, s.ssr, soft));
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -5454,11 +5496,13 @@ impl Backend {
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // the other settings now, the samples and SSR with their
-                // pipelines
+                // the other settings now, the samples, SSR and soft shadows
+                // with their pipelines (the soft shadows' mask is made
+                // once the pipelines that read it are there)
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
+                    soft_shadows: self.settings.soft_shadows,
                     ..s
                 };
                 if now != self.settings {
@@ -5479,6 +5523,7 @@ impl Backend {
                     samples,
                     self.config.format,
                     s.ssr,
+                    soft,
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -5488,14 +5533,16 @@ impl Backend {
                     &self.tex_layout,
                     samples,
                     s.ssr,
+                    soft,
                 );
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
         }
     }
 
-    /// Compile the pipelines for `samples` and `ssr` on a worker thread.
-    fn start_pipeline_build(&self, samples: u32, ssr: bool) -> PipelineBuild {
+    /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
+    /// path `soft` on a worker thread.
+    fn start_pipeline_build(&self, samples: u32, ssr: bool, soft: bool) -> PipelineBuild {
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let device = self.device.clone();
         let layouts = [
@@ -5511,8 +5558,8 @@ impl Backend {
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
-            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr);
-            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr);
+            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr, soft);
+            let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
         });
@@ -5523,6 +5570,7 @@ impl Backend {
         PipelineBuild {
             samples,
             ssr,
+            soft,
             started: std::time::Instant::now(),
             done,
         }
@@ -5547,6 +5595,7 @@ impl Backend {
         let taa_was = self.taa.is_some();
         if let Some((samples, scene, impostors)) = rebuilt {
             self.msaa_samples = samples;
+            self.soft_pipelines = soft_path(&s);
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
         }
@@ -9988,6 +10037,16 @@ impl Backend {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_scene_shader_without_soft_shadows_drops_their_path() {
+        let with = super::common_shader_for(true);
+        let without = super::common_shader_for(false);
+        assert!(with.contains(super::SOFT_PATH_ON));
+        assert!(!without.contains(super::SOFT_PATH_ON));
+        assert!(without.contains("const SOFT_PATH: bool = false;"));
+        assert_eq!(without.len(), with.len() + 1);
+    }
+
     use super::*;
 
     /// The occlusion's table is read by index against the main view's

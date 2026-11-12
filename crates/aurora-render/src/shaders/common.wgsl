@@ -1405,6 +1405,14 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     return 1.0 - textureLoad(contact_tex, p, 0).r;
 }
 
+// Whether this shader reads the soft shadows: the sun's mask and the
+// projectors' filter. `true` here; while the option is off the scene's
+// pipelines are compiled from this source with the line below set to `false`
+// (renderer.rs `without_soft_shadows`), so the soft branches and their
+// registers are not in the shaders of a frame that never takes them. The
+// line is matched as it stands.
+const SOFT_PATH: bool = true;
+
 // The sun's soft shadow at a pixel of the main view (soft_shadows.wgsl): the
 // light the mask lets through, or -1 where it does not hold for the surface
 // being shaded: it was made for the surface of the depth prepass at that
@@ -1413,7 +1421,7 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 // surface, a reflection or a probe, which have `soft.x == 0`).
 fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
     // (a blended face outside the occlusion depth keeps the filter of before)
-    if (frame.soft.x < 0.5 || !screen_surface) {
+    if (!SOFT_PATH || frame.soft.x < 0.5 || !screen_surface) {
         return -1.0;
     }
     let p = vec2<i32>(frag);
@@ -2185,7 +2193,7 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
         origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
     }
     var s = -1.0;
-    if (frame.soft.z > 0.0) {
+    if (SOFT_PATH && frame.soft.z > 0.0) {
         s = projector_soft(k, world_pos + n * 0.04, n, uv, ndc.z, lp.w, origin, half, dims, texel);
     }
     if (s < 0.0) {

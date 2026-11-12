@@ -10599,7 +10599,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
-| `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across, the real sun is 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
+| `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
 | `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
@@ -11083,12 +11083,12 @@ What the inventory must show with these scenarios:
   light's size (2.3 degrees across at a softness of 1) gives the
   penumbra, and 12 rotated taps take the light (32 in a photo), then a
   bilateral blur in the world's metres removes their noise. The penumbra is
-  never narrower than 1.5 cm: sharp at the contact, soft far from it. The shading reads the mask where its surface is the one of the
+  never narrower than 1.5 cm: sharp at the contact, soft far from it. Where it is narrower than the 3 cm filter of before, the shadow takes that filter (the same taps for every pixel, so no grain and nothing that crawls with the camera), fading into the rotated taps over three times that width. The shading reads the mask where its surface is the one of the
   prepass; blended faces in front of it, water, reflections and probes keep
-  the filter of before. Off, nothing is created or drawn and the casters'
+  the filter of before. Off, nothing is created or drawn, the scene's shaders are compiled without the soft path (a variant built in the background when the setting changes, like the samples and SSR) and the casters'
   culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-2>`**
-  (the slider, active with the soft shadows only; the default is 0.25, a light about 0.6 degrees across, close to the real sun (0.23); 1 is a light 2.3 degrees
-  across, the look of PR 2288, the real sun being 0.23; 0 a light with no
+  (the slider, active with the soft shadows only; the default is 0.25, a light about 0.6 degrees across, close to the real sun (0.53 degrees, a softness of 0.23); 1 is a light 2.3 degrees
+  across, the look of PR 2288; 0 a light with no
   size) and
   **`AURORA_SHADOW_INTENSITY=<0-1>`** (how dark the sun's shadows are, with
   or without the soft shadows; 1 is as before) override the settings.
