@@ -84,12 +84,7 @@ impl App {
             || i.down
             || i.stop
             || i.joystick_yaw.abs() > 0.001;
-        if keys
-            || self.autopilot.is_some()
-            || self.mouse_mode == MouseMode::Steer
-            || self.world.agent.is_sitting()
-            || !self.in_world()
-        {
+        if keys || self.autopilot.is_some() || self.mouse_mode == MouseMode::Steer || self.world.agent.is_sitting() || !self.in_world() {
             self.selection_turn = None;
             return;
         }
@@ -132,8 +127,12 @@ impl App {
                 return;
             };
             let middle = (position + center) / 2.0;
-            self.camera
-                .set_view(middle + Vec3::new(-0.5, 0.0, 14.0), middle, &mut self.world.agent, &self.settings.camera);
+            self.camera.set_view(
+                middle + Vec3::new(-0.5, 0.0, 14.0),
+                middle,
+                &mut self.world.agent,
+                &self.settings.camera,
+            );
             self.build.open_build(crate::build::Tool::Edit);
             self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
             self.flush_build();
