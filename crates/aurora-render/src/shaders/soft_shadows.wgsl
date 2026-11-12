@@ -257,7 +257,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         }
         {
             // the light's half width seen from the receiver, at the blockers'
-            // mean distance; the least is the floor (contact hardening)
+            // mean distance; the least is the floor
             let reach = separation / blockers / depth_per_metre * p.light.x;
             filter_m = clamp(reach, FILTER_FLOOR, max(p.light.y, FILTER_FLOOR));
             // the rotated taps span at least 3/4 of a texel: it is that

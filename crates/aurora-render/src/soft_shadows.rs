@@ -84,7 +84,7 @@ pub(crate) fn search_radius(softness: f32) -> f32 {
 
 /// Radius of the filter at a point whose casters are `gap` metres nearer the
 /// light, at `softness`: the light's half width seen from there, never under
-/// [`FILTER_FLOOR`] (contact hardening) nor over [`search_radius`]. Mirrored
+/// [`FILTER_FLOOR`] nor over [`search_radius`]. Mirrored
 /// by `cascade_soft` in soft_shadows.wgsl (the tests state the model).
 #[cfg(test)]
 pub(crate) fn filter_radius(gap: f32, softness: f32) -> f32 {
@@ -660,7 +660,7 @@ mod tests {
         // by max, not in quadrature); under 75 cm the floor holds
         assert!((filter_radius(5.0, 1.0) - 0.10).abs() < 1e-6);
         assert_eq!(filter_radius(0.5, 1.0), FILTER_FLOOR);
-        // the real sun (0.23), a caster 10 m up: 4.6 cm
+        // the real sun (a softness of 0.23), a caster 10 m up: 4.6 cm
         assert!((filter_radius(10.0, 0.23) - 0.046).abs() < 1e-4);
     }
 
@@ -913,7 +913,7 @@ mod tests {
         // contact hardening: the caster 0.5 m up has a narrower penumbra than
         // the one 3 m up, whatever the light
         assert!(high.2 > low.2 * 1.3, "higher casters give wider penumbrae: {} vs {}", high.2, low.2);
-        // a larger light gives a wider one, a pinpoint light the filter of before
+        // a larger light gives a wider one, a light with no size the shadows of before
         assert!(high.2 > mid.2 * 1.3, "a larger light gives a wider one: {} vs {}", high.2, mid.2);
         assert!(
             mid.2 > pinpoint.2 * 1.3,

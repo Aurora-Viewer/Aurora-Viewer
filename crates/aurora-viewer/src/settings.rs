@@ -1377,7 +1377,7 @@ pub struct Settings {
     /// graphics level; only with the shadows.
     pub soft_shadows: bool,
     /// With soft shadows, the size of the light: 1 = 2.3 degrees across (the
-    /// real sun, 0.53 degrees, is 0.23), 0 = no size, up to 2. Without soft
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = no size, up to 2. Without soft
     /// shadows it has no effect.
     pub shadow_softness: f32,
     /// How dark the sun's shadows are, 0 to 1: 1 = as the Legacy Viewer's,
@@ -1601,7 +1601,7 @@ pub struct Settings {
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
 /// The default shadow softness, 0.25 (a light about 0.6 degrees across, close
-/// to the real sun, 0.23; 1 is 2.3 degrees), and the range of the slider.
+/// to the real sun (0.53 degrees, a softness of 0.23); 1 is 2.3 degrees), and the range of the slider.
 pub(crate) const SHADOW_SOFTNESS: f32 = 0.25;
 pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 2.0;
 /// The shadows as the Legacy Viewer draws them.
