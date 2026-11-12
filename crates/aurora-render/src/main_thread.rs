@@ -642,6 +642,14 @@ impl Renderer {
         let vr = Arc::new(crate::vr_control::Control::new(xr_graphics.is_some()));
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         let vr = Arc::new(crate::vr_control::Control::new(false));
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if let Some((runtime, system)) = xr_graphics.as_ref().map(|g| g.binding()) {
+            vr.set_default_resolution(crate::xr_frame::default_resolution(
+                &runtime,
+                system,
+                device.limits().max_texture_dimension_2d,
+            ));
+        }
         // the compiled pipelines of the earlier starts (pipeline_cache.rs),
         // before the first one is made
         crate::pipeline_cache::open(&device, &ainfo);
@@ -1286,11 +1294,22 @@ impl Renderer {
     /// returns at once, with the statistics of that frame before; without,
     /// the frame is drawn here. A frame that carries a capture is waited
     /// for: `captured` holds it when this returns.
+    pub fn vr_default_resolution(&self) -> Option<[u32; 2]> {
+        self.vr.default_resolution()
+    }
+
     pub fn vr_state(&self) -> crate::VrState {
         self.vr.state()
     }
     pub fn vr_engaged(&self) -> bool {
         self.vr.state().engaged()
+    }
+    /// Latest coherent head pose; None on focus loss, stale tracking or contention.
+    pub fn vr_head_pose(&self) -> Option<crate::HeadPose> {
+        self.vr.head_pose()
+    }
+    pub fn vr_focused(&self) -> bool {
+        self.vr.focused()
     }
     pub fn set_vr_enabled(&self, on: bool) -> bool {
         self.vr.request(on)

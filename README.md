@@ -1158,6 +1158,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |

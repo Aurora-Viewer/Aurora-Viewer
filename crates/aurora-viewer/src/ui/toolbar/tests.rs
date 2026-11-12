@@ -917,8 +917,8 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
         for (language, _) in aurora_i18n::available_languages() {
             assert_ne!(command.label_in(language), command.key, "{}: no label in {language}", command.id);
         }
-        // Speak, Favorites and the AO's toggle have buttons of their own
-        if matches!(command.id, "speak" | "favorites") {
+        // These buttons open their own toolbar popups.
+        if matches!(command.id, "speak" | "favorites" | "vr_view") {
             continue;
         }
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());
