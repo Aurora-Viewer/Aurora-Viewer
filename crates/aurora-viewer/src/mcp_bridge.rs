@@ -12,6 +12,7 @@ use aurora_mcp::{
     ViewerResponse, create_bridge_channels, spawn_server,
 };
 use aurora_net::build::{BuildCmd, NewPrim, TransformUpdate, perm};
+use aurora_net::land::{AccessEntry, LandCommand, ParcelUpdate, AL_ACCESS, AL_BAN};
 use aurora_net::scripts::{ScriptOptions, ScriptTarget};
 use glam::{EulerRot, Quat, Vec3};
 use serde_json::{Value, json};
@@ -1935,6 +1936,35 @@ impl App {
             }
             ViewerRequest::EconomyGetBalance => {
                 let resp = self.handle_mcp_economy_get_balance();
+                let _ = reply_tx.send(resp);
+            }
+            // ---- Phase 8: Land, Parcel & Estate Suite ----
+            ViewerRequest::ParcelInfoQuery => {
+                let resp = self.handle_mcp_parcel_info();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::ParcelSetMusic { music_url } => {
+                let resp = self.handle_mcp_parcel_set_music(&music_url);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::ParcelSetProperties {
+                name,
+                description,
+                flags,
+            } => {
+                let resp = self.handle_mcp_parcel_set_properties(name.as_deref(), description.as_deref(), flags);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::ParcelAccessListModify {
+                action,
+                list,
+                avatar_uuid,
+            } => {
+                let resp = self.handle_mcp_parcel_access_list_modify(&action, &list, &avatar_uuid);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::ParcelEject { target_uuid, ban } => {
+                let resp = self.handle_mcp_parcel_eject(&target_uuid, ban);
                 let _ = reply_tx.send(resp);
             }
         }
@@ -4834,6 +4864,192 @@ impl App {
             "agent_id": self.world.agent_id.to_string(),
             "balance_l$": self.world.balance,
             "currency": "L$",
+        })))
+    }
+
+    // ---- Phase 8: Land, Parcel & Estate Suite ----
+
+    fn handle_mcp_parcel_info(&self) -> Result<ViewerResponse, McpError> {
+        let parcel_opt = self.world.parcel.as_ref().or_else(|| {
+            self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
+        });
+        let Some(p) = parcel_opt else {
+            return Err(McpError::NotInWorld);
+        };
+
+        Ok(ViewerResponse::Json(json!({
+            "local_id": p.local_id,
+            "name": p.name,
+            "description": p.desc,
+            "owner_id": p.owner_id.to_string(),
+            "group_id": p.group_id.to_string(),
+            "is_group_owned": p.is_group_owned,
+            "area_m2": p.area,
+            "max_prims": p.max_prims,
+            "total_prims": p.total_prims,
+            "owner_prims": p.owner_prims,
+            "group_prims": p.group_prims,
+            "other_prims": p.other_prims,
+            "claim_price": p.claim_price,
+            "sale_price": p.sale_price,
+            "flags": p.flags,
+            "music_url": p.music_url,
+            "media_url": p.media_url,
+            "landing_type": p.landing_type,
+            "see_avatars": p.see_avatars,
+            "user_location": [p.user_location.x, p.user_location.y, p.user_location.z],
+            "aabb_min": [p.aabb_min.x, p.aabb_min.y, p.aabb_min.z],
+            "aabb_max": [p.aabb_max.x, p.aabb_max.y, p.aabb_max.z],
+        })))
+    }
+
+    fn handle_mcp_parcel_set_music(&mut self, music_url: &str) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let parcel_opt = self.world.parcel.as_ref().or_else(|| {
+            self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
+        });
+        let Some(p) = parcel_opt else {
+            return Err(McpError::NotInWorld);
+        };
+
+        let mut update = ParcelUpdate::from_parcel(p);
+        update.music_url = music_url.to_string();
+
+        self.send(NetCommand::Land(LandCommand::Update {
+            handle,
+            update: Box::new(update),
+        }));
+
+        if let Some(parcel) = self.world.parcel.as_mut() {
+            Arc::make_mut(parcel).music_url = music_url.to_string();
+        }
+        self.parcel_music.enter(true);
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "music_url": music_url,
+            "status": "updated_and_playing",
+        })))
+    }
+
+    fn handle_mcp_parcel_set_properties(
+        &mut self,
+        name: Option<&str>,
+        description: Option<&str>,
+        flags: Option<u32>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let parcel_opt = self.world.parcel.as_ref().or_else(|| {
+            self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
+        });
+        let Some(p) = parcel_opt else {
+            return Err(McpError::NotInWorld);
+        };
+
+        let mut update = ParcelUpdate::from_parcel(p);
+        if let Some(new_name) = name {
+            update.name = new_name.to_string();
+        }
+        if let Some(new_desc) = description {
+            update.desc = new_desc.to_string();
+        }
+        if let Some(new_flags) = flags {
+            update.flags = new_flags;
+        }
+
+        self.send(NetCommand::Land(LandCommand::Update {
+            handle,
+            update: Box::new(update),
+        }));
+
+        if let Some(parcel) = self.world.parcel.as_mut() {
+            let m = Arc::make_mut(parcel);
+            if let Some(new_name) = name {
+                m.name = new_name.to_string();
+            }
+            if let Some(new_desc) = description {
+                m.desc = new_desc.to_string();
+            }
+            if let Some(new_flags) = flags {
+                m.flags = new_flags;
+            }
+        }
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "name": name,
+            "description": description,
+            "flags": flags,
+        })))
+    }
+
+    fn handle_mcp_parcel_access_list_modify(
+        &mut self,
+        action: &str,
+        list: &str,
+        avatar_uuid_str: &str,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let target = Uuid::parse_str(avatar_uuid_str.trim())
+            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+
+        let local_id = self.world.parcel.as_ref().map(|p| p.local_id).unwrap_or(1);
+        let flags = if list.eq_ignore_ascii_case("ban") || list.eq_ignore_ascii_case("blacklist") {
+            AL_BAN
+        } else {
+            AL_ACCESS
+        };
+
+        let entries = if action.eq_ignore_ascii_case("add") {
+            vec![AccessEntry { id: target, time: 0, flags: 0 }]
+        } else {
+            Vec::new()
+        };
+
+        self.send(NetCommand::Land(LandCommand::AccessListUpdate {
+            handle,
+            local_id,
+            flags,
+            entries,
+        }));
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "action": action,
+            "list": if flags == AL_BAN { "ban" } else { "allow" },
+            "avatar_uuid": target.to_string(),
+        })))
+    }
+
+    fn handle_mcp_parcel_eject(
+        &mut self,
+        target_uuid_str: &str,
+        ban: Option<bool>,
+    ) -> Result<ViewerResponse, McpError> {
+        let Some(handle) = self.world.main_region else {
+            return Err(McpError::NotInWorld);
+        };
+        let target = Uuid::parse_str(target_uuid_str.trim())
+            .map_err(|e| McpError::InvalidParams(format!("invalid resident UUID: {e}")))?;
+
+        let ban_flag = ban.unwrap_or(false);
+        self.send(NetCommand::Land(LandCommand::EjectUser {
+            handle,
+            target,
+            ban: ban_flag,
+        }));
+
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "target_uuid": target.to_string(),
+            "banned": ban_flag,
+            "status": "eject_command_dispatched",
         })))
     }
 }

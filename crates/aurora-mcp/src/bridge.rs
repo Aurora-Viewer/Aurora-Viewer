@@ -532,6 +532,26 @@ pub enum ViewerRequest {
     },
     AvatarAnimationsList,
     EconomyGetBalance,
+
+    // Phase 8: Land, Parcel & Estate
+    ParcelInfoQuery,
+    ParcelSetMusic {
+        music_url: String,
+    },
+    ParcelSetProperties {
+        name: Option<String>,
+        description: Option<String>,
+        flags: Option<u32>,
+    },
+    ParcelAccessListModify {
+        action: String,
+        list: String,
+        avatar_uuid: String,
+    },
+    ParcelEject {
+        target_uuid: String,
+        ban: Option<bool>,
+    },
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -606,7 +626,8 @@ impl ViewerRequest {
             | ViewerRequest::NotecardRead { .. }
             | ViewerRequest::ViewerLogin { .. }
             | ViewerRequest::AvatarAnimationsList
-            | ViewerRequest::EconomyGetBalance => false,
+            | ViewerRequest::EconomyGetBalance
+            | ViewerRequest::ParcelInfoQuery => false,
 
             ViewerRequest::LiveMeshControl { action, .. }
             | ViewerRequest::AssetUpload { action, .. } => {
@@ -657,7 +678,11 @@ impl ViewerRequest {
             | ViewerRequest::PrimSetPhysicsProperties { .. }
             | ViewerRequest::PrimSetMetadata { .. }
             | ViewerRequest::AvatarAnimationPlay { .. }
-            | ViewerRequest::AvatarAnimationStop { .. } => true,
+            | ViewerRequest::AvatarAnimationStop { .. }
+            | ViewerRequest::ParcelSetMusic { .. }
+            | ViewerRequest::ParcelSetProperties { .. }
+            | ViewerRequest::ParcelAccessListModify { .. }
+            | ViewerRequest::ParcelEject { .. } => true,
         }
     }
 }

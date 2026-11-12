@@ -2179,6 +2179,107 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            // ---- Phase 8: Land, Parcel & Estate Suite ----
+            "parcel_info" => {
+                let resp = self
+                    .send_to_viewer(
+                        None,
+                        ViewerRequest::ParcelInfoQuery,
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "parcel_set_music" => {
+                let music_url = args
+                    .get("music_url")
+                    .or_else(|| args.get("url"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'music_url'".into()))?
+                    .to_string();
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ParcelSetMusic { music_url },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "parcel_set_properties" => {
+                let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
+                let description = args.get("description").and_then(Value::as_str).map(str::to_owned);
+                let flags = args.get("flags").and_then(Value::as_u64).map(|v| v as u32);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ParcelSetProperties {
+                            name,
+                            description,
+                            flags,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "parcel_access_list_modify" => {
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("add")
+                    .to_string();
+                let list = args
+                    .get("list")
+                    .and_then(Value::as_str)
+                    .unwrap_or("ban")
+                    .to_string();
+                let avatar_uuid = args
+                    .get("avatar_uuid")
+                    .or_else(|| args.get("target"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'avatar_uuid'".into()))?
+                    .to_string();
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ParcelAccessListModify {
+                            action,
+                            list,
+                            avatar_uuid,
+                        },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "parcel_eject" => {
+                let target_uuid = args
+                    .get("target_uuid")
+                    .or_else(|| args.get("avatar_uuid"))
+                    .or_else(|| args.get("target"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::InvalidParams("missing 'target_uuid'".into()))?
+                    .to_string();
+                let ban = args.get("ban").and_then(Value::as_bool);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ParcelEject { target_uuid, ban },
+                        5_000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
             other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
         }
     }
@@ -3619,6 +3720,67 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: false,
         },
+        ToolDefinition {
+            name: "parcel_info".into(),
+            description: "Query comprehensive metadata for the active or requested parcel, including name, description, owner UUID, group ownership, area in m², prim limits and usage (owner, group, other), audio stream URL, media URL, region bounding box, landing location, and flags.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "parcel_set_music".into(),
+            description: "Update the streaming audio / internet radio URL of the parcel (e.g. Icecast, Shoutcast, or direct MP3/AAC audio stream) and automatically initiate audio stream playback.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "music_url": { "type": "string", "description": "Stream URL (e.g. 'http://stream.example.org:8000/live.mp3')" }
+                },
+                "required": ["music_url"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "parcel_set_properties".into(),
+            description: "Modify parcel settings including name, description, and permission flags.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "New parcel name" },
+                    "description": { "type": "string", "description": "New parcel description" },
+                    "flags": { "type": "integer", "description": "Raw parcel flag bitmask" }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "parcel_access_list_modify".into(),
+            description: "Add or remove an avatar from the parcel's access whitelist or ban blacklist.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "avatar_uuid": { "type": "string", "description": "Target resident UUID" },
+                    "action": { "type": "string", "enum": ["add", "remove"], "description": "'add' to insert entry, 'remove' to remove entry" },
+                    "list": { "type": "string", "enum": ["ban", "allow", "access"], "description": "Target list: 'ban' or 'allow'" }
+                },
+                "required": ["avatar_uuid"]
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "parcel_eject".into(),
+            description: "Eject a resident from the parcel back to region entry, with optional immediate parcel ban.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_uuid": { "type": "string", "description": "Resident UUID to eject" },
+                    "ban": { "type": "boolean", "description": "Whether to also ban the avatar from the parcel (default false)" }
+                },
+                "required": ["target_uuid"]
+            }),
+            in_compact_profile: false,
+        },
     ]
 }
 
@@ -3629,7 +3791,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 92, "expected 92 total tools (43 Legacy + 49 Aurora-native)");
+        assert_eq!(defs.len(), 97, "expected 97 total tools (43 Legacy + 54 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -3733,6 +3895,11 @@ mod tests {
             "avatar_animation_stop",
             "avatar_animations_list",
             "economy_get_balance",
+            "parcel_info",
+            "parcel_set_music",
+            "parcel_set_properties",
+            "parcel_access_list_modify",
+            "parcel_eject",
         ] {
             assert!(
                 names.contains(&native),
