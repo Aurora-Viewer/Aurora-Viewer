@@ -68,8 +68,9 @@ pub(super) enum FacePick {
     Geometry,
     Inventory,
     HudMove,
-    /// HUD press: transparent scripted clickers win, plain alpha-zero
-    /// panels let a visible button behind them take the click.
+    /// HUD press: alpha-zero faces take the click like the Legacy Viewer's
+    /// transparent pick, except a plain hidden media panel, which lets a
+    /// button behind it take the click.
     HudClick,
     /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
@@ -912,7 +913,14 @@ impl Scene {
             if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
-            let hud_clicker = hud_click && crate::interaction::special_hover_cursor(o);
+            // LLToolPie::handleMouseDown presses with a transparent pick, and
+            // a transparent attachment pick always wins: an invisible HUD
+            // button takes the press even when only its root has the touch
+            // script (a face HUD's close and minimise buttons). Only a hidden
+            // prim media panel lets a press through to the button behind it,
+            // unless its own prim shows the special cursor (specialHoverCursor).
+            let hud_clicker =
+                hud_click && (crate::interaction::special_hover_cursor(o) || !o.te.as_ref().is_some_and(|te| te.face(face).has_media()));
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) && !hud_clicker
             {
                 return None;
@@ -3050,10 +3058,12 @@ pub(crate) mod tests {
     }
 
     /// Ordinary HUD hover (no media focus) and HUD presses pick the same
-    /// target: a plain face at exactly alpha 0 lets the object behind it
-    /// take both, a face at 1/255 keeps both, and a transparent prim with a
-    /// special hover cursor (LLViewerObject::specialHoverCursor) stays the
-    /// target, as in LLVOVolume::lineSegmentIntersect.
+    /// target. An invisible button takes both, even when only its root has
+    /// the touch script, as LLToolPie::handleMouseDown's transparent pick
+    /// does (a face HUD's close and minimise buttons). A plain media panel
+    /// at exactly alpha 0 lets the object behind it take both, a face at
+    /// 1/255 keeps both, and a transparent media prim with a special hover
+    /// cursor (LLViewerObject::specialHoverCursor) stays the target.
     #[test]
     fn hud_hover_and_press_share_the_transparent_panel_policy() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
@@ -3081,6 +3091,10 @@ pub(crate) mod tests {
             draw.te_alpha = alpha;
             draw.pass = if alpha < 0.004 { Pass::Hidden } else { Pass::Blend };
         };
+        let set_media = |world: &mut World, on: bool| {
+            let face = &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0];
+            face.media_flags = if on { face.media_flags | 1 } else { face.media_flags & !1 };
+        };
         let targets = |world: &World, scene: &mut Scene| {
             let press = scene.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
             let hover = scene.hover_hud(world, cursor);
@@ -3088,12 +3102,20 @@ pub(crate) mod tests {
             press
         };
 
+        // An invisible button with no script of its own (the touch script
+        // is in the root) takes the press over the panel behind it.
         set_alpha(&mut world, &mut scene, 0.0);
-        assert_eq!(targets(&world, &mut scene), Some(back), "plain alpha-zero panel");
+        assert_eq!(targets(&world, &mut scene), Some(front), "invisible button");
+        world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(targets(&world, &mut scene), Some(front), "invisible button over a scripted panel");
+        world.objects.get_mut(back).unwrap().update_flags = 0;
+
+        set_media(&mut world, true);
+        assert_eq!(targets(&world, &mut scene), Some(back), "plain alpha-zero media panel");
         // Beacon and poser checks still see the panel itself.
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
 
-        // A scripted button behind the invisible panel takes hover and press.
+        // A scripted button behind the invisible media panel takes hover and press.
         world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
         assert_eq!(targets(&world, &mut scene), Some(back), "scripted button behind");
         world.objects.get_mut(back).unwrap().update_flags = 0;
@@ -3102,7 +3124,7 @@ pub(crate) mod tests {
         set_alpha(&mut world, &mut scene, 1.0 / 255.0);
         assert_eq!(targets(&world, &mut scene), Some(front), "alpha 1/255");
 
-        // Special hover cursors keep a transparent front face.
+        // Special hover cursors keep a transparent front media face.
         set_alpha(&mut world, &mut scene, 0.0);
         for (click_action, flags) in [
             (crate::interaction::code::SIT, 0),

@@ -3783,9 +3783,21 @@ impl Scene {
         }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
-        let rig_order = skeleton_owner
-            .filter(|_| rigged)
-            .map(|(_, skeleton)| blend_order::RigOrder::of(world, idx, skeleton));
+        let rig_order = skeleton_owner.filter(|_| rigged).map(|(_, skeleton)| {
+            // eyelashes, brows: the joints of a nonzero weight all of the face
+            let skin = match geom_key {
+                GeomKey::Mesh { id, .. } => self.meshes.meta(&id).and_then(|m| m.skin),
+                _ => None,
+            };
+            let face_detail = skin.is_some_and(|skin| {
+                blend_order::face_detail(
+                    geom.joint_bounds
+                        .iter()
+                        .filter_map(|b| skin.joint_names.get(b.joint as usize).map(String::as_str)),
+                )
+            });
+            blend_order::RigOrder::of(world, idx, skeleton, face_detail)
+        });
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
@@ -5191,6 +5203,11 @@ impl Scene {
             _ => blend_order::rig_runs,
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Layers {
+            blend_order::quiet_runs(&self.blend_tmp, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
+        } else {
+            self.lists.blend_depth_quiet.clear();
+        }
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         // under the water: back to front, the rigged first
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then

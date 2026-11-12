@@ -594,6 +594,10 @@ pub struct DrawLists {
     /// in the first `blend_depth` entries of `blend` (increasing, the last
     /// one `blend_depth`).
     pub blend_depth_runs: Vec<u32>,
+    /// `RiggedBlendDepth::Layers`: the ends, among `blend_depth_runs`, of the
+    /// runs drawn writing their depth on the copy only where nearly opaque
+    /// (eyelashes and brows drawn before the hair, #2121; increasing).
+    pub blend_depth_quiet: Vec<u32>,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -748,6 +752,7 @@ impl DrawLists {
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
+        self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
@@ -797,6 +802,7 @@ impl DrawLists {
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
         self.blend_depth_runs.clear();
+        self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
