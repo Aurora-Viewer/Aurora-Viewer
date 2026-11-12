@@ -464,6 +464,10 @@ mod tests {
             g.center = o.position;
             g.radius = 1.0;
         }
+        for idx in [front, back] {
+            // the server marks a face with prim media (TEM_MEDIA_MASK)
+            Arc::make_mut(world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].media_flags |= 1;
+        }
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
         crate::scene::picking::tests::index_test_objects(&mut scene);
         scene.build_huds(&world, [1280, 720], true, |_| None);
