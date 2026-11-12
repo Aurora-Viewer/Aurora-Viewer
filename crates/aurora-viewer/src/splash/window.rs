@@ -259,7 +259,6 @@ impl Splash {
         let _ = event_loop;
         Ok(())
     }
-
 }
 
 /// The login screen's accent card over the whole window

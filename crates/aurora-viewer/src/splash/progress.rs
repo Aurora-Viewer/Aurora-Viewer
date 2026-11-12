@@ -177,8 +177,7 @@ impl Message {
                 if let Some(version) = other.strip_prefix("version ") {
                     let version = version.trim();
                     let plain = version.chars().all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c));
-                    return (!version.is_empty() && version.len() <= MAX_VERSION && plain)
-                        .then(|| Message::Version(version.to_owned()));
+                    return (!version.is_empty() && version.len() <= MAX_VERSION && plain).then(|| Message::Version(version.to_owned()));
                 }
                 Step::parse(other.strip_prefix("step ")?).map(Message::Step)
             }

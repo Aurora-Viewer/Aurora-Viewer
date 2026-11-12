@@ -296,14 +296,9 @@ pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
             command.args(&plan.args).env(ACK_ENV, &work).current_dir(&plan.install);
             hidden(&mut command);
             let mut child = command.spawn()?;
-            let result = await_frame(
-                &mut child,
-                &work,
-                &plan.token,
-                &plan.version,
-                Duration::from_secs(90),
-                &mut || stage(HelperStage::Handed),
-            );
+            let result = await_frame(&mut child, &work, &plan.token, &plan.version, Duration::from_secs(90), &mut || {
+                stage(HelperStage::Handed)
+            });
             if !matches!(result, Ok(true)) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -388,14 +383,7 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
 }
 
 /// `handed` runs once the new viewer's splash shows, or its first frame.
-fn await_frame(
-    child: &mut Child,
-    work: &Path,
-    token: &str,
-    version: &str,
-    timeout: Duration,
-    handed: &mut dyn FnMut(),
-) -> Result<bool> {
+fn await_frame(child: &mut Child, work: &Path, token: &str, version: &str, timeout: Duration, handed: &mut dyn FnMut()) -> Result<bool> {
     let start = Instant::now();
     let expected = format!("{token}\n{version}");
     let mut splash = false;
