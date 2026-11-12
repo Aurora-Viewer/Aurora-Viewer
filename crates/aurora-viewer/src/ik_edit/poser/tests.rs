@@ -2443,3 +2443,242 @@ fn poser_whole_avatar_of_another_subject_turns_only_that_subject() {
     editor.poser.sessions.get_mut(&id).unwrap().history(false);
     assert_eq!(editor.poser.sessions[&id].pose.rotations[rig.pelvis], theirs);
 }
+
+/// Bit `joint` of a renderer part mask (`world_hints::mask_joints`).
+fn in_mask(mask: &[u32; 8], joint: usize) -> bool {
+    joint < 256 && mask[joint >> 5] & (1 << (joint & 31)) != 0
+}
+
+#[test]
+fn the_body_mask_carries_its_volumes_and_spine_and_leaves_the_head_and_wrists() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let body = world_hints::part(&rig.parent, &keys, rig.pelvis);
+    let joints = world_hints::mask_members(0, &body, &rig.parent, &keys, &rig.canonical_names, &Default::default());
+    let mask = world_hints::mask_joints(&rig.parent, &rig.canonical_names, &joints);
+    // a fitted body's volumes and a Bento body's spine tint with the body
+    for name in [
+        "mTorso",
+        "mChest",
+        "mElbowLeft",
+        "BELLY",
+        "LEFT_PEC",
+        "UPPER_BACK",
+        "L_UPPER_ARM",
+        "mSpine1",
+        "mSpine3",
+        "NECK",
+    ] {
+        assert!(in_mask(&mask, rig.names[name]), "{name} is the body's");
+    }
+    // the head (its volume and the skull follow it) is the face's, a wrist
+    // (its hand's volume) its hand's; the fingers and the face's own bones
+    for name in ["mHead", "HEAD", "mSkull", "mWristLeft", "L_HAND", "mHandMiddle1Left", "mFaceRoot"] {
+        assert!(!in_mask(&mask, rig.names[name]), "{name} is not the body's");
+    }
+}
+
+#[test]
+fn the_face_takes_the_head_and_a_hand_its_wrist_rigged_or_not() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let mask_of = |start: &str, rigged: &std::collections::HashSet<usize>| {
+        let members = world_hints::part(&rig.parent, &keys, rig.names[start]);
+        let key = keys[rig.names[start]];
+        let joints = world_hints::mask_members(key, &members, &rig.parent, &keys, &rig.canonical_names, rigged);
+        world_hints::mask_joints(&rig.parent, &rig.canonical_names, &joints)
+    };
+    let none = std::collections::HashSet::new();
+    // a Bento head weights the face's bones; the system head mHead alone:
+    // either way the whole head lights, the skull and its volume with it
+    let bento: std::collections::HashSet<usize> = (0..rig.len()).filter(|j| keys[*j] == 1).collect();
+    for rigged in [&none, &bento] {
+        let face = mask_of("mFaceLipUpperCenter", rigged);
+        for name in ["mFaceLipUpperCenter", "mHead", "HEAD", "mSkull"] {
+            assert!(in_mask(&face, rig.names[name]), "{name} lights with the face");
+        }
+        assert!(!in_mask(&face, rig.names["mNeck"]), "the neck is the body's");
+    }
+    // a hand: its fingers and its wrist (the palm), not the other hand
+    let fingers: std::collections::HashSet<usize> = (0..rig.len()).filter(|j| keys[*j] == 2).collect();
+    for rigged in [&none, &fingers] {
+        let hand = mask_of("mHandIndex1Left", rigged);
+        for name in ["mHandIndex1Left", "mHandThumb1Left", "mWristLeft", "L_HAND"] {
+            assert!(in_mask(&hand, rig.names[name]), "{name} lights with the left hand");
+        }
+        for name in ["mWristRight", "mHandIndex1Right", "mElbowLeft"] {
+            assert!(!in_mask(&hand, rig.names[name]), "{name} is not the left hand's");
+        }
+    }
+}
+
+#[test]
+fn the_mesh_pick_offers_the_part_its_joint_follows() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let names = &rig.canonical_names;
+    let keys: Vec<usize> = names.iter().map(|n| world_hints::part_key(n)).collect();
+    let offer: Vec<bool> = (0..rig.len()).map(|j| world_hints::offerable(keys[j], false)).collect();
+    let classes = world_hints::pick_classes(&rig.parent, names);
+    let class = |j: usize| (classes[j >> 3] >> ((j & 7) * 4)) & 15;
+    let joints: Vec<_> = (0..rig.len()).map(|j| (j, egui::pos2(j as f32, 0.0))).collect();
+    let picked = |joint: &str, current: usize| {
+        world_hints::picked_part(
+            class(rig.names[joint]),
+            &joints,
+            &rig.parent,
+            names,
+            &offer,
+            current,
+            egui::Pos2::ZERO,
+        )
+        .map(|j| group(&names[j]))
+    };
+    // posing the Hands: a fitted body's volume, a Bento spine: the body
+    assert_eq!(picked("BELLY", 2), Some(0));
+    assert_eq!(picked("mSpine2", 2), Some(0));
+    // posing the Body: the head is the face's, a wrist its hand's
+    assert_eq!(picked("mHead", 0), Some(1));
+    assert_eq!(picked("HEAD", 0), Some(1), "the head's volume follows the head");
+    assert_eq!(picked("mWristLeft", 0), Some(2));
+    // the open group's own: nothing to offer
+    assert_eq!(picked("mChest", 0), None);
+    assert_eq!(picked("mHead", 1), None, "posing the face, the head is its own");
+    // a wing nobody wears: not offered
+    assert_eq!(picked("mWing1Left", 0), None);
+    assert_eq!(class(rig.len()), 1, "the identity slot is the body's");
+    for name in ["mChest", "BELLY", "mSpine2"] {
+        assert_eq!(class(rig.names[name]), 1);
+    }
+    for name in ["mHead", "HEAD", "mSkull", "mEyeLeft"] {
+        assert_eq!(class(rig.names[name]), 2);
+    }
+    for name in ["mWristLeft", "L_HAND", "mHandIndex1Left"] {
+        assert_eq!(class(rig.names[name]), 3);
+    }
+    assert_eq!(class(rig.names["mWristRight"]), 4);
+    assert_eq!(class(rig.names["mWing1Left"]), 5);
+    assert_eq!(class(rig.names["mTail1"]), 6);
+    assert_eq!(class(rig.names["mHindLimb1Left"]), 0);
+    // Within the mesh-picked left hand choose the bone at the cursor,
+    // never the first finger in the skeleton nor a right-hand finger.
+    let finger = rig.names["mHandIndex2Left"];
+    let near = world_hints::picked_part(3, &joints, &rig.parent, names, &offer, 0, joints[finger].1);
+    assert_eq!(near, Some(finger));
+    assert_eq!(
+        world_hints::picked_part(0, &joints, &rig.parent, names, &offer, 1, egui::Pos2::ZERO),
+        None
+    );
+    assert_eq!(
+        world_hints::picked_part(99, &joints, &rig.parent, names, &offer, 1, egui::Pos2::ZERO),
+        None
+    );
+}
+
+#[test]
+fn a_mesh_pick_stands_only_for_its_subject_near_where_it_was_read() {
+    let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    let stored = Some((me, 13, [400.0, 300.0]));
+    let at = |x: f32, y: f32| egui::pos2(x, y);
+    assert_eq!(
+        world_hints::fresh_pick(stored, me, at(402.0, 301.0)),
+        Some(13),
+        "a frame or two late, still there"
+    );
+    assert_eq!(
+        world_hints::fresh_pick(stored, me, at(440.0, 300.0)),
+        None,
+        "the pointer moved on: the bones decide"
+    );
+    assert_eq!(
+        world_hints::fresh_pick(stored, other, at(400.0, 300.0)),
+        None,
+        "another subject since"
+    );
+    assert_eq!(world_hints::fresh_pick(None, me, at(400.0, 300.0)), None);
+}
+
+#[test]
+fn closing_the_window_clears_the_part_and_the_pick() {
+    let (world, mut editor) = fixture();
+    editor.poser.active = true;
+    editor.open = true;
+    editor.poser.part_overlay = Some((world.agent_id, [1; 8]));
+    editor.poser.pick_wanted = true;
+    editor.poser.mesh_pick = Some((world.agent_id, 13, [1.0, 1.0]));
+    assert!(editor.poser_part_overlay().is_some() && editor.poser_pick_subject().is_some());
+    // "stop posing when closed" off: the pose goes on, the part does not
+    editor.poser.stop_on_close = false;
+    editor.close_poser();
+    assert!(editor.poser.active, "the pose goes on");
+    assert_eq!(editor.poser_part_overlay(), None);
+    assert_eq!(editor.poser_pick_subject(), None);
+    assert_eq!(editor.poser.mesh_pick, None);
+}
+
+#[test]
+fn an_avatar_not_drawn_as_meshes_keeps_the_bone_outline() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.active = true;
+    editor.open = true;
+    editor.poser.group = 2;
+    // the chest while posing the Hands: the Body
+    let chest = proj.project(frame.joints[rig.names["mChest"]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    let mut hint_with = |drawn: Option<bool>, editor: &mut Editor| {
+        editor.set_poser_meshes_drawn(drawn);
+        editor.poser.part_overlay = None;
+        let mut hint = world_hints::Hint::None;
+        frames.run(
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+                egui::Event::PointerMoved(chest),
+            ],
+            |ui| {
+                hint = editor.world_hint(ui.ctx(), &p, &world, &proj, &frame, true);
+            },
+        );
+        hint
+    };
+    // drawn as meshes: the renderer gets the part, the identity slot (the
+    // system body's root vertices) with the body
+    assert!(matches!(hint_with(Some(true), &mut editor), world_hints::Hint::Group(_)));
+    let (_, mask) = editor.poser_part_overlay().expect("the renderer draws the body");
+    let root = rig.len();
+    assert!(mask[root >> 5] & (1 << (root & 31)) != 0, "the identity slot is the body's");
+    // an impostor, a jelly doll, first person: no meshes drawn, the bones'
+    // outline instead (the renderer gets nothing)
+    assert!(matches!(hint_with(Some(false), &mut editor), world_hints::Hint::Group(_)));
+    assert_eq!(editor.poser_part_overlay(), None, "the bone outline, painted by the poser");
+}
+
+#[test]
+fn the_drawn_state_and_the_pick_follow_the_subject() {
+    let (world, mut editor) = fixture();
+    let other = Uuid::from_u128(77);
+    editor.poser.subject = world.agent_id;
+    // not drawn as meshes: kept while the scene is not asked, so the outline
+    // does not flicker; another subject starts unknown (taken as drawn)
+    editor.set_poser_meshes_drawn(Some(false));
+    editor.set_poser_meshes_drawn(None);
+    assert!(!editor.poser_meshes_drawn());
+    editor.poser.subject = other;
+    assert!(editor.poser_meshes_drawn());
+    // the pick: after a switch, the answers still in flight (drawn from the
+    // former subject) are dropped, then the new subject's are kept
+    editor.poser.pick_wanted = true;
+    editor.set_poser_mesh_pick(None);
+    for _ in 0..3 {
+        editor.set_poser_mesh_pick(Some((13, [10, 10])));
+        assert_eq!(editor.poser.mesh_pick, None, "the former subject's answer");
+    }
+    editor.set_poser_mesh_pick(Some((21, [10, 10])));
+    assert_eq!(editor.poser.mesh_pick, Some((other, 21, [10.0, 10.0])));
+}

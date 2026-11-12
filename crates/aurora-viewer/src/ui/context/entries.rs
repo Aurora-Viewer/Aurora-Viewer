@@ -593,11 +593,13 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::ObjectInfo(f.object.id),
     );
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        // Object.EnableDerender of menu_attachment_self.xml: never while
+        // RLVa is on (enable_derender_object, FIRE-10082)
         derender_items(
             ui,
             f.object.id,
             aurora_i18n::tr!("ui-context-derender-temporarily"),
-            !f.object.id.is_nil(),
+            !f.object.id.is_nil() && !f.rlva_enabled,
         );
         particles_submenu(ui, f);
     });
@@ -1067,6 +1069,12 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             aurora_i18n::tr!("ui-context-edit-shape"),
             f.worn_shape.is_some(),
             CtxAction::EditWorn(f.worn_shape.unwrap_or_default()),
+        );
+        ui.item_if(
+            "file-export",
+            aurora_i18n::tr!("ui-context-export-shape-xml"),
+            f.worn_shape.is_some() && f.shape_xml_export,
+            CtxAction::ExportShapeXml(f.worn_shape.unwrap_or_default()),
         );
         ui.item(
             "pencil-filled",
@@ -1696,6 +1704,41 @@ mod tests {
     }
 
     #[test]
+    fn the_worn_shape_exports_to_xml_only_when_the_rule_allows_it() {
+        let item = Uuid::from_u128(43);
+        let target = Target::Avatar {
+            id: Uuid::nil(),
+            own: true,
+            attachment: None,
+        };
+        let find = |facts: &Facts| {
+            world_menu(&target, facts, Vec3::ZERO)
+                .into_iter()
+                .find_map(|entry| {
+                    let Kind::Submenu(entries) = entry.kind else { return None };
+                    entries
+                        .into_iter()
+                        .find(|entry| entry.label == aurora_i18n::tr!("ui-context-export-shape-xml"))
+                })
+                .expect("export action")
+        };
+        let allowed = Facts {
+            worn_shape: Some(item),
+            shape_xml_export: true,
+            ..Default::default()
+        };
+        let entry = find(&allowed);
+        assert!(entry.enabled);
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::ExportShapeXml(id)) if id == item));
+        let refused = Facts {
+            shape_xml_export: false,
+            ..allowed
+        };
+        assert!(!find(&refused).enabled, "no modify rights");
+        assert!(!find(&Facts::default()).enabled, "no worn shape");
+    }
+
+    #[test]
     fn our_attachment_keeps_legacy_actions_with_derender_grouped_in_disturbance() {
         // menu_attachment_self.xml, without the entries it hides
         let key = ObjKey { region: 1, local_id: 42 };
@@ -2186,5 +2229,24 @@ mod rlva_sit_tests {
         assert!(!enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
         f.ground_sit_blocked = false;
         assert!(enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
+    }
+
+    #[test]
+    fn rlva_greys_derender_on_our_own_attachments() {
+        let worn = Target::Attachment {
+            key: ObjKey { region: 1, local_id: 2 },
+        };
+        let temporary = aurora_i18n::tr!("ui-context-derender-temporarily");
+        let blacklist = aurora_i18n::tr!("ui-context-derender-blacklist");
+        let mut f = Facts {
+            me: Uuid::from_u128(1),
+            ..Facts::default()
+        };
+        f.object.id = Uuid::from_u128(2);
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
+        f.rlva_enabled = true;
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
     }
 }

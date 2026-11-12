@@ -53,6 +53,15 @@ default
 }
 "#;
 
+/// `AURORA_DEMO_SCRIPTS=lua`: a Lua (SLua) source, item subtype SST_LUA.
+const LUA_DEMO_SOURCE: &str = r#"-- A Lua script: saved for the Luau VM, never as LSL
+local function greet(name: string)
+    ll.Say(0, "Hello, " .. name .. "!")
+end
+
+greet("Avatar")
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -60,6 +69,8 @@ struct ScriptInfo {
     asset: Uuid,
     can_read: bool,
     can_edit: bool,
+    /// From the item subtype: a Lua source keeps its "luau" target.
+    luau: aurora_net::scripts::Luau,
 }
 
 /// Read and edit rights: copy and modify, or copy alone for the library
@@ -272,6 +283,12 @@ impl App {
                 self.panels.inventory = true;
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 let target = ScriptTarget { object: Uuid::nil(), item };
+                if mode == "lua"
+                    && let Some(it) = self.world.inventory.items.get_mut(&item)
+                {
+                    it.flags = (it.flags & !0xff) | 1;
+                    self.demo_script_sources.insert(target, LUA_DEMO_SOURCE.into());
+                }
                 if syntax_demo {
                     self.demo_script_sources.insert(
                         target,
@@ -413,6 +430,18 @@ impl App {
                 self.apply_script_action(action);
             }
         }
+        if self.frame_count == 320 && mode == "lua" {
+            let target = ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(8102),
+            };
+            if let Some(action) = self
+                .script_editors
+                .demo_edit(target, LUA_DEMO_SOURCE.replace("Avatar", "Aurora"), true)
+            {
+                self.apply_script_action(action);
+            }
+        }
         if self.frame_count == 320 && matches!(mode.as_str(), "error" | "save" | "object-save") {
             let target = if mode == "object-save" {
                 let Some(target) = self
@@ -480,6 +509,7 @@ impl App {
                 asset: it.asset_id,
                 can_read,
                 can_edit,
+                luau: aurora_net::scripts::Luau::from_flags(it.flags),
             })
         } else {
             let idx = self.world.objects.index_of_uuid(&target.object)?;
@@ -503,6 +533,7 @@ impl App {
                 asset: it.asset_id,
                 can_read: can_read && modify,
                 can_edit: can_edit && modify,
+                luau: aurora_net::scripts::Luau::from_flags(it.flags),
             })
         }
     }
@@ -520,6 +551,7 @@ impl App {
         }
         let Some(info) = self.script_info(target) else { return };
         if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
+            self.script_editors.set_luau(target, info.luau);
             self.send(NetCommand::LoadScript {
                 request,
                 target,
@@ -565,6 +597,9 @@ impl App {
         {
             self.apply_script_action(action);
         }
+        // the copies of the unsaved scripts (ui/scripts/backup.rs)
+        self.sync_script_backup_dir();
+        self.script_editors.back_up();
         self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);
     }
 
@@ -805,6 +840,11 @@ impl App {
                 // A named marker simulates a server diagnostic in demo mode;
                 // this is deliberately not a local LSL compiler.
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
+                log::info!(
+                    "demo scripts: saved {} for target {}",
+                    target.item,
+                    aurora_net::scripts::compile_target(options.mono, options.luau)
+                );
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);
@@ -872,6 +912,39 @@ mod tests {
         }
         assert_eq!(task_permissions(perm::COPY, 0), (false, false));
         assert_eq!(task_permissions(perm::COPY | perm::MODIFY, 0), (true, true));
+    }
+
+    /// A copy of the unsaved text (ui/scripts/backup.rs) is kept only for a
+    /// script its editor may edit: the editing right of [`permissions`],
+    /// read from the agent's mask (rules::agent_mask).
+    #[test]
+    fn an_unsaved_script_is_copied_only_when_it_may_be_edited() {
+        use aurora_net::inventory::InvItem;
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+        let item = |owner: Uuid, owner_mask: u32, everyone_mask: u32, group_owned: bool| InvItem {
+            owner,
+            owner_mask,
+            everyone_mask,
+            group_owned,
+            asset_type: 10,
+            ..Default::default()
+        };
+        let copied = |it: &InvItem, library: bool| permissions(rules::agent_mask(it, me), library, 0).1;
+        assert!(copied(&item(me, full, 0, false), false), "full permissions");
+        assert!(
+            copied(&item(me, perm::COPY | perm::MODIFY, 0, false), false),
+            "no transfer, as the Legacy Viewer"
+        );
+        assert!(!copied(&item(me, perm::MODIFY | perm::TRANSFER, 0, false), false), "no copy");
+        assert!(!copied(&item(me, perm::COPY | perm::TRANSFER, 0, false), false), "no modify");
+        assert!(!copied(&item(other, full, 0, false), false), "someone else's, nothing for everyone");
+        assert!(copied(&item(other, 0, full, false), false), "someone else's, editable by everyone");
+        assert!(!copied(&item(me, full, 0, true), false), "group-owned: the everyone mask");
+        assert!(!copied(&item(other, 0, full, false), true), "a Library script is read only");
+        // in an object: copy and modify, as for opening it
+        assert!(task_permissions(perm::COPY | perm::MODIFY, 0).1);
+        assert!(!task_permissions(perm::COPY, 0).1 && !task_permissions(perm::MODIFY, 0).1);
     }
 
     #[test]

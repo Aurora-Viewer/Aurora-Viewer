@@ -193,8 +193,14 @@ pub struct Facts {
     pub ground_sit_blocked: bool,
     pub stand_blocked: bool,
     pub object_sit_blocked: bool,
+    /// RLVa is on for the session: Derender is greyed on our own
+    /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
+    pub rlva_enabled: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
+    /// Appearance > Export shape XML: the worn shape may be written to a
+    /// file (`actions::appearance_xml_export_allowed`) and no export runs.
+    pub shape_xml_export: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -292,6 +298,9 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
+    /// Appearance > Export shape XML: the worn shape, by inventory item,
+    /// to an appearance XML file (`shape_editor::xml_export`).
+    ExportShapeXml(Uuid),
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,

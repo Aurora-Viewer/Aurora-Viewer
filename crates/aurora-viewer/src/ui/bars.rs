@@ -39,7 +39,7 @@ pub enum AdminAction {
 
 #[derive(Default)]
 pub enum BarAction {
-    ToggleVr,
+    VrView(crate::camera::VrView),
     IkEdit,
     Poser,
     /// Build › Edit particles (Object.EditParticles).
@@ -100,6 +100,8 @@ pub enum BarAction {
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Release Keys (Tools.ReleaseKeys).
+    ReleaseKeys,
     /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
     AdminStatus(bool),
     Admin(AdminAction),
@@ -289,9 +291,15 @@ pub struct StatusInfo<'a> {
     /// Photos are taken without the shutter sound nor the snapshot
     /// animation (Advanced › Quiet snapshots).
     pub quiet_snapshots: bool,
+    /// A script holds a control and no RLVa lock forbids letting it go:
+    /// Advanced › Release Keys is enabled (`app::release_keys::enabled`).
+    pub release_keys: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// The grid has a Destination Guide (World › Destinations is shown only
+    /// then, GridFeatureCheck destination_guide).
+    pub destinations: bool,
     /// The landmark lying on the agent's parcel (hasParcelLandmark): the
     /// star is lit and World › Landmark this place greyed out.
     pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
@@ -1054,6 +1062,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "places",
             &mut panels.places,
         );
+        // menu_viewer.xml: Destinations, after Places (Floater.Toggle), on a
+        // grid with a guide
+        if st.destinations && menu::item(ui, p, "map-2", aurora_i18n::tr!("toolbar-command-destinations")) {
+            super::widgets::toggle_floater(ui.ctx(), super::destinations::WINDOW, &mut panels.destinations);
+        }
         // menu_viewer.xml: Parcel Details (About Land), then Region Details
         // (Region / Estate, Alt+R)
         // (About Land's floater has an id per layout: the flag alone)
@@ -1363,7 +1376,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action, &st.ik_keys, st.edit_particles);
+        build_menu(ui, p, panels, action, &st.ik_keys, st.edit_particles);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1449,6 +1462,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     }
                 },
             );
+            // Advanced › Release Keys (Tools.ReleaseKeys), greyed while no
+            // script holds a control (Tools.EnableReleaseKeys); no shortcut
+            let release = aurora_i18n::tr!("ui-bars-release-keys");
+            if menu::item_if(ui, p, "keyboard-filled", release, st.release_keys) {
+                *action = BarAction::ReleaseKeys;
+            }
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
@@ -1568,7 +1587,17 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+fn build_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+    if menu::check(
+        ui,
+        p,
+        "man-filled",
+        aurora_i18n::tr!("avatar-studio-title"),
+        panels.avatar_studio,
+        true,
+    ) {
+        *action = run_command(ui.ctx(), "avatar_studio", panels);
+    }
     if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }
@@ -2314,6 +2343,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
+        "avatar_studio" => panels.avatar_studio = !panels.avatar_studio,
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
@@ -2327,6 +2357,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         // ToggleWebBrowser: the browser window on the home page, or closed
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
+        // Floater.Toggle destinations: the grid's Destination Guide
+        "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
@@ -2401,7 +2433,6 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "marketplacelistings" => return BarAction::ToggleMarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
-        "vr_view" => return BarAction::ToggleVr,
         "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
@@ -2422,6 +2453,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
+        "avatar_studio" => panels.avatar_studio,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "places" => panels.places,
@@ -2433,6 +2465,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
+        "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
@@ -3180,7 +3213,9 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
+        // and the Destination Guide's on a grid without one (GridFeatureCheck)
+        let no_guide = b.command == "destinations" && !toolbar.destinations;
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_guide;
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3210,6 +3245,8 @@ pub(crate) fn toolbar_row(
             .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if no_guide {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("destinations-unavailable"))
         } else if !usable {
             format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none"))
         } else {
@@ -3271,6 +3308,27 @@ pub(crate) fn toolbar_row(
             if let Some(a) = fav {
                 *action = BarAction::Favorite(a);
             }
+            continue;
+        }
+        if b.command == "vr_view" {
+            use crate::camera::VrView;
+            menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((egui::RectAlign::TOP, 7.0)),
+                |ui| {
+                    for (mode, label) in [
+                        (VrView::FirstPerson, aurora_i18n::tr!("ui-options-camera-vr-view-first-person")),
+                        (VrView::Avatar, aurora_i18n::tr!("vr-mode-avatar")),
+                        (VrView::Flycam, aurora_i18n::tr!("vr-mode-flycam")),
+                    ] {
+                        if menu::item(ui, p, "", label) {
+                            *action = BarAction::VrView(mode);
+                        }
+                    }
+                },
+            );
             continue;
         }
         if b.command == "ao" {
@@ -3978,6 +4036,7 @@ mod tests {
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
+            ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
@@ -4007,6 +4066,24 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn avatar_studio_toolbar_toggles_and_lights_without_changing_windows() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let before = (panels.appearance, panels.inventory, panels.snapshot);
+        let command = super::super::toolbar::COMMANDS
+            .iter()
+            .find(|c| c.id == "avatar_studio")
+            .expect("configurable command");
+        assert!(command.ready);
+        assert_eq!(command.key, "avatar-studio-title");
+        for active in [true, false] {
+            run_command(&ctx, command.id, &mut panels);
+            assert_eq!(command_active(command.id, &panels, false, false, false), active);
+            assert_eq!((panels.appearance, panels.inventory, panels.snapshot), before);
+        }
     }
 
     #[test]
