@@ -3,11 +3,12 @@ name: Release
 # A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
 # viewer and publishes the release with notes grouped by PR label: the
 # Windows zip (the one the updater installs) and its crash symbols, then the
-# Linux archive and the macOS application. A pull request that changes these
-# release files gets a dry run of the three jobs (the version Git describes,
-# the symbols, the Linux archive and the macOS application kept as the run's
-# artifacts, nothing published): no agent can try the Linux or macOS build
-# on its PC, and the symbols need the release build.
+# Linux archive, the macOS application and the Flatpak bundle. A pull
+# request that changes these release files gets a dry run of the four jobs
+# (the version Git describes, the symbols, the Linux archive, the macOS
+# application and the Flatpak bundle kept as the run's artifacts, nothing
+# published): no agent can try the Linux or macOS build on its PC, and the
+# symbols need the release build.
 # The Nightly workflow calls it with the beta tag it has just pushed (a tag
 # pushed with the workflow token starts no workflow by itself); a tag with
 # a pre-release part is published as a GitHub pre-release.
@@ -289,4 +290,51 @@ jobs:
           path: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256
+          compression-level: 0
+
+  # The Flatpak bundle joins the release like the Linux archive and the
+  # macOS image: a single .flatpak file installable with
+  # `flatpak install --user Aurora-Viewer-….flatpak`, built from
+  # packaging/linux/flatpak by flatpak-builder. The manifest's `dir`
+  # source builds the checked-out tree, tags included (fetch-depth 0), so
+  # aurora-version resolves the release tag with no extra stamping. A pull
+  # request that changes the release files gets a dry run (the bundle kept
+  # as the run's artifact, nothing published).
+  flatpak:
+    needs: windows
+    if: ${{ !cancelled() && (needs.windows.result == 'success' || github.event_name == 'pull_request') }}
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
+        with:
+          bundle: Aurora-Viewer-${{ env.TAG }}-linux-x86_64.flatpak
+          manifest-path: packaging/linux/flatpak/org.aurora_viewer.AuroraViewer.yml
+          cache-key: flatpak-${{ hashFiles('packaging/linux/flatpak/cargo-sources.json', 'Cargo.lock') }}
+          # the dry-run step below uploads the bundle, named like the other
+          # jobs' artifacts, instead of the action's default one
+          upload-artifact: false
+      - name: Checksum
+        run: |
+          bundle="Aurora-Viewer-$TAG-linux-x86_64.flatpak"
+          sha256sum "$bundle" > "$bundle.sha256"
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+      - name: Publish
+        if: env.TAG != 'dry-run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" "$BUNDLE" "$BUNDLE.sha256"
+      - name: Dry-run bundle
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: viewer-flatpak-dry-run
+          path: |
+            ${{ env.BUNDLE }}
+            ${{ env.BUNDLE }}.sha256
           compression-level: 0

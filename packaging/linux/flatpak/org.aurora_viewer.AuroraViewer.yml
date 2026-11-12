@@ -1,0 +1,61 @@
+app-id: org.aurora_viewer.AuroraViewer
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: aurora-viewer
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --device=all
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+  # A SLURL opened while the viewer runs goes to it over the session bus
+  # (slurl_handoff.rs), like the Legacy Viewer's GoSLURL hand-over: the
+  # sandbox denies owning names by default, so the hand-off gets its own.
+  - --own-name=org.aurora_viewer.AuroraViewer
+modules:
+  - name: aurora-viewer
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/aurora-viewer/cargo
+        CARGO_NET_OFFLINE: 'true'
+        # No -O flag: aws-lc-sys must compile its jitterentropy sources with
+        # -O0 (they #error otherwise), and the cc crate appends CFLAGS after
+        # the crate's own flags, so any -O here would win. Plain C code is
+        # still optimized via cargo's OPT_LEVEL through cc's defaults.
+        CFLAGS: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+        HOST_CFLAGS: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+        TARGET_CFLAGS: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+        CFLAGS_x86_64-unknown-linux-gnu: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+        CFLAGS_x86_64_unknown_linux_gnu: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+        CFLAGS_aarch64-unknown-linux-gnu: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+        CFLAGS_aarch64_unknown_linux_gnu: -pipe -g -Wp,-D_GLIBCXX_ASSERTIONS -fexceptions -fstack-protector-strong -grecord-gcc-switches -fasynchronous-unwind-tables -fstack-clash-protection -fno-omit-frame-pointer
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --locked --verbose
+      - cargo --offline build --release --locked --bin aurora-viewer
+      - install -Dm0755 target/release/aurora-viewer ${FLATPAK_DEST}/bin/aurora-viewer
+      - install -Dm0644 org.aurora_viewer.AuroraViewer.desktop ${FLATPAK_DEST}/share/applications/org.aurora_viewer.AuroraViewer.desktop
+      - install -Dm0644 org.aurora_viewer.AuroraViewer.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.aurora_viewer.AuroraViewer.metainfo.xml
+      - install -Dm0644 assets/branding/aurora-logo.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.aurora_viewer.AuroraViewer.svg
+    sources:
+      # Builds the repository checkout this manifest lives in (three levels
+      # up). To build a fixed upstream commit instead, e.g. for a release,
+      # swap this source for:
+      # - type: git
+      #   url: https://github.com/Aurora-Viewer/Aurora-Viewer.git
+      #   commit: <sha>
+      - type: dir
+        path: ../../..
+      - type: file
+        path: org.aurora_viewer.AuroraViewer.desktop
+      - type: file
+        path: org.aurora_viewer.AuroraViewer.metainfo.xml
+      - cargo-sources.json
