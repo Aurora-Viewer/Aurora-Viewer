@@ -567,6 +567,7 @@ impl App {
                     handle: creation.handle,
                     options: ScriptOptions {
                         mono: creation.mono,
+                        luau: aurora_net::scripts::Luau::Off,
                         running: creation.running,
                         experience: Uuid::nil(),
                     },
@@ -3002,6 +3003,7 @@ impl App {
             handle,
             options: ScriptOptions {
                 mono,
+                luau: aurora_net::scripts::Luau::Off,
                 running,
                 experience: Uuid::nil(),
             },
@@ -4342,6 +4344,7 @@ impl App {
             request,
             item: item_uuid,
             asset_type: 7, // LLAssetType::AT_NOTECARD
+            lua: false,
             data: encoded.clone(),
         });
         Ok(ViewerResponse::Json(json!({
