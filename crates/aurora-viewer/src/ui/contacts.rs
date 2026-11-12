@@ -119,6 +119,12 @@ pub enum ContactsAction {
     ToggleTornOff,
     /// The Group titles window (onGroupTitlesButtonClicked).
     GroupTitles,
+    /// A text conference with these residents (LLAvatarActions::startConference).
+    Conference(Vec<Uuid>),
+    /// Search on its Groups tab (LLGroupActions::search).
+    SearchGroups,
+    /// The invitation window of this group (LLFloaterGroupInvite::showForGroup).
+    GroupInvite(Uuid),
 }
 
 /// Confirmations and text prompts (Firestorm notifications).
@@ -160,6 +166,34 @@ enum Dialog {
     },
 }
 
+/// `AURORA_DEMO_CONTACTS=conference|map|invite`: the friends, or the group,
+/// selected to show the buttons they enable.
+pub fn demo_selection(world: &World, mode: &str) -> (Vec<Uuid>, Option<Uuid>) {
+    let friends = &world.social.friends;
+    match mode {
+        "conference" => (friends.iter().filter(|f| f.online).map(|f| f.id).collect(), None),
+        "map" => (
+            friends
+                .iter()
+                .find(|f| world.social.can_map_friend(f.id))
+                .map(|f| f.id)
+                .into_iter()
+                .collect(),
+            None,
+        ),
+        "invite" => (
+            Vec::new(),
+            world
+                .groups
+                .groups
+                .iter()
+                .find(|g| g.powers & aurora_net::groups::powers::MEMBER_INVITE != 0)
+                .map(|g| g.id),
+        ),
+        _ => (Vec::new(), None),
+    }
+}
+
 #[derive(Default)]
 pub struct ContactsUi {
     import_job: Option<importing::Job>,
@@ -196,6 +230,14 @@ pub struct ContactsUi {
 }
 
 impl ContactsUi {
+    /// The selection of a demo scenario ([`demo_selection`]).
+    pub fn demo_select(&mut self, friends: Vec<Uuid>, group: Option<Uuid>) {
+        self.friends_sel = friends;
+        if group.is_some() {
+            self.group_sel = group;
+        }
+    }
+
     /// Initial group filter text (demo scenarios).
     pub fn filter_groups(&mut self, text: &str) {
         self.group_filter = text.to_owned();
@@ -1213,14 +1255,16 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     let sel = &st.friends_sel;
     let n = sel.len();
     let all_online = sel.iter().all(|id| world.social.friends.iter().any(|f| f.id == *id && f.online));
-    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
+    // FSFloaterContacts::onImButtonClicked: one friend, an IM; several, a
+    // conference, only when all are online (refreshRightsChangeList: an
+    // offline friend would be dropped from the session without a word).
     let im_tip = if n > 1 {
-        aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
+        aurora_i18n::tr!("ui-contacts-conference-friends")
     } else {
         aurora_i18n::tr!("ui-contacts-open-private-conversation-window")
     };
-    if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1) {
-        actions.push(ContactsAction::Im(sel[0]));
+    if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1 || (n > 1 && all_online)) {
+        actions.push(im_or_conference(sel));
     }
     // a voice call with one friend, a voice conference with several
     let call_tip = if !world.calls.voice_enabled {
@@ -1259,7 +1303,17 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
             actions.push(ContactsAction::OfferTeleport(*id));
         }
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-map"), soon, false);
+    // onMapButtonClicked / refreshUI: one friend who lets us see them on
+    // the map (is_agent_mappable), and no RLVa @showworldmap.
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-map"),
+        aurora_i18n::tr!("ui-contacts-map-help"),
+        n == 1 && world.social.can_map_friend(sel[0]) && !world.rlva.has("showworldmap"),
+    ) {
+        context::request(ui.ctx(), CtxAction::ShowOnMap(sel[0]));
+    }
     if side_button(
         ui,
         p,
@@ -1531,7 +1585,6 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     let sel = st.group_sel.unwrap_or_default();
     let real = !sel.is_nil();
     let powers = world.groups.group(&sel).map(|g| g.powers).unwrap_or(0);
-    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
     if side_button(
         ui,
         p,
@@ -1576,8 +1629,35 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     {
         super::group_profile::request_create(ui.ctx());
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-search"), soon, false);
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-invite"), soon, false);
+    // onGroupSearchButtonClicked: LLGroupActions::search, Search on Groups.
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-search"),
+        aurora_i18n::tr!("ui-contacts-search-groups-help"),
+        true,
+    ) {
+        actions.push(ContactsAction::SearchGroups);
+    }
+    // onGroupInviteButtonClicked / updateGroupButtons: a group where we hold
+    // GP_MEMBER_INVITE (LLFloaterGroupInvite::showForGroup).
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-invite"),
+        aurora_i18n::tr!("ui-contacts-invite-help"),
+        real && powers & aurora_net::groups::powers::MEMBER_INVITE != 0,
+    ) {
+        actions.push(ContactsAction::GroupInvite(sel));
+    }
+}
+
+/// One resident, an IM; several, a text conference (startConference).
+fn im_or_conference(ids: &[Uuid]) -> ContactsAction {
+    match ids {
+        [one] => ContactsAction::Im(*one),
+        _ => ContactsAction::Conference(ids.to_vec()),
+    }
 }
 
 // ------------------------------------------------------------- contact sets
@@ -1877,13 +1957,15 @@ fn set_buttons(
             actions.push(ContactsAction::Profile(*id));
         }
     }
+    // FSPanelContactSets::onClickStartIM: one resident, an IM; several, a
+    // conference (start_im_btn: any selection).
     let im_tip = if sel.len() > 1 {
-        aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
+        aurora_i18n::tr!("ui-contacts-conference-friends")
     } else {
         aurora_i18n::tr!("ui-contacts-open-private-conversation-window")
     };
-    if side_button(ui, p, "IM...", im_tip, sel.len() == 1) {
-        actions.push(ContactsAction::Im(sel[0]));
+    if side_button(ui, p, "IM...", im_tip, has_sel) {
+        actions.push(im_or_conference(&sel));
     }
     if side_button(
         ui,
@@ -2335,6 +2417,12 @@ mod tests {
         assert_eq!(sel, vec![id(2), id(4)]);
         click_select(&mut sel, &mut anchor, &order, id(5), none);
         assert_eq!(sel, vec![id(5)]);
+    }
+
+    #[test]
+    fn one_resident_gets_an_im_and_several_a_conference() {
+        assert!(matches!(im_or_conference(&[id(1)]), ContactsAction::Im(one) if one == id(1)));
+        assert!(matches!(im_or_conference(&[id(1), id(2)]), ContactsAction::Conference(ids) if ids == vec![id(1), id(2)]));
     }
 
     #[test]
