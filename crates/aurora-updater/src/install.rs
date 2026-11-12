@@ -12,6 +12,28 @@ use std::{
 
 const EXE: &str = "aurora-viewer.exe";
 const ACK_ENV: &str = "AURORA_UPDATE_ACK";
+/// Written by the new viewer once its startup splash is on screen: the
+/// helper's own update window can then go without a gap.
+const SPLASH_SHOWN: &str = "splash-shown";
+
+/// What the helper is doing, for the window the viewer's `main` shows over
+/// the whole switch (`splash/`): between the old window's close and the new
+/// one's first frame nothing of Aurora was on screen for several seconds
+/// (the old process's shutdown, the swap, a cache set aside, the antivirus
+/// scan of the new executable).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelperStage {
+    /// The previous viewer finishes closing.
+    Closing,
+    /// The installation folders are swapped.
+    Installing,
+    /// The cache is set aside (a release that asks for an empty cache).
+    ClearingCache,
+    /// The new viewer was launched and has not shown anything yet.
+    Launching,
+    /// The new viewer shows its own splash or window: this one goes.
+    Handed,
+}
 const ALLOWED: &[&str] = &[
     EXE,
     "assets",
@@ -238,7 +260,8 @@ fn hidden(command: &mut Command) {
 }
 
 /// The private helper route runs before CLI parsing, logging, GPU or settings.
-pub fn run_helper() -> Result<bool> {
+/// `stage` hears each step of the switch, with the new version.
+pub fn run_helper(stage: &mut dyn FnMut(&str, HelperStage)) -> Result<bool> {
     let mut args = std::env::args_os().skip(1);
     if args.next().is_none_or(|a| a != "--aurora-update-helper") {
         return Ok(false);
@@ -251,25 +274,31 @@ pub fn run_helper() -> Result<bool> {
         "helper outside transaction"
     );
     let parent = Parent::open(plan.parent)?;
+    let version = plan.version.clone();
+    let mut stage = |s: HelperStage| stage(&version, s);
     fs::write(work.join("helper-ready"), b"ready")?;
+    // after the old viewer's go: its wait for this helper never includes
+    // the window's start
+    stage(HelperStage::Closing);
     parent.wait()?;
     let result = (|| -> Result<()> {
+        stage(HelperStage::Installing);
         let _lock = lock(&plan.install)?;
         validate_install(&plan.install)?;
         validate_install(&work.join("prepared"))?;
         apply(&plan.install, &work, || {
+            if plan.maintenance.clear_cache {
+                stage(HelperStage::ClearingCache);
+            }
             let mut data = crate::user_data::Backup::prepare(&plan.install, &plan.token, plan.maintenance)?;
+            stage(HelperStage::Launching);
             let mut command = Command::new(plan.install.join(EXE));
             command.args(&plan.args).env(ACK_ENV, &work).current_dir(&plan.install);
             hidden(&mut command);
             let mut child = command.spawn()?;
-            let result = await_frame(
-                &mut child,
-                &work.join("first-frame"),
-                &plan.token,
-                &plan.version,
-                Duration::from_secs(90),
-            );
+            let result = await_frame(&mut child, &work, &plan.token, &plan.version, Duration::from_secs(90), &mut || {
+                stage(HelperStage::Handed)
+            });
             if !matches!(result, Ok(true)) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -282,6 +311,8 @@ pub fn run_helper() -> Result<bool> {
             }
         })
     })();
+    // the new viewer shows, or the old one comes back with its notice
+    stage(HelperStage::Handed);
     if let Err(error) = result {
         fs::write(work.join("failure.txt"), format!("{error:#}"))?;
         // `apply` restored the directory; launch the old viewer with a visible
@@ -351,14 +382,24 @@ pub fn apply(install: &Path, work: &Path, launch: impl FnOnce() -> Result<()>) -
     }
 }
 
-fn await_frame(child: &mut Child, path: &Path, token: &str, version: &str, timeout: Duration) -> Result<bool> {
+/// `handed` runs once the new viewer's splash shows, or its first frame.
+fn await_frame(child: &mut Child, work: &Path, token: &str, version: &str, timeout: Duration, handed: &mut dyn FnMut()) -> Result<bool> {
     let start = Instant::now();
+    let expected = format!("{token}\n{version}");
+    let mut splash = false;
     loop {
         if child.try_wait()?.is_some() {
             return Ok(false);
         }
-        if fs::read_to_string(path).is_ok_and(|s| s == format!("{token}\n{version}")) {
+        if fs::read_to_string(work.join("first-frame")).is_ok_and(|s| s == expected) {
+            if !splash {
+                handed();
+            }
             return Ok(true);
+        }
+        if !splash && fs::read_to_string(work.join(SPLASH_SHOWN)).is_ok_and(|s| s == expected) {
+            splash = true;
+            handed();
         }
         if start.elapsed() >= timeout {
             let _ = child.kill();
@@ -366,6 +407,24 @@ fn await_frame(child: &mut Child, path: &Path, token: &str, version: &str, timeo
             return Ok(false);
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The new viewer's startup splash is on screen: the helper's update window
+/// goes. Called from the splash's reader thread; nothing when the viewer was
+/// not started by an update.
+pub fn acknowledge_splash() {
+    let Some(path) = std::env::var_os(ACK_ENV) else { return };
+    let result = (|| -> Result<()> {
+        let work = PathBuf::from(path);
+        let plan: Plan = serde_json::from_slice(&fs::read(work.join("plan.json"))?)?;
+        validate_work(&work, &plan)?;
+        ensure!(plan.version == aurora_version::version(), "update acknowledgement mismatch");
+        fs::write(work.join(SPLASH_SHOWN), format!("{}\n{}", plan.token, plan.version))?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        log::warn!("update splash acknowledgement: {e:#}");
     }
 }
 
