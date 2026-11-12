@@ -14,6 +14,7 @@ pub(crate) mod docking;
 mod find;
 mod flash;
 pub use flash::{ButtonFlash, ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
+pub mod conversation_log;
 mod gif_picker;
 mod head;
 mod header;

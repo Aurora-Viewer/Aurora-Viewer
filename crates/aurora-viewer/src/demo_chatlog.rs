@@ -11,6 +11,9 @@
 //! - `history`: the History window on a transcript of 20 000 messages
 //!   (`history:find`: Ctrl+F and a word typed at frame 300, searched in the
 //!   whole file);
+//! - `log`: the Conversation Log window over three transcripts (a
+//!   resident, a group, the nearby chat; the window's filter and a click
+//!   that opens the History window are for the pointer);
 //! - `offline`: the instant messages kept while we were away, as the
 //!   request made at login returns them;
 //! - `restore`: saved private and group conversations, reopened without
@@ -43,6 +46,7 @@ pub enum Mode {
     Im,
     Find,
     History { find: bool },
+    Log,
     Offline,
     Restore,
     Import(ImportStage),
@@ -66,6 +70,7 @@ pub fn mode() -> Option<Mode> {
     Some(match mode {
         "find" => Mode::Find,
         "history" => Mode::History { find: arg == "find" },
+        "log" => Mode::Log,
         "offline" => Mode::Offline,
         "restore" => Mode::Restore,
         "import" => Mode::Import(match arg {
@@ -240,7 +245,25 @@ pub fn seed(dir: &Path, mode: Mode, own_name: &str) -> std::io::Result<()> {
         add(day + Duration::from_secs(300), &peer, s[4]);
         add(day + Duration::from_secs(240), own_name, s[5]);
     }
-    std::fs::write(path, text)
+    std::fs::write(&path, &text)?;
+    if mode == Mode::Log {
+        // a group's and the nearby chat's files, each last written at its
+        // own time, for a list in more than one kind and order
+        let other = |stem: String, ago: Duration, from: &str, line: &str| -> std::io::Result<()> {
+            let Some(file) = names::file_path(dir, &stem, None) else {
+                return Ok(());
+            };
+            let stamp = format::stamp(now - ago, true);
+            let mut text = format::format_line(Some(&stamp), from, line).replace('\n', store::EOL);
+            text.push_str(store::EOL);
+            std::fs::write(&file, text)?;
+            std::fs::File::options().write(true).open(&file)?.set_modified(now - ago)
+        };
+        other(names::group("Builders"), day * 3, &peer, s[0])?;
+        other(names::NEARBY.to_owned(), day * 5, &peer, s[1])?;
+        std::fs::File::options().write(true).open(&path)?.set_modified(now - day)?;
+    }
+    Ok(())
 }
 
 fn im(agent: Uuid, text: &str, offline: bool, timestamp: u32) -> NetEvent {

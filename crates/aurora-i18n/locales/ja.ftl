@@ -9751,6 +9751,13 @@ demo-chatlog-line-4 = 明日そのことを話そうか？
 demo-chatlog-line-5 = Aurora広場は夜がすてきだね。
 demo-chatlog-line-6 = うん！できるだけ早くまた行くよ 🌌
 demo-chatlog-system = コンタクトがオンラインです。
+
+conversation-log-title = 会話ログ
+conversation-log-filter = 名前で絞り込む
+conversation-log-no-transcripts = このアカウントの会話記録は保存されていません（環境設定 › チャット › 履歴）。
+conversation-log-reading = 会話記録を読み込んでいます…
+conversation-log-empty = 会話はありません。
+conversation-log-open-tip = { $name } の履歴を開く
 demo-chatlog-new = 戻ったよ！Aurora広場で会おうか？
 demo-chatlog-offline-1 = いる？
 demo-chatlog-offline-2 = 後で読めるようにメッセージを残しておくね。

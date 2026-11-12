@@ -503,6 +503,8 @@ pub struct App {
     favorite_images: std::collections::HashSet<uuid::Uuid>,
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
+    /// The Conversation Log window (`conversation_log` toolbar command).
+    conversation_log_ui: ui::chat::conversation_log::ConversationLogUi,
     perf: PerfData,
     /// The Performance window's full view (ui/monitor) and what its
     /// snapshots need (app/monitor.rs).
@@ -1652,6 +1654,7 @@ impl App {
             favorites_access_applied: None,
             favorite_images: Default::default(),
             history_ui: Default::default(),
+            conversation_log_ui: Default::default(),
             chat_import: Default::default(),
             perf: PerfData::default(),
             monitor: ui::monitor::Monitor::default(),
@@ -17885,6 +17888,14 @@ impl App {
                 if self.settings.friends_list != friends_before {
                     self.settings.save();
                 }
+                // the Conversation Log: a past conversation opens in History
+                if let Some(pick) = self
+                    .conversation_log_ui
+                    .show(&ctx, &p, self.world.chat_log.dir(), &mut self.panels.conversation_log)
+                {
+                    self.history_ui.show_file(pick.title, Some(pick.file));
+                    ui::widgets::bring_floater_front(&ctx, "chat_history");
+                }
                 if let Some(ui::chat::history::HistoryAction::OpenFolder(dir)) = self.history_ui.show(
                     &ctx,
                     &p,
@@ -20779,6 +20790,10 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Log => {
+                        self.panels.chat = false;
+                        self.panels.conversation_log = true;
+                    }
                     Mode::Import(stage) => {
                         use chatlog::ImportStage;
                         let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);

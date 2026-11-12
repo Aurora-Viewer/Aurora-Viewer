@@ -17,6 +17,7 @@
 //! - `import`: a Legacy Viewer's transcripts brought into the account's
 //!   folder, adding only.
 
+pub mod conversations;
 pub mod format;
 pub mod import;
 pub mod names;

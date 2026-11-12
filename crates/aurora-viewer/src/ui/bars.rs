@@ -2383,6 +2383,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
+        // Floater.Toggle conversation
+        "conversation_log" => toggle(super::chat::conversation_log::WINDOW, &mut panels.conversation_log),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         // ToggleWebBrowser: the browser window on the home page, or closed
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
@@ -2491,6 +2493,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
+        "conversation_log" => panels.conversation_log,
         "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
@@ -4063,6 +4066,9 @@ mod tests {
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
+            ("conversation_log", super::super::chat::conversation_log::WINDOW, |p| {
+                p.conversation_log
+            }),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
             ("destinations", super::super::destinations::WINDOW, |p| p.destinations),

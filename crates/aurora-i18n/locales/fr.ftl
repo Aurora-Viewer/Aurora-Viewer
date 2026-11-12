@@ -9784,6 +9784,13 @@ demo-chatlog-line-4 = On en reparle demain ?
 demo-chatlog-line-5 = La place Aurora est superbe la nuit.
 demo-chatlog-line-6 = Oui ! J'y retourne dès que possible 🌌
 demo-chatlog-system = Votre correspondant est en ligne.
+
+conversation-log-title = Journal des conversations
+conversation-log-filter = Filtrer par nom
+conversation-log-no-transcripts = Aucune transcription n’est gardée pour ce compte (Préférences › Chat › Historique).
+conversation-log-reading = Lecture des transcriptions…
+conversation-log-empty = Aucune conversation.
+conversation-log-open-tip = Ouvrir l’historique de { $name }
 demo-chatlog-new = Me revoilà ! On se retrouve sur la place Aurora ?
 demo-chatlog-offline-1 = Tu es là ?
 demo-chatlog-offline-2 = Je te laisse un message pour plus tard.

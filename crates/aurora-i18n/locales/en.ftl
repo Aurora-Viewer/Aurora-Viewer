@@ -9788,6 +9788,13 @@ demo-chatlog-line-4 = Shall we talk about it tomorrow?
 demo-chatlog-line-5 = Aurora plaza looks great at night.
 demo-chatlog-line-6 = Yes! Going back as soon as I can 🌌
 demo-chatlog-system = Your contact is online.
+
+conversation-log-title = Conversation log
+conversation-log-filter = Filter by name
+conversation-log-no-transcripts = No transcripts are kept for this account (Preferences › Chat › History).
+conversation-log-reading = Reading the transcripts…
+conversation-log-empty = No conversation.
+conversation-log-open-tip = Open the history of { $name }
 demo-chatlog-new = I'm back! Meet you at Aurora plaza?
 demo-chatlog-offline-1 = Are you there?
 demo-chatlog-offline-2 = Leaving you a message for later.

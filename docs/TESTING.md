@@ -5809,7 +5809,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
-| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
+| `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, the Conversation Log window, offline IMs and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
@@ -8675,13 +8675,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|restore[:slow]|import[:run|again|login|same|none]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|log|offline|restore[:slow]|import[:run|again|login|same|none]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
   the folder of a real account, and the scenario rewrites them at each launch
   (without this variable, the demo writes and reads back no history). The
   windows are placed at a known size.
+  - `log`: the Conversation Log window over three transcripts (a resident, a
+    group and the nearby chat, last written one, three and five days ago);
+    the nearby chat is closed. Check the order (newest first), the kind icons,
+    the filter by name, and that a click opens the whole transcript in the
+    History window.
   - `import`: the import of a Legacy Viewer's chat history over a synthetic
     folder, `chat_logs\demo-legacy-viewer\<demo account>\`, rewritten at each
     launch. It holds Nova's conversation (a month older, with one message

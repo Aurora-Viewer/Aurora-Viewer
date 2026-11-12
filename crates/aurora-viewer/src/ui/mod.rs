@@ -160,6 +160,8 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// The Conversation Log (the toolbar's `conversation_log` command).
+    pub conversation_log: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -247,6 +249,7 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            conversation_log: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
