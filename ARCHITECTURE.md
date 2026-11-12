@@ -1844,8 +1844,41 @@ never acquire or configure it. Runtime images are returned to attachment layout
 before release. `vr_mirror.rs` samples an already rendered left-eye image into the desktop
 surface at up to 30 FPS, preserving aspect ratio and returning the runtime image
 to attachment layout before release. Bind groups are cached per eye image; no
-CPU readback or third world-rendering pass is used. Desktop presentation is
+CPU readback or third world-rendering pass is used. When a headset colour
+setting is active, the eyes render into ungraded textures. The mirror samples
+those textures and a fullscreen pass applies gamma and vibrancy to the
+headset output. The optional grade textures are released at identity. Runtime
+swapchains prefer sRGB. Display-encoded staging bytes can be copied to an sRGB
+twin; UNORM-only runtime images receive a GPU conversion to linear colour before
+submission. Preferences group the VR fields inside the camera settings while
+retaining their existing flat serialized names. Desktop presentation is
 restored when VR ends.
+
+VR keeps physical VIEW-space tracking direct and separates it from the artificial
+rig and the avatar movement body. `vr_control` returns a coherent predicted head
+sample and runtime focus without blocking the render worker. Samples carry their
+reference/origin identity so a recenter or region change cannot become a stale
+body-follow command. Gamepad mappings reuse the desktop movement pipeline with
+artificial pitch/roll suppressed. Walking uses projected gaze; Flycam travel uses
+full physical gaze and steering pivots at the current tracked head.
+
+`camera/vr.rs` owns the pure room-scale follow/framing logic. First-person body
+following uses head-projected displacement with separate start/stop radii,
+normal walking controls and manual-input priority. Only accepted body-follow
+displacement is counter-translated out of the rig, so catch-up cannot drag the
+head or create runaway feedback. Physical tracking is never smoothed.
+
+Avatar mode reuses the native gamepad orbit, pan, focus and camera animation
+paths. The VR layer retains horizontal user-driven orbit while suppressing
+artificial pitch/roll, adds positional automatic centering without rotating
+its view, and holds zoom height through settling. D-pad target selection uses
+the native travel timing with preserved view heading rather than a target-front
+turn. Native focus height and explicit vertical pan are retained; the VR layer
+does not replace travel with a separate slow framing controller.
+
+The toolbar VR popup selects the entry mode. `ui/options/pages/vr.rs` owns optional horizontal mouse look and
+per-eye resolution settings. Resolution is passed to `xr_frame::Session::new`
+and bounded by runtime and device limits at creation.
 
 `Renderer::render_to_texture` hands a caller-owned output texture through
 `FramePacket` to the rendering thread. The backend validates its size, format,
@@ -2834,6 +2867,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ao/`, `app/ao.rs`, `ui/ao.rs` | Built-in Animation Overrider: catalogue of the authoritative `#Aurora/Aurora AO` sets, inventory links and ZHAO import (`inventory.rs`), one startup reconstruction from `#Firestorm/#AO` when the Aurora folder is absent (`bootstrap.rs`), explicit single-set Legacy Viewer copying (`migration.rs`, on-demand picker in `ui/ao/migration.rs`), states / cycles / groups / tracks and remapping of the pose of our avatar only (`runtime.rs`), synthetic assets and transitions (`demo.rs`); AIS operations and asynchronous replies in `app/ao.rs`, management window opened by the AO button of the bottom bar. The raw signals of the simulator are still used for movement and transitions; the overrides are announced through AgentAnimation. Activation and last set saved per account UUID; pause and standing poses specific to the session. |
 | `camera/` | The camera like LLAgentCamera: view behind the avatar, Alt camera on a point or an object (`focus.rs`), seat camera, scripted camera (`follow.rs`: LLFollowCam parameters, per-object activation stack held by World and avatar-relative simulation; `world/mod.rs` deactivates seat/attachment linkset sources before parent changes, retaining parameters and unrelated sources), mouselook and its right-button zoom (`mouselook_zoom.rs`: LLToolCompGun's held zoom, the wheel steps, the view limits), transitions, smoothing, pull-back in flight, collision sent by the simulator; camera presets (`presets.rs`, issue #1164: a saved `CameraShot` held by the avatar, a place in global metres or an object it follows, with the photo mode's lens, looks and light as optional parts; captured and applied by `app/camera_presets.rs`, listed by the viewfinder's `ui/viewfinder/presets.rs` panel and the Controls window); the photo window's free camera (`free.rs`: its own position and heading while the avatar stays, moves in the camera's frame like the Legacy Viewer's 3D mouse flycam, optional collisions that slide along objects and the ground; `Camera::update` shows it and keeps the avatar's view behind it); Legacy Viewer settings (`settings.rs`, with `SavedViews`: the Rear, Front, Side and Shoulder views the user saved over their templates, #2755), demo scenarios (`demo.rs`) |
 | `world/` | World state received from the network: the favourites (`favorites.rs`: the Favorites folder's landmarks in the account's order, LLFavoritesOrderStorage), objects, regions, terrain, objects of the out-of-range regions set aside until these close or come back into range (`parked.rs`), environment (EEP: cycles and settings assets in `eep.rs`, choice local > parcel > region > default day, local environment and fades in `eep_env.rs`, the photo's own sky, water, day cycle, time and sun laid over it in `eep_photo.rs`, what experience controllers push (ENV_PUSH, above the parcel and under the local environment) in `eep_push.rs`, lists of the environment picker and loading of the folders in `env_select.rs`), selected parcel of "About Land", its rights and its refresh while the window is open (`land.rs`), who may freeze or eject a resident where they stand (`land_moderation.rs`), social, avatar profiles, inventory, groups (active, pinned; the open profile's members and roles in `group_data.rs`, its parcels and accounts in `group_money.rs`), contact sets and nicknames (`contact_sets.rs`), blocks, derendered objects and residents and the account's asset blacklist (`derender.rs`: their updates dropped, kept to come back at once; Show Friends Only hides the avatars that are not friends the same way, `friends_only.rs`), messages of the Legacy Viewer's LSL bridge (hidden), body orientation, gaze (LookAt), map, place profiles of "Places" and of the separate windows (`place_details.rs`: region by its name, landmark, RemoteParcelRequest, ParcelInfoRequest), the parcel snapshots of the favourites and of the Places rows without a thumbnail, by landmark or by point (`place_snapshots.rs`), landmark assets and handles of their regions (`landmarks.rs`), dated and saved teleport history (`tphistory.rs`), how long a teleport or crossing waits for the region to confirm the arrival (`arrival_wait.rs`), what an avatar wears against the worn objects its appearance lists, for the Dev Toolbox's J2 (`worn_listed.rs`, issue #2747), teleport offers and requests from other residents waiting for their answer (`teleport_invites.rs`), whether the teleport screen offers Cancel and what a cancel leaves (`teleport_cancel.rs`), our temporary attachments (an experience's or llAttachToAvatarTemp's, with no inventory item) and their names from AttachmentResources (`temp_attachments.rs`), residents' inventory offers as cards in the giver's conversation, answered through their notification, and the inventory opened on a kept offer's item (ShowInInventory) (`inventory_offers.rs`), direct payments between a resident and us as cards in their conversation, and lines in its transcript (`payments.rs`), calling cards given and received (`calling_cards.rs`), the content rating chosen during the session and its sync with the server (`maturity.rs`), experiences' details, the permission questions waiting for them and the agent's permission for each (`experiences.rs`), one text rule for the names of objects and owners in dialogs: on one line, without bidi embeddings, overrides or isolates, the name as sent kept for blocking (`dialog_names.rs`), Set Home to Here and the map's home that follows it (`home.rs`), the account settings of Preferences › Privacy the grid keeps (`user_info.rs`)… |
+| `camera/vr.rs` | Pure VR comfort controls: positional centering layered on native Avatar movement, horizontal zoom and delayed-authority first-person body arrival, independent from direct headset tracking. |
 | `scene/` | What is sent to the GPU: geometry and LOD, textures (streaming), avatars (skeleton, animations, silhouette), particles, water, reflection probes, world sounds, impostors, environment settings assets (`settings.rs`: sky, water, day cycle) |
 | `ui/` | egui interface: bars (`bars.rs`: the Legacy Viewer's full-width bars and what both looks share; `bars/islands.rs`: Aurora's top bar, glass islands over the world sampling the windows' blur, the system island's items, detailed tooltip and right click; `bars/clock.rs`: the bars' clock, SLT or local time with its zone's abbreviation (tz database) switched by a click, with or without seconds, in 12 or 24 hours (Auto: the system's regional format); `bars/place.rs`: the place island, what it shows by the room it has, its menu; `bars/location_suggest.rs`: what the destination field and the Legacy bars' location field suggest while a place is typed (landmarks, then places of the history, Legacy matching and dictionary order) and the row Enter takes; `bars/dock.rs`: the bottom islands, the chat island with the chat bar's field and the toolbar's buttons in a centred dock, one height for both; `bars/side.rs`: the left and right toolbars; `bars/sizing.rs`: the widths of a toolbar's buttons; `bars/favorites.rs`: the favourites in the place island's menu, the row under the islands or the dock's grid, chosen by "Favourites access"; `bars/demo.rs`: `AURORA_DEMO_BARS`; `interface.rs`: the interface hidden by Alt+Shift+U, immersive mode (hidden but the chat) and the bars in mouselook), windows, options, chat, contacts (friends, groups, contact sets: `contacts.rs`), avatar profiles (`profile.rs`, the Legacy Viewer's tabbed window, and `profile/aurora.rs`, the default window with its header and cards, on the same state), world map (`worldmap/`: the full-frame layout's floating panels in `overlay.rs`, the Legacy Viewer's side panel in `mod.rs`), "Places" (`places.rs`: the Legacy Viewer's tabs of favourites, landmarks, teleport history; `places/aurora.rs`: Aurora's look, narrow with tabs and rows that open in place, widened with a rail of sources and folders and a preview; `places/model.rs`: its places, one per landmark asset, their last visit from the history, the history's places without a landmark) and place profiles (`place_details.rs`, also as separate windows), "Create landmark" (`landmark_create.rs`), "Asset blacklist" (`blacklist.rs`: the derendered objects and residents), "Region / Estate" (`region/`: the window, its roles and "View as" in `mod.rs`, the header and the overview in `overview.rs`, Manage's sections in `manage.rs`, its Interventions and their dialogs (message, teleport home, kick, objects returned, restart, schedule) in `interventions.rs`, the Top scripts / Top colliders window in `top_objects.rs`, Environment, Experiences and Covenant with their pickers and scope question in `estate_wide.rs`, the rules' and terrain's Advanced folds (telehub and spawn points, PBR terrain materials and their transforms, RAW file) in `advanced.rs`, the classic window (the Legacy Viewer's eight tabs over the same sections) in `classic.rs`, their changes waiting for "Apply" in `draft.rs`, the questions and notices in `confirm.rs`, People's four estate lists with their pickers, scope question and CSV files in `people.rs`; data in `world/estate.rs`, what the app feeds it (the selection for the telehub, the terrain's materials) in `app/region_window.rs`, protocol in `aurora-net/src/estate.rs`, `session/estate.rs` and `session/terrain_raw.rs` (the RAW file's Xfer)), "About Land" (`land/`, one file per tab, dialogs; Aurora's layout over them in `aurora.rs`, its overview in `overview.rs`, the settings by intent in `manage.rs`, the access lists and object owners in `people.rs`, Script info in `scripts.rs`), the pieces the redesigned windows share (`sheet.rs`: header on the field's face with its gauge, page tabs with "View as", pills, cards with a title and a link, lines of facts, settings rows with their sentence, amber lock banner and line, "Advanced" folds, a column of sections whose navigation follows the scrolling (a row of icons in a compact window), the bar of changes waiting for "Apply", list heads and resident rows), group profile (`group_profile.rs` and `group_profile/`: header, Home, Members, Notices, Land and L$ (`land.rs`), Experiences (`experiences.rs`) and Administration tabs, or the classic window), resident picker (`avatar_picker.rs`), experience profile with its permission (`experience_profile.rs`), the Me › Experiences window with its five lists (`experiences.rs`), web page in a window (`web_view.rs`), the media filter's question and its list in the preferences (`media_filter.rs`), the Marketplace web site in a window (`marketplace.rs`), the toolbar's built-in web browser (`web_browser.rs`: LLFloaterWebContent on `web_view.rs`), the grid's Destination Guide (`destinations.rs`: LLFloaterDestinations on `web_view.rs`, the guide's address per grid, the Legacy style; `destinations/aurora.rs`: Aurora's window on the guide's feed, compact with category chips and rows that open in place, widened with a rail of categories, cards and a preview; the shared place rows of `place_card.rs`), texture picker, inventory, environment picker and "Personal lighting" (`environment.rs`), maps, debug overlays; sounds caused by the widgets (`sound_cues.rs`: clicks, refused keys, windows); the progress window of a selection's script actions (`script_queue.rs`); right-click menus: shared look (`menu.rs`: Tabler icon, submenus, checked boxes) and entries like the Legacy Viewer (`context.rs`: world, avatar names, groups) |
 | `build/` | Building tools like LLFloaterTools: selection and manipulators (`manip.rs`), selection regressions for linked parts and whole objects (`selection_tests.rs`), cycling through the selection under the pointer with CTRL + wheel (`cycle.rs`: units per linkset or prims of a single object, high-precision wheel), direct moving of HUDs (`hud_drag.rs`: root of the linkset, screen / attachment point conversion, local echo and position MultipleObjectUpdate on release), Move (`grab.rs`) and Align (`align.rs`) tools, a click that puts the selection against the surface under the cursor (`place.rs`, "Place on surface"), snap to objects while moving (`object_snap.rs`: the selection flush against nearby prims, a box prim by its box and a mesh or shaped prim by its visible triangles, stopped at their faces, with its guides; Aurora's own, `object_snap_tests.rs` on the demo boxes), terrain (`land.rs`), edits of the selection (`edits.rs`), materials and media (`materials.rs`), object contents (`contents.rs`) and the inventory dropped into them, one item or a whole selection with its folders, from the world or the Contents tab (`contents_drop.rs`), the texture and material ids a face, sculpt or projector copy may carry to another prim, and the limited item that follows them into its contents (`texture_copy.rs`), the script actions of a selection (`script_queue.rs`: Reset / Run / Stop / Remove scripts, object after object), impact and weights (`costs.rs`), the avatars and animated objects whose animations pause while something they carry is selected (`anim_pause.rs`), demo simulator (`demo_sim.rs`); the window and its tabs in `build/ui/` |
@@ -3318,14 +3352,86 @@ The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam
 pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
-HID reports through hidapi on one worker; the frame copies a bounded latest
+HID reports through hidapi on one worker. Joystick and Gamepad preferences
+store separate device selections, enable switches and tuning. Each lists its
+own devices, and both switches default off. Native gamepads are recognized by
+two stick pairs and four face buttons. Recognized pads use the console defaults
+and unsigned trigger pressure. The frame copies a bounded latest
 snapshot without waiting. `Controller` applies mapping, dead zones, gain,
 button edges, focus/stale-input gating and re-centring after changes.
 Relative channels re-arm independently; absolute zoom needs no centre.
 Mode switches retain button edges while clearing held movement, so an
 off-centre axis cannot block the flycam toggle or the other controls.
 `app/joystick.rs` joins avatar input to the existing simulator controls and
-running state; the independent flycam pose is shown by `camera::Camera`,
+running state. Stick magnitude selects walk or run at the saved threshold;
+the simulator protocol carries directional movement as held flags, so it has
+no continuous speed value. Turning and camera axes retain their analogue
+values. Gamepads use a console-style camera: the right stick orbits the idle
+third-person view around the avatar, while movement folds that orbit behind
+the avatar and routes right-stick yaw to avatar steering. The gamepad backend
+resolves the standardized right-stick X/Y axes from gilrs-core's native axis
+codes, so driver-specific trigger ordering cannot swap orbit and elevation.
+It also identifies standardized buttons and triggers, detects Xbox and
+PlayStation styles from device metadata when possible, and retains a Generic
+fallback. Preferences › Controls › Gamepad (a dedicated page immediately below
+Mouse and keyboard in the Controls sidebar section) configures gamepad mappings, camera sensitivity and independent horizontal and vertical inversion.
+Its Settings and Map controls tabs keep configuration together. Map controls has
+separate Avatar Mode, First person and Flycam sections: each mode can choose its movement and
+camera sticks, while buttons and analog triggers are selected from the connected
+controller's available inputs. Older joystick profiles can retain inherited avatar up/down bindings until
+the user assigns a flycam-specific input. Gamepad defaults resolve A/B and bumpers through native control metadata rather
+than fixed button indices. Avatar flight and Flycam use B/Circle to ascend and X/Square to descend.
+RB/R1 and LB/L1 select the next and previous nearby avatars. Avatar and Flycam camera gains default to 4.0, first
+person to 1.875 in the Gamepad profile. Gamepad Settings exposes a
+gamepad-only flycam travel-speed multiplier and the existing Keep the flycam
+level setting. Leveling uses the original feathered return when enabled and
+allows free roll when disabled.
+The Flycam mappings include pressure-sensitive slowdown and speedup triggers,
+with separate minimum and maximum speed multipliers that blend linearly from
+the default speed according to trigger pressure. The first trigger pressed
+owns speed adjustment until it is released, and the configured default speed
+resumes after release.
+`joystick/bindings.rs` resolves Gamepad mappings for preferences and sampling.
+Each profile arms and samples independently. When both send input in one
+frame, gamepad input takes priority. Flycam keeps the profile that entered it.
+Older enabled gamepad profiles migrate from Joystick to Gamepad while preserving
+native axes, gains and button numbers. Device classification is deferred across
+saves when the saved device is disconnected. Explicit Gamepad profiles take
+precedence. Raw joystick profiles keep their existing input path.
+Avatar-mode camera bindings expose pressure-sensitive trigger zoom, D-pad
+four-way pan, and nearest/previous avatar cycling. Cycling calls
+`ui::people::nearby` for its existing nearest-first ordering and dispatches the
+same `CtxAction::ZoomAvatar` used by People. The player is a stop between the
+nearest and furthest ends of that list in both directions. The selected avatar starts at the
+posed head from `Scene::head_world`, then uses the camera's existing object
+tracking and orbit/pan paths. Movement returns to the player through
+`Camera::reset_view`. Vertical pan uses the existing unlocked camera focus and
+persists through movement, orbit and zoom. Reset camera, mode changes and explicit
+target cycling clear pan; movement returns to the player while preserving pan. On the player, panning unlocks around the
+avatar's horizontal center, not the preset's forward aim offset, preserving the
+eye and focus height. Entering that pivot retains the existing focus animation
+with `CameraSettings::zoom_time`; continued pan updates its destination without
+restarting it. That temporary own-avatar focus reuses object-relative
+tracking with the normal camera's `AvatarFrame` position, so passive movement
+and seated motion keep the pan even before the own object is available.
+Returning to the normal player view clears this temporary tracking. Controller zoom never enters mouselook and retains a
+nonzero minimum orbit radius even with mouse constraints disabled; mouse-wheel
+mode switching remains unchanged. No extra player height is serialized.
+Digital D-pads and native hat axes share semantic bindings; the backend
+normalizes their platform-specific vertical sign.
+The gamepad view button cycles First person → Avatar → Flycam → First person through
+existing mouselook, flycam and reset transitions. Disabled modes are skipped.
+`joystick.first_person` contains independent stick/button bindings and signed
+axis gains; look input feeds the existing `AgentState` yaw/pitch path.
+First-person trigger zoom uses a transient lens in `camera/mouselook_zoom.rs`: pressure
+integrates a log-space target, eased over 80 ms. It survives release and yaw/pitch
+changes and passive avatar movement. Explicit player movement input (before
+crouch latching), leaving mouselook or changing the normal
+FOV resets it. The existing mouse-button zoom remains independent and takes precedence. Avatar and raw joystick/flycam tuning remain shared
+with the legacy preferences; first-person tuning is independent.
+Travel scaling is applied during flycam position integration, after device
+axis safety clamps, so the configured 20×–50× speed endpoints are effective.
+The independent flycam pose is shown by `camera::Camera`,
 including roll, zoom and region-origin shifts. It is cleared by reset,
 mouselook, teleport and photo free-camera entry. Preferences › Mouse and
 keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the
