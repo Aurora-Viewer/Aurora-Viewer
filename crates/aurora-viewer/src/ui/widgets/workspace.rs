@@ -280,6 +280,59 @@ pub(crate) fn organization_drag_preview(ctx: &egui::Context, p: &Palette, id: eg
     }
 }
 
+/// A drag grip and outline painted over the existing control geometry.
+pub(crate) fn organization_source(ui: &egui::Ui, p: &Palette, rect: egui::Rect, leading: bool, hot: bool) {
+    let color = if hot { p.violet_light } else { p.muted_dim };
+    ui.painter().rect_stroke(
+        rect.shrink(0.5),
+        ui.visuals().widgets.inactive.corner_radius,
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
+    let center = egui::pos2(if leading { rect.left() + 8.0 } else { rect.right() - 8.0 }, rect.center().y);
+    let grip = egui::Rect::from_center_size(center, egui::vec2(15.0, 16.0));
+    ui.painter()
+        .rect_filled(grip, ui.visuals().widgets.inactive.corner_radius, p.raised);
+    super::paint_glyph(
+        ui.painter(),
+        "grip-vertical",
+        center,
+        12.0,
+        if hot { p.violet_light } else { p.muted },
+    );
+}
+
+/// Every compatible destination stays visible throughout a layout drag.
+pub(crate) fn organization_drop_target(ui: &egui::Ui, p: &Palette, rect: egui::Rect, label: Option<&str>, insertion: Option<bool>) {
+    let color = p.violet_light;
+    if insertion.is_some() {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.violet.gamma_multiply(0.25));
+    }
+    ui.painter().rect_stroke(
+        rect,
+        ui.visuals().widgets.inactive.corner_radius,
+        Stroke::new(1.0, color),
+        egui::StrokeKind::Inside,
+    );
+    if let Some(label) = label {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(11.0),
+            color,
+        );
+    }
+    if let Some(after) = insertion {
+        ui.painter().hline(
+            rect.x_range(),
+            if after { rect.bottom() } else { rect.top() },
+            Stroke::new(2.0, color),
+        );
+    }
+}
+
 pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         glyph(ui, icon, p.violet_light, 17.0);
@@ -363,6 +416,9 @@ fn section<R>(
             state.toggle(ui);
             header.mark_changed();
         }
+        if super::search_cleared(ui) {
+            ui.ctx().animate_bool_with_time(id, open, 0.0);
+        }
     } else if header.clicked() {
         state.toggle(ui);
         header.mark_changed();
@@ -405,7 +461,8 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
 /// toolbar and the menus. A window opened by another one (a picker, a tool of
 /// the script editor) is named after its owner: its own function comes first.
 pub(super) fn window_icon(id: &str) -> &'static str {
-    if id == "poser" {
+    // both poser windows, the compact one included
+    if id == "poser" || id == "poser-compact" {
         return "wand";
     }
     if id.starts_with("poser-") {

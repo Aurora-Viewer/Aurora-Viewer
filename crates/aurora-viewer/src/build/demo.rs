@@ -136,14 +136,9 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
     let p = match part {
         Part::Arrow(i) => c + g.rotation * unit(i) * len * 0.9,
         Part::Plane(i) => {
-            let at_g = g.rotation.inverse() * cam.at;
-            let mut v = Vec3::ZERO;
-            for j in 0..3 {
-                if j != i {
-                    v[j] = at_g[j].signum() * super::manip::PLANE_OFFSET * len;
-                }
-            }
-            c + g.rotation * v
+            let q = super::manip::plane_handles(cam, &f)[i]?;
+            let p = q[0].lerp(q[2], 0.5);
+            return Some((p.x * cam.ppp, p.y * cam.ppp));
         }
         Part::Ring(i) => {
             let r = super::manip::ring_radius(cam, &f, c);
@@ -211,7 +206,7 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "grid" => tool.ui.grid_options_open = true,
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
             "permissions" => tool.ui.bulk_perms_open = true,
-            "next-owner" => tool.ui.contents_show_next_owner = true,
+            "next-owner" => tool.ui.contents_rights = crate::ui::inventory::permissions::Rights::Both,
             _ => {}
         }
     }

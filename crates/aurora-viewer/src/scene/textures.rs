@@ -1743,19 +1743,10 @@ impl TextureStreamer {
         if id == aurora_prim::te::BLANK_TEXTURE {
             return aurora_render::textures::WHITE;
         }
-        if let Some(e) = self.entries.get_mut(&id) {
-            e.refs += 1;
-            e.unused_since = None;
-            if e.source == TexSource::Asset && source != TexSource::Asset {
-                e.source = source;
-            }
-            Self::settle(&mut self.todo, &mut self.counts, id, e);
-            return e.slot;
-        }
-        // Procedural textures belong only to the offline demo.
-        if let Some(slot) = self.local_slots.get(&id).copied() {
+        if let Some(slot) = self.acquire_known(id, &source) {
             return slot;
         }
+        // Procedural textures belong only to the offline demo.
         if let Some((px, w, h)) = crate::demo::local_texture(&id) {
             let alpha = super::jobs::classify_alpha(&px);
             let pick_mask = (alpha != AlphaKind::Opaque).then(|| PickMask::from_rgba(w, h, &px)).flatten();
@@ -2093,6 +2084,31 @@ impl TextureStreamer {
         }
     }
 
+    fn acquire_known(&mut self, id: Uuid, source: &TexSource) -> Option<u32> {
+        // A saved material can request its maps before local-file restoration
+        // finishes. Once restored, the local slot wins over that placeholder.
+        if let Some(slot) = self.local_slots.get(&id) {
+            return Some(*slot);
+        }
+        let e = self.entries.get_mut(&id)?;
+        e.refs += 1;
+        e.unused_since = None;
+        if e.source == TexSource::Asset && *source != TexSource::Asset {
+            e.source = source.clone();
+        }
+        Self::settle(&mut self.todo, &mut self.counts, id, e);
+        Some(e.slot)
+    }
+
+    fn set_local_slot(&mut self, id: Uuid, slot: u32) {
+        let previous = self.local_slots.insert(id, slot).or_else(|| self.entries.get(&id).map(|e| e.slot));
+        if previous.is_some_and(|previous| previous != slot) {
+            // Reuse the scene's texture-user rebuild path for placeholders
+            // acquired before local-file restoration, even without a GPU slot.
+            self.reslotted.push(id);
+        }
+    }
+
     /// A texture drawn by the viewer itself (media): `acquire` returns its slot.
     pub fn register_local(&mut self, id: Uuid, slot: u32) {
         set_slot_alpha(
@@ -2109,11 +2125,13 @@ impl TextureStreamer {
             self.generation += 1;
             self.alpha_changes.push(slot);
         }
-        self.local_slots.insert(id, slot);
+        self.set_local_slot(id, slot);
     }
 
     pub fn unregister_local(&mut self, id: &Uuid) {
-        self.local_slots.remove(id);
+        if self.local_slots.remove(id).is_some() {
+            self.reslotted.push(*id);
+        }
         self.local_images.remove(id);
     }
 
@@ -2129,7 +2147,7 @@ impl TextureStreamer {
             self.generation += 1;
             self.alpha_changes.push(slot);
         }
-        self.local_slots.insert(id, slot);
+        self.set_local_slot(id, slot);
     }
 
     pub fn release(&mut self, id: &Uuid) {
@@ -4081,6 +4099,33 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_material_local_maps_replace_earlier_asset_placeholders_and_reload_in_place() {
+        let mut textures = TextureStreamer::new(PathBuf::new());
+        let ids = std::array::from_fn::<_, 4, _>(|i| Uuid::from_u128(900 + i as u128));
+        for (i, id) in ids.into_iter().enumerate() {
+            let mut pending = entry(None, 100.0);
+            pending.slot = 20 + i as u32;
+            textures.entries.insert(id, pending);
+            assert_eq!(textures.acquire_known(id, &TexSource::Asset), Some(20 + i as u32));
+            textures.register_local_image(id, 30 + i as u32, AlphaKind::Opaque, false);
+            assert_eq!(textures.acquire_known(id, &TexSource::Asset), Some(30 + i as u32));
+        }
+        let mut changed = Vec::new();
+        textures.take_reslotted(&mut changed);
+        assert_eq!(changed, ids, "already-built material users are rebuilt with the local maps");
+        for (i, id) in ids.into_iter().enumerate() {
+            textures.register_local_image(id, 30 + i as u32, AlphaKind::Opaque, false);
+        }
+        changed.clear();
+        textures.take_reslotted(&mut changed);
+        assert!(changed.is_empty(), "pixel-only reloads keep the same GPU bindings");
+        textures.unregister_local(&ids[0]);
+        textures.take_reslotted(&mut changed);
+        assert_eq!(changed, [ids[0]]);
+        assert_eq!(textures.acquire_known(ids[0], &TexSource::Asset), Some(20));
+    }
 
     #[test]
     fn a_refused_upload_waits_for_the_page_try_and_at_least_a_second() {

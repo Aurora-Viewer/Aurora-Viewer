@@ -733,15 +733,12 @@ fn landmark_menu(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, v: &View<'_
                     Rect::from_center_size(r.center(), Vec2::splat(13.0)),
                     p.muted_dim,
                 );
-                ui.add(
-                    egui::TextEdit::singleline(&mut st.query)
-                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
-                            ui.ctx(),
-                            &egui::TextStyle::Body.resolve(ui.style()),
-                        )))
+                let margin = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+                crate::ui::widgets::search_text_edit_with_margin(ui, p, &mut st.query, margin, |edit| {
+                    edit.frame(egui::Frame::NONE)
                         .hint_text(aurora_i18n::tr!("region-restart-search"))
-                        .desired_width(f32::INFINITY),
-                );
+                        .desired_width(f32::INFINITY)
+                });
             });
         });
     ui.add_space(4.0);

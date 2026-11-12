@@ -538,6 +538,20 @@ mod tests {
     }
 
     #[test]
+    fn parcel_music_refused_by_the_list_is_told_once_per_url() {
+        // LLViewerParcelMedia::filterAudioUrl reports MediaFilterAudioContentBlocked
+        // for each blocked station, not on every frame's recheck.
+        let mut f = MediaFilter::default();
+        f.apply(Edit::Set("blocked.example".into(), Action::Deny));
+        for _ in 0..10 {
+            assert_eq!(f.check("https://blocked.example/a", Source::Music), Verdict::Deny);
+        }
+        assert_eq!(f.messages.len(), 1);
+        assert_eq!(f.check("https://blocked.example/b", Source::Music), Verdict::Deny);
+        assert_eq!(f.messages.len(), 2, "a new denied music URL is told again");
+    }
+
+    #[test]
     fn domain_is_the_host_alone() {
         assert_eq!(domain("http://Example.COM/video.mp4").as_deref(), Some("example.com"));
         assert_eq!(
