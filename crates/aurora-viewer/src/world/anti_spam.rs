@@ -217,7 +217,7 @@ impl World {
             NetEvent::AttachedSound { sound, object, owner, .. } => !sound.is_nil() && self.anti_spam_sound(Queue::Sound, *object, *owner),
             NetEvent::PreloadSounds(sounds) => {
                 sounds.retain(|s| {
-                    !self.mutes.is_muted_id(&s.object)
+                    self.object_block_entry(&s.object).is_none()
                         && !self.mutes.sounds_muted(&s.owner)
                         && !self.anti_spam_sound(Queue::SoundPreload, s.object, s.owner)
                 });

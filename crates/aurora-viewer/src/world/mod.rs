@@ -3363,7 +3363,7 @@ impl World {
             // object (LLMuteList::isMuted(taskid)): not those of a blocked
             // owner, nor on any other condition (no click needed, object out
             // of view or unknown, another region, Do Not Disturb)
-            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
+            NetEvent::ScriptQuestion { task_id, .. } if self.object_block_entry(&task_id).is_some() => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,

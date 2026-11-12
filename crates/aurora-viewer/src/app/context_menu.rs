@@ -333,7 +333,7 @@ impl App {
         f.edit = crate::build::selectable(w, idx);
         f.id = o.full_id;
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
-        f.blocked = w.mutes.is_muted_id(&root_id);
+        f.blocked = w.object_block_entry(&o.full_id).is_some();
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
         if let Some(root) = w.hud_root(idx).and_then(|i| w.objects.get(i)) {
             f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
@@ -699,21 +699,7 @@ impl App {
             CtxAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
             CtxAction::GiveCallingCard(id) => self.world.offer_calling_card(id),
             CtxAction::ToggleBlockObject { id, name } => {
-                // the whole object is blocked: its root (LLMute of getRootEdit)
-                let root = self
-                    .world
-                    .objects
-                    .index_of_uuid(&id)
-                    .and_then(|i| self.world.objects.get(linkset_root(&self.world, i)))
-                    .map_or(id, |r| r.full_id);
-                let name = if name.is_empty() {
-                    aurora_i18n::tr!("common-object-2", value0 = root.to_string()[..8].to_string())
-                } else {
-                    name
-                };
-                if self.world.mutes.is_muted_id(&root) {
-                    self.world.unblock(root, &name, 0);
-                } else if let Err(e) = self.world.block(root, &name, crate::world::mutes::MuteType::Object) {
+                if let Err(e) = self.world.toggle_block_object(id, &name) {
                     self.world.system_message(e);
                 }
             }

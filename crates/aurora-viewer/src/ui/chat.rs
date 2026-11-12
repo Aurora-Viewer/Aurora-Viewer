@@ -2516,8 +2516,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         super::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
     }
     line_menu::show(ui, menu, p, |ui, target| {
-        if let Some(avatar) = target.sender {
-            super::context::chat_sender_menu(ui, p, w, avatar, &target.line);
+        if let Some(sender) = target.sender {
+            sender_menu(ui, p, w, sender, &target.line);
         } else if let Rows::Thread(th) = &mut rows {
             thread::message_menu(ui, &env, th, target);
         }
@@ -2649,7 +2649,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.set_width(w - 8.0);
                 ui.horizontal(|ui| {
                     if object {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                        let (rect, cube) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                        line_object_sender(cube, p, world, line, env.menu);
                         let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
                         if let Some(t) = env.icons.get(glyph) {
                             ui.painter().image(
@@ -2677,7 +2678,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
-                    if !object && !avatar.is_nil() {
+                    if object {
+                        line_object_sender(r.clone(), p, world, line, env.menu);
+                    } else if !avatar.is_nil() {
                         line_name_menu(&r, p, world, avatar, line, env.menu);
                     }
                     if !object
@@ -4150,25 +4153,60 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
         });
 }
 
+/// The object a line can be inspected or blocked by: what it said, not its
+/// IMs, which carry their owner's id.
+pub(super) fn line_object(line: &crate::world::ChatLine) -> Option<uuid::Uuid> {
+    (matches!(line.kind, ChatKind::Object(_)) && !line.source.is_nil()).then_some(line.source)
+}
+
+/// The rows of an object's menu: inspect, ignore (the Block of
+/// menu_object_icon.xml and menu_url_objectim.xml).
+fn object_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, name: &str) {
+    if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
+        super::context::request(ui.ctx(), CtxAction::Inspect(id));
+    }
+    let (icon, label) = if world.object_block_entry(&id).is_some() {
+        ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
+    } else {
+        ("ban", aurora_i18n::tr!("common-ignore"))
+    };
+    if super::menu::item(ui, p, icon, label) {
+        super::context::request(ui.ctx(), CtxAction::ToggleBlockObject { id, name: name.to_owned() });
+    }
+}
+
+/// The menu of a line's sender, a resident's or an object's.
+pub(super) fn sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine) {
+    if line_object(line) == Some(id) {
+        object_menu(ui, p, world, id, &line.from);
+    } else {
+        super::context::chat_sender_menu(ui, p, world, id, line);
+    }
+}
+
 /// An object's name in a line: a click inspects it, a right click offers
 /// to inspect or to ignore it (Firestorm's objectim link of the name,
 /// LLViewerChat::getSenderSLURL).
 fn object_sender(resp: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, name: &str) {
-    super::menu::context_menu(resp, p, |ui| {
-        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
-            super::context::request(ui.ctx(), CtxAction::Inspect(id));
-        }
-        let (icon, label) = if world.mutes.is_muted_id(&id) {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        if super::menu::item(ui, p, icon, label) {
-            super::context::request(ui.ctx(), CtxAction::ToggleBlockObject { id, name: name.to_owned() });
-        }
-    });
+    super::menu::context_menu(resp, p, |ui| object_menu(ui, p, world, id, name));
     if resp.clicked() {
         super::context::request(&resp.ctx, CtxAction::Inspect(id));
+    }
+}
+
+/// The name or the cube of a full-size line from an object: `object_sender`,
+/// in the transcript's own menu where it has one.
+pub(super) fn line_object_sender(r: egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    let Some(id) = line_object(line) else { return };
+    line_menu::demo_mark_object(&r);
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(menu) = menu {
+        line_menu::sender(&r, menu, id, line);
+        if r.clicked() {
+            super::context::request(&r.ctx, CtxAction::Inspect(id));
+        }
+    } else {
+        object_sender(&r, p, world, id, &line.from);
     }
 }
 

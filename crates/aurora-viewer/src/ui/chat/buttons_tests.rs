@@ -720,6 +720,54 @@ fn the_message_menu_acts() {
     }
 }
 
+/// A full-size line of an object: its name, and in the workspace styles its
+/// message, offer to inspect and to ignore it, like Firestorm's object menu.
+#[test]
+fn an_objects_full_size_line_offers_to_ignore_it_in_every_style() {
+    const THING: Uuid = Uuid::from_u128(0x0b1ec7);
+    for style in ALL {
+        for on_name in [true, false] {
+            if !style.workspace() && !on_name {
+                continue;
+            }
+            let mut h = H::new(style);
+            h.world.chat.push_back(line(
+                "Worn Thing",
+                THING,
+                ChatKind::Object(aurora_net::ChatType::Normal),
+                "a word from an object",
+            ));
+            h.open(None);
+            let at = h.text_rect(if on_name { "Worn Thing" } else { "a word from an object" }).center();
+            h.right_click(at);
+            assert!(h.painted(aurora_i18n::tr!("ui-context-inspect-2")), "{style:?} {on_name}: inspect");
+            h.press_text(aurora_i18n::tr!("common-ignore"));
+            let asked = crate::ui::context::take_requests(&h.frames.ctx);
+            assert!(
+                asked.iter().any(
+                    |a| matches!(a, crate::ui::context::CtxAction::ToggleBlockObject { id, name } if *id == THING && name == "Worn Thing")
+                ),
+                "{style:?} {on_name}: ignore"
+            );
+        }
+    }
+}
+
+/// An object's IM carries its owner's id: no object menu on that id.
+#[test]
+fn an_objects_im_has_no_object_menu() {
+    const OWNER: Uuid = Uuid::from_u128(0x0b1ec8);
+    for style in ALL {
+        let mut h = H::new(style);
+        h.world
+            .conversation_line(JANE, line("Worn Thing", OWNER, ChatKind::ObjectIm, "an object's IM"));
+        h.open(Some(JANE));
+        let at = h.text_rect("Worn Thing").center();
+        h.right_click(at);
+        assert!(!h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}");
+    }
+}
+
 /// A double click on the first or the last word of a message, then Ctrl+C,
 /// copies that word alone: not the line's "[time] Name: " prefix, nor the
 /// whole message.

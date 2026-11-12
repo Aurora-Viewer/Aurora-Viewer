@@ -68,13 +68,79 @@ impl World {
             .unwrap_or(Uuid::nil())
     }
 
+    /// The prim an object's block is kept on: the root of its linkset, or
+    /// `id` itself when it is not in the scene. Muting is done by root
+    /// objects (LLMute::LLMute, get_object_to_mute_from_id in
+    /// indra/newview/llmutelist.cpp, originally LGPL 2.1): a script says
+    /// things from the prim it sits in, often a child, chiefly in a worn
+    /// object. Aurora difference: the Legacy Viewer goes up one level, so a
+    /// block taken on a child prim lands on the root there too, but one
+    /// taken on the root prim of someone's attachment lands on its wearer.
+    /// Here it stays on the attachment, like on ours.
+    pub fn object_block_root(&self, id: &Uuid) -> Uuid {
+        let mut root = *id;
+        let mut idx = self.objects.index_of_uuid(id);
+        for _ in 0..64 {
+            let Some(o) = idx.and_then(|i| self.objects.get(i)) else {
+                break;
+            };
+            if o.is_avatar() {
+                break;
+            }
+            root = o.full_id;
+            idx = self.objects.parent_of(o);
+        }
+        root
+    }
+
+    /// The linkset of `id` is blocked, on its root: what `is_muted` cannot
+    /// see from the id of a child (LLMuteList::isMuted looks at the parent).
+    fn root_muted(&self, id: &Uuid, flags: u32) -> bool {
+        if self.mutes.len() == 0 {
+            return false;
+        }
+        let root = self.object_block_root(id);
+        root != *id && self.mutes.is_muted(&root, "", flags)
+    }
+
+    /// The block entry that covers an object: its own id (a block taken
+    /// while it was out of the scene) or its root.
+    pub fn object_block_entry(&self, id: &Uuid) -> Option<Uuid> {
+        if self.mutes.len() == 0 {
+            return None;
+        }
+        [*id, self.object_block_root(id)].into_iter().find(|i| self.mutes.is_muted_id(i))
+    }
+
+    /// Block or unblock an object from a menu: the whole of it, by its root,
+    /// whichever prim was named.
+    pub fn toggle_block_object(&mut self, id: Uuid, name: &str) -> Result<(), String> {
+        let root = self.object_block_root(&id);
+        let fallback;
+        let name = if name.is_empty() {
+            fallback = aurora_i18n::tr!("common-object-2", value0 = root.to_string()[..8].to_string());
+            fallback.as_str()
+        } else {
+            name
+        };
+        match self.object_block_entry(&id) {
+            Some(entry) => {
+                self.unblock(entry, name, 0);
+                Ok(())
+            }
+            None => self.block(root, name, MuteType::Object),
+        }
+    }
+
     /// Nearby chat to hide (process_chat_from_simulator: the source by id or
-    /// name, or its owner).
+    /// name, its root, or its owner).
     pub(super) fn chat_blocked(&self, c: &ChatMessage) -> bool {
         if matches!(c.source_type, ChatSourceType::System) {
             return false;
         }
-        self.mutes.text_muted(&c.source_id, &c.from_name) || (!c.owner_id.is_nil() && self.mutes.text_muted(&c.owner_id, ""))
+        self.mutes.text_muted(&c.source_id, &c.from_name)
+            || self.root_muted(&c.source_id, flag::TEXT_CHAT)
+            || (!c.owner_id.is_nil() && self.mutes.text_muted(&c.owner_id, ""))
     }
 
     /// A resident whose nearby chat is hidden (`chat_blocked`) is not named
@@ -90,7 +156,7 @@ impl World {
     /// or owner (LLScriptFloater, process_script_question, process_load_url).
     pub(super) fn object_blocked(&self, object: &Uuid, name: &str) -> bool {
         let owner = self.owner_of(object);
-        self.mutes.is_muted(object, name, 0) || (!owner.is_nil() && self.mutes.is_muted_id(&owner))
+        self.mutes.is_muted(object, name, 0) || self.root_muted(object, 0) || (!owner.is_nil() && self.mutes.is_muted_id(&owner))
     }
 
     /// A script menu (process_script_dialog): also dropped when the owner
@@ -107,7 +173,8 @@ impl World {
             return false;
         }
         // object IMs carry the object id in the session id (STORM-1209)
-        let muted = self.mutes.text_muted(&im.from_agent_id, &im.from_name) || (im.dialog == 19 && self.mutes.is_muted_id(&im.session_id));
+        let muted = self.mutes.text_muted(&im.from_agent_id, &im.from_name)
+            || (im.dialog == 19 && (self.mutes.is_muted_id(&im.session_id) || self.root_muted(&im.session_id, 0)));
         // inventory_offer_handler: an offer is declined on any entry, one
         // that blocks only sounds, particles or voice too (isMuted with no
         // flags); chat and IMs keep the text chat flag
@@ -166,15 +233,18 @@ impl World {
         self.groups.out.push(cmd);
         if flags == 0 || flags & flag::TEXT_CHAT != 0 {
             // LLNotifications::cancelByOwner (agents), scripts of the object
-            self.notifications.list.retain(|n| match &n.data {
+            // and of the other prims of its linkset
+            let mut list = std::mem::take(&mut self.notifications.list);
+            list.retain(|n| match &n.data {
                 Data::Lure { from, .. }
                 | Data::TeleportRequest { from, .. }
                 | Data::Inventory { from, .. }
                 | Data::RlvaQuery { from, .. } => *from != id,
-                Data::Dialog { object, .. } | Data::TextBox { object, .. } => *object != id,
-                Data::Permissions { task, .. } => *task != id,
+                Data::Dialog { object, .. } | Data::TextBox { object, .. } => *object != id && self.object_block_root(object) != id,
+                Data::Permissions { task, .. } => *task != id && self.object_block_root(task) != id,
                 _ => true,
             });
+            self.notifications.list = list;
             self.close_orphan_inventory_offers();
         }
         if self.groups.report_blocks {
@@ -220,6 +290,7 @@ impl World {
     /// process_attached_sound).
     pub fn sound_blocked(&self, object: &Uuid, owner: &Uuid) -> bool {
         self.mutes.is_muted_id(object)
+            || self.root_muted(object, 0)
             || (!owner.is_nil() && self.mutes.sounds_muted(owner))
             || self.anti_spam.is_blocked(super::anti_spam::Queue::Sound, *object)
             || self.anti_spam.is_blocked(super::anti_spam::Queue::Sound, *owner)
@@ -318,6 +389,161 @@ mod tests {
         w.unblock(jane, "Jane Doe", flag::PARTICLES);
         assert!(!w.particles_blocked(&jane));
         assert!(w.mutes.text_muted(&jane, "") && w.voice_blocked(&jane));
+    }
+
+    /// The offline HUD: a linkset worn by our avatar, and a stranger's world.
+    fn worn_world() -> (World, Uuid, Uuid) {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            w.apply(event);
+        }
+        let agent = w.agent_id;
+        w.mutes.reset(agent);
+        let id = |w: &World, local| w.objects.iter().find(|(_, o)| o.key.local_id == local).expect("object").1.full_id;
+        let child = id(&w, crate::demo::hud::CHILD);
+        let root = w.object_block_root(&child);
+        (w, child, root)
+    }
+
+    fn said_by(source: Uuid, owner: Uuid) -> ChatMessage {
+        ChatMessage {
+            source_id: source,
+            owner_id: owner,
+            from_name: "Worn Thing".into(),
+            source_type: ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::Normal,
+            position: glam::Vec3::ZERO,
+            message: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_block_taken_from_a_child_prim_holds_its_whole_linkset() {
+        let (mut w, child, root) = worn_world();
+        assert_ne!(child, root, "the worn linkset has a child");
+        assert!(w.objects.index_of_uuid(&root).is_some());
+        assert!(!w.chat_blocked(&said_by(child, w.agent_id)));
+        w.toggle_block_object(child, "Worn Thing").expect("blocked");
+        // kept on the root, as an object: not on the wearer, us
+        let entry = w.mutes.get(&root).expect("the root's entry");
+        assert_eq!(entry.kind, MuteType::Object);
+        assert!(w.mutes.get(&child).is_none());
+        assert!(w.mutes.get(&w.agent_id).is_none());
+        // whichever prim speaks or plays
+        for prim in [child, root] {
+            assert!(w.chat_blocked(&said_by(prim, w.agent_id)), "chat");
+            assert!(w.object_blocked(&prim, ""), "dialogs");
+            assert!(w.sound_blocked(&prim, &Uuid::nil()), "sounds");
+            assert_eq!(w.object_block_entry(&prim), Some(root), "the menu reads it as blocked");
+        }
+    }
+
+    #[test]
+    fn the_second_click_on_a_child_prim_unblocks_the_linkset() {
+        let (mut w, child, root) = worn_world();
+        w.toggle_block_object(child, "Worn Thing").expect("blocked");
+        w.toggle_block_object(child, "Worn Thing").expect("unblocked");
+        assert!(w.mutes.get(&root).is_none());
+        assert!(!w.chat_blocked(&said_by(child, w.agent_id)));
+    }
+
+    fn question(task: Uuid) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::ScriptQuestion {
+            task_id: task,
+            item_id: Uuid::from_u128(0x17e),
+            object_name: "Worn Thing".into(),
+            owner_name: "Someone".into(),
+            questions: 4,
+            experience: Uuid::nil(),
+            region: 0,
+        }
+    }
+
+    fn dialog(object: Uuid) -> aurora_net::NetEvent {
+        aurora_net::NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id: object,
+            object_name: "Worn Thing".into(),
+            owner_name: "Someone".into(),
+            owner_id: Uuid::nil(),
+            message: "Choose".into(),
+            channel: -42,
+            buttons: vec!["Yes".into()],
+        }
+    }
+
+    fn asks(w: &World, prim: Uuid) -> bool {
+        w.notifications.list.iter().any(|n| match &n.data {
+            Data::Permissions { task, .. } => *task == prim,
+            Data::Dialog { object, .. } => *object == prim,
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn a_blocked_linkset_asks_nothing_from_a_child_prim() {
+        let (mut w, child, root) = worn_world();
+        w.block(root, "Worn Thing", MuteType::Object).expect("blocked");
+        w.apply(question(child));
+        assert!(!asks(&w, child), "process_script_question: isMuted looks at the parent");
+    }
+
+    #[test]
+    fn blocking_a_linkset_closes_what_its_child_prims_asked() {
+        for event in [question as fn(Uuid) -> aurora_net::NetEvent, dialog] {
+            let (mut w, child, _) = worn_world();
+            w.apply(event(child));
+            assert!(asks(&w, child), "the question is open");
+            w.toggle_block_object(child, "Worn Thing").expect("blocked");
+            assert!(!asks(&w, child), "and goes with the block");
+        }
+    }
+
+    #[test]
+    fn a_blocked_linkset_preloads_nothing_from_a_child_prim() {
+        let (mut w, child, root) = worn_world();
+        let preload = || {
+            aurora_net::NetEvent::PreloadSounds(vec![aurora_net::SoundPreload {
+                sound: Uuid::from_u128(0x50),
+                object: child,
+                owner: Uuid::from_u128(0x0e),
+            }])
+        };
+        assert!(w.apply(preload()).is_some());
+        w.block(root, "Worn Thing", MuteType::Object).expect("blocked");
+        assert!(w.apply(preload()).is_none());
+    }
+
+    #[test]
+    fn a_block_taken_out_of_the_scene_still_ends_from_the_menu() {
+        let (mut w, child, root) = worn_world();
+        // the object was not loaded then: the entry is on the id chat gave
+        w.block(child, "Worn Thing", MuteType::Object).expect("blocked");
+        assert_eq!(w.object_block_entry(&child), Some(child));
+        assert!(w.chat_blocked(&said_by(child, w.agent_id)));
+        assert!(!w.chat_blocked(&said_by(root, w.agent_id)), "the root was never named");
+        w.toggle_block_object(child, "Worn Thing").expect("unblocked");
+        assert!(w.mutes.get(&child).is_none());
+    }
+
+    #[test]
+    fn an_object_out_of_the_scene_is_its_own_root() {
+        let (mut w, _, _) = worn_world();
+        let far = Uuid::from_u128(0xfa2);
+        assert_eq!(w.object_block_root(&far), far);
+        w.toggle_block_object(far, "").expect("blocked");
+        let entry = w.mutes.get(&far).expect("entry");
+        assert!(!entry.name.is_empty(), "a name for the list");
+        assert!(w.chat_blocked(&said_by(far, Uuid::nil())));
+    }
+
+    #[test]
+    fn a_text_only_exception_on_the_root_lets_its_child_prims_speak() {
+        let (mut w, child, root) = worn_world();
+        w.block(root, "Worn Thing", MuteType::Object).expect("blocked");
+        w.unblock(root, "Worn Thing", flag::TEXT_CHAT);
+        assert!(!w.chat_blocked(&said_by(child, w.agent_id)));
+        assert!(w.sound_blocked(&child, &Uuid::nil()), "the rest stays blocked");
     }
 
     #[test]

@@ -219,7 +219,7 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                 if menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-chat-applink-object-profile")) {
                     run();
                 }
-                let (icon, text) = if world.mutes.is_muted_id(&o.id) {
+                let (icon, text) = if world.object_block_entry(&o.id).is_some() {
                     ("circle-check-filled", aurora_i18n::tr!("common-unblock"))
                 } else {
                     ("ban", aurora_i18n::tr!("common-block"))
