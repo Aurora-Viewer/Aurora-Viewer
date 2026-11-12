@@ -765,7 +765,7 @@ mod tests {
     fn the_shader_texts_hold_the_surface_and_lift_rules() {
         let common = include_str!("shaders/common.wgsl");
         // a blended face outside the occlusion depth keeps the filter of before
-        assert!(common.contains("if (frame.soft.x < 0.5 || !screen_surface) {"));
+        assert!(common.contains("if (!SOFT_PATH || frame.soft.x < 0.5 || !screen_surface) {"));
         // the terrain's wet glint takes the lift on a classic sky only (the
         // others have it from `sun_shadow`)
         assert!(include_str!("shaders/env.wgsl").contains("*select(sh, shadow_lift(sh), is_classic_sky()))*wet;"));
