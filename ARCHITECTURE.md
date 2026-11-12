@@ -200,6 +200,18 @@ one sun shadow map of its own, centred on the probe (`probes::shadow_matrix`);
 under the rim of the dome the sky gives way to a mirror of it, for the sea.
 The views of a capture are mirrored (`probes::face_view`), so captures count
 as mirrored passes (`misc.w` 2).
+
+`shaders/cull.wgsl::write_args` validates indexed-indirect ranges against the
+bound u16 index buffer and zeros invalid draws; `cs_classify` counts each
+such face once per frame (left out of the triangle statistics), and the log
+names a new maximum only. CPU-built indirect lists get the same bound when they are pushed
+(`gpu_cull::bound_cpu_draw`); wgpu's `VALIDATION_INDIRECT_CALL` stays off (it
+does not cover the GPU-culled `multi_draw_indexed_indirect_count`). The scene
+texture table stores its bound page count in the header of the existing storage
+location buffer. `common.wgsl::texture_page_index` uses that count to send an
+out-of-range page to page 0, keeping the layer: the face samples a bound texture
+(whatever sits at that layer of page 0), never a stale descriptor; it is not a
+dedicated fallback texture.
 Reflection-probe capture mips use separate compute passes before the final
 radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
 30 when a mip written by one dispatch is sampled by later dispatches.
@@ -606,6 +618,10 @@ Shift+Enter whispers only in nearby chat; other conversations consume it
 before completion/editing/sending, preserving the draft and focus.
 The editor grows to four visible rows, then scrolls. Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
+`ui/chat/channel.rs` shares the nearby-chat channel selector across all
+conversation layouts and both local chat bars. Its channel (`ChatUi::chat_channel`)
+stays outside the draft, like the Legacy spinner; `channel::resolve` applies it
+when the text, OOC-wrapped first, has no `/n`.
 
 The night sky (`aurora-render/src/stars.rs`, `sky_stars` in `shaders/env.wgsl`)
 draws the 8,795 naked-eye stars of `assets/stars/stars.bin` (Tycho-2,
@@ -1370,6 +1386,28 @@ import preview. `poser/storage.rs` returns the successful save path to the UI;
 the refreshed library selects that entry and reports its full path, and native
 file pickers start in the account-local poses directory (#3169). Poser does not
 start IK-project autosaves or object imports.
+The poser's part under Ctrl is drawn and picked from the subject's meshes:
+`poser/world_hints.rs` turns the part into a 256-bit palette joint mask
+(collision volumes, attachment points and the inner spine follow their bone;
+the face takes the head, a hand its wrist) that the frame uniform carries
+(`FrameParams::part_joints`); `scene/mod.rs` lists the subject's skinned faces
+(`part_faces`, visited with the GPU lists too); `vs_part_mask` grades each
+vertex's weight share on those joints into a two-channel mask drawn with the
+scene's depth test, composited by `selection::Overlay::new_part` (a fading
+tint on the subject, a halo on the outer outline only). While Ctrl hovers the
+subject, `aurora-render/src/part_pick.rs` reads the visible part under the
+cursor a frame or two later (`FramePacket` request, `FrameResult::part_pick`,
+`Renderer::take_part_pick`). `FrameParams::part_classes` packs four bits per
+palette joint; `vs_part_pick` sums each part's weights at the vertex and the
+fragment chooses among their interpolated shares, independently of triangle
+index order. The poser offers the nearest projected bone within that part;
+the bones decide until a pick arrives or for an animesh. Both part passes
+honor material sidedness and resolve nearest coverage in a private copy of
+post depth, including unrigged blended accessories, without modifying scene
+depth. FSR's display depth supports that copy too. Readback slots carry
+monotonic sequence numbers so a reused slot cannot deliver an older answer
+over a newer one. `renderer::part_tests` exercises the production shaders
+and shared pipeline states on the GPU; `part_pick` also tests slot reuse.
 `world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
 state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
 and the independent target modal/reminder. Bridge 1.34 adds authenticated
@@ -2887,7 +2925,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/close_key.rs` | Ctrl+W closes the frontmost window, as File › Close Window, and on macOS Command+W does too (both are the keyboard Control mask). Ctrl+Shift+W, and Command+Shift+W on macOS, closes every window, as File › Close All Windows, including the mini-map (`shown_extra`). Taken at the start of the interface's frame, before a text field reads it (`begin`), only when a window is there; every `widgets::Floater` declares itself (`shown`) and closes as its cross when the key is for it (`take`); the Conversations window takes a single close first for its conversation shown, and Close All closes that window |
 | `ui/widgets.rs`, `ui/widgets/resize.rs`, `ui/widgets/cascade.rs`, `ui/widgets/demo.rs`, `ui/widgets/scroll_offset.rs`, `ui/widgets/hero.rs` | Shared widgets and floating windows; the head shared by the Aurora avatar and group profiles, a banner as tall as what it holds with the picture, who it is and the actions centred on one line and the tabs along its bottom, laid out again when its height changes (`hero`); Construction and inventory menu customization share organization typography, headings, close controls and drag previews in `ui/widgets/workspace.rs`; a scroll offset decided after a scroll area is shown (rows above that changed height, automatic scrolling) given back to it at its next show, egui keeping the offset private (`scroll_offset`); the capitals of every text field centred on its face, the field keeping its height (`field_text_margin`, used by `theme.rs` for the theme's fields and by the bare fields laid on their own face); Firestorm inventory preview/editor cascades by type and creation order; collapsing by double-clicking the title or by a button, expanded size kept and collapsed bar movable; offline gestures on the real title; resize handles bounded before the move, opposite edge fixed, limits of the content and of the visible area; position and size kept by egui; names longer than their space cut with "…" with the whole name on hover (`elided_label`, `paint_elided`) for the lists of residents, groups and conversations |
 | `ui/layout.rs`, `ui/layout/anchor.rs`, `ui/layout/gesture.rs` | Interface layout: egui's memory (positions, sizes, collapsed windows) written to `ui_layout.ron` on exit and read back at startup; work area left by the bars (`work_area`) and common gap `GAP` of the default layout and of snapping (none: the windows touch); `Slot`, through which `widgets::Floater` and the minimap (`widgets::bare_window`) go, records each measured window and its movement room; `anchor.rs` converts existing default positions/sizes and older layouts directly into the closest of eight corresponding perimeter points and its signed offset. A window can supply an explicit first-opening point. Completed moves/resizes recompute the closest pair among four corners and four side midpoints. Its invisible point and signed offset persist across viewer resizing and sessions, including closed windows and migration of older layouts; glued windows share a point chosen from their block bounds. `gesture.rs`: the gestures of the frame (`layout::frame`, `layout::resizing`): window dragged by its title together with those stuck to it, block kept within the screen, snapping proposed then applied on release (under the pointer for a resize), sticking links created, saved with the layout and removed when they no longer hold (window closed, collapsed, moved apart, Alt) |
-| `ui/theme_guard.rs` | Test only: reads the interface sources (`ui/`, `build/ui/`, `imports/ui*`, `crash/window.rs`) and fails if a window directly uses an egui widget replaced by a shared widget of `ui/widgets.rs`, or itself writes a radius or a colour instead of those of the theme (AGENTS.md, section 7); list of the rules, of their replacement and of the exceptions (files of `ALLOWED`, lines marked `// theme-guard:`), themselves checked |
+| `ui/theme_guard.rs` | Test only: reads the interface sources (`ui/`, `build/ui/`, `imports/ui*`, `crash/window.rs`, `splash/window.rs`) and fails if a window directly uses an egui widget replaced by a shared widget of `ui/widgets.rs`, or itself writes a radius or a colour instead of those of the theme (AGENTS.md, section 7); list of the rules, of their replacement and of the exceptions (files of `ALLOWED`, lines marked `// theme-guard:`), themselves checked |
 | `ui/snap.rs`, `ui/snap/overlay.rs` | Window snapping, geometry only: which moving edges stick to what (edge facing another window, same-side edge of a neighbour, work area; 10 px margin, edges that touch (`layout::GAP`, no gap), size limits of a resize, holding of the displayed snap), guide to draw, side-by-side windows (`touching`), groups (`group`, `block_limits`). `layout/gesture.rs` only snaps and attaches moved windows while Alt is held, and Alt also detaches the dragged window from its group; resize snapping retains its separate behavior. `overlay.rs`: the guide and the "Alt" pill drawn above the windows |
 | `ui/text_menu.rs`, `ui/text_menu/tests.rs` | Right-click menu of every text field, like the Legacy Viewer's text editors (menu_text_editor.xml: Cut, Copy, Paste, Delete, Select All, greyed by canCut / canCopy / canPaste / canDoDelete): one hook around the interface pass, no change at the fields. It finds the focused field with a `TextEditState` under the right click, reads editable / password from the IME request egui makes for it, keeps a selection right-clicked inside it, and plays the chosen entry into the field at the next frame as egui events (the clipboard's text for Paste). A field with its own right-click menu (script editor, notecards) keeps it. On a misspelled word of a spell-checked field (`ui/spelling.rs`), up to five suggestions, Add to Dictionary and Add to Ignore come first (LLSpellCheckMenuHandler); a suggestion selects its word and is pasted over it, only if the field still holds it. Demo `AURORA_DEMO_TEXT_MENU`, `AURORA_DEMO_SPELLING=menu` |
 | `ui/spelling.rs`, `ui/spelling/tests.rs`, `ui/options/pages/spelling.rs` | Spelling in a field, called after the fields the Legacy Viewer checks (chat bars, Conversations inputs, notecards, group notices, landmark notes, About Land description, postcard and profile photo texts): the auto-replace of a typed space (chat and notecards only), then the misspelled words (cached per field id with the text's hash and the checker's revision) drawn as the Legacy red zigzag over the galley, none under the word being typed for half a second; `marked` gives them to `ui/text_menu.rs`. Preferences › Chat › Spelling: the dictionaries (main, extra, import / remove) and the auto-replace lists and keywords. |
@@ -2982,6 +3020,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `app/busy_pause.rs` | A window behind whose GPU frames crawl (two of 150 ms or more in a row: another program in front keeps the card busy, #2355) stops drawing its 3D until it has the focus again, with the pause of `texture_budget::Background` (empty lists, `PAUSED_RESOLUTION_DIVISOR`) but its textures kept; the world blurred and darkened, an amber notice under the windows and "— Paused" in the window title. Not during a photo, a headset or a timed run; Preferences › Graphics switch, on by default (AURORA_DEMO_BUSY_PAUSE). |
 | `app/gpu_recovery.rs` | The window, the renderer and egui's input state made the same way at start (`resumed`) and after a GPU device loss; the recovery itself (Preferences › Graphics `gpu_recovery`, on by default; `AURORA_GPU_RECOVERY=1`/`0` forces it; not in VR): a new window and device, the old window kept until the new one has presented, the session and the world kept, the scene released on the lost renderer (`Scene::forget_gpu`) and reloaded on the new one (`Scene::adopt_gpu`, `TextureStreamer::gpu_reset`), particles, media and terrain paint brought back, the lost renderer's tickets dropped; the rule for repeated losses (`loss_step`: of the last five minutes, recover, recover with the safe graphics level, close). |
 | `app/egui_shadow.rs` | A CPU copy of egui's textures from the deltas it hands to the renderer (egui keeps no pixels), given whole to the renderer of a GPU recovery. |
+| `splash/` | The startup splash: another process of the executable (`--splash`, `mod.rs` starts it and feeds it the start's step on its standard input), a borderless window drawn on the CPU with the crash window's painter (`window.rs`: egui into a `softbuffer` surface, the login card's look painted once), the step, its share of the bar and its text (`progress.rs`, from the viewer's phase and `aurora_render::start_progress`); it closes when the viewer's window shows. An update's switch shows the same window from the updater's helper (`UpdateWindow`, fed `aurora_updater::install::HelperStage`), until the new viewer's splash is on screen. Not on macOS |
 | `app/safe_graphics.rs` | The safe graphics after GPU trouble in the last session: the login card's choices, the Potato level applied only on the user's click, the level's values kept in `graphics-before-safe.json` and put back on request. |
 | `scene/lights.rs` | Local lights of the frame: the prim lights closest to the camera (range × 1.5, falloff, colour) and, for those that have a texture, their projector — cone computed from the position, the rotation and the size of the prim (`aurora-render` `Projector`), texture reserved as long as the light stays in the list; choice of up to 16 projectors that cast shadows (saved budget, default 2), with a 20% apparent-area retention margin and camera-driven shadow-map fades capped at 4 m/s (`SpotShadowSlots`, #1494) |
 | `scene/animesh.rs` | Standalone skeletons of the animated objects, animations of the linkset, bounds of the poses for culling and shadows, demo scenario |

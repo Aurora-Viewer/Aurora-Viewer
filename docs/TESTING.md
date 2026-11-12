@@ -3199,7 +3199,7 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, Shift-click, move, edit |
 | `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, derender of a linked part, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
 
@@ -3317,7 +3317,7 @@ The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
 
-**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -3364,6 +3364,14 @@ access to a grid.
 - `inspect`: "Inspect" at frame 740: the window lists the root and the
   linked prim, their figures and the totals; the prim of the highlighted
   row is outlined in yellow, the others in blue.
+- `derender-part` (#3384): "Edit" on the backpack at frame 700, "Edit
+  linked parts" ticked and its linked prim selected at 720, right click on
+  that prim at 740, "Derender temporarily" at 780: only the linked prim
+  goes, the root stays on the back. "Clear temporary" at 900 brings it
+  back in its linkset. The log writes `demo worn derender-part: derendered:
+  root present=true child present=false`, then `cleared: … child
+  present=true`. Captures at frames 770, 820 and 990
+  (`AURORA_FPS_LIMIT=60`).
 - `inventory`: the inventory opens on the item, double-clicked on its real
   row at frames 700–703 (the backpack detaches, its worn label leaves the
   row) and again at 900–903 (it is worn again: the demo server rezzes its
@@ -3633,7 +3641,7 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -3683,9 +3691,22 @@ That ignored test creates and removes its own isolated profile.
   types a name and opens Save's form at 490 (Save, Save as…).
   `compact-together` is `together` in the compact window: both eyes
   selected, "+ 1 joint moves with it" under the joint's row.
-  `compact-face` unselects the joint at 500, then holds Ctrl over the face
-  from 560 while posing the Body: capture 640 shows the face's oval tint
-  and "Ctrl + click: Face" (seen from the demo camera, behind the avatar).
+  `compact-face` unselects the joint at 500 (as a click beside), then holds
+  Ctrl over the forehead from 560 while posing the Body: capture 640 shows
+  the head lit from the mesh and "Ctrl + click: Face" (seen from the demo
+  camera, behind the avatar; the system head is weighted to the head bone,
+  so the whole head lights). `compact-body` opens the Hands tab at 500 and
+  holds Ctrl over the chest from 560: the body lit from its mesh without
+  the head, a soft halo on its outline (the demo also moves the app's
+  cursor there, for the GPU part pick).
+  For mesh-pick regression checks, hold Ctrl over a neck/wrist seam at
+  several LODs, a one-sided attachment seen from its back, and an unrigged
+  blended accessory in front of the body. The offered part must match the
+  lit surface; visible accessories block the body behind them in either
+  attachment order, while clear alpha texels do not. Repeat with reduced
+  render scale and FSR, then close the poser with Ctrl held and take a
+  photo: no part tint may remain in the photo. The GPU regression tests
+  also cover triangle index rotation and out-of-order readback slots.
   Synthetic events
   do not validate real LSL delivery: two human-controlled grid clients must
   check bridge 1.34 provisioning and the complete consent round trip.
@@ -5636,6 +5657,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CRASH_SEND=<options>` | Crash report sending with a simulated GitHub |
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
+| `AURORA_SPLASH=0\|1` | No startup splash, or one even with `AURORA_CAPTURE` |
+| `AURORA_DEMO_SPLASH=<step>` | The startup splash stays on that step (`shaders:23/61`, `update-cache`) in demo |
+| `AURORA_DEMO_SPLASH_HOLD=<seconds>` | The startup splash stays open at least that long in demo |
+| `AURORA_SPLASH_CAPTURE=<file.png>` | Screenshot of the startup splash as it closes |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
 | `AURORA_DEMO_UPDATE_NOTICE=1\|ready` | The notice of a new version in the world, or of one downloaded |
 | `AURORA_DEMO_GPU_DRIVER=old\|old-linux\|aged` | Out of date graphics driver warning on the login screen |
@@ -7650,6 +7675,33 @@ failure. Grid validation and any paid upload are performed by the human.
   the preview and, like every mode, publishes only once a few words are
   written in "What were you doing". A real authorization and a real issue are only tested
   by the human, outside the demo.
+- **`AURORA_SPLASH=0|1`**: the startup splash (`splash/`) is the small
+  window a launch shows before the renderer: the logo, a progress bar and
+  the step (`Starting…`, `Reading the settings…`, `Preparing the graphics
+  card…`, `Compiling shaders (n/total)…`, `Loading the interface…`). It
+  is another process of the same executable (`--splash`), drawn on the
+  CPU, and closes when the viewer's window shows its first frame. `0`:
+  none; `1`: one even in an automated capture (`AURORA_CAPTURE` has none
+  otherwise, unless `AURORA_SPLASH_CAPTURE` asks for its picture). Not
+  on macOS. The log says `startup splash: on screen <ms> after the start,
+  closed after <ms>`. To see a slow start: `AURORA_PIPELINE_CACHE=0` and
+  `__GL_SHADER_DISK_CACHE_PATH=<empty folder>` (NVIDIA, see
+  `AURORA_PIPELINE_CACHE`). An update shows the same window from the
+  updater's helper, from the old viewer's close until the new viewer's
+  splash is on screen (`Closing the previous version…`, `Installing the
+  update…`, `Clearing the cache…` when the release asks for it,
+  `Starting the new version…`, the new version under the title); `0`
+  turns it off too. To see it: `scripts/test-update.ps1 -ClearCache`,
+  then Install and restart.
+- **`AURORA_DEMO_SPLASH=starting|settings|gpu|shaders:<n>/<total>|interface|ready|update-closing|update-installing|update-cache|update-launching`**
+  and **`AURORA_DEMO_SPLASH_HOLD=<seconds>`**, with `AURORA_DEMO`: the
+  splash shows that step whatever the start does, and stays open at
+  least that many seconds after it opened (behind the viewer's window
+  once that shows). **`AURORA_SPLASH_CAPTURE=<file.png>`** writes its
+  last image as it closes. The splash alone, without a viewer behind:
+  `AURORA_DEMO=1 AURORA_DEMO_SPLASH=shaders:23/61
+  AURORA_DEMO_SPLASH_HOLD=2 AURORA_SPLASH_CAPTURE=splash-en.png
+  aurora-viewer --splash --language en < /dev/null` (Git Bash).
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: no effect
   while the built-in bug report form is disabled ("Report a bug" opens
   GitHub's issue chooser, see [BUG_REPORTING.md](BUG_REPORTING.md)); what
@@ -10771,6 +10823,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
+| `AURORA_LEGACY_GLARE=0` | Transparent legacy materials without their glare (wet and shine layers invisible), as before #3259 |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
@@ -11358,6 +11411,14 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
+- **`AURORA_LEGACY_GLARE=0`**: a transparent face with a legacy
+  material takes the alpha max(texture alpha, glare), as the Legacy
+  Viewer's `materialF.glsl`: its reflections show on its empty texels (the
+  wet and shine layers of mesh bodies, #1420). `0` turns the glare off: the
+  texture alpha only, and the empty texels discarded before the lighting,
+  as before #3259. For a tester whose card shows squares on blended leaves
+  or streaks in hair: the same place with and without it tells whether the
+  glare is the cause.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
