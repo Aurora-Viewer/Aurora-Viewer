@@ -1402,6 +1402,8 @@ pub enum NetEvent {
         item_id: Uuid,
         running: bool,
         mono: Option<bool>,
+        /// The event queue's Luau and LuauLanguage flags; `Off` when absent.
+        luau: crate::scripts::Luau,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -2269,6 +2271,9 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        /// A script (asset type 10) written in Lua ([`crate::scripts::lua_source`]):
+        /// compiled for "luau", never "mono".
+        lua: bool,
         data: Vec<u8>,
     },
     /// Create a named notecard, then upload its text after the matching
@@ -2279,6 +2284,18 @@ pub enum NetCommand {
         name: String,
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
+    },
+    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// onCreateScript): CreateInventoryItem, then its text through
+    /// UpdateScriptAgent, compiled for Mono. Answered by
+    /// `InventoryContentSaved`, with the new item's id when it was created
+    /// but its text could not be saved.
+    CreateScriptItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through
