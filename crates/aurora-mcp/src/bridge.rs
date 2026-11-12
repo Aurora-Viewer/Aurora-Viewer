@@ -64,6 +64,9 @@ pub enum RollbackAction {
         fov: f32,
     },
     ResetPoser,
+    RestoreEnvironment {
+        time_of_day: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -571,6 +574,18 @@ pub enum ViewerRequest {
     FriendsList {
         online_only: Option<bool>,
     },
+
+    // Phase 10: Environment & EEP
+    EnvironmentGet,
+    EnvironmentSetTime {
+        preset: Option<String>,
+        time_of_day: Option<f32>,
+    },
+    EnvironmentApplyPreset {
+        preset: Option<String>,
+        sky_uuid: Option<String>,
+        water_uuid: Option<String>,
+    },
 }
 
 /// Raw frame returned from the viewer/render pipeline before off-thread PNG encoding.
@@ -602,6 +617,10 @@ pub enum ViewerResponse {
         state: Value,
     },
     PoserMutated {
+        state: Value,
+    },
+    EnvironmentMutated {
+        previous_time_of_day: u8,
         state: Value,
     },
     FrameCaptured(RawCapturedFrame),
@@ -648,7 +667,8 @@ impl ViewerRequest {
             | ViewerRequest::EconomyGetBalance
             | ViewerRequest::ParcelInfoQuery
             | ViewerRequest::GroupsList
-            | ViewerRequest::FriendsList { .. } => false,
+            | ViewerRequest::FriendsList { .. }
+            | ViewerRequest::EnvironmentGet => false,
 
             ViewerRequest::LiveMeshControl { action, .. }
             | ViewerRequest::AssetUpload { action, .. } => {
@@ -706,7 +726,9 @@ impl ViewerRequest {
             | ViewerRequest::ParcelEject { .. }
             | ViewerRequest::EconomyPayAvatar { .. }
             | ViewerRequest::EconomyPayObject { .. }
-            | ViewerRequest::GroupsActivate { .. } => true,
+            | ViewerRequest::GroupsActivate { .. }
+            | ViewerRequest::EnvironmentSetTime { .. }
+            | ViewerRequest::EnvironmentApplyPreset { .. } => true,
         }
     }
 }

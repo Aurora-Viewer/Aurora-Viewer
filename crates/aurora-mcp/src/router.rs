@@ -2388,6 +2388,92 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            // ---- Phase 10: Environment & EEP Suite ----
+            "environment_get" => {
+                let resp = self
+                    .send_to_viewer(None, ViewerRequest::EnvironmentGet, 5_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+
+            "environment_set_time" => {
+                let preset = args
+                    .get("preset")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let time_of_day = args
+                    .get("time_of_day")
+                    .or_else(|| args.get("hour"))
+                    .or_else(|| args.get("time"))
+                    .and_then(Value::as_f64)
+                    .map(|f| f as f32);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::EnvironmentSetTime {
+                            preset,
+                            time_of_day,
+                        },
+                        5_000,
+                    )
+                    .await?;
+
+                if let ViewerResponse::EnvironmentMutated {
+                    previous_time_of_day,
+                    ref state,
+                } = resp
+                {
+                    self.leases.record_rollback(RollbackAction::RestoreEnvironment {
+                        time_of_day: previous_time_of_day,
+                    });
+                    return Ok(text_block(state.clone()));
+                }
+                Ok(text_block(into_json(resp)))
+            }
+
+            "environment_apply_preset" => {
+                let preset = args
+                    .get("preset")
+                    .or_else(|| args.get("name"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let sky_uuid = args
+                    .get("sky_uuid")
+                    .or_else(|| args.get("sky_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let water_uuid = args
+                    .get("water_uuid")
+                    .or_else(|| args.get("water_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::EnvironmentApplyPreset {
+                            preset,
+                            sky_uuid,
+                            water_uuid,
+                        },
+                        5_000,
+                    )
+                    .await?;
+
+                if let ViewerResponse::EnvironmentMutated {
+                    previous_time_of_day,
+                    ref state,
+                } = resp
+                {
+                    self.leases.record_rollback(RollbackAction::RestoreEnvironment {
+                        time_of_day: previous_time_of_day,
+                    });
+                    return Ok(text_block(state.clone()));
+                }
+                Ok(text_block(into_json(resp)))
+            }
+
             other => Err(McpError::InvalidParams(format!("unknown MCP tool '{other}'"))),
         }
     }
@@ -2423,6 +2509,7 @@ fn into_json(resp: ViewerResponse) -> Value {
         }),
         ViewerResponse::CameraMutated { state, .. } => state,
         ViewerResponse::PoserMutated { state } => state,
+        ViewerResponse::EnvironmentMutated { state, .. } => state,
         ViewerResponse::FrameCaptured(raw) => json!({
             "width": raw.width,
             "height": raw.height,
@@ -3949,6 +4036,40 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: true,
         },
+        ToolDefinition {
+            name: "environment_get".into(),
+            description: "Read the active environment enhancement project (EEP) lighting, sky parameters, water settings, time of day preset, sun/moon directions, and ambient light.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "environment_set_time".into(),
+            description: "Override the local time of day or sun position for cinematic captures and daytime/nighttime inspection without altering simulator time. Automatically rolls back when control lease is released.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "preset": { "type": "string", "enum": ["shared", "sunrise", "noon", "sunset", "midnight"], "description": "Named environment preset: 'shared' (region default), 'sunrise', 'noon' / 'midday', 'sunset', or 'midnight'" },
+                    "time_of_day": { "type": "number", "description": "Optional fractional hour [0.0 .. 24.0] (e.g. 12.0 for midday, 18.5 for sunset, 0.0 for midnight)" }
+                }
+            }),
+            in_compact_profile: false,
+        },
+        ToolDefinition {
+            name: "environment_apply_preset".into(),
+            description: "Apply a local environment preset, custom Sky asset UUID, or custom Water asset UUID, or reset local overrides back to the simulator/region default ('reset' or 'clear').".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "preset": { "type": "string", "description": "Preset name or command: 'reset' / 'clear' to restore region default" },
+                    "sky_uuid": { "type": "string", "description": "Optional custom Sky asset UUID" },
+                    "water_uuid": { "type": "string", "description": "Optional custom Water asset UUID" }
+                }
+            }),
+            in_compact_profile: false,
+        },
     ]
 }
 
@@ -3959,7 +4080,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 102, "expected 102 total tools (43 Legacy + 59 Aurora-native)");
+        assert_eq!(defs.len(), 105, "expected 105 total tools (43 Legacy + 62 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -4073,6 +4194,9 @@ mod tests {
             "groups_list",
             "groups_activate",
             "friends_list",
+            "environment_get",
+            "environment_set_time",
+            "environment_apply_preset",
         ] {
             assert!(
                 names.contains(&native),

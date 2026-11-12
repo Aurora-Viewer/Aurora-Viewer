@@ -195,6 +195,7 @@ pub struct McpBridge {
     lsd_stores: HashMap<Uuid, LinksetDataStore>,
     mcp_poses: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     local_mesh_auto_reload: bool,
+    pub sse_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 
 impl McpBridge {
@@ -222,16 +223,25 @@ impl McpBridge {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        if self.events_buffer.len() >= MAX_EVENTS_BUFFER {
-            self.events_buffer.pop_front();
-        }
-        self.events_buffer.push_back(json!({
+        let event_json = json!({
             "seq": self.next_event_seq,
             "timestamp_ms": ts_ms,
             "source": source,
             "type": event_type,
             "data": payload,
-        }));
+        });
+        if let Some(sse_tx) = &self.sse_tx {
+            let notification = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/message",
+                "params": event_json.clone()
+            });
+            let _ = sse_tx.send(notification.to_string());
+        }
+        if self.events_buffer.len() >= MAX_EVENTS_BUFFER {
+            self.events_buffer.pop_front();
+        }
+        self.events_buffer.push_back(event_json);
     }
 }
 
@@ -253,6 +263,7 @@ impl App {
         match spawn_server(self.net.runtime(), tx, cli.mcp_port) {
             Ok(handle) => {
                 log::info!("MCP server listening on http://{}/mcp", handle.bind_addr);
+                self.mcp_bridge.sse_tx = Some(handle.sse_tx.clone());
                 self.mcp_bridge.rx = Some(rx);
                 self.mcp_bridge.server_handle = Some(handle);
             }
@@ -1615,6 +1626,16 @@ impl App {
                             self.mcp_bridge.mcp_poses.clear();
                             restored += 1;
                         }
+                        RollbackAction::RestoreEnvironment { time_of_day } => {
+                            if time_of_day == 0 {
+                                self.world.eep.clear_local();
+                            } else {
+                                self.world.eep.set_time_of_day(time_of_day);
+                            }
+                            self.panels.time_of_day = time_of_day;
+                            self.settings.time_of_day = time_of_day;
+                            restored += 1;
+                        }
                     }
                 }
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
@@ -1993,6 +2014,22 @@ impl App {
             }
             ViewerRequest::FriendsList { online_only } => {
                 let resp = self.handle_mcp_friends_list(online_only);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::EnvironmentGet => {
+                let resp = self.handle_mcp_environment_get();
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::EnvironmentSetTime { preset, time_of_day } => {
+                let resp = self.handle_mcp_environment_set_time(preset.as_deref(), time_of_day);
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::EnvironmentApplyPreset { preset, sky_uuid, water_uuid } => {
+                let resp = self.handle_mcp_environment_apply_preset(
+                    preset.as_deref(),
+                    sky_uuid.as_deref(),
+                    water_uuid.as_deref(),
+                );
                 let _ = reply_tx.send(resp);
             }
         }
@@ -5243,6 +5280,226 @@ impl App {
             "friends": friends_vec,
         })))
     }
+
+    // ---- Phase 10: Environment / EEP Suite ----
+
+    fn handle_mcp_environment_get(&mut self) -> Result<ViewerResponse, McpError> {
+        let (sky, water) = self.world.environment_frames(&mut self.panels.time_of_day);
+        let state = environment_state_json(
+            self.panels.time_of_day,
+            self.world.eep.has_local(),
+            self.world.eep.rlva_locked,
+            &sky,
+            &water,
+        );
+        Ok(ViewerResponse::Json(state))
+    }
+
+    fn handle_mcp_environment_set_time(
+        &mut self,
+        preset_str: Option<&str>,
+        time_of_day_val: Option<f32>,
+    ) -> Result<ViewerResponse, McpError> {
+        if self.world.eep.rlva_locked {
+            return Err(McpError::InvalidParams(
+                "Environment is locked by RLVa @setenv".into(),
+            ));
+        }
+
+        let target_preset: u8 = if let Some(p) = preset_str {
+            match p.trim().to_ascii_lowercase().as_str() {
+                "shared" | "default" | "region" | "clear" | "reset" | "0" => 0,
+                "sunrise" | "dawn" | "1" => 1,
+                "midday" | "noon" | "2" => 2,
+                "sunset" | "dusk" | "3" => 3,
+                "midnight" | "night" | "4" => 4,
+                "midday_legacy" | "legacy_midday" | "5" => 5,
+                other => {
+                    return Err(McpError::InvalidParams(format!(
+                        "unknown time_of_day preset '{other}'. Valid: shared, sunrise, midday, sunset, midnight, midday_legacy"
+                    )));
+                }
+            }
+        } else if let Some(t) = time_of_day_val {
+            if t <= 0.0 {
+                0
+            } else if t <= 5.0 && t.fract() == 0.0 {
+                t as u8
+            } else if t <= 24.0 {
+                if (5.0..=8.5).contains(&t) {
+                    1
+                } else if (8.5..=15.5).contains(&t) {
+                    2
+                } else if (15.5..=20.5).contains(&t) {
+                    3
+                } else {
+                    4
+                }
+            } else {
+                return Err(McpError::InvalidParams(format!(
+                    "invalid time_of_day value: {t}. Expected preset index (0-5) or 24-hour time (0.0-24.0)"
+                )));
+            }
+        } else {
+            return Err(McpError::InvalidParams(
+                "either 'preset' string or 'time_of_day' numeric value must be provided".into(),
+            ));
+        };
+
+        let previous_time_of_day = self.panels.time_of_day;
+
+        if target_preset == 0 {
+            self.world.eep.clear_local();
+        } else {
+            self.world.eep.set_time_of_day(target_preset);
+        }
+        self.panels.time_of_day = target_preset;
+        self.settings.time_of_day = target_preset;
+
+        let (sky, water) = self.world.environment_frames(&mut self.panels.time_of_day);
+        let state = environment_state_json(
+            self.panels.time_of_day,
+            self.world.eep.has_local(),
+            self.world.eep.rlva_locked,
+            &sky,
+            &water,
+        );
+
+        Ok(ViewerResponse::EnvironmentMutated {
+            previous_time_of_day,
+            state,
+        })
+    }
+
+    fn handle_mcp_environment_apply_preset(
+        &mut self,
+        preset_str: Option<&str>,
+        sky_uuid_str: Option<&str>,
+        water_uuid_str: Option<&str>,
+    ) -> Result<ViewerResponse, McpError> {
+        use crate::world::env_select::SettingsKind;
+
+        if self.world.eep.rlva_locked {
+            return Err(McpError::InvalidParams(
+                "Environment is locked by RLVa @setenv".into(),
+            ));
+        }
+
+        let previous_time_of_day = self.panels.time_of_day;
+
+        if let Some(preset) = preset_str {
+            match preset.trim().to_ascii_lowercase().as_str() {
+                "shared" | "default" | "clear" | "reset" | "0" => {
+                    self.world.eep.clear_local();
+                    self.panels.time_of_day = 0;
+                    self.settings.time_of_day = 0;
+                }
+                "sunrise" | "dawn" | "1" => {
+                    self.world.eep.set_time_of_day(1);
+                    self.panels.time_of_day = 1;
+                    self.settings.time_of_day = 1;
+                }
+                "midday" | "noon" | "2" => {
+                    self.world.eep.set_time_of_day(2);
+                    self.panels.time_of_day = 2;
+                    self.settings.time_of_day = 2;
+                }
+                "sunset" | "dusk" | "3" => {
+                    self.world.eep.set_time_of_day(3);
+                    self.panels.time_of_day = 3;
+                    self.settings.time_of_day = 3;
+                }
+                "midnight" | "night" | "4" => {
+                    self.world.eep.set_time_of_day(4);
+                    self.panels.time_of_day = 4;
+                    self.settings.time_of_day = 4;
+                }
+                "midday_legacy" | "legacy_midday" | "5" => {
+                    self.world.eep.set_time_of_day(5);
+                    self.panels.time_of_day = 5;
+                    self.settings.time_of_day = 5;
+                }
+                other => {
+                    return Err(McpError::InvalidParams(format!(
+                        "unknown environment preset '{other}'"
+                    )));
+                }
+            }
+        }
+
+        if let Some(sky_uuid) = sky_uuid_str {
+            let sky_id = Uuid::parse_str(sky_uuid.trim())
+                .map_err(|e| McpError::InvalidParams(format!("invalid sky UUID: {e}")))?;
+            self.world.eep.request_local(sky_id, SettingsKind::Sky);
+        }
+
+        if let Some(water_uuid) = water_uuid_str {
+            let water_id = Uuid::parse_str(water_uuid.trim())
+                .map_err(|e| McpError::InvalidParams(format!("invalid water UUID: {e}")))?;
+            self.world.eep.request_local(water_id, SettingsKind::Water);
+        }
+
+        let (sky, water) = self.world.environment_frames(&mut self.panels.time_of_day);
+        let state = environment_state_json(
+            self.panels.time_of_day,
+            self.world.eep.has_local(),
+            self.world.eep.rlva_locked,
+            &sky,
+            &water,
+        );
+
+        Ok(ViewerResponse::EnvironmentMutated {
+            previous_time_of_day,
+            state,
+        })
+    }
+}
+
+fn environment_state_json(
+    time_of_day: u8,
+    has_local: bool,
+    rlva_locked: bool,
+    sky: &crate::world::eep::SkyFrame,
+    water: &crate::world::eep::WaterFrame,
+) -> Value {
+    let preset_name = match time_of_day {
+        0 => "shared",
+        1 => "sunrise",
+        2 => "midday",
+        3 => "sunset",
+        4 => "midnight",
+        5 => "midday_legacy",
+        _ => "custom",
+    };
+    json!({
+        "time_of_day_preset": time_of_day,
+        "preset_name": preset_name,
+        "has_local_override": has_local,
+        "rlva_locked": rlva_locked,
+        "sky": {
+            "sun_direction": [sky.sun_direction().x, sky.sun_direction().y, sky.sun_direction().z],
+            "moon_direction": [sky.moon_direction().x, sky.moon_direction().y, sky.moon_direction().z],
+            "sunlight": [sky.sunlight.x, sky.sunlight.y, sky.sunlight.z],
+            "ambient": [sky.ambient.x, sky.ambient.y, sky.ambient.z],
+            "blue_horizon": [sky.blue_horizon.x, sky.blue_horizon.y, sky.blue_horizon.z],
+            "blue_density": [sky.blue_density.x, sky.blue_density.y, sky.blue_density.z],
+            "haze_density": sky.haze_density,
+            "haze_horizon": sky.haze_horizon,
+            "cloud_color": [sky.cloud_color.x, sky.cloud_color.y, sky.cloud_color.z],
+            "cloud_scale": sky.cloud_scale,
+            "cloud_shadow": sky.cloud_shadow,
+            "gamma": sky.gamma,
+        },
+        "water": {
+            "fog_color": [water.fog_color.x, water.fog_color.y, water.fog_color.z],
+            "fog_density": water.fog_density,
+            "underwater_fog_mod": water.underwater_fog_mod,
+            "fresnel_scale": water.fresnel_scale,
+            "fresnel_offset": water.fresnel_offset,
+            "blur_multiplier": water.blur_multiplier,
+            "normal_scale": [water.normal_scale.x, water.normal_scale.y, water.normal_scale.z],
+        }
+    })
 }
 
 #[cfg(test)]

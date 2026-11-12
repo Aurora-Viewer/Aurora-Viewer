@@ -17,6 +17,7 @@ pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub struct McpServerHandle {
     pub bind_addr: SocketAddr,
     shutdown_tx: watch::Sender<bool>,
+    pub sse_tx: broadcast::Sender<String>,
 }
 
 impl McpServerHandle {
@@ -133,6 +134,7 @@ pub fn spawn_server(
     let router = Arc::new(McpRouter::new(bridge_tx, McpProfile::from_env()));
     let (sse_tx, _) = broadcast::channel::<String>(64);
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let server_sse_tx = sse_tx.clone();
 
     rt.spawn(async move {
         let Ok(listener) = TcpListener::from_std(std_listener) else {
@@ -153,7 +155,7 @@ pub fn spawn_server(
                         continue;
                     };
                     let router = router.clone();
-                    let sse_tx = sse_tx.clone();
+                    let sse_tx = server_sse_tx.clone();
                     let mut conn_shutdown = shutdown_rx.clone();
                     tokio::spawn(async move {
                         let _ = tokio::select! {
@@ -169,6 +171,7 @@ pub fn spawn_server(
     Ok(McpServerHandle {
         bind_addr: local_addr,
         shutdown_tx,
+        sse_tx,
     })
 }
 
