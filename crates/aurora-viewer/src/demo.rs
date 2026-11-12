@@ -5950,7 +5950,7 @@ pub fn events() -> Vec<NetEvent> {
         // AURORA_DEMO_MUSIC=<url>|1: parcel music, started by the radio toggle
         let music_url = match std::env::var("AURORA_DEMO_MUSIC").unwrap_or_default().trim() {
             "" | "0" => String::new(),
-            "1" => land::MUSIC_URL.into(),
+            "1" | "fade" => land::MUSIC_URL.into(),
             url => url.to_owned(),
         };
         // the parcel's cells: the 128 m square around the plaza (x and y
