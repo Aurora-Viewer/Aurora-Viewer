@@ -5905,10 +5905,16 @@ impl Scene {
                 .map(|m| m.w_axis.truncate())
                 .collect()
         });
+        // An animation that keys the pelvis drops a mesh pelvis override:
+        // the still reference follows the evaluation's rule.
+        let still = match self.motions.get(id) {
+            Some(controller) => controller.still_joint(rig, neutral, joint)?,
+            None => *neutral.get(joint)?,
+        };
         // A palette matrix maps the default rig's rest to the posed joint.
         let rest = rig.default_world_inv[joint].inverse().w_axis.truncate();
         let posed = world.avatar_poses.get(id)?.get(joint)?.transform_point3(rest);
-        Some(posed - *neutral.get(joint)?)
+        Some(posed - still)
     }
 
     /// Stable name tag above the avatar root, also used for click depth.

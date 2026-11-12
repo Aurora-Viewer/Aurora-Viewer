@@ -495,6 +495,11 @@ impl Default for Camera {
     }
 }
 
+/// The most an animated joint's movement may carry the body-part camera,
+/// before the intensity: animations move a joint well under this, so a
+/// larger offset is a reference mismatch, and the camera must not fly off.
+const FOLLOW_JOINT_MAX_OFFSET: f32 = 2.0;
+
 fn follow_joint_intensity_scale(percent: u16) -> f32 {
     f32::from(percent.min(500)) / 100.0
 }
@@ -2335,7 +2340,11 @@ impl Camera {
         }
         f.follow_joint_offset
             .filter(|offset| offset.is_finite())
-            .map(|offset| self.avatar.render_rotation * offset * follow_joint_intensity_scale(s.third_person_follow_intensity))
+            .map(|offset| {
+                self.avatar.render_rotation
+                    * offset.clamp_length_max(FOLLOW_JOINT_MAX_OFFSET)
+                    * follow_joint_intensity_scale(s.third_person_follow_intensity)
+            })
             .unwrap_or(Vec3::ZERO)
     }
 
@@ -3733,6 +3742,29 @@ mod tests {
         let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
         assert!(camera_after.abs_diff_eq(camera_before, 1e-5));
         assert!(focus_after.abs_diff_eq(focus_before, 1e-5));
+    }
+
+    #[test]
+    fn a_far_joint_offset_cannot_throw_the_camera_away() {
+        // The grid report on #2307: a reference mismatch of -10.7 m at 285%
+        // dropped the camera about 30 m. The applied movement is capped.
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            third_person_follow_intensity: 285,
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        input.follow_joint_offset = Some(Vec3::new(0.1, 0.4, -10.68));
+        let delta = camera.third_person_joint_delta(&settings, &input);
+        assert!(delta.length() <= FOLLOW_JOINT_MAX_OFFSET * 2.85 + 1e-4, "{delta}");
+        input.follow_joint_offset = Some(Vec3::Z * 0.2);
+        let small = camera.third_person_joint_delta(&settings, &input);
+        assert!(small.abs_diff_eq(Vec3::Z * 0.2 * 2.85, 1e-4), "a real movement is not capped");
     }
 
     fn world_at(pos: Vec3) -> World {

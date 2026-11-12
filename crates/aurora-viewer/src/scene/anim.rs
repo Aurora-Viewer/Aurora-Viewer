@@ -503,6 +503,11 @@ pub struct Controller {
     /// matrices receive it: the head, the eyes and the camera stay where the
     /// avatar stands, and the held pose comes back with the last constraint.
     constraint_pelvis: Vec3,
+    /// How far the last evaluation moved the pelvis rest from the shaped
+    /// base: `-pelvis_rest` while an animation keys the pelvis position
+    /// (that key replaces a mesh pelvis override), zero otherwise. The
+    /// body-part camera's still reference follows the same rule.
+    pelvis_reference: Vec3,
     pub name_tag_height: Option<f32>,
     /// Look-at point (LookAtPoint): from the head to the target, in the
     /// avatar's root frame; None = look forward.
@@ -883,6 +888,26 @@ impl Controller {
         self.placement.resume(d);
         self.ground_handoff.resume(d);
         self.pointing.resume(d);
+    }
+
+    /// Where `joint` stands with no animation, by the rule the last
+    /// evaluation placed the pelvis: `neutral` is the shaped base skeleton
+    /// with no animation (`Rig::world_with` at rest, as joint positions). An
+    /// animation that keys the pelvis position sets it absolutely, dropping a
+    /// mesh pelvis override (LLJointStateBlender::blendJointStates), so the
+    /// pelvis and everything under it moves by `pelvis_reference`.
+    pub fn still_joint(&self, rig: &Rig, neutral: &[Vec3], joint: usize) -> Option<Vec3> {
+        let mut under_pelvis = false;
+        let mut j = Some(joint);
+        while let Some(at) = j {
+            if at == rig.pelvis {
+                under_pelvis = true;
+                break;
+            }
+            j = rig.parent.get(at).copied().flatten();
+        }
+        let still = *neutral.get(joint)?;
+        Some(if under_pelvis { still + self.pelvis_reference } else { still })
     }
 
     /// Skeleton-space position of the head as posed last frame.
@@ -1509,6 +1534,7 @@ impl Controller {
         let pelvis_rest =
             rest_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO) - rig.local_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO);
         let pelvis_offset = self.pelvis_offset.map_or(Vec3::ZERO, |position| position - pelvis_rest);
+        self.pelvis_reference = self.pelvis_offset.map_or(Vec3::ZERO, |_| -pelvis_rest);
         let source_rotations = if added_rot.is_empty() {
             None
         } else {
@@ -2031,6 +2057,52 @@ mod tests {
         controller.evaluate(&rig, now + Duration::from_secs(4), Some(&base), &mut out);
         let pelvis = Mat4::from_cols_array_2d(&out[rig.pelvis]).w_axis.truncate();
         assert!(pelvis.abs_diff_eq(base.local_pos[rig.pelvis], 1e-6));
+    }
+
+    #[test]
+    fn a_keyed_pelvis_on_a_mesh_pelvis_override_leaves_a_still_joint_where_it_is_posed() {
+        // A mesh that moves the pelvis 10.7 m and a stand that keys the
+        // pelvis at rest: the key replaces the override, so the body-part
+        // camera's still reference must drop it too (grid report on #2307).
+        let rig = rig();
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.pelvis] += Vec3::new(0.0, 0.0, 10.7);
+        let neutral: Vec<Vec3> = rig
+            .world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale)
+            .iter()
+            .map(|m| m.w_axis.truncate())
+            .collect();
+        let mut animation = swing(&rig).anim.clone();
+        animation.looping = true;
+        animation.joints = vec![aurora_assets::JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![aurora_assets::anim::PosKey {
+                time: 0.0,
+                position: Vec3::ZERO,
+            }],
+        }];
+        let animation = Arc::new(BoundAnim::bind(animation, &rig));
+        let now = Instant::now();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let check = |controller: &Controller, out: &[[[f32; 4]; 4]], label: &str| {
+            for name in ["mHead", "mPelvis", "mFootLeft"] {
+                let joint = rig.names[name];
+                let posed = Mat4::from_cols_array_2d(&out[joint]).w_axis.truncate();
+                let still = controller.still_joint(&rig, &neutral, joint).expect("joint");
+                assert!(posed.abs_diff_eq(still, 1e-4), "{label} {name}: posed {posed}, still {still}");
+            }
+        };
+        let mut controller = Controller::for_control_avatar();
+        controller.evaluate(&rig, now, Some(&base), &mut out);
+        check(&controller, &out, "no animation keeps the override");
+        controller.sync(&[signal(Uuid::from_u128(43), 1, now)], now, |_| Some(animation.clone()));
+        controller.evaluate(&rig, now + Duration::from_millis(500), Some(&base), &mut out);
+        check(&controller, &out, "a keyed pelvis drops it");
     }
 
     fn synchronized_controller() -> Controller {
