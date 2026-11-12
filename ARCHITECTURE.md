@@ -4569,6 +4569,86 @@ IK Edit suspends automatic foot placement before capturing its frozen source.
 Cross-avatar target refresh retains terrain evaluation and advances body
 physics once from the final constrained pose, within the parallel pose jobs.
 
+## Avatar Studio
+
+Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
+`scene/avatar_studio.rs`) is a session-local dressing-room presentation,
+toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
+Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
+toggle and active indication. Left-drag orbits;
+right-drag adjusts the avatar-relative focus height without avatar-height bounds.
+Right clicks retain the native avatar and attachment context menus. The shared
+10-point right-gesture threshold separates a click from a focus-height drag;
+dragging never opens a menu on release. Attachment editing keeps native
+left-button selection/manipulator input while the build tools are open.
+Middle-button dragging translates eye and target together in the viewing
+plane, with a separate smoothed two-dimensional offset. The offset uses
+the camera's right/up axes so orbiting preserves screen composition; Reset
+clears it. Captured button releases remain owned over UI, and focus loss or
+transitions cancel the drag. Native UI and worn HUDs retain pointer ownership.
+The wheel changes distance to that focus independently of pointer position.
+Studio has no framing zoom bounds or view-plane pan radius; finite-value guards
+and a 1 mm numerical eye/target separation keep the camera valid. Reset restores
+the initial composition and retains the selected pose and lighting.
+The studio bar uses the top islands' shared glass surface and 36-point height,
+smaller mouse hints, and Pose / Lighting dropdowns. AO / In-world is the default
+pose; T-Pose and A-Pose override only our final joint palette, including worn
+attachment anchors, after the ordinary motion and physics update on the same
+parallel pose workers. Animation signals and controller clocks continue, so
+releasing the override restores the current phase. The shaped rest skeleton is
+retained, with A-Pose lowering each straight arm 45 degrees. Leaving the studio
+releases the local override.
+Each preset's final matrices are translated as one unit so the lowest foot
+joint, less the shared sole-height approximation, meets the entry floor. The
+conversion uses the actual skeleton model, including mesh pelvis offsets and
+root rotation; the stage and camera do not move. Body attachments consume the
+same grounded palette, and photo face/eye focus reads those displayed joints.
+Photo mode temporarily replaces the ordinary camera with a native camera
+seeded from the Studio view (`PhotoSession`), while the Studio scene remains
+active. Its pointer/keyboard controls, lens projection, exposure and depth of
+field take precedence and the Studio guide hides. Simulator controls retain
+the saved world camera and aim. Closing Photo mode restores that camera and
+Studio's input ownership; regional origin shifts also move the saved camera.
+Studio lighting remains the default. Current environment skips the neutral
+environment, studio lights and aurora overrides, reusing the ordinary resolved
+local/parcel/region EEP frame, its sky/water textures and live changes. It never
+changes the environment selection. The reveal radiance is independent of the
+aurora enable flag so it also works with the current environment.
+Focus height, view-plane pan and distance ease towards their targets with a frame-rate
+independent exponential response. These use a separate render camera; the agent transform and
+camera sent to the simulator retain their ordinary ownership. A circular
+podium and ocean plane use private meshes and draw records, released on
+exit or GPU cleanup. The sky lifts the login illustration's four aurora
+curtains and distant ridgelines (`ui/aurora_bg.rs`) onto sky directions in
+`common.wgsl`, using the same palette and motion. The normal water and
+material reflection paths see that sky too. It is disabled by default in
+`SkyParams`, enabled only in the studio frame, and respects reduced motion.
+The backdrop and three neutral local lights follow the inspection angle.
+The pedestal is a closed, rounded-bevel cylinder with a satin-metal PBR
+finish using the renderer's built-in neutral textures. Its supplemental CPU
+draw is included in the main view and both water captures, alongside GPU
+avatar draws; the reflected camera therefore sees the same solid occluder.
+The existing isolation visibility path selects the live avatar and its
+attachments without replacing photo choices. Terrain isolation also clears
+the separate classic/PBR terrain lists used by water reflection and refraction,
+including offscreen land. Region terrain, water and
+particles are replaced by the local stage; native windows and worn HUDs
+remain active. Camera restrictions, VR, logout and teleport close the mode.
+No simulator object, asset upload or avatar relocation is involved.
+
+`avatar_studio::Transition` delays the camera change until a fully black
+frame has been drawn, holds black on the switched frame, then uncovers it.
+The final UI shape covers scene, HUDs and windows together for 120 ms out /
+180 ms in. A separate visual age holds the avatar white through that fade
+and 80 ms beyond it, then linearly restores normal radiance over 850 ms.
+`studio_aurora[3].w` carries this temporary white amount; material alpha and
+animation clocks remain untouched, HUD shaders bypass it, and the stage's
+private records opt out with `flags[3]::STUDIO_STAGE`. Up to 96 analytically
+aged, additive GPU billboards drift outwards and fade within 1.2 seconds,
+without world emitters or asset loading. Reduced motion skips both reveal
+effects; the ordinary particle budget also bounds the burst. Teleport,
+logout, VR and camera restrictions cancel pending transitions immediately.
+
 ## Local interactive water
 
 AO quick controls (2026-10-18): `ui/ao/quick.rs` opens above the toolbar AO
