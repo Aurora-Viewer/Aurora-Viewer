@@ -90,6 +90,109 @@ impl App {
         }
     }
 
+    /// Whether our worn shape may be written to an appearance XML
+    /// (`actions::appearance_xml_export_allowed`, as the editor's button).
+    pub(super) fn worn_shape_xml_allowed(&self) -> bool {
+        crate::shape_editor::worn_shape(&self.world)
+            .and_then(|id| self.world.inventory.items.get(&id))
+            .is_some_and(|item| crate::world::inventory::actions::appearance_xml_export_allowed(item, self.world.agent_id))
+    }
+
+    /// Appearance > Export shape XML: read the worn shape's asset, then
+    /// export it (`shape_xml_menu_loaded`). `path` skips the save dialog
+    /// (`AURORA_DEMO_SHAPE_XML_MENU`).
+    pub(super) fn export_worn_shape_xml(&mut self, item: uuid::Uuid) {
+        self.export_worn_shape_xml_to(item, None);
+    }
+
+    fn export_worn_shape_xml_to(&mut self, item: uuid::Uuid, path: Option<std::path::PathBuf>) {
+        if self.shape_ui.xml_menu.busy() {
+            return;
+        }
+        let worn = crate::shape_editor::worn_shape(&self.world) == Some(item);
+        let Some(info) = self.world.inventory.items.get(&item).filter(|_| worn).cloned() else {
+            return;
+        };
+        if !self.worn_shape_xml_allowed() {
+            self.world.system_notice(
+                aurora_i18n::tr!("appearance-xml-export-refused"),
+                crate::world::notice_topics::Topic::Warning,
+            );
+            return;
+        }
+        self.shape_ui.xml_menu.loading = Some((info.id, info.asset_id));
+        self.shape_ui.xml_menu.path = path;
+        if self.demo {
+            let data = self
+                .demo_documents
+                .get(&item)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| crate::world::inventory::wearable::create(0, &info.name, self.world.agent_id));
+            self.shape_xml_menu_loaded(info.id, info.asset_id, &data);
+        } else {
+            self.send(NetCommand::PreviewInventoryItem(info));
+        }
+    }
+
+    /// The worn shape's asset for Appearance > Export shape XML. True when
+    /// it was the one asked for (a shared download may serve an editor too).
+    pub(super) fn shape_xml_menu_loaded(&mut self, item: uuid::Uuid, asset: uuid::Uuid, result: &Result<Vec<u8>, String>) -> bool {
+        if self.shape_ui.xml_menu.loading != Some((item, asset)) {
+            return false;
+        }
+        self.shape_ui.xml_menu.loading = None;
+        let path = self.shape_ui.xml_menu.path.take();
+        let failed = |world: &mut crate::world::World| {
+            world.system_notice(
+                aurora_i18n::tr!("appearance-xml-export-failed"),
+                crate::world::notice_topics::Topic::Warning,
+            );
+        };
+        // Still worn, the same asset, and still allowed.
+        let Some(info) = self
+            .world
+            .inventory
+            .items
+            .get(&item)
+            .filter(|i| i.asset_id == asset && crate::shape_editor::worn_shape(&self.world) == Some(item))
+            .cloned()
+        else {
+            failed(&mut self.world);
+            return true;
+        };
+        let wearable = match result {
+            Ok(bytes) => aurora_assets::wearable::Wearable::parse(bytes).ok().filter(|w| w.kind == 0),
+            Err(e) => {
+                log::warn!("appearance XML export: the worn shape could not be read: {e}");
+                None
+            }
+        };
+        let Some(wearable) = wearable else {
+            failed(&mut self.world);
+            return true;
+        };
+        let allowed = self.worn_shape_xml_allowed();
+        let lad = &self.world.avatar_lib.shape_params;
+        if let Err(message) = self
+            .shape_ui
+            .xml_menu
+            .job
+            .start_parts(&self.egui_ctx, &info.name, 0, &wearable.params, allowed, lad, path)
+        {
+            self.world.system_notice(message, crate::world::notice_topics::Topic::Warning);
+        }
+        true
+    }
+
+    /// The end of an Appearance > Export shape XML, as a notice.
+    pub(super) fn poll_shape_xml_menu(&mut self) {
+        if let Some((message, saved)) = self.shape_ui.xml_menu.job.poll_saved() {
+            use crate::world::notice_topics::Topic;
+            self.world.system_notice(message, if saved { Topic::Items } else { Topic::Warning });
+        }
+    }
+
     pub(super) fn focus_shape_category(&mut self) {
         self.sync_appearance_camera();
         if !self.settings.appearance_camera_movement {
@@ -247,6 +350,28 @@ impl App {
             && let Some(draft) = &self.shape_ui.draft
         {
             self.shape_ui.xml.start_file(&self.egui_ctx, draft, path.into());
+        }
+        // AURORA_DEMO_SHAPE_XML_MENU=<file>: Appearance > Export shape XML
+        // of our avatar's menu without its dialog, under the same rule.
+        if let Ok(path) = std::env::var("AURORA_DEMO_SHAPE_XML_MENU")
+            && let Some(item) = crate::shape_editor::worn_shape(&self.world)
+        {
+            self.export_worn_shape_xml_to(item, Some(path.into()));
+        }
+        // AURORA_DEMO_SHAPE_XML_EXPORT=<file>: the Export button's path without
+        // its dialog, under the same permission rule (`readonly` refuses it).
+        if let Ok(path) = std::env::var("AURORA_DEMO_SHAPE_XML_EXPORT")
+            && let Some(draft) = &self.shape_ui.draft
+        {
+            let allowed = draft.can_export_xml(&self.world);
+            let lad = &self.world.avatar_lib.shape_params;
+            if let Err(message) = self
+                .shape_ui
+                .xml_export
+                .start_file(&self.egui_ctx, draft, allowed, lad, path.into())
+            {
+                self.shape_ui.message = message;
+            }
         }
         self.focus_shape_category();
         if mode == "mesh-drag" {
