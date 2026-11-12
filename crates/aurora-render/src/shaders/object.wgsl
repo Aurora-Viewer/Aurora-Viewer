@@ -1536,6 +1536,12 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
+    // Studio isolation leaves the live avatar and attachments in this pass.
+    // Blend the final radiance, preserving material alpha/cutouts and never
+    // editing their records. HUDs use fs_hud and scenery carries its own bit.
+    let white = select(0.0, clamp(frame.studio_aurora[3].w, 0.0, 1.0),
+        frame.studio_aurora[3].w > 0.0 && (rec.flags.w & FLAG_STUDIO_STAGE) == 0u);
+    col = mix(col, vec3<f32>(1.0), white);
     // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
     // the vertex alpha being the face color's (a fullbright face takes the
     // other branch and has no glare, as emissive_brightness 1 there)
@@ -1550,6 +1556,8 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
         s.roughness = 1.0;
     }
+    s.roughness = mix(s.roughness, 1.0, white);
+    s.metallic *= 1.0 - white;
     return s;
 }
 
@@ -1818,6 +1826,152 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
         if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
     }
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
+// The poser's hovered part on the subject's skinned faces (Aurora's own):
+// each vertex's share of skinning weight on the part's palette joints
+// (`frame.part_joints`), graded across the mesh where the weights turn from
+// one part to the next. The position is vs_main's, so the depth test
+// against the scene matches.
+struct PoserPartOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) part: f32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+};
+
+// The diffuse coordinates as vs_main gives them, texture animation included,
+// for the part's alpha test.
+fn poser_part_uv(rec: DrawRecord, in: VsIn) -> vec2<f32> {
+    var st = face_st(in, rec);
+    let animated = has_tex_anim(rec);
+    if (animated) {
+        st = tex_anim_st(st, rec, frame.anim_clock.zw);
+    }
+    if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
+        return vec2<f32>(st.x, 1.0 - st.y);
+    }
+    return te_uv(st, rec);
+}
+
+// What of a face the part shows and picks: an alpha-masked face as it is
+// cut out; a blended one where it can be seen (a hair card's or a fishnet's
+// clear texels are not the avatar); others whole.
+const POSER_PART_BLEND_ALPHA: f32 = 0.1;
+fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>, front: bool) -> bool {
+    // Match the colour/depth passes: only double-sided materials show backs.
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { return false; }
+    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+    let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
+    if (!masked && !blended) {
+        return true;
+    }
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (masked && rec.base_color.a >= 0.004 && alpha < rec.params.w) {
+        return false;
+    }
+    return !(blended && alpha < POSER_PART_BLEND_ALPHA);
+}
+
+fn in_poser_part(joint: u32) -> bool {
+    let word = frame.part_joints[(joint >> 7u) & 1u][(joint >> 5u) & 3u];
+    return joint < 256u && ((word >> (joint & 31u)) & 1u) != 0u;
+}
+
+@vertex
+fn vs_part_mask(in: VsIn) -> PoserPartOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPartOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.part = 0.0;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let w = in.weights;
+        var share = 0.0;
+        for (var k = 0u; k < 4u; k++) {
+            if (w[k] > 0.0 && in_poser_part(skin_binds[rec.flags.z + in.joints[k]].joint.x)) {
+                share += w[k];
+            }
+        }
+        out.part = share / max(w.x + w.y + w.z + w.w, 1e-4);
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    // the part's share, eased so the tint fades where the weights pass to
+    // the next part (Overlay::new_part); green: the subject is here
+    return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
+}
+
+// The pick interpolates each part's summed skinning weights, as the mask
+// interpolates its share. A flat joint ID makes the first vertex decide
+// for the entire triangle and changes when a mesh reorders its indices.
+struct PoserPickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) parts_lo: vec4<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+    @location(4) parts_hi: vec4<f32>,
+};
+
+fn poser_pick_class(joint: u32) -> u32 {
+    if (joint >= 256u) { return 0u; }
+    let word = joint >> 3u;
+    return (frame.part_classes[word >> 2u][word & 3u] >> ((joint & 7u) * 4u)) & 15u;
+}
+
+@vertex
+fn vs_part_pick(in: VsIn) -> PoserPickOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPickOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.parts_lo = vec4<f32>(0.0);
+    out.parts_hi = vec4<f32>(0.0);
+    let total = dot(in.weights, vec4<f32>(1.0));
+    if ((rec.flags.x & FLAG_SKINNED) != 0u && total > 1e-4) {
+        for (var k = 0u; k < 4u; k++) {
+            if (in.weights[k] <= 0.0) { continue; }
+            let part_id = poser_pick_class(skin_binds[rec.flags.z + in.joints[k]].joint.x);
+            let part = select(0u, part_id, part_id <= 6u);
+            let weight = in.weights[k] / total;
+            // FXC cannot address a dynamic component of an output struct's
+            // vector. Whole-vector additions keep the same per-part sums.
+            out.parts_lo += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(0u, 1u, 2u, 3u));
+            out.parts_hi += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(4u, 5u, 6u, 7u));
+        }
+    } else {
+        // Unrigged accessories still win depth and occlude the body.
+        out.parts_lo.x = 1.0;
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_pick(in: PoserPickOut, @builtin(front_facing) front: bool) -> @location(0) vec4<u32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    var best = 0u;
+    var weight = in.parts_lo.x;
+    for (var part = 1u; part <= 6u; part++) {
+        var share = 0.0;
+        if (part < 4u) { share = in.parts_lo[part]; }
+        else { share = in.parts_hi[part - 4u]; }
+        if (share > weight) { best = part; weight = share; }
+    }
+    return vec4<u32>(best, 0u, 0u, 0u);
 }
 
 // Glow suppression of a face LL draws in its alpha pool: the glow under it

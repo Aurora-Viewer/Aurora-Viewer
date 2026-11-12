@@ -194,6 +194,8 @@ impl DemoSim {
                 demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
                 demo_item(id, 2, aurora_i18n::tr!("build-demo-sim-instructions"), 7, 7),
                 demo_item(id, 3, aurora_i18n::tr!("build-demo-sim-light-wood"), 0, 0),
+                // an object to drag out onto the land (rez from contents)
+                demo_item(id, 4, aurora_i18n::tr!("build-demo-sim-chair"), 6, 6),
             ];
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("contents-move-plain,")) {
                 items.retain(|i| i.asset_type != 10);
@@ -682,6 +684,7 @@ impl DemoSim {
                     item_id: *item_id,
                     running,
                     mono: Some(mono),
+                    luau: aurora_net::scripts::Luau::Off,
                 }]
             }
             // the hover tips' parcel under the pointer

@@ -58,6 +58,7 @@ pub mod throttle;
 pub mod trans;
 pub mod transition;
 pub mod types;
+pub mod url_floater;
 pub mod user_info;
 pub mod viewer_stats;
 pub mod voice_moderation;

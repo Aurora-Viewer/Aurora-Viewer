@@ -377,6 +377,7 @@ mod tests {
             login,
             sims: [(address, sim)].into(),
             main: Some(address),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
