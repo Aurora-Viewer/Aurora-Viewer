@@ -1068,7 +1068,10 @@ pub fn request_tree(inv: &mut Inventory, root: Uuid) -> bool {
         if f.state != FetchState::Fetched {
             complete = false;
         }
-        if f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
+        if !inv.too_big.contains(&id)
+            && matches!(f.state, FetchState::Unknown | FetchState::Failed)
+            && requests.len() + inv.queue.len() < 16
+        {
             requests.push(id);
         }
         todo.extend(f.children.iter().copied());

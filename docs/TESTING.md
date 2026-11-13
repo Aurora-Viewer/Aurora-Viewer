@@ -5919,6 +5919,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -10446,10 +10447,23 @@ separate searches enabled and disabled; that preference controls only the text.
   `toggle=<s>` (opens and closes the window every `s` seconds, to compare
   closed and open in one run; each change is logged as
   `demo inventory window open=…`), `churn=<ms>` (one item changes every
-  `ms` milliseconds, like the server's inventory updates) and `replace`
+  `ms` milliseconds, like the server's inventory updates), `replace`
   (opens Replace links on the first object, which a link of every fifty
   items points to: with `big:300000`, about 120,000 objects to choose
-  from; the frame rate must stay that of the window closed). With
+  from; the frame rate must stay that of the window closed) and `fetch`
+  (load through a simulated AIS server instead of seeding the folders
+  ready: the live inventory starts at 0 and the background walk loads it;
+  every reply over 20,000 folders and items is refused like the server's
+  too-big answer, then the normal fallbacks apply). With `fetch`,
+  `AURORA_DEMO_INVENTORY_FAULT=transient[=<n>]` fails the first `n` tree
+  reads (default 1, recovered by the 15 s background retry),
+  `too-big` makes the unsorted 2,000-object folder over the limit (the
+  alert "Your inventory is experiencing issues (status 403). Please
+  contact support.", its direct items stay missing, its subfolders still
+  load) and `limit=<n>` changes the simulated reply budget. Example:
+  `AURORA_DEMO_INVENTORY=big:480000,fetch` loads 480,015 objects in about
+  100 s, the last `1 folders left` being the Marketplace listings the walk
+  leaves to its window. With
   `AURORA_PROFILE=1` and `AURORA_FPS_LIMIT=120`, read `u_inventory`: in the
   dev build, the window open costs about 0.4 ms per frame (12.9 ms before
   only the rows in sight were laid out) and no slow frame when it opens; an

@@ -795,6 +795,10 @@ inventory-count-tooltip = Objets : { $items }
     Dossiers : { $folders }
 inventory-syncing = Synchronisation…
 inventory-synced = Synchronisé
+inventory-sync-incomplete = Certains dossiers n’ont pas pu être chargés
+inventory-limit-title = L’inventaire n’a pas pu être entièrement chargé
+inventory-limit-body = Votre inventaire rencontre des problèmes. Veuillez contacter le support.
+inventory-limit-body-status = Votre inventaire rencontre des problèmes (statut { $status }). Veuillez contacter le support.
 inventory-tab-all = Tout
 inventory-tab-recent = Récents
 inventory-tab-worn = Portés

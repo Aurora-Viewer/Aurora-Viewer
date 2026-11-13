@@ -3388,7 +3388,12 @@ impl Session<'_> {
                         }
                         Err(error) => {
                             log::warn!("inventory fetch failed: {error}");
-                            let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                            let too_big = error.kind == crate::inventory::ais::FetchFailure::TooBig;
+                            let _ = events.send(NetEvent::InventoryFetchFailed {
+                                folders: chunk.to_vec(),
+                                too_big,
+                                status: error.status,
+                            });
                         }
                     }
                 }
@@ -3405,7 +3410,14 @@ impl Session<'_> {
             .and_then(|a| self.sims.get(&a))
             .and_then(|s| s.caps.get(cap_name).cloned());
         let Some(url) = url else {
-            emit(self.sh, NetEvent::InventoryFetchFailed { folders });
+            emit(
+                self.sh,
+                NetEvent::InventoryFetchFailed {
+                    folders,
+                    too_big: false,
+                    status: None,
+                },
+            );
             return;
         };
         let http = self.sh.caps_http.clone();
@@ -3420,7 +3432,15 @@ impl Session<'_> {
                     }
                     Err(e) => {
                         log::warn!("inventory fetch failed: {e}");
-                        let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                        let status = match &e {
+                            caps::CapsError::Status(status) => Some(*status),
+                            _ => None,
+                        };
+                        let _ = events.send(NetEvent::InventoryFetchFailed {
+                            folders: chunk.to_vec(),
+                            too_big: status == Some(403),
+                            status,
+                        });
                     }
                 }
             }
@@ -3448,6 +3468,7 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
+            let count = if children.is_empty() { 1 } else { children.len() };
             let result = if let Some(cap) = ais {
                 crate::inventory::ais::fetch_tree(&http, &cap, owner, parent, &children, depth).await
             } else if let Some(url) = legacy {
@@ -3456,17 +3477,17 @@ impl Session<'_> {
                 caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory)
                     .await
                     .map(|v| crate::inventory::parse_fetch_response(&v))
-                    .map_err(|_| "inventory read failed")
+                    .map_err(crate::inventory::ais::FetchError::from)
             } else {
-                Err("no inventory capability")
+                Err(crate::inventory::ais::FetchError::new(
+                    crate::inventory::ais::FetchFailure::Fatal,
+                    None,
+                ))
             };
             if let Err(error) = result {
-                log::debug!("background inventory fetch of {parent} failed: {error}");
+                log::warn!("background inventory fetch of {parent} failed ({count} folders, depth {depth}): {error}");
             }
-            let _ = events.send(NetEvent::InventoryTreeFetched {
-                request,
-                result: result.map_err(str::to_owned),
-            });
+            let _ = events.send(NetEvent::InventoryTreeFetched { request, result });
         });
     }
 

@@ -1514,6 +1514,11 @@ impl World {
     }
 
     fn inventory_cache_path(&self) -> Option<std::path::PathBuf> {
+        // The fetch demo starts cold on purpose: a cache from an earlier run
+        // would restore the folders and the walk would have nothing to load.
+        if std::env::var_os("AURORA_DEMO").is_some() && inventory::demo::big().is_some_and(|big| big.fetch) {
+            return None;
+        }
         let dir = self.cache_dir.as_ref()?;
         (!self.agent_id.is_nil()).then(|| crate::cache::path(dir, "inventory", &self.agent_id, "inv"))
     }
@@ -2128,6 +2133,25 @@ impl World {
             parcel = entry.parcel_name.clone()
         );
         self.system_message(text.to_string());
+    }
+
+    /// The Legacy Viewer's InventoryLimitReachedAIS alert, once per session.
+    fn announce_inventory_limit(&mut self) {
+        let (folders, status) = self.inventory_background.take_too_big();
+        if folders.is_empty() {
+            return;
+        }
+        let body = match status {
+            Some(status) => aurora_i18n::tr!("inventory-limit-body-status", status = status.to_string()),
+            None => aurora_i18n::tr!("inventory-limit-body").to_string(),
+        };
+        log::warn!("inventory limit alert: {body}");
+        self.notifications.push(
+            notifications::Kind::Alert,
+            aurora_i18n::tr!("inventory-limit-title"),
+            body,
+            notifications::Data::None,
+        );
     }
 
     pub fn system_message(&mut self, text: impl Into<String>) {
@@ -4209,22 +4233,31 @@ impl World {
                 None
             }
             NetEvent::InventoryTreeFetched { request, result } => {
-                if let Ok(contents) = result {
-                    self.inventory.apply(contents);
-                }
-                self.inventory_background.on_reply(&mut self.inventory, request);
+                let (stale, outcome) = match result {
+                    Ok(contents) => (self.inventory.apply(contents), Ok(())),
+                    Err(error) => (Vec::new(), Err(error)),
+                };
+                self.inventory_background.on_reply(&mut self.inventory, request, &stale, outcome);
+                self.announce_inventory_limit();
                 None
             }
-            NetEvent::InventoryFetchFailed { folders } => {
+            NetEvent::InventoryFetchFailed { folders, too_big, status } => {
                 self.inventory.failed(&folders);
-                // BGFolderHttpHandler::processFailure puts a failed folder
-                // back in the queue. A fetch sent on the capabilities of the
-                // region just left fails once the agent is in the next one:
-                // asked again once per change of region, then on the new
-                // region's capabilities (`retry_failed`)
-                for id in folders {
-                    if self.inventory_retried.insert(id) {
-                        self.inventory.request(id);
+                if too_big {
+                    // A folder the server refuses even alone: record it and
+                    // stop asking for it (search and refresh skip it too).
+                    self.inventory_background.note_too_big(&mut self.inventory, &folders, status);
+                    self.announce_inventory_limit();
+                } else {
+                    // BGFolderHttpHandler::processFailure puts a failed folder
+                    // back in the queue. A fetch sent on the capabilities of
+                    // the region just left fails once the agent is in the
+                    // next one: asked again once per change of region, then
+                    // on the new region's capabilities (`retry_failed`)
+                    for id in folders {
+                        if self.inventory_retried.insert(id) {
+                            self.inventory.request(id);
+                        }
                     }
                 }
                 None
@@ -8955,11 +8988,19 @@ mod motion_tests {
         world.inventory.queue.clear();
         world.apply(NetEvent::MainRegionChanged { handle: there });
         // sent on the capabilities of the region left: asked again once
-        world.apply(NetEvent::InventoryFetchFailed { folders: vec![cof] });
+        world.apply(NetEvent::InventoryFetchFailed {
+            folders: vec![cof],
+            too_big: false,
+            status: None,
+        });
         assert_eq!(world.inventory.queue, vec![(cof, false)]);
         world.inventory.queue.clear();
         // the region entered has no capabilities yet: it waits for them
-        world.apply(NetEvent::InventoryFetchFailed { folders: vec![cof] });
+        world.apply(NetEvent::InventoryFetchFailed {
+            folders: vec![cof],
+            too_big: false,
+            status: None,
+        });
         assert!(world.inventory.queue.is_empty());
         assert_eq!(world.inventory.folders[&cof].state, FetchState::Failed);
         // a neighbour's capabilities change nothing

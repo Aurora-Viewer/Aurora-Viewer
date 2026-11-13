@@ -17,7 +17,7 @@
 
 use super::{FetchState, Inventory};
 use aurora_net::NetCommand;
-use aurora_net::inventory::ais::MAX_FOLDER_DEPTH;
+use aurora_net::inventory::ais::{FetchError, FetchFailure, MAX_FOLDER_DEPTH};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use uuid::Uuid;
@@ -34,6 +34,15 @@ const LEGACY_IN_FLIGHT: usize = 12;
 const MARKETPLACE_LISTINGS: i32 = 53;
 /// Queue entries looked at per frame (bulkFetch stops after 6 ms).
 const STEPS_PER_FRAME: usize = 512;
+/// Reads the HTTP layer's own retries (ais.rs) left failed are asked again
+/// later, so a throttled or briefly unavailable AIS server does not end the
+/// walk with folders missing.
+const BACKGROUND_RETRIES: u32 = 3;
+const BACKGROUND_BACKOFF: [std::time::Duration; 3] = [
+    std::time::Duration::from_secs(15),
+    std::time::Duration::from_secs(60),
+    std::time::Duration::from_secs(300),
+];
 
 /// LLInventoryModelBackgroundFetch::EFetchType.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +60,18 @@ struct Request {
     folder: Uuid,
     /// The batch of a subset read; empty when `folder` itself was read.
     children: Vec<Uuid>,
+    depth: i32,
+    attempt: u32,
+}
+
+/// A read waiting for its next attempt after a transient failure.
+struct Retry {
+    due: Instant,
+    kind: Kind,
+    folder: Uuid,
+    children: Vec<Uuid>,
+    depth: i32,
+    attempt: u32,
 }
 
 #[derive(Default)]
@@ -75,6 +96,15 @@ pub struct BackgroundFetch {
     /// The folders of each tree's next legacy read, sent when full or at the
     /// end of the frame.
     legacy_batch: [Vec<Uuid>; 2],
+    /// Reads waiting for their next attempt (a transient failure).
+    retries: Vec<Retry>,
+    /// The too-big folders not announced to the user yet.
+    too_big_new: Vec<Uuid>,
+    /// The first too-big folder has been announced (the Legacy Viewer's
+    /// InventoryLimitReachedAISAlert is shown once).
+    too_big_announced: bool,
+    /// The HTTP status of the refusal that found the first over-limit folder.
+    too_big_status: Option<u16>,
 }
 
 impl BackgroundFetch {
@@ -111,12 +141,41 @@ impl BackgroundFetch {
     }
 
     pub fn is_idle(&self) -> bool {
-        self.queue.is_empty() && self.in_flight.is_empty() && self.orphans_pending.is_none()
+        self.queue.is_empty() && self.in_flight.is_empty() && self.orphans_pending.is_none() && self.retries.is_empty()
+    }
+
+    /// The folders the server refuses even at depth 0, not announced yet,
+    /// and the HTTP status of the refusal.
+    pub fn take_too_big(&mut self) -> (Vec<Uuid>, Option<u16>) {
+        (std::mem::take(&mut self.too_big_new), self.too_big_status.take())
+    }
+
+    /// Record folders the server refuses even at depth 0 (from the background
+    /// walk or a folder the user opened) and announce the first one once.
+    pub fn note_too_big(&mut self, inv: &mut Inventory, folders: &[Uuid], status: Option<u16>) {
+        if self.too_big_status.is_none() {
+            self.too_big_status = status;
+        }
+        for &id in folders {
+            if inv.too_big.insert(id) {
+                log::warn!("inventory folder {id} is over the server's limit; its direct items cannot be loaded");
+            }
+        }
+        if !self.too_big_announced && !folders.is_empty() {
+            self.too_big_announced = true;
+            self.too_big_new.extend(folders);
+        }
     }
 
     /// LLInventoryModelBackgroundFetch::bulkFetchViaAis: the reads to send
     /// this frame, never more than [`MAX_IN_FLIGHT`] at once.
     pub fn pump(&mut self, inv: &mut Inventory, agent: Uuid) -> Vec<NetCommand> {
+        self.pump_at(inv, agent, Instant::now())
+    }
+
+    /// [`pump`] with the clock given (the tests drive the retries without
+    /// waiting for the real backoff).
+    pub fn pump_at(&mut self, inv: &mut Inventory, agent: Uuid, now: Instant) -> Vec<NetCommand> {
         let mut out = Vec::new();
         // llstartup::STATE_INVENTORY_SEND calls findLostItems once per
         // session, including when the regular folders came from cache.
@@ -129,6 +188,27 @@ impl BackgroundFetch {
             out.push(NetCommand::FetchInventoryOrphans { request });
         }
         let max = if self.legacy[0] { LEGACY_IN_FLIGHT } else { MAX_IN_FLIGHT };
+        // Reads that failed transiently come back before new ones: they are
+        // already known to the model.
+        let mut retries = std::mem::take(&mut self.retries);
+        let mut waiting = Vec::new();
+        for retry in retries.drain(..) {
+            if retry.due > now || self.in_flight.len() + usize::from(self.orphans_pending.is_some()) >= max {
+                waiting.push(retry);
+            } else {
+                self.send(
+                    inv,
+                    agent,
+                    retry.kind,
+                    retry.folder,
+                    retry.children,
+                    retry.depth,
+                    &mut out,
+                    retry.attempt,
+                );
+            }
+        }
+        self.retries = waiting;
         let mut steps = 0;
         while self.in_flight.len() + usize::from(self.orphans_pending.is_some()) < max && steps < STEPS_PER_FRAME {
             let Some((id, kind)) = self.queue.pop_front() else {
@@ -141,15 +221,26 @@ impl BackgroundFetch {
             self.send_legacy(inv, agent, library, &mut out);
         }
         self.queue.extend(self.waiting.drain(..));
+        if !self.is_idle() && self.busy.is_some() {
+            log::debug!(
+                "DIAG not idle: queue={} in_flight={} retries={} waiting={} orphans={:?}",
+                self.queue.len(),
+                self.in_flight.len(),
+                self.retries.len(),
+                self.waiting.len(),
+                self.orphans_pending
+            );
+        }
         if self.is_idle()
             && let Some((since, requests)) = self.busy.take()
         {
             let unfetched = inv.folders.values().filter(|f| f.state != FetchState::Fetched).count();
             log::info!(
-                "inventory background fetch: {} folders and {} items in {:.1} s ({requests} requests, {unfetched} folders left)",
+                "inventory background fetch: {} folders and {} items in {:.1} s ({requests} requests, {unfetched} folders left, {} over the server's limit)",
                 inv.folders.len() - unfetched,
                 inv.items.len(),
-                since.elapsed().as_secs_f32()
+                since.elapsed().as_secs_f32(),
+                inv.too_big.len()
             );
         }
         out
@@ -168,6 +259,11 @@ impl BackgroundFetch {
         let Some(folder) = inv.folders.get(&id) else {
             return;
         };
+        // A folder over the server's limit is not read again, but its known
+        // subfolders are still walked.
+        if inv.too_big.contains(&id) && kind != Kind::ContentRecursive {
+            return;
+        }
         if self.legacy[usize::from(folder.library)] {
             return self.step_legacy(inv, agent, id, kind, out);
         }
@@ -175,7 +271,7 @@ impl BackgroundFetch {
             Kind::Recursive | Kind::FolderAndContent => match folder.state {
                 FetchState::Unknown | FetchState::Failed => {
                     let depth = if kind == Kind::Recursive { MAX_FOLDER_DEPTH } else { 0 };
-                    self.send(inv, agent, kind, id, Vec::new(), depth, out);
+                    self.send(inv, agent, kind, id, Vec::new(), depth, out, 0);
                 }
                 FetchState::Fetching if self.pending.contains(&id) => {}
                 // asked for by the user: walked once it has arrived
@@ -209,7 +305,7 @@ impl BackgroundFetch {
                     }
                 }
                 if !batch.is_empty() {
-                    self.send(inv, agent, kind, id, batch, MAX_FOLDER_DEPTH, out);
+                    self.send(inv, agent, kind, id, batch, MAX_FOLDER_DEPTH, out, 0);
                 }
                 if done {
                     self.queue.extend(later.into_iter().map(|child| (child, Kind::Recursive)));
@@ -229,7 +325,7 @@ impl BackgroundFetch {
         let Some(folder) = inv.folders.get(&id) else {
             return;
         };
-        if folder.info.type_default == MARKETPLACE_LISTINGS {
+        if (inv.too_big.contains(&id) && kind != Kind::ContentRecursive) || folder.info.type_default == MARKETPLACE_LISTINGS {
             return;
         }
         let library = usize::from(folder.library);
@@ -240,7 +336,7 @@ impl BackgroundFetch {
             }
             (_, FetchState::Fetching) if self.pending.contains(&id) => {}
             (_, FetchState::Fetching) => self.waiting.push((id, kind)),
-            (Kind::FolderAndContent, _) => self.send(inv, agent, kind, id, Vec::new(), 0, out),
+            (Kind::FolderAndContent, _) => self.send(inv, agent, kind, id, Vec::new(), 0, out, 0),
             (Kind::Recursive, _) => {
                 if !self.legacy_batch[library].contains(&id) {
                     self.legacy_batch[library].push(id);
@@ -259,7 +355,7 @@ impl BackgroundFetch {
         let Some(&first) = batch.first() else {
             return;
         };
-        self.send(inv, agent, Kind::Recursive, first, batch, 0, out);
+        self.send(inv, agent, Kind::Recursive, first, batch, 0, out, 0);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -272,6 +368,7 @@ impl BackgroundFetch {
         children: Vec<Uuid>,
         depth: i32,
         out: &mut Vec<NetCommand>,
+        attempt: u32,
     ) {
         let library = inv.folders.get(&folder).is_some_and(|f| f.library);
         let targets = if children.is_empty() {
@@ -299,19 +396,101 @@ impl BackgroundFetch {
             owner: if library { inv.lib_owner } else { agent },
             library,
         });
-        self.in_flight.insert(request, Request { kind, folder, children });
+        self.in_flight.insert(
+            request,
+            Request {
+                kind,
+                folder,
+                children,
+                depth,
+                attempt,
+            },
+        );
         self.busy.get_or_insert_with(|| (Instant::now(), 0)).1 += 1;
     }
 
     /// onAISFolderCalback / onAISContentCalback, once the reply's snapshots
-    /// are applied. A requested folder the reply did not bring failed.
-    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64) {
-        let Some(Request { kind, folder, children }) = self.in_flight.remove(&request) else {
+    /// are applied. `stale` are the folders `Inventory::apply` queued again;
+    /// `outcome` is why the read failed, when it did.
+    pub fn on_reply(&mut self, inv: &mut Inventory, request: u64, stale: &[Uuid], outcome: Result<(), FetchError>) {
+        self.on_reply_at(inv, request, stale, outcome, Instant::now())
+    }
+
+    /// [`on_reply`] with the clock given (the tests drive the retries).
+    pub fn on_reply_at(&mut self, inv: &mut Inventory, request: u64, stale: &[Uuid], outcome: Result<(), FetchError>, now: Instant) {
+        let Some(Request {
+            kind,
+            folder,
+            children,
+            depth,
+            attempt,
+        }) = self.in_flight.remove(&request)
+        else {
             return;
         };
-        let targets = if children.is_empty() { vec![folder] } else { children };
+        let single = children.is_empty();
+        let targets = if single { vec![folder] } else { children.clone() };
+        if let Err(error) = &outcome {
+            log::debug!(
+                "DIAG reply {request}: {kind:?} {folder} single={single} targets={} err={error}",
+                targets.len()
+            );
+        }
+        if let Err(error) = outcome {
+            // A throttled or briefly unavailable server: ask again later
+            // instead of ending the walk with this folder missing. The HTTP
+            // layer already retried a few times (ais.rs).
+            if error.kind == FetchFailure::Transient && attempt < BACKGROUND_RETRIES {
+                for id in &targets {
+                    self.pending.remove(id);
+                    if let Some(f) = inv.folders.get_mut(id)
+                        && f.state == FetchState::Fetching
+                    {
+                        f.state = FetchState::Unknown;
+                    }
+                }
+                let delay = BACKGROUND_BACKOFF[attempt.min(BACKGROUND_BACKOFF.len() as u32 - 1) as usize];
+                log::debug!(
+                    "background inventory read of {folder} failed transiently; retry {} in {delay:?}",
+                    attempt + 1
+                );
+                self.retries.push(Retry {
+                    due: now + delay,
+                    kind,
+                    folder,
+                    children,
+                    depth,
+                    attempt: attempt + 1,
+                });
+                return;
+            }
+            // A folder the server refuses even at depth 0 is over its reply
+            // limit (the Legacy Viewer's InventoryLimitReachedAIS): record it,
+            // announce it once, and still walk its subfolders.
+            if error.kind == FetchFailure::TooBig && kind == Kind::FolderAndContent && single {
+                log::warn!("inventory folder {folder} is over the server's limit; its direct items cannot be loaded");
+                inv.too_big.insert(folder);
+                if !self.too_big_announced {
+                    self.too_big_announced = true;
+                    self.too_big_new.push(folder);
+                }
+                for id in &targets {
+                    self.pending.remove(id);
+                }
+                if let Some(f) = inv.folders.get_mut(&folder) {
+                    f.state = FetchState::Failed;
+                }
+                self.queue.push_back((folder, Kind::ContentRecursive));
+                return;
+            }
+        }
         for id in targets {
             self.pending.remove(&id);
+            // Inventory::apply queued this stale folder again; it is being
+            // read by the user path, so this reply must not fail it.
+            if stale.contains(&id) {
+                continue;
+            }
             let Some(state) = inv.folders.get(&id).map(|f| f.state) else {
                 continue;
             };

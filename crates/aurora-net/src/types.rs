@@ -1361,10 +1361,14 @@ pub enum NetEvent {
     /// brought, parents first, or why the read failed.
     InventoryTreeFetched {
         request: u64,
-        result: Result<Vec<crate::inventory::FolderContents>, String>,
+        result: Result<Vec<crate::inventory::FolderContents>, crate::inventory::ais::FetchError>,
     },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
+        /// The server refuses these folders even alone: over its reply limit.
+        too_big: bool,
+        /// The HTTP status the refusal carried, when one was read.
+        status: Option<u16>,
     },
     /// Items fetched by id (FetchInventory2).
     InventoryItems(Vec<crate::inventory::InvItem>),

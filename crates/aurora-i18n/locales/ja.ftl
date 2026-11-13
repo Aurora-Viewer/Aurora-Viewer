@@ -789,6 +789,10 @@ inventory-count-tooltip = アイテム：{ $items }
     フォルダ：{ $folders }
 inventory-syncing = 同期しています…
 inventory-synced = 同期済み
+inventory-sync-incomplete = 一部のフォルダーを読み込めませんでした
+inventory-limit-title = インベントリを完全に読み込めませんでした
+inventory-limit-body = インベントリで問題が発生しています。サポートにお問い合わせください。
+inventory-limit-body-status = インベントリで問題が発生しています（ステータス { $status }）。サポートにお問い合わせください。
 inventory-tab-all = すべて
 inventory-tab-recent = 最新
 inventory-tab-worn = 着用中

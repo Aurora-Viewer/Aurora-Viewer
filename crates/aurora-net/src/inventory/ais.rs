@@ -128,6 +128,88 @@ fn parse_folder(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<FolderContents, &'s
 /// The server caps deeper requests and refuses a reply that would be too big.
 pub const MAX_FOLDER_DEPTH: i32 = 50;
 
+/// Retries after the first attempt, like Firestorm's `llcorehttp` default
+/// (`HTTP_RETRY_COUNT_DEFAULT`, 5, with a 1 to 5 s backoff).
+const RETRY_ATTEMPTS: u32 = 5;
+const RETRY_BACKOFF_MIN: std::time::Duration = std::time::Duration::from_secs(1);
+const RETRY_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_secs(5);
+/// A stalled reply becomes a retriable error instead of hanging the walk.
+/// The Legacy Viewer's default request timeout is 30 s; a large inventory
+/// reply can be slower, so this stays generous.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Why an inventory read failed, enough for the background walk to decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchFailure {
+    /// HTTP 403: the reply would be over the server's limit. A recursive read
+    /// can retry with less depth; at depth 0 the folder's own contents are
+    /// over the limit (the Legacy Viewer's InventoryLimitReachedAIS).
+    TooBig,
+    /// A timeout or throttling (408, 425, 429) or a server error (5xx), still
+    /// failing after the retries.
+    Transient,
+    /// A malformed or incomplete reply, or a refusal retrying cannot fix.
+    Fatal,
+}
+
+/// A failed inventory read: its kind and the HTTP status when one was read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FetchError {
+    pub kind: FetchFailure,
+    pub status: Option<u16>,
+}
+
+impl FetchError {
+    pub const fn new(kind: FetchFailure, status: Option<u16>) -> Self {
+        FetchError { kind, status }
+    }
+
+    fn status_of(status: u16) -> Self {
+        let kind = match status {
+            403 => FetchFailure::TooBig,
+            408 | 425 | 429 | 500..=599 => FetchFailure::Transient,
+            _ => FetchFailure::Fatal,
+        };
+        FetchError {
+            kind,
+            status: Some(status),
+        }
+    }
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.status {
+            Some(status) => write!(f, "AIS inventory read failed (status {status}, {:?})", self.kind),
+            None => write!(f, "AIS inventory read failed ({:?})", self.kind),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {}
+
+impl From<crate::caps::CapsError> for FetchError {
+    fn from(error: crate::caps::CapsError) -> Self {
+        match error {
+            crate::caps::CapsError::Status(status) => FetchError::status_of(status),
+            crate::caps::CapsError::Http(_) => FetchError::new(FetchFailure::Transient, None),
+            crate::caps::CapsError::Llsd(_) => FetchError::new(FetchFailure::Fatal, None),
+        }
+    }
+}
+
+fn retry_backoff(attempt: u32, retry_after: Option<std::time::Duration>) -> std::time::Duration {
+    let base = RETRY_BACKOFF_MIN.saturating_mul(1 << attempt.saturating_sub(1).min(3));
+    let asked = retry_after.unwrap_or_default().min(std::time::Duration::from_secs(60));
+    base.min(RETRY_BACKOFF_MAX).max(asked)
+}
+
+/// The `Retry-After` header, in seconds (`PF_USE_RETRY_AFTER` in llcorehttp).
+fn retry_after(response: &reqwest::Response) -> Option<std::time::Duration> {
+    let value = response.headers().get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    value.trim().parse::<u64>().ok().map(std::time::Duration::from_secs)
+}
+
 /// A folder's snapshot, then those nested in it, parents first so that each
 /// folder is known before its own snapshot is applied. Like
 /// AISUpdate::parseCategory, a folder counts as fetched only while `depth`
@@ -170,7 +252,7 @@ pub async fn fetch_tree(
     parent: Uuid,
     children: &[Uuid],
     depth: i32,
-) -> Result<Vec<FolderContents>, &'static str> {
+) -> Result<Vec<FolderContents>, FetchError> {
     let mut url = format!("{}/category/{parent}/children?depth={depth}", cap.trim_end_matches('/'));
     if !children.is_empty() {
         let ids: Vec<String> = children.iter().map(Uuid::to_string).collect();
@@ -178,7 +260,7 @@ pub async fn fetch_tree(
         url.push_str(&ids.join(","));
     }
     let doc = get(http, url).await?;
-    parse_tree_reply(&doc, owner, parent, children, depth)
+    parse_tree_reply(&doc, owner, parent, children, depth).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
 }
 
 fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], depth: i32) -> Result<Vec<FolderContents>, &'static str> {
@@ -201,25 +283,103 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
     Ok(out)
 }
 
-async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, &'static str> {
-    crate::caps::get_llsd_as(http, &url, crate::probe::HttpKind::Inventory)
-        .await
-        .map_err(|_| "AIS inventory read failed")
+/// One AIS read, retried on the conditions Firestorm's HTTP layer retries
+/// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
+async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let timed = crate::probe::HttpRequest::start(crate::probe::HttpKind::Inventory);
+        let sent = tokio::time::timeout(REQUEST_TIMEOUT, http.get(&url).header("Accept", "application/llsd+xml").send()).await;
+        let response = match sent {
+            Err(_) => {
+                if let Some(t) = timed {
+                    t.finish(0, 0, false);
+                }
+                if attempt <= RETRY_ATTEMPTS {
+                    tokio::time::sleep(retry_backoff(attempt, None)).await;
+                    continue;
+                }
+                return Err(FetchError::new(FetchFailure::Transient, None));
+            }
+            Ok(Err(error)) => {
+                if let Some(t) = timed {
+                    t.finish(0, 0, false);
+                }
+                if attempt <= RETRY_ATTEMPTS {
+                    log::debug!("AIS inventory read failed ({error}); retry {attempt}");
+                    tokio::time::sleep(retry_backoff(attempt, None)).await;
+                    continue;
+                }
+                return Err(FetchError::new(FetchFailure::Transient, None));
+            }
+            Ok(Ok(response)) => response,
+        };
+        let status = response.status().as_u16();
+        if !response.status().is_success() {
+            if let Some(t) = timed {
+                t.finish(status, 0, false);
+            }
+            let failure = FetchError::status_of(status);
+            if failure.kind == FetchFailure::Transient && attempt <= RETRY_ATTEMPTS {
+                log::debug!("AIS inventory read failed (status {status}); retry {attempt}");
+                tokio::time::sleep(retry_backoff(attempt, retry_after(&response))).await;
+                continue;
+            }
+            return Err(failure);
+        }
+        let wait = retry_after(&response);
+        let body = match tokio::time::timeout(REQUEST_TIMEOUT, response.bytes()).await {
+            Err(_) => {
+                if let Some(t) = timed {
+                    t.finish(status, 0, false);
+                }
+                if attempt <= RETRY_ATTEMPTS {
+                    tokio::time::sleep(retry_backoff(attempt, wait)).await;
+                    continue;
+                }
+                return Err(FetchError::new(FetchFailure::Transient, Some(status)));
+            }
+            Ok(Err(error)) => {
+                if let Some(t) = timed {
+                    t.finish(status, 0, false);
+                }
+                if attempt <= RETRY_ATTEMPTS {
+                    log::debug!("AIS inventory reply failed ({error}); retry {attempt}");
+                    tokio::time::sleep(retry_backoff(attempt, wait)).await;
+                    continue;
+                }
+                return Err(FetchError::new(FetchFailure::Transient, Some(status)));
+            }
+            Ok(Ok(body)) => body,
+        };
+        let bytes = body.len();
+        if let Some(t) = timed {
+            t.finish(status, bytes, true);
+        }
+        if body.is_empty() {
+            return Ok(Llsd::Undef);
+        }
+        return aurora_llsd::from_xml(&body).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(status)));
+    }
 }
 
 /// Bounded parallel reads, outside the viewer thread. Never substitute a
 /// legacy listing: it may omit the favorites and thumbnails of siblings.
-pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<FolderContents>, &'static str> {
+pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<FolderContents>, FetchError> {
     let mut contents = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(16) {
         let mut tasks = tokio::task::JoinSet::new();
         for id in chunk.iter().copied() {
             let http = http.clone();
             let url = format!("{}/category/{id}/children?depth=0", cap.trim_end_matches('/'));
-            tasks.spawn(async move { parse_folder(&get(&http, url).await?, id, owner) });
+            tasks.spawn(async move {
+                let doc = get(&http, url).await?;
+                parse_folder(&doc, id, owner).map_err(|_| FetchError::new(FetchFailure::Fatal, Some(200)))
+            });
         }
         while let Some(result) = tasks.join_next().await {
-            contents.push(result.map_err(|_| "AIS inventory task failed")??);
+            contents.push(result.map_err(|_| FetchError::new(FetchFailure::Fatal, None))??);
         }
     }
     Ok(contents)
@@ -678,6 +838,74 @@ mod tests {
         // the parent is no snapshot of its own; 20 came back incomplete
         assert_eq!(fetched(&contents), [id(10), id(30)]);
         assert!(parse_tree_reply(&tree(), id(2), id(99), &[id(10)], MAX_FOLDER_DEPTH).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_transient_ais_failure_is_retried_before_the_read_fails() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let mut statuses = vec!["503 Service Unavailable", "429 Too Many Requests", "200 OK"];
+            let mut seen = 0;
+            while let Some(status) = statuses.first().copied() {
+                let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                    .expect("request timeout")
+                    .expect("request");
+                let mut buffer = [0u8; 2048];
+                let _ = socket.read(&mut buffer).await.expect("read");
+                seen += 1;
+                let (header, body) = if status == "200 OK" {
+                    let body = aurora_llsd::to_xml(&snapshot(vec![record(3, false, 1, false)]));
+                    (
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        ),
+                        body,
+                    )
+                } else {
+                    (
+                        format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n"),
+                        Vec::new(),
+                    )
+                };
+                socket.write_all(header.as_bytes()).await.expect("header");
+                socket.write_all(&body).await.expect("body");
+                statuses.remove(0);
+            }
+            seen
+        });
+        let contents = fetch_tree(&reqwest::Client::new(), &url, id(2), id(1), &[], 0)
+            .await
+            .expect("a throttled or unavailable AIS read is retried");
+        assert_eq!(fetched(&contents), [id(1)]);
+        assert_eq!(server.await.expect("server"), 3, "two failures and the successful read");
+    }
+
+    #[tokio::test]
+    async fn a_forbidden_reply_is_reported_as_too_big_and_not_retried() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local test server");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                .await
+                .expect("request timeout")
+                .expect("request");
+            let mut buffer = [0u8; 2048];
+            let _ = socket.read(&mut buffer).await.expect("read");
+            socket
+                .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .expect("response");
+            1
+        });
+        let error = fetch_tree(&reqwest::Client::new(), &url, id(2), id(1), &[], 0)
+            .await
+            .expect_err("a folder over the limit is refused");
+        assert_eq!(error.kind, FetchFailure::TooBig);
+        assert_eq!(error.status, Some(403));
+        assert_eq!(server.await.expect("server"), 1, "a hard limit is not hammered with retries");
     }
 
     #[tokio::test]
