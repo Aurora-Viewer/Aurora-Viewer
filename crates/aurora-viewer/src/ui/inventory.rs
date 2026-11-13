@@ -565,6 +565,8 @@ pub struct InventoryUi {
     list_focus_frame: Option<u64>,
     /// Which row order the list drew last, for the work done outside it.
     shown_order: keyboard::ShownOrder,
+    /// Letters typed into the focused list (LLFolderView's type-ahead).
+    type_ahead: keyboard::TypeAhead,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -763,6 +765,7 @@ impl InventoryUi {
     /// LLFolderView::startRenamingSelectedItem: edit and select the name in place.
     pub fn begin_rename(&mut self, inv: &Inventory, id: Uuid) {
         self.keyboard_selection = false;
+        self.type_ahead.clear();
         self.selected = Some(id);
         self.selection.clear();
         self.selection.insert(id);
@@ -970,6 +973,7 @@ impl InventoryUi {
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
         clipboard::request_focus(ui, self);
         self.keyboard_selection = false;
+        self.type_ahead.clear();
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;

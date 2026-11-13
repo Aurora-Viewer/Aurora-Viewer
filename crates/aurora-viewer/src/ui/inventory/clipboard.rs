@@ -464,6 +464,34 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 },
             ];
         }
+        // Type-ahead: "Demo s" then "il" adds up to Demo silhouette; Up
+        // ends the word, so "n" selects Non-transferable object.
+        if mode.ends_with("keyboard-type") {
+            if matches!(frame, 666 | 690 | 720) {
+                log::info!(
+                    "demo inventory keyboard type: frame={frame}, selected={:?}, selected_count={}, visible={}",
+                    st.selected,
+                    st.selection.len(),
+                    st.selected.is_some_and(|id| st.visible.contains(&id))
+                );
+            }
+            let text = match frame {
+                665 => "Demo s",
+                667 => "il",
+                705 => "n",
+                700 => {
+                    return vec![egui::Event::Key {
+                        key: egui::Key::ArrowUp,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }];
+                }
+                _ => return Vec::new(),
+            };
+            return vec![egui::Event::Text(text.into())];
+        }
         // Left from the object selects its folder, Left again closes it,
         // Right opens it again.
         if mode.ends_with("keyboard-fold") {
@@ -1053,6 +1081,56 @@ mod tests {
         assert_eq!(h.st.selected, Some(id(20_060)));
         assert_eq!(h.st.selection.len(), 61);
         h.row(id(20_060)); // The unfiltered tree shares the same minimal scroll.
+    }
+
+    #[test]
+    fn inventory_typing_in_the_focused_list_jumps_to_the_named_row() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            let original = h.world.inventory.items[&id(8100)].clone();
+            h.world.inventory.add_items(
+                (0..90)
+                    .map(|n| aurora_net::inventory::InvItem {
+                        id: id(20_000 + n),
+                        name: format!("Keyboard {n:03}"),
+                        ..original.clone()
+                    })
+                    .collect(),
+            );
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let typed = |text: &str| Event::Text(text.into());
+            h.select(id(8100), false);
+            h.frame(vec![typed("keyboard 0")]);
+            h.frame(vec![typed("75")]);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.st.selected, Some(id(20_075)), "letters within 1.5 s add up");
+            assert_eq!(h.st.selection, HashSet::from([id(20_075)]));
+            assert!(h.st.search.is_empty(), "the search field gets nothing");
+            h.row(id(20_075)); // Scrolled into view.
+
+            h.frame(vec![typed("Keyboard 01")]);
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 08")]);
+            assert_eq!(h.st.selected, Some(id(20_080)), "a pause starts a new word");
+
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 05")]);
+            assert_eq!(h.st.selected, Some(id(20_050)));
+            h.frame(vec![arrow(true, false)]);
+            h.frame(vec![typed("2")]);
+            assert_eq!(h.st.selected, Some(id(20_051)), "an arrow ends the word");
+
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 01")]);
+            h.select(id(20_020), false);
+            h.frame(vec![typed("5")]);
+            assert_eq!(h.st.selected, Some(id(20_020)), "so does a click");
+        }
     }
 
     #[test]
