@@ -33,6 +33,8 @@
 //! - `ground-ml-body-on|off`: ground sit at 520, enter at 600, stand at 760.
 //! - `ml-eyes-on-body-on|ml-eyes-off-body-on`: animate the head with optional
 //!   eye following; prefix `ground-` to exercise ground sitting.
+//! - `head-follow|pelvis-follow|hand-follow`: animate the named body part and
+//!   enable that third-person camera joint.
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
 //! - `wheel-chat`: the Conversations window opened at 560, its field taking
 //!   the keyboard, 12 wheel clicks in at 650 (into mouselook: the window
@@ -423,6 +425,11 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             f if f > 300 && f.is_multiple_of(30) => out.push(Step::Log),
             _ => {}
         },
+        "head-follow" | "pelvis-follow" | "hand-follow" => {
+            if matches!(frame, 550 | 565 | 580 | 595 | 610 | 625) {
+                out.push(Step::Log);
+            }
+        }
         _ => {}
     }
     out

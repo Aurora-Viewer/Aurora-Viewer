@@ -1800,6 +1800,18 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
 }
 
 #[test]
+fn the_weather_lives_in_graphics_only() {
+    // (and in the Aurora Weather window; Preferences › Aurora, the choices
+    // between Aurora's look and the Legacy Viewer's, has none of it)
+    let paths = collected();
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
+    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
+}
+
+#[test]
 fn show_friends_only_switches_from_controls_once_logged_in() {
     // the rows of a search for the row's own label on Controls, in the
     // interface's language (the tests may run in French): the shapes painted
