@@ -137,6 +137,16 @@ pub fn prepare_staged(
     prepare_snapshot(snapshot, supported, pool, cache)
 }
 
+/// The JSON of a LODS frame: as sent, or inflated when it starts with
+/// "ZLIB" (the "compressed-lods" feature), bounded like a compressed
+/// snapshot.
+pub(super) fn lods_body(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    match bytes.strip_prefix(b"ZLIB") {
+        Some(compressed) => inflate(compressed, MAX_DECODED_BYTES).map(std::borrow::Cow::Owned),
+        None => Ok(std::borrow::Cow::Borrowed(bytes)),
+    }
+}
+
 pub(super) fn inflate(bytes: &[u8], limit: usize) -> Result<Vec<u8>, String> {
     use flate2::{Decompress, FlushDecompress, Status};
     let invalid = || aurora_i18n::tr!("blender-live-invalid-compression").to_owned();

@@ -101,7 +101,7 @@ fn serve(
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
-    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "max_decoded_bytes": protocol::MAX_DECODED_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods", "static-meshes", "object-links", "compressed-snapshots", "packed-geometry"] });
+    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "max_decoded_bytes": protocol::MAX_DECODED_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods", "static-meshes", "object-links", "compressed-snapshots", "packed-geometry", "compressed-lods"] });
     writeln!(stream, "{hello}")?;
     {
         let mut status = shared.status.lock();
@@ -130,10 +130,14 @@ fn serve(
         read(stream, &mut bytes, shared, Duration::from_secs(5))?;
         if bytes.starts_with(b"LODS") {
             let expected = *shared.import_expected.lock();
+            // "compressed-lods": the prepared LODs may come deflated, as
+            // snapshots do; four LOD levels of JSON outgrow MAX_BYTES first.
+            let body = protocol::lods_body(&bytes[4..]).ok();
             if let Some(expected) = expected
-                && serde_json::from_slice::<super::import::Request>(&bytes[4..]).is_ok_and(|request| request == expected)
+                && let Some(body) = body.as_deref()
+                && serde_json::from_slice::<super::import::Request>(body).is_ok_and(|request| request == expected)
             {
-                let result = super::import::decode(&bytes[4..], expected, supported);
+                let result = super::import::decode(body, expected, supported);
                 let current = {
                     let mut pending = shared.import_expected.lock();
                     if *pending == Some(expected) {

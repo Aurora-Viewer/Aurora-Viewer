@@ -284,7 +284,9 @@ triangle counts are approximate and may require adjusting the target.
 
 Preparation waits for Blender's Object Mode, with an actionable error after
 30 seconds; Aurora abandons an unanswered request after 180 seconds or a
-disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB.
+disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB
+on the wire; with a viewer that offers `compressed-lods`, the plug-in deflates
+it first, so up to 256 MiB of prepared LODs fit (#3519).
 Older plug-ins can still synchronize live, but must be updated for this import
 workflow. A paused source can be imported without enabling its live preview.
 
@@ -807,7 +809,10 @@ Clients negotiating `import-lods` can receive
 `prepare_import: {"id":"<request UUID>","source":"<source UUID>"}` in a reply.
 Blender's main thread prepares the source's configured levels; its socket worker
 sends a length-prefixed body beginning with four ASCII bytes `LODS`, followed
-by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. `levels`
+by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. When
+the viewer advertises `compressed-lods`, the JSON after `LODS` may instead be
+`ZLIB` and a complete zlib stream of it, bounded like `compressed-snapshots`
+(64 MiB on the wire, 256 MiB decoded); plain bodies stay accepted. `levels`
 is ordered Lowest, Low, Medium, High. Each level contains the regular wire
 `mesh`, `slots` mapping its nonempty surfaces to High, and a bounded `origin`
 label. Errors send `id`, `source`, `error` instead. The viewer validates the

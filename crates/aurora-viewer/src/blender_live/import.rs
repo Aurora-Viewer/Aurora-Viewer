@@ -93,7 +93,8 @@ fn aligned_scene(low: &Scene, high: &Scene, slots: &[usize]) -> Result<Arc<Scene
 }
 
 pub fn decode(bytes: &[u8], expected: Request, supported: &HashSet<String>) -> Result<Bundle, String> {
-    if bytes.is_empty() || bytes.len() > protocol::MAX_BYTES {
+    // An inflated "compressed-lods" body may be larger than one frame.
+    if bytes.is_empty() || bytes.len() > protocol::MAX_DECODED_BYTES {
         return Err("Invalid Blender LOD payload size".into());
     }
     let reply: Reply = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;

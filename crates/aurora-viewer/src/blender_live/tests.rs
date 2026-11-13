@@ -1041,6 +1041,41 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
     drop(owner);
 }
 
+/// #3519: four LOD levels of JSON can pass the 64 MiB frame limit; a client
+/// that sees "compressed-lods" sends LODS + ZLIB, which reaches the import.
+#[test]
+fn blender_lods_transport_accepts_compressed_lods() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+    let port = listener.local_addr().expect("address").port();
+    let shared = transport::start_listener(listener, supported(), Default::default(), egui::Context::default(), None).expect("server");
+    let owner = Server { shared: shared.clone() };
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    stream.write_all(b"AURBLD1\n").expect("hello");
+    let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("hello");
+    assert!(line.contains("compressed-lods"));
+    let request = import::Request {
+        id: Uuid::from_u128(321),
+        source: Uuid::from_u128(654),
+    };
+    *shared.import_expected.lock() = Some(request);
+    let json = serde_json::to_vec(&serde_json::json!({"id":request.id,"source":request.source,"error":"Missing LOD"})).expect("result");
+    let mut bytes = b"LODS".to_vec();
+    bytes.extend(compressed_snapshot(&json));
+    stream.write_all(&(bytes.len() as u32).to_le_bytes()).expect("length");
+    stream.write_all(&bytes).expect("data");
+    line.clear();
+    reader.read_line(&mut line).expect("reply");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&line).expect("JSON")["ok"], true);
+    let (id, result) = shared.import_result.lock().take().expect("compressed result delivered");
+    assert_eq!(id, request.id);
+    assert!(result.is_err_and(|message| message == "Missing LOD"));
+    assert!(shared.import_expected.lock().is_none());
+    drop(owner);
+}
+
 #[test]
 fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revision() {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");

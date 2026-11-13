@@ -104,6 +104,22 @@ class ClientTests(unittest.TestCase):
         self.assertFalse(json.loads(payload)["meshes"])
         self.assertIn("transfer limit", errors["Over decoded budget"])
 
+    def test_lods_frame_compresses_only_when_the_viewer_offers_it(self):
+        prepared = {"id": "i", "source": "s", "levels": [{"mesh": {"padding": "x" * 9000}}], "images": []}
+        hello_value = {"features": ["import-lods", "compressed-lods"], "max_bytes": 4096, "max_decoded_bytes": 65536}
+        frame = module.lods_frame(prepared, hello_value)
+        self.assertEqual(frame[:8], b"LODSZLIB")
+        self.assertEqual(json.loads(zlib.decompress(frame[8:])), prepared)
+        # an older viewer reads LODS as plain JSON: the same bundle is refused
+        old = module.lods_frame(prepared, {"features": ["import-lods"], "max_bytes": 4096})
+        self.assertEqual(json.loads(old[4:]), {"id": "i", "source": "s", "error": "Prepared LODs exceed 64 MiB"})
+        # small bundles stay plain
+        small = {"id": "i", "source": "s", "levels": [], "images": []}
+        self.assertEqual(module.lods_frame(small, hello_value), b"LODS" + json.dumps(small, separators=(",", ":")).encode())
+        # beyond the decoded budget nothing is compressed
+        over = module.lods_frame(prepared, dict(hello_value, max_decoded_bytes=1024))
+        self.assertEqual(json.loads(over[4:])["error"], "Prepared LODs exceed 64 MiB")
+
     def test_socket_sends_compressed_frames_then_recovers_from_an_oversized_source(self):
         received = []
         first = threading.Event()

@@ -71,6 +71,24 @@ class SnapshotSizeError(ValueError):
     pass
 
 
+def lods_frame(prepared, hello):
+    """The LODS frame of prepared import LODs. Four LOD levels written as JSON
+    text can pass 64 MiB for a mesh whose single-LOD COLLADA export is small;
+    a viewer that offers "compressed-lods" receives "ZLIB" and the deflated
+    JSON instead, bounded like compressed snapshots."""
+    raw = json.dumps(prepared, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    limit = min(MAX_BYTES, hello.get("max_bytes", MAX_BYTES)) - 4
+    if "compressed-lods" in hello.get("features", []) and (len(raw) >= COMPRESS_THRESHOLD or len(raw) > limit):
+        if len(raw) <= min(MAX_DECODED_BYTES, hello.get("max_decoded_bytes", MAX_DECODED_BYTES)):
+            packed = b"ZLIB" + zlib.compress(raw, 1)
+            if len(packed) < len(raw) and len(packed) <= limit:
+                return b"LODS" + packed
+    if len(raw) <= limit:
+        return b"LODS" + raw
+    return b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"],
+                                 "error": "Prepared LODs exceed 64 MiB"}, separators=(",", ":")).encode("utf-8")
+
+
 def _encode(snapshot, hello):
     value = wire_snapshot(snapshot, hello.get("features", []))
     raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -291,10 +309,7 @@ class Client:
                                 result, self._shape_result = self._shape_result, None
                                 prepared, self._import_result = self._import_result, None
                             if prepared is not None:
-                                payload = b"LODS" + json.dumps(prepared, separators=(",", ":"), allow_nan=False).encode("utf-8")
-                                if len(payload) > MAX_BYTES:
-                                    payload = b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"],
-                                        "error": "Prepared LODs exceed 64 MiB"}, separators=(",", ":")).encode("utf-8")
+                                payload = lods_frame(prepared, hello)
                                 # A full four-level decode can outlast an ordinary
                                 # live frame. Keep it on the worker, bounded by the
                                 # viewer's import deadline; close() still interrupts.
