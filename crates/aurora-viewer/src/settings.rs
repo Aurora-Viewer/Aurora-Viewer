@@ -1040,6 +1040,10 @@ pub struct Settings {
     /// (an Aurora addition): moving between the two viewers keeps the
     /// history, and a notice says what came in.
     pub log_import_at_login: bool,
+    /// The transcripts in the Legacy Viewer's own layout under the chosen
+    /// folder (`<folder>/<first_last>`), so that both viewers share them. An
+    /// Aurora addition, off by default: Aurora then only appends lines there.
+    pub log_legacy_layout: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
@@ -2280,6 +2284,7 @@ impl Default for Settings {
             log_show_history: true,
             log_dated_names: false,
             log_import_at_login: true,
+            log_legacy_layout: false,
             warn_external_links: true,
             trusted_sites: Default::default(),
             mute_all_groups: false,
