@@ -561,7 +561,7 @@ fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &
                     }
                 });
             // the abilities, by set
-            let catalogue = abilities::catalogue();
+            let catalogue = abilities::catalogue(v.post_links);
             let total: usize = catalogue.iter().map(|s| s.abilities.len()).sum();
             let has: usize = catalogue
                 .iter()
@@ -688,7 +688,7 @@ fn dialog(st: &mut GroupProfileUi, ctx: &egui::Context, p: &Palette, v: &View, d
     let role_label = role_now(d, &st.admin.changes, &role)
         .map(|r| role_name(&r.name))
         .unwrap_or_default();
-    let catalogue = abilities::catalogue();
+    let catalogue = abilities::catalogue(v.post_links);
     let ability = |bit: u32| {
         catalogue
             .iter()
@@ -1004,7 +1004,7 @@ fn rating_choice(ui: &mut egui::Ui, p: &Palette, chosen: &mut Option<bool>, info
 /// set, the roles and members of the one chosen.
 fn abilities_section(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &GroupData) {
     let p = c.p;
-    let catalogue = abilities::catalogue();
+    let catalogue = abilities::catalogue(v.post_links);
     let full = ui.max_rect();
     let left = Rect::from_min_max(
         ui.cursor().min,
