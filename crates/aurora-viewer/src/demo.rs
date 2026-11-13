@@ -6512,7 +6512,7 @@ pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
                 .join("sound")
                 .join(format!("{}.ogg", crate::cache::keyed_name(&id))),
         )
-        && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
+        && let Ok(clip) = aurora_audio::SoundClip::decode_asset(&data)
     {
         return clip;
     }
