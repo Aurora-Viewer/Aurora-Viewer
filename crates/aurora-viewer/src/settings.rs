@@ -926,6 +926,33 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// Opacity of the background of the window with the focus
+    /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
+    pub window_opacity_active: f32,
+    /// Opacity of the background of the other windows
+    /// (InactiveFloaterTransparency; 1 here where the Legacy Viewer has 0.95:
+    /// Aurora's windows are glass already).
+    pub window_opacity_inactive: f32,
+    /// Opacity of the Conversations window and the detached conversations
+    /// while not focused (FSIMOpacity, 1; there the lower of it and the
+    /// inactive windows').
+    pub conversations_opacity: f32,
+    /// Conversations takes the active window's opacity while it has the
+    /// focus (FSImActiveOpacityOverride, off).
+    pub conversations_active_opacity_override: bool,
+    /// Opacity of the background of the bars (Aurora's own, 1).
+    pub bar_opacity: f32,
+    /// Opacity of the menus' background (FSMenuBackgroundAlpha, 1).
+    pub menu_opacity: f32,
+    /// Opacity of the chat cards over the world (ConsoleBackgroundOpacity;
+    /// 0.75 here where the Legacy Viewer has 0.5: Aurora's cards always had it).
+    pub console_opacity: f32,
+    /// Opacity of the mini-map's background (FSMiniMapOpacity, 0.66).
+    pub minimap_opacity: f32,
+    /// The pie menu takes `pie_opacity` (OverridePieColors, off).
+    pub pie_opacity_override: bool,
+    /// Opacity of the pie menu when overridden (PieMenuOpacity, 0.85).
+    pub pie_opacity: f32,
     /// The entry of a conversation that receives a message while another
     /// is shown flashes in violet, then stays tinted until read
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
@@ -2201,6 +2228,16 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            window_opacity_active: 1.0,
+            window_opacity_inactive: 1.0,
+            conversations_opacity: 1.0,
+            conversations_active_opacity_override: false,
+            bar_opacity: 1.0,
+            menu_opacity: 1.0,
+            console_opacity: crate::ui::surface_opacity::CONSOLE,
+            minimap_opacity: crate::ui::surface_opacity::MINIMAP,
+            pie_opacity_override: false,
+            pie_opacity: crate::ui::surface_opacity::PIE,
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
@@ -3243,6 +3280,22 @@ impl Settings {
         } else {
             0.5
         };
+        for opacity in [
+            &mut self.window_opacity_active,
+            &mut self.window_opacity_inactive,
+            &mut self.conversations_opacity,
+            &mut self.bar_opacity,
+            &mut self.menu_opacity,
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        for (opacity, default) in [
+            (&mut self.console_opacity, crate::ui::surface_opacity::CONSOLE),
+            (&mut self.minimap_opacity, crate::ui::surface_opacity::MINIMAP),
+            (&mut self.pie_opacity, crate::ui::surface_opacity::PIE),
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
+        }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {

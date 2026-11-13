@@ -4113,7 +4113,10 @@ pub fn toasts(
             for line in recent {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
-                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * alpha) as u8);
+                let (console_tint, console_blur) =
+                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+                let tint =
+                    Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * console_tint * alpha).min(255.0) as u8);
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
@@ -4172,8 +4175,10 @@ pub fn toasts(
                     });
                 if glass && let Some(slot) = slot {
                     let rect = bubble.response.rect;
-                    ui.painter()
-                        .set(slot, aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha));
+                    ui.painter().set(
+                        slot,
+                        aurora_render::glass_panel_faded(rect, f32::from(radius.nw), tint, alpha * console_blur),
+                    );
                 }
                 ui.add_space(gap);
             }

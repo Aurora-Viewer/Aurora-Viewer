@@ -336,9 +336,17 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
     return col * gain * extinction * glare;
 }
 
-// Textured (or analytic) disc of a heavenly body; rgb premultiplied, a coverage.
-fn body_disc(dir: vec3<f32>, body: vec3<f32>, half_size: f32, slot: u32) -> vec4<f32> {
+// Texel of a heavenly body's texture in direction `dir`, as stored: rgb in the
+// texture's sRGB, not premultiplied, a its alpha (0 outside the quad).
+// `radius` is LLHeavenBody's disc radius (SUN_DISK_RADIUS 0.5, the moon 0.9
+// of it). LLVOSky::updateHeavenlyBodyGeometry lays the quad at
+// HEAVENLY_BODY_DIST with half sides HEAVENLY_BODY_DIST x 0.1 x radius x
+// scale, wider and taller towards the horizon: as tangents, 0.1 x radius x
+// scale x (1 + 0.3 (1 - z)) across and (1 + 0.2 (1 - z)) up.
+fn body_disc(dir: vec3<f32>, body: vec3<f32>, radius: f32, scale: f32, slot: u32) -> vec4<f32> {
     let b = normalize(body);
+    let low = 1.0 - b.z;
+    let half_size = vec2<f32>(1.0 + low * 0.3, 1.0 + low * 0.2) * (0.1 * radius * scale);
     let mu = dot(dir, b);
     if (mu < 0.0) {
         return vec4<f32>(0.0);
@@ -354,8 +362,7 @@ fn body_disc(dir: vec3<f32>, body: vec3<f32>, half_size: f32, slot: u32) -> vec4
     if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
         return vec4<f32>(0.0);
     }
-    let t = sample_tex_level(slot, uv, 0.0);
-    return vec4<f32>(srgb_to_linear(t.rgb) * t.a, t.a);
+    return sample_tex_level(slot, uv, 0.0);
 }
 
 // Rainbow and 22° halo, port of skyF.glsl's rainbow() and halo22() (Second
@@ -415,23 +422,43 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     // skyF.glsl: added to the haze color before its x 2, under the clouds
     let haze = a.color + sky_rainbow(a.light_dot) + sky_halo(a.light_dot);
     var c = clamp(haze * 2.0, vec3<f32>(0.0), vec3<f32>(5.0));
+    // Sun then moon over the haze, under the clouds, like
+    // LLDrawPoolWLSky::renderHeavenlyBodies (lldrawpoolwlsky.cpp): plain alpha
+    // blending (BT_ALPHA) of the texel as stored, in the same space as the
+    // haze, so softenLightF's srgb_to_linear x sky_hdr_scale below applies to
+    // both. sunDiscF.glsl draws the texel as it is; moonF.glsl scales its rgb
+    // by the moon brightness, fades its alpha near the horizon and discards
+    // alpha <= 2/255. Premultiplying in linear and adding the sun x 6 (moon at
+    // 90 % opacity) blew soft halos out to a white disc with stepped rings and
+    // a visible quad (#2782).
+    var hidden = 0.0;
+    let sd = normalize(frame.sky_sun.xyz);
+    if (frame.tex_slots.y != 0u) {
+        let s = body_disc(d, sd, 0.5, frame.sky_sun.w, frame.tex_slots.y);
+        c = mix(c, s.rgb, s.a);
+        // the Legacy Viewer's sun quad writes depth and hides every star
+        // behind it, even where it is clear: here only as much as it covers
+        hidden = s.a;
+    }
+    if (frame.tex_slots.z != 0u) {
+        let md = normalize(frame.sky_moon.xyz);
+        let m = body_disc(d, md, 0.45, frame.sky_moon.w, frame.tex_slots.z);
+        if (m.a > 2.0 / 255.0) {
+            let fade = select(1.0, clamp(md.z * md.z * 4.0, 0.0, 1.0), md.z > 0.0);
+            c = mix(c, m.rgb * frame.sky_misc.z, m.a * fade);
+            // SL-14113: the moon's kept texels write depth, the stars behind
+            // them are hidden
+            hidden = 1.0;
+        }
+    }
     let clouds = sky_clouds(d);
     c = mix(c, clouds.rgb, clouds.a);
     var col = srgb_to_linear(c) * frame.sky_cloud_pd2.w;
     let cover = 1.0 - clouds.a;
-    // stars and Milky Way (above), and the aurora, behind the clouds
-    col += (sky_stars(d, col, foot) + aurora_sky(d)) * cover;
-    // moon
-    if (frame.tex_slots.z != 0u) {
-        let m = body_disc(d, frame.sky_moon.xyz, 0.035 * frame.sky_moon.w, frame.tex_slots.z);
-        col = col * (1.0 - m.a * 0.9 * cover) + m.rgb * frame.sky_misc.z * 2.0 * cover;
-    }
-    // sun
-    let sd = normalize(frame.sky_sun.xyz);
-    if (frame.tex_slots.y != 0u) {
-        let s = body_disc(d, sd, 0.025 * frame.sky_sun.w, frame.tex_slots.y);
-        col += s.rgb * 6.0 * cover;
-    } else {
+    // stars and Milky Way (above) behind the clouds and the sun and moon; the
+    // aurora, in the atmosphere, behind the clouds only
+    col += (sky_stars(d, col, foot) * (1.0 - hidden) + aurora_sky(d)) * cover;
+    if (frame.tex_slots.y == 0u) {
         let mu = dot(d, sd);
         let disk = smoothstep(0.99955, 0.9997, mu) * clamp(sd.z * 10.0 + 1.0, 0.0, 1.0);
         col += frame.sun_color.rgb * disk * 6.0 * cover;
