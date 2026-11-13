@@ -12926,6 +12926,8 @@ impl App {
                             | "aurora-keyboard"
                             | "aurora-keyboard-fold"
                             | "aurora-keyboard-down"
+                            | "keyboard-type"
+                            | "aurora-keyboard-type"
                             | "aurora-keyboard-wide"
                             | "enter-key"
                     ) || v.starts_with("note-")
@@ -23805,6 +23807,8 @@ impl ApplicationHandler for App {
                             | "aurora-keyboard-down"
                             | "aurora-keyboard-click-top"
                             | "aurora-keyboard-click-bottom"
+                            | "keyboard-type"
+                            | "aurora-keyboard-type"
                             | "aurora-keyboard-wide"
                             | "link-icons"
                             | "aurora-link-icons"

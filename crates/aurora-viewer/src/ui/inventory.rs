@@ -623,6 +623,8 @@ pub struct InventoryUi {
     /// The list's focus target that opened this document window, so closing
     /// it hands the keyboard back there (see `clipboard::return_focus_to`).
     document_owner: Option<egui::Id>,
+    /// Letters typed into the focused list (LLFolderView's type-ahead).
+    type_ahead: keyboard::TypeAhead,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -841,6 +843,7 @@ impl InventoryUi {
     /// LLFolderView::startRenamingSelectedItem: edit and select the name in place.
     pub fn begin_rename(&mut self, inv: &Inventory, id: Uuid) {
         self.keyboard_selection = false;
+        self.type_ahead.clear();
         self.selected = Some(id);
         self.selection.clear();
         self.selection.insert(id);
@@ -1048,6 +1051,7 @@ impl InventoryUi {
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
         clipboard::request_focus(ui, self);
         self.keyboard_selection = false;
+        self.type_ahead.clear();
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;

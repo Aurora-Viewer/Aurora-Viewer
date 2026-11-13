@@ -11475,6 +11475,13 @@ separate searches enabled and disabled; that preference controls only the text.
   it becomes selected and wholly visible, without scrolling sideways.
   A fully visible row must not move. Repeat at font scales 1, 1.5 and 2;
   drag the scroll bar afterwards: it must stay where released.
+- `keyboard-type`, `aurora-keyboard-type`: click the demo object at frame
+  650, type "Demo s" at 665 and "il" at 667 (the letters add up: Demo
+  silhouette is selected), press Up at 700 (the typed word ends) and type
+  "n" at 705 (Non-transferable object is selected). Capture at 690 and 720.
+  The log reports the selection at 666, 690 and 720. Manually check the
+  1.5 s pause that starts a new word, a click ending it, and that typing in
+  the search or rename field still goes to the field.
 - `clipboard`: expanded inventory to test Ctrl+C / Ctrl+X / Ctrl+V on
   items, folders and multiple selections. Choose the destination
   folder (or one of its items) before pasting. The search and
