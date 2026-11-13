@@ -228,7 +228,7 @@ fn closing_studio_timeline_releases_its_egui_hit_layer() {
         ..Default::default()
     };
     let id = egui::Id::unique("avatar-studio-animation-timeline-window-v3");
-    let mut run_frame = |editor: &mut Editor| {
+    let run_frame = |editor: &mut Editor| {
         let mut output = ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
         output.textures_delta.clear();
     };
