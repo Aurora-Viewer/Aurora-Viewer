@@ -609,6 +609,9 @@ struct CullCtx<'a> {
     reflection_distance: f32,
     shadows: bool,
     reflections: bool,
+    /// The CPU lists are built: the rain's shelter map takes what stands
+    /// still in its square, shadows or not (`DrawLists::shelter_casters`).
+    shelter: bool,
 }
 
 /// An object that passed the tests: its culling sphere and the views it
@@ -622,6 +625,8 @@ struct ObjVis {
     /// renderer knows (`ProbeCapture::reach`), so the camera's reach and
     /// small object culling do not apply.
     probes: bool,
+    /// In the rain's shelter map (`CullCtx::shelter`).
+    shelters: bool,
 }
 
 /// Object tests of the CPU lists, the same as `face_mask` in cull.wgsl:
@@ -660,7 +665,17 @@ fn object_visibility(
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
     let probes = ctx.reflections;
-    if !in_view && !casts && !reflects && !probes {
+    // the shelter map's square (renderer.rs `rain_shelter_matrix`: 40 m
+    // each way, 60 m up and down), what stands still (cull.wgsl `moves`)
+    let half = Vec3::new(40.0, 40.0, 60.0) + Vec3::splat(sr);
+    let shelters = ctx.shelter
+        && !g.is_avatar
+        && !g.rigged
+        && !g.physical
+        && g.owner_avatar.is_none()
+        && avatar.is_none()
+        && (sc - ctx.view.eye).abs().cmple(half).all();
+    if !in_view && !casts && !reflects && !probes && !shelters {
         return None;
     }
     // tiny objects far away are culled (LL-like small object culling)
@@ -674,6 +689,7 @@ fn object_visibility(
         casts: casts && large,
         reflects: reflects && large,
         probes,
+        shelters: shelters && large,
     })
 }
 
@@ -4937,6 +4953,7 @@ impl Scene {
             reflection_distance: refl_dist,
             shadows,
             reflections,
+            shelter: full,
         };
 
         // objects in parallel
@@ -4979,6 +4996,7 @@ impl Scene {
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
             casters: Vec<ShadowCaster>,
+            shelter: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
             probe: Vec<ShadowCaster>,
             visible: usize,
@@ -5005,6 +5023,7 @@ impl Scene {
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
             casters: Vec::new(),
+            shelter: Vec::new(),
             refl: Vec::new(),
             probe: Vec::new(),
             visible: 0,
@@ -5073,6 +5092,7 @@ impl Scene {
                 casts,
                 reflects,
                 probes,
+                shelters,
             }) = object_visibility(
                 g,
                 idx,
@@ -5191,6 +5211,16 @@ impl Scene {
                             alpha: pass.record_flags() != 0,
                         });
                     }
+                    // the rain's shelter map: blended faces too (glass keeps
+                    // the rain off as well as tiles)
+                    if shelters {
+                        l.shelter.push(ShadowCaster {
+                            cmd,
+                            center: sc,
+                            radius: sr,
+                            alpha: pass.record_flags() != 0,
+                        });
+                    }
                     if matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
                         let c = ShadowCaster {
                             cmd,
@@ -5275,6 +5305,7 @@ impl Scene {
             a.part_faces.append(&mut b.part_faces);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
+            a.shelter.append(&mut b.shelter);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
             a.visible += b.visible;
@@ -5336,6 +5367,7 @@ impl Scene {
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
+        self.lists.shelter_casters.extend(result.shelter);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
@@ -7832,6 +7864,7 @@ mod tests {
             reflection_distance: 64.0,
             shadows: true,
             reflections: true,
+            shelter: false,
         };
         let gview = GpuCullView {
             first_person: None,

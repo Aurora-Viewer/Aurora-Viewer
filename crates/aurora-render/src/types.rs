@@ -616,6 +616,11 @@ pub struct DrawLists {
     /// Per `blend_under_water` entry: the same sidedness rule before water.
     pub blend_under_double_sided: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
+    /// Aurora Weather, CPU lists only: what the rain's shelter map takes in
+    /// its square around the camera, shadows or not: what stands still
+    /// (no avatar, worn, rigged or physical object), blended faces too (a
+    /// glass roof), as the GPU culling's shelter bin (cull.wgsl).
+    pub shelter_casters: Vec<ShadowCaster>,
     /// Terrain chunks casting shadows: drawn depth only like the opaque
     /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
     /// never through `fs_shadow`.
@@ -768,6 +773,7 @@ impl DrawLists {
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
         self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
+        self.shelter_casters.clone_from(&src.shelter_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
@@ -820,6 +826,7 @@ impl DrawLists {
         self.blend_depth_runs.clear();
         self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
+        self.shelter_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();

@@ -8143,7 +8143,14 @@ impl Backend {
             let Some(vp) = vp else { continue };
             let planes = crate::gpu_cull::view_planes(*vp).map(|p| p.to_array());
             let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
-            spot_lists[k].extend(lists.shadow_casters.iter().filter(inside).map(|c| c.cmd));
+            // the shelter map: what stands still, glass too (as the GPU's
+            // shelter bin), not the shadows' casters
+            let casters = if shelter_map == Some(k) {
+                &lists.shelter_casters
+            } else {
+                &lists.shadow_casters
+            };
+            spot_lists[k].extend(casters.iter().filter(inside).map(|c| c.cmd));
             spot_terrain_lists[k].extend(lists.terrain_shadow_casters.iter().filter(inside).map(|c| c.cmd));
         }
 
