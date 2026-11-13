@@ -76,7 +76,9 @@ fn arc(a: Vec3, b: Vec3, t: f32) -> Vec3 {
 /// How many pieces a beam gets for its length on screen (`screen`, none
 /// when an end is off screen).
 fn piece_count(screen: Option<f32>) -> usize {
-    screen.map_or(PIECES.1 / 2, |points| (points / SCREEN_PIECE).ceil() as usize).clamp(PIECES.0, PIECES.1)
+    screen
+        .map_or(PIECES.1 / 2, |points| (points / SCREEN_PIECE).ceil() as usize)
+        .clamp(PIECES.0, PIECES.1)
 }
 
 /// The phase (0..1) of each glow at `time`, a beam's own `seed` keeping two
@@ -101,9 +103,11 @@ fn pulse_at(t: f32, phase: f32) -> f32 {
 /// strength (0..1), or none between two.
 fn ripple(phases: [f32; 2]) -> Option<(f32, f32)> {
     // a glow reaches the target at phase 1, then starts again from 0
-    let k = phases.iter().copied().filter(|p| *p < RIPPLE_TIME).fold(None, |m: Option<f32>, p| {
-        Some(m.map_or(p, |m| m.min(p)))
-    })?;
+    let k = phases
+        .iter()
+        .copied()
+        .filter(|p| *p < RIPPLE_TIME)
+        .fold(None, |m: Option<f32>, p| Some(m.map_or(p, |m| m.min(p))))?;
     let k = k / RIPPLE_TIME;
     Some((4.0 + RIPPLE * k, (1.0 - k).powi(2)))
 }
@@ -139,7 +143,13 @@ fn surface(from: Vec3, center: Vec3, rot: Quat, half: Vec3) -> Vec3 {
     }
     // along o -> 0, the box is entered once every axis is within its slab
     let enter = (0..3)
-        .map(|i| if o[i].abs() > half[i] { (o[i].abs() - half[i]) / o[i].abs() } else { 0.0 })
+        .map(|i| {
+            if o[i].abs() > half[i] {
+                (o[i].abs() - half[i]) / o[i].abs()
+            } else {
+                0.0
+            }
+        })
         .fold(0.0f32, f32::max);
     center + rot * (o * (1.0 - enter))
 }
@@ -177,7 +187,9 @@ pub fn draw(ctx: &egui::Context, p: &Palette, world: &World, scene: &Scene, proj
     let time = ctx.input(|i| i.time);
     for (effect, b) in &world.beams.shown {
         let alpha = b.alpha(now, FADE_IN);
-        let Some(from) = source_pos(world, scene, &b.source, now) else { continue };
+        let Some(from) = source_pos(world, scene, &b.source, now) else {
+            continue;
+        };
         let Some(to) = target_pos(world, b, from, now) else { continue };
         if alpha <= 0.0 || from.distance_squared(to) < 1e-4 {
             continue;
@@ -270,7 +282,12 @@ fn thread(
         let rect = egui::Rect::from_center_size(c - vec2(0.0, 20.0 + size.y * 0.5), size);
         let round = size.y * 0.5;
         painter.rect_filled(rect, round, p.panel.gamma_multiply(0.85 * alpha));
-        painter.rect_stroke(rect, round, Stroke::new(1.0, color.gamma_multiply(0.6 * alpha)), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            round,
+            Stroke::new(1.0, color.gamma_multiply(0.6 * alpha)),
+            egui::StrokeKind::Inside,
+        );
         painter.galley(rect.center() - galley.size() * 0.5, galley, p.ink);
     }
 }

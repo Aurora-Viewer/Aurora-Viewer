@@ -4392,16 +4392,10 @@ impl World {
                 // object must be in the world; ours are drawn on their own
                 if source != self.agent_id {
                     let objects = &self.objects;
-                    self.beams.receive(
-                        effect,
-                        source,
-                        target,
-                        position,
-                        color,
-                        duration,
-                        std::time::Instant::now(),
-                        |id| objects.index_of_uuid(id).is_some(),
-                    );
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
                 }
                 None
             }

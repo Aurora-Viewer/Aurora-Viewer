@@ -86,7 +86,10 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-build-show-beams-hint"),
             &field!(beams.show),
         );
-        cx.keywords("EffectColor beam")
-            .color(tr!("ui-options-build-beam-color"), tr!("ui-options-build-beam-color-hint"), &field!(beams.color));
+        cx.keywords("EffectColor beam").color(
+            tr!("ui-options-build-beam-color"),
+            tr!("ui-options-build-beam-color-hint"),
+            &field!(beams.color),
+        );
     });
 }

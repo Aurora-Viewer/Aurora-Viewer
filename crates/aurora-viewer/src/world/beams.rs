@@ -223,9 +223,8 @@ impl Beams {
     /// Drop the beams faded out, and those whose source or target left.
     pub fn forget(&mut self, now: Instant, exists: impl Fn(&Uuid) -> bool) {
         let gone = Duration::from_secs_f32(FADE_OUT);
-        self.shown.retain(|_, b| {
-            now.saturating_duration_since(b.until) < gone && exists(&b.source) && b.target.is_none_or(|t| exists(&t))
-        });
+        self.shown
+            .retain(|_, b| now.saturating_duration_since(b.until) < gone && exists(&b.source) && b.target.is_none_or(|t| exists(&t)));
     }
 }
 
