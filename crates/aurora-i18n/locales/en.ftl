@@ -13466,6 +13466,7 @@ set-editor-no-badge = No badge
 set-editor-badge-hint = On their nameplate and their marker
 set-editor-replace-friend = Use instead of default friendship symbol
 set-editor-colour-custom = Custom colour
+set-editor-marker-show = Show it
 set-editor-marker-off-hint = Hidden
 set-editor-marker-parcel-hint = On your parcel
 set-editor-marker-region-hint = In your region

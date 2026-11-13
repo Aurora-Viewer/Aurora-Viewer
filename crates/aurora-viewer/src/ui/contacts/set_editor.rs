@@ -458,10 +458,13 @@ fn look(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, 
     if std::mem::take(&mut st.editor.reveal_marker) {
         ui.scroll_to_cursor(Some(egui::Align::TOP));
     }
-    marker_scope(ui, p, &mut v);
+    labelled(ui, p, aurora_i18n::tr!("set-editor-marker-show"), |ui| marker_scope(ui, p, &mut v));
     if v.marker != MarkerScope::Off {
-        ui.add_space(16.0);
-        marker_shapes(ui, p, &mut v, cfg);
+        ui.add_space(12.0);
+        let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(cfg.color));
+        labelled(ui, p, aurora_i18n::tr!("set-editor-marker-shape"), |ui| {
+            marker_shapes(ui, p, &mut v, color)
+        });
         ui.add_space(12.0);
         labelled(ui, p, aurora_i18n::tr!("set-editor-marker-fade"), |ui| {
             let mut fades = v.marker_fade.is_some();
@@ -686,130 +689,127 @@ fn custom_colour(ui: &mut egui::Ui, p: &Palette, world: &mut World, set: &str, c
     });
 }
 
-/// Where the marker shows, as three cards: off, on my parcel, in my
-/// region; the one chosen lit in the accent.
+/// What a segment of `glyph_choice` shows before its word.
+enum Glyph<'a> {
+    Icon(&'a str),
+    /// The marker's own shape, in the set's colour.
+    Shape(MarkerShape, Color32),
+}
+
+/// A small choice in one track, each segment a glyph and its word, the lit
+/// face sliding to the one chosen (the theme's `segmented`, with glyphs).
+/// Returns the segment clicked, if it was not the chosen one.
+fn glyph_choice(ui: &mut egui::Ui, p: &Palette, id: &str, chosen: usize, cells: &[(Glyph, &str, &str)]) -> Option<usize> {
+    const H: f32 = 28.0;
+    const PAD: f32 = 2.0;
+    let font = egui::FontId::proportional(12.0);
+    let galleys: Vec<_> = cells
+        .iter()
+        .map(|(_, word, _)| ui.painter().layout_no_wrap((*word).to_owned(), font.clone(), p.ink))
+        .collect();
+    let widths: Vec<f32> = galleys.iter().map(|g| 10.0 + 14.0 + 6.0 + g.size().x + 12.0).collect();
+    let (track, _) = ui.allocate_exact_size(Vec2::new(widths.iter().sum::<f32>() + PAD * 2.0, H), Sense::hover());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(track, radius, p.bar);
+    let mut rects = Vec::new();
+    let mut x = track.left() + PAD;
+    for w in &widths {
+        rects.push(Rect::from_min_size(Pos2::new(x, track.top() + PAD), Vec2::new(*w, H - PAD * 2.0)));
+        x += w;
+    }
+    let inner = widgets::inner_radius(ui.visuals());
+    if let Some(on) = rects.get(chosen) {
+        let key = ui.scope_id().with(("glyph-choice", id));
+        let time = ui.style().animation_time;
+        let left = ui.ctx().animate_value_with_time(key.with("left"), on.left() - track.left(), time);
+        let right = ui.ctx().animate_value_with_time(key.with("right"), on.right() - track.left(), time);
+        let lit = Rect::from_x_y_ranges(track.left() + left..=track.left() + right, on.y_range());
+        ui.painter().rect_filled(lit, inner, p.raised);
+    }
+    let mut picked = None;
+    for (i, ((glyph, word, tip), galley)) in cells.iter().zip(galleys).enumerate() {
+        let rect = rects[i];
+        let resp = ui.interact(rect, ui.scope_id().with(("glyph-choice", id, i)), Sense::click());
+        let on = i == chosen;
+        if !on && resp.hovered() {
+            ui.painter().rect_filled(rect, inner, p.raised.gamma_multiply(0.5));
+        }
+        let ink = if on || resp.hovered() { p.ink } else { p.muted };
+        let cell = Rect::from_center_size(Pos2::new(rect.left() + 10.0 + 7.0, rect.center().y), Vec2::splat(14.0));
+        match glyph {
+            Glyph::Icon(icon) => {
+                if let Some(t) = crate::ui::icons::global(icon) {
+                    let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                    let tint = if on { p.violet_light } else { ink };
+                    ui.painter().image(t.id(), cell.shrink(1.0), uv, tint);
+                }
+            }
+            Glyph::Shape(shape, color) => {
+                let c = cell.center();
+                let fill = if on { *color } else { color.gamma_multiply(0.6) };
+                match shape {
+                    MarkerShape::Circle => ui.painter().circle_filled(c, 5.5, fill),
+                    MarkerShape::Diamond => ui.painter().add(egui::Shape::convex_polygon(
+                        vec![
+                            c + Vec2::new(0.0, -6.5),
+                            c + Vec2::new(6.5, 0.0),
+                            c + Vec2::new(0.0, 6.5),
+                            c + Vec2::new(-6.5, 0.0),
+                        ],
+                        fill,
+                        egui::Stroke::NONE,
+                    )),
+                };
+            }
+        }
+        widgets::paint_row_text(ui.painter(), galley, cell.right() + 6.0, rect.center().y, ink);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, *word));
+        if resp.on_hover_text(*tip).clicked() && !on {
+            picked = Some(i);
+        }
+    }
+    picked
+}
+
+/// Where the marker shows: off, on my parcel, in my region.
 fn marker_scope(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals) {
-    let choices = [
+    let scopes = [MarkerScope::Off, MarkerScope::Parcel, MarkerScope::Region];
+    let cells = [
         (
-            MarkerScope::Off,
-            "eye-off",
+            Glyph::Icon("eye-off"),
             aurora_i18n::tr!("contact-visual-marker-off"),
             aurora_i18n::tr!("set-editor-marker-off-hint"),
         ),
         (
-            MarkerScope::Parcel,
-            "home-filled",
+            Glyph::Icon("home-filled"),
             aurora_i18n::tr!("set-editor-marker-parcel"),
             aurora_i18n::tr!("set-editor-marker-parcel-hint"),
         ),
         (
-            MarkerScope::Region,
-            "world-filled",
+            Glyph::Icon("world-filled"),
             aurora_i18n::tr!("set-editor-marker-region"),
             aurora_i18n::tr!("set-editor-marker-region-hint"),
         ),
     ];
-    let gap = 8.0;
-    let w = ((ui.available_width() - gap * 2.0) / 3.0).floor();
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = gap;
-        for (scope, icon, title, hint) in choices {
-            let on = v.marker == scope;
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 66.0), Sense::click());
-            let radius = ui.visuals().widgets.inactive.corner_radius;
-            let fill = if on {
-                p.violet.gamma_multiply(0.16)
-            } else if resp.hovered() {
-                p.field.lerp_to_gamma(p.raised, 0.5)
-            } else {
-                p.field
-            };
-            ui.painter().rect_filled(rect, radius, fill);
-            if on {
-                ui.painter()
-                    .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
-            }
-            // the icon in its disc, the name, the hint, one under the other
-            let disc = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 8.0 + 11.0), Vec2::splat(22.0));
-            ui.painter()
-                .circle_filled(disc.center(), 11.0, if on { p.violet } else { p.raised });
-            if let Some(t) = crate::ui::icons::global(icon) {
-                let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-                let tint = if on { p.on_accent } else { p.muted };
-                ui.painter()
-                    .image(t.id(), Rect::from_center_size(disc.center(), Vec2::splat(12.0)), uv, tint);
-            }
-            let width = (rect.width() - 12.0).max(0.0);
-            let line = |text: &str, format: egui::TextFormat| {
-                let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
-                job.wrap = egui::text::TextWrapping::truncate_at_width(width);
-                ui.painter().layout_job(job)
-            };
-            let title_g = line(
-                title,
-                crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 12.5, p.ink),
-            );
-            let hint_g = line(hint, egui::TextFormat::simple(egui::FontId::proportional(11.0), p.muted));
-            let (tw, hw) = (title_g.size().x, hint_g.size().x);
-            widgets::paint_row_text(ui.painter(), title_g, rect.center().x - tw / 2.0, disc.bottom() + 11.0, p.ink);
-            widgets::paint_row_text(ui.painter(), hint_g, rect.center().x - hw / 2.0, disc.bottom() + 25.0, p.muted);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, title));
-            if resp.on_hover_text(hint).clicked() {
-                v.marker = scope;
-            }
-        }
-    });
+    let chosen = scopes.iter().position(|s| *s == v.marker).unwrap_or(0);
+    if let Some(i) = glyph_choice(ui, p, "marker-scope", chosen, &cells) {
+        v.marker = scopes[i];
+    }
 }
 
-/// The marker's shape, chosen from the two markers themselves, drawn as
-/// they will show in the world.
-fn marker_shapes(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals, cfg: &ContactSet) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let (label, _) = ui.allocate_exact_size(Vec2::new(130.0, 60.0), Sense::hover());
-        let g = ui.painter().layout_no_wrap(
-            aurora_i18n::tr!("set-editor-marker-shape").to_owned(),
-            egui::FontId::proportional(12.5),
-            p.ink,
-        );
-        widgets::paint_row_text(ui.painter(), g, label.left(), label.center().y, p.ink);
-        for (shape, name) in [
-            (MarkerShape::Circle, aurora_i18n::tr!("contact-visual-marker-shape-circle")),
-            (MarkerShape::Diamond, aurora_i18n::tr!("contact-visual-marker-shape-diamond")),
-        ] {
-            let on = v.marker_shape == shape;
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(80.0, 60.0), Sense::click());
-            let radius = ui.visuals().widgets.inactive.corner_radius;
-            let fill = if on {
-                p.violet.gamma_multiply(0.16)
-            } else if resp.hovered() {
-                p.field.lerp_to_gamma(p.raised, 0.5)
-            } else {
-                p.field
-            };
-            ui.painter().rect_filled(rect, radius, fill);
-            if on {
-                ui.painter()
-                    .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
-            }
-            // the set's marker in that shape, as the world draws it
-            let mut look = cfg.clone();
-            look.visuals = v.clone();
-            look.visuals.marker_shape = shape;
-            if let Some(marker) = &sample(&look).marker {
-                crate::ui::contact_markers::paint_preview_at(ui.painter(), p, Pos2::new(rect.center().x, rect.top() + 24.0), marker);
-            }
-            let g = ui
-                .painter()
-                .layout_no_wrap(name.to_owned(), egui::FontId::proportional(11.5), if on { p.ink } else { p.muted });
-            let gw = g.size().x;
-            widgets::paint_row_text(ui.painter(), g, rect.center().x - gw / 2.0, rect.bottom() - 9.0, p.ink);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, name));
-            if resp.clicked() {
-                v.marker_shape = shape;
-            }
-        }
-    });
+/// The marker's shape, each choice showing the shape in the set's colour.
+fn marker_shapes(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals, color: Color32) {
+    let shapes = [MarkerShape::Circle, MarkerShape::Diamond];
+    let circle = aurora_i18n::tr!("contact-visual-marker-shape-circle");
+    let diamond = aurora_i18n::tr!("contact-visual-marker-shape-diamond");
+    let cells = [
+        (Glyph::Shape(MarkerShape::Circle, color), circle, circle),
+        (Glyph::Shape(MarkerShape::Diamond, color), diamond, diamond),
+    ];
+    let chosen = usize::from(v.marker_shape == MarkerShape::Diamond);
+    if let Some(i) = glyph_choice(ui, p, "marker-shape", chosen, &cells) {
+        v.marker_shape = shapes[i];
+    }
 }
 
 /// The badges, as they show on a plate: a disc each, in the set's colour,

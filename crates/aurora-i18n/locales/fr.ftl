@@ -13471,6 +13471,7 @@ set-editor-no-badge = Aucun badge
 set-editor-badge-hint = Sur leur étiquette et leur marqueur
 set-editor-replace-friend = Utiliser à la place du symbole d’amitié par défaut
 set-editor-colour-custom = Couleur personnalisée
+set-editor-marker-show = L’afficher
 set-editor-marker-off-hint = Masqué
 set-editor-marker-parcel-hint = Sur votre parcelle
 set-editor-marker-region-hint = Dans votre région

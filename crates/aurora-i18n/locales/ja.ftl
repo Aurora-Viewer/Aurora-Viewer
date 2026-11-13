@@ -13387,6 +13387,7 @@ set-editor-no-badge = バッジなし
 set-editor-badge-hint = 名前タグとマーカーに表示
 set-editor-replace-friend = デフォルトのフレンド記号の代わりに使用
 set-editor-colour-custom = カスタムカラー
+set-editor-marker-show = 表示
 set-editor-marker-off-hint = 非表示
 set-editor-marker-parcel-hint = 自分の区画
 set-editor-marker-region-hint = 自分のリージョン
