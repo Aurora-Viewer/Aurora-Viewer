@@ -111,35 +111,33 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.5 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.8 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Region Tracker, like the Legacy Viewer</h3>
-      Watch a list of regions from World › Region tracker or the map's
-      Track region: whether each one is up and how many avatars are there,
-      without opening the map.
+      <h3>Building, like the Legacy Viewer</h3>
+      Edit Face selects the faces of what you wear again, and Derender
+      with Edit linked parts hides only the selected part.
     </td>
     <td width="50%" valign="top">
-      <h3>Find your contacts in the world</h3>
-      A contact set can mark its members with a small circle or diamond,
-      seen through walls and held at the screen's edge when they are out of
-      view. Off by default, chosen set by set.
+      <h3>Chat and voice</h3>
+      The channel selector shows by every nearby chat input and keeps the
+      channel you chose. Nearby voice now connects on slow, high-latency
+      links too.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Emojis and chat</h3>
-      A row of your recent emojis by the chat field, favourite emojis if
-      you want them, recent GIFs in the picker, Alt+Enter for ((OOC)) chat,
-      and Request teleport next to Offer teleport.
+      <h3>Right on every graphics card</h3>
+      Tree leaves and mesh hair look right again on AMD cards, and
+      blended eyelashes stay visible behind mesh hair.
     </td>
     <td valign="top">
-      <h3>Your avatar, your view</h3>
-      Import an appearance XML into the shape and clothing editors, hide
-      the face lights other avatars wear, hide every name tag in one click,
-      and keep avatar tips with world tooltips off.
+      <h3>Smoother starts</h3>
+      A small Aurora window shows while the viewer starts and after an
+      update's restart. The avatar complexity notice no longer repeats,
+      and invisible HUD buttons take a left click again.
     </td>
   </tr>
 </table>
@@ -869,6 +867,14 @@ the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
 
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
+
 ### Hover height
 
 Open **Appearance › Hover Height** to adjust your height from -3 to +3 m.
@@ -1151,6 +1157,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |

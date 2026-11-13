@@ -17,7 +17,7 @@ use crate::world::eep;
 use crate::world::env_apply::{self, Target};
 use crate::world::env_day_edit::{self, DayDoc, LegacyError, LegacyFolder};
 use crate::world::env_select::SettingsKind;
-use crate::world::land::{AgentRights, EnvState};
+use crate::world::land::EnvState;
 use crate::world::notifications::{Data, Kind};
 use crate::world::windlight_presets;
 use aurora_llsd::Llsd;
@@ -103,14 +103,16 @@ impl App {
                 .is_some_and(|r| r.caps.contains_key("ExtEnvironment"))
     }
 
-    /// LLAgent::canManageEstate (we are never godlike): an estate manager or
-    /// the region's owner.
+    /// LLViewerRegion::canManageEstate: a god, an estate manager or the
+    /// region's owner.
     pub(super) fn can_manage_estate(&self) -> bool {
-        self.world
-            .main_region
-            .and_then(|h| self.world.regions.get(&h))
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
+        self.world.god_level > 0
+            || self
+                .world
+                .main_region
+                .and_then(|h| self.world.regions.get(&h))
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
     }
 
     /// LLViewerParcelMgr::getAgentOrSelectedParcel: About Land's selection,
@@ -131,10 +133,7 @@ impl App {
                 || self.world.main_region.and_then(|h| self.world.regions.get(&h)).is_some_and(|r| {
                     r.caps.contains_key("UpdateSettingsAgentInventory") && r.caps.contains_key("UpdateSettingsTaskInventory")
                 });
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let extended = self.extended_environment();
         EditorAccess {
             inventory,
@@ -587,10 +586,7 @@ impl App {
         let (Some(local_id), EnvState::Ready(summary)) = (sel.local_id(), &sel.env) else {
             return;
         };
-        let rights = AgentRights {
-            id: self.world.agent_id,
-            groups: &self.world.groups.groups,
-        };
+        let rights = self.world.agent_rights();
         let enabled = sel
             .parcel
             .as_ref()

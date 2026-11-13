@@ -192,11 +192,13 @@ fn rlva_gpu_spheres_preserve_uniform_images_and_compose_black_masks_without_glow
     let sampler = device.create_sampler(&Default::default());
     let locations = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 4,
+        size: 8,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&locations, 0, &[0; 4]);
+    // The texture table's layout: the bound page count, then the slots'
+    // locations (slot 0: page 0, layer 0).
+    queue.write_buffer(&locations, 0, bytemuck::cast_slice(&[1u32, 0]));
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
         entries: &[
