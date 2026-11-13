@@ -55,7 +55,8 @@ const DAY_VERSION: u64 = 3;
 pub const WINDOWS: [u16; 16] = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1080, 1440];
 /// The period of a day that gives none: 30 minutes.
 const DEFAULT_WINDOW: u8 = 4;
-/// The most characters a name holds (inventory names).
+/// The most bytes a name holds (inventory names: DB_INV_ITEM_NAME_STR_LEN,
+/// in bytes, so an accented letter takes two).
 pub const NAME_MAX: usize = 63;
 
 /// The weather of a sky: what it is like at its keyframe.
@@ -572,13 +573,21 @@ pub fn coded_name(name: &str) -> Option<&str> {
 /// to keep the whole within [`NAME_MAX`].
 fn with_code(name: &str, code: &str) -> String {
     let room = NAME_MAX - 2 - code.len();
-    let base: String = strip_code(name).chars().take(room).collect();
-    format!("{} ~{code}", base.trim_end())
+    let base = strip_code(name);
+    // whole characters only, the bytes counted: the server cuts a longer
+    // name in bytes, and the code at its end would go
+    let cut = base
+        .char_indices()
+        .map(|(i, c)| i + c.len_utf8())
+        .take_while(|&end| end <= room)
+        .last()
+        .unwrap_or(0);
+    format!("{} ~{code}", base[..cut].trim_end())
 }
 
 /// Whether `name` (without its code) is too long to take a code of `len`.
 pub fn too_long_for(name: &str, len: usize) -> bool {
-    strip_code(name).chars().count() > NAME_MAX - 2 - len
+    strip_code(name).len() > NAME_MAX - 2 - len
 }
 
 fn ordered(v: (f32, f32)) -> (f32, f32) {
@@ -823,6 +832,17 @@ mod tests {
         let fitted = storm().name_with(&long);
         assert_eq!(fitted.chars().count(), NAME_MAX);
         assert_eq!(SkyWeather::from_name(&fitted), Some(storm()));
+        // accented letters take two bytes, and the server cuts in bytes: the
+        // name is cut so that the whole, code included, fits (review of #2410)
+        let accented = "Orage éclair ".repeat(6);
+        assert!(accented.chars().count() < 80 && too_long_for(&accented, SKY_LEN));
+        let fitted = storm().name_with(&accented);
+        assert!(fitted.len() <= NAME_MAX, "{} bytes", fitted.len());
+        assert_eq!(SkyWeather::from_name(&fitted), Some(storm()));
+        // a name that fits in characters but not in bytes is too long
+        let wide = "é".repeat(30);
+        assert!(wide.chars().count() <= NAME_MAX - 2 - SKY_LEN && too_long_for(&wide, SKY_LEN));
+        assert!(storm().name_with(&wide).len() <= NAME_MAX);
         // the default schedule writes no code, and takes one away
         let d = DayWeather { window: 2, seed: 5 };
         assert_eq!(DayWeather::from_name(&d.name_with("Day")), Some(d));
