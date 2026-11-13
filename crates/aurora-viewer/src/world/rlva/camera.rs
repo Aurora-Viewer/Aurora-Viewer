@@ -89,7 +89,11 @@ impl Rlva {
     pub fn camera_texture(&self) -> Option<Uuid> {
         self.camera_value("setcam_textures").and_then(|value| {
             if value.is_empty() {
-                Some(aurora_prim::te::DEFAULT_TEXTURE)
+                // RlvBehaviourModifier's default is IMG_DEFAULT (addModifier
+                // RLV_BHVR_SETCAM_TEXTURES, rlvhelper.cpp), the flat grey the
+                // Legacy Viewer paints locally. The plywood texture is a
+                // different id.
+                Some(aurora_prim::te::IMG_DEFAULT)
             } else {
                 Uuid::parse_str(value).ok()
             }

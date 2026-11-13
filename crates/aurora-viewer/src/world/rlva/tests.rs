@@ -1799,7 +1799,14 @@ fn rlva_teleport_home_landmarks_and_bare_tplocal_follow_the_legacy_rules() {
 fn rlva_render_aliases_release_without_mutating_saved_settings_and_touch_measures_the_surface() {
     let mut r = enabled();
     command(&mut r, A, "@camtextures=n,camavdist:4=n,showselfhead=n");
-    assert_eq!(r.camera_texture(), Some(aurora_prim::te::DEFAULT_TEXTURE));
+    // Empty @camtextures / @setcam_textures is IMG_DEFAULT, the flat grey
+    // (rlvhelper.cpp), not the plywood texture.
+    assert_eq!(r.camera_texture(), Some(aurora_prim::te::IMG_DEFAULT));
+    let expected = aurora_prim::te::IMG_DEFAULT.to_string();
+    assert_eq!(
+        r.camera_reply(&Command::parse("getcam_textures=123").unwrap(), 1.0, 1.0).as_deref(),
+        Some(expected.as_str())
+    );
     assert_eq!(r.silhouette_distance(), Some(4.0));
     command(&mut r, A, "@camtextures=y,camavdist:4=y");
     assert_eq!(r.camera_texture(), None);
