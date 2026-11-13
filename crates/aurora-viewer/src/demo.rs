@@ -16,6 +16,8 @@ use uuid::Uuid;
 pub mod anti_spam;
 #[path = "demo_beacons.rs"]
 pub mod beacons;
+#[path = "demo_beams.rs"]
+pub mod beams;
 #[path = "demo_parcel_visibility.rs"]
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
@@ -4441,6 +4443,7 @@ pub fn events() -> Vec<NetEvent> {
             billable_factor: 1.0,
         })),
     ];
+    ev.extend(group::simulator_features());
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];
