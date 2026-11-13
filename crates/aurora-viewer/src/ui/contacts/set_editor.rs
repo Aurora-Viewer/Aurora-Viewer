@@ -306,6 +306,19 @@ fn tab_bar(ui: &mut egui::Ui, p: &Palette, tab: &mut EditorTab, members: usize) 
         ),
     ];
     let w = (bar.width() - 6.0 - 3.0 * 3.0) / 4.0;
+    // the raised face slides to the tab chosen, as the theme's segments do
+    let chosen = tabs.iter().position(|t| t.0 == *tab).unwrap_or(0) as f32;
+    let slide = ui
+        .ctx()
+        .animate_value_with_time(ui.scope_id().with("set-editor-tab-slide"), chosen, ui.style().animation_time);
+    ui.painter().rect_filled(
+        Rect::from_min_size(
+            Pos2::new(bar.left() + 3.0 + slide * (w + 3.0), bar.top() + 3.0),
+            Vec2::new(w, TABS_H - 6.0),
+        ),
+        radius,
+        p.raised,
+    );
     for (i, (id, icon, label, count)) in tabs.into_iter().enumerate() {
         let rect = Rect::from_min_size(
             Pos2::new(bar.left() + 3.0 + i as f32 * (w + 3.0), bar.top() + 3.0),
@@ -314,9 +327,7 @@ fn tab_bar(ui: &mut egui::Ui, p: &Palette, tab: &mut EditorTab, members: usize) 
         let resp = ui.interact(rect, ui.scope_id().with(("set-editor-tab", i)), Sense::click());
         let on = *tab == id;
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, on, label));
-        if on {
-            ui.painter().rect_filled(rect, radius, p.raised);
-        } else if resp.hovered() {
+        if !on && resp.hovered() {
             ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.45));
         }
         let ink = if on || resp.hovered() { p.ink } else { p.muted };
@@ -704,7 +715,7 @@ fn marker_scope(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals) {
         ui.spacing_mut().item_spacing.x = gap;
         for (scope, icon, title, hint) in choices {
             let on = v.marker == scope;
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 92.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 66.0), Sense::click());
             let radius = ui.visuals().widgets.inactive.corner_radius;
             let fill = if on {
                 p.violet.gamma_multiply(0.16)
@@ -719,14 +730,14 @@ fn marker_scope(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals) {
                     .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
             }
             // the icon in its disc, the name, the hint, one under the other
-            let disc = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 12.0 + 16.0), Vec2::splat(32.0));
+            let disc = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 8.0 + 11.0), Vec2::splat(22.0));
             ui.painter()
-                .circle_filled(disc.center(), 16.0, if on { p.violet } else { p.raised });
+                .circle_filled(disc.center(), 11.0, if on { p.violet } else { p.raised });
             if let Some(t) = crate::ui::icons::global(icon) {
                 let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
                 let tint = if on { p.on_accent } else { p.muted };
                 ui.painter()
-                    .image(t.id(), Rect::from_center_size(disc.center(), Vec2::splat(16.0)), uv, tint);
+                    .image(t.id(), Rect::from_center_size(disc.center(), Vec2::splat(12.0)), uv, tint);
             }
             let width = (rect.width() - 12.0).max(0.0);
             let line = |text: &str, format: egui::TextFormat| {
@@ -740,8 +751,8 @@ fn marker_scope(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals) {
             );
             let hint_g = line(hint, egui::TextFormat::simple(egui::FontId::proportional(11.0), p.muted));
             let (tw, hw) = (title_g.size().x, hint_g.size().x);
-            widgets::paint_row_text(ui.painter(), title_g, rect.center().x - tw / 2.0, disc.bottom() + 14.0, p.ink);
-            widgets::paint_row_text(ui.painter(), hint_g, rect.center().x - hw / 2.0, disc.bottom() + 30.0, p.muted);
+            widgets::paint_row_text(ui.painter(), title_g, rect.center().x - tw / 2.0, disc.bottom() + 11.0, p.ink);
+            widgets::paint_row_text(ui.painter(), hint_g, rect.center().x - hw / 2.0, disc.bottom() + 25.0, p.muted);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, title));
             if resp.on_hover_text(hint).clicked() {
                 v.marker = scope;
@@ -755,7 +766,7 @@ fn marker_scope(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals) {
 fn marker_shapes(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals, cfg: &ContactSet) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let (label, _) = ui.allocate_exact_size(Vec2::new(130.0, 72.0), Sense::hover());
+        let (label, _) = ui.allocate_exact_size(Vec2::new(130.0, 60.0), Sense::hover());
         let g = ui.painter().layout_no_wrap(
             aurora_i18n::tr!("set-editor-marker-shape").to_owned(),
             egui::FontId::proportional(12.5),
@@ -767,7 +778,7 @@ fn marker_shapes(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals, cfg: &ContactS
             (MarkerShape::Diamond, aurora_i18n::tr!("contact-visual-marker-shape-diamond")),
         ] {
             let on = v.marker_shape == shape;
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(92.0, 72.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(80.0, 60.0), Sense::click());
             let radius = ui.visuals().widgets.inactive.corner_radius;
             let fill = if on {
                 p.violet.gamma_multiply(0.16)
@@ -786,13 +797,13 @@ fn marker_shapes(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals, cfg: &ContactS
             look.visuals = v.clone();
             look.visuals.marker_shape = shape;
             if let Some(marker) = &sample(&look).marker {
-                crate::ui::contact_markers::paint_preview_at(ui.painter(), p, Pos2::new(rect.center().x, rect.top() + 28.0), marker);
+                crate::ui::contact_markers::paint_preview_at(ui.painter(), p, Pos2::new(rect.center().x, rect.top() + 24.0), marker);
             }
             let g = ui
                 .painter()
                 .layout_no_wrap(name.to_owned(), egui::FontId::proportional(11.5), if on { p.ink } else { p.muted });
             let gw = g.size().x;
-            widgets::paint_row_text(ui.painter(), g, rect.center().x - gw / 2.0, rect.bottom() - 12.0, p.ink);
+            widgets::paint_row_text(ui.painter(), g, rect.center().x - gw / 2.0, rect.bottom() - 9.0, p.ink);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, name));
             if resp.clicked() {
                 v.marker_shape = shape;

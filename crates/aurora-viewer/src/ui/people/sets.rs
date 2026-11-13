@@ -427,6 +427,36 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::contact_tip(resp, tip.as_deref());
 }
 
+/// How wide a member's two lines are when nothing is cut: the name with
+/// its heart and staff tag, or the second line with every chip.
+fn member_content_width(
+    ui: &egui::Ui,
+    p: &Palette,
+    world: &World,
+    id: &Uuid,
+    name: &str,
+    second: &str,
+    chips: &[(String, Color32)],
+) -> f32 {
+    let name_w = ui
+        .painter()
+        .layout_no_wrap(name.to_owned(), rows::semibold(ui, 13.0, p.ink).font_id, p.ink)
+        .size()
+        .x;
+    let heart = if world.social.is_friend(id) { 6.0 + 12.0 } else { 0.0 };
+    let staff = crate::ui::staff::width(ui, p, crate::world::staff::mark(world, id), 13.0);
+    let staff = if staff > 0.0 { staff + 6.0 } else { 0.0 };
+    let second_w = ui
+        .painter()
+        .layout_no_wrap(second.to_owned(), FontId::proportional(11.5), p.muted)
+        .size()
+        .x;
+    let chips_w: f32 = chips.iter().map(|(n, _)| chip_layout(ui, p, n).1 + 4.0).sum();
+    // the second line keeps its 40 points beside the chips (`fitting_chips`)
+    let second_line_w = second_w.max(40.0) + if chips.is_empty() { 0.0 } else { 6.0 + chips_w };
+    (name_w + heart + staff).max(second_line_w) + 2.0
+}
+
 /// A member being dragged toward a set: who, where the pointer holds the
 /// row (from its corner), and the row's width.
 #[derive(Clone, Copy, Debug)]
@@ -454,7 +484,17 @@ fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &People
         return;
     }
     let id = carry.id;
-    let rect = Rect::from_min_size(at - carry.grab, Vec2::new(carry.width, RICH_H));
+    let name = rows::display_name(world, &id);
+    let second = second_line(world, &id);
+    let chips = other_sets(world, &id, set);
+    // as wide as what it shows, never wider than the row: the same lines,
+    // nothing cut
+    let left_pad = rows::names_left(Rect::from_min_size(Pos2::ZERO, Vec2::new(carry.width, RICH_H)));
+    let width = (left_pad + member_content_width(ui, p, world, &id, &name, &second, &chips) + 12.0).min(carry.width);
+    // held where it was grabbed, or by its right end when the card is
+    // narrower than the place it was grabbed at
+    let grab = Vec2::new(carry.grab.x.min(width - 12.0), carry.grab.y);
+    let rect = Rect::from_min_size(at - grab, Vec2::new(width, RICH_H));
     let layer = egui::LayerId::new(egui::Order::Tooltip, member_carry_key());
     let mut card = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
     card.set_clip_rect(ui.ctx().content_rect());
@@ -464,7 +504,6 @@ fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &People
     card.painter().rect_filled(rect, radius, p.raised);
     card.painter()
         .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
-    let name = rows::display_name(world, &id);
     let left = rows::picture(&card, p, world, rect, data.pics.get(&id), id, &name, false);
     let color = crate::ui::colors::resident_name(world, &id, p.ink);
     member_names(
@@ -475,8 +514,8 @@ fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &People
         rect.right() - 10.0,
         &name,
         color,
-        &second_line(world, &id),
-        &other_sets(world, &id, set),
+        &second,
+        &chips,
         world.social.is_friend(&id),
         crate::world::staff::mark(world, &id),
     );
@@ -647,6 +686,39 @@ fn selection_bar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, c
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The theme's segmented control: its lit face slides from the choice
+    /// before to the new one over a few frames, then rests on it.
+    #[test]
+    fn a_segmented_choice_slides_its_face_to_the_new_choice() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let options = [("One", false), ("Two", false), ("Three", false)];
+        let lit_left = |frames: &mut crate::ui::widgets::elide_tests::Frames, chosen: usize| {
+            let shapes = frames.shapes(Vec::new(), |ui| {
+                let mut i = chosen;
+                widgets::segmented(ui, &p, &mut i, &options);
+            });
+            shapes
+                .iter()
+                .filter_map(|shape| match shape {
+                    egui::Shape::Rect(r) if r.fill == p.raised => Some(r.rect.left()),
+                    _ => None,
+                })
+                .next()
+                .expect("the chosen segment is lit")
+        };
+        let first = lit_left(&mut frames, 0);
+        let _ = lit_left(&mut frames, 0);
+        // the frame of the click starts from where it was, the next moves
+        assert_eq!(lit_left(&mut frames, 2), first);
+        let moving = lit_left(&mut frames, 2);
+        let mut last = moving;
+        for _ in 0..60 {
+            last = lit_left(&mut frames, 2);
+        }
+        assert!(moving > first && moving < last, "on its way: {first} < {moving} < {last}");
+    }
 
     #[test]
     fn chips_fit_while_the_second_line_keeps_its_room() {
