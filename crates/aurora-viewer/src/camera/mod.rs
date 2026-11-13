@@ -879,7 +879,7 @@ impl Camera {
     }
 
     fn update_focus_offset(&mut self) {
-        if self.focus_object == Some(self.own) {
+        if (self.gamepad_follow_avatar || self.focus_geom.is_none()) && self.focus_object == Some(self.own) {
             self.focus_object_offset = self.focus_target - self.avatar.position;
         } else if let Some(g) = self.focus_geom {
             self.focus_object_offset = self.focus_target - g.position;
@@ -2209,7 +2209,7 @@ impl Camera {
             self.focus_geom = None;
             return;
         };
-        if id == self.own {
+        if (self.gamepad_follow_avatar || self.focus_geom.is_none()) && id == self.own {
             // The normal player camera uses AvatarFrame too. Its position is
             // available before our object arrives and follows seated motion.
             if self.gamepad_follow_avatar || track {
@@ -5210,6 +5210,27 @@ mod tests {
                 camera.target.distance(camera.focus_target)
             );
         }
+    }
+
+    #[test]
+    fn explicit_focus_on_our_avatar_keeps_refreshing_zoom_geometry() {
+        let settings = CameraSettings::default();
+        let mut world = hover_world(false);
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let geom = focus_object_geom(&world, &world.agent_id, Instant::now()).unwrap();
+        camera.alt_focus(
+            geom.position,
+            Some((world.agent_id, geom)),
+            (camera.position, camera.forward()),
+            &mut world.agent,
+            &settings,
+        );
+        let index = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let scale = geom.scale * 1.5;
+        world.objects.get_mut(index).unwrap().scale = scale;
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        assert_eq!(camera.focus_geom.unwrap().scale, scale);
     }
 
     #[test]
