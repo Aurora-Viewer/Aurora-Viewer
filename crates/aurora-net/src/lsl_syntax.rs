@@ -359,7 +359,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("test folder");
         std::fs::write(cache_file(&dir, id), aurora_llsd::to_xml(&doc())).expect("cached LSL");
         let http = reqwest::Client::new();
-        let defs = load_definitions(&http, "http://127.0.0.1:9/none", &dir, id).await.expect("cached LSL");
+        let defs = load_definitions(&http, "http://127.0.0.1:9/none", &dir, id)
+            .await
+            .expect("cached LSL");
         assert!(defs.lsl.is_some() && defs.lua.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
