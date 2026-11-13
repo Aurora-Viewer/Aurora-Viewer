@@ -5920,6 +5920,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
+| `AURORA_DEMO_WEARABLE_FAVORITES=1\|folder\|sync\|legacy-none\|wear\|wear-refused\|delete-real` | Favorite wearables window with a synthetic wardrobe |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
@@ -9111,6 +9112,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_ACTIVE_GROUP=none`**: starts the demo session with no active group
   (`world.groups.active` nil and no group title worn). Used e.g. with `AURORA_DEMO_CONTACTS=groups`
   to verify that "None (no group tag)" displays the active tag badge and "Activate" is enabled for groups.
+- **`AURORA_DEMO_WEARABLE_FAVORITES=1|folder|sync|legacy-none|wear|wear-refused|delete-real`**:
+  the Favorite wearables window opens at frame 600 on a synthetic wardrobe.
+  `1`: favorites in `#Aurora/Wearable Favorites` and an Evening subfolder,
+  beside a Legacy folder. `folder`: the same, showing Evening. `sync`: only the
+  Legacy folder; Sync runs by itself at frame 720 and the list fills with
+  "5 favorites added". `legacy-none`: the empty list, without the Sync button.
+  `wear`: as `1`, with the shirt and the hair worn from the list at frame 660.
+  `wear-refused`: the same without a current outfit folder: the window's footer
+  says the wear was refused. `delete-real`: as `folder`, with a real item in
+  Evening: its delete is asked at frame 720, refused, and the footer says why.
 - **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
   toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
   600, with every title of the three demo groups and three region rules:

@@ -156,6 +156,7 @@ mod update_notice;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
+mod wearable_favorites;
 mod world_click_demo;
 mod worn_demo;
 
@@ -865,6 +866,7 @@ pub struct App {
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
     group_titles_ui: ui::group_titles::GroupTitlesUi,
+    wearable_favorites_ui: ui::wearable_favorites::WearableFavoritesUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
     /// The toolbar's Voice controls window (`ui/voice_controls.rs`).
@@ -1906,6 +1908,7 @@ impl App {
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             group_titles_ui: Default::default(),
+            wearable_favorites_ui: Default::default(),
             bumps_ui: Default::default(),
             voice_controls_ui: Default::default(),
             grid_status: Default::default(),
@@ -3339,6 +3342,7 @@ impl App {
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
         self.appearance_ui = Default::default();
+        self.wearable_favorites_ui = Default::default();
         self.shape_ui = Default::default();
         self.shape_camera = None;
         self.physics_ui = Default::default();
@@ -3671,6 +3675,10 @@ impl App {
             }
             if self.ao_ui.pending.as_ref().is_some_and(|p| p.request == request) {
                 self.ao_inventory_result(result);
+                return;
+            }
+            if self.wearable_favorites_ui.pending.as_ref().is_some_and(|p| p.request == request) {
+                self.wearable_favorites_result(result);
                 return;
             }
             self.inventory_result(request, result);
@@ -9560,6 +9568,7 @@ impl App {
         }
         // Group titles: the window's lists, the arrival's title
         self.group_titles_tick();
+        self.wearable_favorites_tick();
         // the script editor's keywords follow the region's LSL syntax
         if let Some(c) = self.world.follow_lsl_syntax() {
             self.send(c);
@@ -19003,6 +19012,7 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
+                self.wearable_favorites_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);
