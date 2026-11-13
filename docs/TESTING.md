@@ -5859,7 +5859,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
-| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; also fills Me › Experiences |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
@@ -8454,7 +8454,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the account's page; `fail`: the settings never come, the switches stay
   greyed; `savefail`: a change is refused, a notice says so and the
   switches go back to what the grid has.
-- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive`**: experiences
+- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|scenes`**: experiences
   asking for permissions; the demo plays the simulator, GetExperienceInfo and
   ExperiencePreferences. In SL a script may ask from any event (a click, a
   collision, the arrival on the parcel, a timer): the viewer only sees the
@@ -8482,6 +8482,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   environment (PushExpEnvironment, PushPartialEnvironment): over 3 s the sky
   fades to a violet sunset and the water fog turns red. The profile's Forget
   fades it back over 1 s, Block at once (ENV_PUSH, `world/eep_push.rs`).
+  `scenes`: an already-allowed controller pushes violet lighting at frame 620,
+  blue lighting at 900, then clears its override at 1200. Capture frames
+  850, 1150 and 1400 to compare both scenes and the restored shared environment.
   The Me › Experiences window lists them: the club's experience is
   Administered, the plaza's Contributed, and Allowed or Blocked follows your
   answers (the tab moves when you Allow, Block or Forget in the profile).

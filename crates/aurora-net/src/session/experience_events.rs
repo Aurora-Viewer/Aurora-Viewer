@@ -10,7 +10,24 @@ fn document(bytes: &[u8]) -> Option<aurora_llsd::Llsd> {
     if bytes.len() > 1024 * 1024 {
         return None;
     }
-    let bytes = bytes.strip_prefix(b"<?llsd/notation?>").unwrap_or(bytes);
+    let bytes = bytes.trim_ascii_start();
+    // LLSDSerialize::deserialize accepts spaced and case-insensitive codec
+    // headers, including the standard "<? llsd/notation ?>" serializer form.
+    if let Some(header) = bytes.strip_prefix(b"<?")
+        && let Some(end) = header.windows(2).position(|w| w == b"?>")
+    {
+        let name = header[..end].trim_ascii();
+        let body = header[end + 2..].trim_ascii_start();
+        if name.eq_ignore_ascii_case(b"llsd/notation") {
+            return aurora_llsd::from_notation(body).ok();
+        }
+        if name.eq_ignore_ascii_case(b"llsd/binary") {
+            return aurora_llsd::from_binary(body).ok().map(|(document, _)| document);
+        }
+        if name.eq_ignore_ascii_case(b"llsd/xml") {
+            return aurora_llsd::from_xml(body).ok();
+        }
+    }
     aurora_llsd::from_notation(bytes)
         .or_else(|_| aurora_llsd::from_xml(bytes))
         .or_else(|_| aurora_llsd::from_binary(bytes).map(|(document, _)| document))
@@ -82,6 +99,10 @@ impl Session<'_> {
             "PushExpEnvironment" => {
                 if let Some(event) = environment(agent, self.agent_id(), invoice, parameters) {
                     emit(self.sh, event);
+                } else {
+                    // Keep controller payloads and parcel/object names out of
+                    // diagnostics; an invalid document must not fail silently.
+                    log::warn!("PushExpEnvironment ignored: invalid recipient, experience, action or serialized document");
                 }
             }
             _ => {}
@@ -162,6 +183,40 @@ mod tests {
         assert!(environment(agent, agent, Uuid::nil(), &[push]).is_none());
         assert!(environment(agent, agent, experience, &[b"{'action':'Explode'}"]).is_none());
         assert!(environment(agent, agent, experience, &[b"broken"]).is_none());
+    }
+
+    #[test]
+    fn experience_environment_push_accepts_standard_serialized_documents() {
+        let agent = Uuid::from_u128(1);
+        let experience = Uuid::from_u128(2);
+        let message = aurora_llsd::llsd_map! {
+            "action" => "PushPartialEnvironment",
+            "action_data" => aurora_llsd::llsd_map! {
+                "transition_time" => 0.5,
+                "settings" => aurora_llsd::llsd_map! {
+                    "sky" => aurora_llsd::llsd_map! { "gamma" => 2.0 },
+                },
+            },
+        };
+        let notation = aurora_llsd::to_notation(&message);
+        let binary = aurora_llsd::to_binary(&message);
+        let xml = aurora_llsd::to_xml(&message);
+        for bytes in [
+            format!("<? llsd/notation ?>\n{notation}\0").into_bytes(),
+            format!("  \n<? LLSD/Notation ?>\r\n{notation}").into_bytes(),
+            format!("<?llsd/notation?>\n{notation}").into_bytes(),
+            notation.into_bytes(),
+            xml.clone(),
+            [b"<? LLSD/XML ?>\n".as_slice(), &xml].concat(),
+            binary.clone(),
+            [b"<?llsd/binary?>\n".as_slice(), &binary].concat(),
+        ] {
+            let decoded = environment(agent, agent, experience, &[&bytes]);
+            assert!(
+                matches!(decoded, Some(NetEvent::ExperienceEnvironment { experience: id, message: ref value }) if id == experience && value == &message),
+                "serializer document was dropped"
+            );
+        }
     }
 
     #[test]

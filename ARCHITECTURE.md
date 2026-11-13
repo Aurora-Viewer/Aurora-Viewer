@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Experience generic-message documents accept standard spaced, case-insensitive
+LLSD codec headers. Full pushed environments retain receipt order independently
+for day, sky and water, so late asset responses cannot restore an older scene
+or erase newer independent halves. Clearing an unrelated experience leaves
+the active transition intact. `demo_experience` supplies the offline `scenes`
+sequence for two controller changes and return to shared lighting (#1805).
 Inventory Delete carries a `DeleteRequest` with its originating window and
 selection through the Marketplace guard. `app/inventory.rs` binds that intent
 to the mutation's request before sending it, including synchronous demo replies.

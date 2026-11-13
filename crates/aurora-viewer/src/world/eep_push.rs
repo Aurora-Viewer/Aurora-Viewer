@@ -23,6 +23,7 @@ struct Waiting {
     experience: Uuid,
     asset: Uuid,
     transition: f32,
+    sequence: u64,
 }
 
 #[derive(Debug, Default)]
@@ -33,6 +34,13 @@ pub struct PushLayer {
     sky_keys: BTreeMap<String, (Llsd, Uuid)>,
     water_keys: BTreeMap<String, (Llsd, Uuid)>,
     waiting: Vec<Waiting>,
+    // Order full pushes by receipt, independently for each half. A delayed
+    // old download must not undo a newer scene; sky and water can load in
+    // either order, and a day replaces only halves not changed after it.
+    next_sequence: u64,
+    day_sequence: u64,
+    sky_sequence: u64,
+    water_sequence: u64,
     generation: u64,
     transition: f32,
 }
@@ -92,11 +100,15 @@ impl PushLayer {
         let transition = data["transition_time"].as_f32().max(0.0);
         match message["action"].as_str() {
             "ClearEnvironment" => self.clear(experience, transition),
-            "PushFullEnvironment" => self.waiting.push(Waiting {
-                experience,
-                asset: data["asset_id"].as_uuid(),
-                transition,
-            }),
+            "PushFullEnvironment" => {
+                self.next_sequence += 1;
+                self.waiting.push(Waiting {
+                    experience,
+                    asset: data["asset_id"].as_uuid(),
+                    transition,
+                    sequence: self.next_sequence,
+                });
+            }
             "PushPartialEnvironment" => self.push_partial(experience, &data["settings"], transition),
             other => log::warn!("unknown environment push action '{other}'"),
         }
@@ -131,13 +143,36 @@ impl PushLayer {
             };
             match Settings::clone(settings) {
                 Settings::Day(day) => {
-                    // setInjectedDay: the day owns the sky and the water too
-                    self.sky = None;
-                    self.water = None;
+                    if w.sequence < self.day_sequence {
+                        continue;
+                    }
+                    // setInjectedDay owns both halves, except a newer push
+                    // that already finished while this day was downloading.
+                    self.day_sequence = w.sequence;
+                    if w.sequence >= self.sky_sequence {
+                        self.sky = None;
+                        self.sky_sequence = w.sequence;
+                    }
+                    if w.sequence >= self.water_sequence {
+                        self.water = None;
+                        self.water_sequence = w.sequence;
+                    }
                     self.day = Some((w.experience, Arc::new(day)));
                 }
-                Settings::Sky(sky) => self.sky = Some((w.experience, sky)),
-                Settings::Water(water) => self.water = Some((w.experience, water)),
+                Settings::Sky(sky) => {
+                    if w.sequence < self.sky_sequence {
+                        continue;
+                    }
+                    self.sky_sequence = w.sequence;
+                    self.sky = Some((w.experience, sky));
+                }
+                Settings::Water(water) => {
+                    if w.sequence < self.water_sequence {
+                        continue;
+                    }
+                    self.water_sequence = w.sequence;
+                    self.water = Some((w.experience, water));
+                }
             }
             self.changed(w.transition);
         }
@@ -147,7 +182,7 @@ impl PushLayer {
     /// clearInjections: what `experience` pushed (everything for the null one).
     pub fn clear(&mut self, experience: Uuid, transition: f32) {
         let ours = |owner: Uuid| experience.is_nil() || owner == experience;
-        let before = self.is_active();
+        let before = self.override_count();
         if self.day.as_ref().is_some_and(|(owner, _)| ours(*owner)) {
             self.day = None;
         }
@@ -164,9 +199,17 @@ impl PushLayer {
         } else {
             self.waiting.retain(|w| w.experience != experience);
         }
-        if before {
+        if self.override_count() != before {
             self.changed(transition);
         }
+    }
+
+    fn override_count(&self) -> usize {
+        usize::from(self.day.is_some())
+            + usize::from(self.sky.is_some())
+            + usize::from(self.water.is_some())
+            + self.sky_keys.len()
+            + self.water_keys.len()
     }
 
     fn changed(&mut self, transition: f32) {
@@ -223,6 +266,85 @@ mod tests {
                 "settings" => llsd_map! { "sky" => sky },
             },
         }
+    }
+
+    fn full(asset: Uuid) -> Llsd {
+        llsd_map! { "action" => "PushFullEnvironment", "action_data" => llsd_map! { "asset_id" => asset } }
+    }
+
+    #[test]
+    fn full_environment_replies_do_not_restore_an_older_scene() {
+        let mut layer = PushLayer::default();
+        let old = exp(51);
+        let new = exp(52);
+        layer.handle(exp(1), &full(old));
+        layer.handle(exp(1), &full(new));
+        let sky = |gamma| {
+            Arc::new(Settings::Sky(SkyFrame {
+                gamma,
+                ..Default::default()
+            }))
+        };
+        layer.on_settings(new, Some(&sky(2.0)));
+        let generation = layer.generation();
+        layer.on_settings(old, Some(&sky(1.0)));
+        assert_eq!(layer.apply(SkyFrame::default(), WaterFrame::default()).0.gamma, 2.0);
+        assert_eq!(layer.generation(), generation, "a stale reply must not restart the fade");
+    }
+
+    #[test]
+    fn full_environment_day_keeps_newer_independent_sky_and_water() {
+        let mut layer = PushLayer::default();
+        let (day, sky, water) = (exp(51), exp(52), exp(53));
+        for asset in [day, sky, water] {
+            layer.handle(exp(1), &full(asset));
+        }
+        let wanted_sky = SkyFrame {
+            gamma: 2.0,
+            ..Default::default()
+        };
+        let wanted_water = WaterFrame {
+            fog_density: 7.0,
+            ..Default::default()
+        };
+        layer.on_settings(water, Some(&Arc::new(Settings::Water(wanted_water))));
+        layer.on_settings(sky, Some(&Arc::new(Settings::Sky(wanted_sky))));
+        layer.on_settings(
+            day,
+            Some(&Arc::new(Settings::Day(DayCycle::fixed(
+                SkyFrame::default(),
+                WaterFrame::default(),
+            )))),
+        );
+        assert!(layer.day().is_some());
+        let shown = layer.apply(SkyFrame::default(), WaterFrame::default());
+        assert_eq!(shown.0.gamma, wanted_sky.gamma);
+        assert_eq!(shown.1.fog_density, wanted_water.fog_density);
+    }
+
+    #[test]
+    fn full_environment_clear_cancels_pending_assets_without_hiding_other_experiences() {
+        let mut layer = PushLayer::default();
+        let asset = exp(51);
+        layer.handle(exp(1), &full(asset));
+        layer.handle(exp(2), &full(asset));
+        layer.clear(exp(1), 0.0);
+        let settings = Arc::new(Settings::Sky(SkyFrame::default()));
+        layer.on_settings(asset, Some(&settings));
+        assert_eq!(layer.experiences(), vec![exp(2)]);
+        layer.clear(Uuid::nil(), 0.0);
+        assert!(!layer.is_active());
+        assert!(layer.wanted().is_empty());
+    }
+
+    #[test]
+    fn unrelated_environment_clear_does_not_restart_an_active_fade() {
+        let mut layer = PushLayer::default();
+        layer.handle(exp(1), &partial(llsd_map! { "gamma" => 2.0 }, 3.0));
+        let generation = layer.generation();
+        layer.clear(exp(2), 0.0);
+        assert_eq!(layer.generation(), generation);
+        assert_eq!(layer.transition(), 3.0);
     }
 
     #[test]

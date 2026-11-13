@@ -1560,6 +1560,29 @@ mod tests {
     }
 
     #[test]
+    fn experience_scene_switching_stays_above_refreshed_region_lighting() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        let experience = Uuid::from_u128(9);
+        let scene = |value| {
+            llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! { "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => value } } },
+            }
+        };
+        sel.push_experience(experience, &scene(3.0));
+        assert_eq!(gamma(&mut sel, 1.0), 3.0);
+        sel.on_answer(REGION, -1, answer(-1, Some(1.2)), ctx(None));
+        assert_eq!(gamma(&mut sel, 2.0), 3.0, "a region refresh must not pin the viewer to its sky");
+        sel.push_experience(experience, &scene(2.0));
+        assert_eq!(gamma(&mut sel, 3.0), 2.0);
+        sel.clear_experience(experience, 0.0);
+        assert!((gamma(&mut sel, 4.0) - 1.2).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
+    }
+
+    #[test]
     fn parcel_without_day_keeps_the_region_environment() {
         // the Yikes log: region day, then the parcel answer without one
         let mut sel = EnvSelector::default();
