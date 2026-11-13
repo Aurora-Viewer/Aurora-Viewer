@@ -837,8 +837,12 @@ impl EnvSelector {
             match p.state {
                 PendingState::Ready(s, origin) => {
                     self.apply_settings(p.asset, &s, origin, p.timing);
-                    let weather = self.asset_weather.get(&p.asset).cloned();
-                    self.set_local_weather(weather);
+                    // a sky or a day sets the weather (or clears it); a water
+                    // has none and leaves the sky's
+                    if !matches!(*s, super::eep::Settings::Water(_)) {
+                        let weather = self.asset_weather.get(&p.asset).cloned();
+                        self.set_local_weather(weather);
+                    }
                 }
                 PendingState::Failed if p.preset != 0 => {
                     log::warn!(
@@ -1839,6 +1843,28 @@ mod tests {
         assert!((gamma(&mut sel, 10.0) - 1.9).abs() < 1e-6);
         assert!((gamma(&mut sel, 12.5) - 1.1).abs() < 1e-5, "halfway through 5 s");
         assert!((gamma(&mut sel, 15.0) - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_water_applied_over_a_coded_sky_keeps_its_weather() {
+        use crate::weather::region::{RegionDay, SkyWeather};
+        let mut sel = region_selector();
+        sel.note_asset_weather(SKY, Some(RegionDay::fixed(SkyWeather::CLEAR)));
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        assert!(sel.local_weather().is_some(), "the coded sky's weather");
+        // a water has no weather: the sky's stays (review of #2410)
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        sel.frame(&input(2.0));
+        assert!(sel.local_weather().is_some(), "kept under a new water");
+        // another sky without a code clears it
+        let plain = Uuid::from_u128(0x54);
+        sel.request_local(plain, SettingsKind::Sky);
+        sel.on_settings(plain, Some(sky_asset(1.2)));
+        sel.frame(&input(3.0));
+        assert!(sel.local_weather().is_none());
     }
 
     #[test]
