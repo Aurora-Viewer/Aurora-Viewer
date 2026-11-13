@@ -806,6 +806,7 @@ dependencies = [
  "unicode-bidi",
  "unicode-bidi-mirroring",
  "uuid",
+ "wayland-backend",
  "wayland-client",
  "windows",
  "windows-sys 0.61.2",
