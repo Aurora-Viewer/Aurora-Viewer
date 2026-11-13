@@ -58,6 +58,18 @@ impl ScriptControls {
         })
     }
 
+    /// Whether a script took CONTROL_UP without passing it on (upGrabbed).
+    /// Automatic fly must not start while this is true (agent_jump).
+    pub fn up_grabbed(&self) -> bool {
+        self.taken_only(control::UP_POS)
+    }
+
+    /// A control bit taken outright (`pass_on` false), ignoring pass-on holds.
+    fn taken_only(&self, flag: u32) -> bool {
+        let bit = flag.trailing_zeros() as usize;
+        bit < BITS && self.taken[bit] > 0
+    }
+
     /// Whether any script holds a control (anyControlGrabbed).
     pub fn any(&self) -> bool {
         self.taken.iter().chain(self.passed_on.iter()).any(|&n| n > 0)
@@ -127,5 +139,17 @@ mod tests {
             mask_left_button(control::AT_POS, true),
             control::AT_POS | control::LBUTTON_UP | control::ML_LBUTTON_UP
         );
+    }
+
+    #[test]
+    fn up_grabbed_only_counts_pass_on_false() {
+        let mut c = ScriptControls::default();
+        assert!(!c.up_grabbed());
+        c.apply(true, control::UP_POS, true);
+        assert!(!c.up_grabbed(), "pass_on still lets automatic fly");
+        c.apply(true, control::UP_POS, false);
+        assert!(c.up_grabbed());
+        c.apply(false, control::UP_POS, false);
+        assert!(!c.up_grabbed());
     }
 }
