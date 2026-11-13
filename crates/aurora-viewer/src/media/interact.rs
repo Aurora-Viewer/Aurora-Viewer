@@ -426,8 +426,8 @@ impl MediaManager {
 fn area_normal(positions: &[[f32; 3]], indices: &[u16], scale: Vec3) -> Option<Vec3> {
     let at = |i: u16| positions.get(i as usize).map(|p| Vec3::from(*p) * scale);
     let mut sum = Vec3::ZERO;
-    for tri in indices.chunks_exact(3) {
-        if let (Some(a), Some(b), Some(c)) = (at(tri[0]), at(tri[1]), at(tri[2])) {
+    for &[i, j, k] in indices.as_chunks::<3>().0 {
+        if let (Some(a), Some(b), Some(c)) = (at(i), at(j), at(k)) {
             sum += (b - a).cross(c - a);
         }
     }
