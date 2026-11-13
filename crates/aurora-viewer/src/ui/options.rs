@@ -463,6 +463,8 @@ pub struct OptionsUi {
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
+    /// Imported LUTs shared with the photo editor.
+    pub world_lut_files: Vec<String>,
     /// Audio devices (set by the app) and microphone level (0..1).
     pub output_devices: Vec<String>,
     pub input_devices: Vec<String>,

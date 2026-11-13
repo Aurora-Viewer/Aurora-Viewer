@@ -27,6 +27,68 @@ pub fn page(cx: &mut Cx, tab: usize) {
     }
 }
 
+fn world_lut(cx: &mut Cx) {
+    use crate::snapshot::looks;
+    use aurora_i18n::tr;
+
+    let files = &cx.st.world_lut_files;
+    let imported = looks::lut_list(files);
+    let selected = if cx.s.world_lut.is_empty() {
+        tr!("photo-look-none").into()
+    } else if cx.s.world_lut.starts_with(looks::PACK) {
+        looks::name(&cx.s.world_lut).unwrap_or_else(|| tr!("ui-options-world-lut-unavailable").into())
+    } else {
+        imported
+            .iter()
+            .find(|entry| entry.id == cx.s.world_lut)
+            .map(|entry| entry.name.clone())
+            .unwrap_or_else(|| tr!("ui-options-world-lut-unavailable").into())
+    };
+    cx.keywords("LUT cube").row(
+        tr!("ui-options-world-lut"),
+        tr!("ui-options-world-lut-help"),
+        &field!(world_lut),
+        |ui, s| {
+            let mut changed = false;
+            egui::ComboBox::from_id_salt(ui.scope_id().with("world-lut"))
+                .width(COMBO_W)
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    changed |= ui
+                        .selectable_value(&mut s.world_lut, String::new(), tr!("photo-look-none"))
+                        .changed();
+                    for (creator, entries) in looks::pack_list() {
+                        ui.separator();
+                        ui.label(creator);
+                        for entry in entries {
+                            changed |= ui.selectable_value(&mut s.world_lut, entry.id, entry.name.as_ref()).changed();
+                        }
+                    }
+                    if !imported.is_empty() {
+                        ui.separator();
+                        ui.label(tr!("photo-lut-mine"));
+                        for entry in &imported {
+                            changed |= ui
+                                .selectable_value(&mut s.world_lut, entry.id.clone(), entry.name.as_ref())
+                                .changed();
+                        }
+                    }
+                });
+            changed
+        },
+    );
+    let enabled = !cx.s.world_lut.is_empty();
+    cx.row(
+        tr!("ui-options-world-lut-strength"),
+        tr!("ui-options-world-lut-strength-help"),
+        &field!(world_lut_strength),
+        |ui, s| {
+            ui.add_enabled_ui(enabled, |ui| super::super::slider(ui, &mut s.world_lut_strength, 0..=100, "%"))
+                .inner
+        },
+    );
+}
+
 /// Graphics › Sky and environment: the environment's own settings.
 fn environment(cx: &mut Cx) {
     use aurora_i18n::tr;
@@ -1032,6 +1094,7 @@ fn image(cx: &mut Cx) {
         );
     });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
+        world_lut(cx);
         // "HDR and Emissive" (RenderDisableVintageMode): off, the tone
         // mapping, its mix and the sharpening are greyed, as in
         // LLFloaterPreference::refreshEnabledState

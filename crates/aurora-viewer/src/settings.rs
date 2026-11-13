@@ -1488,6 +1488,9 @@ pub struct Settings {
     /// Share of the tone mapped color over the exposed linear one, on skies
     /// that are not classic (RenderTonemapMix, 0.7 like the Legacy Viewer).
     pub tonemap_mix: f32,
+    /// LUT ID for the live world view. Empty disables colour grading.
+    pub world_lut: String,
+    pub world_lut_strength: u8,
     /// "HDR and Emissive" (RenderDisableVintageMode, on by default, off in
     /// the Legacy Viewer's Low and LowMid levels): off, no exposure, tone
     /// mapping nor sharpening, no emissive on opaque PBR faces and 8-bit
@@ -2431,6 +2434,8 @@ impl Default for Settings {
             colored_sky_ambient: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
+            world_lut: String::new(),
+            world_lut_strength: 100,
             hdr_emissive: true,
             fps_cap: true,
             fps_limit: 60,
@@ -3287,6 +3292,7 @@ impl Settings {
             512.0
         };
         self.tonemapper = self.tonemapper.min(1);
+        self.world_lut_strength = self.world_lut_strength.min(100);
         self.tonemap_mix = if self.tonemap_mix.is_finite() {
             self.tonemap_mix.clamp(0.0, 1.0)
         } else {
