@@ -299,6 +299,19 @@ impl Preset {
         }
         .write(s);
         s.graphics_saved_active = None;
+        // the weather's quality follows the level, but is not one of its
+        // values: choosing it in the Weather section keeps the level shown
+        s.weather.quality = self.weather_quality();
+    }
+
+    /// The Weather quality a level sets.
+    pub fn weather_quality(self) -> crate::weather::WeatherQuality {
+        use crate::weather::WeatherQuality;
+        match self {
+            Preset::Potato | Preset::Low => WeatherQuality::Low,
+            Preset::Medium => WeatherQuality::Medium,
+            Preset::High | Preset::Deluxe => WeatherQuality::High,
+        }
     }
 
     /// The level whose settings are exactly those of `s`, if any.
@@ -603,7 +616,7 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
 }
 
 /// Settings files written before the levels set the nearby lights (version
-/// 37), all with every light: a profile exactly on Potato apart from it
+/// 38), all with every light: a profile exactly on Potato apart from it
 /// takes its 8 (the Legacy Viewer's Low); any other keeps them all. (The
 /// earlier upgrades leave the lights aside too: files of then hold none.)
 pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
@@ -876,6 +889,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn levels_set_the_weather_quality_and_choosing_it_keeps_the_level() {
+        use crate::weather::WeatherQuality;
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Low);
+        s.weather.quality = WeatherQuality::High;
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        Preset::Medium.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Medium);
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::High);
+    }
+
+    #[test]
     fn each_level_matches_itself_after_applying() {
         for preset in Preset::ALL {
             let mut s = Settings::default();
@@ -1115,7 +1142,7 @@ mod tests {
         Preset::High.apply(&mut s);
         s.local_light_count = 20;
         assert_eq!(Preset::matching(&s), None);
-        // a file of version 36 exactly on Potato (all the lights then)
+        // a file of version 37 exactly on Potato (all the lights then)
         // takes its 8; one from before version 24 too, through the earlier
         // upgrades, which leave the lights aside
         let mut s = Settings::default();

@@ -156,7 +156,12 @@ impl LibraryUi {
             editor.message = message;
         }
     }
-    pub(crate) fn demo_preview_controls(&mut self, mode: &str) {
+    pub(crate) fn forget_local_asset(&mut self, id: Uuid) {
+        for editor in self.windows.iter_mut().filter_map(|window| window.editor.as_mut()) {
+            editor.forget_local_asset(id);
+        }
+    }
+    pub(crate) fn demo_preview_controls(&mut self, mode: &str, world: &mut World) {
         for window in &mut self.windows {
             window.texture.display.keep_ratio = !mode.ends_with("stretch");
             if let Some(editor) = &mut window.editor {
@@ -171,6 +176,15 @@ impl LibraryUi {
                 draft.metallic_factor = 0.35;
                 draft.roughness_factor = 0.6;
                 draft.double_sided = true;
+                if matches!(
+                    mode,
+                    "preview-controls-local"
+                        | "preview-controls-local-picker"
+                        | "preview-controls-local-apply"
+                        | "preview-controls-local-narrow"
+                ) {
+                    editor.demo_local_map(world, mode.ends_with("-picker"));
+                }
             }
         }
     }
@@ -199,6 +213,14 @@ impl LibraryUi {
         self.windows
             .iter()
             .any(|window| window.editor.as_ref().is_some_and(|editor| editor.saving == Some(request)))
+    }
+    pub(crate) fn demo_material_draft(&self, item: Uuid) -> Option<aurora_assets::PbrMaterial> {
+        self.windows
+            .iter()
+            .find(|window| window.id == item)?
+            .editor
+            .as_ref()
+            .map(|editor| (*editor.draft).clone())
     }
     pub(crate) fn begin_material_save(&mut self, item: Uuid, request: Uuid) -> bool {
         let Some(editor) = self.windows.iter_mut().find(|w| w.id == item).and_then(|w| w.editor.as_mut()) else {
@@ -365,6 +387,9 @@ impl LibraryUi {
                     window.texture.export_path = None;
                 }
                 window.texture.prepare(ctx, asset, scene);
+                let copy_uuid = window
+                    .texture
+                    .copy_uuid_allowed(&world.inventory, item.asset_id, world.god_level > 0);
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
@@ -372,7 +397,8 @@ impl LibraryUi {
                     ui,
                     p,
                     &item,
-                    rules::held(&world.inventory, &item),
+                    &world.inventory,
+                    copy_uuid,
                     dimensions,
                     &mut window.texture.display,
                     actions,

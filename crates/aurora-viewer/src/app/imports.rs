@@ -676,6 +676,7 @@ impl App {
                         .collect();
                     self.imports.clear_appearance_targets(&mut self.world.objects, &targets, Some(id));
                     self.build.forget_local_picker_asset(id);
+                    self.texture_library.forget_local_asset(id);
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
                         let mut entry = self.imports.entries.remove(index);
                         if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -795,6 +796,9 @@ impl App {
         }
         self.imports.save_local_registry(false);
         self.show_local_appearance_status(ctx, palette);
+        if self.avatar_studio.active && self.avatar_studio.animation_editor && !self.imports.any_window_open() {
+            self.ik_editor.resume_after_upload(&self.world);
+        }
     }
 
     fn show_local_appearance_status(&mut self, ctx: &egui::Context, palette: &Palette) {

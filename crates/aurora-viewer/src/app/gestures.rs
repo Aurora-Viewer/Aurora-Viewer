@@ -693,6 +693,7 @@ impl App {
                 request,
                 item,
                 asset_type: 21,
+                lua: false,
                 data,
             });
         }
@@ -723,6 +724,7 @@ impl App {
                     request,
                     item,
                     asset_type: 21,
+                    lua: false,
                     data,
                 });
             }

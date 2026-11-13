@@ -210,6 +210,16 @@ const BEFORE: &[&str] = &[
     "chat_bubbles_hide_console",
     "typing_bubbles",
     "chat_bubble_opacity",
+    "window_opacity_active",
+    "window_opacity_inactive",
+    "conversations_opacity",
+    "conversations_active_opacity_override",
+    "bar_opacity",
+    "menu_opacity",
+    "console_opacity",
+    "minimap_opacity",
+    "pie_opacity_override",
+    "pie_opacity",
     "toast_friends_online",
     "friends_online_in_chat",
     "presence_position",
@@ -270,6 +280,8 @@ const BEFORE: &[&str] = &[
     "no_neighbour_regions",
     "cache_size_mb",
     "cache_location",
+    "browser_behavior",
+    "browser_home_page",
     "audio",
     "media",
     "keybinds",
@@ -305,6 +317,7 @@ const BEFORE: &[&str] = &[
     "classic_search",
     "classic_region_estate",
     "classic_places",
+    "destinations_style",
     "classic_inventory",
     "classic_pay_window",
     "legacy_money_tracker",
@@ -409,6 +422,29 @@ fn a_setting_has_one_page() {
 }
 
 #[test]
+fn camera_and_vr_page_resets_are_independent() {
+    let mut s = Settings::default();
+    s.camera.vr.mouse_look = true;
+    s.camera.vr.resolution = Some([2560, 2560]);
+    s.camera.vr.gamma = 1.5;
+    s.camera.vr.vibrancy = 0.7;
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Camera, &mut s);
+    assert!(s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, Some([2560, 2560]));
+    assert_eq!(s.camera.vr.gamma, 1.5);
+    assert_eq!(s.camera.vr.vibrancy, 0.7);
+    assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Vr, &mut s);
+    assert!(!s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, None);
+    assert_eq!(s.camera.vr.gamma, 1.0);
+    assert_eq!(s.camera.vr.vibrancy, 1.0);
+    assert_eq!(s.camera.smoothing, 8.0);
+}
+
+#[test]
 fn a_page_reset_leaves_the_other_pages_alone() {
     let mut s = Settings {
         draw_distance: 300.0,
@@ -477,11 +513,30 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn gamepad_and_joystick_preferences_reset_independently() {
+    let mut settings = Settings::default();
+    settings.joystick.enabled = true;
+    settings.joystick.device = "raw-device".into();
+    settings.joystick.avatar.gain[5] = 0.35;
+    settings.gamepad.enabled = true;
+    settings.gamepad.device = "pad-device".into();
+    settings.gamepad.avatar.gain[5] = 7.0;
+    let raw = settings.joystick.clone();
+    let pad = settings.gamepad.clone();
+    reset_page_settings(Page::Controls, &mut settings);
+    assert_eq!(settings.gamepad, pad);
+    settings.joystick = raw.clone();
+    reset_page_settings(Page::Gamepad, &mut settings);
+    assert_eq!(settings.joystick, raw);
+    assert_eq!(settings.gamepad, Settings::default().gamepad);
+}
+
+#[test]
 fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     let mut s = Settings::default();
     s.joystick.enabled = true;
     s.joystick.device = "test-device".into();
-    s.joystick.gamepad();
+    s.joystick.raw_gamepad_preset();
     s.joystick.flycam.gain[3] = 0.7;
     s.joystick.avatar.dead_zone[0] = 0.4;
     s.joystick.auto_level = false;
@@ -756,6 +811,35 @@ fn group_titles_are_chosen_in_one_dropdown_and_reset_together() {
     s.group_titles = GroupTitles::AllExceptMine;
     reset_page_settings(Page::Avatars, &mut s);
     assert_eq!(s.group_titles, GroupTitles::All);
+}
+
+#[test]
+fn browser_behavior_radio_writes_the_selected_setting() {
+    use crate::settings::BrowserBehavior;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    assert_eq!(s.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+    let choices = [
+        (BrowserBehavior::SystemForAll, aurora_i18n::tr!("ui-options-browser-system-all")),
+        (
+            BrowserBehavior::BuiltInForSecondLife,
+            aurora_i18n::tr!("ui-options-browser-second-life"),
+        ),
+        (BrowserBehavior::BuiltInForAll, aurora_i18n::tr!("ui-options-browser-internal-all")),
+    ];
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, Vec::new());
+    }
+    for (behavior, label) in choices {
+        let at = texts.iter().find(|t| t.source == label).expect("browser choice").rect.center();
+        for events in click(at) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, events);
+        }
+        assert_eq!(s.browser_behavior, behavior);
+        assert!(r.changed);
+    }
 }
 
 #[test]
@@ -1723,6 +1807,96 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
+}
+
+/// Confirmations lists every "don't ask / don't show again" answer, as the
+/// Legacy Viewer's Alerts tab: the questions of other pages (their own
+/// rows, counted on their page) and the warnings with no page of their
+/// own, which come back from there.
+#[test]
+fn the_confirmations_page_lists_every_question_and_warning() {
+    use aurora_i18n::tr;
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    s.gpu_driver_dismissed = "32.0.15.6094".into();
+    s.debug_settings_warning_ignored = true;
+    s.fly_override_warned = true;
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, Vec::new());
+    }
+    let shows = |key: &str| texts.iter().any(|t| t.source == key);
+    for key in [
+        tr!("task-transfer-warn-move"),
+        tr!("task-transfer-warn-scripted"),
+        tr!("ui-options-confirm-no-transfer-settings"),
+        tr!("ui-options-warn-before-external-links"),
+        tr!("ui-options-group-snooze-ask"),
+        tr!("ui-options-confirm-hide-interface"),
+        tr!("poser-confirm-close"),
+        tr!("ui-options-debug-settings-warning"),
+        tr!("ui-options-fly-override-caution"),
+        tr!("ui-options-driver-warning"),
+        tr!("ui-options-skipped-update"),
+        "32.0.15.6094",
+    ] {
+        assert!(shows(key), "{key} on Confirmations");
+    }
+
+    // the dismissals count as changes of this page, the borrowed rows on theirs
+    s.warn_external_links = false;
+    let c = counts(&mut s, "");
+    assert_eq!(c.modified(Page::Confirmations), 3);
+    assert_eq!(c.modified(Page::Protections), 1);
+    let found = counts(&mut s, &cx::fold(tr!("ui-options-warn-before-external-links")));
+    assert_eq!(found.hits(Page::Confirmations), 0);
+
+    // "Show again" (the nearest to its row's label) brings the driver
+    // warning back
+    let label = |texts: &[crate::ui::widgets::elide_tests::Text], key: &str| {
+        texts
+            .iter()
+            .find(|t| t.source == key)
+            .unwrap_or_else(|| panic!("the row {key}"))
+            .rect
+    };
+    let driver = label(&texts, tr!("ui-options-driver-warning"));
+    let again = texts
+        .iter()
+        .filter(|t| t.source == tr!("ui-options-show-again"))
+        .min_by(|a, b| {
+            a.rect
+                .center()
+                .distance(driver.center())
+                .total_cmp(&b.rect.center().distance(driver.center()))
+        })
+        .expect("a Show again button")
+        .rect;
+    assert!(again.bottom() < 900.0, "the button is on the test screen");
+    for events in click(again.center()) {
+        page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, events);
+    }
+    assert!(s.gpu_driver_dismissed.is_empty());
+    assert!(r.changed);
+    texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, Vec::new());
+    assert!(!texts.iter().any(|t| t.source == "32.0.15.6094"));
+
+    // the page's reset brings back its own warnings, not the borrowed rows
+    reset_page_settings(Page::Confirmations, &mut s);
+    assert!(!s.debug_settings_warning_ignored && !s.fly_override_warned);
+    assert!(!s.warn_external_links, "the link warning is reset with Protections");
+}
+
+#[test]
+fn the_weather_lives_in_graphics_only() {
+    // (and in the Aurora Weather window; Preferences › Aurora, the choices
+    // between Aurora's look and the Legacy Viewer's, has none of it)
+    let paths = collected();
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
+    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
 }
 
 #[test]
