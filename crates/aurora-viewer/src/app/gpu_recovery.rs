@@ -208,7 +208,14 @@ impl App {
             fullscreen: old.window.fullscreen(),
         };
         let maximized = old.window.is_maximized();
-        let Gfx { mut renderer, window, .. } = old;
+        // the layout watch is the connection's keyboard, not the window's:
+        // it carries over
+        let Gfx {
+            mut renderer,
+            window,
+            layout_watch,
+            ..
+        } = old;
         self.forget_gpu_scene(&mut renderer);
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
@@ -242,6 +249,7 @@ impl App {
             window,
             shown: false,
             maximize_on_show: maximized,
+            layout_watch,
         });
         self.gpu_stall = Default::default();
         // the crash report's state froze at the loss; it follows the session
