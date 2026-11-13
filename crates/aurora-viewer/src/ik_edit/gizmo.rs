@@ -12,6 +12,16 @@ use crate::{
 use egui::Pos2;
 use glam::{Quat, Vec3, Vec4};
 
+pub(super) const DEFAULT_SENSITIVITY: f32 = 0.5;
+
+pub(super) fn sensitivity_scale(sensitivity: f32) -> f32 {
+    if sensitivity.is_finite() {
+        sensitivity.clamp(0.05, 2.0) / DEFAULT_SENSITIVITY
+    } else {
+        1.0
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Tool {
     #[default]
@@ -26,11 +36,15 @@ pub(super) enum Space {
     Local,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// FSManipRotateJoint's roll ring, at `mRadiusMeters * 1.2` around the rings.
+const VIEW_RING: f32 = 1.2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Axis(usize),
     Plane(usize),
     Ring(usize),
+    Roll,
 }
 
 #[derive(Clone, Copy)]
@@ -104,6 +118,29 @@ impl Geometry {
         self.pivot + (u * t.cos() + a.cross(u) * t.sin()) * self.length
     }
 
+    /// Like FSManipRotateJoint::renderCenterCircle, in the plane facing the
+    /// camera from the joint (normal mCenterToCamNorm): the plane its drag
+    /// turns in, so the joint follows the pointer along the drawn ring even
+    /// off-centre. The camera's up, made orthogonal, keeps t = 0 to the left.
+    fn view_ring(&self, t: f32) -> Vec3 {
+        let normal = self.part_axis(Part::Roll);
+        let (left, up) = normal
+            .cross(self.cam.up)
+            .try_normalize()
+            .map(|left| (left, left.cross(normal)))
+            .unwrap_or_else(|| normal.any_orthonormal_pair());
+        self.pivot + (left * t.cos() + up * t.sin()) * self.length * VIEW_RING
+    }
+
+    fn part_axis(&self, part: Part) -> Vec3 {
+        match part {
+            Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => self.axis(i),
+            // LL_ROT_ROLL turns about mCenterToCamNorm; the signed ring angle
+            // makes the sign of the axis irrelevant to the drag direction.
+            Part::Roll => -self.cam.direction_to(self.pivot),
+        }
+    }
+
     fn pick(&self, pointer: Pos2) -> Option<Part> {
         let mut best = (8.0, None);
         for axis in 0..3 {
@@ -143,7 +180,25 @@ impl Geometry {
                 }
             }
         }
-        best.1
+        if best.1.is_some() {
+            return best.1;
+        }
+        // Like FSManipRotateJoint::highlightManipulators, roll only when no
+        // axis ring is near, on a band outside them: the interior stays free.
+        if self.tool != Tool::Rotate {
+            return None;
+        }
+        for k in 0..96 {
+            let t = std::f32::consts::TAU / 96.0;
+            if let (Some(a), Some(b)) = (
+                self.cam.project(self.view_ring(k as f32 * t)),
+                self.cam.project(self.view_ring((k + 1) as f32 * t)),
+            ) && seg_distance(pointer, a, b).0 < 8.0
+            {
+                return Some(Part::Roll);
+            }
+        }
+        None
     }
 
     fn draw(&self, ctx: &egui::Context, palette: &Palette, active: Option<Part>) {
@@ -195,6 +250,14 @@ impl Geometry {
                 }
             }
         }
+        // Like FSManipRotateJoint::renderManipulatorRings, the roll ring shows
+        // only while hovered or dragged; its band is picked all the same.
+        if self.tool == Tool::Rotate && active == Some(Part::Roll) {
+            for k in 0..96 {
+                let t = std::f32::consts::TAU / 96.0;
+                p.line_cased(self.view_ring(k as f32 * t), self.view_ring((k + 1) as f32 * t), palette.amber, 6.0);
+            }
+        }
     }
 }
 
@@ -210,19 +273,18 @@ struct Drag {
     part: Part,
     pose: Pose,
     motion: Motion,
+    sensitivity: f32,
 }
 
 impl Drag {
-    fn new(geometry: Geometry, part: Part, pointer: Pos2, pose: Pose) -> Option<Self> {
+    fn new(geometry: Geometry, part: Part, pointer: Pos2, pose: Pose, sensitivity: f32) -> Option<Self> {
         let (o, d) = geometry.cam.ray(pointer.x * geometry.cam.ppp, pointer.y * geometry.cam.ppp);
-        let axis = geometry.axis(match part {
-            Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => i,
-        });
+        let axis = geometry.part_axis(part);
         let pivot = geometry.pivot;
         let motion = match part {
             Part::Axis(_) => Motion::Axis(nearest_on_line(o, d, pivot, pivot + axis)?),
             Part::Plane(_) => Motion::Plane(ray_plane(o, d, pivot, axis)?),
-            Part::Ring(_) if axis.dot(d).abs() > 0.15 => Motion::Ring {
+            Part::Ring(_) | Part::Roll if axis.dot(d).abs() > 0.15 => Motion::Ring {
                 start: (ray_plane(o, d, pivot, axis)? - pivot).try_normalize()?,
                 last: 0.0,
                 total: 0.0,
@@ -253,29 +315,29 @@ impl Drag {
                     radius,
                 }
             }
+            Part::Roll => return None,
         };
         Some(Self {
             geometry,
             part,
             pose,
             motion,
+            sensitivity: sensitivity_scale(sensitivity),
         })
     }
 
     fn update(&mut self, pointer: Pos2) -> Option<Pose> {
         let g = &self.geometry;
         let (o, d) = g.cam.ray(pointer.x * g.cam.ppp, pointer.y * g.cam.ppp);
-        let axis = g.axis(match self.part {
-            Part::Axis(i) | Part::Plane(i) | Part::Ring(i) => i,
-        });
+        let axis = g.part_axis(self.part);
         let mut pose = self.pose;
         let angle = match &mut self.motion {
             Motion::Axis(start) => {
-                pose.position += axis * (nearest_on_line(o, d, g.pivot, g.pivot + axis)? - *start);
+                pose.position += axis * (nearest_on_line(o, d, g.pivot, g.pivot + axis)? - *start) * self.sensitivity;
                 return Some(pose);
             }
             Motion::Plane(start) => {
-                pose.position += ray_plane(o, d, g.pivot, axis)? - *start;
+                pose.position += (ray_plane(o, d, g.pivot, axis)? - *start) * self.sensitivity;
                 return Some(pose);
             }
             Motion::Ring { start, last, total } => {
@@ -288,7 +350,7 @@ impl Drag {
             }
             Motion::Edge { origin, tangent, radius } => (pointer - *origin).dot(*tangent) / *radius,
         };
-        pose.rotation = (Quat::from_axis_angle(axis, angle) * pose.rotation).normalize();
+        pose.rotation = (Quat::from_axis_angle(axis, angle * self.sensitivity) * pose.rotation).normalize();
         Some(pose)
     }
 }
@@ -315,6 +377,7 @@ impl Gizmo {
         geometry: Geometry,
         pose: Pose,
         allow_hover: bool,
+        sensitivity: f32,
     ) -> (bool, Option<(Pose, Tool)>) {
         let (pointer, pressed, down, released, alt) = ctx.input(|i| {
             (
@@ -337,7 +400,7 @@ impl Gizmo {
             })
             .and_then(|p| geometry.pick(p));
         if pressed && let (Some(part), Some(pointer)) = (hover, pointer) {
-            self.drag = Drag::new(geometry, part, pointer, pose);
+            self.drag = Drag::new(geometry, part, pointer, pose, sensitivity);
         } else if self.drag.is_none() {
             geometry.draw(ctx, palette, hover);
         }

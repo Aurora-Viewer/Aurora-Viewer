@@ -33,6 +33,9 @@ pub(super) struct AutoHover {
     tx: Sender<(u64, Option<Measurement>)>,
     rx: Receiver<(u64, Option<Measurement>)>,
     measurement: Option<Measurement>,
+    // Pose placement retains the last successful height while the current
+    // outfit is recalibrated. Only value() may authorize hover publication.
+    grounding: Option<(uuid::Uuid, f32)>,
     offset: Option<f32>,
     base: Option<Arc<anim::SkeletonBase>>,
     base_hash: u64,
@@ -52,6 +55,7 @@ impl Default for AutoHover {
             tx,
             rx,
             measurement: None,
+            grounding: None,
             offset: None,
             base: None,
             base_hash: 0,
@@ -72,6 +76,7 @@ pub(super) struct RemoteSoles {
 }
 
 struct SoleSnapshot {
+    avatar: uuid::Uuid,
     signature: u64,
     ready: bool,
     estimate: Estimate,
@@ -87,6 +92,11 @@ impl AutoHover {
             .then_some(self.measurement)
             .flatten()
             .map(|measurement| measurement.height)
+    }
+
+    fn grounding_value(&self, avatar: uuid::Uuid) -> Option<f32> {
+        self.observed?;
+        self.grounding.filter(|(owner, _)| *owner == avatar).map(|(_, height)| height)
     }
 
     fn prepare_base(&mut self, rig: &anim::Rig, base: &Arc<anim::SkeletonBase>) {
@@ -107,6 +117,7 @@ impl AutoHover {
     /// one avatar; a retired cache's late job cannot reach its replacement.
     fn update(&mut self, snapshot: SoleSnapshot, jobs: &super::jobs::Jobs, now: Instant) -> bool {
         let SoleSnapshot {
+            avatar,
             signature,
             ready,
             estimate,
@@ -126,6 +137,9 @@ impl AutoHover {
             if ready && self.observed == Some(stamp) {
                 self.finished = Some(stamp);
                 self.measurement = result;
+                if let Some(measurement) = result {
+                    self.grounding = Some((avatar, measurement.height));
+                }
                 completed = true;
             }
         }
@@ -263,9 +277,12 @@ impl Scene {
             self.auto_hover.second_life,
         )?;
         let adjustment = if owner == world.agent_id {
-            self.automatic_hover_base(world).unwrap_or(0.0)
+            self.auto_hover.grounding_value(owner).unwrap_or(0.0)
         } else {
-            self.remote_soles.entries.get(&owner).and_then(AutoHover::value)?
+            self.remote_soles
+                .entries
+                .get(&owner)
+                .and_then(|state| state.grounding_value(owner))?
         };
         Some(skeleton.neutral_root_height - height * 0.5 - adjustment)
     }
@@ -293,6 +310,7 @@ impl Scene {
         if !enabled && !self.ground_avatar_feet {
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
+            self.auto_hover.grounding = None;
             self.auto_hover.offset = None;
             while self.auto_hover.rx.try_recv().is_ok() {
                 self.auto_hover.pending = false;
@@ -497,6 +515,7 @@ impl Scene {
             }
         }
         Some(SoleSnapshot {
+            avatar,
             signature: hash.finish(),
             ready,
             estimate: Estimate {
@@ -595,7 +614,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
             let mut vertex = SkinVertex::default();
             for k in 0..4 {
                 vertex.joints[k] = (face.joints[i][k] as usize).min(skin.joint_names.len() - 1) as u8;
-                vertex.weights[k] = (face.weights[i][k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                vertex.weights[k] = aurora_render::pack_skin_weight(face.weights[i][k]);
             }
             if let Some(point) = skinned_point(
                 skin.bind_shape.transform_point3(Vec3::from_array(*position)),
@@ -773,7 +792,7 @@ mod tests {
     fn tiny_weights_rounded_to_zero_do_not_select_low_vertices() {
         let lib = library();
         let mut geometry = face();
-        geometry.weights[1] = [0.0001, 0.9999, 0.0, 0.0];
+        geometry.weights[1] = [0.000001, 0.999999, 0.0, 0.0];
         let matrices = vec![Mat4::IDENTITY; lib.rig.len()];
         assert!((mesh_min(&[geometry], Some(&skin()), None, &lib.rig, &matrices).unwrap() + 0.3).abs() < 1e-5);
     }
@@ -782,11 +801,11 @@ mod tests {
     fn selected_vertices_blend_every_joint_and_normalize_packed_weights() {
         let vertex = SkinVertex {
             joints: [0, 1, 0, 0],
-            weights: [64, 191, 0, 0],
+            weights: [16384, 49151, 0, 0],
         };
         let matrices = [Mat4::from_translation(-Vec3::Z), Mat4::from_translation(Vec3::Z)];
         let point = skinned_point(Vec3::ZERO, &vertex, &matrices, &[true, false]).unwrap();
-        assert!((point.z - 127.0 / 255.0).abs() < 1e-6);
+        assert!((point.z - 32767.0 / 65535.0).abs() < 1e-6);
         assert_eq!(skinned_point(Vec3::ZERO, &vertex, &matrices, &[false, false]), None);
         assert_eq!(skinned_point(Vec3::ZERO, &SkinVertex::default(), &matrices, &[true, true]), None);
     }
@@ -2033,6 +2052,127 @@ mod tests {
         settle(&mut scene, &mut world, now + Duration::from_secs(1));
         assert!(scene.auto_hover.measurement.and_then(|m| m.lowest).is_some());
         assert_ne!(world.hover_height.value(), 0.42);
+    }
+
+    #[test]
+    fn own_foot_placement_keeps_its_last_sole_while_recalibrating() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        scene.ground_avatar_feet = true;
+        crate::demo::auto_hover::install_mesh(&world.avatar_lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        settle(&mut scene, &mut world, now);
+        let owner = world.agent_id;
+        let previous_stamp = scene.auto_hover.finished.unwrap();
+        let previous_sole = scene.grounding_sole_height(&world, owner).unwrap();
+        let previous_height = scene.automatic_hover_base(&world).unwrap();
+        assert_eq!(
+            scene.auto_hover.grounding_value(uuid::Uuid::nil()),
+            None,
+            "another avatar cannot reuse the retained sole"
+        );
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        let shoe = world
+            .objects
+            .index_of_uuid(&crate::demo::u(crate::demo::auto_hover::LEFT.into()))
+            .unwrap();
+        // A rigged attachment's object transform is not its skinned sole.
+        // Updating that transform invalidates the outfit without moving it.
+        world.objects.get_mut(shoe).unwrap().position.x += 0.01;
+        let at = now + Duration::from_secs(1);
+        scene.update_auto_hover(&mut world, false, 0.0, true, at);
+        assert_eq!(scene.automatic_hover_base(&world), None, "new outfit is not ready to publish");
+        assert_eq!(
+            scene.grounding_sole_height(&world, owner),
+            Some(previous_sole),
+            "recalibration discarded the visible shoe compensation"
+        );
+        scene
+            .auto_hover
+            .tx
+            .send((
+                previous_stamp,
+                Some(Measurement {
+                    height: 1.7,
+                    lowest: Some(0.0),
+                }),
+            ))
+            .unwrap();
+        scene.update_auto_hover(&mut world, true, 0.1, true, at);
+        assert_eq!(
+            world.hover_height.value(),
+            0.35,
+            "an offset edit must not publish a retained or stale height"
+        );
+        assert_eq!(scene.grounding_sole_height(&world, owner), Some(previous_sole));
+        // A failed replacement is not a new valid sole either.
+        scene.auto_hover.tx.send((scene.auto_hover.observed.unwrap(), None)).unwrap();
+        scene.update_auto_hover(&mut world, false, 0.0, true, at);
+        assert_eq!(scene.automatic_hover_base(&world), None);
+        assert_eq!(scene.grounding_sole_height(&world, owner), Some(previous_sole));
+        world.objects.get_mut(shoe).unwrap().position.x += 0.01;
+        let at = at + Duration::from_millis(50);
+        scene.update_auto_hover(&mut world, false, 0.0, true, at);
+        for _ in 0..2 {
+            scene.update_auto_hover(&mut world, false, 0.0, true, at + SETTLE);
+        }
+        assert_eq!(scene.automatic_hover_base(&world), Some(previous_height));
+        assert_eq!(scene.grounding_sole_height(&world, owner), Some(previous_sole));
+        assert_eq!(world.hover_height.value(), 0.35, "foot placement must preserve manual hover");
+        scene.ground_avatar_feet = false;
+        scene.update_auto_hover(&mut world, false, 0.0, true, at + Duration::from_secs(1));
+        assert_eq!(scene.automatic_hover_base(&world), None);
+        assert_ne!(
+            scene.grounding_sole_height(&world, owner),
+            Some(previous_sole),
+            "disabled calibration retained a usable height"
+        );
+    }
+
+    #[test]
+    fn remote_foot_placement_stays_active_while_its_sole_is_recalibrated() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        scene.ground_avatar_feet = true;
+        let resident = remote_shoes(&mut scene, &mut world, now, 1, 0.06);
+        let avatar = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        world.objects.get_mut(avatar).unwrap().velocity = Vec3::ZERO;
+        for frame in 0..90 {
+            remote_step(&mut scene, &mut world, now + Duration::from_millis(frame * 16));
+        }
+        let previous_sole = scene.grounding_sole_height(&world, resident.avatar).unwrap();
+        let previous_height = scene.remote_soles.entries[&resident.avatar].value().unwrap();
+        let shoe = world
+            .objects
+            .index_of(&crate::world::objects::ObjKey {
+                region: 1,
+                local_id: resident.shoe,
+            })
+            .unwrap();
+        world.objects.get_mut(shoe).unwrap().position.x += 0.01;
+        let at = now + Duration::from_secs(2);
+        remote_step(&mut scene, &mut world, at);
+        assert_eq!(scene.remote_soles.entries[&resident.avatar].value(), None);
+        assert_eq!(scene.grounding_sole_height(&world, resident.avatar), Some(previous_sole));
+        let avatar = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        assert!(
+            scene.grounding_frame(&world, avatar, at).is_some(),
+            "recalibration switched off remote foot placement"
+        );
+        for frame in 1..=45 {
+            let at = at + Duration::from_millis(frame * 16);
+            remote_step(&mut scene, &mut world, at);
+            assert!(
+                rendered_remote_sole(&scene, &world, &resident, at).abs() < 0.003,
+                "recalibration moved the rendered sole at frame {frame}"
+            );
+        }
+        assert_eq!(scene.remote_soles.entries[&resident.avatar].value(), Some(previous_height));
     }
 
     #[test]

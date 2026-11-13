@@ -56,7 +56,7 @@ pub struct Input {
     /// signalled, as `FSDisableTurningAroundWhenWalkingBackwards`).
     pub step_back: bool,
     /// How much faster the body turns while walking or standing, 0 to 100 %
-    /// (Preferences › Controls, FSAvatarTurnSpeed); every avatar drawn.
+    /// (FSAvatarTurnSpeed, in Debug Settings); every avatar drawn.
     pub turn_speed: f32,
 }
 

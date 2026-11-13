@@ -225,6 +225,15 @@ impl PlainTree {
     }
 }
 
+/// Where Collapse leaves the list: back at its top, with the top folders in
+/// sight, rather than at the end of a long list of them (the Legacy
+/// Viewer's `LLFolderView::closeAllFolders` keeps the offset). An
+/// inventory update held at the old place no longer brings it back.
+pub(super) fn top_after_collapse(st: &mut InventoryUi) -> f32 {
+    st.scroll_hold = None;
+    0.0
+}
+
 /// The plain tree in its scroll area, `root` shown as the first row or not
 /// (folder windows list its contents only).
 #[allow(clippy::too_many_arguments)]
@@ -247,11 +256,17 @@ pub(super) fn scroll(
         st.plain.persist(ui.ctx(), egui::Id::unique("inventory_open_folders"));
     }
     st.view.prepare(inv, prefs.sort_for(st.tab));
-    if let Some(open) = st.expand_all.take() {
+    let collapsed = st.expand_all.take().is_some_and(|open| {
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
+        !open
+    });
+    // Back from a search: where the list was; else the place `list` gives it
+    // (a revealed row below wins).
+    let restore = st.scroll_restore.take();
+    let mut offset = st.plain_scroll_restore.take().or(restore);
+    if collapsed {
+        offset = Some(top_after_collapse(st));
     }
-    // Back from a search: where the list was (a revealed row below wins).
-    let mut offset = st.plain_scroll_restore.take();
     // The root opens the first time it is shown, scrolled to the top.
     if show_root && st.roots_seen.insert(root) {
         st.plain.set_open(root, true);
@@ -272,6 +287,9 @@ pub(super) fn scroll(
     }
     let height_of_row = row_height(st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;
+    if navigated {
+        st.scroll_hold = None;
+    }
     if navigated && let Some(index) = st.selected.and_then(|id| st.plain.position(id)) {
         offset = Some(keyboard::scroll_offset(st, index, height_of_row, pitch, height));
     }
@@ -319,6 +337,7 @@ pub(super) fn scroll(
     });
     st.plain_scroll = out.state.unclamped_offset().y;
     st.list_viewport = Some((out.state.unclamped_offset().y, out.inner_rect.height()));
+    super::record_list_shown(ui, st, &out);
     drag::navigation::scroll(ui, &out, st.ui_id);
     out
 }

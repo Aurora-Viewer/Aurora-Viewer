@@ -14,11 +14,13 @@
 //! often a small invisible box.
 
 use super::animesh::JointBounds;
+use super::draw_limits::Fixup;
 use super::{GeomKey, GeomState, Scene, anchors, anim};
 use crate::world::World;
 use glam::{Mat4, Vec3};
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
+use uuid::Uuid;
 
 /// Padding around the pelvis the box starts from (calculateSpatialExtents).
 const PELVIS_PADDING: f32 = 0.25;
@@ -28,10 +30,13 @@ const MAX_DIAGONAL: f32 = 1000.0;
 
 impl Scene {
     /// The animated box of every animated object (`anim_boxes`), from this
-    /// frame's palettes. The rigged extents are gathered again only when the
-    /// object's rigged meshes or their geometry change; placing them costs
-    /// eight points per rigged joint.
-    pub(super) fn update_anim_boxes(&mut self, world: &World, now: Instant) {
+    /// frame's palettes, and the fixups it calls for (`World::animesh_fixups`,
+    /// draw_limits.rs: LLControlAvatar::matchVolumeTransform recomputes them
+    /// at each frame too). The rigged extents are gathered again only when
+    /// the object's rigged meshes or their geometry change; placing them
+    /// costs eight points per rigged joint.
+    pub(super) fn update_anim_boxes(&mut self, world: &mut World, now: Instant) {
+        let mut fixups: Vec<(Uuid, Fixup)> = Vec::new();
         let skeletons = &self.skeletons;
         self.anim_boxes.retain(|id, _| skeletons.contains_key(id));
         self.rig_extents.retain(|id, _| skeletons.contains_key(id));
@@ -84,12 +89,23 @@ impl Scene {
                 continue;
             };
             let b = extents.posed_box(pelvis, palette);
+            // (from any finite box: a figure scaled past the limit is wider
+            // than MAX_DIAGONAL, and a box of a palette not posed yet only
+            // gives a fixup for one frame, the next box being drawn with it)
+            let current = world.animesh_fixups.get(owner).copied().unwrap_or_default();
+            let next = current.next(pos, b, Self::wearer_avatar(world, owner_idx).is_some());
+            if next != Fixup::NONE {
+                fixups.push((*owner, next));
+            }
             if b.min.is_finite() && b.max.is_finite() && (b.max - b.min).length() < MAX_DIAGONAL {
                 self.anim_boxes.insert(*owner, b);
             } else {
                 self.anim_boxes.remove(owner);
             }
         }
+        // (none for the others: no box, as box_valid_and_non_zero)
+        world.animesh_fixups.clear();
+        world.animesh_fixups.extend(fixups);
     }
 }
 
