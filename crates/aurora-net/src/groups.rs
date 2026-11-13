@@ -32,6 +32,9 @@ pub mod powers {
     pub const NOTICES_RECEIVE: u64 = 1 << 43;
     pub const MEMBER_VISIBLE_IN_DIR: u64 = 1 << 47;
     pub const GROUP_BAN_ACCESS: u64 = 1 << 51;
+    /// GP_SESSION_POST_LINKS: may post web links outside Linden Lab's own
+    /// domains in group chat; the server redacts the others' links.
+    pub const SESSION_POST_LINKS: u64 = 1 << 52;
 }
 
 /// Where a member was last seen (the OnlineStatus string: "Online", or
@@ -597,6 +600,10 @@ pub mod ban {
     pub const CREATE: i32 = 1;
     pub const DELETE: i32 = 2;
 }
+
+/// The pause between two groups of a ban in all our groups
+/// (banFromAllGroupsCoro: suspendUntilTimeout(0.5f)).
+pub const BAN_IN_GROUPS_PAUSE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// The body of a ban POST (postGroupBanRequestCoro).
 pub fn ban_body(action: i32, ids: &[Uuid]) -> Llsd {

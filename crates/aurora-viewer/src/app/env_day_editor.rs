@@ -183,7 +183,15 @@ impl App {
                 DayAction::SaveAs(name) => self.day_editor_save(Some(name)),
                 DayAction::ApplyLocal => {
                     if let Some(day) = self.day_editor.rendered().cloned() {
+                        let (length, offset) = (day.length, day.offset);
                         self.world.eep.apply_local_day(day);
+                        // its Aurora Weather (the ground track's) with it
+                        let weather = self
+                            .day_editor
+                            .doc
+                            .as_ref()
+                            .and_then(|d| crate::weather::region::RegionDay::read(&d.to_llsd(), 0, length, offset));
+                        self.world.eep.set_local_weather(weather);
                         self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-applied").into(), false));
                     }
                 }
@@ -230,11 +238,15 @@ impl App {
                 self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-copied").into(), false));
             }
             (None, Some(it)) => {
+                // renamed too when saved over with another name, as
+                // LLSettingsVOBase::updateInventoryItem does (update_name)
+                self.rename_settings_item(&it, doc.name());
                 self.day_editor.saving = Some(request);
                 self.send(NetCommand::SaveInventoryContent {
                     request,
                     item: it.id,
                     asset_type: 56,
+                    lua: false,
                     data: doc.to_asset(),
                 });
             }
@@ -278,7 +290,13 @@ impl App {
     pub(super) fn day_editor_saved(&mut self, result: Result<aurora_net::inventory::InvItem, String>) {
         self.day_editor.saving = None;
         match result {
-            Ok(it) => {
+            Ok(mut it) => {
+                if self.day_editor.item == Some(it.id)
+                    && let Some(doc) = &self.day_editor.doc
+                {
+                    // (trimmed, as the rename sent it)
+                    it.name = doc.name().trim().to_owned();
+                }
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.day_editor.saved(
                     it.id,

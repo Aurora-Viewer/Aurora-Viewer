@@ -19,6 +19,10 @@
 //! - `zoom-resident`: the People list's Zoom on the nearest standing resident
 //!   at frame 600, who then walks south from 660 to 760 and west until 860:
 //!   the camera keeps facing them all along
+//! - `zoom-unloaded` (with `AURORA_DEMO_PEOPLE=rows`): the same Zoom at
+//!   frame 600 on a far resident only known by its coarse location: the
+//!   camera looks at that point; its avatar is drawn at 700 and the camera
+//!   follows it from then on (the log's `focus_object`)
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
@@ -29,6 +33,8 @@
 //! - `ground-ml-body-on|off`: ground sit at 520, enter at 600, stand at 760.
 //! - `ml-eyes-on-body-on|ml-eyes-off-body-on`: animate the head with optional
 //!   eye following; prefix `ground-` to exercise ground sitting.
+//! - `head-follow|pelvis-follow|hand-follow`: animate the named body part and
+//!   enable that third-person camera joint.
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
 //! - `wheel-chat`: the Conversations window opened at 560, its field taking
 //!   the keyboard, 12 wheel clicks in at 650 (into mouselook: the window
@@ -92,6 +98,11 @@ pub enum Step {
     ZoomResident,
     /// Slide the demo resident by (x, y) metres, as if it walked.
     MoveResident(f32, f32),
+    /// The radar's double click on the first far resident of
+    /// AURORA_DEMO_PEOPLE, only a coarse location yet.
+    ZoomUnloadedResident,
+    /// That resident's avatar arrives from the simulator.
+    DrawUnloadedResident,
     Log,
 }
 
@@ -244,6 +255,16 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                     Step::Log,
                 ]),
                 _ => {}
+            }
+        }
+        "zoom-unloaded" => {
+            match frame {
+                600 => out.push(Step::ZoomUnloadedResident),
+                700 => out.push(Step::DrawUnloadedResident),
+                _ => {}
+            }
+            if matches!(frame, 600 | 650 | 700 | 702 | 760) {
+                out.push(Step::Log);
             }
         }
         "zoom-resident" => {
@@ -404,6 +425,11 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             f if f > 300 && f.is_multiple_of(30) => out.push(Step::Log),
             _ => {}
         },
+        "head-follow" | "pelvis-follow" | "hand-follow" => {
+            if matches!(frame, 550 | 565 | 580 | 595 | 610 | 625) {
+                out.push(Step::Log);
+            }
+        }
         _ => {}
     }
     out

@@ -47,6 +47,10 @@ struct Harness {
     friends: crate::ui::people::FriendsSettings,
     /// The window is open (its cross or Ctrl+W closes it).
     open: bool,
+    /// `Settings::chat_column_collapsed`, given every frame as the app does.
+    column_setting: bool,
+    /// The viewer runs in demo mode (the button never writes the settings).
+    demo: bool,
 }
 
 impl Harness {
@@ -74,6 +78,8 @@ impl Harness {
             people: Default::default(),
             friends: Default::default(),
             open: true,
+            column_setting: false,
+            demo: false,
         }
     }
 
@@ -95,7 +101,12 @@ impl Harness {
             people,
             friends,
             open,
+            column_setting,
+            demo,
         } = self;
+        // as the app does every frame, and with what the button asked
+        st.follow_column_setting(*column_setting);
+        let asked = actions.len();
         let radar = crate::world::radar::Radar::default();
         let mut radar_settings = crate::ui::people::RadarSettings::default();
         let voice = HashMap::new();
@@ -104,10 +115,11 @@ impl Harness {
             settings: &mut radar_settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };
-        frames.run(events, |ui| {
+        let texts = frames.run(events, |ui| {
             // as the app does before any window
             crate::ui::close_key::begin(ui.ctx());
             actions.extend(show(
@@ -131,7 +143,13 @@ impl Harness {
                 }),
                 open,
             ));
-        })
+        });
+        for action in &actions[asked..] {
+            if let ConvAction::ColumnCollapsed(collapsed) = action {
+                st.column_collapsed_by_button(column_setting, *collapsed, *demo);
+            }
+        }
+        texts
     }
 
     fn settle(&mut self) -> Vec<crate::ui::widgets::elide_tests::Text> {
@@ -268,6 +286,66 @@ fn a_double_click_selects_one_word_of_a_line() {
     h.settle();
     let (start, end) = h.st.selection.1.bounds().expect("a word is selected");
     assert_eq!((start.seq, start.at, end.at), (end.seq, 6, 10), "\"from\" of \"hello from Jane\"");
+}
+
+#[test]
+fn clearing_the_message_filter_keeps_the_selected_text_and_its_message_in_view() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        for method in 0..3 {
+            let mut h = Harness::new(style);
+            for i in 0..150 {
+                let text = if i == 75 {
+                    "Needle".into()
+                } else {
+                    format!("Other message {i:03}")
+                };
+                h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &text));
+            }
+            h.st.selected = Some(JANE);
+            h.st.searches.entry(Some(JANE)).or_default().filter = Some("Needle".into());
+            let texts = h.settle();
+            let at = last(&texts, "Needle").center();
+            for _ in 0..2 {
+                h.click(at);
+            }
+            let bounds = h.st.selection.1.bounds().expect("the message's word is selected");
+            let field = super::super::find::filter_id(Some(JANE));
+            let at = h.rect(if method == 0 { field.with("clear") } else { field }).center();
+            h.click(at);
+            if method != 0 {
+                let modifiers = egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                };
+                h.frame(vec![
+                    egui::Event::Key {
+                        key: egui::Key::A,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                    egui::Event::Key {
+                        key: if method == 1 { egui::Key::Delete } else { egui::Key::Backspace },
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            assert_eq!(h.st.searches[&Some(JANE)].filter.as_deref(), Some(""));
+            for _ in 0..3 {
+                h.settle();
+            }
+            assert_eq!(h.st.selection.1.bounds(), Some(bounds), "{style:?}, method={method}");
+            let texts = h.settle();
+            let rect = last(&texts, "Needle");
+            assert!(rect.top() > 0.0 && rect.bottom() < 900.0, "{style:?}, method={method}: {rect:?}");
+            assert!(h.frames.ctx.memory(|m| m.has_focus(field)));
+        }
+    }
 }
 
 /// A drag on the head (not the title bar) leaves the window in place.
@@ -1175,12 +1253,12 @@ fn empty_sections_are_not_drawn() {
 /// its layout once each way (the human's report of 2026-10-16).
 #[test]
 fn layout_thresholds_have_a_margin() {
-    use super::{RAIL_BELOW, members_room_now, rail_now};
-    assert!(rail_now(None, RAIL_BELOW - 1.0));
-    assert!(!rail_now(None, RAIL_BELOW + 1.0));
-    assert!(rail_now(Some(true), RAIL_BELOW + 20.0), "a rail stays one past 600");
-    assert!(!rail_now(Some(true), RAIL_BELOW + 41.0));
-    assert!(!rail_now(Some(false), RAIL_BELOW + 1.0));
+    use super::{RAIL_BELOW, members_room_now, narrow_now};
+    assert!(narrow_now(None, RAIL_BELOW - 1.0));
+    assert!(!narrow_now(None, RAIL_BELOW + 1.0));
+    assert!(narrow_now(Some(true), RAIL_BELOW + 20.0), "a narrow window stays one past 600");
+    assert!(!narrow_now(Some(true), RAIL_BELOW + 41.0));
+    assert!(!narrow_now(Some(false), RAIL_BELOW + 1.0));
     let room = super::members::WIDTH + super::MESSAGES_MIN;
     assert!(members_room_now(None, room));
     assert!(!members_room_now(None, room - 1.0));
@@ -1205,6 +1283,422 @@ fn the_column_eases_to_the_rail() {
     let narrow = *widths.last().expect("frames");
     let between = widths.iter().filter(|w| **w < wide - 1.0 && **w > narrow + 1.0).count();
     assert!(narrow < wide && between >= 3, "{wide} → {widths:?}");
+}
+
+/// The window at `width`, then the frames of the column's easing.
+fn resize(h: &mut Harness, width: f32) {
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 560.0));
+    for _ in 0..30 {
+        h.frame(Vec::new());
+    }
+}
+
+/// A click on the column's button, then the frames of the column's easing.
+fn toggle_column(h: &mut Harness) {
+    let button = h.rect(super::super::sidebar::control_id("column-toggle"));
+    h.click(button.center());
+    h.frame(vec![egui::Event::PointerGone]);
+    for _ in 0..30 {
+        h.frame(Vec::new());
+    }
+}
+
+fn shows_rail(h: &Harness) -> bool {
+    h.rect(entry_id(Pinned::Local)).width() <= super::super::sidebar::RAIL
+}
+
+fn collapsed_asked(h: &Harness) -> Vec<bool> {
+    h.actions
+        .iter()
+        .filter_map(|a| match a {
+            ConvAction::ColumnCollapsed(collapsed) => Some(*collapsed),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The rail has no search field: it ignores a search, whatever made it a
+/// rail (its button, a narrower window), and keeps the text for the column,
+/// where it filters again. Alt+arrows go through what the rail shows. A
+/// window narrowed for a moment loses nothing, as before the button.
+#[test]
+fn the_rail_ignores_a_search_and_keeps_it_for_the_column() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    let all = super::super::sidebar::tab_order(&h.world, &h.st).len();
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    assert!(super::super::sidebar::tab_order(&h.world, &h.st).len() < all, "the column filters");
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h), "the rail shows its entries");
+    assert_eq!(
+        super::super::sidebar::tab_order(&h.world, &h.st).len(),
+        all,
+        "Alt+arrows: the whole rail"
+    );
+    assert_eq!(h.st.side_filter, "nobody", "the text is kept");
+    resize(&mut h, 700.0);
+    assert!(
+        super::super::sidebar::tab_order(&h.world, &h.st).len() < all,
+        "and filters the column again"
+    );
+
+    toggle_column(&mut h);
+    assert!(shows_rail(&h), "collapsed by the button: the same");
+    assert_eq!(h.st.side_filter, "nobody");
+}
+
+/// The button's choice goes through the settings the app gives back every
+/// frame (`ChatUi::follow_column_setting`): a collapse is kept on the next
+/// frames and after a relog, an expand is not undone by the setting, and the
+/// demo's own collapse ends with the button.
+#[test]
+fn the_buttons_choice_lives_in_the_settings() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(h.column_setting, "the setting keeps the collapse");
+    resize(&mut h, 700.0);
+    assert!(shows_rail(&h), "still collapsed on the frames after");
+
+    // a relog: the window state made again from the saved settings
+    let saved = crate::settings::Settings {
+        chat_column_collapsed: h.column_setting,
+        ..Default::default()
+    };
+    let mut relog = Harness::new(ChatStyle::Aurora);
+    relog.st = ChatUi::from_settings(&saved);
+    relog.column_setting = saved.chat_column_collapsed;
+    resize(&mut relog, 700.0);
+    assert!(shows_rail(&relog), "collapsed after a relog");
+    toggle_column(&mut relog);
+    assert!(!relog.column_setting && !shows_rail(&relog), "expanded");
+    resize(&mut relog, 700.0);
+    assert!(!shows_rail(&relog), "the setting does not collapse it again");
+
+    // demo mode (AURORA_DEMO_CONV=aurora:collapsed): the session's own
+    // state, never the settings, even when they say collapsed
+    let mut demo = Harness::new(ChatStyle::Aurora);
+    demo.demo = true;
+    demo.st.demo_column = Some(true);
+    resize(&mut demo, 700.0);
+    assert!(shows_rail(&demo) && !demo.column_setting);
+    toggle_column(&mut demo);
+    resize(&mut demo, 700.0);
+    assert!(!shows_rail(&demo), "the button expands it");
+    assert_eq!(demo.st.demo_column, Some(false));
+    assert!(!demo.column_setting, "the settings are untouched");
+    demo.column_setting = true;
+    resize(&mut demo, 700.0);
+    assert!(!shows_rail(&demo), "the session's state stands in for the settings");
+}
+
+/// At the window's least height, during a call, the list still shows its
+/// first two entries whole above the call panel, in the rail and in the
+/// full column (`ui/chat.rs`, the floater's least size).
+#[test]
+fn the_least_window_shows_two_entries_above_the_call() {
+    // with and without the Contacts tab (Contacts pinned over Nearby chat,
+    // or Nearby chat then a section's head)
+    for contacts in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.show_contacts = contacts;
+        h.world.start_call(JANE);
+        h.settle();
+        // Nearby chat shown, as in AURORA_DEMO_CONV=aurora:call-away
+        h.st.selected = None;
+        for width in [460.0, 700.0] {
+            // asked smaller than the least: the floater keeps its least size
+            crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 120.0));
+            for _ in 0..30 {
+                h.frame(Vec::new());
+            }
+            assert!(
+                h.frames
+                    .ctx
+                    .read_response(super::super::sidebar::control_id("panel-hang-up"))
+                    .is_some(),
+                "contacts={contacts} width {width}: the call panel is in the column"
+            );
+            let whole = [
+                Pinned::Contacts,
+                Pinned::Local,
+                Pinned::Conversation(BOB),
+                Pinned::Conversation(JANE),
+            ]
+            .into_iter()
+            .filter_map(|entry| h.frames.ctx.read_response(entry_id(entry)))
+            .filter(|entry| entry.interact_rect == entry.rect)
+            .count();
+            assert!(
+                whole >= 2,
+                "contacts={contacts} width {width}: {whole} whole entries above the call panel"
+            );
+        }
+    }
+}
+
+/// The window's least height. Without a call it is what it was before the
+/// button; during one it keeps two whole entries above the call's panel,
+/// whether the panel shows or not (the call's own conversation hides it),
+/// and it comes back down when the call ends. The column's button is in the
+/// head at every height.
+#[test]
+fn the_least_height_grows_only_during_a_call() {
+    use super::super::sidebar::least_column_short;
+    // two entries of 100 and a call panel of 80, with its gap (12) and the
+    // margin under the list (6): a 198 column fits them exactly
+    assert_eq!(least_column_short(198.0, 100.0, 80.0), 0.0);
+    assert_eq!(least_column_short(150.0, 100.0, 80.0), 48.0);
+    assert_eq!(least_column_short(250.0, 100.0, 80.0), -52.0);
+
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let toggle = super::super::sidebar::control_id("column-toggle");
+    // asked smaller than the least: the floater keeps its least size
+    let least = |h: &mut Harness| {
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, 120.0));
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        assert!(h.frames.ctx.read_response(toggle).is_some(), "the button stays in the head");
+        h.frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .expect("the window was drawn")
+            .height()
+    };
+    let without = least(&mut h);
+    assert!(without <= 240.5, "no call: the least height of before, {without}");
+    assert!(h.st.column_short.is_none(), "no call: the column asks nothing");
+
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    let during = least(&mut h);
+    assert!(during > without, "a call: two entries above its panel, {without} → {during}");
+    // the call's own conversation: no panel, the same least height
+    h.st.open(JANE);
+    assert!(
+        (least(&mut h) - during).abs() <= 0.5,
+        "the window does not jump with the conversation"
+    );
+
+    h.world.end_call();
+    assert!((least(&mut h) - without).abs() <= 0.5, "the call ended: back to before");
+}
+
+/// The column's least height is taken by the window each frame: once the
+/// column is no longer drawn (the Legacy style here), nothing it measured
+/// keeps the window tall.
+#[test]
+fn a_column_not_drawn_leaves_no_least_height() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    resize(&mut h, 700.0);
+    assert!(h.st.column_short.is_some(), "measured during the call");
+    h.st.style = ChatStyle::Legacy;
+    h.settle();
+    assert!(h.st.column_short.is_none(), "taken, and not measured again");
+}
+
+/// All false is the automatic layout; each click departs from it or comes
+/// back to it, whatever the width.
+#[test]
+fn the_column_choice_comes_back_to_automatic() {
+    use super::ColumnChoice;
+    let auto = ColumnChoice::default();
+    assert!(auto.rail(true) && !auto.rail(false), "automatic: the window decides");
+
+    let collapsed = auto.toggled(false);
+    assert_eq!(
+        collapsed,
+        ColumnChoice {
+            collapsed: true,
+            opened: false
+        }
+    );
+    assert!(collapsed.rail(false) && collapsed.rail(true), "a rail at any width");
+    assert_eq!(collapsed.toggled(false), auto, "expanded in a wide window: automatic");
+
+    let opened = auto.toggled(true);
+    assert_eq!(
+        opened,
+        ColumnChoice {
+            collapsed: false,
+            opened: true
+        }
+    );
+    assert!(!opened.rail(true), "the column in a narrow window");
+    assert_eq!(opened.toggled(true), auto, "closed again: nothing stays collapsed");
+
+    // collapsed in a wide window, then expanded in a narrow one: the last
+    // click is the wish, not the older collapse
+    assert_eq!(collapsed.toggled(true), opened);
+
+    assert!(!auto.by_hand(), "the button is plain while automatic");
+    assert!(collapsed.by_hand() && opened.by_hand(), "and lit by hand, in both directions");
+}
+
+/// In a wide window the button collapses the column for good: the window
+/// narrowed and widened again leaves it a rail, and the settings are told.
+#[test]
+fn the_button_collapses_the_column_at_any_width() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    assert!(!shows_rail(&h));
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    assert!(shows_rail(&h), "collapsed in a wide window");
+    assert_eq!(h.st.side_filter, "nobody", "the rail ignores the search and keeps its text");
+    assert_eq!(collapsed_asked(&h), [true]);
+    // (the rest without it: back on the column it would hide every entry)
+    h.st.side_filter.clear();
+
+    resize(&mut h, 460.0);
+    resize(&mut h, 700.0);
+    assert!(shows_rail(&h), "still collapsed once wide again");
+
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed);
+    assert!(!shows_rail(&h), "expanded");
+    assert_eq!(collapsed_asked(&h), [true, false]);
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h), "automatic again: narrow, a rail");
+    resize(&mut h, 700.0);
+    assert!(!shows_rail(&h), "automatic again: wide, the column");
+}
+
+/// In a narrow window the button opens the column until the window is wide
+/// enough to have it anyway: narrowed again, the rail comes back by itself.
+/// Nothing of it is saved.
+#[test]
+fn the_button_opens_the_column_in_a_narrow_window() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 580.0);
+    assert!(shows_rail(&h));
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened");
+    assert!(h.rect(super::super::sidebar::search_id()).width() > 0.0, "with its search field");
+    toggle_column(&mut h);
+    assert!(shows_rail(&h), "closed");
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened again");
+
+    resize(&mut h, 700.0);
+    assert!(!h.st.column.opened, "automatic once wide");
+    resize(&mut h, 580.0);
+    assert!(shows_rail(&h), "narrow again: the rail by itself");
+    assert_eq!(collapsed_asked(&h), [] as [bool; 0]);
+}
+
+/// Below `OPEN_FROM` the column does not fit: the button is greyed out, a
+/// click does nothing, and the column opened closes by itself, for good.
+#[test]
+fn the_button_is_greyed_out_when_the_column_does_not_fit() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let button = super::super::sidebar::control_id("column-toggle");
+    resize(&mut h, 460.0);
+    assert!(!h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(shows_rail(&h) && !h.st.column.opened, "a click on it does nothing");
+
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened from the threshold");
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h) && !h.st.column.opened, "no room left: closed");
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(shows_rail(&h), "room again: still automatic");
+
+    // collapsed by hand it stays so, greyed out until the room is back
+    h.column_setting = true;
+    resize(&mut h, 460.0);
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed && !shows_rail(&h));
+}
+
+/// The column's button sits in the column's head: first in the row of the
+/// search field and the "new conversation" button, their height, and alone
+/// at the top of the rail, above the entries. Each one stands under the
+/// other's centre, so the pointer that clicked stays on it.
+#[test]
+fn the_column_button_sits_in_the_head() {
+    use super::super::sidebar::control_id;
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    let button = h.rect(control_id("column-toggle"));
+    let search = h.rect(super::super::sidebar::search_id());
+    let new = h.rect(control_id("new-conversation"));
+    assert!(
+        button.right() < search.left() && search.right() < new.left(),
+        "{button:?} {search:?} {new:?}"
+    );
+    assert_eq!(button.size(), new.size(), "the head's buttons alike");
+    assert!((button.center().y - new.center().y).abs() <= 0.5);
+    assert!(button.bottom() < h.rect(entry_id(Pinned::Local)).top(), "above the list");
+
+    toggle_column(&mut h);
+    assert!(shows_rail(&h));
+    let rail_button = h.rect(control_id("column-toggle"));
+    let first = h.rect(entry_id(Pinned::Local));
+    assert_eq!(rail_button.size(), button.size());
+    assert!((rail_button.top() - button.top()).abs() <= 0.5, "the same row");
+    assert!(rail_button.bottom() < first.top(), "above the rail's pictures");
+    assert!(
+        rail_button.contains(button.center()) && button.contains(rail_button.center()),
+        "under the pointer both ways: {button:?} {rail_button:?}"
+    );
+}
+
+/// The button takes nothing from the list's foot: the call panel stands
+/// where it stood before the button, its gap above the window's bottom.
+#[test]
+fn the_call_panel_keeps_its_place() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    // the microphone's button, as the app gives it (its three buttons fill
+    // the panel's foot, stacked in the rail)
+    h.st.mic = Some(true);
+    for collapse in [false, true] {
+        if collapse {
+            toggle_column(&mut h);
+        } else {
+            resize(&mut h, 700.0);
+        }
+        let window = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .expect("the window was drawn");
+        let hang_up = h.rect(super::super::sidebar::control_id("panel-hang-up"));
+        // the panel's 8 points of padding under its buttons, its 12 of gap
+        let gap = window.bottom() - hang_up.bottom();
+        assert!((gap - 20.0).abs() <= 1.0, "collapsed={collapse}: {gap} under the panel's buttons");
+    }
+}
+
+/// The column collapsed by hand leaves the members' panel its place: only
+/// a narrow window takes it away.
+#[test]
+fn a_collapsed_column_keeps_the_members_panel() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.column_setting = true;
+    resize(&mut h, 700.0);
+    assert!(h.st.layout_members_room == Some(true), "room in a wide window, rail or not");
+    resize(&mut h, 560.0);
+    assert!(h.st.layout_members_room == Some(false), "none in a narrow one");
 }
 
 /// Finding in a conversation opens the field in the head's row: no strip
@@ -1437,7 +1931,7 @@ fn contacts_navigation_details_button_opens_sheet() {
                             .collect()
                     });
                     buttons.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
-                    assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain visible");
+                    assert_eq!(buttons.len(), if online { 6 } else { 4 }, "all quick actions remain visible");
                     assert_eq!(row.rect.height(), 42.0, "contact rows keep their height at every window width");
                     assert!(buttons.iter().all(|button| button.center().y == row.rect.center().y));
                     let details = buttons[buttons.len() - 2].center();
@@ -1584,6 +2078,7 @@ fn the_contacts_tab_shows_peoples_friends() {
         settings: &mut radar_settings,
         voice: &voice,
         draw_distance: 64.0,
+        second_life: true,
         now: 0.0,
         pics: &pics,
     };

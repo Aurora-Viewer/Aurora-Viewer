@@ -65,6 +65,83 @@ pub(super) fn appearance_controls(ui: &mut egui::Ui, p: &Palette, mut controls: 
     actions
 }
 
+/// The editor's title row: the item's name, then LLPanelEditWearable's
+/// Import button (panel_edit_wearable.xml `import_btn`) and an Export button,
+/// shared by the shape, physics and layer editors. Import reads an appearance
+/// XML into the draft (`shape_editor::xml_import`); it is greyed out without
+/// modify rights, as there. Export writes the draft to one
+/// (`shape_editor::xml_export`), greyed out without modify rights too
+/// (`actions::appearance_xml_export_allowed`). Which one was clicked.
+pub(super) fn name_row(ui: &mut egui::Ui, p: &Palette, glyph: Option<&str>, name: RichText, import: bool, export: bool) -> (bool, bool) {
+    let mut clicked = (false, false);
+    let buttons = |ui: &mut egui::Ui, clicked: &mut (bool, bool)| {
+        clicked.1 = widgets::action_button_if(
+            ui,
+            p,
+            "file-export",
+            aurora_i18n::tr!("appearance-xml-export-button"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            export,
+        )
+        .on_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
+        .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
+        .clicked();
+        clicked.0 = widgets::action_button_if(
+            ui,
+            p,
+            "file-import",
+            aurora_i18n::tr!("appearance-xml-import-button"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            import,
+        )
+        .on_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+        .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+        .clicked();
+    };
+    // The buttons go under the name when both would not fit on one row
+    // (the physics editor is narrow, item names are long), so the name is
+    // not cut down to a few letters.
+    let spacing = ui.spacing().item_spacing.x;
+    let buttons_w: f32 = [
+        ("file-export", aurora_i18n::tr!("appearance-xml-export-button")),
+        ("file-import", aurora_i18n::tr!("appearance-xml-import-button")),
+    ]
+    .iter()
+    .map(|(icon, label)| widgets::action_button_keyed_content(ui, icon, label, None) + widgets::KEYED_PAD + spacing)
+    .sum();
+    let glyph_w = if glyph.is_some() { 24.0 + spacing } else { 0.0 };
+    let name_w = egui::WidgetText::from(name.clone())
+        .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+        .size()
+        .x;
+    let one_row = glyph_w + name_w + spacing + buttons_w <= ui.available_width();
+    ui.horizontal(|ui| {
+        if let Some(icon) = glyph {
+            widgets::glyph(ui, icon, p.muted, 24.0);
+        }
+        if one_row {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                buttons(ui, &mut clicked);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(name.clone()).truncate());
+                });
+            });
+        } else {
+            ui.add(egui::Label::new(name.clone()).truncate());
+        }
+    });
+    if !one_row {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                buttons(ui, &mut clicked);
+            });
+        });
+    }
+    clicked
+}
+
 fn groups() -> [&'static str; 9] {
     [
         aurora_i18n::tr!("shape-group-body"),
@@ -149,6 +226,16 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     let mut open = true;
     let mut close = false;
     let mut reset = false;
+    let mut import = false;
+    let mut export = false;
+    let modify = st.draft.as_ref().is_some_and(|draft| draft.can_modify(world));
+    if let Some((message, imported)) = st.xml.poll(st.draft.as_mut(), modify, &world.avatar_lib.shape_params) {
+        st.message = message;
+        changed |= imported;
+    }
+    if let Some(message) = st.xml_export.poll() {
+        st.message = message;
+    }
     let mut floater = widgets::Floater::new(
         "shape_editor",
         aurora_i18n::tr!("shape-title"),
@@ -165,10 +252,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             let male = draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5;
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    widgets::glyph(ui, "man-filled", p.muted, 24.0);
-                    ui.add(egui::Label::new(RichText::new(&draft.item.name).strong().size(15.0).color(p.ink)).truncate());
-                });
+                (import, export) = name_row(
+                    ui,
+                    p,
+                    Some("man-filled"),
+                    RichText::new(&draft.item.name).strong().size(15.0).color(p.ink),
+                    modify && !busy && !st.xml.busy(),
+                    draft.can_export_xml(world) && !st.xml_export.busy(),
+                );
                 ui.columns(2, |columns| {
                     columns[0].add_enabled_ui(modify && !busy, |ui| {
                         let mut selection = male;
@@ -252,7 +343,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(80.0);
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
                 if widgets::icon_toggle(ui, p, "photo-filled", aurora_i18n::tr!("shape-hints"), st.hints) {
                     st.hints = !st.hints;
                 }
@@ -476,6 +567,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     });
     if reset && let Some(draft) = &mut st.draft {
         draft.edited = draft.original.clone();
+    }
+    if import && let Some(draft) = &st.draft {
+        st.message.clear();
+        st.xml.start(ctx, draft);
+    }
+    if export && let Some(draft) = &st.draft {
+        st.message.clear();
+        let allowed = draft.can_export_xml(world);
+        if let Err(message) = st.xml_export.start(ctx, draft, allowed, &world.avatar_lib.shape_params) {
+            st.message = message;
+        }
     }
     if changed || reset {
         st.changed(world);

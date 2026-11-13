@@ -157,6 +157,7 @@ impl Session<'_> {
                 }
             }
             NetCommand::ChatSession { method, session } => self.chat_session_request(*method, *session),
+            NetCommand::ModerateText { session, agent, allow } => self.moderate_text(*session, *agent, *allow),
             NetCommand::Call {
                 method,
                 session,
@@ -213,6 +214,13 @@ impl Session<'_> {
                 m.data.object_permissions = *permissions;
                 self.send_main(&m, true);
             }
+            NetCommand::ForceScriptControlRelease => {
+                // LLAgent::forceReleaseControls: reliable, to the agent's region
+                let mut m = ForceScriptControlRelease::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                self.send_main(&m, true);
+            }
             _ => return false,
         }
         true
@@ -250,6 +258,29 @@ impl Session<'_> {
                 result,
                 not_found,
             });
+        });
+    }
+
+    /// POST a moderator's "mute update" to ChatSessionRequest
+    /// (LLIMSpeakerMgr::allowTextChat, moderationActionCoro): only a
+    /// failure answers; the change itself comes back as an agent update.
+    fn moderate_text(&mut self, session: uuid::Uuid, agent: uuid::Uuid, allow: bool) {
+        let Some(url) = self.main_cap("ChatSessionRequest") else {
+            log::warn!("ChatSessionRequest: no capability (mute update)");
+            emit(self.sh, NetEvent::SessionModerationFailed { session, forbidden: false });
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let body = crate::social::mute_update_body(session, agent, allow);
+            if let Err(e) = crate::caps::post_llsd(&http, &url, &body).await {
+                log::warn!("ChatSessionRequest mute update for {session}: {e}");
+                let _ = events.send(NetEvent::SessionModerationFailed {
+                    session,
+                    forbidden: matches!(e, crate::caps::CapsError::Status(403)),
+                });
+            }
         });
     }
 
@@ -550,6 +581,46 @@ fn agent_animation_changes_messages(
     })
 }
 
+/// GenericMessage method of the server's answer to MuteListRequest when the
+/// resident blocks nobody (LLMuteList's constructor registers
+/// LLDispatchEmptyMuteList under it, llmutelist.cpp).
+const EMPTY_MUTE_LIST: &str = "emptymutelist";
+
+/// Whether a (Large)GenericMessage is "emptymutelist" for our agent
+/// (process_generic_message drops another agent's, llviewergenericmessage.cpp;
+/// LLDispatcher matches the method exactly). Its parameters are unused.
+fn empty_mute_list(agent: uuid::Uuid, ours: uuid::Uuid, method: &[u8]) -> bool {
+    field_str(method) == EMPTY_MUTE_LIST && agent == ours
+}
+
+impl Session<'_> {
+    /// GenericMessage / LargeGenericMessage methods of this module.
+    pub(super) fn on_social_generic(&self, agent: uuid::Uuid, method: &[u8]) {
+        if empty_mute_list(agent, self.agent_id(), method) {
+            log::info!("mute list: the server says it is empty");
+            emit(self.sh, NetEvent::MuteList(MuteListSource::ServerEmpty));
+        } else if field_str(method) == EMPTY_MUTE_LIST {
+            log::warn!("emptymutelist for another agent ({agent})");
+        }
+    }
+
+    /// "URLFloater" (LLUrlFloaterDispatchHandler): only for our agent, as
+    /// process_generic_message drops the messages of another one.
+    pub(super) fn on_url_floater_generic(&self, agent: uuid::Uuid, method: &[u8], parameter: &[u8]) {
+        if field_str(method) != crate::url_floater::METHOD {
+            return;
+        }
+        if agent != self.agent_id() {
+            log::warn!("URLFloater for another agent ({agent})");
+            return;
+        }
+        if let Some(url) = crate::url_floater::url(parameter) {
+            log::info!("URLFloater: {url}");
+            emit(self.sh, NetEvent::UrlFloater { url });
+        }
+    }
+}
+
 /// Xfer ids only need to be unique among our transfers.
 fn rand_u64() -> u64 {
     use std::hash::{BuildHasher, Hasher};
@@ -561,6 +632,25 @@ fn rand_u64() -> u64 {
             .unwrap_or(0),
     );
     h.finish()
+}
+
+#[cfg(test)]
+mod empty_mute_list_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn empty_mute_list_only_for_our_agent_and_the_exact_method() {
+        let ours = Uuid::from_u128(1);
+        // the method field carries its NUL terminator on the wire
+        assert!(empty_mute_list(ours, ours, b"emptymutelist\0"));
+        assert!(empty_mute_list(ours, ours, b"emptymutelist"));
+        assert!(!empty_mute_list(Uuid::from_u128(2), ours, b"emptymutelist\0"));
+        assert!(!empty_mute_list(ours, ours, b"EmptyMuteList\0"));
+        assert!(!empty_mute_list(ours, ours, b"emptymutelistx\0"));
+        assert!(!empty_mute_list(ours, ours, b"ExperienceEvent\0"));
+        assert!(!empty_mute_list(ours, ours, b""));
+    }
 }
 
 #[cfg(test)]

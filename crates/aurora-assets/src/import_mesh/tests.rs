@@ -108,6 +108,33 @@ pub(super) fn collada_objects(visual: &str, rigged: bool, identical_controllers:
     )
 }
 
+/// #3348: an exporter wrote count="0" on a full bind-pose array. The Legacy
+/// Viewer reads the values the array holds (LLDAELoader), not the attribute.
+#[test]
+fn collada_float_array_count_attribute_is_not_trusted_over_its_values() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let visual = r##"<node id="mPelvis" type="JOINT"/><node><instance_controller url="#a-skin"/></node>"##;
+    let document =
+        collada_objects(visual, true, false, false).replace(r#"<float_array count="16">1 0 0 0"#, r#"<float_array count="0">1 0 0 0"#);
+    assert!(document.contains(r#"count="0""#), "fixture changed");
+    let scene = collada::parse(document.as_bytes(), &skeleton).expect("bind poses with a wrong count attribute");
+    let skin = scene.models[0].skin.as_ref().expect("rigged");
+    assert_eq!(skin.names, ["mPelvis"]);
+    assert_eq!(skin.inverse_bind.len(), 1);
+}
+
+/// A float array shorter than its accessor needs is still refused.
+#[test]
+fn collada_float_array_shorter_than_its_accessor_is_refused() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let visual = r##"<node id="mPelvis" type="JOINT"/><node><instance_controller url="#a-skin"/></node>"##;
+    let document = collada_objects(visual, true, false, false).replace(
+        r#"<float_array count="16">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array>"#,
+        r#"<float_array count="16">1 0 0 0 0 1 0 0</float_array>"#,
+    );
+    assert!(collada::parse(document.as_bytes(), &skeleton).is_err());
+}
+
 #[test]
 fn collada_multiple_objects_keep_geometry_instances_and_nested_transforms() {
     let document = collada_objects(
