@@ -1422,6 +1422,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
         settings.max_avatars = v;
     }
+    if let Some(v) = std::env::var("AURORA_LOCAL_LIGHTS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.local_light_count = v.min(crate::scene::lights::MAX_LIGHTS as u32);
+    }
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
@@ -11638,6 +11641,7 @@ impl App {
                     gfx.renderer.max_texture_dimension(),
                 ),
                 others_attached_lights: self.settings.others_attached_lights,
+                max_lights: self.settings.local_light_count as usize,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
