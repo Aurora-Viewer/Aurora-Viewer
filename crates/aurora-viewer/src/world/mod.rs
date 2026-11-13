@@ -9118,7 +9118,7 @@ mod motion_tests {
         world.agent.position -= Vec3::X * 0.2;
         assert!(world.own_motion_moving(), "a zero-velocity report does not finish visual smoothing");
         for _ in 0..60 {
-            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
+            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0, false);
         }
         assert!(!world.own_motion_moving());
         world.agent.velocity = Vec3::Z * 2.0;
@@ -9130,10 +9130,10 @@ mod motion_tests {
 
         world.agent.set_predicting(true);
         world.agent.position -= Vec3::X * 0.2;
-        world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
+        world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0, false);
         assert!(world.own_motion_moving(), "Aurora's drawn glide must settle too");
         for _ in 0..180 {
-            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
+            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0, false);
         }
         assert!(!world.own_motion_moving());
     }

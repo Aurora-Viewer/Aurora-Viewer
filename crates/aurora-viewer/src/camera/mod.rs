@@ -5215,7 +5215,7 @@ mod tests {
                         let before = world.agent.predicted_position();
                         world.agent.simulate_locally(&input, mode == VrView::FirstPerson, None, 0.016, true);
                         let displacement = (world.agent.predicted_position() - before).truncate().normalize();
-                        world.agent.update(&input, mode == VrView::FirstPerson, 0.016, 5.0);
+                        world.agent.update(&input, mode == VrView::FirstPerson, 0.016, 5.0, false);
                         camera.update_vr(&mut world, &settings, &frame(0.016), rig_yaw);
                         anchor.follow(camera.vr_view(rig_yaw)).expect("rig");
                         let eye = anchor
@@ -5713,7 +5713,7 @@ mod tests {
                 MoveInput::default()
             };
             world.agent.simulate_locally(&input, true, None, 0.016, true);
-            world.agent.update(&input, true, 0.016, 1.0);
+            world.agent.update(&input, true, 0.016, 1.0, false);
             camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
             camera.vr_body_offset(follow.accepted_root(camera.vr_body_root()));
             anchor.follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson).expect("follow");
@@ -5736,7 +5736,7 @@ mod tests {
             ..Default::default()
         };
         world.agent.simulate_locally(&input, true, None, 0.016, true);
-        world.agent.update(&input, true, 0.016, 1.0);
+        world.agent.update(&input, true, 0.016, 1.0, false);
         camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
         camera.vr_body_offset(follow.accepted_root(camera.vr_body_root()));
         anchor.follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson).expect("manual");

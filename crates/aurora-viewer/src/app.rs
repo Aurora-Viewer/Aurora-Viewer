@@ -10305,7 +10305,9 @@ impl App {
             self.update_own_prediction(ml, dt);
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             let yaw_before_update = self.world.agent.yaw;
-            self.world.agent.update(&self.input, ml, dt, camera_distance);
+            self.world
+                .agent
+                .update(&self.input, ml, dt, camera_distance, self.world.script_controls.rotate_grabbed());
             if self.vr_camera.is_some() && self.world.agent.is_sitting() {
                 // Seated keys drive the vehicle script, not a second local turn.
                 self.world.agent.yaw = yaw_before_update;
