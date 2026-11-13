@@ -1,6 +1,7 @@
 //! Preferences › Language and updates: the interface's language, how the
 //! new versions come, whether the `secondlife:` links of web pages open
-//! in this viewer, and the backup of the settings (`options/backup.rs`).
+//! in this viewer, the backup of the settings (`options/backup.rs`), and
+//! the removal of Aurora from this computer (`uninstall.rs`).
 
 use super::super::COMBO_W;
 use super::super::cx::{Cx, Nothing, field};
@@ -54,6 +55,19 @@ pub fn page(cx: &mut Cx) {
             &[
                 (Channel::Stable, tr!("update-channel-stable")),
                 (Channel::Beta, tr!("update-channel-beta")),
+            ],
+        );
+        use crate::updater::Interval;
+        cx.combo(
+            tr!("update-interval"),
+            tr!("update-interval-help"),
+            &field!(update_check_interval),
+            &[
+                (Interval::Minutes10, tr!("update-interval-10-minutes")),
+                (Interval::Minutes30, tr!("update-interval-30-minutes")),
+                (Interval::Hour1, tr!("update-interval-1-hour")),
+                (Interval::Hours6, tr!("update-interval-6-hours")),
+                (Interval::Never, tr!("update-interval-never")),
             ],
         );
     });
@@ -142,6 +156,31 @@ pub fn page(cx: &mut Cx) {
                         ui.add(egui::Label::new(RichText::new(&st.restore_status).size(11.5).color(p.muted)).wrap());
                     }
                 });
+                false
+            },
+        );
+    });
+    // the Legacy Viewer's uninstaller, from the viewer (uninstall.rs): what
+    // it registered outside its folders, confirmed first
+    cx.group(tr!("ui-options-remove-aurora"), |cx| {
+        use crate::ui::widgets::{ActionKind, action_button};
+        cx.row_with(
+            tr!("ui-options-remove-aurora"),
+            tr!("ui-options-remove-aurora-help"),
+            &Nothing,
+            |ui, _, _, r| {
+                if action_button(
+                    ui,
+                    &p,
+                    "trash-filled",
+                    tr!("ui-options-remove-aurora-button"),
+                    ActionKind::Danger,
+                    Vec2::new(0.0, 26.0),
+                )
+                .clicked()
+                {
+                    r.uninstall = true;
+                }
                 false
             },
         );

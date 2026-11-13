@@ -99,7 +99,7 @@ pub fn sellable(inv: &Inventory, item: Uuid, worn: &HashSet<Uuid>) -> Result<(),
     if matches!(it.asset_type, 24 | 25) {
         return Err(aurora_i18n::tr!("marketplace-reason-linked").into());
     }
-    if it.owner_mask & TRANSFER == 0 {
+    if crate::world::inventory::actions::held(inv, it) & TRANSFER == 0 {
         return Err(aurora_i18n::tr!("marketplace-reason-no-transfer").into());
     }
     if worn.contains(&item) {
@@ -115,7 +115,9 @@ pub fn sellable(inv: &Inventory, item: Uuid, worn: &HashSet<Uuid>) -> Result<(),
 }
 
 fn copyable(inv: &Inventory, item: Uuid) -> bool {
-    inv.items.get(&item).is_some_and(|it| it.owner_mask & COPY != 0)
+    inv.items
+        .get(&item)
+        .is_some_and(|it| crate::world::inventory::actions::held(inv, it) & COPY != 0)
 }
 
 #[derive(Debug, Clone)]
@@ -376,7 +378,7 @@ impl<'a> Tree<'a> {
             return true;
         }
         let Some(it) = self.item(item) else { return false };
-        if it.owner_mask & COPY != 0 {
+        if crate::world::inventory::actions::held(self.inv, it) & COPY != 0 {
             return false;
         }
         let (kind, next) = (it.inv_type, it.next_owner_mask);
@@ -658,7 +660,7 @@ impl<'a> Tree<'a> {
                 continue;
             }
             let Some(it) = self.item(*item) else { continue };
-            let key = if it.owner_mask & COPY != 0 {
+            let key = if crate::world::inventory::actions::held(self.inv, it) & COPY != 0 {
                 COPYABLE_KEY
             } else {
                 ((it.inv_type as u32 & 0xFF) << 24) | (it.next_owner_mask & 0xFF_FFFF)

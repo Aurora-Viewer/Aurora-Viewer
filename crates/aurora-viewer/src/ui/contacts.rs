@@ -119,6 +119,12 @@ pub enum ContactsAction {
     ToggleTornOff,
     /// The Group titles window (onGroupTitlesButtonClicked).
     GroupTitles,
+    /// A text conference with these residents (LLAvatarActions::startConference).
+    Conference(Vec<Uuid>),
+    /// Search on its Groups tab (LLGroupActions::search).
+    SearchGroups,
+    /// The invitation window of this group (LLFloaterGroupInvite::showForGroup).
+    GroupInvite(Uuid),
 }
 
 /// Confirmations and text prompts (Firestorm notifications).
@@ -160,6 +166,34 @@ enum Dialog {
     },
 }
 
+/// `AURORA_DEMO_CONTACTS=conference|map|invite`: the friends, or the group,
+/// selected to show the buttons they enable.
+pub fn demo_selection(world: &World, mode: &str) -> (Vec<Uuid>, Option<Uuid>) {
+    let friends = &world.social.friends;
+    match mode {
+        "conference" => (friends.iter().filter(|f| f.online).map(|f| f.id).collect(), None),
+        "map" => (
+            friends
+                .iter()
+                .find(|f| world.social.can_map_friend(f.id))
+                .map(|f| f.id)
+                .into_iter()
+                .collect(),
+            None,
+        ),
+        "invite" => (
+            Vec::new(),
+            world
+                .groups
+                .groups
+                .iter()
+                .find(|g| g.powers & aurora_net::groups::powers::MEMBER_INVITE != 0)
+                .map(|g| g.id),
+        ),
+        _ => (Vec::new(), None),
+    }
+}
+
 #[derive(Default)]
 pub struct ContactsUi {
     import_job: Option<importing::Job>,
@@ -186,6 +220,13 @@ pub struct ContactsUi {
     /// Contact set being configured (FSFloaterContactSetConfiguration).
     config: Option<String>,
     rename: String,
+    /// The custom responses of the set being configured, by
+    /// `ResponseMode::ALL`, as typed: saved when the field loses the focus
+    /// or the window closes (the Legacy Viewer's commit on focus lost).
+    response_edit: Option<(String, [String; 3])>,
+    /// AURORA_DEMO_SET_NOTICES=config-responses|config-bottom: the window
+    /// scrolled down to the set's responses, or to its end.
+    pub demo_scroll: Option<DemoScroll>,
     /// Height under the group and contact set lists (the count line),
     /// measured each frame.
     groups_footer: f32,
@@ -196,6 +237,19 @@ pub struct ContactsUi {
 }
 
 impl ContactsUi {
+    /// The selection of a demo scenario ([`demo_selection`]).
+    pub fn demo_select(&mut self, friends: Vec<Uuid>, group: Option<Uuid>) {
+        self.friends_sel = friends;
+        if group.is_some() {
+            self.group_sel = group;
+        }
+    }
+
+    /// Initial group filter text (demo scenarios).
+    pub fn filter_groups(&mut self, text: &str) {
+        self.group_filter = text.to_owned();
+    }
+
     /// "Add..." of the friend list: the resident picker.
     pub fn pick_new_friend(&mut self) {
         self.pick_for = Some(PickFor::Friend);
@@ -281,7 +335,7 @@ impl ContactsUi {
         self.ask_new_set_for(Vec::new());
     }
 
-    /// "New contact set…" of a resident's menu: the new set's name asked
+    /// "New contact setâ€¦" of a resident's menu: the new set's name asked
     /// (AddNewContactSet), then these residents added to it.
     pub fn ask_new_set_for(&mut self, ids: Vec<Uuid>) {
         self.new_set_members = ids;
@@ -616,7 +670,7 @@ pub fn panel(
     actions
 }
 
-/// The torn-off Contacts window (floater_fs_contacts.xml, 396 × 390); its
+/// The torn-off Contacts window (floater_fs_contacts.xml, 396 Ã— 390); its
 /// title bar button docks it back into Conversations. It shows what the
 /// docked tab shows (#961): People's friends tab in Aurora's look
 /// (`friends`, the same pane state as the docked tab, so the filter,
@@ -679,7 +733,7 @@ const PICKER_ID: &str = "contacts_avatar_picker";
 fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>) {
     match what {
         PickFor::Friend => {
-            // onAvatarPicked → requestFriendshipDialog; Firestorm's picker
+            // onAvatarPicked â†’ requestFriendshipDialog; Firestorm's picker
             // refuses friends (isItemsFreeOfFriends), the shared one does not
             match ids.iter().find(|id| **id != world.agent_id && !world.social.is_friend(id)) {
                 Some(to) => {
@@ -735,7 +789,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                     full_name(n, &o, settings.full_name_display_first),
                 ),
                 None => {
-                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "…".into());
+                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "â€¦".into());
                     (legacy.clone(), legacy.clone(), legacy)
                 }
             };
@@ -766,7 +820,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
     // sortFriendList: by username or display name, then online first
     rows.sort_by_cached_key(|r| {
         let key = if settings.sort_by_display_name { &r.display } else { &r.user };
-        (!r.online, key.to_lowercase())
+        (!r.online, crate::natural_order::key(key))
     });
     rows
 }
@@ -792,7 +846,7 @@ fn friends_tab(
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
+            widgets::search_field(ui, p, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
             ui.add_space(3.0);
             friend_table(ui, p, world, st, settings, &rows, &order, list_w, actions);
         });
@@ -921,6 +975,14 @@ fn friend_table(
                 for r in rows {
                     // dragged onto a conversation, a friend joins it
                     let (rect, resp) = ui.allocate_exact_size(Vec2::new(rows_w, ROW_H), Sense::click_and_drag());
+                    widgets::reveal_search_selection(
+                        ui,
+                        &resp,
+                        st.friends_anchor
+                            .filter(|id| st.friends_sel.contains(id))
+                            .or_else(|| st.friends_sel.last().copied())
+                            == Some(r.id),
+                    );
                     resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
                     if !ui.is_rect_visible(rect) {
                         continue;
@@ -1056,7 +1118,7 @@ fn friend_menu(
     if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
         actions.push(ContactsAction::OfferTeleport(id));
     }
-    if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
+    if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
@@ -1200,14 +1262,16 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
     let sel = &st.friends_sel;
     let n = sel.len();
     let all_online = sel.iter().all(|id| world.social.friends.iter().any(|f| f.id == *id && f.online));
-    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
+    // FSFloaterContacts::onImButtonClicked: one friend, an IM; several, a
+    // conference, only when all are online (refreshRightsChangeList: an
+    // offline friend would be dropped from the session without a word).
     let im_tip = if n > 1 {
-        aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
+        aurora_i18n::tr!("ui-contacts-conference-friends")
     } else {
         aurora_i18n::tr!("ui-contacts-open-private-conversation-window")
     };
-    if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1) {
-        actions.push(ContactsAction::Im(sel[0]));
+    if side_button(ui, p, aurora_i18n::tr!("status-im-call"), im_tip, n == 1 || (n > 1 && all_online)) {
+        actions.push(im_or_conference(sel));
     }
     // a voice call with one friend, a voice conference with several
     let call_tip = if !world.calls.voice_enabled {
@@ -1246,7 +1310,17 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
             actions.push(ContactsAction::OfferTeleport(*id));
         }
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-map"), soon, false);
+    // onMapButtonClicked / refreshUI: one friend who lets us see them on
+    // the map (is_agent_mappable), and no RLVa @showworldmap.
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-map"),
+        aurora_i18n::tr!("ui-contacts-map-help"),
+        n == 1 && world.social.can_map_friend(sel[0]) && !world.rlva.has("showworldmap"),
+    ) {
+        context::request(ui.ctx(), CtxAction::ShowOnMap(sel[0]));
+    }
     if side_button(
         ui,
         p,
@@ -1302,7 +1376,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
+            widgets::search_field(ui, p, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 30.0) - footer_or_default(st.groups_footer)).max(60.0);
             let list = group_list(ui, p, world, st, pics, &groups, &filter, list_w, list_h, actions);
@@ -1348,33 +1422,35 @@ fn group_list(
                 .min_scrolled_height(list_h)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    let shown: Vec<_> = groups
-                        .iter()
-                        .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(filter))
-                        .collect();
+                    let plan = crate::world::groups::plan_group_list(groups, &st.group_filter, |g| &g.name);
+                    // "None (no group tag)" row on top.
+                    // Differs from LLGroupList::refresh (indra/newview/llgrouplist.cpp):
+                    // 1) LLGroupList only adds "none" when !have_filter; Aurora deliberately keeps
+                    //    it visible while filtering so residents can always clear their active group tag (#2788).
+                    // 2) The label uses "None (no group tag)" rather than Legacy Viewer's "none" (GroupsNone)
+                    //    for clarity.
+                    if plan.show_none {
+                        group_row(ui, p, world, st, pics, None, rows_w, actions);
+                    }
                     if groups.is_empty() {
                         ui.label(
                             RichText::new(aurora_i18n::tr!("ui-contacts-looking-for-a-group-to-join-try-search"))
                                 .size(12.0)
                                 .color(p.muted),
                         );
-                    } else if shown.is_empty() {
+                    } else if let Some(query) = &plan.no_match {
                         ui.label(
                             RichText::new(aurora_i18n::tr!(
                                 "ui-contacts-no-group-containing-was-found",
-                                value0 = st.group_filter.trim().to_string()
+                                value0 = query.clone()
                             ))
                             .size(12.0)
                             .color(p.muted),
                         );
                     }
-                    // "none" on top when not filtering (LLGroupList::refresh)
-                    if filter.is_empty() && !groups.is_empty() {
-                        group_row(ui, p, world, st, pics, None, rows_w, actions);
-                    }
-                    let pinned = shown.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
-                    for (i, g) in shown.iter().enumerate() {
-                        if filter.is_empty() && pinned > 0 && i == pinned && pinned < shown.len() {
+                    let pinned = plan.items.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
+                    for (i, &g) in plan.items.iter().enumerate() {
+                        if filter.is_empty() && pinned > 0 && i == pinned && pinned < plan.items.len() {
                             // LLGroupListSeparator after the pinned groups
                             let (r, _) = ui.allocate_exact_size(Vec2::new(rows_w, 7.0), Sense::hover());
                             ui.painter()
@@ -1395,12 +1471,13 @@ fn group_row(
     world: &mut World,
     st: &mut ContactsUi,
     pics: &Pics,
-    g: Option<&&aurora_net::GroupMembership>,
+    g: Option<&aurora_net::GroupMembership>,
     width: f32,
     actions: &mut Vec<ContactsAction>,
 ) {
     let id = g.map(|g| g.id).unwrap_or_default();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, st.group_sel == Some(id));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1416,16 +1493,30 @@ fn group_row(
         st.wanted_images.insert(i);
     }
     row_icon(ui, p, icon, insignia.and_then(|i| pics.images.get(&i)), "users-group");
-    // active group in bold; hidden from the profile: GroupHiddenInProfile
+    // active group in bold and active pill; hidden from the profile: GroupHiddenInProfile
     let active = world.groups.active == id;
-    let name = g.map(|g| g.name.clone()).unwrap_or_else(|| aurora_i18n::tr!("extra-none").into());
+    let name = g
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| aurora_i18n::tr!("ui-contacts-none-no-group-tag").into());
     let col = match g {
         Some(g) if g.list_in_profile => p.indigo_light,
         _ => p.ink,
     };
     let pinned = world.groups.favorites.contains(&id);
-    let text_w = width - 30.0 - if pinned { 18.0 } else { 0.0 };
+    let pinned_w = if pinned { 18.0 } else { 0.0 };
+    let (tag_ink, tag_fill) = widgets::active_tag_colors(p);
+    let active_tag = active.then(|| {
+        let text = aurora_i18n::tr!("people-groups-active-tag");
+        widgets::tag_pill_layout(ui, text, tag_ink)
+    });
+    let active_w = active_tag.as_ref().map_or(0.0, |(_, w)| *w + 6.0);
+    let text_w = (width - 30.0 - pinned_w - active_w).max(0.0);
     row_text(ui, &name, egui::pos2(icon.right() + 6.0, rect.center().y), text_w, col, active);
+    if let Some((g, tag_w)) = active_tag {
+        let pill_right = rect.right() - pinned_w - 4.0;
+        let pill_rect = egui::Rect::from_min_size(egui::pos2(pill_right - tag_w, rect.center().y - 8.0), Vec2::new(tag_w, 16.0));
+        widgets::paint_tag_pill(ui, g, pill_rect, tag_ink, tag_fill);
+    }
     if pinned && let Some(t) = super::icons::global("pinned-filled") {
         let r = egui::Rect::from_center_size(egui::pos2(rect.right() - 10.0, rect.center().y), Vec2::splat(12.0));
         ui.painter().image(
@@ -1438,8 +1529,14 @@ fn group_row(
     if resp.clicked() || resp.secondary_clicked() {
         st.group_sel = Some(id);
     }
-    if resp.double_clicked() && !id.is_nil() {
-        actions.push(ContactsAction::GroupChat(id));
+    if resp.double_clicked() {
+        if id.is_nil() {
+            if world.groups.active != id {
+                actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
+            }
+        } else {
+            actions.push(ContactsAction::GroupChat(id));
+        }
     }
     menu::context_menu(&resp, p, |ui| group_menu(ui, p, world, st, id, actions));
 }
@@ -1451,7 +1548,7 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         ui,
         p,
         "circle-check-filled",
-        aurora_i18n::tr!("common-enable"),
+        aurora_i18n::tr!("common-activate"),
         world.groups.active != id,
     ) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
@@ -1495,7 +1592,6 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     let sel = st.group_sel.unwrap_or_default();
     let real = !sel.is_nil();
     let powers = world.groups.group(&sel).map(|g| g.powers).unwrap_or(0);
-    let soon = aurora_i18n::tr!("ui-contacts-coming-soon-in-aurora");
     if side_button(
         ui,
         p,
@@ -1511,7 +1607,7 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     if side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), "", true) {
         actions.push(ContactsAction::GroupTitles);
     }
-    if side_button(ui, p, aurora_i18n::tr!("common-enable"), "", sel != world.groups.active) {
+    if side_button(ui, p, aurora_i18n::tr!("common-activate"), "", sel != world.groups.active) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));
     }
     let pinned = world.groups.favorites.contains(&sel);
@@ -1540,8 +1636,35 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     {
         super::group_profile::request_create(ui.ctx());
     }
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-search"), soon, false);
-    side_button(ui, p, aurora_i18n::tr!("ui-contacts-invite"), soon, false);
+    // onGroupSearchButtonClicked: LLGroupActions::search, Search on Groups.
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-search"),
+        aurora_i18n::tr!("ui-contacts-search-groups-help"),
+        true,
+    ) {
+        actions.push(ContactsAction::SearchGroups);
+    }
+    // onGroupInviteButtonClicked / updateGroupButtons: a group where we hold
+    // GP_MEMBER_INVITE (LLFloaterGroupInvite::showForGroup).
+    if side_button(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-contacts-invite"),
+        aurora_i18n::tr!("ui-contacts-invite-help"),
+        real && powers & aurora_net::groups::powers::MEMBER_INVITE != 0,
+    ) {
+        actions.push(ContactsAction::GroupInvite(sel));
+    }
+}
+
+/// One resident, an IM; several, a text conference (startConference).
+fn im_or_conference(ids: &[Uuid]) -> ContactsAction {
+    match ids {
+        [one] => ContactsAction::Im(*one),
+        _ => ContactsAction::Conference(ids.to_vec()),
+    }
 }
 
 // ------------------------------------------------------------- contact sets
@@ -1583,7 +1706,7 @@ fn sets_tab(
             .get(id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
-            .unwrap_or_else(|| "…".into())
+            .unwrap_or_else(|| "â€¦".into())
     };
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
@@ -1591,9 +1714,9 @@ fn sets_tab(
     members.retain(|id| super::people::matches_name(world, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
-        members.sort_by_cached_key(|id| (!online(id), name_of(id).to_lowercase()));
+        members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
     } else {
-        members.sort_by_cached_key(|id| name_of(id).to_lowercase());
+        members.sort_by_cached_key(|id| crate::natural_order::key(&name_of(id)));
     }
     let rows: Vec<(Uuid, String, bool, Option<Color32>)> = members
         .iter()
@@ -1676,7 +1799,7 @@ fn sets_tab(
                 }
             });
             ui.add_space(3.0);
-            widgets::search_field(ui, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
+            widgets::search_field(ui, p, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 60.0) - footer_or_default(st.sets_footer)).max(60.0);
             let list = egui::Frame::new().fill(p.field.gamma_multiply(0.6)).show(ui, |ui| {
@@ -1698,6 +1821,14 @@ fn sets_tab(
                         let row_h = if settings.set_list_icons { 22.0 } else { ROW_H };
                         for (id, name, on, color) in &rows {
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(list_w - widgets::scroll_strip(ui), row_h), Sense::click());
+                            widgets::reveal_search_selection(
+                                ui,
+                                &resp,
+                                st.set_anchor
+                                    .filter(|id| st.set_sel.contains(id))
+                                    .or_else(|| st.set_sel.last().copied())
+                                    == Some(*id),
+                            );
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }
@@ -1743,6 +1874,15 @@ fn sets_tab(
                                 }
                                 if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), *on) {
                                     actions.push(ContactsAction::OfferTeleport(*id));
+                                }
+                                if menu::item_if(
+                                    ui,
+                                    p,
+                                    "car-filled",
+                                    aurora_i18n::tr!("common-request-teleport"),
+                                    world.social.can_request_teleport(id),
+                                ) {
+                                    context::request(ui.ctx(), CtxAction::RequestTeleport(*id));
                                 }
                             });
                         }
@@ -1824,13 +1964,15 @@ fn set_buttons(
             actions.push(ContactsAction::Profile(*id));
         }
     }
+    // FSPanelContactSets::onClickStartIM: one resident, an IM; several, a
+    // conference (start_im_btn: any selection).
     let im_tip = if sel.len() > 1 {
-        aurora_i18n::tr!("ui-contacts-multi-person-conference-coming-soon-in-aurora")
+        aurora_i18n::tr!("ui-contacts-conference-friends")
     } else {
         aurora_i18n::tr!("ui-contacts-open-private-conversation-window")
     };
-    if side_button(ui, p, "IM...", im_tip, sel.len() == 1) {
-        actions.push(ContactsAction::Im(sel[0]));
+    if side_button(ui, p, "IM...", im_tip, has_sel) {
+        actions.push(im_or_conference(&sel));
     }
     if side_button(
         ui,
@@ -1929,38 +2071,135 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
             ui.label(RichText::new(aurora_i18n::tr!("common-color")).size(12.5).color(p.ink));
         });
         visuals::preview(ui, p, world, &set);
-        egui::ScrollArea::vertical()
-            .max_height((ctx.content_rect().height() - 360.0).clamp(180.0, 420.0))
-            .show(ui, |ui| {
-                let mut sort = cfg.sort_by_online;
-                if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
-                    world.contact_sets.set_sort_by_online(&set, sort);
+        let mut area = egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 360.0).clamp(180.0, 420.0));
+        if st.demo_scroll == Some(DemoScroll::Bottom) {
+            st.demo_scroll = None;
+            area = area.vertical_scroll_offset(5000.0);
+        }
+        area.show(ui, |ui| {
+            let mut sort = cfg.sort_by_online;
+            if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
+                world.contact_sets.set_sort_by_online(&set, sort);
+            }
+            let mut notify = cfg.notify;
+            if widgets::switch_labeled(ui, p, &mut notify, aurora_i18n::tr!("ui-contacts-show-notifications"))
+                .on_hover_text(aurora_i18n::tr!("ui-contacts-show-notifications-tip"))
+                .changed()
+            {
+                world.contact_sets.set_notify(&set, notify);
+            }
+            let mut apart = cfg.separate_chats;
+            if widgets::switch_labeled(ui, p, &mut apart, aurora_i18n::tr!("ui-contacts-separate-chats"))
+                .on_hover_text(aurora_i18n::tr!("ui-contacts-separate-chats-tip"))
+                .changed()
+            {
+                world.contact_sets.set_separate_chats(&set, apart);
+            }
+            visuals::editor(ui, p, world, &set, &cfg.visuals);
+            widgets::divider(ui, p);
+            // after the set's own options, as floater_fs_contact_set_configuration.xml
+            set_responses(ui, p, world, st, &set, &cfg);
+            widgets::divider(ui, p);
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
+                    .size(12.5)
+                    .strong()
+                    .color(p.ink),
+            );
+            ui.horizontal(|ui| {
+                if let Some(c) = set_color_button(ui, p, "default_color", world.contact_sets.default_color) {
+                    world.contact_sets.set_default_color(c);
                 }
-                let mut apart = cfg.separate_chats;
-                if widgets::switch_labeled(ui, p, &mut apart, aurora_i18n::tr!("ui-contacts-separate-chats"))
-                    .on_hover_text(aurora_i18n::tr!("ui-contacts-separate-chats-tip"))
-                    .changed()
-                {
-                    world.contact_sets.set_separate_chats(&set, apart);
-                }
-                visuals::editor(ui, p, world, &set, &cfg.visuals);
-                widgets::divider(ui, p);
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
-                        .size(12.5)
-                        .strong()
-                        .color(p.ink),
-                );
-                ui.horizontal(|ui| {
-                    if let Some(c) = set_color_button(ui, p, "default_color", world.contact_sets.default_color) {
-                        world.contact_sets.set_default_color(c);
-                    }
-                    ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
-                });
+                ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
             });
+            let mut toast = world.contact_sets.notices_toast;
+            if widgets::switch_labeled_wrapped(ui, p, &mut toast, aurora_i18n::tr!("ui-contacts-set-notices-toast")).changed() {
+                world.contact_sets.set_notices_toast(toast);
+            }
+            let mut chat = world.contact_sets.notices_chat;
+            if widgets::switch_labeled_wrapped(ui, p, &mut chat, aurora_i18n::tr!("ui-contacts-set-notices-chat")).changed() {
+                world.contact_sets.set_notices_chat(chat);
+            }
+        });
     });
     if !open {
+        save_responses(world, st, &set);
+        st.response_edit = None;
         st.config = None;
+    }
+}
+
+/// The set's own automatic responses (set_autoresponse_* of
+/// floater_fs_contact_set_configuration.xml): a box per status mode, its
+/// text field greyed out while it is off.
+fn set_responses(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, set: &str, cfg: &contact_sets::ContactSet) {
+    use contact_sets::{ResponseMode, SetResponse};
+    if st.response_edit.as_ref().is_none_or(|(name, _)| name != set) {
+        st.response_edit = Some((set.to_owned(), ResponseMode::ALL.map(|m| cfg.response(m).text.clone())));
+    }
+    let heading = ui.label(
+        RichText::new(aurora_i18n::tr!("ui-contacts-set-responses"))
+            .size(12.5)
+            .strong()
+            .color(p.ink),
+    );
+    if st.demo_scroll == Some(DemoScroll::Responses) {
+        st.demo_scroll = None;
+        heading.scroll_to_me(Some(egui::Align::TOP));
+    }
+    for (i, mode) in ResponseMode::ALL.into_iter().enumerate() {
+        let label = match mode {
+            ResponseMode::Busy => aurora_i18n::tr!("ui-contacts-set-response-busy"),
+            ResponseMode::Autorespond => aurora_i18n::tr!("ui-contacts-set-response-autorespond"),
+            ResponseMode::NonFriends => aurora_i18n::tr!("ui-contacts-set-response-nonfriends"),
+        };
+        // greyed under RLVa @sendim, like Preferences' do not disturb text
+        // (the world does not send it then)
+        let locked = mode == ResponseMode::Busy && world.rlva.has("sendim");
+        let mut enabled = cfg.response(mode).enabled;
+        let toggled = ui
+            .add_enabled_ui(!locked, |ui| widgets::checkbox(ui, p, &mut enabled, label).changed())
+            .inner;
+        let Some((_, texts)) = st.response_edit.as_mut() else {
+            return;
+        };
+        let field = ui.add_enabled(
+            enabled && !locked,
+            egui::TextEdit::multiline(&mut texts[i])
+                .desired_rows(2)
+                .desired_width(f32::INFINITY),
+        );
+        if toggled || field.lost_focus() {
+            let text = texts[i].clone();
+            world.contact_sets.set_response(set, mode, SetResponse { enabled, text });
+        }
+        ui.add_space(4.0);
+    }
+}
+
+/// Where AURORA_DEMO_SET_NOTICES scrolls a set's settings window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DemoScroll {
+    Responses,
+    Bottom,
+}
+
+/// What is still typed in the response fields, when the window closes.
+fn save_responses(world: &mut World, st: &ContactsUi, set: &str) {
+    let Some((name, texts)) = &st.response_edit else {
+        return;
+    };
+    if name != set {
+        return;
+    }
+    for (i, mode) in contact_sets::ResponseMode::ALL.into_iter().enumerate() {
+        let Some(enabled) = world.contact_sets.set(set).map(|c| c.response(mode).enabled) else {
+            return;
+        };
+        let text = texts[i].clone();
+        world
+            .contact_sets
+            .set_response(set, mode, contact_sets::SetResponse { enabled, text });
     }
 }
 
@@ -2168,7 +2407,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                         .hint_text(hint.to_owned()),
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
-            // Enter while the field has focus (or just gave it up) confirms —
+            // Enter while the field has focus (or just gave it up) confirms â€”
             // same pattern as script search. Relying on lost_focus alone missed
             // presses that left the field focused, so Send never ran.
             if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {
@@ -2282,6 +2521,12 @@ mod tests {
         assert_eq!(sel, vec![id(2), id(4)]);
         click_select(&mut sel, &mut anchor, &order, id(5), none);
         assert_eq!(sel, vec![id(5)]);
+    }
+
+    #[test]
+    fn one_resident_gets_an_im_and_several_a_conference() {
+        assert!(matches!(im_or_conference(&[id(1)]), ContactsAction::Im(one) if one == id(1)));
+        assert!(matches!(im_or_conference(&[id(1), id(2)]), ContactsAction::Conference(ids) if ids == vec![id(1), id(2)]));
     }
 
     #[test]

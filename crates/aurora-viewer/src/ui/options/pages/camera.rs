@@ -4,8 +4,8 @@
 //! live view back behind the avatar (`OptionsResult::reset_camera`).
 
 use super::super::COMBO_W;
-use super::super::cx::{Cx, Nothing, field, fields};
-use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE};
+use super::super::cx::{Custom, Cx, Nothing, field, fields};
+use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 use egui::RichText;
 
 /// Three fields x / y / z (x forward, y left, z up).
@@ -58,7 +58,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                                 }
                             });
                         if ch {
-                            c.apply_preset(preset);
+                            // the view as the user saved it (Controls window)
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         ch
                     },
@@ -103,7 +104,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                             } else {
                                 c.preset
                             };
-                            c.apply_preset(preset);
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         reset
                     },
@@ -159,7 +160,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-smoothing"),
                     tr!("ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag"),
                     &field!(camera.smoothing),
-                    0.0..=9.0,
+                    SMOOTHING_RANGE,
                     "",
                 );
                 cx.slider(
@@ -170,17 +171,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
             });
-            // the headset's starting viewpoint (app.rs, toggle_vr)
             cx.group(tr!("ui-options-camera-vr"), |cx| {
-                use crate::camera::VrView;
-                cx.unfolded().choice(
-                    tr!("ui-options-camera-vr-view"),
-                    tr!("ui-options-camera-vr-view-help"),
-                    &field!(camera.vr_view),
-                    &[
-                        (VrView::FirstPerson, tr!("ui-options-camera-vr-view-first-person"), false),
-                        (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
-                    ],
+                cx.toggle(
+                    tr!("ui-options-camera-vr-at-start"),
+                    tr!("ui-options-camera-vr-at-start-help"),
+                    &field!(camera.vr_at_start),
                 );
             });
         }
@@ -191,9 +186,10 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-moving-your-avatar-returns-the-camera-behind-it-after"),
                     &field!(camera.reset_on_movement),
                 );
+                // FSResetCameraOnTP: only a teleport inside the region reads it
                 cx.toggle(
-                    tr!("ui-options-camera-return-after-teleporting"),
-                    tr!("ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival"),
+                    tr!("ui-options-camera-return-after-a-teleport-in-the-region"),
+                    tr!("ui-options-camera-after-a-teleport-in-the-region-the-camera-returns"),
                     &field!(camera.reset_on_teleport),
                 );
                 cx.toggle(
@@ -242,7 +238,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
     }
     // the rest of the camera's settings (written by its shortcuts, its
     // windows): the page's reset puts them back too, as "Reset camera" did
-    cx.track(&field!(camera));
+    cx.track(&Custom {
+        // Reset ownership excludes the independently tracked camera.vr group.
+        path: "camera.desktop",
+        modified: |s, d| {
+            let mut camera = s.camera.clone();
+            camera.vr = d.camera.vr.clone();
+            camera != d.camera
+        },
+        reset: |s, d| {
+            let vr = s.camera.vr.clone();
+            s.camera = d.camera.clone();
+            s.camera.vr = vr;
+        },
+    });
 }
 
 /// Preferences › Camera › Mouselook: the Legacy Viewer's mouselook rows.

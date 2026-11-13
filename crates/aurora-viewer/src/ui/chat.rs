@@ -5,6 +5,7 @@ mod app_links;
 pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
+mod channel;
 mod completion;
 mod compose;
 mod console;
@@ -24,6 +25,7 @@ mod keys;
 mod latest;
 mod line_menu;
 mod members;
+pub mod moderation;
 mod object_row;
 mod offer_card;
 mod payment_card;
@@ -47,6 +49,8 @@ mod workspace;
 mod action_marker_tests;
 #[cfg(test)]
 mod buttons_tests;
+#[cfg(test)]
+mod chat_lines_tests;
 #[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
@@ -149,6 +153,9 @@ pub struct ChatUi {
     pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
+    /// The chat bar's channel menu is open: it keeps an autohidden bar shown
+    /// while the pointer goes into the menu, as `bar_emoji_open` does.
+    pub bar_channel_open: bool,
     /// The lines' style of the settings, given every frame by the app
     /// (`set_style`).
     pub style: crate::settings::ChatStyle,
@@ -161,15 +168,31 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
     /// chat's volume once it is drawn.
     pub demo_volume_menu: bool,
+    /// The emojis used last, the row under the fields.
+    pub recent_emojis: super::emoji::recent::Recent,
     /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
     /// without changing the preferences.
     pub demo_channel: bool,
-    /// The workspace's layout last frame (None before the first): the
-    /// column as a rail, room for the members' panel. A threshold crossed
-    /// back needs a margin past it (`workspace::rail_now`), so a window
-    /// resized around one does not flip at every point.
-    layout_rail: Option<bool>,
+    /// What the button in the column's head asked; `collapsed` is
+    /// given every frame by the app, from the settings.
+    pub column: workspace::ColumnChoice,
+    /// Demo mode: the column's state of this session, which stands in for
+    /// the preferences (`AURORA_DEMO_CONV=aurora:collapsed` starts it
+    /// collapsed; the button changes it, never the settings file).
+    pub demo_column: Option<bool>,
+    /// The workspace's layout last frame (None before the first): a window
+    /// narrow enough for the rail, room for the members' panel. A threshold
+    /// crossed back needs a margin past it (`workspace::narrow_now`), so a
+    /// window resized around one does not flip at every point.
+    layout_narrow: Option<bool>,
     layout_members_room: Option<bool>,
+    /// During a call, how much taller the column needs to be to keep two
+    /// whole entries above the call's panel (negative: to spare), as last
+    /// frame laid them out (`sidebar::show`); the window's least height
+    /// follows it. None without a call, and taken by each frame that reads
+    /// it: a column not drawn since (another style, a closed window) leaves
+    /// none behind.
+    column_short: Option<f32>,
     /// The workspace's width last frame, and whether this frame's change of
     /// it comes from a drag of the window's edge: the layout then follows
     /// the edge at once, without easing (`workspace::ease`).
@@ -198,6 +221,10 @@ pub struct ChatUi {
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
+    /// The selector's channel (the Legacy Viewer's `ChatChannel` spinner):
+    /// one for every nearby chat field, kept from one message to the next
+    /// for the session, used when the text has no `/n` (`channel::resolve`).
+    pub chat_channel: i32,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
@@ -289,6 +316,34 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// The column's saved state, given every frame by the app
+    /// (`Settings::chat_column_collapsed`), or the demo session's own.
+    pub fn follow_column_setting(&mut self, saved: bool) {
+        self.column.collapsed = self.demo_column.unwrap_or(saved);
+    }
+
+    /// The column's button changed `ColumnChoice::collapsed`
+    /// (`ConvAction::ColumnCollapsed`): the setting keeps it, or in demo mode
+    /// the session alone. True when the settings are to be saved.
+    pub fn column_collapsed_by_button(&mut self, saved: &mut bool, collapsed: bool, demo: bool) -> bool {
+        if demo {
+            self.demo_column = Some(collapsed);
+            return false;
+        }
+        *saved = collapsed;
+        true
+    }
+
+    /// The column's search as the list and Alt+arrows apply it: none on the
+    /// rail, which has no field to show it. The text stays, for the column.
+    pub(super) fn side_search(&self) -> &str {
+        if self.column.rail(self.layout_narrow.unwrap_or(false)) {
+            ""
+        } else {
+            self.side_filter.trim()
+        }
+    }
+
     /// Recreate only the account-independent nearby window. IMs, messages,
     /// drafts and focus never cross sessions. Its stable floater id lets the
     /// existing layout restore position, size and minimized state.
@@ -300,6 +355,26 @@ impl ChatUi {
 
     pub fn remember_layout(&self, settings: &mut crate::settings::Settings) {
         settings.nearby_chat_window = self.popped.nearby_state();
+    }
+
+    /// LLViewerWindow::handleKey lets keys a chat editor does not use reach
+    /// LLGestureMgr::triggerGesture (indra/newview/llviewerwindow.cpp).
+    /// Only function keys pass through our chat fields: text, navigation,
+    /// other editors and popup menus keep their keyboard ownership.
+    pub(crate) fn allows_gesture_key(&self, ctx: &egui::Context, key: Option<u8>) -> bool {
+        if egui::Popup::is_any_open(ctx) {
+            return false;
+        }
+        if !ctx.egui_wants_keyboard_input() {
+            return true;
+        }
+        matches!(key, Some(0xa1..=0xac))
+            && ctx.memory(|m| m.focused()).is_some_and(|focused| {
+                focused == bar_input_id()
+                    || std::iter::once(self.selected)
+                        .chain(self.popped.conversations())
+                        .any(|conversation| focused == egui::Id::unique(("conv_input", conversation)))
+            })
     }
 
     /// `start_gesture` and FSNearbyChat::showDefaultChatBar
@@ -390,6 +465,14 @@ impl ChatUi {
         }
     }
 
+    /// The channel selector's channel while Preferences show it: what a
+    /// nearby line without `/n` is sent on (`channel::resolve`). Off channel
+    /// 0 it is not said aloud, so no typing animation, as
+    /// FSNearbyChat::handleChatBarKeystroke given the spinner's channel.
+    pub fn selector_channel(&self) -> Option<i32> {
+        self.show_channel.then_some(self.chat_channel)
+    }
+
     /// The chat bar is drawn this frame: always, or with `autohide` while it
     /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
@@ -401,7 +484,13 @@ impl ChatUi {
         if self.bar_hidden {
             return self.focus_request;
         }
-        !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
+        !self.autohide
+            || self.has_focus
+            || self.focus_request
+            || !self.input.trim().is_empty()
+            || self.bar_emoji_open
+            || self.bar_channel_open
+            || self.bar_hovered
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -434,6 +523,15 @@ impl ChatUi {
     /// not count, a keyboard request does.
     pub fn in_use(&self) -> bool {
         self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
+    }
+
+    /// The keyboard taken from every field (mouselook begun or ended,
+    /// gFocusMgr.setKeyboardFocus(NULL)): a request not served yet goes
+    /// too, so the field does not take it back next frame; the draft stays.
+    pub fn let_keyboard_go(&mut self) {
+        self.focus_request = false;
+        self.conv_focus_request = false;
+        self.has_focus = false;
     }
 
     /// The nearby chat is in its own window (#910): the chat island's
@@ -535,7 +633,7 @@ impl ChatUi {
     /// several for a conference; a search typed in the column carries over.
     fn start_picker(&mut self, start: Start) {
         self.start = start;
-        let query = self.side_filter.trim().to_owned();
+        let query = self.side_search().to_owned();
         self.picker.open("conversations_start", start == Start::Conference);
         if !query.is_empty() {
             self.picker.set_query(&query);
@@ -596,6 +694,92 @@ pub struct OutgoingChat {
 /// with nothing is not sent. The chat inputs never send an empty field.
 pub fn sends_local_line(channel: i32, message: &str) -> bool {
     channel != 0 || !message.is_empty()
+}
+
+/// ANIM_AGENT_TALK, ANIM_AGENT_SHOUT and ANIM_AGENT_WHISPER
+/// (indra/llcharacter/llanimationstates.cpp).
+pub const ANIM_AGENT_TALK: uuid::Uuid = uuid::Uuid::from_u128(0x5c682a95_6da4_a463_0bf6_0f5b7be129d1);
+pub const ANIM_AGENT_SHOUT: uuid::Uuid = uuid::Uuid::from_u128(0x6bd01860_4ebd_127a_bb3d_d1427e8e0c42);
+pub const ANIM_AGENT_WHISPER: uuid::Uuid = uuid::Uuid::from_u128(0x7693f268_06c7_ea71_fa21_2b30d6533f8f);
+
+/// The animation our avatar plays as it says a local line (PlayChatAnim),
+/// as FSNearbyChat::sendChatFromViewer (indra/newview/fsnearbychathub.cpp)
+/// picks it: talk, shout or whisper by the line's volume, after RLVa's
+/// (`Rlva::chat_animation_volume`); nothing on another channel ("Don't
+/// animate for chats people can't hear"). Emotes and OOC lines animate as
+/// any other line; a chat bar command, a gesture's own chat step and a
+/// line a gesture trigger emptied never come this far. Only a start is
+/// sent: the animations do not loop and end by themselves.
+pub fn chat_animation(channel: i32, chat_type: ChatType) -> Option<uuid::Uuid> {
+    if channel != 0 {
+        return None;
+    }
+    match chat_type {
+        ChatType::Whisper => Some(ANIM_AGENT_WHISPER),
+        ChatType::Normal => Some(ANIM_AGENT_TALK),
+        ChatType::Shout => Some(ANIM_AGENT_SHOUT),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SendKey {
+    Normal,
+    Shout,
+    Whisper,
+    Ooc,
+}
+
+impl SendKey {
+    /// OOC always uses normal volume, independently of the nearby volume
+    /// selector (FSNearbyChat::sendChat, indra/newview/fsnearbychathub.cpp).
+    fn chat_type(self, selected: ChatType) -> ChatType {
+        match self {
+            Self::Normal => selected,
+            Self::Shout => ChatType::Shout,
+            Self::Whisper => ChatType::Whisper,
+            Self::Ooc => ChatType::Normal,
+        }
+    }
+}
+
+/// Classify the Enter event once: releasing a modifier later in the same
+/// frame must change neither permission to send, OOC wrapping nor volume.
+/// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
+/// the event's mask; Alt alone is OOC, other Alt chords stay unclaimed.
+fn send_enter(i: &egui::InputState) -> Option<SendKey> {
+    i.events.iter().find_map(|event| {
+        let egui::Event::Key {
+            key: egui::Key::Enter,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        if modifiers.alt {
+            ooc_key(modifiers).then_some(SendKey::Ooc)
+        } else if modifiers.ctrl {
+            Some(SendKey::Shout)
+        } else if modifiers.shift {
+            Some(SendKey::Whisper)
+        } else {
+            Some(SendKey::Normal)
+        }
+    })
+}
+
+/// Alt+Enter alone sends ((OOC)) chat (FSUseAltOOC, on by default).
+fn ooc_key(m: &egui::Modifiers) -> bool {
+    m.alt && !m.ctrl && !m.shift && !m.mac_cmd
+}
+
+/// An OOC line as FSNearbyChat::sendChat (fsnearbychathub.cpp) and
+/// FSFloaterIM::sendMsgFromInputEditor build it: the default FSOOCPrefix and
+/// FSOOCPostfix around the text, before the channel is read.
+fn ooc(text: &str) -> String {
+    if text.is_empty() { String::new() } else { format!("(( {text} ))") }
 }
 
 /// Parse "/5 text" channel prefixes.
@@ -1177,6 +1361,8 @@ fn line_job(
 }
 
 pub enum ConvAction {
+    /// The column's button changed `ColumnChoice::collapsed`: to keep.
+    ColumnCollapsed(bool),
     Local(OutgoingChat),
     Im {
         to: uuid::Uuid,
@@ -1369,50 +1555,251 @@ pub(crate) fn resolved_text(world: &World, text: &str) -> String {
     world.rlva_filter_text(&text).into_owned()
 }
 
+/// The schemes of the links of a text, with or without their own text.
+const LINK_SCHEMES: [&str; 5] = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"];
+
+/// Texts at least this long keep where their links are in `SEGMENT_CACHE`:
+/// a profile's About, a pick or a group's charter is drawn every frame. A
+/// chat line (at most 1023 bytes) is cut again each time, which costs little.
+const CACHED_TEXT: usize = 1024;
+/// The bytes `SEGMENT_CACHE` keeps at most (texts and their links), the
+/// texts drawn least recently dropped first.
+const CACHED_BYTES: usize = 1 << 20;
+
+/// A long text cut lately, and where its links are (start, length).
+type CachedLinks = (Box<str>, Box<[(usize, usize)]>);
+
+thread_local! {
+    /// The long texts cut lately, the most recently drawn last: their
+    /// segments are rebuilt from where their links are, without reading the
+    /// whole text for links again.
+    static SEGMENT_CACHE: std::cell::RefCell<std::collections::VecDeque<CachedLinks>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+/// A text cut into plain text and links.
 fn segments(text: &str) -> Vec<Seg<'_>> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while !rest.is_empty() {
-        let Some((i, len, seg)) = next_link(rest) else {
-            out.push(Seg::Text(rest));
-            break;
-        };
-        if i > 0 {
-            out.push(Seg::Text(&rest[..i]));
+    let links = if text.len() < CACHED_TEXT {
+        link_spans(text)
+    } else {
+        cached_link_spans(text)
+    };
+    let mut out = Vec::with_capacity(2 * links.len() + 1);
+    let mut at = 0;
+    for (i, len, seg) in links {
+        if i > at {
+            out.push(Seg::Text(&text[at..i]));
         }
         out.push(seg);
-        rest = &rest[i + len..];
+        at = i + len;
+    }
+    if at < text.len() {
+        out.push(Seg::Text(&text[at..]));
     }
     out
 }
 
-/// The first link of a text: where it starts, how long it is, and what it
-/// is. Links are found in the order of LLUrlRegistry::findUrl
-/// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[` of
-/// a link with its own text wins over the address inside it.
-fn next_link(text: &str) -> Option<(usize, usize, Seg<'_>)> {
-    let schemes = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"]
-        .iter()
-        .filter_map(|p| text.find(p));
-    let bare = schemes.chain(web_start(text)).min();
-    let labelled = text
-        .match_indices('[')
-        .map(|(i, _)| i)
-        .take_while(|&i| bare.is_none_or(|b| i < b))
-        .find_map(|i| labelled(&text[i..]).map(|(len, seg)| (i, len, seg)));
-    if labelled.is_some() {
-        return labelled;
+/// `link_spans` of a long text, from `SEGMENT_CACHE` when it was cut lately.
+fn cached_link_spans(text: &str) -> Vec<(usize, usize, Seg<'_>)> {
+    let hit = SEGMENT_CACHE.with_borrow_mut(|cache| {
+        let entry = cache.remove(cache.iter().position(|(t, _)| **t == *text)?)?;
+        let spans = entry.1.clone();
+        cache.push_back(entry);
+        Some(spans)
+    });
+    if let Some(spans) = hit {
+        return spans.iter().map(|&(i, len)| (i, len, link_at(text, i, len))).collect();
     }
-    let i = bare?;
-    let tail = &text[i..];
-    let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
-    // trailing punctuation belongs to the sentence
-    while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ']', ';', ':', '"', '\'']) {
-        end -= 1;
+    let links = link_spans(text);
+    let spans: Box<[(usize, usize)]> = links.iter().map(|&(i, len, _)| (i, len)).collect();
+    let size = |(t, s): &CachedLinks| t.len() + std::mem::size_of_val(&**s);
+    SEGMENT_CACHE.with_borrow_mut(|cache| {
+        cache.push_back((text.into(), spans));
+        let mut bytes: usize = cache.iter().map(size).sum();
+        while bytes > CACHED_BYTES
+            && let Some(old) = cache.pop_front()
+        {
+            bytes -= size(&old);
+        }
+    });
+    links
+}
+
+/// The segment of a link that `link_spans` found at `i`, `len` bytes long.
+fn link_at(text: &str, i: usize, len: usize) -> Seg<'_> {
+    if text[i..].starts_with('[')
+        && let Some((found, seg)) = Linker::new(text).labelled(i)
+        && found == len
+    {
+        return seg;
     }
-    let link = &tail[..end.max(1)];
-    let link = &link[..verb_end(link)];
-    Some((i, link.len(), link_seg(link)))
+    link_seg(&text[i..i + len])
+}
+
+/// The links of a text in order: where each starts, its length and what it
+/// is.
+fn link_spans(text: &str) -> Vec<(usize, usize, Seg<'_>)> {
+    let mut linker = Linker::new(text);
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(link) = linker.next_link(at) {
+        at = link.0 + link.1;
+        out.push(link);
+    }
+    out
+}
+
+/// The first place of a pattern at or after a position, kept while a text is
+/// read from its start to its end: as the position only moves forward, each
+/// pattern is searched once over the whole text, so finding the links of a
+/// long text (a profile full of `[`) stays linear in its length.
+#[derive(Clone, Copy, Default)]
+struct Ahead {
+    /// Searched from there…
+    from: Option<usize>,
+    /// …and found there (`None`: nowhere after `from`).
+    at: Option<usize>,
+}
+
+impl Ahead {
+    fn next(&mut self, pos: usize, find: impl FnOnce(usize) -> Option<usize>) -> Option<usize> {
+        let known = self.from.is_some_and(|from| from <= pos) && self.at.is_none_or(|at| at >= pos);
+        if !known {
+            self.from = Some(pos);
+            self.at = find(pos);
+        }
+        self.at
+    }
+}
+
+/// Finds the links of one text, from its start to its end (`next_link`).
+struct Linker<'a> {
+    text: &'a str,
+    schemes: [Ahead; LINK_SCHEMES.len()],
+    web: Ahead,
+    /// The next whitespace: where an address ends.
+    space: Ahead,
+    /// The next `]`: where the text of a `[` link ends.
+    close: Ahead,
+    /// What follows the address of the last `[` link tried: where the address
+    /// ends, then the spaces before its text and where its `]` is, if it has
+    /// a text. The `[` that follow share it until the next whitespace.
+    after_url: Option<(usize, Option<(usize, usize)>)>,
+}
+
+/// The next whitespace of `text` at or after `from`.
+fn space_from(text: &str, from: usize) -> Option<usize> {
+    text[from..].find(char::is_whitespace).map(|i| i + from)
+}
+
+impl<'a> Linker<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            schemes: Default::default(),
+            web: Ahead::default(),
+            space: Ahead::default(),
+            close: Ahead::default(),
+            after_url: None,
+        }
+    }
+
+    /// The first link at or after `at`: where it starts, how long it is, and
+    /// what it is. Links are found in the order of LLUrlRegistry::findUrl
+    /// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[`
+    /// of a link with its own text wins over the address inside it.
+    fn next_link(&mut self, at: usize) -> Option<(usize, usize, Seg<'a>)> {
+        let text = self.text;
+        let mut bare = self.web.next(at, |from| web_start(text, from));
+        for (ahead, scheme) in self.schemes.iter_mut().zip(LINK_SCHEMES) {
+            if let Some(i) = ahead.next(at, |from| text[from..].find(scheme).map(|i| i + from)) {
+                bare = Some(bare.map_or(i, |b| b.min(i)));
+            }
+        }
+        let before = &text[at..bare.unwrap_or(text.len())];
+        if let Some(link) = before
+            .match_indices('[')
+            .find_map(|(i, _)| self.labelled(at + i).map(|(len, seg)| (at + i, len, seg)))
+        {
+            return Some(link);
+        }
+        let i = bare?;
+        let tail = &text[i..];
+        let mut end = self.space.next(i, |from| space_from(text, from)).map_or(tail.len(), |w| w - i);
+        // trailing punctuation belongs to the sentence
+        while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ']', ';', ':', '"', '\'']) {
+            end -= 1;
+        }
+        let link = &tail[..end.max(1)];
+        let link = &link[..verb_end(link)];
+        Some((i, link.len(), link_seg(link)))
+    }
+
+    /// `[https://example.org Text]` at `i`: its length and its segment. The
+    /// pattern of LLUrlEntryHTTPLabel and LLUrlEntrySLLabel,
+    /// `\[(https?|secondlife)://\S+[ \t]+[^\]]+\]`; the text is unescaped
+    /// like getLabelFromWikiLink, and a text that is itself a link shows the
+    /// address instead (LLUrlEntryHTTPLabel::getLabel), so it cannot pass for
+    /// another destination.
+    fn labelled(&mut self, i: usize) -> Option<(usize, Seg<'a>)> {
+        let text = self.text;
+        let body = text[i..].strip_prefix('[')?;
+        // the scheme first: a `[` that starts no address is passed at once
+        if !LINK_SCHEMES
+            .iter()
+            .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)))
+        {
+            return None;
+        }
+        let url_end = self.space.next(i + 1, |from| space_from(text, from))? - (i + 1);
+        let url = &body[..url_end];
+        if url.ends_with("://") {
+            return None;
+        }
+        let (gap, close) = self.after_url(i + 1 + url_end)?;
+        let label = body[url_end + gap..][..close].trim_end();
+        let len = 1 + url_end + gap + close + 1;
+        let inner = link_seg(url);
+        let label = unescape(label);
+        if !link_spans(&label).is_empty() {
+            return Some((len, inner));
+        }
+        Some((
+            len,
+            match inner {
+                Seg::Place(u, mut place) => {
+                    place.label = label.into_owned();
+                    Seg::Place(u, place)
+                }
+                inner => Seg::Labelled(label, Box::new(inner)),
+            },
+        ))
+    }
+
+    /// After an address of a `[` link ending at `end`: the spaces or tabs
+    /// before its text and where its `]` is, from the text's start, when the
+    /// text is there. Kept for the next `[` of the same address.
+    fn after_url(&mut self, end: usize) -> Option<(usize, usize)> {
+        if let Some((at, found)) = self.after_url
+            && at == end
+        {
+            return found;
+        }
+        let text = self.text;
+        let after = &text[end..];
+        let gap = after.len() - after.trim_start_matches([' ', '\t']).len();
+        let found = if gap == 0 {
+            None
+        } else {
+            let start = end + gap;
+            self.close
+                .next(start, |from| text[from..].find(']').map(|c| c + from))
+                .map(|close| (gap, close - start))
+                .filter(|&(_, close)| !text[start..start + close].trim().is_empty())
+        };
+        self.after_url = Some((end, found));
+        found
+    }
 }
 
 /// Where an agent, group, parcel or experience link ends: after the word of
@@ -1442,19 +1829,16 @@ fn verb_end(link: &str) -> usize {
     link.len() - (verb.len() - word)
 }
 
-/// Where an address without its scheme starts, "www.example.org"
-/// (LLUrlEntryHTTPNoProtocol: `\bwww\.\S+\.([^\s<]*)?\b`).
-fn web_start(text: &str) -> Option<usize> {
-    let mut from = 0;
+/// Where an address without its scheme starts at or after `from`,
+/// "www.example.org" (LLUrlEntryHTTPNoProtocol: `\bwww\.\S+\.([^\s<]*)?\b`).
+/// A link ends before a whitespace, a punctuation mark or a `]`, so the
+/// character before `from` tells a word's start as it would in the rest of
+/// the text alone.
+fn web_start(text: &str, from: usize) -> Option<usize> {
+    let mut from = from;
     while let Some(i) = text[from..].find("www.").map(|i| i + from) {
         let word_start = !text[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
-        let host = text[i + 4..].split(|c: char| c.is_whitespace() || c == '<').next().unwrap_or("");
-        // a dot with something on both sides after "www."
-        let dotted = host
-            .trim_end_matches(|c: char| !c.is_alphanumeric())
-            .find('.')
-            .is_some_and(|d| d > 0);
-        if word_start && dotted {
+        if word_start && dotted_host(&text[i + 4..]) {
             return Some(i);
         }
         from = i + 4;
@@ -1462,49 +1846,16 @@ fn web_start(text: &str) -> Option<usize> {
     None
 }
 
-/// `[https://example.org Text]` at the start of `text`: its length and its
-/// segment. The pattern of LLUrlEntryHTTPLabel and LLUrlEntrySLLabel,
-/// `\[(https?|secondlife)://\S+[ \t]+[^\]]+\]`; the text is unescaped like
-/// getLabelFromWikiLink, and a text that is itself a link shows the address
-/// instead (LLUrlEntryHTTPLabel::getLabel), so it cannot pass for another
-/// destination.
-fn labelled(text: &str) -> Option<(usize, Seg<'_>)> {
-    let body = text.strip_prefix('[')?;
-    let known = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"]
-        .iter()
-        .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)));
-    let url_end = body.find(char::is_whitespace)?;
-    let url = &body[..url_end];
-    if !known || url.ends_with("://") {
-        return None;
+/// The text after "www." holds a dot with something on both sides: in its
+/// host (up to a whitespace or `<`), the first dot comes after a character
+/// and has a letter or a digit after it. Read only as far as needed, so the
+/// "www." of a long word are not each read to its end.
+fn dotted_host(after: &str) -> bool {
+    let host_end = |c: char| c.is_whitespace() || c == '<';
+    match after.char_indices().find(|&(_, c)| c == '.' || host_end(c)) {
+        Some((d, '.')) if d > 0 => after[d + 1..].chars().take_while(|&c| !host_end(c)).any(char::is_alphanumeric),
+        _ => false,
     }
-    let after = &body[url_end..];
-    let label_start = after.trim_start_matches([' ', '\t']);
-    let gap = after.len() - label_start.len();
-    if gap == 0 {
-        return None;
-    }
-    let close = label_start.find(']')?;
-    let label = label_start[..close].trim_end();
-    if label.trim().is_empty() {
-        return None;
-    }
-    let len = 1 + url_end + gap + close + 1;
-    let inner = link_seg(url);
-    let label = unescape(label);
-    if segments(&label).iter().any(|s| !matches!(s, Seg::Text(_))) {
-        return Some((len, inner));
-    }
-    Some((
-        len,
-        match inner {
-            Seg::Place(u, mut place) => {
-                place.label = label.into_owned();
-                Seg::Place(u, place)
-            }
-            inner => Seg::Labelled(label, Box::new(inner)),
-        },
-    ))
 }
 
 /// What a link is, from its address.
@@ -1580,6 +1931,17 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
+    });
+    line_menu::inline(r);
+}
+
+/// Right click on a member of a conversation's members' panel: the name
+/// menu, then a group chat's moderator options (`moderation`).
+fn member_menu(r: &egui::Response, p: &Palette, world: &World, conversation: uuid::Uuid, id: uuid::Uuid) {
+    super::contacts::drag::person_source(r, id);
+    super::menu::context_menu(r, p, |ui| {
+        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name);
+        moderation::menu(ui, p, world, conversation, id);
     });
     line_menu::inline(r);
 }
@@ -2253,6 +2615,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 return;
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
+            let clearing_filter = view.is_filtered() && filter.is_empty();
             let changed = view.sync(
                 &view::Source {
                     lines,
@@ -2277,6 +2640,15 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
+            if clearing_filter
+                && !selection.is_empty()
+                && let Some(head) = selection.head
+            {
+                let selected_row = view.lines().position(|index| clock.first + index as u64 == head.seq);
+                if let Some(row) = selected_row {
+                    view.scroll_to(row);
+                }
+            }
             let content = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;
@@ -2901,8 +3273,19 @@ pub fn show(
     // workspace's rail, head, 60 points of messages and field; the Legacy
     // style's tabs and field): smaller, it grew back to its content during
     // a resize and the messages, laid out for the smaller size first,
-    // hopped for a frame
-    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    // hopped for a frame. During a call the workspace's column also keeps
+    // two whole entries above the call's panel (`ChatUi::column_short`).
+    let mut least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    // the column grows 1:1 with the window: its shortfall is how much the
+    // least height must be above the window's own (the window's rect read
+    // only then: nothing more per frame without a call)
+    let short = st.column_short.take().filter(|_| style.workspace() && world.calls.active.is_some());
+    if let Some(column) = short.and_then(|short| {
+        ctx.memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .map(|now| now.height() + short)
+    }) {
+        least.y = least.y.max(column);
+    }
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
@@ -3181,7 +3564,7 @@ fn classic_pane(
                         (*id, world.social.name_of(id), info.moderators.contains(id))
                     })
                     .collect();
-                names.sort_by_key(|(_, n, _)| n.to_lowercase());
+                names.sort_by_key(|(_, n, _)| crate::natural_order::key(n));
                 if names.is_empty() {
                     ui.label(
                         RichText::new(aurora_i18n::tr!("ui-chat-loading-participants"))
@@ -3210,7 +3593,7 @@ fn classic_pane(
             });
         ui.add_space(4.0);
     }
-    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H);
+    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H) + st.recent_emojis.height();
     // Ctrl+F opens the find field of the conversation shown (in
     // the head's row), when the keyboard is in this window, or
     // nowhere with the pointer over it
@@ -3264,6 +3647,13 @@ fn classic_pane(
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
+    // the recent emojis, over the field (under it with the Legacy chat style)
+    let over = if st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft)
+    } else {
+        None
+    };
     let resp = ui
         .horizontal(|ui| {
             // the edges of the lines above, half the theme's spacing between
@@ -3281,7 +3671,11 @@ fn classic_pane(
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
-            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            let show_channel = st.selected.is_none() && st.show_channel;
+            let channel_w = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
+                .floor()
+                .max(40.0);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3301,6 +3695,9 @@ fn classic_pane(
                 Some(id) => suggest::Scope::Session(id, &people),
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+            if show_channel {
+                channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
+            }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output
@@ -3309,12 +3706,18 @@ fn classic_pane(
                 .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
         })
         .inner;
+    if !st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft);
+    }
+    // the row over the field is not part of the strip
+    let field_top = over.map_or(resp.rect.top(), |row| row.top());
     // the strip between the lines and the field: egui reaches
     // both from it (interact_radius), it keeps the normal cursor
     // unless a drag goes through it
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && pos.y > strip_top
-        && pos.y < resp.rect.top()
+        && pos.y < field_top
         && ui.min_rect().x_range().contains(pos.x)
         && !ui.input(|i| i.pointer.any_down())
     {
@@ -3332,7 +3735,10 @@ fn classic_pane(
             .show(ui.ctx(), |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                     ui.set_width(300.0);
-                    let picked = emoji.picker(ui, p, icons);
+                    let picked = emoji.picker(ui, p, icons, st.recent_emojis.favorites());
+                    if let Some(c) = picked.favorite {
+                        st.recent_emojis.toggle_favorite(c);
+                    }
                     if let Some(c) = picked.chosen {
                         draft.push(c);
                         close = !ui.input(|i| i.modifiers.shift);
@@ -3353,27 +3759,28 @@ fn classic_pane(
         cursor_to_end(ui.ctx(), conv_input, &draft);
     }
     let mut sent = false;
-    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
-        let text = st.suggest.expand(st.selected, draft.trim());
+    let send = if send_clicked {
+        Some(SendKey::Normal)
+    } else if resp.has_focus() || resp.lost_focus() {
+        ui.input(send_enter)
+    } else {
+        None
+    };
+    if let Some(send) = send {
+        let mut text = st.suggest.expand(st.selected, draft.trim());
+        if send == SendKey::Ooc {
+            text = ooc(&text);
+        }
         if !text.is_empty() {
             sent = true;
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
             match st.selected {
                 None => {
-                    let (channel, message) = parse_channel(&text);
+                    let (channel, message) = channel::resolve(&text, st.selector_channel());
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
-                        // Ctrl+Enter shouts, Shift+Enter whispers (like the chat bar)
-                        chat_type: ui.input(|i| {
-                            if i.modifiers.ctrl {
-                                ChatType::Shout
-                            } else if i.modifiers.shift {
-                                ChatType::Whisper
-                            } else {
-                                ChatType::Normal
-                            }
-                        }),
+                        chat_type: send.chat_type(ChatType::Normal),
                     }));
                 }
                 Some(to) => actions.push(ConvAction::Im { to, text }),
@@ -3389,7 +3796,7 @@ fn classic_pane(
         sent,
     });
     if st.selected.is_none() {
-        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
+        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
         st.local_field(&resp, said, sent);
     }
     if !draft.is_empty() {
@@ -3530,6 +3937,93 @@ fn said_by_resident(line: &crate::world::ChatLine) -> bool {
     matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_))
 }
 
+/// Where the nearby chat lines were laid out from in their area, anchored
+/// by its bottom: `held` before them, `settle` after keeps their bottom on
+/// that anchor in the frame where their height changes.
+///
+/// An area anchored by its bottom places its content with the height it
+/// had the frame before (egui's `AreaState::size`): the frame a line's fade
+/// ends and it leaves, the others were laid out its height too high, and
+/// the frame one arrives, too low; the next frame put them back. That is
+/// the flicker of #2544. The Legacy Viewer stacks its lines from the
+/// bottom in the frame it draws them (`LLConsole::draw`, `y_pos` from the
+/// bottom, indra/llui/llconsole.cpp), so they never move but to make room.
+/// Here the lines are laid out as before, then everything they painted
+/// (text, cards, glass) is moved to where egui will put them the next
+/// frame; in a frame where the height does not change, nothing moves.
+///
+/// Rather than `ctx.request_discard` (a second pass of the whole interface
+/// when a line comes or goes, which egui drops when another discard has
+/// already taken its last pass), the shapes of this one area are moved.
+struct Held {
+    /// The bottom of the room the area is anchored in, plus the anchor's
+    /// offset: what egui places the area's top from.
+    room: f32,
+    lift: f32,
+    /// The first shape the lines painted on the area's layer.
+    start: usize,
+}
+
+impl Held {
+    /// Before the lines, at the start of the area's `ui`; `lift` is the
+    /// vertical offset of the area's anchor. The clip reaches a screen
+    /// lower: in the frame a line arrives, the lines are laid out below the
+    /// bar before they are moved up, and egui paints nothing of a card or a
+    /// label laid out wholly outside the clip.
+    fn new(ui: &mut egui::Ui, lift: f32) -> Self {
+        let clip = ui.clip_rect();
+        ui.set_clip_rect(clip.with_max_y(clip.bottom() + ui.ctx().content_rect().height()));
+        let layer = ui.layer_id();
+        Self {
+            room: ui.ctx().content_rect().bottom(),
+            lift,
+            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
+        }
+    }
+
+    /// After the lines: moves what they painted to the top egui gives the
+    /// area at their new height (`Area::begin`: `Align2::LEFT_BOTTOM` in
+    /// the room, the offset, then `round_area_position`), the same to the
+    /// pixel as the frames after, and returns the move, for the click areas
+    /// laid over them.
+    fn settle(self, ui: &egui::Ui) -> egui::Vec2 {
+        use egui::emath::GuiRounding as _;
+        let top = (self.room - ui.min_rect().height() + self.lift)
+            .round_to_pixels(ui.pixels_per_point())
+            .round_ui();
+        let shift = egui::vec2(0.0, top - ui.max_rect().top());
+        if shift.y != 0.0 {
+            let moved = egui::emath::TSTransform::from_translation(shift);
+            let layer = ui.layer_id();
+            ui.ctx().graphics_mut(|g| {
+                let list = g.entry(layer);
+                for i in self.start..list.next_idx().0 {
+                    // the shapes alone: the clip stays the area's, the
+                    // screen's (moved too, it could cut off a line that just
+                    // arrived)
+                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
+                }
+            });
+        }
+        shift
+    }
+
+    /// After the area: the rect it keeps moves with what it painted, for
+    /// what avoids the lines later in the frame (the friends' online
+    /// toasts, `notification_center::chat_lines`).
+    fn publish(ctx: &egui::Context, shift: egui::Vec2) {
+        if shift.y == 0.0 {
+            return;
+        }
+        // the area of the lines, one for both looks
+        let layer = egui::LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
+        if let Some(mut state) = egui::AreaState::load(ctx, layer.id) {
+            state.set_left_top_pos(state.left_top_pos() + shift);
+            ctx.memory_mut(|m| m.areas_mut().set_state(layer, state));
+        }
+    }
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
@@ -3545,6 +4039,7 @@ pub fn toasts(
     wanted_pics: &mut HashSet<uuid::Uuid>,
     bottom: f32,
     seconds: f32,
+    max_lines: u32,
     times: bool,
     pills: bool,
     cards: bool,
@@ -3561,6 +4056,7 @@ pub fn toasts(
             wanted_pics,
             bottom,
             seconds,
+            max_lines,
             times,
             compact_automated,
             residents,
@@ -3568,27 +4064,40 @@ pub fn toasts(
         return;
     }
     let now = std::time::SystemTime::now();
-    let recent: Vec<_> = world
-        .chat
-        .iter()
-        .rev()
-        .filter(|l| residents || !said_by_resident(l))
-        .take(6)
-        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
-        .collect();
+    let size = super::fonts::chat_size(ctx, if pills { 12.0 } else { 13.0 });
+    let family = pills.then(|| super::fonts::semibold(ctx));
+    let recent = console::recent(world, now, seconds, max_lines, residents, |line| {
+        console::rows(
+            ctx,
+            line,
+            line_job(
+                ctx,
+                line,
+                p,
+                world,
+                want_names,
+                540.0,
+                size,
+                times,
+                family.as_ref().map_or(JobLook::Line, JobLook::Pill),
+            ),
+        )
+    });
     if recent.is_empty() {
         return;
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
+    let mut shift = egui::Vec2::ZERO;
+    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(
-            egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
-        )
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
+            // a line that leaves or arrives moves the others in this frame
+            // only (#2544)
+            let held = Held::new(ui, lift);
             ui.set_max_width(560.0);
             // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
             // 4 px between two lines
@@ -3601,7 +4110,7 @@ pub fn toasts(
             if pills {
                 ui.spacing_mut().item_spacing.y = 0.0;
             }
-            for line in recent.into_iter().rev() {
+            for line in recent {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
                 let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * alpha) as u8);
@@ -3668,12 +4177,14 @@ pub fn toasts(
                 }
                 ui.add_space(gap);
             }
+            shift = held.settle(ui);
         });
+    Held::publish(ctx, shift);
     for (k, (rect, link, col)) in links.iter().enumerate() {
-        bubble_link(ctx, p, world, k, *rect, link, *col);
+        bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
-        bubble_sender_link(ctx, p, world, k, rect, line);
+        bubble_sender_link(ctx, p, world, k, rect.translate(shift), line);
     }
 }
 
@@ -3760,6 +4271,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let line_menu = line_menu::demo_events(ctx, frame);
     if !line_menu.is_empty() {
         return line_menu;
+    }
+    let moderate = moderation::demo_events(ctx, frame);
+    if !moderate.is_empty() {
+        return moderate;
     }
     let preview = previews::demo_events(ctx, frame);
     if !preview.is_empty() {
@@ -3965,6 +4480,11 @@ pub(crate) fn bar_input_id() -> egui::Id {
     egui::Id::unique("nearby_chat_input")
 }
 
+/// The nearby chat bar's selector, separate from the workspace field.
+pub(crate) fn bar_channel_id() -> egui::Id {
+    bar_input_id().with("channel")
+}
+
 /// The text cursor of a field after the last character: the keyboard given
 /// to a field that holds a draft, or the letter that started the chat.
 pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
@@ -3974,8 +4494,8 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
-/// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
-/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
+/// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
+/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
 /// its own frame (`build` dresses the field) and shows emoji pictures.
@@ -3989,30 +4509,40 @@ pub(crate) fn bar_input(
     build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
 ) -> Option<OutgoingChat> {
     let mut out = None;
+    let show_channel = st.show_channel;
+    let channel_width = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+    let field_width = (width - channel_width).max(40.0);
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
-    let build = identified(build);
-    input::prepare(ui, bar_input_id(), true);
-    let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
-    let nav = super::emoji::codes::keys(ui, bar_input_id());
-    let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+    let build = identified(|edit| build(edit).desired_width(field_width));
     let mut emoji = emoji;
-    let minimum = ui.spacing().interact_size.y;
-    let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, width, minimum, build);
-    if recalled {
-        output.response.mark_changed();
-    }
-    super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
-    super::spelling::field(ui, p, &mut output, &mut st.input, true);
-    suggest::after(
-        ui,
-        p,
-        &mut output,
-        &mut st.input,
-        suggest_nav,
-        &mut st.suggest,
-        suggest::Scope::Nearby(gestures),
-    );
+    let output = ui
+        .horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            input::prepare(ui, bar_input_id(), true);
+            let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
+            let nav = super::emoji::codes::keys(ui, bar_input_id());
+            let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+            let minimum = ui.spacing().interact_size.y;
+            let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, field_width, minimum, build);
+            if recalled {
+                output.response.mark_changed();
+            }
+            super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
+            super::spelling::field(ui, p, &mut output, &mut st.input, true);
+            suggest::after(
+                ui,
+                p,
+                &mut output,
+                &mut st.input,
+                suggest_nav,
+                &mut st.suggest,
+                suggest::Scope::Nearby(gestures),
+            );
+            st.bar_channel_open = show_channel && channel::show(ui, p, &mut st.chat_channel, bar_channel_id());
+            output
+        })
+        .inner;
     let resp = output
         .response
         .response
@@ -4033,27 +4563,31 @@ pub(crate) fn bar_input(
     }
     st.has_focus = resp.has_focus();
     // The editor leaves ordinary Enter to this send path.
-    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
+        ui.input(send_enter)
+    } else {
+        None
+    };
+    let enter = send.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
-    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
+    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
     }
-    if enter && !st.input.trim().is_empty() {
+    if let Some(send) = send
+        && !st.input.trim().is_empty()
+    {
         st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
-        let (channel, message) = parse_channel(&st.suggest.expand(None, st.input.trim()));
+        let mut text = st.suggest.expand(None, st.input.trim());
+        if send == SendKey::Ooc {
+            text = ooc(&text);
+        }
+        let (channel, message) = channel::resolve(&text, st.selector_channel());
         out = Some(OutgoingChat {
             message,
             channel,
-            chat_type: if shout {
-                ChatType::Shout
-            } else if whisper {
-                ChatType::Whisper
-            } else {
-                ChatType::Normal
-            },
+            chat_type: send.chat_type(ChatType::Normal),
         });
         st.input.clear();
         if st.keep_focus {
@@ -4062,12 +4596,25 @@ pub(crate) fn bar_input(
             st.focus_request = true;
         }
     }
-    // Enter on an empty bar returns to movement (like Firestorm).
+    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
+        let alt = egui::Modifiers::ALT;
+        assert!(super::ooc_key(&alt));
+        // AltGr (Ctrl+Alt) and other Alt chords stay unclaimed
+        assert!(!super::ooc_key(&(alt | egui::Modifiers::CTRL)));
+        assert!(!super::ooc_key(&(alt | egui::Modifiers::SHIFT)));
+        assert_eq!(super::ooc("brb"), "(( brb ))");
+        assert_eq!(super::ooc(""), "");
+        // like the Legacy Viewer, a channel typed after Alt+Enter stays text on channel 0
+        assert_eq!(super::parse_channel(&super::ooc("/5 hi")), (0, "(( /5 hi ))".into()));
+    }
+
     use super::*;
 
     fn nearby(apart: bool, shown: bool, minimized: bool, front: bool, focused: bool, tab_visible: bool) -> NearbyChatView {
@@ -4253,6 +4800,126 @@ mod tests {
         assert!(st.gesture_key(&frames.ctx, &slash, code, false, mods));
         assert_eq!(st.input, "/");
         assert!(st.focus_request);
+    }
+
+    #[test]
+    fn focused_chat_function_gestures_keep_drafts_and_release_waits() {
+        use crate::gestures::{Effect, Entry, Manager};
+        use aurora_assets::gesture::{Gesture, Step, WAIT_RELEASE};
+        use std::collections::BTreeSet;
+
+        let mut frames = Frames::new();
+        let docked = uuid::Uuid::from_u128(101);
+        let detached = uuid::Uuid::from_u128(102);
+        let mut st = ChatUi {
+            selected: Some(docked),
+            ..Default::default()
+        };
+        st.popped.pop_out(None, false, false, false);
+        st.popped.pop_out(Some(detached), false, false, false);
+        // All conversation styles use these same field ids, including
+        // nearby chat and IM/group/conference windows torn off the tabs.
+        let fields = [
+            bar_input_id(),
+            egui::Id::unique(("conv_input", None::<uuid::Uuid>)),
+            egui::Id::unique(("conv_input", Some(docked))),
+            egui::Id::unique(("conv_input", Some(detached))),
+        ];
+        for field in fields {
+            let mut draft = "Unsent chat draft".to_owned();
+            frames.run(vec![], |ui| {
+                egui::TextEdit::multiline(&mut draft).id(field).show(ui).response.request_focus();
+            });
+            assert!(frames.ctx.egui_wants_keyboard_input());
+            for key in 0xa1..=0xac {
+                for mask in [0, 1, 4, 5] {
+                    let mut manager = Manager::default();
+                    let id = uuid::Uuid::from_u128(1);
+                    let definition = Gesture {
+                        key,
+                        mask,
+                        steps: vec![
+                            Step::Wait {
+                                seconds: 0.0,
+                                flags: WAIT_RELEASE,
+                            },
+                            Step::Chat {
+                                text: "Gesture played".into(),
+                                flags: 0,
+                            },
+                        ],
+                        ..Default::default()
+                    };
+                    manager.active.insert(id);
+                    manager.entries.insert(
+                        id,
+                        Entry {
+                            asset: uuid::Uuid::nil(),
+                            definition: definition.clone(),
+                        },
+                    );
+                    let triggered = st
+                        .allows_gesture_key(&frames.ctx, Some(key))
+                        .then(|| manager.key_trigger(key, mask))
+                        .flatten();
+                    assert_eq!(triggered, Some(id), "F{} mask={mask}, field={field:?}", key - 0xa0);
+                    manager.play(id, definition, Some(key));
+                    let now = std::time::Instant::now();
+                    assert!(manager.tick(now, &BTreeSet::new()).is_empty());
+                    manager.release(Some(key));
+                    assert_eq!(manager.tick(now, &BTreeSet::new()), [Effect::Chat("Gesture played".into())]);
+                    assert_eq!(frames.ctx.memory(|m| m.focused()), Some(field));
+                }
+            }
+            assert_eq!(draft, "Unsent chat draft");
+        }
+    }
+
+    #[test]
+    fn focused_chat_function_gestures_preserve_other_keyboard_owners() {
+        let mut frames = Frames::new();
+        let st = ChatUi::default();
+        assert!(st.allows_gesture_key(&frames.ctx, Some(b'G')), "world shortcuts still work");
+        let mut draft = "Draft".to_owned();
+        frames.run(vec![], |ui| {
+            egui::TextEdit::multiline(&mut draft)
+                .id(bar_input_id())
+                .show(ui)
+                .response
+                .request_focus();
+        });
+        for key in [
+            None,
+            Some(b'A'),
+            Some(b'6'),
+            Some(32),
+            Some(0x81),
+            Some(0x82),
+            Some(0x86),
+            Some(0x89),
+            Some(0x94),
+        ] {
+            assert!(
+                !st.allows_gesture_key(&frames.ctx, key),
+                "text, editing and modifier keys stay in chat: {key:?}"
+            );
+        }
+        let popup = egui::Id::unique("function_gesture_popup");
+        egui::Popup::open_id(&frames.ctx, popup);
+        assert!(!st.allows_gesture_key(&frames.ctx, Some(0xa6)), "a menu keeps Ctrl+F6");
+        egui::Popup::close_all(&frames.ctx);
+        for field in [
+            egui::Id::unique("search"),
+            egui::Id::unique(("conv_input", Some(uuid::Uuid::from_u128(999)))),
+        ] {
+            frames.run(vec![], |ui| {
+                egui::TextEdit::multiline(&mut draft).id(field).show(ui).response.request_focus();
+            });
+            assert!(
+                !st.allows_gesture_key(&frames.ctx, Some(0xa6)),
+                "other editors retain function keys"
+            );
+        }
     }
 
     /// One frame of a notification text with place links: the regions
@@ -4562,6 +5229,62 @@ mod tests {
         assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
     }
 
+    /// Long texts with many brackets or many link starts and few spaces are
+    /// split into links in linear time: a profile's About is cut every
+    /// frame it is shown.
+    #[test]
+    fn long_texts_with_many_brackets_are_split_quickly() {
+        let id = uuid::Uuid::from_u128(5);
+        let n = 65_000;
+        let start = std::time::Instant::now();
+        let whole = |t: &str| assert_eq!(segments(t), vec![Seg::Text(t)]);
+        whole(&"[".repeat(n));
+        whole(&format!("[{}", "a".repeat(n)));
+        whole(&"awww.".repeat(n / 5));
+        whole(&"www..".repeat(n / 5));
+        // one address up to the first whitespace, its first `[` left out
+        let t = "[https://".repeat(n / 9);
+        assert_eq!(segments(&t), vec![Seg::Text("["), Seg::Url(&t[1..])]);
+        for end in [" x", " \n\n]"] {
+            let t = format!("{}{end}", "[https://a".repeat(n / 10));
+            assert_eq!(
+                segments(&t),
+                vec![Seg::Text("["), Seg::Url(&t[1..t.len() - end.len()]), Seg::Text(end)]
+            );
+        }
+        // links glued to each other: each ends at its verb
+        let t = format!("secondlife:///app/agent/{id}/about'").repeat(n / 66);
+        assert_eq!(segments(&t).iter().filter(|s| **s == Seg::Agent(id)).count(), n / 66);
+        // a labelled link after many brackets is still found
+        let t = format!("{}[https://example.org the site]", "[".repeat(n));
+        assert_eq!(
+            segments(&t)[1],
+            Seg::Labelled("the site".into(), Box::new(Seg::Url("https://example.org")))
+        );
+        let took = start.elapsed();
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
+    }
+
+    /// A long text cut again comes from `SEGMENT_CACHE`, with the same
+    /// segments.
+    #[test]
+    fn a_long_text_cut_again_keeps_its_segments() {
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!(
+            "see https://example.org/x, [https://a.org the site] secondlife:///app/agent/{id}/about's \
+             [secondlife:///app/teleport/Ahern/1/2/3 the beach] www.example.org [note] "
+        )
+        .repeat(20);
+        assert!(t.len() >= CACHED_TEXT);
+        let fresh: Vec<_> = link_spans(&t).into_iter().map(|(_, _, s)| s).collect();
+        let first = segments(&t);
+        let again = segments(&t);
+        assert_eq!(first, again);
+        let links: Vec<_> = again.into_iter().filter(|s| !matches!(s, Seg::Text(_))).collect();
+        assert_eq!(links, fresh);
+        assert_eq!(links.len(), 5 * 20);
+    }
+
     #[test]
     fn addresses_without_scheme_are_links() {
         let segs = segments("see www.youtube.com/watch, or [www.youtube.com YouTube]");
@@ -4754,6 +5477,7 @@ mod tests {
                         &mut HashSet::new(),
                         800.0,
                         20.0,
+                        40,
                         false,
                         true,
                         false,
@@ -4833,6 +5557,28 @@ mod tests {
         let (channel, message, gesture) = prepare_local_line(&mut manager, "/wave", false);
         assert_eq!((channel, message.as_str(), gesture), (0, "", Some(id)));
         assert!(!sends_local_line(channel, &message));
+    }
+
+    /// FSNearbyChat::sendChatFromViewer: talk, shout or whisper by the
+    /// volume, on channel 0 only; the typing notices never animate.
+    #[test]
+    fn a_local_line_plays_the_animation_of_its_volume_on_channel_zero_only() {
+        assert_eq!(chat_animation(0, ChatType::Normal), Some(ANIM_AGENT_TALK));
+        assert_eq!(chat_animation(0, ChatType::Shout), Some(ANIM_AGENT_SHOUT));
+        assert_eq!(chat_animation(0, ChatType::Whisper), Some(ANIM_AGENT_WHISPER));
+        for channel in [5, -1, i32::MAX] {
+            for kind in [ChatType::Normal, ChatType::Shout, ChatType::Whisper] {
+                assert_eq!(chat_animation(channel, kind), None, "{channel} {kind:?}");
+            }
+        }
+        for kind in [ChatType::StartTyping, ChatType::StopTyping, ChatType::OwnerSay] {
+            assert_eq!(chat_animation(0, kind), None, "{kind:?}");
+        }
+        // the ids of llanimationstates.cpp, as the built-in gestures name them
+        assert_eq!(ANIM_AGENT_TALK.to_string(), "5c682a95-6da4-a463-0bf6-0f5b7be129d1");
+        assert_eq!(ANIM_AGENT_SHOUT.to_string(), "6bd01860-4ebd-127a-bb3d-d1427e8e0c42");
+        assert_eq!(ANIM_AGENT_WHISPER.to_string(), "7693f268-06c7-ea71-fa21-2b30d6533f8f");
+        assert!(crate::settings::Settings::default().play_chat_anim, "PlayChatAnim is on by default");
     }
 
     /// A gesture's replacement may itself open with a channel: the Legacy

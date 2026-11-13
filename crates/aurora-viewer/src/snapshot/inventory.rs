@@ -68,6 +68,14 @@ pub fn capture_size(aspect: Aspect, size: TextureSize, window: (u32, u32)) -> (u
     (w.max(MIN_SIDE), h.max(MIN_SIDE))
 }
 
+/// The long side a photo of the reel is read back at for the inventory: its
+/// own, never above MAX_TEXTURE_SIDE. The photo window's size does not apply:
+/// the quick view neither shows nor offers one, and the preset would shrink a
+/// photo already taken (512 x 256 for a 16:9 photo at the default size).
+pub fn reel_side(photo: (u32, u32)) -> u32 {
+    photo.0.max(photo.1).min(MAX_TEXTURE_SIDE)
+}
+
 /// The texture a photo of `capture` becomes: each side to a power of two,
 /// rounded down unless it is over 1.75 times the lower one.
 pub fn texture_size(capture: (u32, u32)) -> (u32, u32) {

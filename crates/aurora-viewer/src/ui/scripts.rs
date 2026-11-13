@@ -5,10 +5,11 @@
 
 use super::widgets::{Floater, flat_button};
 use crate::theme::Palette;
-use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
+use aurora_net::scripts::{Luau, MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
 use egui::Vec2;
 use uuid::Uuid;
 
+pub mod backup;
 mod colors;
 mod debug;
 mod dialogs;
@@ -19,6 +20,7 @@ mod focus;
 mod folding;
 mod indent;
 mod preprocessor;
+pub mod recovery;
 mod reference;
 pub mod settings;
 mod syntax;
@@ -81,6 +83,9 @@ pub struct Editor {
     pub can_reset: bool,
     pub mono: bool,
     baseline_mono: bool,
+    /// The Luau VM this script is saved for, which the Mono box cannot
+    /// change: a Lua source saved as "mono" or "lsl2" fails or breaks.
+    luau: Luau,
     experience: experiences::State,
     running: Option<bool>,
     status: String,
@@ -129,7 +134,9 @@ impl Editor {
         self.status = aurora_i18n::tr!("script-saving").into();
         self.errors.clear();
         self.tools.diagnostics_processed = false;
-        if self.processor_settings.preprocessor {
+        // The LSL preprocessor never runs on a Lua source (FS:Zi's
+        // updateTabs(is_lua) in LLScriptEdCore).
+        if self.processor_settings.preprocessor && self.luau != Luau::Lua {
             self.status = aurora_i18n::tr!("script-preproc-processing").into();
             self.processing = Some(preprocessor::start(
                 self.source.clone(),
@@ -144,6 +151,7 @@ impl Editor {
             target: self.target,
             options: ScriptOptions {
                 mono: self.mono,
+                luau: self.luau,
                 running: self.running.unwrap_or(false),
                 experience: self.experience.selected.unwrap_or_default(),
             },
@@ -161,6 +169,10 @@ pub struct Editors {
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
     pub agent_name: String,
+    /// The account's folder of copies of the unsaved scripts (backup.rs);
+    /// `None` keeps none.
+    pub backup_dir: Option<std::path::PathBuf>,
+    pub backups: backup::Book,
 }
 
 struct PendingInclude {
@@ -177,7 +189,32 @@ impl Editors {
         self.debug.open = true;
     }
 
+    /// Copy the unsaved scripts (backup.rs), at most every
+    /// `backup::INTERVAL`, off the frame thread.
+    pub fn back_up(&mut self) {
+        self.back_up_now(false);
+    }
+
+    fn back_up_now(&mut self, force: bool) {
+        let docs = self.documents.iter().map(|e| backup::Doc {
+            target: e.target,
+            name: &e.name,
+            source: &e.source,
+            unsaved: e.loaded && e.source != e.baseline,
+            editable: e.loaded && e.can_edit,
+        });
+        let jobs = self
+            .backups
+            .plan(self.backup_dir.as_deref(), docs, std::time::Instant::now(), force);
+        backup::run(jobs);
+    }
+
     pub fn disconnected(&mut self) {
+        // the latest text is copied, and the copies stay for the next login
+        // whatever the editors do now (LLScriptEdContainer's destructor
+        // keeps the file when there is no region)
+        self.back_up_now(true);
+        self.backups.release();
         self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
@@ -463,6 +500,7 @@ impl Editors {
             can_reset: !target.object.is_nil(),
             mono: true,
             baseline_mono: true,
+            luau: Luau::Off,
             experience: experiences::State::default(),
             running: None,
             status: if can_read {
@@ -553,10 +591,12 @@ impl Editors {
                 e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
-                e.status = if saved.compiled {
+                e.status = if !saved.compiled {
+                    aurora_i18n::tr!("script-compile-failed")
+                } else if saved.checked {
                     aurora_i18n::tr!("script-saved")
                 } else {
-                    aurora_i18n::tr!("script-compile-failed")
+                    aurora_i18n::tr!("script-saved-not-compiled")
                 }
                 .into();
                 if e.close_after_save && saved.compiled && !e.dirty() {
@@ -569,13 +609,27 @@ impl Editors {
         true
     }
 
-    pub fn running(&mut self, target: ScriptTarget, running: bool, mono: Option<bool>) {
+    /// The script's source language from its item flags
+    /// ([`Luau::from_flags`]), set when its editor opens.
+    pub fn set_luau(&mut self, target: ScriptTarget, luau: Luau) {
+        if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
+            e.luau = luau;
+        }
+    }
+
+    pub fn running(&mut self, target: ScriptTarget, running: bool, mono: Option<bool>, luau: Luau) {
         if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
             if e.running.is_none()
                 && let Some(mono) = mono
             {
                 e.mono = mono;
                 e.baseline_mono = mono;
+            }
+            // LLLiveLSLEditor::processScriptRunningReply: the reply names
+            // the VM. A Lua source (its item subtype) stays Lua whatever
+            // the reply says.
+            if e.running.is_none() && e.luau != Luau::Lua {
+                e.luau = luau;
             }
             e.running = Some(running);
         }
@@ -678,6 +732,7 @@ impl Editors {
                                 target: e.target,
                                 options: ScriptOptions {
                                     mono: pending.mono,
+                                    luau: e.luau,
                                     running: pending.running,
                                     experience: pending.experience.unwrap_or_default(),
                                 },
@@ -1515,6 +1570,45 @@ mod tests {
     }
 
     #[test]
+    fn a_lua_script_is_saved_for_luau_without_the_lsl_preprocessor() {
+        let target = target(80);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "Lua".into(), true, true).unwrap();
+        editors.set_luau(target, Luau::from_flags(1));
+        editors.loaded(load, target, Ok("print(\"hi\")".into()));
+        // A running reply that says nothing of Luau does not turn it into LSL.
+        editors.running(target, true, Some(true), Luau::Off);
+        let e = &mut editors.documents[0];
+        e.processor_settings.preprocessor = true;
+        e.source = "#include \"x\"\nprint(\"bye\")".into();
+        e.mono = false;
+        let Some(Action::Save { options, source, .. }) = e.save() else {
+            panic!("a Lua source is saved at once, not preprocessed")
+        };
+        assert!(e.processing.is_none());
+        assert_eq!(source, "#include \"x\"\nprint(\"bye\")");
+        assert_eq!(aurora_net::scripts::compile_target(options.mono, options.luau), "luau");
+    }
+
+    #[test]
+    fn an_lsl_script_on_the_luau_vm_keeps_it_and_the_first_reply_wins() {
+        let target = target(81);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "LSL on Luau".into(), true, true).unwrap();
+        editors.set_luau(target, Luau::from_flags(0));
+        editors.loaded(load, target, Ok("default {}".into()));
+        editors.running(target, true, Some(false), Luau::Lsl);
+        editors.running(target, false, None, Luau::Off);
+        let e = &mut editors.documents[0];
+        e.source = "default { state_entry() {} }".into();
+        let Some(Action::Save { options, .. }) = e.save() else {
+            panic!("save")
+        };
+        assert_eq!(aurora_net::scripts::compile_target(options.mono, options.luau), "lsl-luau");
+        assert!(!options.running);
+    }
+
+    #[test]
     fn asynchronous_preprocessing_loads_includes_and_saves_a_snapshot_that_reopens_as_original_source() {
         let target = target(70);
         let mut editors = Editors::default();
@@ -1566,6 +1660,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(72),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1625,7 +1720,7 @@ mod tests {
         };
         let request = editors.open(target, "Test".into(), true, true).expect("load");
         editors.loaded(request, target, Ok("original".into()));
-        editors.running(target, true, Some(true));
+        editors.running(target, true, Some(true), Luau::Off);
         let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
             panic!("load experiences")
         };
@@ -1655,6 +1750,7 @@ mod tests {
                 &Ok(ScriptSaved {
                     asset: Uuid::from_u128(99),
                     compiled: true,
+                    checked: true,
                     errors: vec![],
                 }),
             );
@@ -1672,7 +1768,7 @@ mod tests {
         };
         let request = editors.open(target, "Test".into(), true, true).expect("load");
         editors.loaded(request, target, Ok("original".into()));
-        editors.running(target, true, Some(true));
+        editors.running(target, true, Some(true), Luau::Off);
         editors.documents[0].source.push_str(" // edit");
         let Action::Experiences { request, .. } = editors.load_experiences(target).expect("experiences") else {
             panic!("load")
@@ -1807,6 +1903,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));
@@ -1833,6 +1930,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: false,
+                checked: true,
                 errors: vec!["(1, 1) Syntax error".into()],
             }),
         );
@@ -1855,7 +1953,7 @@ mod tests {
             let request = editors.open(target, "Test".into(), true, true).expect("load");
             editors.loaded(request, target, Ok("original".into()));
         }
-        editors.running(object, false, Some(false));
+        editors.running(object, false, Some(false), Luau::Off);
         editors.documents[0].source = "inventory edit".into();
         editors.documents[1].source = "object edit".into();
         assert!(editors.open(inventory, "Again".into(), true, true).is_none());
@@ -1871,6 +1969,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(4),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1899,6 +1998,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));

@@ -5,6 +5,7 @@
 //! Port of indra/llplugin/llpluginclassmedia.cpp (Copyright (C) Linden
 //! Research, Inc., originally LGPL 2.1).
 
+use crate::file_picker::FilePicker;
 use crate::message::PluginMessage;
 use crate::process::{PluginPaths, PluginProcess};
 use aurora_llsd::Llsd;
@@ -90,6 +91,31 @@ pub struct Modifiers {
     /// indra/llwindow/llkeyboardmacosx.cpp), and its native key data
     /// carries it apart.
     pub command: bool,
+}
+
+/// The Edit menu commands a page takes (the `edit_*` messages of
+/// LLPluginClassMedia, indra/llplugin/llpluginclassmedia.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+impl EditCommand {
+    fn message(self) -> &'static str {
+        match self {
+            EditCommand::Undo => "edit_undo",
+            EditCommand::Redo => "edit_redo",
+            EditCommand::Cut => "edit_cut",
+            EditCommand::Copy => "edit_copy",
+            EditCommand::Paste => "edit_paste",
+            EditCommand::SelectAll => "edit_select_all",
+        }
+    }
 }
 
 impl Modifiers {
@@ -213,6 +239,7 @@ impl Default for BrowserSettings {
 
 pub struct MediaPlugin {
     process: PluginProcess,
+    file_picker: Option<FilePicker>,
     queue: VecDeque<PluginMessage>,
     texture_params_received: bool,
     depth: i32,
@@ -325,6 +352,7 @@ impl MediaPlugin {
         let process = PluginProcess::launch(&paths.launcher, &paths.plugin_dir, &file, &env)?;
         let mut m = MediaPlugin {
             process,
+            file_picker: None,
             queue: VecDeque::new(),
             texture_params_received: false,
             depth: 0,
@@ -464,6 +492,10 @@ impl MediaPlugin {
         }
         for m in self.process.take_messages() {
             self.receive(m);
+        }
+        if let Some(response) = self.file_picker.as_ref().and_then(FilePicker::poll) {
+            self.file_picker = None;
+            self.process.send(&response);
         }
         if self.media_width == -1 || !self.texture_params_received || !self.process.is_running() {
             // can't process a size change at this time
@@ -732,6 +764,14 @@ impl MediaPlugin {
         self.send(PluginMessage::new(CLASS_MEDIA_BROWSER, "focus").with("focused", focused));
     }
 
+    /// An Edit menu command on the focused page (LLPluginClassMedia::undo,
+    /// redo, cut, copy, paste, selectAll in
+    /// indra/llplugin/llpluginclassmedia.cpp): the CEF plugin runs it in the
+    /// page, with the system clipboard.
+    pub fn edit(&mut self, cmd: EditCommand) {
+        self.send(PluginMessage::new(CLASS_MEDIA, cmd.message()));
+    }
+
     // ------------------------------------------------------------ navigation
 
     /// LLPluginClassMedia::setCookie: a cookie in the browser's store (the
@@ -920,11 +960,15 @@ impl MediaPlugin {
             }
             "tooltip_text" => self.hover_text = m.string("tooltip"),
             "pick_file" => {
-                // blocking request: answer with nothing picked
-                let r = PluginMessage::new(CLASS_MEDIA, "pick_file_response")
-                    .with("file_list", Llsd::new_array())
-                    .with("blocking_response", true);
-                self.process.send(&r);
+                if self.file_picker.is_none() {
+                    match FilePicker::open(m.boolean("multiple_files")) {
+                        Ok(picker) => self.file_picker = Some(picker),
+                        Err(e) => {
+                            log::warn!("media: cannot open file picker: {e}");
+                            self.process.send(&crate::file_picker::response(Vec::new()));
+                        }
+                    }
+                }
             }
             "auth_request" => {
                 let r = PluginMessage::new(CLASS_MEDIA, "auth_response")
@@ -935,6 +979,11 @@ impl MediaPlugin {
                 self.process.send(&r);
             }
             "debug_message" => self.events.push(MediaEvent::DebugMessage(m.string("message_text"))),
+            "file_download" => {
+                // Downloads are not implemented. Release CEF's blocking
+                // callback without choosing a save destination.
+                self.process.send(&crate::file_picker::response(Vec::new()));
+            }
             _ => {}
         }
     }
@@ -1077,6 +1126,17 @@ mod tests {
         assert!(!volume_changed(0.0, 0.0));
         assert!(!volume_changed(0.5, 0.5005));
         assert!(volume_changed(0.5, 0.6));
+    }
+
+    #[test]
+    fn edit_commands_are_the_messages_the_cef_plugin_reads() {
+        // MediaPluginCEF::receiveMessage, indra/media_plugins/cef/media_plugin_cef.cpp
+        assert_eq!(EditCommand::Undo.message(), "edit_undo");
+        assert_eq!(EditCommand::Redo.message(), "edit_redo");
+        assert_eq!(EditCommand::Cut.message(), "edit_cut");
+        assert_eq!(EditCommand::Copy.message(), "edit_copy");
+        assert_eq!(EditCommand::Paste.message(), "edit_paste");
+        assert_eq!(EditCommand::SelectAll.message(), "edit_select_all");
     }
 
     #[test]

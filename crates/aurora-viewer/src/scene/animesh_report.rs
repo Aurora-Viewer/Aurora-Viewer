@@ -11,6 +11,7 @@
 //! playing on the wearer, with the keyed joints that are attachment points
 //! or unknown names.
 
+use crate::world::inventory::asset_ids::AssetIds;
 use glam::{EulerRot, Quat, Vec3};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -163,6 +164,42 @@ pub fn position_at(keys: &[(f32, Vec3)], time: f32) -> Option<Vec3> {
 }
 
 impl super::Scene {
+    /// The rig joints the rigged meshes of `subject` use: an avatar's worn
+    /// attachments (its animated ones included), or an animated object's
+    /// own prims. The poser offers the wings and the tail only when a mesh
+    /// is weighted to them. A mesh whose skin has not loaded yet adds none.
+    pub fn rigged_joints(&self, world: &crate::world::World, subject: Uuid) -> std::collections::HashSet<usize> {
+        let rig = &self.avatar_lib.rig;
+        let Some(index) = world.objects.index_of_uuid(&subject) else {
+            return Default::default();
+        };
+        let Some(object) = world.objects.get(index) else {
+            return Default::default();
+        };
+        let prims: Vec<usize> = if object.is_avatar() {
+            world
+                .objects
+                .children_of(&object.key)
+                .iter()
+                .flat_map(|root| linkset(world, *root))
+                .collect()
+        } else {
+            super::animesh::members(&world.objects, index)
+        };
+        let mut joints = std::collections::HashSet::new();
+        for i in prims {
+            let Some(o) = world.objects.get(i) else { continue };
+            let volume = o.visual_volume();
+            let Some(sculpt) = volume.sculpt.filter(|_| volume.is_mesh()) else {
+                continue;
+            };
+            if let Some(skin) = self.meshes.meta(&sculpt.texture).and_then(|m| m.skin) {
+                joints.extend(skin.joint_names.iter().filter_map(|n| rig.names.get(n).copied()));
+            }
+        }
+        joints
+    }
+
     /// What J9 says of the animated objects and rigged attachments avatar
     /// `avatar` wears.
     pub fn worn_animesh_report(&self, world: &crate::world::World, avatar: Uuid, now: std::time::Instant) -> Report {
@@ -359,24 +396,24 @@ fn name(joints: &[JointRef], j: usize) -> &str {
     joints.get(j).map_or("?", |r| r.name.as_str())
 }
 
-/// The J9 text.
-pub fn text(r: &Report) -> String {
+/// The J9 text; mesh and animation ids written by `ids`.
+pub fn text(r: &Report, ids: &AssetIds) -> String {
     let mut s = String::new();
     if r.objects.is_empty() {
         let _ = writeln!(s, "worn animated objects of '{}': none", r.wearer);
     } else {
         let _ = writeln!(s, "worn animated objects of '{}': {}", r.wearer, r.objects.len());
         for a in &r.objects {
-            object(&mut s, a);
+            object(&mut s, a, ids);
         }
     }
-    worn(&mut s, r);
+    worn(&mut s, r, ids);
     s
 }
 
 /// The rigged meshes of a linkset, the same mesh asset written once with
 /// how many more prims use it (as J2 does).
-fn mesh_lines(s: &mut String, meshes: &[MeshSkin]) {
+fn mesh_lines(s: &mut String, meshes: &[MeshSkin], ids: &AssetIds) {
     let mut seen: Vec<(Uuid, usize, usize)> = Vec::new();
     for (i, m) in meshes.iter().enumerate() {
         match seen.iter_mut().find(|(id, ..)| *id == m.mesh) {
@@ -392,7 +429,7 @@ fn mesh_lines(s: &mut String, meshes: &[MeshSkin]) {
             String::new()
         };
         let Some(skin) = &m.skin else {
-            let _ = writeln!(s, "  mesh {} on prim {}{alike}: skin not loaded yet", m.mesh, m.prim);
+            let _ = writeln!(s, "  mesh {} on prim {}{alike}: skin not loaded yet", ids.id(m.mesh), m.prim);
             continue;
         };
         // an empty slot binds nothing (counted, not listed)
@@ -407,7 +444,7 @@ fn mesh_lines(s: &mut String, meshes: &[MeshSkin]) {
         let _ = writeln!(
             s,
             "  mesh {} on prim {}{alike}: {} joints{} [{}], alternate binds {}, lock scale {}, pelvis offset {:.4}{}",
-            m.mesh,
+            ids.id(m.mesh),
             m.prim,
             names.len(),
             if unnamed > 0 {
@@ -433,7 +470,7 @@ fn mesh_lines(s: &mut String, meshes: &[MeshSkin]) {
 }
 
 /// The overrides `meshes` ask of a skeleton, winner first.
-fn override_lines(s: &mut String, asks: &BTreeMap<usize, Vec<OverrideAsk>>, joints: &[JointRef], on: &str) {
+fn override_lines(s: &mut String, asks: &BTreeMap<usize, Vec<OverrideAsk>>, joints: &[JointRef], on: &str, ids: &AssetIds) {
     if asks.is_empty() {
         let _ = writeln!(s, "  joint position overrides{on}: none");
         return;
@@ -445,13 +482,16 @@ fn override_lines(s: &mut String, asks: &BTreeMap<usize, Vec<OverrideAsk>>, join
     );
     for (j, list) in asks {
         let won = list[0];
-        let others: Vec<String> = list[1..].iter().map(|o| format!("{} from {}", v(o.position), o.mesh)).collect();
+        let others: Vec<String> = list[1..]
+            .iter()
+            .map(|o| format!("{} from {}", v(o.position), ids.id(o.mesh)))
+            .collect();
         let _ = writeln!(
             s,
             "    {}: {} from {} (xml {}){}",
             name(joints, *j),
             v(won.position),
-            won.mesh,
+            ids.id(won.mesh),
             v(joints.get(*j).map_or(Vec3::ZERO, |r| r.xml)),
             if others.is_empty() {
                 String::new()
@@ -463,13 +503,13 @@ fn override_lines(s: &mut String, asks: &BTreeMap<usize, Vec<OverrideAsk>>, join
 }
 
 /// The motions playing on a skeleton.
-fn animation_lines(s: &mut String, animations: &[AnimLine], on: &str) {
+fn animation_lines(s: &mut String, animations: &[AnimLine], on: &str, ids: &AssetIds) {
     let _ = writeln!(s, "  animations playing{on}: {}", animations.len());
     for an in animations {
         let _ = writeln!(
             s,
             "    {} priority {}, {}, {:.2} s, at {:.2} s, weight {:.2}, {} joints in position, {} in rotation only",
-            an.id,
+            ids.id(an.id),
             an.priority,
             if an.looping { "loop" } else { "once" },
             an.duration,
@@ -495,7 +535,7 @@ fn animation_lines(s: &mut String, animations: &[AnimLine], on: &str) {
     }
 }
 
-fn object(s: &mut String, a: &Animesh) {
+fn object(s: &mut String, a: &Animesh, ids: &AssetIds) {
     let _ = writeln!(
         s,
         "animesh {} on point {}: offset on its point {}, rotation {}, {} prims, {} rigged meshes",
@@ -506,9 +546,9 @@ fn object(s: &mut String, a: &Animesh) {
         a.prims,
         a.meshes.len()
     );
-    mesh_lines(s, &a.meshes);
+    mesh_lines(s, &a.meshes, ids);
     let asks = overrides(&a.meshes, &a.joints);
-    override_lines(s, &asks, &a.joints, "");
+    override_lines(s, &asks, &a.joints, "", ids);
     // the joints worth a line: overridden, or keyed by a motion
     let mut keyed: BTreeMap<usize, ()> = asks.keys().map(|j| (*j, ())).collect();
     for an in &a.animations {
@@ -560,16 +600,16 @@ fn object(s: &mut String, a: &Animesh) {
             }
         }
     }
-    animation_lines(s, &a.animations, "");
+    animation_lines(s, &a.animations, "", ids);
     if !a.waiting.is_empty() {
-        let ids: Vec<String> = a.waiting.iter().map(Uuid::to_string).collect();
-        let _ = writeln!(s, "  signalled, not playing (asset loading or missing): {}", ids.join(", "));
+        let waiting: Vec<String> = a.waiting.iter().map(|id| ids.id(*id).to_string()).collect();
+        let _ = writeln!(s, "  signalled, not playing (asset loading or missing): {}", waiting.join(", "));
     }
 }
 
 /// The ordinary rigged attachments, skinned to the wearer's skeleton, and
 /// the motions playing on the wearer.
-fn worn(s: &mut String, r: &Report) {
+fn worn(s: &mut String, r: &Report, ids: &AssetIds) {
     if r.worn.is_empty() {
         let _ = writeln!(s, "worn rigged attachments of '{}': none", r.wearer);
         return;
@@ -585,16 +625,22 @@ fn worn(s: &mut String, r: &Report) {
             w.prims,
             w.meshes.len()
         );
-        mesh_lines(s, &w.meshes);
+        mesh_lines(s, &w.meshes, ids);
     }
     let asks = overrides(r.worn.iter().flat_map(|w| &w.meshes), &r.joints);
-    override_lines(s, &asks, &r.joints, " on the wearer (all worn rigged meshes)");
-    animation_lines(s, &r.animations, " on the wearer");
+    override_lines(s, &asks, &r.joints, " on the wearer (all worn rigged meshes)", ids);
+    animation_lines(s, &r.animations, " on the wearer", ids);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::inventory::Inventory;
+
+    /// The text with every id written out (demo mode's rule).
+    fn text(r: &Report) -> String {
+        super::text(r, &AssetIds::new(&Inventory::default(), [], true))
+    }
 
     fn joints() -> Vec<JointRef> {
         vec![
@@ -724,6 +770,26 @@ mod tests {
         assert!(t.contains(&Uuid::from_u128(43).to_string()), "{t}");
         // no world position, no region: only the place on the point
         assert!(!t.contains("region"));
+        // mesh and animation ids follow the asset id rule: mesh 9 is held
+        // with full permissions, the other assets are not
+        let mut inv = Inventory::default();
+        inv.items.insert(
+            Uuid::from_u128(99),
+            aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(99),
+                asset_id: Uuid::from_u128(9),
+                owner_mask: crate::world::inventory::actions::FULL,
+                ..Default::default()
+            },
+        );
+        let ids = AssetIds::new(&inv, [], false);
+        let t = super::text(&report, &ids);
+        assert!(t.contains(&format!("from {}", Uuid::from_u128(9))), "{t}");
+        assert!(t.contains(&format!("from {}", ids.id(Uuid::from_u128(1)))), "{t}");
+        for hidden in [1, 6, 42, 43] {
+            assert!(!t.contains(&Uuid::from_u128(hidden).to_string()), "{hidden}: {t}");
+        }
+        assert!(t.contains(&format!("on prim {}", Uuid::from_u128(5))), "object ids stay: {t}");
     }
 
     #[test]

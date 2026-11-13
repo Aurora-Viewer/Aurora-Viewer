@@ -207,7 +207,7 @@ impl Value {
             (Some(_), None) => Ordering::Greater,
             (None, Some(_)) => Ordering::Less,
             (None, None) => match (self, other) {
-                (Value::Text(a), Value::Text(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+                (Value::Text(a), Value::Text(b)) => crate::natural_order::cmp(a, b),
                 (Value::Text(_), _) => Ordering::Greater,
                 (_, Value::Text(_)) => Ordering::Less,
                 _ => Ordering::Equal,
@@ -321,7 +321,7 @@ impl List {
         if let Some((column, descending)) = self.sort {
             rows.sort_by(|a, b| {
                 let order = match column {
-                    0 => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    0 => crate::natural_order::cmp(&a.name, &b.name),
                     c => match (a.values.get(c - 1), b.values.get(c - 1)) {
                         (Some(x), Some(y)) => x.order(y),
                         _ => std::cmp::Ordering::Equal,

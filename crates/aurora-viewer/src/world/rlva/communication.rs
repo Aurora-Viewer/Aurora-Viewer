@@ -141,7 +141,7 @@ impl World {
 
     pub(crate) fn rlva_teleport_dnd(&mut self, sender: Uuid) {
         if self.status.dnd {
-            let text = self.status.cfg.dnd_text.clone();
+            let text = self.dnd_response_to(&sender);
             self.auto_im(sender, Uuid::nil(), &text);
         }
     }
@@ -454,6 +454,7 @@ mod tests {
             object_id: Uuid::from_u128(0x6469_0000 + n),
             object_name: "Dialog object".into(),
             owner_name: "Test Resident".into(),
+            owner_id: Uuid::nil(),
             message: "Choose".into(),
             channel,
             buttons: vec!["Yes".into()],

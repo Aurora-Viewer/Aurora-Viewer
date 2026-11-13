@@ -25,6 +25,19 @@ impl World {
         })
     }
 
+    /// enableLinkObjects: a locked seat cannot be relinked. The regular
+    /// RlvActions::canEdit policy remains enforced for every selected root.
+    pub fn rlva_can_link(&self, roots: &[usize]) -> bool {
+        if !self.rlva.enabled() {
+            return true;
+        }
+        let locked_seat = self.rlva.has("unsit") && self.agent.seated;
+        let seat = locked_seat.then(|| self.rlva_sit_id());
+        roots
+            .iter()
+            .all(|&i| self.rlva_can_edit(i) && self.objects.get(i).is_some_and(|o| Some(o.full_id) != seat))
+    }
+
     pub fn rlva_allows_build(&self, command: &BuildCmd) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -39,10 +52,16 @@ impl World {
         };
         let uuid = |id: &uuid::Uuid| self.objects.index_of_uuid(id).is_some_and(|i| self.rlva_can_edit(i));
         match command {
+            BuildCmd::Link { handle, local_ids } => {
+                let roots: Option<Vec<_>> = local_ids
+                    .iter()
+                    .map(|&local_id| self.objects.index_of(&ObjKey { region: *handle, local_id }))
+                    .collect();
+                roots.is_some_and(|roots| self.rlva_can_link(&roots))
+            }
             BuildCmd::Transform { handle, updates } => updates.iter().all(|u| local(*handle, u.local_id)),
-            BuildCmd::SetName { handle, local_id, .. }
-            | BuildCmd::SetDescription { handle, local_id, .. }
-            | BuildCmd::SetFlags { handle, local_id, .. }
+            BuildCmd::SetDescription { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
+            BuildCmd::SetFlags { handle, local_id, .. }
             | BuildCmd::SetPhysicsParams { handle, local_id, .. }
             | BuildCmd::SetTextures { handle, local_id, .. }
             | BuildCmd::SetExtraParam { handle, local_id, .. }
@@ -50,8 +69,8 @@ impl World {
             | BuildCmd::MoveTaskInventory { handle, local_id, .. }
             | BuildCmd::UpdateTaskInventory { handle, local_id, .. }
             | BuildCmd::RezScript { handle, local_id, .. } => local(*handle, *local_id),
+            BuildCmd::SetName { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
             BuildCmd::Select { handle, local_ids }
-            | BuildCmd::Link { handle, local_ids }
             | BuildCmd::Delink { handle, local_ids }
             | BuildCmd::DeRez { handle, local_ids, .. }
             | BuildCmd::SetShape { handle, local_ids, .. }

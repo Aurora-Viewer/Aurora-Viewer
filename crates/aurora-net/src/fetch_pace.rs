@@ -29,7 +29,14 @@ use std::time::{Duration, Instant};
 
 /// The fixed number Aurora used before, and the floor of the limit.
 pub const MIN: usize = 24;
-/// The ceiling: past 128 at once the arrivals at KB gained little.
+/// The ceiling: past 128 at once the arrivals at KB gained little. It sits
+/// near the Legacy Viewer's total (about 28 connections with pipelining,
+/// some 140 requests in flight, `LLAppCoreHttp::init_data` in
+/// llappcorehttp.cpp), a little above because Aurora's requests are not
+/// pipelined. It is reached only while requests wait and the hosts still
+/// answer as fast as when idle: a 429 or 503 halves the limit, a first
+/// byte twice as slow takes a fifth off, and the "Limited" connections
+/// (`LIMITED_FETCH_SLOTS`) stay at 24 without adapting.
 pub const MAX: usize = 192;
 /// A window ends after this many answers (at least) or this long.
 const WINDOW_ANSWERS: usize = 16;

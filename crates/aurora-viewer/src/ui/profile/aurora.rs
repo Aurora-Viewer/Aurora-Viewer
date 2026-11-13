@@ -1000,7 +1000,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         // no Share: it only brought the inventory forward, and an item
         // dropped anywhere on the window is given (`super::give_drop`)
-        if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
+        if menu::item(ui, p, "car-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
             act(CtxAction::RequestTeleport(id));
         }
         if compact && menu::item(ui, p, "users", aurora_i18n::tr!("ui-profile-aurora-view-in-people")) {
@@ -1042,6 +1042,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         ) {
             act(CtxAction::ShowHistory(Some(id)));
         }
+        context::admin_submenu(ui, p, world, id, act);
     });
 }
 
@@ -1931,7 +1932,7 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
             return;
         }
         let mut groups: Vec<_> = pr.groups.iter().collect();
-        groups.sort_by_key(|g| g.name.to_lowercase());
+        groups.sort_by_key(|g| crate::natural_order::key(&g.name));
         ui.spacing_mut().item_spacing.y = 0.0;
         for g in groups {
             let member = world.groups.is_member(&g.id);

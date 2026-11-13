@@ -88,7 +88,7 @@ mod native {
                 .name("image-clipboard".into())
                 .spawn(move || {
                     while let Ok((ctx, image)) = rx.recv() {
-                        let result = copy(&crate::settings::cache_dir().join("clipboard-images"), &image);
+                        let result = copy(&crate::settings::asset_cache_dir().join(crate::cache::CLIPBOARD_IMAGES), &image);
                         finish(&ctx, &image, result);
                     }
                 })

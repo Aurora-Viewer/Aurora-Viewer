@@ -3,6 +3,7 @@
 
 use super::{FetchState, Inventory};
 use aurora_llsd::{Llsd, llsd_map};
+use aurora_net::inventory::InvItem;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use aurora_net::outfits::OutfitLink;
 use std::collections::HashSet;
@@ -16,6 +17,104 @@ pub const MOVE: u32 = 0x80000;
 /// (indra/newview/llviewerinventory.cpp) asks before an asset UUID is shown.
 pub const FULL: u32 = COPY | MODIFY | TRANSFER;
 
+/// The permission bits `agent` holds on an inventory item, which every rule
+/// on the agent's inventory and the Library reads instead of a mask of the
+/// item: LLViewerInventoryItem::getPermissionMask
+/// (indra/newview/llviewerinventory.cpp), that is
+/// LLPermissions::allowOperationBy with no group
+/// (indra/llinventory/llpermissions.cpp). The owner mask for the item's
+/// owner, the everyone mask for anyone else: a Library item, owned by the
+/// Library's account, allows what it allows everyone. An item built here
+/// before the server's reply (no owner yet), or asked before the login (no
+/// agent), counts as the agent's.
+pub fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
+    let owned = !item.group_owned && (item.owner == agent || item.owner.is_nil() || agent.is_nil());
+    if owned { item.owner_mask } else { item.everyone_mask }
+}
+
+/// [`agent_mask`] for an item of an object's contents, the same reading
+/// (LLViewerInventoryItem::getIsFullPerm): an object we may only modify
+/// keeps its owner's mask for its owner.
+pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
+    let owned = !item.group_owned && (item.owner_id == agent || item.owner_id.is_nil() || agent.is_nil());
+    if owned { item.owner_mask } else { item.everyone_mask }
+}
+
+/// Whether an object of an object's contents may be rezzed from there, by a
+/// drag onto the land or onto another object: copy for the agent, transfer
+/// for its owner. LLToolDragAndDrop::dad3dRezFromObjectOnLand and
+/// dad3dRezFromObjectOnObject (indra/newview/lltooldraganddrop.cpp), that is
+/// LLPermissions::allowCopyBy(agent, active group) and
+/// allowTransferTo(null) (indra/llinventory/llpermissions.h): the owner's
+/// mask must allow transfer, even for the agent's own item. Stricter than
+/// the Legacy Viewer's land check (LLAgent::allowOperation, which lets a
+/// member with the group power act as the owner of a group-owned item and
+/// reads the group mask for any group of the agent): only the active
+/// group's mask counts here, on land as on an object.
+pub fn task_rez_allowed(item: &aurora_net::build::TaskItem, agent: Uuid, active_group: Uuid) -> bool {
+    let copy = if !item.group_owned && item.owner_id == agent {
+        item.owner_mask
+    } else if !item.group_id.is_nil() && item.group_id == active_group {
+        item.group_mask | item.everyone_mask
+    } else {
+        item.everyone_mask
+    };
+    copy & COPY != 0 && item.owner_mask & TRANSFER != 0
+}
+
+/// Rights on a task script with the agent's group membership, following
+/// LLLiveLSLEditor::loadAsset (indra/newview/llpreviewscript.cpp).
+/// Unlike agent inventory, task scripts also use the object's group rights.
+pub fn task_script_mask(item: &aurora_net::build::TaskItem, agent: Uuid, member: bool) -> u32 {
+    if item.owner_id == agent || item.group_owned && member {
+        item.owner_mask
+    } else {
+        item.everyone_mask | if member { item.group_mask } else { 0 }
+    }
+}
+
+/// LLTaskNotecardBridge::openItem (indra/newview/llpanelobjectinventory.cpp):
+/// a group-owned notecard uses owner rights only with object-manipulation
+/// power. Other members retain the group's rights.
+pub fn task_notecard_mask(item: &InvItem, agent: Uuid, member: bool, manipulate: bool) -> u32 {
+    if item.owner == agent || item.group_owned && manipulate {
+        item.owner_mask
+    } else {
+        item.everyone_mask | if member { item.group_mask } else { 0 }
+    }
+}
+
+/// [`agent_mask`] for the agent whose inventory `inv` is.
+pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
+    agent_mask(item, inv.owner)
+}
+
+/// GOD_MAINTENANCE (indra/llcommon/indra_constants.h): the god level from
+/// which LLAgent::allowOperation, at its default `god_minimum`, lets a god
+/// past an item's permissions.
+pub const GOD_MAINTENANCE: u8 = 250;
+
+/// A server-granted god level applied to an item's rights, as
+/// LLAgent::allowOperation (indra/newview/llagent.cpp) does with its default
+/// `god_minimum`: every asset right from [`GOD_MAINTENANCE`], none under it.
+/// What any god may do whatever the permissions is decided by the caller
+/// with `god_level > 0`, never here (the Legacy Viewer's `isGodlike()`):
+/// read a script or notecard (LLPreviewLSL::loadAsset,
+/// LLPreviewNotecard::loadAsset), see an asset UUID
+/// (LLViewerInventoryItem::getProtectedAssetUUID,
+/// isGodlikeWithoutAdminMenuFakery), take any texture as a material map
+/// (LLMaterialEditor::postBuild). So OpenSim's usual levels (200 to 249)
+/// read a no-modify script or notecard but cannot change it. Showing the
+/// Admin menu alone never raises the level.
+pub fn with_god(mask: u32, god_level: u8) -> u32 {
+    if god_level >= GOD_MAINTENANCE { mask | FULL } else { mask }
+}
+
+/// Rights held on an item, with [`with_god`] for a confirmed god level.
+pub fn held_for(inv: &Inventory, item: &InvItem, god_level: u8) -> u32 {
+    with_god(held(inv, item), god_level)
+}
+
 /// Whether an asset UUID met outside its inventory item (a material map)
 /// may be shown: a built-in texture, or an item of the inventory holding it
 /// with full permissions, like the UUID field of LLFloaterTexturePicker
@@ -23,7 +122,27 @@ pub const FULL: u32 = COPY | MODIFY | TRANSFER;
 pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
     use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
     [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
-        || inv.items.values().any(|it| it.asset_id == asset && it.owner_mask & FULL == FULL)
+        || inv.items.values().any(|it| it.asset_id == asset && held(inv, it) & FULL == FULL)
+}
+
+/// Whether the agent may write a wearable's slider values to an appearance
+/// XML file (the Export XML button of the shape, physics and layer editors).
+/// Stricter than the Legacy Viewer, whose Advanced > Character > Appearance
+/// to XML (LLVOAvatar::dumpArchetypeXML, indra/newview/llvoavatar.cpp)
+/// checks nothing: it asks modify rights, like the Import button
+/// (LLPanelEditWearable `import_btn`, allowModifyBy,
+/// indra/newview/llpaneleditwearable.cpp). A no-modify shape is often a
+/// bought one; its sliders stay visible, but it is not written to a file.
+/// The file never carries a texture id.
+pub fn appearance_xml_export_allowed(item: &InvItem, agent: Uuid) -> bool {
+    agent_mask(item, agent) & MODIFY != 0
+}
+
+/// [`asset_uuid_shown`] for an agent that may be a god: a god sees every
+/// asset UUID (LLViewerInventoryItem::getProtectedAssetUUID,
+/// isGodlikeWithoutAdminMenuFakery).
+pub fn asset_uuid_shown_to(inv: &Inventory, asset: Uuid, god: bool) -> bool {
+    god || asset_uuid_shown(inv, asset)
 }
 
 pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
@@ -64,6 +183,20 @@ pub fn in_type(inv: &Inventory, id: Uuid, kind: i32) -> bool {
 }
 pub fn library(inv: &Inventory, id: Uuid) -> bool {
     inv.folders.get(&id).is_some_and(|f| f.library) || parent(inv, id).and_then(|p| inv.folders.get(&p)).is_some_and(|f| f.library)
+}
+/// "Restore to last position" may rez the object back: in Second Life only
+/// a copy of it, since a no-copy object could be lost on the way
+/// (LLItemBridge::restoreToWorld, "CantRestoreToWorldNoCopy"); OpenSim
+/// keeps it in any case.
+pub fn restorable(it: &aurora_net::inventory::InvItem, opensim: bool) -> bool {
+    opensim || it.owner_mask & COPY != 0
+}
+/// The next owner's rights of an item can be changed: by an owner who may
+/// transfer it, never on a calling card or a landmark
+/// (LLSidepanelItemInfo::refreshFromItem: can_agent_sell with PERM_TRANSFER,
+/// LLInventoryType::cannotRestrictPermissions).
+pub fn next_owner_editable(it: &aurora_net::inventory::InvItem) -> bool {
+    it.owner_mask & TRANSFER != 0 && !matches!(it.inv_type, 2 | 3) && !matches!(it.asset_type, 2 | 3)
 }
 /// Can be edited (renamed, created in, shared…): not in the Library, the
 /// current outfit nor Received Items, which only lets its contents leave.
@@ -127,7 +260,7 @@ pub fn renameable(inv: &Inventory, id: Uuid) -> bool {
             || {
                 inv.items
                     .get(&id)
-                    .is_some_and(|it| it.owner_mask & MODIFY != 0 && !matches!(it.asset_type, 2 | 24 | 25))
+                    .is_some_and(|it| held(inv, it) & MODIFY != 0 && !matches!(it.asset_type, 2 | 24 | 25))
             },
             |f| matches!(f.info.type_default, -1 | 47 | 54),
         )
@@ -409,7 +542,7 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
                 }],
             });
         } else {
-            if it.owner_mask & COPY == 0 && !library(inv, id) {
+            if held(inv, it) & COPY == 0 && !library(inv, id) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-no-copy-item").into());
             }
             change.copies.push(CopyItem {
@@ -585,6 +718,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("thumbnail") {
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
+                        f.info.thumbnail_known = true;
                     }
                 } else {
                     let it = inv.items.get_mut(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
@@ -714,7 +848,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
             }
         } else {
             let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
-            if it.owner_mask & TRANSFER == 0 || matches!(it.asset_type, 2 | 24 | 25) || (copy && it.owner_mask & COPY == 0) {
+            if held(inv, it) & TRANSFER == 0 || matches!(it.asset_type, 2 | 24 | 25) || (copy && held(inv, it) & COPY == 0) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-every-item-must-be-transferable-and-for-a-copy").into());
             }
         }
@@ -766,7 +900,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
                 for item in seen
                     .into_iter()
                     .filter_map(|id| inv.items.get(&id))
-                    .filter(|it| it.owner_mask & COPY == 0)
+                    .filter(|it| held(inv, it) & COPY == 0)
                 {
                     let stock = Uuid::new_v4();
                     change.operations.push(Operation::Folder {
@@ -789,7 +923,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
             });
             change.refresh.push(version);
             let item = &inv.items[&id];
-            let to = if item.owner_mask & COPY == 0 {
+            let to = if held(inv, item) & COPY == 0 {
                 let stock = Uuid::new_v4();
                 change.operations.push(Operation::Folder {
                     id: stock,
@@ -833,7 +967,7 @@ pub fn paste_allowed(
             if matches!(it.asset_type, 24 | 25) {
                 original(inv, id).is_some()
             } else {
-                it.owner_mask & COPY != 0 || library(inv, id)
+                held(inv, it) & COPY != 0 || library(inv, id)
             }
         })
     }
@@ -892,7 +1026,7 @@ pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>,
             todo.extend(f.items.iter().chain(&f.children).copied());
         } else {
             let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
-            if it.owner_mask & TRANSFER == 0 || matches!(it.asset_type, 24 | 25) {
+            if held(inv, it) & TRANSFER == 0 || matches!(it.asset_type, 24 | 25) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-non-transferable-item-or-a").into());
             }
             bucket.push(it.asset_type as u8);
@@ -911,7 +1045,7 @@ pub fn offer_has_no_copy(inv: &Inventory, bucket: &[u8]) -> bool {
         Uuid::from_slice(&tuple[1..])
             .ok()
             .and_then(|id| inv.items.get(&id))
-            .is_some_and(|it| it.owner_mask & COPY == 0)
+            .is_some_and(|it| held(inv, it) & COPY == 0)
     })
 }
 

@@ -320,9 +320,24 @@ pub fn copy_request(
         None => return Err(aurora_i18n::tr!("ui-object-actions-loading-contents").to_owned()),
     };
     let items: Vec<_> = items.iter().map(|item| task::from_inventory(c.target.object, item)).collect();
-    let transfer = task::contents_transfer(world, c.target.object, &items, task::owned(world, c.target.object, props))?;
+    task_copy_request(c.target.object, items, props, world)
+}
+
+/// The same folder copy for the Open button and the selected-items menus.
+/// Aurora also offers it in the editor, where the Legacy Viewer uses a drag.
+pub fn task_copy_request(
+    object: uuid::Uuid,
+    items: Vec<aurora_net::build::TaskItem>,
+    props: Option<&aurora_net::build::ObjectProps>,
+    world: &World,
+) -> Result<CopyRequest, String> {
+    use crate::build::task_inventory as task;
+    if world.objects.index_of_uuid(&object).is_none() {
+        return Err(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available").to_owned());
+    }
+    let transfer = task::contents_transfer(world, object, &items, task::owned(world, object, props))?;
     Ok(CopyRequest {
-        object: c.target.object,
+        object,
         name: props.map(|props| props.name.clone()).unwrap_or_default(),
         items,
         transfer,

@@ -7,7 +7,7 @@
 //! and the photo keeps its alpha: a PNG with nothing around the subject.
 //!
 //! The scene flags what is left out for the GPU lists
-//! (`object_flags::PHOTO_HIDDEN`); the particles, name plates and water
+//! (`object_flags::HIDDEN`); the particles, name plates and water
 //! effects read [`object_visible`]. While choosing in the scene everything
 //! is drawn, the chosen ones outlined, so that anything can be clicked.
 
@@ -23,6 +23,9 @@ pub enum Mode {
     Own,
     /// The avatars and objects chosen.
     Chosen,
+    /// Everything but the other avatars (and what they wear): the outfit
+    /// portrait in its region (`snapshot::portrait`).
+    OthersHidden,
 }
 
 /// The isolation of the photo session.
@@ -73,8 +76,9 @@ impl Isolation {
         self.applied() && self.transparent
     }
 
-    /// Whether the avatar or linkset whose root is `root` is drawn.
-    pub fn root_visible(&self, root: &Uuid) -> bool {
+    /// Whether the avatar or linkset whose root is `root` is drawn;
+    /// `avatar`: that root is an avatar.
+    pub fn root_visible(&self, root: &Uuid, avatar: bool) -> bool {
         if !self.applied() {
             return true;
         }
@@ -82,6 +86,7 @@ impl Isolation {
             Mode::Off => true,
             Mode::Own => *root == self.own,
             Mode::Chosen => self.chosen.contains(root),
+            Mode::OthersHidden => !avatar || *root == self.own,
         }
     }
 
@@ -137,7 +142,7 @@ impl Isolation {
     pub fn set_own(&mut self, own: Uuid) {
         if self.own != own {
             self.own = own;
-            if self.applied() && self.mode == Mode::Own {
+            if self.applied() && matches!(self.mode, Mode::Own | Mode::OthersHidden) {
                 self.bump();
             }
         }
@@ -185,6 +190,10 @@ impl Isolation {
 /// avatar itself even when seated. None for a HUD (interface, never
 /// isolated) or an object whose parent is not known yet.
 pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid)> {
+    root_including_huds(world, index, false)
+}
+
+fn root_including_huds(world: &crate::world::World, index: usize, huds: bool) -> Option<(usize, Uuid)> {
     let mut index = index;
     for _ in 0..64 {
         let object = world.objects.get(index)?;
@@ -193,7 +202,8 @@ pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid
         }
         // (the attachment point is the state of a worn root prim; a tree's
         // state is its species, hence the parent)
-        if (31..=38).contains(&object.attachment_point())
+        if !huds
+            && (31..=38).contains(&object.attachment_point())
             && world
                 .objects
                 .parent_of(object)
@@ -206,10 +216,17 @@ pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid
     None
 }
 
-/// Whether the object at `index` is drawn under the photo's isolation.
+/// Visibility in the local studio or the photo's independent isolation.
 pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
+    if world.avatar_studio {
+        return root_including_huds(world, index, true).is_some_and(|(_, root)| root == world.agent_id);
+    }
     let iso = &world.photo_isolation;
-    !iso.applied() || root_of(world, index).is_none_or(|(_, root)| iso.root_visible(&root))
+    !iso.applied()
+        || root_of(world, index).is_none_or(|(at, root)| {
+            let avatar = world.objects.get(at).is_some_and(|o| o.is_avatar());
+            iso.root_visible(&root, avatar)
+        })
 }
 
 #[cfg(test)]
@@ -228,27 +245,80 @@ mod tests {
     }
 
     #[test]
+    fn studio_isolates_the_live_avatar_without_replacing_photo_choices() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(event);
+        }
+        world.photo_isolation = opened();
+        world.photo_isolation.set_mode(Mode::Chosen);
+        world.photo_isolation.toggle(id(99));
+        let version = world.photo_isolation.version;
+        let position = world.agent.position;
+        let yaw = world.agent.yaw;
+        let own = world.objects.index_of_uuid(&world.agent_id).expect("demo avatar");
+        world.avatar_studio = true;
+        assert!(object_visible(&world, own));
+        let hud = world
+            .objects
+            .index_of_uuid(&crate::demo::hud::object(31, false).full_id)
+            .expect("own HUD");
+        let other_hud = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == 8241)
+            .map(|(i, _)| i)
+            .expect("other HUD");
+        assert!(object_visible(&world, hud));
+        assert!(!object_visible(&world, other_hud));
+        let mut hidden = 0;
+        for (index, _) in world.objects.iter() {
+            if let Some((_, root)) = root_of(&world, index) {
+                assert_eq!(object_visible(&world, index), root == world.agent_id);
+                hidden += usize::from(root != world.agent_id);
+            }
+        }
+        assert!(hidden > 0, "demo world geometry is left out");
+        world.avatar_studio = false;
+        assert!(!object_visible(&world, own), "the original photo choice resumes");
+        assert_eq!(world.photo_isolation.version, version);
+        assert_eq!(world.photo_isolation.chosen(), &[id(99)]);
+        assert_eq!((world.agent.position, world.agent.yaw), (position, yaw));
+    }
+
+    #[test]
     fn own_shows_our_avatar_alone_and_chosen_the_choices() {
         let mut iso = opened();
-        assert!(iso.root_visible(&id(1)), "off: everything drawn");
+        assert!(iso.root_visible(&id(1), true), "off: everything drawn");
         iso.set_mode(Mode::Own);
-        assert!(iso.root_visible(&id(9)));
-        assert!(!iso.root_visible(&id(1)));
+        assert!(iso.root_visible(&id(9), true));
+        assert!(!iso.root_visible(&id(1), true));
         assert!(iso.empty_background());
         iso.set_mode(Mode::Chosen);
-        assert!(!iso.root_visible(&id(9)), "chosen, nothing chosen: nothing drawn");
+        assert!(!iso.root_visible(&id(9), true), "chosen, nothing chosen: nothing drawn");
         assert!(iso.toggle(id(1)));
         assert!(iso.toggle(id(2)));
-        assert!(iso.root_visible(&id(1)) && iso.root_visible(&id(2)));
+        assert!(iso.root_visible(&id(1), true) && iso.root_visible(&id(2), true));
         assert!(!iso.toggle(id(1)), "a second click removes");
-        assert!(!iso.root_visible(&id(1)));
+        assert!(!iso.root_visible(&id(1), true));
         assert_eq!(iso.chosen(), &[id(2)]);
         iso.set_picking(true);
-        assert!(iso.root_visible(&id(1)), "choosing shows everything");
+        assert!(iso.root_visible(&id(1), true), "choosing shows everything");
         assert!(!iso.empty_background());
         iso.set_transparent(false);
         iso.set_picking(false);
         assert!(!iso.empty_background(), "the sky and the ground kept");
+    }
+
+    #[test]
+    fn others_hidden_keeps_the_scene_and_our_avatar() {
+        let mut iso = opened();
+        iso.set_transparent(false);
+        iso.set_mode(Mode::OthersHidden);
+        assert!(iso.root_visible(&id(9), true), "our avatar");
+        assert!(!iso.root_visible(&id(1), true), "another avatar");
+        assert!(iso.root_visible(&id(2), false), "a linkset of the region");
+        assert!(!iso.empty_background());
     }
 
     #[test]
@@ -271,7 +341,7 @@ mod tests {
         assert_eq!(iso.version, 6);
         iso.set_open(false);
         assert!(
-            iso.root_visible(&id(4)) && iso.root_visible(&id(5)),
+            iso.root_visible(&id(4), true) && iso.root_visible(&id(5), true),
             "photo mode closed: everything drawn"
         );
         assert_eq!(

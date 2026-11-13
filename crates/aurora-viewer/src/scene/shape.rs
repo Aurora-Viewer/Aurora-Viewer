@@ -51,11 +51,16 @@ enum Kind {
 
 #[derive(Debug, Clone)]
 struct Param {
+    /// `name=` (an appearance XML writes it next to the id).
+    name: Box<str>,
     group: u8,
     min: f32,
     max: f32,
     default: f32,
     sex: u8,
+    /// The wearable type that carries it (`wearable=`), as an index of
+    /// LLWearableType.
+    wearable: Option<u8>,
     kind: Kind,
 }
 
@@ -65,6 +70,18 @@ pub struct ShapeParams {
     params: BTreeMap<i32, Param>,
     /// Ids of the parameters sent in AvatarAppearance, in message order.
     transmitted: Vec<i32>,
+}
+
+/// One parameter of a wearable type, as [`ShapeParams::wearable_params`]
+/// lists them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WearableParam<'a> {
+    pub id: i32,
+    pub name: &'a str,
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+    pub group: u8,
 }
 
 /// Collision volume offsets (per unit of weight) of a body morph.
@@ -222,18 +239,43 @@ impl ShapeParams {
             Kind::Other
         };
         Some(Param {
+            name: e.attr("name").unwrap_or_default().into(),
             group,
             min,
             max,
             default,
             sex,
+            wearable: e.attr("wearable").and_then(crate::world::inventory::wearable::kind_of),
             kind,
         })
     }
 
-    #[cfg(test)]
+    /// Number of bytes in a complete AvatarAppearance parameter block.
     pub fn transmitted_count(&self) -> usize {
         self.transmitted.len()
+    }
+
+    /// Weight range of a parameter that a wearable of `kind` carries, as
+    /// LLWearable::createVisualParams clones the avatar's parameters whose
+    /// wearable type matches (indra/llappearance/llwearable.cpp).
+    pub fn wearable_range(&self, id: i32, kind: u8) -> Option<(f32, f32)> {
+        self.params.get(&id).filter(|p| p.wearable == Some(kind)).map(|p| (p.min, p.max))
+    }
+
+    /// The parameters a wearable of `kind` carries, by id, the same set as
+    /// [`Self::wearable_range`] accepts.
+    pub fn wearable_params(&self, kind: u8) -> impl Iterator<Item = WearableParam<'_>> {
+        self.params
+            .iter()
+            .filter(move |(_, p)| p.wearable == Some(kind))
+            .map(|(&id, p)| WearableParam {
+                id,
+                name: &p.name,
+                min: p.min,
+                max: p.max,
+                default: p.default,
+                group: p.group,
+            })
     }
 
     /// Range and default weight of a parameter.
