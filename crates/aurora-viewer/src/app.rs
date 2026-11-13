@@ -4443,6 +4443,51 @@ impl App {
     /// AURORA_DEMO_CAMERA: scripted camera input (camera/demo.rs).
     fn demo_camera_steps(&mut self, spec: &str) {
         use crate::camera::demo::Step;
+        let demo_joint = match spec {
+            "head-follow" => Some(crate::camera::CameraFollowJoint::Head),
+            "pelvis-follow" => Some(crate::camera::CameraFollowJoint::Pelvis),
+            "hand-follow" => Some(crate::camera::CameraFollowJoint::LeftWrist),
+            _ => None,
+        };
+        if let Some(joint) = demo_joint {
+            // Set the scenario's initial choice once. Reapplying it each
+            // frame made the Preferences picker impossible to change.
+            if self.frame_count == 1 {
+                self.settings.camera.third_person_follow_joint = Some(joint);
+            }
+            if self.frame_count == 540 {
+                if let Some(joint_rest) = self
+                    .world
+                    .avatar_lib
+                    .rig
+                    .names
+                    .get(joint.rig_name())
+                    .and_then(|&i| self.world.avatar_lib.rig.local_pos.get(i))
+                    .copied()
+                {
+                    let id = uuid::Uuid::from_u128(0x1015_eeef);
+                    let axis = if joint == crate::camera::CameraFollowJoint::LeftWrist {
+                        Vec3::X
+                    } else {
+                        Vec3::Z
+                    };
+                    self.scene.anims.insert(
+                        id,
+                        Arc::new(crate::scene::anim::BoundAnim::bind(
+                            crate::demo::third_person_joint_animation(joint.rig_name(), joint_rest, axis),
+                            &self.world.avatar_lib.rig,
+                        )),
+                    );
+                    self.world.apply(NetEvent::AvatarAnimations {
+                        avatar: self.world.agent_id,
+                        anims: vec![(id, 1)],
+                        sources: Vec::new(),
+                    });
+                } else {
+                    log::warn!("demo camera follow: rig has no {} rest position", joint.rig_name());
+                }
+            }
+        }
         if spec.ends_with("-body-on") || spec.ends_with("-body-off") {
             self.settings.camera.show_avatar_in_mouselook = spec.ends_with("-body-on");
             self.settings.camera.mouselook_follow_eyes = spec.contains("-eyes-on");
@@ -10037,10 +10082,14 @@ impl App {
                     .filter(|id| self.build.edits_object(&self.world, id))
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
+                follow_joint_offset: None,
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
-            if frame.edit_tracking.is_some() || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+            if frame.edit_tracking.is_some()
+                || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera)
+                || self.camera.needs_animated_joint(&self.settings.camera)
+            {
                 // Evaluate the focused edit selection after the local drag,
                 // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
@@ -10682,7 +10731,14 @@ impl App {
             let camera_changed = late_camera_frame.is_some() || panned;
             if let Some(mut frame) = late_camera_frame {
                 frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
-                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+                frame.follow_joint_offset = self
+                    .settings
+                    .camera
+                    .third_person_follow_joint
+                    .and_then(|joint| self.scene.joint_offset(&self.world, &self.world.agent_id, joint.rig_name()));
+                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera)
+                    || self.camera.needs_animated_joint(&self.settings.camera)
+                {
                     frame.now = now;
                 }
                 if self.vr_camera.is_some() {

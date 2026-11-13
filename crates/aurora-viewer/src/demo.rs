@@ -754,6 +754,32 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
     animation
 }
 
+/// A looping joint translation for third-person bone-camera captures.
+pub fn third_person_joint_animation(joint_name: &str, joint_rest: Vec3, axis: Vec3) -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey};
+    let mut animation = idle_animation();
+    animation.base_priority = 6;
+    animation.duration = 2.0;
+    animation.loop_in = 0.0;
+    animation.loop_out = 2.0;
+    animation.ease_in = 0.0;
+    animation.ease_out = 0.0;
+    animation.joints.clear();
+    animation.joints.push(JointMotion {
+        joint_name: joint_name.into(),
+        priority: 5,
+        rot_keys: Vec::new(),
+        pos_keys: [(0.0, 0.0), (0.5, 0.22), (1.0, 0.0), (1.5, -0.12), (2.0, 0.0)]
+            .into_iter()
+            .map(|(time, z)| PosKey {
+                time,
+                position: joint_rest + axis * z,
+            })
+            .collect(),
+    });
+    animation
+}
+
 /// Ground-sit fixture: the demo asset fallback is an idle, so supply a
 /// folded-leg pose with a lowered pelvis without requesting a grid asset.
 pub fn first_person_ground_animation() -> aurora_assets::Animation {

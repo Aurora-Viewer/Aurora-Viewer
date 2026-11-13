@@ -309,6 +309,7 @@ mod tests {
                 build_mode: false,
                 edit_tracking: None,
                 eye_offset: None,
+                follow_joint_offset: None,
                 draw_distance: 128.0,
                 region_width: 256.0,
                 aspect: 1.5,
