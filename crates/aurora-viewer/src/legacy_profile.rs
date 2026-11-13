@@ -58,6 +58,19 @@ impl Account {
         format!("{}_{}", self.first, self.last).to_lowercase().replace(' ', "_")
     }
 
+    /// The account's folder in a Legacy Viewer's chat log folder
+    /// (LLDir::setPerAccountChatLogsDir): `first_last`, then `.<grid label>`
+    /// off the main grid, `.demo` for the demo. None on another grid, whose
+    /// label only the Legacy Viewer knows (`grid_known`).
+    pub fn chat_folder(&self) -> Option<String> {
+        match self.grid.as_str() {
+            "agni" => Some(self.folder()),
+            "aditi" => Some(format!("{}{BETA_SUFFIX}", self.folder())),
+            grid if self.grid_known() => Some(format!("{}.{grid}", self.folder())),
+            _ => None,
+        }
+    }
+
     /// False on another grid than Second Life's: its label comes from the
     /// viewer's grid list (`LLGridManager::getGridLabel`), so its folder
     /// cannot be told from another grid's, and only the user can choose it.
@@ -191,5 +204,19 @@ mod tests {
             grid: "agni".into(),
         };
         assert!(resident.owns("janedoe_resident"));
+    }
+
+    #[test]
+    fn the_chat_folder_written_like_the_legacy_viewer() {
+        assert_eq!(account("agni").chat_folder().as_deref(), Some("jane_doe"));
+        assert_eq!(account("aditi").chat_folder().as_deref(), Some("jane_doe.second_life_beta"));
+        // never the main grid's folder
+        assert_eq!(account("demo").chat_folder().as_deref(), Some("jane_doe.demo"));
+        assert_eq!(account("custom_osgrid_org").chat_folder(), None);
+        // the folder it writes is the one the import reads
+        for grid in ["agni", "aditi"] {
+            let a = account(grid);
+            assert!(a.owns(&a.chat_folder().expect("folder")), "{grid}");
+        }
     }
 }
