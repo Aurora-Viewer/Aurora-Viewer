@@ -767,9 +767,9 @@ impl super::Scene {
 
     /// The HUD object the hover cursor is over, which comes before any object
     /// of the world: the target a press would take (`hud_click_pick`), so
-    /// the hover cursor and the click never disagree. Invisible Mask/Blend
-    /// buttons and transparent scripted clickers count; a plain alpha-zero
-    /// panel lets the object behind it take the hover.
+    /// the hover cursor and the click never disagree. Invisible buttons
+    /// count; a plain alpha-zero media panel lets the object behind it take
+    /// the hover.
     pub fn hover_hud(&mut self, world: &crate::world::World, cursor: (f32, f32)) -> Option<usize> {
         if !profile_enabled() {
             return self.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);

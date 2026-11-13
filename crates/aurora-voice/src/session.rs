@@ -53,6 +53,15 @@ const DISCONNECT_RENEGOTIATE_DELAY: Duration = Duration::from_secs(10);
 const GATHER_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the peer connection may take to come up after the answer.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Delay between two connectivity checks of one candidate pair (the
+/// webrtc-rs default).
+const ICE_CHECK_INTERVAL: Duration = Duration::from_millis(200);
+/// Connectivity checks sent on one candidate pair before giving it up: enough
+/// to cover [`CONNECT_TIMEOUT`], as libwebrtc keeps pinging. The webrtc-rs
+/// default (7 checks, 1.4 s) gave up before some voice hosts answered, and a
+/// failed pair is never checked again (issue #3364).
+const ICE_MAX_CHECKS: u16 = 150;
+const _: () = assert!(ICE_CHECK_INTERVAL.as_millis() * ICE_MAX_CHECKS as u128 >= CONNECT_TIMEOUT.as_millis());
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Largest provisioning answer read: an SDP and a few keys take a few KB.
 const MAX_REPLY_BYTES: usize = 1 << 20;
@@ -267,7 +276,9 @@ async fn build_peer_connection(
         )
         .map_err(|e| e.to_string())?;
     let registry = register_default_interceptors(Registry::new(), &mut media).map_err(|e| e.to_string())?;
-    let settings = SettingEngineBuilder::new().with_multicast_dns_mode(mdns);
+    let settings = SettingEngineBuilder::new()
+        .with_multicast_dns_mode(mdns)
+        .with_ice_connection_attempts(Some(ICE_CHECK_INTERVAL), Some(ICE_MAX_CHECKS));
     #[cfg(test)]
     let settings = if tests::LOOPBACK_ONLY.load(Ordering::Relaxed) {
         tests::restrict_to_loopback(settings)
@@ -719,6 +730,8 @@ async fn negotiate_and_run(
         }
     };
     let viewer_session = answer.viewer_session.clone();
+    log::debug!("voice: answer ICE: {}", protocol::answer_ice_summary(&answer.sdp));
+    log::trace!("voice: answer SDP:\n{}", answer.sdp);
 
     let outcome = async {
         let remote = match RTCSessionDescription::answer(answer.sdp) {

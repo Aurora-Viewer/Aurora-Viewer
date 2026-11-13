@@ -9,7 +9,7 @@ use crate::build::contents::AT_LSL_TEXT;
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
-use crate::ui::inventory::permissions::Permissions;
+use crate::ui::inventory::permissions::{self, Permissions};
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use aurora_net::build::{TaskItem, perm};
@@ -61,78 +61,61 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .is_some_and(|r| r.lua_scripts);
     let lua = lua_region && tool.ui.new_script_lua.unwrap_or(true);
 
-    if super::legacy::active(ui) {
-        ui.columns(3, |columns| {
-            if columns[0]
-                .add_enabled(editable && single, egui::Button::new(aurora_i18n::tr!("common-new-script")))
-                .clicked()
-            {
-                tool.new_script(world, idx, lua);
-            }
-            if lua_region {
-                new_script_language(&mut columns[0], tool, lua);
-            }
-            if columns[1].button(aurora_i18n::tr!("common-rights")).clicked() {
-                tool.ui.bulk_perms_open = !tool.ui.bulk_perms_open;
-            }
-            if columns[2].button(aurora_i18n::tr!("build-ui-contents-refresh")).clicked() {
-                tool.request_contents(world, idx, true);
-            }
-            if columns[2]
-                .add_enabled(
-                    editable && single,
-                    egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-contents-reset-scripts")).size(11.0)),
-                )
-                .clicked()
-            {
-                tool.reset_scripts(world);
-            }
-        });
-    } else {
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    editable && single,
-                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-script")).size(12.0)),
-                )
-                .clicked()
-            {
-                tool.new_script(world, idx, lua);
-            }
-            if lua_region {
-                new_script_language(ui, tool, lua);
-            }
-            if ui
-                .button(RichText::new(aurora_i18n::tr!("common-rights")).size(12.0))
-                .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))
-                .clicked()
-            {
-                tool.ui.bulk_perms_open = !tool.ui.bulk_perms_open;
-            }
-            ui.vertical(|ui| {
-                if ui.small_button(aurora_i18n::tr!("build-ui-contents-refresh")).clicked() {
-                    tool.request_contents(world, idx, true);
-                }
-                if ui
-                    .add_enabled(
-                        editable && single,
-                        egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-contents-reset-scripts")).size(11.0)).small(),
-                    )
-                    .clicked()
-                {
-                    tool.reset_scripts(world);
-                }
-            });
-        });
-    }
-    {
+    let font_size = if super::legacy::active(ui) { 11.0 } else { 12.0 };
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                editable && single,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-script")).size(font_size)),
+            )
+            .clicked()
+        {
+            tool.new_script(world, idx, lua);
+        }
+        if lua_region {
+            new_script_language(ui, tool, lua);
+        }
+        if ui
+            .add_enabled(
+                editable && single,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("build-ui-contents-reset-scripts")).size(font_size)),
+            )
+            .clicked()
+        {
+            tool.reset_scripts(world);
+        }
+        if ui
+            .button(RichText::new(aurora_i18n::tr!("build-ui-contents-refresh")).size(font_size))
+            .clicked()
+        {
+            tool.request_contents(world, idx, true);
+        }
+    });
+    ui.horizontal(|ui| {
+        if ui
+            .button(RichText::new(aurora_i18n::tr!("common-rights")).size(font_size))
+            .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))
+            .clicked()
+        {
+            tool.ui.bulk_perms_open = !tool.ui.bulk_perms_open;
+        }
+        let response = permissions::rights_button(ui, p, &mut tool.ui.contents_rights, 26.0);
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("contents-rights-button"), response.rect));
+        #[cfg(not(test))]
+        let _ = response;
         let width = ui.available_width();
-        crate::ui::widgets::search_text_edit(ui, p, &mut tool.ui.contents_filter, |edit| {
+        let search = crate::ui::widgets::search_text_edit(ui, p, &mut tool.ui.contents_filter, |edit| {
             edit.hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
                 .desired_width(width)
-        })
-    };
-    crate::ui::inventory::permissions::next_owner_toggle(ui, p, &mut tool.ui.contents_show_next_owner);
+        });
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("contents-search-field"), search.rect));
+        #[cfg(not(test))]
+        let _ = search;
+    });
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
@@ -308,10 +291,12 @@ fn item_row(
         if item.asset_type == AT_LSL_TEXT && running.is_some_and(|r| !r.0) {
             name.push_str(aurora_i18n::tr!("build-ui-contents-stopped"));
         }
-        let permissions = Permissions::new(item.owner_mask, item.next_owner_mask).with_next_owner(tool.ui.contents_show_next_owner);
+        let permissions = Permissions::new(item.owner_mask, item.next_owner_mask);
         let selected = tool.ui.contents_selection.object == Some(object_id) && tool.ui.contents_selection.items.contains(&item.item_id);
         let r = ui
-            .push_id(("task_item", object_id, item.item_id), |ui| permissions.row(ui, p, &name, selected))
+            .push_id(("task_item", object_id, item.item_id), |ui| {
+                permissions.row_with_rights(ui, p, &name, selected, tool.ui.contents_rights)
+            })
             .inner
             .on_hover_ui(|ui| {
                 ui.label(&name);
