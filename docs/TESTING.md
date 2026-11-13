@@ -10631,6 +10631,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_ANIMATION_EXPLORER=1\|blacklist` | Animation explorer with a stand-in preview, or a blacklisted animation |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
+| `AURORA_DEMO_NEARBY_MEDIA=open`, `select`, `outside`, `zoom` or `stop-all` | Three media screens and the nearby media panel pinned open (see Details) |
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
@@ -10955,6 +10956,19 @@ What the inventory must show with these scenarios:
   links and their redirects must stay on the same HTTP(S) origin; HLS is
   unsupported. No JavaScript is executed and normal media-filter consent
   still precedes the first request.
+- **`AURORA_DEMO_NEARBY_MEDIA`**: three screens with media on a prim,
+  two in the plaza's parcel (the first is `AURORA_DEMO_MEDIA`'s, the second
+  "Plaza cinema" north of it) and "Parcel next door" outside it, east of
+  x = 192 m; with `AURORA_DEMO_PARCEL_MEDIA` the parcel's media heads the
+  list. The panel under the top bar's media button stays open. `open`:
+  just the list; `select`: the nearest screen selected, its controls
+  (play / pause / stop, mute, volume, zoom) under the list; `outside`: Show
+  set to "Outside this parcel", only "Parcel next door"; `zoom`: Zoom on the
+  selected screen 300 frames after the panel first shows (the camera faces it, `nearby media: zoom
+  on` in the log), the button becomes Reset the camera; `stop-all`: Stop
+  all at the same moment, every row unticked and the media button no longer lit.
+  Without the media plugins the rows stay dimmed (nothing shows), with them
+  their titles and "(playing)" appear.
 - **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing

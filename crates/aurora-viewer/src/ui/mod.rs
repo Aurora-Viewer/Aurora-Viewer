@@ -86,6 +86,7 @@ pub mod monitor;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
+pub mod nearby_media;
 pub mod news;
 pub mod notification_center;
 pub mod notifications;
