@@ -1014,6 +1014,17 @@ impl SlotTable for Renderer {
     }
 }
 
+/// The alpha classes of the renderer's built-in slots: the transparent
+/// texture has no visible pixel. Every renderer has them, the one of a GPU
+/// recovery too (`gpu_reset_into`): without them, a face of the built-in
+/// transparent texture is drawn opaque, as the shine layers of mesh heads
+/// (eyebrows, lips, eyes) black after a reset.
+fn builtin_alpha() -> Vec<AlphaKind> {
+    let mut a = vec![AlphaKind::Opaque; 16];
+    a[aurora_render::textures::TRANSPARENT as usize] = AlphaKind::Mask;
+    a
+}
+
 /// Alpha class of a bindless slot; a change bumps `generation` and is
 /// listed in `changes` (`TextureStreamer::take_alpha_changes`).
 fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mut Vec<u32>, slot: u32, a: AlphaKind) {
@@ -1076,6 +1087,12 @@ pub struct TextureStreamer {
     legacy_bumps: HashMap<(Uuid, u8), Uuid>,
     legacy_bump_entries: HashMap<Uuid, legacy_bump_stream::LegacyBumpState>,
     legacy_bump_jobs: usize,
+    /// The full size of the textures evicted since the session began
+    /// (`known_size`): an avatar's complexity counts its textures' sizes,
+    /// and forgetting them on eviction made our own complexity move with
+    /// the texture memory, a "Your avatar complexity is N" notice each
+    /// time (#3381). 12 bytes a texture.
+    evicted_sizes: HashMap<Uuid, (u32, u32)>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -1499,12 +1516,7 @@ impl TextureStreamer {
                 (id, mask)
             })
             .collect(),
-            // built-in slots: the transparent texture has no visible pixel
-            alpha_by_slot: {
-                let mut a = vec![AlphaKind::Opaque; 16];
-                a[aurora_render::textures::TRANSPARENT as usize] = AlphaKind::Mask;
-                a
-            },
+            alpha_by_slot: builtin_alpha(),
             alpha_channel_by_slot: Vec::new(),
             cache_dir,
             local_slots: HashMap::new(),
@@ -1551,6 +1563,7 @@ impl TextureStreamer {
             dirty: Vec::new(),
             forgotten: Vec::new(),
             evicted: Vec::new(),
+            evicted_sizes: HashMap::new(),
             slotless: 0,
             slotless_unreported: 0,
             slotless_ids: Vec::new(),
@@ -1604,6 +1617,13 @@ impl TextureStreamer {
     /// Full resolution of a texture once its header is known.
     pub fn full_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         self.entries.get(id).and_then(full_size)
+    }
+
+    /// [`full_size`](Self::full_size), or the size the texture had when it
+    /// was last evicted: what the complexity counts, steady while the
+    /// texture memory comes and goes.
+    pub fn known_size(&self, id: &Uuid) -> Option<(u32, u32)> {
+        self.full_size(id).or_else(|| self.evicted_sizes.get(id).copied())
     }
 
     /// Share source bytes and cache locations, never GPU readback or disk IO
@@ -1850,7 +1870,7 @@ impl TextureStreamer {
     fn gpu_reset_into(&mut self, new: &mut impl SlotTable) {
         // their staged data is in the old device's pool
         self.uploads = Default::default();
-        self.alpha_by_slot.clear();
+        self.alpha_by_slot = builtin_alpha();
         self.alpha_channel_by_slot.clear();
         self.alpha_changes.clear();
         self.first_texels.clear();
@@ -2034,6 +2054,9 @@ impl TextureStreamer {
             let Some(e) = self.entries.remove(&id) else {
                 continue;
             };
+            if let Some(size) = full_size(&e) {
+                self.evicted_sizes.insert(id, size);
+            }
             self.forget_legacy_bump(id);
             self.counts.change(e.counted, 0);
             if let Some(mask) = self.pick_masks.remove(&id) {
@@ -2722,16 +2745,19 @@ impl TextureStreamer {
                         e.decoding = true;
                         *decodes += 1;
                         let (want, pool) = (e.want, staging.clone());
-                        jobs.spawn(move || {
-                            texture_result(
-                                id,
-                                want,
-                                (source.texels)(&id, want),
-                                (AlphaKind::Opaque, false),
-                                None,
-                                pool.as_deref(),
-                            )
-                        });
+                        jobs.spawn_or(
+                            move || {
+                                texture_result(
+                                    id,
+                                    want,
+                                    (source.texels)(&id, want),
+                                    (AlphaKind::Opaque, false),
+                                    None,
+                                    pool.as_deref(),
+                                )
+                            },
+                            move || JobResult::TextureFailed { id },
+                        );
                     }
                     return;
                 }
@@ -2859,13 +2885,24 @@ impl TextureStreamer {
             };
             let pool = staging.clone();
             let meter = meter.clone();
-            jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+            // (a failed decode gives its slot back and retries later, as a
+            // decode error does)
+            jobs.spawn_or(
+                move || decode_job(job, &data, pool.as_deref(), &meter),
+                move || JobResult::TextureFailed { id },
+            );
             Self::settle(todo, counts, id, e);
         }
         let dir = cache_dir.clone();
         let pool = staging.clone();
         jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
-            read_job(&dir, id, want, blocks, pool.as_deref())
+            // (a failed read is a cache miss: the texture is downloaded)
+            super::jobs::caught(|| read_job(&dir, id, want, blocks, pool.as_deref())).unwrap_or(JobResult::TextureCache {
+                id,
+                data: None,
+                complete: false,
+                keep_rgba: false,
+            })
         });
         if !forgotten.is_empty() {
             log::info!("refreshing {} textures: downloaded again", forgotten.len());
@@ -5411,6 +5448,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_gpu_recovery_keeps_the_transparent_texture_invisible() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let transparent = aurora_render::textures::TRANSPARENT as usize;
+        assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
+        let mut e = entry(None, 100.0);
+        e.slot = 20;
+        s.entries.insert(id(1), e);
+        let mut table = Slots {
+            left: vec![30],
+            ..Default::default()
+        };
+        s.gpu_reset_into(&mut table);
+        // the textures got slots of the new table, the built-in ones kept
+        // their class: the shine layers of mesh heads stay see-through
+        assert_eq!(s.entries[&id(1)].slot, 30);
+        assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
+        assert_eq!(s.alpha_by_slot[30], AlphaKind::Opaque);
+    }
+
     /// A failed download of texture `n` (in slot `10 + n`, never loaded).
     fn fail(s: &mut TextureStreamer, n: u128, status: u16) {
         let key = 1000 + n as u64;
@@ -5545,6 +5602,21 @@ mod tests {
         s.evict(&mut table, due);
         assert_eq!(s.slotless, 1);
         assert!(table.freed.is_empty());
+    }
+
+    #[test]
+    fn an_evicted_texture_keeps_its_known_size() {
+        // #3381: the complexity counts it the same once it is gone
+        let mut s = full_table(&[], &[]);
+        let mut table = Slots::default();
+        s.entries.insert(id(5), entry(Some(2), 0.0));
+        s.entries.insert(id(6), entry(None, 0.0));
+        assert_eq!(s.known_size(&id(5)), Some((1024, 1024)));
+        s.evict(&mut table, vec![id(5), id(6)]);
+        assert_eq!(s.full_size(&id(5)), None);
+        assert_eq!(s.known_size(&id(5)), Some((1024, 1024)));
+        // a size never known stays unknown
+        assert_eq!(s.known_size(&id(6)), None);
     }
 
     #[test]

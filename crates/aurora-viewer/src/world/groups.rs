@@ -765,6 +765,12 @@ impl World {
                 };
                 self.session_system(session, format!("{what}{}", reason(&error)));
             }
+            // moderationActionCoro → showSessionEventError("mute", …): the
+            // notice shows the event alone, its reason is left out
+            NetEvent::SessionModerationFailed { session, forbidden } => {
+                log::warn!("session {session}: moderation refused (not a moderator: {forbidden})");
+                self.session_system(session, aurora_i18n::tr!("world-groups-error-while-moderating"));
+            }
             NetEvent::SessionClosed { session, reason: r } => {
                 self.cancel_saved_im(session);
                 self.groups.restoring.remove(&session);
