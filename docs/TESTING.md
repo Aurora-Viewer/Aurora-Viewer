@@ -6052,7 +6052,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   monitor's Network section as the bars open it (the full view for this
   opening only); `monitor-<section>` one section of the monitor:
   `overview`, `subsystems`, `threads`, `memory`, `network`, `disk`, `scene`
-  or `region` (`scene-objects`: the scene on its objects). The monitor samples every half second: allow
+  or `region` (`scene-objects`: the scene on its objects; `scene-worn` and
+  `scene-huds`: what the agent wears on the body and on the screen, each
+  with its share of the complexity (none on a HUD), triangles, prims and
+  texture memory, the dearest first, with Inspect and Detach; combine with
+  `AURORA_DEMO_WORN=1` and `AURORA_DEMO_HUDS=1` for rows). The monitor samples every half second: allow
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=1500` (25 s) for graphs
   with some history, and `AURORA_WINDOW_SIZE=1600,1000` so that its default
   size (1180 × 760) fits. What to look for: the rail's eight sections with
