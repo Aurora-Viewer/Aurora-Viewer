@@ -539,6 +539,16 @@ pub fn of_settings(map: &aurora_llsd::Llsd) -> Option<RegionDay> {
     }
 }
 
+/// `name` given the code `original` ends in, if any: what a rename of a
+/// coded item keeps (its field shows the name without the code, which
+/// deleting would otherwise take the weather away with).
+pub fn keep_code(original: &str, name: &str) -> String {
+    match (coded_name(original), code_part(original)) {
+        (Some(_), Some(code)) if coded_name(name).is_none() => with_code(name, code),
+        _ => name.to_owned(),
+    }
+}
+
 /// The letters after the last `~` of a name, trimmed.
 fn code_part(name: &str) -> Option<&str> {
     let trimmed = name.trim_end();
@@ -843,6 +853,15 @@ mod tests {
         let wide = "é".repeat(30);
         assert!(wide.chars().count() <= NAME_MAX - 2 - SKY_LEN && too_long_for(&wide, SKY_LEN));
         assert!(storm().name_with(&wide).len() <= NAME_MAX);
+        // a rename of a coded item keeps its code; a name typed with a code
+        // of its own, or an uncoded item, is left as typed
+        let coded = storm().name_with("Storm");
+        assert_eq!(keep_code(&coded, "Thunder"), storm().name_with("Thunder"));
+        assert_eq!(SkyWeather::from_name(&keep_code(&coded, "Thunder")), Some(storm()));
+        let other = SkyWeather::CLEAR.name_with("Calm");
+        assert_eq!(keep_code(&coded, &other), other);
+        assert_eq!(keep_code("Plain sky", "Other sky"), "Other sky");
+        assert!(keep_code(&coded, &"é".repeat(40)).len() <= NAME_MAX);
         // the default schedule writes no code, and takes one away
         let d = DayWeather { window: 2, seed: 5 };
         assert_eq!(DayWeather::from_name(&d.name_with("Day")), Some(d));

@@ -398,7 +398,7 @@ pub struct PropertyEdit {
 impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
     fn from(it: &aurora_net::inventory::InvItem) -> Self {
         Self {
-            name: it.name.clone(),
+            name: shown_name(it).to_owned(),
             desc: it.desc.clone(),
             next: it.next_owner_mask,
             group: it.group_mask,
@@ -767,11 +767,14 @@ impl InventoryUi {
         self.selection.clear();
         self.selection.insert(id);
         self.reveal = Some(id);
-        self.rename = Some(InlineRename {
-            id,
-            name: rules::name(inv, id),
-            focus: true,
-        });
+        // a coded settings item: its name without the Aurora Weather code,
+        // which the rename keeps (`finish_rename`)
+        let name = inv
+            .items
+            .get(&id)
+            .and_then(weather_coded_name)
+            .map_or_else(|| rules::name(inv, id), str::to_owned);
+        self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
@@ -1122,6 +1125,12 @@ pub(crate) fn weather_coded_name(it: &aurora_net::inventory::InvItem) -> Option<
         return None;
     }
     crate::weather::region::coded_name(&it.name)
+}
+
+/// The name an item's fields show: a coded settings item's without its
+/// code, which a rename keeps (`weather::region::keep_code`).
+pub(crate) fn shown_name(it: &aurora_net::inventory::InvItem) -> &str {
+    weather_coded_name(it).unwrap_or(&it.name)
 }
 
 /// " [Aurora Weather]" after a coded settings item's name, "Aurora" in the
@@ -1817,7 +1826,12 @@ fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAct
     if !rules::renameable(inv, edit.id) {
         return;
     }
-    match rules::clean_name(&edit.name) {
+    // a coded settings item keeps its weather code (`begin_rename`)
+    let typed = rules::clean_name(&edit.name).map(|name| match inv.items.get(&edit.id).filter(|it| weather_coded_name(it).is_some()) {
+        Some(it) => crate::weather::region::keep_code(&it.name, &name),
+        None => name,
+    });
+    match typed {
         Ok(name) if name == rules::name(inv, edit.id) => return,
         Ok(name) if st.pending.is_none() => match rules::patch(inv, edit.id, aurora_llsd::llsd_map! { "name" => name }) {
             Ok(change) => {
