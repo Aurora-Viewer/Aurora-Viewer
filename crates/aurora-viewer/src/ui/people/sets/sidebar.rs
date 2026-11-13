@@ -19,10 +19,6 @@ const SMART_ROW_H: f32 = 30.0;
 /// The picker's button.
 const PICKER_H: f32 = 46.0;
 
-/// The payload of a set dragged to a new place in the priority order.
-#[derive(Clone, Debug)]
-struct SetDrag(String);
-
 /// The smart lists: (pseudo-set, icon, label key).
 fn smart_lists() -> [(&'static str, &'static str, &'static str); 4] {
     [
@@ -219,16 +215,118 @@ fn two_lines(ui: &egui::Ui, p: &Palette, left: f32, right: f32, y: f32, name: &s
     widgets::paint_row_text(ui.painter(), sub_g, left, y + 8.0, p.muted);
 }
 
-/// Where a set dragged over the row at `index` would go once released:
-/// before it in its top half, after it in its bottom half; `from` is where
-/// it stands now (`move_priority_to` takes the place once it is out).
-fn drop_index(from: usize, index: usize, lower_half: bool) -> usize {
-    let to = index + usize::from(lower_half);
-    if from < to { to - 1 } else { to }
+/// A set carried in the list: its name, where it stood, and where the
+/// pointer holds the card (from the card's top).
+#[derive(Clone, Debug)]
+struct Carry {
+    name: String,
+    from: usize,
+    grab: f32,
+}
+
+/// How the rows slide: each set's offset from its place, eased toward
+/// where it should be, and the set carried.
+#[derive(Clone, Debug, Default)]
+struct Slide {
+    offsets: std::collections::HashMap<String, f32>,
+    carry: Option<Carry>,
+    /// A set released, until the new order shows (the edit is applied
+    /// after this frame): drawn where it was dropped meanwhile.
+    dropped: Option<Dropped>,
+}
+
+/// A set released at `to`, its card at `card_top`, over `order` (the order
+/// when it was released); `frames` it has waited.
+#[derive(Clone, Debug)]
+struct Dropped {
+    carry: Carry,
+    to: usize,
+    card_top: f32,
+    order: Vec<String>,
+    frames: u32,
+}
+
+/// The place a card whose top is at `card_top` takes among `n` rows, the
+/// first at `top0`, one every `pitch`.
+fn target_slot(card_top: f32, top0: f32, pitch: f32, n: usize) -> usize {
+    if n == 0 || pitch <= 0.0 {
+        return 0;
+    }
+    (((card_top - top0) / pitch).round().max(0.0) as usize).min(n - 1)
+}
+
+/// Where the row `i` stands while the set at `from` is carried to `to`:
+/// the rows between make way, one step toward the place it left.
+fn shifted_slot(i: usize, from: usize, to: usize) -> usize {
+    if from < to && i > from && i <= to {
+        i - 1
+    } else if to < from && i >= to && i < from {
+        i + 1
+    } else {
+        i
+    }
+}
+
+/// Where each set lands in the order once `from` is put at `to`.
+fn new_index(i: usize, from: usize, to: usize) -> usize {
+    if i == from { to } else { shifted_slot(i, from, to) }
+}
+
+/// A set's row: its tile, its name and counts (or count), and room for the
+/// cog when `cog` is shown. Painted with `ui`'s painter (another layer for
+/// the card carried).
+#[allow(clippy::too_many_arguments)]
+fn paint_set_row(
+    ui: &egui::Ui,
+    c: &Ctx,
+    rect: Rect,
+    set: &contact_sets::ContactSet,
+    face: Option<egui::Color32>,
+    cog: bool,
+    compact: bool,
+) {
+    let p = c.p;
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    if let Some(face) = face {
+        ui.painter().rect_filled(rect, radius, face);
+    }
+    let side = if compact { 26.0 } else { 28.0 };
+    let tile = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + side / 2.0, rect.center().y), Vec2::splat(side));
+    crate::ui::contacts::set_tile(ui, p, tile, set);
+    let m: Members = members(c.world, &set.name);
+    let text_right = if cog { rect.right() - 31.0 } else { rect.right() - 6.0 };
+    if compact {
+        let count = m.ids.len().to_string();
+        let g = ui.painter().layout_no_wrap(count, FontId::proportional(11.5), p.muted);
+        let count_w = g.size().x;
+        widgets::paint_row_text(ui.painter(), g, text_right - count_w, rect.center().y, p.muted);
+        let mut job = egui::text::LayoutJob::single_section(set.name.clone(), super::super::rows::semibold(ui, 13.0, p.ink));
+        job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - count_w - 8.0 - tile.right() - 9.0).max(0.0));
+        widgets::paint_row_text(
+            ui.painter(),
+            ui.painter().layout_job(job),
+            tile.right() + 9.0,
+            rect.center().y,
+            p.ink,
+        );
+    } else {
+        two_lines(
+            ui,
+            p,
+            tile.right() + 9.0,
+            text_right,
+            rect.center().y,
+            &set.name,
+            &count_line(&m),
+            13.0,
+        );
+    }
 }
 
 /// The sets, highest first: a click shows one, its cog opens its editor,
-/// a drag moves it in the priority order, residents dropped join it.
+/// residents dropped join it. A set dragged is carried under the pointer
+/// as a lifted card while the others slide out of its way; released, it
+/// takes that place in the priority order.
 fn set_rows(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, height: f32) {
     let p = c.p;
     let names = c.world.contact_sets.ordered_set_names();
@@ -240,45 +338,147 @@ fn set_rows(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, he
             p.muted,
         );
         widgets::paint_row_text(ui.painter(), g, rect.left() + 8.0, rect.center().y, p.muted);
+        return;
     }
-    let dragged = egui::DragAndDrop::payload::<SetDrag>(ui.ctx()).map(|d| d.0.clone());
     let compact = height < SET_ROW_H;
+    let key = ui.make_persistent_id("people-set-slide");
+    let mut slide: Slide = ui.ctx().data(|d| d.get_temp(key)).unwrap_or_default();
+    // the places, fixed: what the pointer clicks and drops on
+    let rows: Vec<(Rect, egui::Response)> = names
+        .iter()
+        .map(|_| ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click_and_drag()))
+        .collect();
+    let top0 = rows[0].0.top();
+    let pitch = if rows.len() > 1 { rows[1].0.top() - top0 } else { height };
+    let pointer = ui.input(|i| i.pointer.interact_pos());
+    let down = ui.input(|i| i.pointer.primary_down());
+    if slide.carry.is_none()
+        && let Some((i, (rect, _))) = rows.iter().enumerate().find(|(_, (_, r))| r.drag_started())
+        // held where it was pressed, not where the drag began to count
+        && let Some(at) = ui.input(|i| i.pointer.press_origin()).or(pointer)
+    {
+        slide.carry = Some(Carry {
+            name: names[i].clone(),
+            from: i,
+            grab: at.y - rect.top(),
+        });
+    }
+    // the carry is dropped if its set went away meanwhile
+    if slide.carry.as_ref().is_some_and(|carry| names.get(carry.from) != Some(&carry.name)) {
+        slide.carry = None;
+    }
+    // a drop waiting for the new order: once it shows, the offsets move to
+    // the new places, so that every row glides on from where it is drawn
+    if let Some(drop) = slide.dropped.as_mut() {
+        drop.frames += 1;
+        let applied = drop.order != names && names.get(drop.to) == Some(&drop.carry.name);
+        if applied {
+            for (i, name) in drop.order.iter().enumerate() {
+                let j = new_index(i, drop.carry.from, drop.to);
+                if let Some(offset) = slide.offsets.get_mut(name) {
+                    *offset += (i as f32 - j as f32) * pitch;
+                }
+            }
+        }
+        // applied, or not after half a second, or the sets changed otherwise:
+        // the rows glide back to their places
+        if applied || drop.frames > 30 || drop.order != names {
+            slide.dropped = None;
+        }
+    }
+    let n = names.len();
+    // the set held (carried, or dropped and waiting): where it stood, the
+    // top of its card, the place it takes
+    let held: Option<(usize, f32, usize)> = match (&slide.carry, &slide.dropped) {
+        (Some(carry), _) => pointer.map(|at| {
+            let top = at.y - carry.grab;
+            (carry.from, top, target_slot(top, top0, pitch, n))
+        }),
+        (None, Some(drop)) => Some((drop.carry.from, drop.card_top, drop.to)),
+        _ => None,
+    };
+    // where every row should be, and the ease toward it
+    let dt = ui.input(|i| i.stable_dt).min(0.1);
+    let ease = 1.0 - (-dt * 22.0).exp();
+    let mut moving = false;
+    for (i, name) in names.iter().enumerate() {
+        let carried = held.is_some_and(|(from, _, _)| from == i);
+        let target = match held {
+            Some((from, top, _)) if from == i => top - rows[i].0.top(),
+            Some((from, _, to)) => (shifted_slot(i, from, to) as f32 - i as f32) * pitch,
+            None => 0.0,
+        };
+        let offset = slide.offsets.entry(name.clone()).or_insert(0.0);
+        // the card follows the pointer at once, the others glide
+        *offset = if carried { target } else { *offset + (target - *offset) * ease };
+        if (target - *offset).abs() > 0.5 {
+            moving = true;
+        } else if !carried {
+            *offset = target;
+        }
+    }
+    slide.offsets.retain(|name, _| names.contains(name));
+    // released: the set takes its place once the edit is applied
+    if slide.carry.is_some() && !down {
+        if let (Some(carry), Some((from, card_top, to))) = (slide.carry.take(), held)
+            && to != from
+        {
+            context::request(
+                ui.ctx(),
+                context::CtxAction::ContactSet(SetEdit::Reorder {
+                    set: carry.name.clone(),
+                    index: to,
+                }),
+            );
+            slide.dropped = Some(Dropped {
+                carry,
+                to,
+                card_top,
+                order: names.clone(),
+                frames: 0,
+            });
+        }
+        moving = true;
+    }
+    let carrying = slide
+        .carry
+        .as_ref()
+        .map(|carry| carry.from)
+        .or(slide.dropped.as_ref().map(|drop| drop.carry.from));
+    if carrying.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
     for (i, name) in names.iter().enumerate() {
         let Some(set) = c.world.contact_sets.set(name) else { continue };
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click_and_drag());
-        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let (rect, resp) = &rows[i];
+        let at = rect.translate(Vec2::new(0.0, slide.offsets.get(name).copied().unwrap_or(0.0)));
         let on = name == current;
-        let radius = ui.visuals().widgets.inactive.corner_radius;
-        let hovered = resp.hovered() || resp.contains_pointer();
-        if on {
-            ui.painter().rect_filled(rect, radius, p.raised);
+        if carrying == Some(i) {
+            // the card in the hand, lifted over the list
+            let layer = egui::LayerId::new(egui::Order::Tooltip, key.with("carried"));
+            let mut card = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(at));
+            card.set_clip_rect(ui.ctx().content_rect());
+            let radius = ui.visuals().widgets.inactive.corner_radius;
+            card.painter()
+                .rect_filled(at.translate(Vec2::new(0.0, 4.0)).expand(2.0), radius, p.navy.gamma_multiply(0.45));
+            card.painter()
+                .rect_stroke(at, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
+            paint_set_row(&card, c, at, set, Some(p.raised.lerp_to_gamma(p.ink, 0.06)), false, compact);
+            continue;
+        }
+        let hovered = carrying.is_none() && (resp.hovered() || resp.contains_pointer());
+        let face = if on {
+            Some(p.raised)
         } else if hovered {
-            ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.5));
-        }
-        let side = if compact { 26.0 } else { 28.0 };
-        let tile = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + side / 2.0, rect.center().y), Vec2::splat(side));
-        crate::ui::contacts::set_tile(ui, p, tile, set);
-        let cog = Rect::from_center_size(Pos2::new(rect.right() - 15.0, rect.center().y), Vec2::splat(24.0));
-        let m: Members = members(c.world, name);
-        let text_right = if on || hovered { cog.left() - 4.0 } else { rect.right() - 6.0 };
-        if compact {
-            let count = m.ids.len().to_string();
-            let g = ui.painter().layout_no_wrap(count, FontId::proportional(11.5), p.muted);
-            let count_w = g.size().x;
-            widgets::paint_row_text(ui.painter(), g, text_right - count_w, rect.center().y, p.muted);
-            let mut job = egui::text::LayoutJob::single_section(name.clone(), super::super::rows::semibold(ui, 13.0, p.ink));
-            job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - count_w - 8.0 - tile.right() - 9.0).max(0.0));
-            widgets::paint_row_text(
-                ui.painter(),
-                ui.painter().layout_job(job),
-                tile.right() + 9.0,
-                rect.center().y,
-                p.ink,
-            );
+            Some(p.raised.gamma_multiply(0.5))
         } else {
-            two_lines(ui, p, tile.right() + 9.0, text_right, rect.center().y, name, &count_line(&m), 13.0);
-        }
-        if on || hovered {
+            None
+        };
+        let cog_shown = carrying.is_none() && (on || hovered);
+        paint_set_row(ui, c, at, set, face, cog_shown, compact);
+        if cog_shown {
+            let radius = ui.visuals().widgets.inactive.corner_radius;
+            let cog = Rect::from_center_size(Pos2::new(rect.right() - 15.0, rect.center().y), Vec2::splat(24.0));
             let cog_resp = ui
                 .interact(cog, ui.scope_id().with(("people-set-cog", name)), Sense::click())
                 .on_hover_text(aurora_i18n::tr!("people-sets-edit"));
@@ -298,32 +498,16 @@ fn set_rows(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, he
             st.sel.clear();
             st.sets_picker_open = false;
         }
-        // a drag moves the set in the priority order
-        resp.dnd_set_drag_payload(SetDrag(name.clone()));
-        if let Some(from) = dragged.as_ref().and_then(|d| names.iter().position(|n| n == d))
-            && let Some(at) = resp.hover_pos().filter(|_| resp.dnd_hover_payload::<SetDrag>().is_some())
-        {
-            let lower = at.y > rect.center().y;
-            let y = if lower { rect.bottom() + 1.0 } else { rect.top() - 1.0 };
-            ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, p.violet));
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            if resp.dnd_release_payload::<SetDrag>().is_some() {
-                context::request(
-                    ui.ctx(),
-                    context::CtxAction::ContactSet(SetEdit::Reorder {
-                        set: names[from].clone(),
-                        index: drop_index(from, i, lower),
-                    }),
-                );
-            }
-        }
         // residents dropped join it (the people chosen with the one dragged)
-        crate::ui::contacts::drag::set_target_with(&resp, name, &st.sel);
+        crate::ui::contacts::drag::set_target_with(resp, name, &st.sel);
     }
+    if moving || slide.carry.is_some() || slide.dropped.is_some() {
+        ui.ctx().request_repaint();
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, slide));
 }
 
-/// A smart list's row: its icon, its name, its count; "Not in a set"
-/// counts in the accent's badge while friends wait in it.
+/// A smart list's row: its icon, its name, its count.
 fn smart_row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, id: &str, icon: &str) {
     let p = c.p;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), SMART_ROW_H), Sense::click());
@@ -337,29 +521,12 @@ fn smart_row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, i
     let cell = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 14.0, rect.center().y), Vec2::splat(16.0));
     super::super::radar::icon(ui, icon, cell, 15.0, if on { p.ink } else { p.muted });
     let count = members(c.world, id).ids.len();
-    let count_text = aurora_i18n::integer(count as i64);
-    let badge = id == contact_sets::NO_SETS && count > 0;
-    let g = ui.painter().layout_no_wrap(
-        count_text,
-        if badge {
-            super::super::rows::semibold(ui, 11.0, p.on_accent).font_id
-        } else {
-            FontId::proportional(11.5)
-        },
-        if badge { p.on_accent } else { p.muted },
-    );
+    let g = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::integer(count as i64), FontId::proportional(11.5), p.muted);
     let count_w = g.size().x;
     let right = rect.right() - 8.0;
-    if badge {
-        let pill = Rect::from_min_max(
-            Pos2::new(right - count_w - 10.0, rect.center().y - 9.0),
-            Pos2::new(right, rect.center().y + 9.0),
-        );
-        ui.painter().rect_filled(pill, radius, p.violet);
-        widgets::paint_row_text(ui.painter(), g, pill.left() + 5.0, rect.center().y, p.on_accent);
-    } else {
-        widgets::paint_row_text(ui.painter(), g, right - count_w, rect.center().y, p.muted);
-    }
+    widgets::paint_row_text(ui.painter(), g, right - count_w, rect.center().y, p.muted);
     let left = cell.right() + 9.0;
     let mut job = egui::text::LayoutJob::single_section(label(id), egui::TextFormat::simple(FontId::proportional(12.5), p.ink));
     job.wrap = egui::text::TextWrapping::truncate_at_width((right - count_w - 18.0 - left).max(0.0));
@@ -376,15 +543,124 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_set_dropped_goes_before_or_after_the_row_under_it() {
-        // order A B C D, A (0) dragged
-        assert_eq!(drop_index(0, 2, false), 1, "above C: between B and C");
-        assert_eq!(drop_index(0, 2, true), 2, "below C: between C and D");
-        assert_eq!(drop_index(0, 0, true), 0, "below itself: stays");
-        // D (3) dragged up
-        assert_eq!(drop_index(3, 0, false), 0, "above A: first");
-        assert_eq!(drop_index(3, 1, true), 2, "below B");
-        assert_eq!(drop_index(3, 3, false), 3, "above itself: stays");
+    fn a_carried_set_takes_the_place_under_it_and_the_others_make_way() {
+        // four rows, 40 apart from 100
+        assert_eq!(target_slot(100.0, 100.0, 40.0, 4), 0);
+        assert_eq!(target_slot(119.0, 100.0, 40.0, 4), 0, "under half a row: stays");
+        assert_eq!(target_slot(121.0, 100.0, 40.0, 4), 1);
+        assert_eq!(target_slot(10.0, 100.0, 40.0, 4), 0, "above the list: first");
+        assert_eq!(target_slot(900.0, 100.0, 40.0, 4), 3, "below it: last");
+        // A (0) carried to 2: B and C step up, D stays
+        assert_eq!([1, 2, 3].map(|i| shifted_slot(i, 0, 2)), [0, 1, 3]);
+        // D (3) carried to 1: B and C step down, A stays
+        assert_eq!([0, 1, 2].map(|i| shifted_slot(i, 3, 1)), [0, 2, 3]);
+        // the new order once released matches the model's
+        let mut sets = contact_sets::ContactSets::default();
+        for name in ["A", "B", "C", "D"] {
+            sets.add_set(name);
+        }
+        let before = sets.ordered_set_names();
+        sets.move_priority_to("D", 1);
+        let after = sets.ordered_set_names();
+        for (i, name) in before.iter().enumerate() {
+            assert_eq!(after[new_index(i, 3, 1)], *name);
+        }
+    }
+
+    /// Where the set `name` is drawn this frame: its place plus its offset.
+    fn drawn_top(ctx: &egui::Context, key: egui::Id, name: &str, slot_top: f32) -> f32 {
+        let slide: Slide = ctx.data(|d| d.get_temp(key)).unwrap_or_default();
+        slot_top + slide.offsets.get(name).copied().unwrap_or(0.0)
+    }
+
+    /// A drag down the real list, frame by frame: the card follows the
+    /// pointer, and from the frame it is released to the frame the new
+    /// order shows it does not jump (it waits where it was dropped, then
+    /// glides from there).
+    #[test]
+    fn a_dropped_set_stays_where_it_was_let_go_until_it_glides_into_place() {
+        let p = crate::theme::Theme::default().palette();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for name in ["A", "B", "C", "D"] {
+            world.contact_sets.add_set(name);
+        }
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut friends = super::super::super::FriendsSettings::default();
+        let images = std::collections::HashMap::new();
+        let mut actions = Vec::new();
+        let mut st = PeopleUi::default();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let key_cell = std::cell::Cell::new(egui::Id::NULL);
+        let tops_cell = std::cell::RefCell::new(Vec::<f32>::new());
+        let mut frame = |frames: &mut crate::ui::widgets::elide_tests::Frames, world: &crate::world::World, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                ui.set_width(220.0);
+                key_cell.set(ui.make_persistent_id("people-set-slide"));
+                let top = ui.cursor().top();
+                tops_cell.replace((0..4).map(|i| top + i as f32 * (SET_ROW_H + ui.spacing().item_spacing.y)).collect());
+                let mut c = Ctx {
+                    p: &p,
+                    world,
+                    contacts: &mut contacts,
+                    friends: &mut friends,
+                    images: &images,
+                    actions: &mut actions,
+                    embedded_contacts: false,
+                    contact_sheet_on_click: false,
+                };
+                set_rows(ui, &mut c, &mut st, "A", SET_ROW_H);
+            });
+        };
+        let button = |at: Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut frames, &world, Vec::new());
+        let tops = tops_cell.borrow().clone();
+        let key = key_cell.get();
+        let start = Pos2::new(60.0, tops[0] + 20.0);
+        frame(&mut frames, &world, vec![egui::Event::PointerMoved(start), button(start, true)]);
+        // down past C, a little at a time, as a hand does
+        let mut at = start;
+        for _ in 0..12 {
+            at.y += 8.0;
+            frame(&mut frames, &world, vec![egui::Event::PointerMoved(at)]);
+        }
+        let card = drawn_top(&frames.ctx, key, "A", tops[0]);
+        assert!(
+            (card - (at.y - 20.0)).abs() < 1.0,
+            "the card is under the pointer: {card} vs {}",
+            at.y - 20.0
+        );
+        // let go: the edit waits for the app, the card stays put
+        frame(&mut frames, &world, vec![button(at, false)]);
+        assert!((drawn_top(&frames.ctx, key, "A", tops[0]) - card).abs() < 1.0, "jumped on release");
+        frame(&mut frames, &world, Vec::new());
+        assert!(
+            (drawn_top(&frames.ctx, key, "A", tops[0]) - card).abs() < 1.0,
+            "jumped before the new order"
+        );
+        for request in crate::ui::context::take_requests(&frames.ctx) {
+            if let crate::ui::context::CtxAction::ContactSet(edit) = request {
+                crate::ui::contacts::apply_set_edit(&mut world, edit);
+            }
+        }
+        let order = world.contact_sets.ordered_set_names();
+        let slot = order.iter().position(|n| n == "A").expect("A is still a set");
+        assert!(slot >= 2, "A went down past C: {order:?}");
+        // the first frame of the new order: drawn where it was, then gliding
+        frame(&mut frames, &world, Vec::new());
+        let first = drawn_top(&frames.ctx, key, "A", tops[slot]);
+        assert!((first - card).abs() < 4.0, "jumped when the order changed: {first} vs {card}");
+        for _ in 0..60 {
+            frame(&mut frames, &world, Vec::new());
+        }
+        assert!(
+            (drawn_top(&frames.ctx, key, "A", tops[slot]) - tops[slot]).abs() < 0.5,
+            "settled in its place"
+        );
     }
 
     #[test]

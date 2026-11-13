@@ -20417,9 +20417,9 @@ impl ApplicationHandler for App {
                     }
                     use crate::demo::people::SetsScene;
                     match crate::demo::people::sets_scene() {
-                        Some(SetsScene::Editor { tab, badges, far }) => {
+                        Some(SetsScene::Editor { tab, badges, marker }) => {
                             self.contacts_ui.configure_set_at(aurora_i18n::tr!("demo-family"), tab);
-                            self.contacts_ui.demo_editor(badges, far);
+                            self.contacts_ui.demo_editor(badges, marker);
                         }
                         Some(SetsScene::QuickSort) => {
                             self.contacts_ui.set_choice = Some(crate::world::contact_sets::NO_SETS.to_owned());

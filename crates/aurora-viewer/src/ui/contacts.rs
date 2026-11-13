@@ -383,12 +383,12 @@ impl ContactsUi {
         self.editor.tab = tab;
     }
 
-    /// The set editor's badge grid unfolded, its preview from afar (the
+    /// The set editor's badge grid unfolded, or its marker shown (the
     /// demo's captures).
-    pub fn demo_editor(&mut self, badges: bool, far: bool) {
+    pub fn demo_editor(&mut self, badges: bool, marker: bool) {
         self.editor.badges_open = badges;
         self.editor.reveal_badges = badges;
-        self.editor.far = far;
+        self.editor.reveal_marker = marker;
     }
 
     /// The nickname of `ids`, asked (SetAlias); the first one's nickname

@@ -7,9 +7,9 @@
 //! Viewer's combo (all, no set, with a nickname, non-friends) are the smart
 //! lists under them. A window too narrow for two columns, or one with a
 //! sheet open beside, shows the sets in a picker above the members instead.
-//! The members are People's rows, with chips for their other sets, in parts
-//! online, offline and not friends when the set sorts by status
-//! (FSPanelContactSets::updateAvatarListSorting); the people chosen with a
+//! The members are People's rows, with chips for their other sets, online
+//! first when the set sorts by status (FSPanelContactSets::
+//! updateAvatarListSorting); the people chosen with a
 //! click, Ctrl or Shift get a bar of actions (add to a set, move, nickname,
 //! remove). Non-friends stay in their sets. Nicknames are in the sheet too.
 //!
@@ -34,9 +34,8 @@ use uuid::Uuid;
 const SIDEBAR_MIN: f32 = 470.0;
 /// Below this width the pane's buttons drop their labels.
 const LABELS_MIN: f32 = 640.0;
-/// Height of the selection bar, and of a heading over the members.
+/// Height of the selection bar.
 const BAR_H: f32 = 40.0;
-const HEADING_H: f32 = 26.0;
 /// A chip of a member's other set.
 const CHIP_H: f32 = 16.0;
 
@@ -137,12 +136,10 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
     ids.sort_by_cached_key(|id| {
         (
             by_status && !is_online(world, id),
-            by_status && !world.social.is_friend(id),
             crate::natural_order::key(&rows::display_name(world, id)),
         )
     });
     st.sel.retain(|id| ids.contains(id));
-    let parts = parts(p, world, &ids, by_status);
     let bar = !st.sel.is_empty();
     let rows_h = (ui.available_height() - if bar { BAR_H + 10.0 } else { 4.0 }).max(0.0);
     let area = egui::ScrollArea::vertical()
@@ -159,13 +156,8 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
                 };
                 rows::empty(ui, p, text);
             }
-            for (label, dot, part) in &parts {
-                if let Some(label) = label {
-                    heading(ui, p, label, *dot);
-                }
-                for id in part {
-                    row(ui, c, data, st, set, *id, &rows::display_name(world, id), &ids);
-                }
+            for id in &ids {
+                row(ui, c, data, st, set, *id, &rows::display_name(world, id), &ids);
             }
         });
     let drop = ui.interact(area.inner_rect, ui.scope_id().with("contact_set_drop"), Sense::hover());
@@ -174,55 +166,6 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
         ui.add_space(6.0);
         selection_bar(ui, c, st, set, compact);
     }
-}
-
-/// The members in their parts: online, offline, then the residents who
-/// are not friends (their status is not known), each with its heading;
-/// one part without heading when the set sorts by name.
-fn parts(p: &Palette, world: &World, ids: &[Uuid], by_status: bool) -> Vec<(Option<String>, Color32, Vec<Uuid>)> {
-    if !by_status {
-        return vec![(None, Color32::TRANSPARENT, ids.to_vec())];
-    }
-    let (mut online, mut offline, mut others) = (Vec::new(), Vec::new(), Vec::new());
-    for id in ids {
-        if is_online(world, id) {
-            online.push(*id);
-        } else if world.social.is_friend(id) {
-            offline.push(*id);
-        } else {
-            others.push(*id);
-        }
-    }
-    [
-        (aurora_i18n::tr!("people-sets-part-online", count = online.len()), p.success, online),
-        (
-            aurora_i18n::tr!("people-sets-part-offline", count = offline.len()),
-            p.muted_dim,
-            offline,
-        ),
-        (
-            aurora_i18n::tr!("people-sets-part-not-friends", count = others.len()),
-            p.muted_dim,
-            others,
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, _, ids)| !ids.is_empty())
-    .map(|(label, dot, ids)| (Some(label), dot, ids))
-    .collect()
-}
-
-/// "ONLINE · 2" over its part, after a dot of the status's colour.
-fn heading(ui: &mut egui::Ui, p: &Palette, label: &str, dot: Color32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), HEADING_H), Sense::hover());
-    let y = rect.bottom() - 10.0;
-    ui.painter().circle_filled(Pos2::new(rect.left() + 5.5, y), 3.5, dot);
-    let g = ui.painter().layout_no_wrap(
-        label.to_uppercase(),
-        crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, p.muted).font_id,
-        p.muted,
-    );
-    widgets::paint_row_text(ui.painter(), g, rect.left() + 14.0, y, p.muted);
 }
 
 /// A button of the pane: its label when there is room, else its icon
@@ -390,7 +333,8 @@ fn member_names(
 }
 
 /// One member: picture and status, names and chips, and the quick actions
-/// under the pointer.
+/// under the pointer (take out of the set, the menu; moving is the
+/// selection bar's).
 #[allow(clippy::too_many_arguments)]
 fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, set: &str, id: Uuid, name: &str, order: &[Uuid]) {
     let p = c.p;
@@ -417,14 +361,10 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::face(ui, p, rect, selected, hot);
     let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
     let mutable = !ContactSets::is_internal(set);
-    // under the pointer: move, take out, the menu
+    // under the pointer: take out, the menu
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {
         let mut b = Vec::new();
         if mutable {
-            b.push((
-                "arrows-exchange",
-                aurora_i18n::tr!("ui-contacts-move-this-resident-to-another-contact-set"),
-            ));
             b.push((
                 "circle-minus",
                 aurora_i18n::tr!("ui-contacts-remove-this-resident-from-the-selected-contact-set"),
@@ -514,12 +454,6 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, i
     let mut menu_open = false;
     for ((icon, _), resp) in buttons.iter().zip(rows::actions(ui, p, slot, buttons, ("people-set-act", id))) {
         match *icon {
-            "arrows-exchange" => {
-                let ids = targets(st, id);
-                menu_open |= menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    sets_menu(ui, c, set, &ids, false);
-                });
-            }
             "circle-minus" if resp.clicked() => c.contacts.ask_remove_from_set(set, targets(st, id)),
             "dots-filled" => {
                 let kind = if world.social.is_friend(&id) {
@@ -651,27 +585,24 @@ mod tests {
     }
 
     #[test]
-    fn members_come_in_parts_online_offline_then_not_friends() {
+    fn a_sets_counts_are_its_members_and_those_online() {
         let mut world = world();
-        let p = crate::theme::Theme::default().palette();
         let on = friend(&mut world, 1, true);
         let off = friend(&mut world, 2, false);
         let stranger = Uuid::from_u128(3);
         world.contact_sets.add_set("S");
         let social = &world.social;
         world.contact_sets.add_to_set(&[on, off, stranger], "S", |id| social.is_friend(id));
-        let ids = [on, off, stranger];
-        let parts = parts(&p, &world, &ids, true);
-        let kinds: Vec<Vec<Uuid>> = parts.iter().map(|(_, _, ids)| ids.clone()).collect();
-        assert_eq!(kinds, vec![vec![on], vec![off], vec![stranger]]);
-        assert!(parts.iter().all(|(label, _, _)| label.is_some()));
-        // sorted by name: one part, no heading
-        let parts = super::parts(&p, &world, &ids, false);
-        assert_eq!(parts.len(), 1);
-        assert!(parts[0].0.is_none());
-        // the counts of a set
         let m = members(&world, "S");
         assert_eq!((m.ids.len(), m.online), (3, 1));
+        assert_eq!(
+            count_line(&m),
+            format!(
+                "{} · {}",
+                aurora_i18n::tr!("people-sets-people", count = 3),
+                aurora_i18n::tr!("people-sets-online", count = 1)
+            )
+        );
     }
 
     #[test]

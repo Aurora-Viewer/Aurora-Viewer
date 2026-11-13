@@ -71,12 +71,12 @@ pub fn mode() -> Option<Mode> {
 /// What a `sets-…` scenario opens over People's contact sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetsScene {
-    /// The Family set's editor at a tab, its badges unfolded, its preview
-    /// from afar.
+    /// The Family set's editor at a tab, its badges unfolded, scrolled to
+    /// its marker.
     Editor {
         tab: crate::ui::contacts::EditorTab,
         badges: bool,
-        far: bool,
+        marker: bool,
     },
     QuickSort,
     Options,
@@ -87,14 +87,24 @@ pub enum SetsScene {
 pub fn sets_scene() -> Option<SetsScene> {
     use crate::ui::contacts::EditorTab;
     let value = std::env::var("AURORA_DEMO_PEOPLE").ok()?;
-    let editor = |tab, badges, far| Some(SetsScene::Editor { tab, badges, far });
+    let editor = |tab, badges| {
+        Some(SetsScene::Editor {
+            tab,
+            badges,
+            marker: false,
+        })
+    };
     match value.split(':').next()?.trim() {
-        "sets-editor" => editor(EditorTab::Look, false, false),
-        "sets-editor-badges" => editor(EditorTab::Look, true, false),
-        "sets-editor-far" => editor(EditorTab::Look, false, true),
-        "sets-editor-behaviour" => editor(EditorTab::Behaviour, false, false),
-        "sets-editor-replies" => editor(EditorTab::Replies, false, false),
-        "sets-editor-members" => editor(EditorTab::Members, false, false),
+        "sets-editor" => editor(EditorTab::Look, false),
+        "sets-editor-badges" => editor(EditorTab::Look, true),
+        "sets-editor-marker" => Some(SetsScene::Editor {
+            tab: EditorTab::Look,
+            badges: false,
+            marker: true,
+        }),
+        "sets-editor-behaviour" => editor(EditorTab::Behaviour, false),
+        "sets-editor-replies" => editor(EditorTab::Replies, false),
+        "sets-editor-members" => editor(EditorTab::Members, false),
         "sets-sort" => Some(SetsScene::QuickSort),
         "sets-options" => Some(SetsScene::Options),
         "sets-select" => Some(SetsScene::Select),

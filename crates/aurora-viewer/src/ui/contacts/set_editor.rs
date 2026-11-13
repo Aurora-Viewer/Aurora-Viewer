@@ -1,8 +1,8 @@
 //! The editor of a contact set (FSFloaterContactSetConfiguration,
 //! fsfloatercontactsetconfiguration.cpp, floater_fs_contact_set_
 //! configuration.xml, originally LGPL 2.1), in Aurora's look: a live
-//! preview of the set's look on the left (its plate near and its marker
-//! from afar, a chat line, a list row, the minimap's dot); on the right
+//! preview of the set's look on the left (its plate, a chat line, a list
+//! row, and its marker from afar while it has one); on the right
 //! the set's tile, its name edited in place and its counts, then four tabs:
 //! Look (colour, where it shows, badge, marker, plate size), Behaviour
 //! (sorting, notices, a chat section of its own, priority), Auto-replies
@@ -22,14 +22,14 @@ use crate::world::contact_sets::{ContactSet, MarkerScope, MarkerShape, PlateSize
 use egui::{Pos2, Rect};
 
 /// The window's size when it first opens, and the preview's column.
-const SIZE: Vec2 = Vec2::new(860.0, 660.0);
-const PREVIEW_MIN: f32 = 220.0;
-const PREVIEW_MAX: f32 = 280.0;
+const SIZE: Vec2 = Vec2::new(980.0, 720.0);
+const PREVIEW_MIN: f32 = 240.0;
+const PREVIEW_MAX: f32 = 300.0;
 /// The set's tile beside its name, and the tab bar.
 const TILE: f32 = 52.0;
 const TABS_H: f32 = 40.0;
 const FOOTER_H: f32 = 52.0;
-/// The round shoulders of the preview's figure, far and near (a drawing,
+/// The round shoulders of the preview's figures, far and near (a drawing,
 /// not chrome).
 const FAR_SHOULDERS: f32 = 8.0;
 const NEAR_SHOULDERS: f32 = 22.0;
@@ -50,10 +50,10 @@ pub(crate) struct EditorUi {
     pub tab: EditorTab,
     /// The badges' grid unfolded.
     pub badges_open: bool,
-    /// The preview from afar (the marker) rather than near (the plate).
-    pub far: bool,
-    /// The badge's part scrolled into view once (the demo's captures).
+    /// The badge's or the marker's part scrolled into view once (the
+    /// demo's captures).
     pub reveal_badges: bool,
+    pub reveal_marker: bool,
 }
 
 /// Where AURORA_DEMO_SET_NOTICES takes the editor: its auto-replies, or
@@ -124,7 +124,7 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
                 .max_rect(side.shrink(18.0))
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
-        preview(&mut side_ui, p, &cfg, &mut st.editor.far);
+        preview(&mut side_ui, p, &cfg);
         let mut main_ui = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("set-editor-main")
@@ -419,12 +419,7 @@ fn look(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, 
                 world.contact_sets.set_color(set, preset_color(rgb));
             }
         }
-        ui.scope(|ui| {
-            ui.spacing_mut().interact_size = Vec2::splat(24.0);
-            if let Some(c) = set_color_button(ui, p, "set_color", cfg.color) {
-                world.contact_sets.set_color(set, c);
-            }
-        });
+        custom_colour(ui, p, world, set, cfg);
     });
     ui.add_space(28.0);
     // where it shows
@@ -449,33 +444,13 @@ fn look(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, 
     ui.add_space(28.0);
     // marker
     section(ui, p, aurora_i18n::tr!("contact-visual-marker"));
-    labelled(ui, p, aurora_i18n::tr!("set-editor-marker-show"), |ui| {
-        let options = [
-            (aurora_i18n::tr!("contact-visual-marker-off"), false),
-            (aurora_i18n::tr!("set-editor-marker-parcel"), false),
-            (aurora_i18n::tr!("set-editor-marker-region"), false),
-        ];
-        let mut i = match v.marker {
-            MarkerScope::Off => 0,
-            MarkerScope::Parcel => 1,
-            MarkerScope::Region => 2,
-        };
-        if widgets::segmented(ui, p, &mut i, &options) {
-            v.marker = [MarkerScope::Off, MarkerScope::Parcel, MarkerScope::Region][i];
-        }
-    });
+    if std::mem::take(&mut st.editor.reveal_marker) {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
+    marker_scope(ui, p, &mut v);
     if v.marker != MarkerScope::Off {
-        ui.add_space(12.0);
-        labelled(ui, p, aurora_i18n::tr!("set-editor-marker-shape"), |ui| {
-            let options = [
-                (aurora_i18n::tr!("contact-visual-marker-shape-circle"), false),
-                (aurora_i18n::tr!("contact-visual-marker-shape-diamond"), false),
-            ];
-            let mut i = usize::from(v.marker_shape == MarkerShape::Diamond);
-            if widgets::segmented(ui, p, &mut i, &options) {
-                v.marker_shape = if i == 1 { MarkerShape::Diamond } else { MarkerShape::Circle };
-            }
-        });
+        ui.add_space(16.0);
+        marker_shapes(ui, p, &mut v, cfg);
         ui.add_space(12.0);
         labelled(ui, p, aurora_i18n::tr!("set-editor-marker-fade"), |ui| {
             let mut fades = v.marker_fade.is_some();
@@ -649,34 +624,243 @@ fn badge(ui: &mut egui::Ui, p: &Palette, st: &mut ContactsUi, v: &mut Visuals, c
     }
     if st.editor.badges_open {
         ui.add_space(8.0);
-        egui::Frame::new()
-            .fill(p.bar)
-            .corner_radius(ui.visuals().window_corner_radius)
-            .inner_margin(egui::Margin::same(10))
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = Vec2::splat(4.0);
-                let per_row = 10;
-                let picks: Vec<Option<usize>> = std::iter::once(None).chain((0..ICONS.len()).map(Some)).collect();
-                for row in picks.chunks(per_row) {
-                    ui.horizontal(|ui| {
-                        for pick in row {
-                            let chosen = match pick {
-                                None => widgets::icon_toggle(ui, p, "ban", aurora_i18n::tr!("set-editor-no-badge"), v.icon.is_none()),
-                                Some(i) => widgets::icon_toggle(ui, p, ICONS[*i], aurora_i18n::text(ICON_LABELS[*i]), v.icon == Some(*i)),
-                            };
-                            if chosen {
-                                v.icon = *pick;
-                                st.editor.badges_open = false;
-                            }
-                        }
-                    });
-                }
-            });
+        if let Some(pick) = badge_grid(ui, p, v.icon, cfg) {
+            v.icon = pick;
+            st.editor.badges_open = false;
+        }
     }
     if v.icon.is_some() {
         ui.add_space(10.0);
         widgets::switch_labeled(ui, p, &mut v.replace_friend, aurora_i18n::tr!("set-editor-replace-friend"));
     }
+}
+
+/// The custom colour: a dashed circle with a plus, ringed while the set's
+/// colour is none of the presets, that opens the colour picker under it.
+fn custom_colour(ui: &mut egui::Ui, p: &Palette, world: &mut World, set: &str, cfg: &ContactSet) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+    let custom = !PRESETS.iter().any(|(_, rgb)| is_preset(cfg.color, *rgb));
+    let ink = if resp.hovered() { p.ink } else { p.muted };
+    let points: Vec<Pos2> = (0..=48)
+        .map(|i| {
+            let a = i as f32 / 48.0 * std::f32::consts::TAU;
+            rect.center() + Vec2::new(a.cos(), a.sin()) * 11.0
+        })
+        .collect();
+    ui.painter()
+        .extend(egui::Shape::dashed_line(&points, egui::Stroke::new(1.5, ink), 3.0, 2.6));
+    if let Some(t) = crate::ui::icons::global("plus") {
+        let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        ui.painter()
+            .image(t.id(), Rect::from_center_size(rect.center(), Vec2::splat(12.0)), uv, ink);
+    }
+    if custom {
+        ui.painter().circle_stroke(rect.center(), 15.0, egui::Stroke::new(2.0, p.ink));
+    }
+    let resp = resp.on_hover_text(aurora_i18n::tr!("set-editor-colour-custom"));
+    let id = ui.make_persistent_id("set-editor-custom-colour");
+    let [r, g, b, a] = cfg.color;
+    let mut srgba = Color32::from(egui::Rgba::from_rgba_unmultiplied(r, g, b, a)).to_srgba_unmultiplied();
+    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        let mut state = ui
+            .ctx()
+            .data(|d| d.get_temp::<widgets::color::ColorPickState>(id))
+            .unwrap_or_else(|| widgets::color::ColorPickState::new(id, srgba));
+        if widgets::color::color_panel(ui, p, &mut state, &mut srgba, false) {
+            let [r, g, b, a] = srgba;
+            let c = egui::Rgba::from(Color32::from_rgba_unmultiplied(r, g, b, a)).to_rgba_unmultiplied();
+            world.contact_sets.set_color(set, c);
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(id, state));
+    });
+}
+
+/// Where the marker shows, as three cards: off, on my parcel, in my
+/// region; the one chosen lit in the accent.
+fn marker_scope(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals) {
+    let choices = [
+        (
+            MarkerScope::Off,
+            "eye-off",
+            aurora_i18n::tr!("contact-visual-marker-off"),
+            aurora_i18n::tr!("set-editor-marker-off-hint"),
+        ),
+        (
+            MarkerScope::Parcel,
+            "home-filled",
+            aurora_i18n::tr!("set-editor-marker-parcel"),
+            aurora_i18n::tr!("set-editor-marker-parcel-hint"),
+        ),
+        (
+            MarkerScope::Region,
+            "world-filled",
+            aurora_i18n::tr!("set-editor-marker-region"),
+            aurora_i18n::tr!("set-editor-marker-region-hint"),
+        ),
+    ];
+    let gap = 8.0;
+    let w = ((ui.available_width() - gap * 2.0) / 3.0).floor();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        for (scope, icon, title, hint) in choices {
+            let on = v.marker == scope;
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 92.0), Sense::click());
+            let radius = ui.visuals().widgets.inactive.corner_radius;
+            let fill = if on {
+                p.violet.gamma_multiply(0.16)
+            } else if resp.hovered() {
+                p.field.lerp_to_gamma(p.raised, 0.5)
+            } else {
+                p.field
+            };
+            ui.painter().rect_filled(rect, radius, fill);
+            if on {
+                ui.painter()
+                    .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
+            }
+            // the icon in its disc, the name, the hint, one under the other
+            let disc = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 12.0 + 16.0), Vec2::splat(32.0));
+            ui.painter()
+                .circle_filled(disc.center(), 16.0, if on { p.violet } else { p.raised });
+            if let Some(t) = crate::ui::icons::global(icon) {
+                let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                let tint = if on { p.on_accent } else { p.muted };
+                ui.painter()
+                    .image(t.id(), Rect::from_center_size(disc.center(), Vec2::splat(16.0)), uv, tint);
+            }
+            let width = (rect.width() - 12.0).max(0.0);
+            let line = |text: &str, format: egui::TextFormat| {
+                let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+                ui.painter().layout_job(job)
+            };
+            let title_g = line(
+                title,
+                crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 12.5, p.ink),
+            );
+            let hint_g = line(hint, egui::TextFormat::simple(egui::FontId::proportional(11.0), p.muted));
+            let (tw, hw) = (title_g.size().x, hint_g.size().x);
+            widgets::paint_row_text(ui.painter(), title_g, rect.center().x - tw / 2.0, disc.bottom() + 14.0, p.ink);
+            widgets::paint_row_text(ui.painter(), hint_g, rect.center().x - hw / 2.0, disc.bottom() + 30.0, p.muted);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, title));
+            if resp.on_hover_text(hint).clicked() {
+                v.marker = scope;
+            }
+        }
+    });
+}
+
+/// The marker's shape, chosen from the two markers themselves, drawn as
+/// they will show in the world.
+fn marker_shapes(ui: &mut egui::Ui, p: &Palette, v: &mut Visuals, cfg: &ContactSet) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let (label, _) = ui.allocate_exact_size(Vec2::new(130.0, 72.0), Sense::hover());
+        let g = ui.painter().layout_no_wrap(
+            aurora_i18n::tr!("set-editor-marker-shape").to_owned(),
+            egui::FontId::proportional(12.5),
+            p.ink,
+        );
+        widgets::paint_row_text(ui.painter(), g, label.left(), label.center().y, p.ink);
+        for (shape, name) in [
+            (MarkerShape::Circle, aurora_i18n::tr!("contact-visual-marker-shape-circle")),
+            (MarkerShape::Diamond, aurora_i18n::tr!("contact-visual-marker-shape-diamond")),
+        ] {
+            let on = v.marker_shape == shape;
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(92.0, 72.0), Sense::click());
+            let radius = ui.visuals().widgets.inactive.corner_radius;
+            let fill = if on {
+                p.violet.gamma_multiply(0.16)
+            } else if resp.hovered() {
+                p.field.lerp_to_gamma(p.raised, 0.5)
+            } else {
+                p.field
+            };
+            ui.painter().rect_filled(rect, radius, fill);
+            if on {
+                ui.painter()
+                    .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
+            }
+            // the set's marker in that shape, as the world draws it
+            let mut look = cfg.clone();
+            look.visuals = v.clone();
+            look.visuals.marker_shape = shape;
+            if let Some(marker) = &sample(&look).marker {
+                crate::ui::contact_markers::paint_preview_at(ui.painter(), p, Pos2::new(rect.center().x, rect.top() + 28.0), marker);
+            }
+            let g = ui
+                .painter()
+                .layout_no_wrap(name.to_owned(), egui::FontId::proportional(11.5), if on { p.ink } else { p.muted });
+            let gw = g.size().x;
+            widgets::paint_row_text(ui.painter(), g, rect.center().x - gw / 2.0, rect.bottom() - 12.0, p.ink);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, name));
+            if resp.clicked() {
+                v.marker_shape = shape;
+            }
+        }
+    });
+}
+
+/// The badges, as they show on a plate: a disc each, in the set's colour,
+/// the one chosen ringed in it; "None" first. Returns the badge clicked.
+fn badge_grid(ui: &mut egui::Ui, p: &Palette, current: Option<usize>, cfg: &ContactSet) -> Option<Option<usize>> {
+    let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(cfg.color));
+    let mut picked = None;
+    egui::Frame::new()
+        .fill(p.bar)
+        .stroke(egui::Stroke::new(1.0, p.raised))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(aurora_i18n::tr!("set-editor-badge-choose")).size(12.0).color(p.muted));
+            ui.add_space(10.0);
+            const CELL: f32 = 36.0;
+            const GAP: f32 = 8.0;
+            let per_row = (((ui.available_width() + GAP) / (CELL + GAP)).floor() as usize).max(1);
+            let picks: Vec<Option<usize>> = std::iter::once(None).chain((0..ICONS.len()).map(Some)).collect();
+            for row in picks.chunks(per_row) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = GAP;
+                    for pick in row {
+                        let on = *pick == current;
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(CELL), Sense::click());
+                        let hot = resp.hovered();
+                        let fill = if on {
+                            color.gamma_multiply(0.18)
+                        } else if hot {
+                            p.raised
+                        } else {
+                            p.field
+                        };
+                        let r = if hot && !on { CELL / 2.0 } else { CELL / 2.0 - 1.0 };
+                        ui.painter().circle_filled(rect.center(), r, fill);
+                        if on {
+                            ui.painter().circle_stroke(rect.center(), r, egui::Stroke::new(1.5, color));
+                        }
+                        let (icon, tint, tip) = match pick {
+                            None => ("ban", p.muted, aurora_i18n::tr!("set-editor-no-badge")),
+                            Some(i) => (
+                                ICONS[*i],
+                                if on || hot { color } else { color.gamma_multiply(0.7) },
+                                aurora_i18n::text(ICON_LABELS[*i]),
+                            ),
+                        };
+                        if let Some(t) = crate::ui::icons::global(icon) {
+                            let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                            ui.painter()
+                                .image(t.id(), Rect::from_center_size(rect.center(), Vec2::splat(17.0)), uv, tint);
+                        }
+                        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, tip));
+                        if resp.on_hover_text(tip).clicked() {
+                            picked = Some(*pick);
+                        }
+                    }
+                });
+                ui.add_space(GAP);
+            }
+        });
+    picked
 }
 
 /// A card of a tab: a title, its hint, and a control on the right.
@@ -964,91 +1148,56 @@ fn sample(cfg: &ContactSet) -> std::sync::Arc<Appearance> {
     sample.appearance(&id).clone()
 }
 
-/// What the preview's caption says, from near or afar.
-fn preview_caption(v: &Visuals, far: bool) -> &'static str {
-    match (far, v.marker, v.icon.is_some(), v.marker_fade.is_some()) {
-        (false, MarkerScope::Off, _, _) => aurora_i18n::text("set-editor-preview-near-no-marker"),
-        (false, _, true, _) => aurora_i18n::text("set-editor-preview-near-lands"),
-        (false, _, false, true) => aurora_i18n::text("set-editor-preview-near-fades"),
-        (false, _, false, false) => aurora_i18n::text("set-editor-preview-near-stays"),
-        (true, MarkerScope::Off, _, _) => aurora_i18n::text("set-editor-preview-far-no-marker"),
-        (true, MarkerScope::Parcel, _, _) => aurora_i18n::text("set-editor-preview-far-parcel"),
-        (true, MarkerScope::Region, _, _) => aurora_i18n::text("set-editor-preview-far-region"),
-    }
+/// What the marker's preview says when the set has one: where it shows,
+/// and what it does up close.
+fn marker_caption(v: &Visuals) -> Option<[&'static str; 2]> {
+    let scope = match v.marker {
+        MarkerScope::Off => return None,
+        MarkerScope::Parcel => aurora_i18n::text("set-editor-preview-far-parcel"),
+        MarkerScope::Region => aurora_i18n::text("set-editor-preview-far-region"),
+    };
+    let near = match (v.icon.is_some(), v.marker_fade.is_some()) {
+        (true, _) => aurora_i18n::text("set-editor-preview-near-lands"),
+        (false, true) => aurora_i18n::text("set-editor-preview-near-fades"),
+        (false, false) => aurora_i18n::text("set-editor-preview-near-stays"),
+    };
+    Some([scope, near])
 }
 
-/// The live preview: near (the plate) or afar (the marker), then a chat
-/// line, a list row and the minimap's dot in the set's colours.
-fn preview(ui: &mut egui::Ui, p: &Palette, cfg: &ContactSet, far: &mut bool) {
+/// The live preview: the plate over a resident, a chat line, a list row,
+/// and the marker over a resident far away while the set has one.
+fn preview(ui: &mut egui::Ui, p: &Palette, cfg: &ContactSet) {
     ui.spacing_mut().item_spacing.y = 0.0;
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("set-editor-preview").to_uppercase())
-                .size(10.5)
-                .color(p.muted)
-                .family(crate::ui::fonts::semibold(ui.ctx())),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut i = usize::from(*far);
-            let options = [
-                (aurora_i18n::tr!("set-editor-near"), false),
-                (aurora_i18n::tr!("set-editor-far"), false),
-            ];
-            if widgets::segmented(ui, p, &mut i, &options) {
-                *far = i == 1;
-            }
-        });
-    });
+    ui.label(
+        RichText::new(aurora_i18n::tr!("set-editor-preview").to_uppercase())
+            .size(10.5)
+            .color(p.muted)
+            .family(crate::ui::fonts::semibold(ui.ctx())),
+    );
     ui.add_space(12.0);
     let appearance = sample(cfg);
     let radius = ui.visuals().widgets.inactive.corner_radius;
-    let (scene, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 200.0), Sense::hover());
-    ui.painter().rect_filled(scene, radius, p.field);
-    let floor = Rect::from_min_max(Pos2::new(scene.left(), scene.bottom() - 46.0), scene.max);
-    ui.painter().rect_filled(floor, radius, p.ink.gamma_multiply(0.02));
     let body = p.raised.lerp_to_gamma(p.field, 0.2);
-    if *far {
-        // a resident far away: small, the marker over them
-        let base = Pos2::new(scene.center().x, scene.bottom() - 34.0);
-        ui.painter().circle_filled(base - Vec2::new(0.0, 26.0), 6.0, body);
-        ui.painter().rect_filled(
-            Rect::from_min_max(base - Vec2::new(15.0, 18.0), base + Vec2::new(15.0, 0.0)),
-            FAR_SHOULDERS,
-            body,
-        );
-        if let Some(marker) = &appearance.marker {
-            crate::ui::contact_markers::paint_preview_at(ui.painter(), p, base - Vec2::new(0.0, 66.0), marker);
-        }
-    } else {
-        // a resident near: shoulders and head, their plate over them
-        let base = Pos2::new(scene.center().x, scene.bottom());
-        ui.painter().rect_filled(
-            Rect::from_min_max(base - Vec2::new(40.0, 44.0), base + Vec2::new(40.0, 0.0)),
-            NEAR_SHOULDERS,
-            body,
-        );
-        ui.painter().circle_filled(base - Vec2::new(0.0, 64.0), 16.0, body);
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(
-                    Pos2::new(scene.left(), scene.top() + 26.0),
-                    Pos2::new(scene.right(), scene.bottom() - 82.0),
-                ))
-                .layout(egui::Layout::top_down(egui::Align::Center)),
-        );
-        crate::ui::nameplate::preview(&mut child, p, appearance.clone());
-    }
-    let caption = preview_caption(&cfg.visuals, *far);
-    let mut caption_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(Rect::from_min_size(
-                scene.min + Vec2::new(10.0, 8.0),
-                Vec2::new(scene.width() - 20.0, 40.0),
-            ))
-            .layout(egui::Layout::top_down(egui::Align::Min)),
+    // a resident near: shoulders and head, their plate over them
+    let (scene, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 180.0), Sense::hover());
+    ui.painter().rect_filled(scene, radius, p.field);
+    let base = Pos2::new(scene.center().x, scene.bottom());
+    ui.painter().rect_filled(
+        Rect::from_min_max(base - Vec2::new(40.0, 44.0), base + Vec2::new(40.0, 0.0)),
+        NEAR_SHOULDERS,
+        body,
     );
-    caption_ui.add(egui::Label::new(RichText::new(caption).size(11.0).color(p.muted)).wrap());
-    ui.add_space(14.0);
+    ui.painter().circle_filled(base - Vec2::new(0.0, 64.0), 16.0, body);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_min_max(
+                Pos2::new(scene.left(), scene.top() + 10.0),
+                Pos2::new(scene.right(), scene.bottom() - 82.0),
+            ))
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+    );
+    crate::ui::nameplate::preview(&mut child, p, appearance.clone());
+    ui.add_space(10.0);
     let shown =
         |c: Option<[f32; 4]>, fallback: Color32| c.map_or(fallback, |c| crate::interface_colors::on_panel(crate::ui::colors::set_color(c)));
     let sample_name = aurora_i18n::tr!("contact-visual-sample-name");
@@ -1076,32 +1225,51 @@ fn preview(ui: &mut egui::Ui, p: &Palette, cfg: &ContactSet, far: &mut bool) {
             ui.add(egui::Label::new(job).wrap());
         });
     ui.add_space(10.0);
-    // a list row and the minimap's dot
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        let w = ui.available_width() - 64.0 - 10.0;
-        let (row, _) = ui.allocate_exact_size(Vec2::new(w, 44.0), Sense::hover());
-        ui.painter().rect_filled(row, radius, p.field);
-        let disc = Rect::from_center_size(Pos2::new(row.left() + 8.0 + 13.0, row.center().y), Vec2::splat(26.0));
-        widgets::avatar_disc(ui, p, disc, None, sample_name, false);
-        let mut job = egui::text::LayoutJob::single_section(
-            sample_name.to_owned(),
-            crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 12.5, shown(appearance.ui_name, p.ink)),
-        );
-        job.wrap = egui::text::TextWrapping::truncate_at_width((row.right() - disc.right() - 18.0).max(0.0));
-        widgets::paint_row_text(
-            ui.painter(),
-            ui.painter().layout_job(job),
-            disc.right() + 8.0,
-            row.center().y,
-            p.ink,
-        );
-        let (map, _) = ui.allocate_exact_size(Vec2::new(64.0, 44.0), Sense::hover());
-        ui.painter().rect_filled(map, radius, p.field);
-        ui.painter().circle_filled(map.center() - Vec2::new(10.0, 6.0), 2.5, p.ink);
-        ui.painter()
-            .circle_filled(map.center() + Vec2::new(10.0, 4.0), 3.5, shown(appearance.minimap, p.muted));
-    });
+    // a list row
+    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
+    ui.painter().rect_filled(row, radius, p.field);
+    let disc = Rect::from_center_size(Pos2::new(row.left() + 8.0 + 13.0, row.center().y), Vec2::splat(26.0));
+    widgets::avatar_disc(ui, p, disc, None, sample_name, false);
+    let mut job = egui::text::LayoutJob::single_section(
+        sample_name.to_owned(),
+        crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 12.5, shown(appearance.ui_name, p.ink)),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width((row.right() - disc.right() - 18.0).max(0.0));
+    widgets::paint_row_text(
+        ui.painter(),
+        ui.painter().layout_job(job),
+        disc.right() + 8.0,
+        row.center().y,
+        p.ink,
+    );
+    // the marker, over a resident far away, while the set has one
+    if let (Some(marker), Some([scope, near])) = (&appearance.marker, marker_caption(&cfg.visuals)) {
+        ui.add_space(10.0);
+        egui::Frame::new()
+            .fill(p.field)
+            .corner_radius(radius)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    let (cell, _) = ui.allocate_exact_size(Vec2::new(54.0, 84.0), Sense::hover());
+                    let base = Pos2::new(cell.center().x, cell.bottom() - 2.0);
+                    ui.painter().circle_filled(base - Vec2::new(0.0, 26.0), 6.0, body);
+                    ui.painter().rect_filled(
+                        Rect::from_min_max(base - Vec2::new(15.0, 18.0), base + Vec2::new(15.0, 0.0)),
+                        FAR_SHOULDERS,
+                        body,
+                    );
+                    crate::ui::contact_markers::paint_preview_at(ui.painter(), p, base - Vec2::new(0.0, 60.0), marker);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.add(egui::Label::new(RichText::new(scope).size(11.5).color(p.ink)).wrap());
+                        ui.add(egui::Label::new(RichText::new(near).size(11.0).color(p.muted)).wrap());
+                    });
+                });
+            });
+    }
     ui.add_space(14.0);
     ui.label(
         RichText::new(aurora_i18n::tr!("set-editor-applies-to", count = cfg.friends.len()))
@@ -1148,20 +1316,31 @@ mod tests {
     }
 
     #[test]
-    fn the_caption_says_what_the_marker_does_near_and_far() {
+    fn the_marker_preview_shows_only_with_a_marker_and_says_what_it_does() {
         let mut v = Visuals::default();
-        assert_eq!(preview_caption(&v, false), aurora_i18n::text("set-editor-preview-near-no-marker"));
-        assert_eq!(preview_caption(&v, true), aurora_i18n::text("set-editor-preview-far-no-marker"));
+        assert_eq!(marker_caption(&v), None, "no marker: no preview");
         v.marker = MarkerScope::Region;
-        assert_eq!(preview_caption(&v, true), aurora_i18n::text("set-editor-preview-far-region"));
-        assert_eq!(preview_caption(&v, false), aurora_i18n::text("set-editor-preview-near-stays"));
+        let region = aurora_i18n::text("set-editor-preview-far-region");
+        assert_eq!(
+            marker_caption(&v),
+            Some([region, aurora_i18n::text("set-editor-preview-near-stays")])
+        );
         v.marker_fade = Some(10);
-        assert_eq!(preview_caption(&v, false), aurora_i18n::text("set-editor-preview-near-fades"));
+        assert_eq!(
+            marker_caption(&v),
+            Some([region, aurora_i18n::text("set-editor-preview-near-fades")])
+        );
         // with a badge it lands on it, fading or not
         v.icon = Some(0);
-        assert_eq!(preview_caption(&v, false), aurora_i18n::text("set-editor-preview-near-lands"));
+        assert_eq!(
+            marker_caption(&v),
+            Some([region, aurora_i18n::text("set-editor-preview-near-lands")])
+        );
         v.marker = MarkerScope::Parcel;
-        assert_eq!(preview_caption(&v, true), aurora_i18n::text("set-editor-preview-far-parcel"));
+        assert_eq!(
+            marker_caption(&v).map(|c| c[0]),
+            Some(aurora_i18n::text("set-editor-preview-far-parcel"))
+        );
     }
 
     #[test]
