@@ -341,10 +341,12 @@ impl Override {
     }
 }
 
-/// `AURORA_CONTACT_VARIANT`: a diagnostic of the GPU hangs (device lost)
-/// some AMD RX 9070 XT cards had as soon as the pass ran, each variant
-/// without one construct of the window's shader (`variant_source`), to find
-/// the one the driver does not take. The photo's pipelines stay Bend's.
+/// The window's shader, without one of Bend's constructs when it is not
+/// `Bend` (`variant_source`). `AURORA_CONTACT_VARIANT` chooses one, as a
+/// diagnostic of the GPU hangs (device lost) of the AMD RX 9000 cards; with
+/// the variable unset, those cards get `NoShared` ([`Variant::for_card`]).
+/// A photo's pipeline is `NoShared` too when the window's is, Bend's
+/// otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Variant {
     /// The shader as it is.
@@ -374,16 +376,95 @@ impl Variant {
         }
     }
 
-    pub(crate) fn from_env() -> Self {
-        static VARIANT: std::sync::OnceLock<Variant> = std::sync::OnceLock::new();
-        *VARIANT.get_or_init(|| {
-            let v = Variant::parse(std::env::var("AURORA_CONTACT_VARIANT").ok().as_deref());
-            if v != Variant::Bend {
-                log::info!("contact shadows: diagnostic variant {v:?} (AURORA_CONTACT_VARIANT)");
-            }
-            v
-        })
+    /// The variant for the card `info` names: `AURORA_CONTACT_VARIANT` when
+    /// it is set (`bend` keeps Bend's on an RX 9000, to compare), else
+    /// [`Variant::for_card`].
+    pub(crate) fn for_adapter(info: &wgpu::AdapterInfo) -> Self {
+        let env = std::env::var("AURORA_CONTACT_VARIANT").ok();
+        let v = Variant::choose(env.as_deref(), info.vendor, &info.name);
+        if env.as_deref().is_some_and(|e| !e.trim().is_empty()) {
+            log::info!("contact shadows: diagnostic variant {v:?} (AURORA_CONTACT_VARIANT)");
+        } else if v == Variant::NoShared {
+            log::info!(
+                "contact shadows: without workgroup memory on {} (AMD RX 9000: Bend's shader hangs the card, #2238)",
+                info.name
+            );
+        }
+        v
     }
+
+    fn choose(env: Option<&str>, vendor: u32, name: &str) -> Self {
+        match env.map(str::trim).filter(|e| !e.is_empty()) {
+            Some(e) => Variant::parse(Some(e)),
+            None => Variant::for_card(vendor, name),
+        }
+    }
+
+    /// `NoShared` on the AMD RX 9000 cards (RDNA 4), Bend's elsewhere. On
+    /// an RX 9070 XT (Windows, AMD's driver 26.10), Bend's shader hung the
+    /// card within seconds of the pass running, and so did `Short` and
+    /// `NoEarlyOut`; `NoShared` ran for half an hour with a teleport into a
+    /// busy region (2026-11-10, #2238). The same mask, about 0.5 ms more per
+    /// frame (0.41 -> 0.94 ms at 2560 x 1385 on an RTX 4090): only those
+    /// cards pay it. The other AMD cards' GPU losses happened with the
+    /// contact shadows off, so they keep Bend's.
+    pub(crate) fn for_card(vendor: u32, name: &str) -> Self {
+        if vendor == AMD && is_rdna4(name) {
+            Variant::NoShared
+        } else {
+            Variant::Bend
+        }
+    }
+}
+
+/// PCI vendor id of AMD (wgpu::AdapterInfo::vendor).
+const AMD: u32 = 0x1002;
+
+/// Whether an AMD card's name is one of the RDNA 4 family: the RX 9000
+/// series ("AMD Radeon RX 9070 XT", "RX 9060"), the Radeon AI PRO R9000
+/// ones ("AMD Radeon AI PRO R9700"), and any that Mesa names with its GFX12
+/// target ("(RADV GFX1201)"). The older R9 cards ("R9 290") are not.
+fn is_rdna4(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    let series = |prefix: &str| {
+        name.match_indices(prefix).any(|(at, _)| {
+            let digits = &name.as_bytes()[at + prefix.len()..];
+            digits.len() >= 3 && digits[..3].iter().all(u8::is_ascii_digit) && digits.get(3).is_none_or(|c| !c.is_ascii_digit())
+        })
+    };
+    name.contains("GFX12") || series("RX 9") || series("PRO R9")
+}
+
+/// Bend's shader `src` (line feeds only) without its workgroup memory and
+/// its barrier: each thread recomputes from the depth texture what the
+/// others would have shared (contact_shadows_no_shared.wgsl). Works on the
+/// window's shader and on a photo's ([`shader_source`]), whatever its
+/// samples. Panics when a construct is not found, so a change to the
+/// shader cannot leave the rewrite silently undone (the tests build it).
+fn without_shared(mut src: String) -> String {
+    cut(&mut src, "var<workgroup> depth_data", "var<workgroup> any_live: atomic<u32>;\n", "");
+    cut(
+        &mut src,
+        "    // ---- early out of a wavefront",
+        "    if (skip_pixel) {\n        return;\n    }\n",
+        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
+    );
+    let reads = src.matches("depth_data[sample_index + i]").count();
+    assert_eq!(reads, 3, "contact shadows variant: the shared reads");
+    src = src.replace("depth_data[sample_index + i]", "stored_depth(wave, sample_index + i)");
+    src.push_str(&include_str!("shaders/contact_shadows_no_shared.wgsl").replace("\r\n", "\n"));
+    src
+}
+
+/// Replaces `src` from the first `from` to the end of the first `to` after
+/// it with `with`; panics when either is missing.
+fn cut(src: &mut String, from: &str, to: &str, with: &str) {
+    let start = src.find(from).unwrap_or_else(|| panic!("contact shadows variant: no `{from}`"));
+    let len = src[start..]
+        .find(to)
+        .unwrap_or_else(|| panic!("contact shadows variant: no `{to}`"))
+        + to.len();
+    src.replace_range(start..start + len, with);
 }
 
 /// The window's shader for `variant`: Bend's as it is, or without one of
@@ -393,14 +474,6 @@ impl Variant {
 pub(crate) fn variant_source(variant: Variant) -> String {
     let bend = include_str!("shaders/contact_shadows.wgsl");
     let lf = || bend.replace("\r\n", "\n");
-    let cut = |src: &mut String, from: &str, to: &str, with: &str| {
-        let start = src.find(from).unwrap_or_else(|| panic!("contact shadows variant: no `{from}`"));
-        let len = src[start..]
-            .find(to)
-            .unwrap_or_else(|| panic!("contact shadows variant: no `{to}`"))
-            + to.len();
-        src.replace_range(start..start + len, with);
-    };
     match variant {
         Variant::Bend | Variant::Skip => bend.to_owned(),
         Variant::Short => shader_source(16, 1),
@@ -409,21 +482,19 @@ pub(crate) fn variant_source(variant: Variant) -> String {
             cut(&mut src, "    if (workgroupUniformLoad(&any_live) == 0u) {", "    }\n", "");
             src
         }
-        Variant::NoShared => {
-            let mut src = lf();
-            cut(&mut src, "var<workgroup> depth_data", "var<workgroup> any_live: atomic<u32>;\n", "");
-            cut(
-                &mut src,
-                "    // ---- early out of a wavefront",
-                "    if (skip_pixel) {\n        return;\n    }\n",
-                "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
-            );
-            let reads = src.matches("depth_data[sample_index + i]").count();
-            assert_eq!(reads, 3, "contact shadows variant: the shared reads");
-            src = src.replace("depth_data[sample_index + i]", "stored_depth(wave, sample_index + i)");
-            src.push_str(&include_str!("shaders/contact_shadows_no_shared.wgsl").replace("\r\n", "\n"));
-            src
-        }
+        Variant::NoShared => without_shared(lf()),
+    }
+}
+
+/// A photo's shader for `count` samples ([`shader_source`]), without
+/// workgroup memory when the window's is `NoShared`: an RX 9000 hangs on
+/// Bend's whatever its samples.
+pub(crate) fn photo_source(variant: Variant, count: i32, hard: i32) -> String {
+    let source = shader_source(count, hard);
+    if variant == Variant::NoShared {
+        without_shared(source.replace("\r\n", "\n"))
+    } else {
+        source
     }
 }
 
@@ -460,7 +531,8 @@ pub(crate) struct ContactShadows {
     /// This frame's dispatches (`write`, then `encode`).
     list: DispatchList,
     filter: Filter,
-    /// `AURORA_CONTACT_VARIANT`: `Skip` dispatches no wavefront.
+    /// The window's shader ([`Variant::for_adapter`]); `Skip` dispatches no
+    /// wavefront, `NoShared` makes the photo's without workgroup memory too.
     variant: Variant,
 }
 
@@ -570,8 +642,9 @@ impl Targets {
 }
 
 impl ContactShadows {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        Self::with_variant(device, Variant::from_env())
+    /// The pass for the card `info` names ([`Variant::for_adapter`]).
+    pub(crate) fn new(device: &wgpu::Device, info: &wgpu::AdapterInfo) -> Self {
+        Self::with_variant(device, Variant::for_adapter(info))
     }
 
     /// [`Self::new`] with the window's shader of `variant`.
@@ -666,7 +739,7 @@ impl ContactShadows {
         let (count, hard) = self.samples;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("contact shadows (photo)"),
-            source: wgpu::ShaderSource::Wgsl(shader_source(count, hard).into()),
+            source: wgpu::ShaderSource::Wgsl(photo_source(self.variant, count, hard).into()),
         });
         let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("contact shadows (photo)"),
@@ -1057,6 +1130,62 @@ mod tests {
         assert_eq!(Variant::parse(Some("SKIP")), Variant::Skip);
     }
 
+    #[test]
+    fn the_rx_9000_cards_get_the_shader_without_workgroup_memory() {
+        for name in [
+            "AMD Radeon RX 9070 XT",
+            "AMD Radeon RX 9070",
+            "AMD Radeon RX 9070 GRE",
+            "AMD Radeon RX 9060 XT",
+            "AMD Radeon AI PRO R9700",
+            "AMD Radeon RX 9070 XT (RADV GFX1201)",
+            "AMD Radeon Graphics (RADV GFX1200)",
+        ] {
+            assert_eq!(Variant::for_card(AMD, name), Variant::NoShared, "{name}");
+        }
+        for name in [
+            "AMD Radeon RX 7900 XTX",
+            "AMD Radeon RX 6600",
+            "AMD Radeon RX 5600 XT",
+            "AMD Radeon RX 590",
+            "AMD Radeon R9 290",
+            "AMD Radeon(TM) Graphics",
+            "AMD Radeon RX 7600 XT (RADV NAVI33)",
+        ] {
+            assert_eq!(Variant::for_card(AMD, name), Variant::Bend, "{name}");
+        }
+        // the name alone is not enough: another vendor keeps Bend's
+        assert_eq!(Variant::for_card(0x10DE, "NVIDIA GeForce RTX 4090"), Variant::Bend);
+        assert_eq!(Variant::for_card(0x10DE, "RX 9070 XT"), Variant::Bend);
+    }
+
+    #[test]
+    fn the_variable_wins_over_the_card() {
+        let rx = "AMD Radeon RX 9070 XT";
+        assert_eq!(Variant::choose(None, AMD, rx), Variant::NoShared);
+        assert_eq!(Variant::choose(Some("  "), AMD, rx), Variant::NoShared);
+        assert_eq!(Variant::choose(Some("bend"), AMD, rx), Variant::Bend);
+        assert_eq!(Variant::choose(Some("skip"), AMD, rx), Variant::Skip);
+        assert_eq!(Variant::choose(None, 0x10DE, "NVIDIA GeForce RTX 4090"), Variant::Bend);
+        assert_eq!(
+            Variant::choose(Some("no-shared"), 0x10DE, "NVIDIA GeForce RTX 4090"),
+            Variant::NoShared
+        );
+    }
+
+    #[test]
+    fn a_photo_follows_the_window_without_workgroup_memory() {
+        let (count, hard) = samples(4.0);
+        assert_eq!(photo_source(Variant::Bend, count, hard), shader_source(count, hard));
+        assert_eq!(photo_source(Variant::NoEarlyOut, count, hard), shader_source(count, hard));
+        let photo = photo_source(Variant::NoShared, count, hard);
+        for gone in ["var<workgroup>", "workgroupBarrier", "workgroupUniformLoad", "depth_data"] {
+            assert!(!photo.contains(gone), "{gone}");
+        }
+        assert!(photo.contains(&format!("const SAMPLE_COUNT: i32 = {count};")));
+        assert_eq!(photo.matches("stored_depth(wave, sample_index + i)").count(), 3);
+    }
+
     /// Each variant drops what it says and only that (the shaders' own
     /// validity: `contact_shadows_shader_is_valid` in lib.rs).
     #[test]
@@ -1170,10 +1299,10 @@ mod tests {
         queue.submit([encoder.finish()]);
         // the sun ahead and high, its point on screen above the image
         let light = [0.2, 1.6, 0.0, 0.8];
-        let mask = |variant: Variant| -> Vec<u8> {
+        let mask_at = |variant: Variant, scale: f32| -> Vec<u8> {
             let mut cs = ContactShadows::with_variant(&device, variant);
             let t = cs.targets(&device, &depth_view, format, w, h);
-            cs.write(&device, &queue, &t, light, 0.1, 1.0);
+            cs.write(&device, &queue, &t, light, 0.1, scale);
             let mut encoder = device.create_command_encoder(&Default::default());
             cs.encode(&mut encoder, &t, false);
             let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -1207,6 +1336,7 @@ mod tests {
                 .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
                 .collect()
         };
+        let mask = |variant: Variant| mask_at(variant, 1.0);
         let bend = mask(Variant::Bend);
         let shadowed = bend.iter().filter(|&&v| v > 128).count();
         assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
@@ -1241,5 +1371,17 @@ mod tests {
             assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
         }
         assert!(mask(Variant::Skip).iter().all(|&v| v == 0), "skip: nothing");
+        // a photo's pipeline (twice the samples) on an RX 9000: the same mask
+        // as Bend's photo pipeline
+        let bend_photo = mask_at(Variant::Bend, 2.0);
+        assert_ne!(bend_photo, bend, "the photo's samples make longer shadows");
+        let d: Vec<usize> = bend_photo
+            .iter()
+            .zip(mask_at(Variant::NoShared, 2.0))
+            .enumerate()
+            .filter(|(i, (a, b))| **a != *b && writes[*i] == 1)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(d.is_empty(), "NoShared photo: {} pixels differ", d.len());
     }
 }
