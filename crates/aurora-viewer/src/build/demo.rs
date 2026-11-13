@@ -15,6 +15,7 @@
 //!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
+//!   multi-mesh-materials: select two separate mesh roots in the Materials panel.
 //!   create-delete | create-ready: create and select a basic prim, then
 //!   delete it (ready leaves the new prim for the human).
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
@@ -392,6 +393,24 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             _ => Vec::new(),
         };
     }
+    if parts[0] == "multi-mesh-materials" {
+        let objects: Vec<usize> = [99620, 99622]
+            .into_iter()
+            .filter_map(|local_id| {
+                world
+                    .objects
+                    .iter()
+                    .find_map(|(idx, object)| (object.key.local_id == local_id).then_some(idx))
+            })
+            .collect();
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 if objects.len() == 2 => vec![Step::SelectMany(objects)],
+            227 => vec![Step::Focus(false)],
+            235 => vec![Step::CloseView],
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "link" | "link-ready" | "link-denied") {
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
@@ -556,7 +575,9 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6), Step::Linked(false)],
             220 => object.into_iter().map(Step::Select).collect(),
             227 => vec![Step::Focus(false)],
-            235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => vec![Step::CloseView],
+            235 if matches!(parts[0], "faces-close" | "faces-complex") || parts[0].starts_with("faces-picker") => {
+                vec![Step::CloseView]
+            }
             _ if parts[0] == "faces-ready" => Vec::new(),
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),

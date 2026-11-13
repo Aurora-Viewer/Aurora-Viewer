@@ -1734,6 +1734,116 @@ fn material_inspector() -> Inspector {
 }
 
 #[test]
+fn shifted_mesh_selection_edits_specular_values_across_different_maps() {
+    use crate::scene::legacy_mat::LegacyMaterial;
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+
+    let mut inspector = material_inspector();
+    inspector.tool.tab = 3;
+    inspector.tool.ui.tex_tab = 0;
+    let objects: Vec<_> = [118, 151]
+        .into_iter()
+        .map(|local_id| {
+            inspector
+                .world
+                .objects
+                .iter()
+                .find(|(_, object)| object.key.local_id == local_id)
+                .unwrap()
+                .0
+        })
+        .collect();
+    let material_ids = [uuid::Uuid::from_u128(0x5001), uuid::Uuid::from_u128(0x5002)];
+    let specular_maps = [uuid::Uuid::from_u128(0x6001), uuid::Uuid::from_u128(0x6002)];
+    for (index, (&object_idx, &material_id)) in objects.iter().zip(&material_ids).enumerate() {
+        let object = inspector.world.objects.get_mut(object_idx).unwrap();
+        object.update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+        object.volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: uuid::Uuid::from_u128(0x7000 + index as u128),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        let mut te = object.te.as_deref().unwrap().clone();
+        for face in &mut te.faces {
+            face.material_id = material_id;
+        }
+        object.te = Some(std::sync::Arc::new(te));
+        inspector.scene.legacy_mats.insert(
+            material_id,
+            LegacyMaterial {
+                specular_map: specular_maps[index],
+                specular_exp: 70,
+                env_intensity: 15,
+                ..Default::default()
+            },
+        );
+    }
+
+    inspector
+        .tool
+        .click_select(&mut inspector.world, &inspector.settings, Some(objects[0]), false);
+    inspector.tool.mouse_down(
+        &mut inspector.world,
+        &mut inspector.settings,
+        None,
+        Some(objects[1]),
+        None,
+        (10_000.0, 10_000.0),
+        Mods {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(inspector.tool.selection.len(), 2, "Shift-click should select both mesh roots");
+
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let (_, texts) = inspector.show(vec![]);
+    let environment = texts
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("common-environment"))
+        .unwrap()
+        .1;
+    let field = texts
+        .iter()
+        .find(|(text, rect)| {
+            aurora_i18n::parse_number(text) == Some(15.0) && rect.top() > environment.top() && rect.top() < environment.bottom() + 32.0
+        })
+        .unwrap()
+        .1;
+    let click = |inspector: &mut Inspector, point| {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    };
+    click(&mut inspector, field.center());
+    inspector.show(vec![egui::Event::Text("44".into())]);
+    inspector.show(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+
+    for (object_idx, _) in objects.iter().zip(&material_ids) {
+        let id = inspector.world.objects.get(*object_idx).unwrap().full_id;
+        assert!(
+            inspector.tool.ui.legacy_pending.iter().any(|((object_id, _), (_, material))| {
+                *object_id == id && material.as_ref().is_some_and(|material| material.env_intensity == 44)
+            }),
+            "the selected mesh {id} should receive the edited environment value"
+        );
+    }
+}
+
+#[test]
 fn material_tab_clicks_switch_the_selected_objects_local_render_mode() {
     let mut inspector = material_inspector();
     inspector.tool.tab = 3;

@@ -2408,6 +2408,12 @@ It selects the torus at 625 and adds the face of the mesh with Shift at 645.
 Capture at 646 then 730: temporary highlight, inner and outer silhouettes of
 the two selected faces, materials unchanged after the fade.
 
+`multi-mesh-materials,138,126` places two separate mesh roots, selects
+both, and focuses the view. Capture at 660 and 730 with
+`AURORA_DEMO_BUILD_TAB=texture:bp`: both roots remain selected while the
+Blinn-Phong material panel is shown. The regression test simulates the
+Shift-click and checks the shared environment edit on both roots.
+
 `faces-picker,object:99620` selects a face at 625 and opens its texture
 picker at 635, with a very long name in a "Project textures" subfolder.
 Capture at 660 then 960: the 320 × 720-point picker (limited to the work area) stays bounded without

@@ -4223,6 +4223,26 @@ pub fn complex_face_selection_events() -> Vec<NetEvent> {
     events
 }
 
+/// Two independent mesh roots for the offline multi-object material editor test.
+pub fn multi_mesh_materials_events() -> Vec<NetEvent> {
+    let mut events = complex_face_selection_events();
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects.iter_mut().filter(|object| matches!(object.local_id, 99620 | 99622)) {
+                object.volume = aurora_prim::VolumeParams {
+                    sculpt: Some(SculptParams {
+                        texture: FACE_SELECTION_MESH,
+                        sculpt_type: LL_SCULPT_TYPE_MESH,
+                    }),
+                    ..Default::default()
+                };
+                object.rotation = Quat::IDENTITY;
+            }
+        }
+    }
+    events
+}
+
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.
 pub fn ban_collision() -> NetEvent {
     let mut bitmap = vec![0u8; 64 * 64 / 8];
