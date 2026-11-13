@@ -549,6 +549,11 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [
     views
 }
 
+/// With the shadows off, how long the shelter map drawn alone is kept while
+/// the camera stays in its metre (what is built or moved under a roof shows
+/// within it).
+const SHELTER_REFRESH: Duration = Duration::from_secs(1);
+
 /// The shelter map's entry in the frame's spot lights: not a light, and not
 /// -1 either (an empty slot's).
 const RAIN_SHELTER_LIGHT: i32 = -2;
@@ -1844,6 +1849,10 @@ pub(crate) struct Backend {
     /// The projector map the rain's shelter takes while it is drawn
     /// (`projector_shadows::shelter_slot`): past the projectors' maps.
     shelter_slot: usize,
+    /// With the shadows off, the shelter map drawn alone: its matrix and
+    /// when (kept in the atlas, which nothing else draws then; drawn again
+    /// when the camera crosses a metre, or after `SHELTER_REFRESH`).
+    shelter_drawn: Option<(Mat4, Instant)>,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -3995,6 +4004,7 @@ impl Backend {
             shadow_size,
             shadow_count: 2,
             shelter_slot: 2,
+            shelter_drawn: None,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -6107,6 +6117,7 @@ impl Backend {
             self.shadow_size = res;
             self.shadow_count = count;
             self.shelter_slot = shelter;
+            self.shelter_drawn = None;
             let (width, height) = crate::projector_shadows::atlas_size(res, maps);
             log::info!(
                 "projector shadow budget: requested {}, effective {count}, shelter map {shelter}, map {} px, atlas {width}x{height} ({} MiB)",
@@ -8562,6 +8573,20 @@ impl Backend {
         }
         let shelter = self.rain_shelter(f);
         let shelter_only = !f.shadows && shelter;
+        // shadows off: the shelter map alone, kept while it still holds this
+        // square (snapped to the metre) and what stands in it, not every
+        // frame (review of #2410: the users who turned the shadows off for
+        // speed paid for a full pass while the ground was wet)
+        let shelter_kept = shelter_only
+            && self
+                .shelter_drawn
+                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos) && at.elapsed() < SHELTER_REFRESH);
+        if f.shadows || !shelter {
+            self.shelter_drawn = None;
+        } else if shelter_only && !shelter_kept {
+            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos), Instant::now()));
+        }
+        let shelter_only = shelter_only && !shelter_kept;
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
         let mut shelter_marked = false;
         if f.shadows || shelter_only {
