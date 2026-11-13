@@ -3050,6 +3050,8 @@ impl App {
         if log.identity().is_none() {
             log.set_folder(chat_log_root(&s.chat_log_location));
         }
+        // no file moves: a no-op once applied
+        log.set_legacy_layout(s.log_legacy_layout);
     }
 
     // ------------------------------------------------------------------ login
@@ -16445,6 +16447,7 @@ impl App {
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
+        self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
         self.poll_settings_backup();
         if let Some(done) = self.world.chat_log.take_relocated() {
@@ -21217,7 +21220,7 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore | Mode::Shared { .. })
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
@@ -21241,6 +21244,39 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Shared { on } => {
+                        // the synthetic Legacy Viewer folder, chosen for this
+                        // run only: never saved in the demo's settings, which
+                        // every worktree shares. The option itself is saved
+                        // like any setting; without a chosen folder it does
+                        // nothing.
+                        let account = self.world.login.as_ref().map(|l| crate::legacy_profile::Account {
+                            first: l.first_name.clone(),
+                            last: l.last_name.clone(),
+                            grid: "demo".into(),
+                        });
+                        let place = self
+                            .world
+                            .chat_log
+                            .dir()
+                            .map(chatlog::legacy_root)
+                            .zip(account.and_then(|a| a.chat_folder()));
+                        if let Some((root, folder)) = place {
+                            if let Err(e) = chatlog::seed_shared(&root, &folder, &self.world.own_name()) {
+                                log::warn!("demo Legacy Viewer transcripts not written: {e}");
+                            }
+                            if on {
+                                self.settings.log_legacy_layout = true;
+                                self.world.chat_log.set_legacy_layout(true);
+                            }
+                            self.world.chat_log.relocate(Some(root));
+                        }
+                        // the history read from the Legacy Viewer's file,
+                        // then a new message added to it
+                        self.world.apply(chatlog::new_message(me));
+                        self.panels.settings = true;
+                        self.options_ui.open(ui::options::Page::Chat, 3);
+                    }
                     Mode::Import(stage) => {
                         use chatlog::ImportStage;
                         let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);
