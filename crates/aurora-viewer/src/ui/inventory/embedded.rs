@@ -266,7 +266,7 @@ pub(super) fn editor(
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(url.as_ref());
             if output.response.clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(url.as_ref()));
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::OpenUrl(url.to_string()));
             }
         }
     }

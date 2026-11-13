@@ -1076,6 +1076,12 @@ pub struct TextureStreamer {
     legacy_bumps: HashMap<(Uuid, u8), Uuid>,
     legacy_bump_entries: HashMap<Uuid, legacy_bump_stream::LegacyBumpState>,
     legacy_bump_jobs: usize,
+    /// The full size of the textures evicted since the session began
+    /// (`known_size`): an avatar's complexity counts its textures' sizes,
+    /// and forgetting them on eviction made our own complexity move with
+    /// the texture memory, a "Your avatar complexity is N" notice each
+    /// time (#3381). 12 bytes a texture.
+    evicted_sizes: HashMap<Uuid, (u32, u32)>,
     /// Bumped whenever a slot's alpha class or alpha channel, or a sculpt
     /// map, changes.
     pub generation: u64,
@@ -1551,6 +1557,7 @@ impl TextureStreamer {
             dirty: Vec::new(),
             forgotten: Vec::new(),
             evicted: Vec::new(),
+            evicted_sizes: HashMap::new(),
             slotless: 0,
             slotless_unreported: 0,
             slotless_ids: Vec::new(),
@@ -1604,6 +1611,13 @@ impl TextureStreamer {
     /// Full resolution of a texture once its header is known.
     pub fn full_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         self.entries.get(id).and_then(full_size)
+    }
+
+    /// [`full_size`](Self::full_size), or the size the texture had when it
+    /// was last evicted: what the complexity counts, steady while the
+    /// texture memory comes and goes.
+    pub fn known_size(&self, id: &Uuid) -> Option<(u32, u32)> {
+        self.full_size(id).or_else(|| self.evicted_sizes.get(id).copied())
     }
 
     /// Share source bytes and cache locations, never GPU readback or disk IO
@@ -1743,19 +1757,10 @@ impl TextureStreamer {
         if id == aurora_prim::te::BLANK_TEXTURE {
             return aurora_render::textures::WHITE;
         }
-        if let Some(e) = self.entries.get_mut(&id) {
-            e.refs += 1;
-            e.unused_since = None;
-            if e.source == TexSource::Asset && source != TexSource::Asset {
-                e.source = source;
-            }
-            Self::settle(&mut self.todo, &mut self.counts, id, e);
-            return e.slot;
-        }
-        // Procedural textures belong only to the offline demo.
-        if let Some(slot) = self.local_slots.get(&id).copied() {
+        if let Some(slot) = self.acquire_known(id, &source) {
             return slot;
         }
+        // Procedural textures belong only to the offline demo.
         if let Some((px, w, h)) = crate::demo::local_texture(&id) {
             let alpha = super::jobs::classify_alpha(&px);
             let pick_mask = (alpha != AlphaKind::Opaque).then(|| PickMask::from_rgba(w, h, &px)).flatten();
@@ -2043,6 +2048,9 @@ impl TextureStreamer {
             let Some(e) = self.entries.remove(&id) else {
                 continue;
             };
+            if let Some(size) = full_size(&e) {
+                self.evicted_sizes.insert(id, size);
+            }
             self.forget_legacy_bump(id);
             self.counts.change(e.counted, 0);
             if let Some(mask) = self.pick_masks.remove(&id) {
@@ -2093,6 +2101,31 @@ impl TextureStreamer {
         }
     }
 
+    fn acquire_known(&mut self, id: Uuid, source: &TexSource) -> Option<u32> {
+        // A saved material can request its maps before local-file restoration
+        // finishes. Once restored, the local slot wins over that placeholder.
+        if let Some(slot) = self.local_slots.get(&id) {
+            return Some(*slot);
+        }
+        let e = self.entries.get_mut(&id)?;
+        e.refs += 1;
+        e.unused_since = None;
+        if e.source == TexSource::Asset && *source != TexSource::Asset {
+            e.source = source.clone();
+        }
+        Self::settle(&mut self.todo, &mut self.counts, id, e);
+        Some(e.slot)
+    }
+
+    fn set_local_slot(&mut self, id: Uuid, slot: u32) {
+        let previous = self.local_slots.insert(id, slot).or_else(|| self.entries.get(&id).map(|e| e.slot));
+        if previous.is_some_and(|previous| previous != slot) {
+            // Reuse the scene's texture-user rebuild path for placeholders
+            // acquired before local-file restoration, even without a GPU slot.
+            self.reslotted.push(id);
+        }
+    }
+
     /// A texture drawn by the viewer itself (media): `acquire` returns its slot.
     pub fn register_local(&mut self, id: Uuid, slot: u32) {
         set_slot_alpha(
@@ -2109,11 +2142,13 @@ impl TextureStreamer {
             self.generation += 1;
             self.alpha_changes.push(slot);
         }
-        self.local_slots.insert(id, slot);
+        self.set_local_slot(id, slot);
     }
 
     pub fn unregister_local(&mut self, id: &Uuid) {
-        self.local_slots.remove(id);
+        if self.local_slots.remove(id).is_some() {
+            self.reslotted.push(*id);
+        }
         self.local_images.remove(id);
     }
 
@@ -2129,7 +2164,7 @@ impl TextureStreamer {
             self.generation += 1;
             self.alpha_changes.push(slot);
         }
-        self.local_slots.insert(id, slot);
+        self.set_local_slot(id, slot);
     }
 
     pub fn release(&mut self, id: &Uuid) {
@@ -2704,16 +2739,19 @@ impl TextureStreamer {
                         e.decoding = true;
                         *decodes += 1;
                         let (want, pool) = (e.want, staging.clone());
-                        jobs.spawn(move || {
-                            texture_result(
-                                id,
-                                want,
-                                (source.texels)(&id, want),
-                                (AlphaKind::Opaque, false),
-                                None,
-                                pool.as_deref(),
-                            )
-                        });
+                        jobs.spawn_or(
+                            move || {
+                                texture_result(
+                                    id,
+                                    want,
+                                    (source.texels)(&id, want),
+                                    (AlphaKind::Opaque, false),
+                                    None,
+                                    pool.as_deref(),
+                                )
+                            },
+                            move || JobResult::TextureFailed { id },
+                        );
                     }
                     return;
                 }
@@ -2841,13 +2879,24 @@ impl TextureStreamer {
             };
             let pool = staging.clone();
             let meter = meter.clone();
-            jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+            // (a failed decode gives its slot back and retries later, as a
+            // decode error does)
+            jobs.spawn_or(
+                move || decode_job(job, &data, pool.as_deref(), &meter),
+                move || JobResult::TextureFailed { id },
+            );
             Self::settle(todo, counts, id, e);
         }
         let dir = cache_dir.clone();
         let pool = staging.clone();
         jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
-            read_job(&dir, id, want, blocks, pool.as_deref())
+            // (a failed read is a cache miss: the texture is downloaded)
+            super::jobs::caught(|| read_job(&dir, id, want, blocks, pool.as_deref())).unwrap_or(JobResult::TextureCache {
+                id,
+                data: None,
+                complete: false,
+                keep_rgba: false,
+            })
         });
         if !forgotten.is_empty() {
             log::info!("refreshing {} textures: downloaded again", forgotten.len());
@@ -4081,6 +4130,33 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_material_local_maps_replace_earlier_asset_placeholders_and_reload_in_place() {
+        let mut textures = TextureStreamer::new(PathBuf::new());
+        let ids = std::array::from_fn::<_, 4, _>(|i| Uuid::from_u128(900 + i as u128));
+        for (i, id) in ids.into_iter().enumerate() {
+            let mut pending = entry(None, 100.0);
+            pending.slot = 20 + i as u32;
+            textures.entries.insert(id, pending);
+            assert_eq!(textures.acquire_known(id, &TexSource::Asset), Some(20 + i as u32));
+            textures.register_local_image(id, 30 + i as u32, AlphaKind::Opaque, false);
+            assert_eq!(textures.acquire_known(id, &TexSource::Asset), Some(30 + i as u32));
+        }
+        let mut changed = Vec::new();
+        textures.take_reslotted(&mut changed);
+        assert_eq!(changed, ids, "already-built material users are rebuilt with the local maps");
+        for (i, id) in ids.into_iter().enumerate() {
+            textures.register_local_image(id, 30 + i as u32, AlphaKind::Opaque, false);
+        }
+        changed.clear();
+        textures.take_reslotted(&mut changed);
+        assert!(changed.is_empty(), "pixel-only reloads keep the same GPU bindings");
+        textures.unregister_local(&ids[0]);
+        textures.take_reslotted(&mut changed);
+        assert_eq!(changed, [ids[0]]);
+        assert_eq!(textures.acquire_known(ids[0], &TexSource::Asset), Some(20));
+    }
 
     #[test]
     fn a_refused_upload_waits_for_the_page_try_and_at_least_a_second() {
@@ -5500,6 +5576,21 @@ mod tests {
         s.evict(&mut table, due);
         assert_eq!(s.slotless, 1);
         assert!(table.freed.is_empty());
+    }
+
+    #[test]
+    fn an_evicted_texture_keeps_its_known_size() {
+        // #3381: the complexity counts it the same once it is gone
+        let mut s = full_table(&[], &[]);
+        let mut table = Slots::default();
+        s.entries.insert(id(5), entry(Some(2), 0.0));
+        s.entries.insert(id(6), entry(None, 0.0));
+        assert_eq!(s.known_size(&id(5)), Some((1024, 1024)));
+        s.evict(&mut table, vec![id(5), id(6)]);
+        assert_eq!(s.full_size(&id(5)), None);
+        assert_eq!(s.known_size(&id(5)), Some((1024, 1024)));
+        // a size never known stays unknown
+        assert_eq!(s.known_size(&id(6)), None);
     }
 
     #[test]

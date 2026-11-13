@@ -8,7 +8,7 @@
 //! originally LGPL 2.1.
 
 use aurora_llsd::{Llsd, Map};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -19,6 +19,9 @@ pub const PERM_OWNER: u8 = 1;
 #[allow(dead_code)] // group membership is not checked yet
 pub const PERM_GROUP: u8 = 2;
 pub const PERM_ANYONE: u8 = 4;
+
+/// `controls` of LLMediaEntry::MINI (STANDARD is 0).
+pub const MINI_CONTROLS: u8 = 1;
 
 /// One face's media settings (LLMediaEntry, defaults of its constructor).
 #[derive(Debug, Clone, PartialEq)]
@@ -126,8 +129,26 @@ impl MediaEntry {
     /// hover and wheel reach the page whatever it says (handleMediaClick).
     /// The group bit is not checked yet.
     pub fn may_navigate(&self, owner: bool) -> bool {
+        self.has_media_permission(self.perms_interact, owner)
+    }
+
+    /// LLVOVolume::hasMediaPermission(MEDIA_PERM_CONTROL): may we show and
+    /// use the prim media chrome (LLPanelPrimMediaControls)? Without it the
+    /// Legacy Viewer hides the whole bar; clicks still reach the page.
+    /// The group bit is not checked yet.
+    pub fn may_control(&self, owner: bool) -> bool {
+        self.has_media_permission(self.perms_control, owner)
+    }
+
+    fn has_media_permission(&self, perms: u8, owner: bool) -> bool {
         let bits = if owner { PERM_OWNER | PERM_ANYONE } else { PERM_ANYONE };
-        self.perms_interact & bits != 0
+        perms & bits != 0
+    }
+
+    /// `PRIM_MEDIA_CONTROLS_MINI` (LLMediaEntry::MINI): the controls keep
+    /// their buttons without the address and the time slider.
+    pub fn mini_controls(&self) -> bool {
+        self.controls == MINI_CONTROLS
     }
 
     /// LLMediaEntry::checkCandidateUrl: allowed by the whitelist (if on).
@@ -228,12 +249,15 @@ pub struct Fetched {
 #[derive(Debug)]
 struct Pending {
     object: Uuid,
+    generation: u64,
     cap: String,
     /// Attempts already made.
     attempts: u32,
     /// A refresh of data already received (the round-robin queue), rather
     /// than the first load of an object (the sorted queue).
     update: bool,
+    /// Dynamic priority: shown media, HUD, own attachment, world.
+    priority: u8,
 }
 
 /// Why a GET failed: `retry` when the simulator was busy (503, its answer
@@ -258,7 +282,9 @@ pub struct MediaDataClient {
     /// Busy answers, re-queued at their instant (LLMediaDataClient::RetryTimer).
     retrying: Vec<(Instant, Pending)>,
     /// Objects queued, retrying or in flight.
-    queued: HashSet<Uuid>,
+    /// Generation and latest priority for queued, retrying, or in-flight GETs.
+    queued: HashMap<Uuid, (u64, u8)>,
+    next_generation: u64,
     /// The sorted queue's turn (LLObjectMediaDataClient::swapCurrentQueue).
     sorted_turn: bool,
     tx: crossbeam_channel::Sender<(Pending, Result<ObjectMediaData, GetError>)>,
@@ -271,6 +297,10 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 /// PrimMediaMaxRetries: LLMediaDataClient::Handler::onFailure counts the
 /// first attempt, so 4 attempts in all.
 const MAX_ATTEMPTS: u32 = 4;
+pub const SHOWN: u8 = 3;
+pub const HUD: u8 = 2;
+pub const ATTACHMENT: u8 = 1;
+pub const WORLD: u8 = 0;
 
 impl Default for MediaDataClient {
     fn default() -> Self {
@@ -279,7 +309,8 @@ impl Default for MediaDataClient {
             sorted: Vec::new(),
             round_robin: VecDeque::new(),
             retrying: Vec::new(),
-            queued: HashSet::new(),
+            queued: HashMap::new(),
+            next_generation: 0,
             sorted_turn: true,
             tx,
             rx,
@@ -289,21 +320,36 @@ impl Default for MediaDataClient {
 }
 
 impl MediaDataClient {
+    #[cfg(test)]
+    pub(super) fn queued_priority(&self, object: &Uuid) -> Option<u8> {
+        self.queued.get(object).map(|(_, priority)| *priority)
+    }
+
+    #[cfg(test)]
+    pub(super) fn next_due_object(&mut self, now: Instant, interest: impl Fn(&Uuid) -> Option<(f32, f32)>) -> Option<Uuid> {
+        self.next(now, interest).map(|p| p.object)
+    }
+
     pub fn is_queued(&self, object: &Uuid) -> bool {
-        self.queued.contains(object)
+        self.queued.contains_key(object)
     }
 
     /// Queue a GET for an object (no-op if already queued, retrying or in
     /// flight). `update`: the object's data was received before.
-    pub fn request(&mut self, object: Uuid, cap: &str, update: bool) {
-        if !self.queued.insert(object) {
+    pub fn request(&mut self, object: Uuid, cap: &str, update: bool, priority: u8) {
+        if self.queued.contains_key(&object) {
             return;
         }
+        let generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1);
+        self.queued.insert(object, (generation, priority));
         let p = Pending {
             object,
+            generation,
             cap: cap.to_string(),
             attempts: 0,
             update,
+            priority,
         };
         self.enqueue(p);
     }
@@ -349,13 +395,32 @@ impl MediaDataClient {
         out
     }
 
+    /// Recompute a pending request's priority in either direction. The queue
+    /// reads the latest value from this map when it selects a request.
+    pub fn prioritize(&mut self, object: &Uuid, priority: u8) {
+        if let Some((_, current)) = self.queued.get_mut(object) {
+            *current = priority;
+        }
+    }
+
+    /// Cancel a removed object's queued or in-flight request. Its queue entry
+    /// is discarded on the next scan; a late answer fails the generation check.
+    pub fn cancel(&mut self, object: &Uuid) {
+        self.queued.remove(object);
+    }
+
     /// An answer: kept for a retry when the simulator was busy, else handed
     /// to the caller.
     fn answer(&mut self, mut p: Pending, result: Result<ObjectMediaData, GetError>, now: Instant) -> Option<Fetched> {
+        let (generation, priority) = self.queued.get(&p.object).copied()?;
+        if generation != p.generation {
+            return None;
+        }
+        p.priority = priority;
         p.attempts += 1;
         let data = match result {
             Ok(d) => Ok(d),
-            Err(e) if e.retry && p.attempts < MAX_ATTEMPTS && self.queued.contains(&p.object) => {
+            Err(e) if e.retry && p.attempts < MAX_ATTEMPTS => {
                 log::debug!("ObjectMedia GET {} failed ({}), retrying in 5 s", p.object, e.message);
                 self.retrying.push((now + RETRY_DELAY, p));
                 return None;
@@ -383,34 +448,46 @@ impl MediaDataClient {
         }
         // objects gone since they were queued (Request::isDead)
         let queued = &mut self.queued;
-        let mut alive = |p: &Pending| {
-            let keep = interest(&p.object).is_some();
-            if !keep {
-                queued.remove(&p.object);
+        let mut alive = |p: &mut Pending| {
+            let Some((generation, priority)) = queued.get(&p.object).copied() else {
+                return false;
+            };
+            if generation != p.generation {
+                return false;
             }
-            keep
+            if interest(&p.object).is_none() {
+                queued.remove(&p.object);
+                return false;
+            }
+            p.priority = priority;
+            true
         };
-        self.sorted.retain(&mut alive);
-        self.round_robin.retain(&mut alive);
-        let use_sorted = if self.sorted_turn {
-            !self.sorted.is_empty()
-        } else {
-            self.round_robin.is_empty()
+        self.sorted.retain_mut(&mut alive);
+        self.round_robin.retain_mut(&mut alive);
+        let best_sorted = self
+            .sorted
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                let (ia, ib) = (interest(&a.object).unwrap_or_default(), interest(&b.object).unwrap_or_default());
+                a.priority.cmp(&b.priority).then(ia.0.total_cmp(&ib.0)).then(ib.1.total_cmp(&ia.1))
+            })
+            .map(|(i, p)| (i, p.priority));
+        let update_priority = self.round_robin.iter().map(|p| p.priority).max();
+        let best_round_robin =
+            update_priority.and_then(|priority| self.round_robin.iter().position(|p| p.priority == priority).map(|i| (i, priority)));
+        let use_sorted = match (best_sorted, best_round_robin) {
+            (None, None) => return None,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (Some((_, sorted_priority)), Some((_, update_priority))) if sorted_priority > update_priority => true,
+            (Some((_, sorted_priority)), Some((_, update_priority))) if update_priority > sorted_priority => false,
+            (Some(_), Some(_)) => self.sorted_turn,
         };
         let p = if use_sorted {
-            // LLObjectMediaDataClient::sortQueue: the highest interest first
-            let best = self
-                .sorted
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| {
-                    let (ia, ib) = (interest(&a.object).unwrap_or_default(), interest(&b.object).unwrap_or_default());
-                    ia.0.total_cmp(&ib.0).then(ib.1.total_cmp(&ia.1))
-                })
-                .map(|(i, _)| i)?;
-            self.sorted.swap_remove(best)
+            self.sorted.swap_remove(best_sorted?.0)
         } else {
-            self.round_robin.pop_front()?
+            self.round_robin.remove(best_round_robin?.0)?
         };
         // the other queue's turn next (swapCurrentQueue)
         self.sorted_turn = !use_sorted;
@@ -476,6 +553,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mini_controls_come_from_the_llsd_controls_field() {
+        // LLMediaEntry::MediaControls: STANDARD is 0, MINI is the next value.
+        let mut standard_llsd = Llsd::new_map();
+        standard_llsd.insert("controls", 0);
+        let standard = MediaEntry::from_llsd(&standard_llsd);
+        assert!(!standard.mini_controls());
+        assert_eq!(standard.controls, 0);
+        let mut mini_llsd = Llsd::new_map();
+        mini_llsd.insert("controls", 1);
+        let mini = MediaEntry::from_llsd(&mini_llsd);
+        assert!(mini.mini_controls());
+        assert_eq!(mini.controls, MINI_CONTROLS);
+        let missing = MediaEntry::from_llsd(&Llsd::new_map());
+        assert!(!missing.mini_controls(), "a missing controls key stays standard");
+    }
+
+    #[test]
     fn entry_round_trips() {
         let e = MediaEntry {
             home_url: "https://example.com".into(),
@@ -539,7 +633,7 @@ mod tests {
     fn one_request_per_second_whatever_the_queue() {
         let mut c = MediaDataClient::default();
         for n in 1..=40 {
-            c.request(id(n), "cap", false);
+            c.request(id(n), "cap", false, WORLD);
         }
         let t0 = Instant::now();
         let any = |_: &Uuid| Some((0.0, 1.0));
@@ -557,10 +651,10 @@ mod tests {
     fn first_loads_go_by_interest_and_take_turns_with_refreshes() {
         let mut c = MediaDataClient::default();
         // far, near and on-screen first loads, then a refresh
-        c.request(id(1), "cap", false);
-        c.request(id(2), "cap", false);
-        c.request(id(3), "cap", false);
-        c.request(id(9), "cap", true);
+        c.request(id(1), "cap", false, WORLD);
+        c.request(id(2), "cap", false, WORLD);
+        c.request(id(3), "cap", false, WORLD);
+        c.request(id(9), "cap", true, WORLD);
         let interest = |o: &Uuid| {
             Some(match o.as_u128() {
                 1 => (0.0, 90.0),
@@ -578,9 +672,49 @@ mod tests {
     }
 
     #[test]
+    fn queued_refresh_priority_drops_after_visibility_expires_below_hud_load() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", true, SHOWN);
+        c.prioritize(&id(1), WORLD);
+        c.request(id(2), "cap", false, HUD);
+        let now = Instant::now();
+        // A newly attached HUD outranks the now off-screen round-robin refresh,
+        // even though the scheduler would otherwise favor its refresh turn.
+        assert_eq!(c.next_due_object(now, |_| Some((0.0, 1.0))), Some(id(2)));
+        c.prioritize(&id(1), SHOWN);
+        assert_eq!(c.queued.get(&id(1)).map(|(_, p)| *p), Some(SHOWN));
+    }
+
+    #[test]
+    fn cancel_invalidates_a_late_answer_and_allows_a_fresh_request() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", false, WORLD);
+        let old = c.next(Instant::now(), |_| Some((0.0, 1.0))).unwrap();
+        c.cancel(&id(1));
+        c.request(id(1), "cap", false, HUD);
+        assert!(c.answer(old, Ok(ObjectMediaData::default()), Instant::now()).is_none());
+        assert_eq!(c.queued.get(&id(1)).map(|(_, p)| *p), Some(HUD));
+    }
+
+    #[test]
+    fn large_backlog_uses_latest_priority_and_skips_cancelled_entries() {
+        let mut c = MediaDataClient::default();
+        for n in 1..=5_000 {
+            c.request(id(n), "cap", false, WORLD);
+        }
+        // An ordinary object with no request must not disturb the backlog.
+        c.cancel(&id(6_000));
+        c.prioritize(&id(5_000), HUD);
+        c.cancel(&id(5_000));
+        c.request(id(5_001), "cap", false, HUD);
+        assert_eq!(c.next_due_object(Instant::now(), |_| Some((0.0, 1.0))), Some(id(5_001)));
+        assert!(!c.is_queued(&id(5_000)));
+    }
+
+    #[test]
     fn busy_answers_are_retried_four_attempts_in_all() {
         let mut c = MediaDataClient::default();
-        c.request(id(1), "cap", false);
+        c.request(id(1), "cap", false, WORLD);
         let any = |_: &Uuid| Some((0.0, 1.0));
         let mut t = Instant::now();
         for attempt in 1..=MAX_ATTEMPTS {
@@ -603,7 +737,7 @@ mod tests {
     #[test]
     fn other_failures_are_not_retried() {
         let mut c = MediaDataClient::default();
-        c.request(id(1), "cap", false);
+        c.request(id(1), "cap", false, WORLD);
         let t = Instant::now();
         let p = c.next(t, |_| Some((0.0, 1.0))).expect("request sent");
         let refused = Err(GetError {
@@ -617,10 +751,20 @@ mod tests {
     #[test]
     fn requests_of_objects_gone_are_dropped() {
         let mut c = MediaDataClient::default();
-        c.request(id(1), "cap", false);
-        c.request(id(2), "cap", true);
+        c.request(id(1), "cap", false, WORLD);
+        c.request(id(2), "cap", true, WORLD);
         assert!(c.next(Instant::now(), |_| None).is_none());
         assert!(!c.is_queued(&id(1)) && !c.is_queued(&id(2)));
+    }
+
+    #[test]
+    fn control_permissions_gate_the_media_chrome() {
+        let mut e = MediaEntry::default();
+        assert!(e.may_control(true) && e.may_control(false));
+        e.perms_control = PERM_OWNER;
+        assert!(e.may_control(true) && !e.may_control(false));
+        e.perms_control = 0;
+        assert!(!e.may_control(true) && !e.may_control(false));
     }
 
     #[test]
