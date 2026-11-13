@@ -332,6 +332,8 @@ pub mod veils;
 /// (AURORA_DEMO_VOICE_CONTROLS).
 #[path = "demo_voice_controls.rs"]
 pub mod voice_controls;
+#[path = "demo_wearable_favorites.rs"]
+pub mod wearable_favorites;
 /// Transparent shells with a shiny blended legacy material, the wet layers
 /// of mesh bodies (AURORA_DEMO_WET_LAYER).
 #[path = "demo_wet_layer.rs"]

@@ -75,7 +75,7 @@ pub(crate) fn worn_labels(world: &World) -> HashMap<Uuid, String> {
 }
 
 /// Keep modifier clicks for selection, including a fast Ctrl/Shift-click.
-pub(super) fn double_clicked(response: &egui::Response) -> bool {
+pub(crate) fn double_clicked(response: &egui::Response) -> bool {
     response.double_clicked_by(egui::PointerButton::Primary) && !response.ctx.input(|i| i.modifiers.any())
 }
 
@@ -83,7 +83,7 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// (lloutfitslist.cpp, llpanelwearing.cpp): add beside the worn items,
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
-pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
+pub(crate) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
     if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
         return;
     }
@@ -233,7 +233,7 @@ pub(super) fn context_menu(
 }
 
 /// One item stays the single-item action; several go in one COF update.
-fn wear_action(mut items: Vec<Uuid>, replace: bool, point: u8) -> Action {
+pub(crate) fn wear_action(mut items: Vec<Uuid>, replace: bool, point: u8) -> Action {
     if items.len() == 1 {
         Action::WearItem {
             item: items.remove(0),
@@ -251,7 +251,7 @@ fn wear_action(mut items: Vec<Uuid>, replace: bool, point: u8) -> Action {
 /// clothing alone, Detach for objects alone, both names for a mix. RLVa
 /// greys it when every item is locked on; only the unlocked ones are sent,
 /// in one COF update (LLAppearanceMgr::removeItemsFromAvatar).
-pub(super) fn remove_item(
+pub(crate) fn remove_item(
     ui: &mut egui::Ui,
     p: &Palette,
     items: &[&InvItem],
@@ -279,7 +279,7 @@ pub(super) fn remove_item(
     }
 }
 
-fn attach_menu(
+pub(crate) fn attach_menu(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
