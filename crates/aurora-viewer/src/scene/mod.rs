@@ -900,6 +900,7 @@ pub struct Scene {
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
     studio_visible: bool,
+    studio_roots: Vec<Uuid>,
     pub studio_stage: avatar_studio::Stage,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
@@ -1633,6 +1634,7 @@ impl Scene {
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
             studio_visible: false,
+            studio_roots: Vec::new(),
             studio_stage: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
@@ -2774,10 +2776,20 @@ impl Scene {
         let types = self.hidden_types;
         // (a HUD is no rendering type: it stays)
         let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
-        if self.photo_isolation_version != iso.version || self.hidden_types_applied != types || self.studio_visible != world.avatar_studio {
+        let studio_roots = if world.avatar_studio {
+            isolate::studio_roots(world)
+        } else {
+            Vec::new()
+        };
+        if self.photo_isolation_version != iso.version
+            || self.hidden_types_applied != types
+            || self.studio_visible != world.avatar_studio
+            || self.studio_roots != studio_roots
+        {
             self.photo_isolation_version = iso.version;
             self.hidden_types_applied = types;
             self.studio_visible = world.avatar_studio;
+            self.studio_roots = studio_roots;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
                 let hidden = left_out(idx, g.hud);
                 if g.hidden != hidden {

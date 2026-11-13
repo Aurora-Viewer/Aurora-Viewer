@@ -19,14 +19,23 @@ impl App {
             .map_or(self.world.agent.position, |(p, _, _)| p)
     }
 
-    fn studio_subject(&self) -> (Vec3, f32) {
+    fn studio_subject(&self) -> (Vec3, f32, Option<(uuid::Uuid, Vec3)>) {
         let now = Instant::now();
         let id = &self.world.agent_id;
         let root = self.studio_root();
         let feet = ["mFootLeft", "mFootRight"].map(|name| self.scene.joint_world(&self.world, id, name, now));
-        let bottom = feet.into_iter().flatten().map(|p| p.z).reduce(f32::min).unwrap_or(root.z - 0.9) - crate::avatar_studio::SOLE_HEIGHT;
+        let mut bottom =
+            feet.into_iter().flatten().map(|p| p.z).reduce(f32::min).unwrap_or(root.z - 0.9) - crate::avatar_studio::SOLE_HEIGHT;
+        let furniture = studio_furniture(&self.world, now);
+        if let Some(seat) = &furniture {
+            bottom = bottom.min(seat.bottom);
+        }
         let top = self.scene.joint_world(&self.world, id, "mHead", now).map_or(root.z + 0.85, |p| p.z) + 0.2;
-        (root.with_z(bottom), (top - bottom).clamp(0.5, 6.0))
+        (
+            root.with_z(bottom),
+            (top - bottom).clamp(0.5, 6.0),
+            furniture.map(|s| (s.root, s.center)),
+        )
     }
 
     pub(super) fn studio_frame(&mut self, renderer: &mut Renderer, dt: f32) {
@@ -68,9 +77,10 @@ impl App {
                 self.autopilot = None;
                 self.input = crate::agent::MoveInput::default();
                 self.down.clear();
-                let (floor, height) = self.studio_subject();
-                self.avatar_studio.enter(self.world.agent.yaw, height);
+                let (floor, height, podium_center) = self.studio_subject();
+                self.avatar_studio.enter(studio_facing(&self.world, Instant::now()), height);
                 self.avatar_studio.floor_offset = floor.z - self.studio_root().z;
+                self.avatar_studio.podium_center = podium_center;
                 if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "grounding") {
                     self.avatar_studio.floor_offset -= 1.25;
                 }
@@ -95,6 +105,12 @@ impl App {
             log::info!("avatar studio: {}", if active { "entered" } else { "left" });
         }
         let active = self.avatar_studio.active;
+        if active {
+            let seat = crate::snapshot::isolate::studio_seat(&self.world).map(|(_, id)| id);
+            if seat != self.avatar_studio.podium_center.map(|(id, _)| id) {
+                self.avatar_studio.podium_center = studio_furniture(&self.world, Instant::now()).map(|s| (s.root, s.center));
+            }
+        }
         if self.demo
             && active
             && let Ok(mode) = std::env::var("AURORA_DEMO_AVATAR_STUDIO")
@@ -187,6 +203,10 @@ impl App {
         self.avatar_studio.active.then(|| {
             let root = self.studio_root();
             let mut view = self.avatar_studio.view(root + Vec3::Z * self.avatar_studio.floor_offset, aspect);
+            if let Some(center) = studio_podium_center(&self.world, self.avatar_studio.podium_center, Instant::now()) {
+                view.floor.x = center.x;
+                view.floor.y = center.y;
+            }
             if self.studio_photo_session.is_some() {
                 view.eye = self.camera.position;
                 view.target = self.camera.target;
@@ -327,6 +347,7 @@ impl App {
             fp.dof = None;
             fp.cutout = false;
         }
+        let particle_floor = self.studio_root().with_z(view.floor.z);
         let lists = &mut self.scene.lists;
         crate::scene::avatar_studio::hide_region_terrain(lists);
         lists.water.clear();
@@ -337,12 +358,11 @@ impl App {
         lists.land_overlay.clear();
         lists.creation_preview.clear();
         lists.physics_shapes.clear();
-        lists.impostor_sprites.clear();
         if let Some(age) = effect_age {
             let colors = [self.palette.teal, self.palette.violet_light, self.palette.indigo_light].map(|c| [c.r(), c.g(), c.b()]);
             crate::scene::avatar_studio::reveal_particles(
                 &mut lists.particles,
-                view.floor,
+                particle_floor,
                 self.avatar_studio.height(),
                 age,
                 colors,
@@ -559,12 +579,14 @@ impl App {
                 self.ik_editor.reset_animation_from_avatar_studio(&self.world);
             }
             let offset = self.avatar_studio.floor_offset;
+            let podium_center = self.avatar_studio.podium_center;
             let pose = self.avatar_studio.pose;
             let lighting = self.avatar_studio.lighting;
             let animation_editor = self.avatar_studio.animation_editor;
             let hover_height = self.avatar_studio.hover_height;
             self.avatar_studio.enter(self.avatar_studio.facing, self.studio_subject().1);
             self.avatar_studio.floor_offset = offset;
+            self.avatar_studio.podium_center = podium_center;
             self.avatar_studio.pose = pose;
             self.avatar_studio.lighting = lighting;
             self.avatar_studio.animation_editor = animation_editor;
@@ -611,6 +633,61 @@ fn studio_mouse_hint(painter: &egui::Painter, rect: egui::Rect, button: usize, a
     }
     let movement = egui::Rect::from_center_size(rect.right_center() - egui::vec2(10.0, 0.0) * scale, egui::Vec2::splat(20.0 * scale));
     paint(painter, action, movement, p.ink);
+}
+
+struct StudioFurniture {
+    root: uuid::Uuid,
+    center: Vec3,
+    bottom: f32,
+}
+
+// Keep bounds in the furniture root's frame so rotating or moving it does
+// not require a per-frame linkset scan. family excludes sitters and attachments.
+fn studio_furniture(world: &crate::world::World, now: Instant) -> Option<StudioFurniture> {
+    let (root_index, root) = crate::snapshot::isolate::studio_seat(world)?;
+    let (origin, rotation, _) = Scene::object_transform(world, root_index, now, 0)?;
+    let inverse = rotation.inverse();
+    let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+    let mut bottom = f32::INFINITY;
+    for index in crate::build::family(world, root_index) {
+        let Some((position, part_rotation, _)) = Scene::object_transform(world, index, now, 0) else {
+            continue;
+        };
+        let half = world.visual_scale(index).abs() * 0.5;
+        let local = inverse * (position - origin);
+        let extent = glam::Mat3::from_quat(inverse * part_rotation).abs() * half;
+        let base = position.z - (glam::Mat3::from_quat(part_rotation).abs() * half).z;
+        if local.is_finite() && extent.is_finite() && base.is_finite() {
+            lo = lo.min(local - extent);
+            hi = hi.max(local + extent);
+            bottom = bottom.min(base);
+        }
+    }
+    (lo.is_finite() && hi.is_finite()).then_some(StudioFurniture {
+        root,
+        center: (lo + hi) * 0.5,
+        bottom,
+    })
+}
+
+fn studio_podium_center(world: &crate::world::World, anchor: Option<(uuid::Uuid, Vec3)>, now: Instant) -> Option<Vec3> {
+    let (id, center) = anchor?;
+    let index = world.objects.index_of_uuid(&id)?;
+    Scene::object_transform(world, index, now, 0).map(|(position, rotation, _)| position + rotation * center)
+}
+
+// Seated agent yaw is parent-relative. Like the seated branches of
+// LLAgentCamera (indra/newview/llagentcamera.cpp), use the avatar's resolved
+// render rotation, including every seat/link parent, for its world-facing view.
+fn studio_facing(world: &crate::world::World, now: Instant) -> f32 {
+    world
+        .objects
+        .index_of_uuid(&world.agent_id)
+        .filter(|&i| world.objects.get(i).is_some_and(|o| o.parent_id != 0))
+        .and_then(|i| Scene::object_transform(world, i, now, 0))
+        .map(|(_, rotation, _)| rotation * Vec3::X)
+        .filter(|forward| forward.is_finite() && forward.truncate().length_squared() > 1e-6)
+        .map_or(world.agent.yaw, |forward| forward.y.atan2(forward.x))
 }
 
 fn studio_pose_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, pose: &mut Pose, open: bool) {
@@ -738,5 +815,161 @@ mod hover_menu_tests {
         output.textures_delta.clear();
         assert!(row_height.is_some_and(|height| height <= 40.0));
         assert_eq!(hover_height, 0.35);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::NetEvent;
+
+    #[test]
+    fn podium_centers_the_whole_furniture_linkset_independently_of_its_sitters() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let updates = |frame| {
+            crate::demo::sit_events(frame)
+                .into_iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectUpdates { handle, objects } => Some((handle, objects)),
+                    _ => None,
+                })
+                .expect("seat fixture")
+        };
+        let (handle, mut seats) = updates(250);
+        seats[1].position = Vec3::new(3.0, 0.0, 0.0);
+        seats[1].scale = Vec3::new(2.0, 1.0, 0.4);
+        let (_, mut avatars) = updates(300);
+        let mut avatar = avatars.remove(0);
+        avatar.parent_id = 951;
+        avatar.position = Vec3::new(9.0, 0.0, 0.4);
+        let mut companion = avatar.clone();
+        companion.full_id = uuid::Uuid::from_u128(19801);
+        companion.local_id = 19801;
+        companion.parent_id = 950;
+        companion.position.x = -9.0;
+        companion.scale = Vec3::splat(100.0);
+        let mut attachment = seats[1].clone();
+        attachment.full_id = uuid::Uuid::from_u128(19802);
+        attachment.local_id = 19802;
+        attachment.parent_id = companion.local_id;
+        attachment.position.x = -20.0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: seats.iter().cloned().chain([avatar.clone(), companion, attachment]).collect(),
+        });
+        let now = Instant::now() + std::time::Duration::from_secs(2);
+        let furniture = studio_furniture(&world, now).expect("seated furniture");
+        let expected_center = Vec3::new(1.75, 0.0, 0.0);
+        assert!(
+            furniture.center.abs_diff_eq(expected_center, 1e-4),
+            "include the offset child, excluding all sitters and attachments"
+        );
+        let anchor = Some((furniture.root, furniture.center));
+        let initial = studio_podium_center(&world, anchor, now).expect("podium");
+        avatar.position.x = -7.0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        assert!(
+            studio_podium_center(&world, anchor, now)
+                .expect("podium")
+                .abs_diff_eq(initial, 1e-4),
+            "changing seats must not drag the podium with the avatar"
+        );
+        seats[0].position += Vec3::new(5.0, 2.0, 0.0);
+        seats[0].rotation = Quat::from_rotation_z(std::f32::consts::PI);
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![seats[0].clone()],
+        });
+        let expected = seats[0].position + seats[0].rotation * expected_center;
+        let now = Instant::now() + std::time::Duration::from_secs(2);
+        assert!(
+            studio_podium_center(&world, anchor, now)
+                .expect("podium")
+                .abs_diff_eq(expected, 1e-4),
+            "the cached centre follows furniture translation and rotation"
+        );
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert!(
+            studio_furniture(&world, now).is_none(),
+            "standing restores avatar-centred placement"
+        );
+    }
+
+    #[test]
+    fn entry_faces_the_seated_avatar_through_rotated_link_parents() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let updates = |frame| {
+            crate::demo::sit_events(frame)
+                .into_iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectUpdates { handle, objects } => Some((handle, objects)),
+                    _ => None,
+                })
+                .expect("seat fixture")
+        };
+        let (handle, mut seats) = updates(250);
+        let (_, mut avatars) = updates(300);
+        let mut avatar = avatars.remove(0);
+        avatar.parent_id = 951;
+        seats[1].rotation = Quat::from_rotation_z(0.7);
+        for (seat_yaw, local_yaw, expected_yaw) in [
+            (0.0, 0.3, 1.0),
+            (std::f32::consts::PI, 0.3, std::f32::consts::PI + 1.0),
+            (std::f32::consts::PI, 0.3 - std::f32::consts::PI, 1.0),
+        ] {
+            seats[0].rotation = Quat::from_rotation_z(seat_yaw);
+            avatar.rotation = Quat::from_rotation_z(local_yaw);
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: seats.iter().cloned().chain(std::iter::once(avatar.clone())).collect(),
+            });
+            // Let report-correction smoothing reach each fixture orientation;
+            // entry follows the rendered pose, not an undrawn server update.
+            let now = Instant::now() + std::time::Duration::from_secs(2);
+            let mut studio = Studio::default();
+            studio.enter(studio_facing(&world, now), 1.8);
+            let view = studio.view(Vec3::ZERO, 1.5);
+            let toward_camera = (view.eye - view.target).truncate().normalize();
+            let forward = (Quat::from_rotation_z(expected_yaw) * Vec3::X).truncate();
+            assert!(
+                toward_camera.dot(forward) > 0.9999,
+                "entry must show the avatar's front: seat={seat_yaw}, local={local_yaw}, expected={expected_yaw}, facing={}",
+                studio.facing
+            );
+        }
+        avatar.parent_id = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar.clone()],
+        });
+        world.agent.yaw = 1.2;
+        assert_eq!(
+            studio_facing(&world, Instant::now()),
+            1.2,
+            "standing keeps the existing agent-facing behavior"
+        );
+        avatar.parent_id = 999_999;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![avatar],
+        });
+        assert_eq!(
+            studio_facing(&world, Instant::now()),
+            world.agent.yaw,
+            "an unloaded seat retains a usable fallback"
+        );
     }
 }
