@@ -109,6 +109,7 @@ mod media_pack;
 mod money_tracker;
 mod monitor;
 mod movement;
+mod nearby_media;
 mod object_actions;
 mod object_menu;
 mod object_menu_demo;
@@ -910,6 +911,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     grids_ui: ui::grids::Manager,
     audio_ui: ui::audio::AudioUi,
+    /// The nearby media panel under the media button (app/nearby_media.rs).
+    nearby_media: nearby_media::State,
     notif_ui: ui::notifications::NotifUi,
     /// A friendship offer in the middle of the screen (#465).
     friend_prompt: ui::friend_prompt::FriendPromptUi,
@@ -1370,6 +1373,27 @@ fn clouds_choice(mode: Option<&str>, demo_scenario: bool, setting: bool) -> bool
     }
 }
 
+/// The see-through windows and bars: the preferences', or in demo mode
+/// `AURORA_DEMO_OPACITY` over them (a capture's, never saved).
+fn wanted_opacity(settings: &Settings) -> ui::surface_opacity::Opacity {
+    let opacity = ui::surface_opacity::Opacity {
+        active: settings.window_opacity_active,
+        inactive: settings.window_opacity_inactive,
+        conversations: settings.conversations_opacity,
+        conversations_active_override: settings.conversations_active_opacity_override,
+        bars: settings.bar_opacity,
+        menus: settings.menu_opacity,
+        console: settings.console_opacity,
+        name_tags: settings.chat_bubble_opacity,
+        minimap: settings.minimap_opacity,
+        pie: settings.pie_opacity_override.then_some(settings.pie_opacity),
+    };
+    if std::env::var_os("AURORA_DEMO").is_some() {
+        return ui::surface_opacity::demo_override(opacity);
+    }
+    opacity
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -1570,6 +1594,7 @@ impl App {
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
+        ui::surface_opacity::set(wanted_opacity(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
         apply_chat_text_scale(&egui_ctx, &settings);
         crate::crash::update(&skin.theme, &settings);
@@ -1926,6 +1951,7 @@ impl App {
             options_ui: Default::default(),
             grids_ui: Default::default(),
             audio_ui: Default::default(),
+            nearby_media: Default::default(),
             notif_ui: Default::default(),
             friend_prompt: Default::default(),
             region_message_prompt: Default::default(),
@@ -6316,6 +6342,10 @@ impl App {
     fn demo_media_filter(&mut self) {
         use crate::media::filter::{Action, Edit, MediaFilter};
         self.world.media_filter = MediaFilter::default();
+        // AURORA_DEMO_NEARBY_MEDIA: its screens' `data:` pages play at once
+        if nearby_media::demo_mode().is_some() {
+            self.world.media_filter.apply(Edit::Set("data".into(), Action::Allow));
+        }
         let Ok(mode) = std::env::var("AURORA_DEMO_MEDIA_FILTER") else {
             return;
         };
@@ -12528,6 +12558,7 @@ impl App {
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
+            ui::surface_opacity::set(wanted_opacity(&self.settings));
             self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
             apply_chat_text_scale(&self.egui_ctx, &self.settings);
             ui::colors::set(&self.settings.colors);
@@ -14967,7 +14998,7 @@ impl App {
         self.egui_ctx.copy_text(aurora_version::version().to_owned());
     }
 
-    fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
+    fn handle_actions(&mut self, mut a: UiActions, event_loop: &ActiveEventLoop) {
         if let Some(action) = a.exit {
             self.confirm_exit(action);
             return;
@@ -15090,13 +15121,7 @@ impl App {
                 self.parcel_music.toggle();
                 self.remember_music_choice();
             }
-            ui::audio::AudioAction::ToggleMedia => {
-                if self.media.parcel_playing() {
-                    self.media.stop_parcel();
-                } else {
-                    self.media.play_parcel(&self.world, &self.settings.media);
-                }
-            }
+            ui::audio::AudioAction::ToggleMedia => self.toggle_all_media(),
             // applied to the audio engine each frame; saved with the settings on exit
             ui::audio::AudioAction::Changed => {}
             ui::audio::AudioAction::OpenPreferences => {
@@ -15104,6 +15129,7 @@ impl App {
                 self.options_ui.open(ui::options::Page::Sound, 0);
             }
         }
+        self.apply_nearby_media(std::mem::take(&mut a.nearby_media));
         self.poll_stream_list();
         for command in self.appearance_ui.json.poll(&self.egui_ctx, &mut self.world) {
             self.send(command);
@@ -17257,8 +17283,9 @@ impl App {
                     music_playing: self.parcel_music.requested(),
                     music_status: self.music_status,
                     media_available: self.settings.media.enabled
-                        && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
-                    media_playing: self.media.parcel_playing(),
+                        && (self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty())
+                            || self.media.any_in_world_media()),
+                    media_playing: self.media.any_media_on(),
                 };
                 let aurora = self.notifications_aurora();
                 let bell = ui::bars::BellState {
@@ -17307,6 +17334,19 @@ impl App {
                     );
                     a.bar = bar;
                     a.audio = Some(audio_action);
+                    a.nearby_media = nearby_media::panel(
+                        &ctx,
+                        &p,
+                        &mut self.nearby_media,
+                        &mut self.audio_ui,
+                        nearby_media::Inputs {
+                            media: &self.media,
+                            world: &self.world,
+                            settings: &self.settings.media,
+                            camera: &self.camera,
+                            demo: self.demo,
+                        },
+                    );
                 } else {
                     ui::bars::islands::set_favorites_row_bottom(&ctx, None);
                 }
@@ -19652,6 +19692,7 @@ struct UiActions {
     offer_tp: Vec<uuid::Uuid>,
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,
+    nearby_media: Vec<ui::nearby_media::Action>,
     ctx_action: Option<ui::context::CtxAction>,
     object_confirm: Option<Option<i32>>,
     /// Display name change to send (old, new).
@@ -19689,6 +19730,7 @@ impl UiActions {
         self.offer_tp.extend(later.offer_tp);
         first(&mut self.landmark, later.landmark);
         first(&mut self.audio, later.audio);
+        self.nearby_media.extend(later.nearby_media);
         first(&mut self.ctx_action, later.ctx_action);
         first(&mut self.object_confirm, later.object_confirm);
         first(&mut self.set_display_name, later.set_display_name);
@@ -22253,6 +22295,23 @@ impl ApplicationHandler for App {
                     self.on_app_event(e);
                 }
                 self.media.demo_face(object, face, &url, mini);
+            }
+            // AURORA_DEMO_NEARBY_MEDIA: three screens for the nearby media
+            // panel (app/nearby_media.rs), the first one AURORA_DEMO_MEDIA's
+            if nearby_media::demo_mode().is_some() {
+                let mut screens = vec![(crate::demo::media_screen(), crate::demo::demo_media_page())];
+                if std::env::var_os("AURORA_DEMO_MEDIA").is_some() {
+                    screens.clear();
+                }
+                let [cinema, next_door] = crate::demo::nearby_media_screens();
+                screens.push((cinema, aurora_i18n::tr!("demo-nearby-media-page-cinema")));
+                screens.push((next_door, aurora_i18n::tr!("demo-nearby-media-page-next-door")));
+                for ((ev, object, face), url) in screens {
+                    if let Some(e) = self.world.apply(ev) {
+                        self.on_app_event(e);
+                    }
+                    self.media.demo_face(object, face, url, false);
+                }
             }
             // AURORA_DEMO_WORN: an object worn on our avatar's back
             if std::env::var_os("AURORA_DEMO_WORN").is_some() {
