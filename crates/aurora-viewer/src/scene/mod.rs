@@ -871,6 +871,7 @@ pub struct Scene {
     pub studio_stage: avatar_studio::Stage,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
+    pub studio_hover_height: f32,
     /// The kinds of objects not drawn (Advanced › Rendering types), set by
     /// the app at each frame, and those the objects were last flagged for.
     pub hidden_types: render_types::Hidden,
@@ -1584,6 +1585,7 @@ impl Scene {
             studio_stage: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
+            studio_hover_height: 0.0,
             hidden_types: Default::default(),
             hidden_types_applied: Default::default(),
             held_at: None,
@@ -5767,6 +5769,9 @@ impl Scene {
             }
             if *owner == world.agent_id {
                 avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
+                if world.avatar_studio {
+                    avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
+                }
             }
         });
         drop(jobs);
@@ -5821,6 +5826,9 @@ impl Scene {
                 }
                 if *owner == world.agent_id {
                     avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
+                    if world.avatar_studio {
+                        avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
+                    }
                 }
             });
         }
@@ -5863,6 +5871,10 @@ impl Scene {
             let Some(src) = self.palettes.get(base..base + joints) else {
                 continue;
             };
+            if owner == world.agent_id {
+                // the lift this stored pose carries, for the editors' `Frame`
+                world.avatar_studio_lift = if world.avatar_studio { self.studio_hover_height } else { 0.0 };
+            }
             let dst = world.avatar_poses.entry(owner).or_default();
             dst.clear();
             // rest -> posed (attachment points are given in the default pose)

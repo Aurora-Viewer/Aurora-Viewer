@@ -159,6 +159,8 @@ impl Transition {
 pub struct Studio {
     pub pose: Pose,
     pub lighting: Lighting,
+    pub animation_editor: bool,
+    pub reset_animation_confirm: bool,
     pub rotating: bool,
     pub panning: bool,
     pub panning_plane: bool,
@@ -166,6 +168,10 @@ pub struct Studio {
     pub yaw: f32,
     pub facing: f32,
     pub floor_offset: f32,
+    /// Session-only vertical offset for the displayed studio avatar.
+    pub hover_height: f32,
+    /// Smoothed display value, so small changes do not visibly step the rig.
+    pub display_hover_height: f32,
     height: f32,
     focus_height: f32,
     target_height: f32,
@@ -275,6 +281,7 @@ impl Studio {
         self.focus_height += (self.target_height - self.focus_height) * weight;
         self.distance += (self.target_distance - self.distance) * weight;
         self.pan += (self.target_pan - self.pan) * weight;
+        self.display_hover_height += (self.hover_height - self.display_hover_height) * weight;
     }
 }
 
@@ -387,6 +394,26 @@ mod tests {
         let p = project(before);
         let q = project(after);
         assert!((p.truncate() / p.w - q.truncate() / q.w).length() < 0.00001);
+    }
+
+    #[test]
+    fn display_hover_eases_toward_small_slider_changes_without_overshoot() {
+        let mut studio = Studio {
+            hover_height: 0.05,
+            ..Studio::default()
+        };
+
+        studio.update(1.0 / 60.0);
+        let first = studio.display_hover_height;
+        assert!(first > 0.0 && first < 0.05);
+
+        for _ in 0..120 {
+            let previous = studio.display_hover_height;
+            studio.update(1.0 / 60.0);
+            assert!(studio.display_hover_height >= previous);
+            assert!(studio.display_hover_height <= 0.05);
+        }
+        assert!((studio.display_hover_height - 0.05).abs() < 1e-5);
     }
 
     #[test]

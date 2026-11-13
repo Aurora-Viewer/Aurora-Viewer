@@ -2264,4 +2264,12 @@ mod tests {
             assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
         }
     }
+
+    #[test]
+    fn draw_record_control_flags_do_not_overlap() {
+        assert_eq!(flags::STUDIO_STAGE & flags::OBJECT_MASK_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
+    }
 }

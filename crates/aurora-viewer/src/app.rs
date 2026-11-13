@@ -4943,7 +4943,8 @@ impl App {
             ),
             Action::IkEdit => {
                 self.ik_editor.open_ik();
-                ui::widgets::open_floater(&self.egui_ctx, "ik-edit", &mut self.ik_editor.open);
+                let window = self.ik_editor.window_id();
+                ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
             }
             Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
@@ -10540,8 +10541,7 @@ impl App {
             }
             self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
-            self.ik_editor
-                .tick_clip(&self.scene.jobs, &self.egui_ctx, self.world.avatar_lib.rig.clone());
+            self.ik_editor.tick_clip(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.scene.ik_edit = self.ik_editor.request();
             if self.demo
                 && let Ok(mode) = std::env::var("AURORA_DEMO_POSER")
@@ -16652,7 +16652,7 @@ impl App {
                         &self.scene,
                         projector,
                         self.camera.position,
-                        !self.camera.mouselook(),
+                        !self.camera.mouselook() && !(self.avatar_studio.active && self.avatar_studio.animation_editor),
                         ui::hud::avatar_tags(
                             self.interface.immersive,
                             self.settings.immersive_name_tags,
@@ -17353,6 +17353,12 @@ impl App {
                         ctrl: self.ctrl,
                         alt: self.alt,
                     };
+                    // A press the animation timeline acted on is its alone:
+                    // egui holds the same event, and the build tools would
+                    // delete the selected object or undo an edit with it.
+                    for (key, modifiers) in self.ik_editor.take_timeline_keys() {
+                        ctx.input_mut(|input| input.consume_key(modifiers, key));
+                    }
                     // Focused web/media pages already received the native
                     // keys; their history must not also change world objects.
                     if self.media.focus.is_none() && !self.web_has_focus() {
@@ -22390,6 +22396,31 @@ impl ApplicationHandler for App {
                         if let Some(input) = self.options_ui.capture_key(code, pressed, ke.repeat) {
                             self.finish_capture(input);
                         }
+                        return;
+                    }
+                    // The animation editor owns its accelerators before the
+                    // global keybind table (Home=Fly, Ctrl+S=Resync). egui
+                    // already received this event above; only route it when
+                    // no text field or focused widget owns keyboard input.
+                    if pressed
+                        && !altgr_text
+                        && let Some(key) = crate::ik_edit::Editor::map_timeline_key(&ke.logical_key)
+                        // a held arrow keeps stepping frames; the other accelerators fire once
+                        && (!ke.repeat || matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight))
+                        && self.ik_editor.handle_timeline_shortcut(
+                            &self.egui_ctx,
+                            key,
+                            egui::Modifiers {
+                                alt: self.alt,
+                                ctrl: self.ctrl,
+                                shift: self.shift,
+                                mac_cmd: self.command,
+                                command: self.command,
+                            },
+                        )
+                    {
+                        self.down.remove(&Input::key(code));
+                        self.egui_ctx.request_repaint();
                         return;
                     }
                     // egui received Close Window above (Ctrl+W and
