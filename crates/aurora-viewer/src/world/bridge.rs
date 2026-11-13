@@ -1488,6 +1488,7 @@ impl Bridge {
                             handle: root.key.region,
                             options: ScriptOptions {
                                 mono: true,
+                                luau: aurora_net::scripts::Luau::Off,
                                 running: true,
                                 experience: Uuid::nil(),
                             },

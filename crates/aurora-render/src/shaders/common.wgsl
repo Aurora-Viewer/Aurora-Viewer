@@ -79,8 +79,14 @@ struct Frame {
     // axes; w: catalogue (-1 none), Milky Way strength, 0
     sky_stars: array<vec4<f32>, 3>,
     sky_star_pass: vec4<f32>,   // this pass's target: width, height, 1/w, 1/h (0: frame.screen)
+    studio_aurora: array<vec4<f32>, 4>, // navy/enabled, teal/yaw, violet/time, indigo/white reveal
     anim_clock: vec4<u32>,      // effects clock (rez, portals): x ms (wrapping), y sub-ms fraction (f32 bits); zw the same for texture animations (held while the world is frozen)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
+    // the poser's hovered part (`fs_part_mask`): bit j of the skeleton's
+    // palette joint j, 256 joints in two vectors (word j >> 5)
+    part_joints: array<vec4<u32>, 2>,
+    // Eight four-bit part classes per word, summed before interpolation.
+    part_classes: array<vec4<u32>, 8>,
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
@@ -149,6 +155,11 @@ const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+// flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
+const LAYER_RANK_SHIFT: u32 = 24u;
+const LAYER_RANK_MAX: u32 = 7u;
+const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
+const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -249,7 +260,19 @@ struct SkinBind {
 // the page (high 16 bits) and its layer (low 16 bits).
 @group(2) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
 @group(2) @binding(1) var tex_sampler: sampler;
-@group(2) @binding(2) var<storage, read> tex_loc: array<u32>;
+struct TextureLocations {
+    page_count: u32,
+    values: array<u32>,
+}
+@group(2) @binding(2) var<storage, read> tex_loc: TextureLocations;
+
+// Stale or corrupt locations fall back to page 0, which always holds the
+// reserved textures. `TextureTable::build` binds at least that page.
+fn texture_page_index(loc: u32) -> u32 {
+    let page = loc >> 16u;
+    let last_bound_page = max(tex_loc.page_count, 1u) - 1u;
+    return select(page, 0u, page > last_bound_page);
+}
 
 // Local lights of a fragment (light_tiles.rs). In the main view, the lights
 // that cover its screen column, its screen row and its slice of depth at
@@ -368,35 +391,58 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSampleBias(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
+    let loc = tex_loc.values[idx];
+    return textureSampleBias(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
 }
 
 // Without the frame's mip bias: the shadow maps have their own size, and
 // their pass binds no frame uniform
 fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
+    let loc = tex_loc.values[idx];
+    return textureSample(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu);
 }
 
 fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
-    let loc = tex_loc[idx];
-    return textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
+    let loc = tex_loc.values[idx];
+    return textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
 }
 
 fn in_reflection_pass() -> bool {
     return frame.misc.w > 0.5;
 }
 
-/// Planar reflection passes (water, mirror): a view mirrored by a plane.
+/// Reflection passes with a mirrored view: planar ones (water, mirror) and
+/// the faces of a probe (probes::face_view).
 fn mirrored_pass() -> bool {
     return frame.misc.w > 1.5;
 }
 
-// Probes are sampled in the main view only (captures see the sky instead,
-// a single bounce).
+// frame.light_mode.z, the capture of a probe that lights its surfaces with
+// the probes as LLReflectionMapManager::updateUniforms does: the radiance
+// capture with both, the irradiance capture (PROBE_CAPTURE_AMBIANCE too)
+// with no irradiance and half the radiance. A closed room then sees its own
+// dark surroundings in its captures, not the sky. probes::CaptureLighting.
+const PROBE_CAPTURE_LIT: u32 = 0x20000u;
+const PROBE_CAPTURE_AMBIANCE: u32 = 0x40000u;
+// frame.light_mode.z, any capture of a probe: the sea instead of the sky under
+// the rim of the Legacy Viewer's dome (sky_pixel in env.wgsl).
+// probes::capture_lighting::DOME.
+const PROBE_CAPTURE_DOME: u32 = 0x80000u;
+
+// Probes are sampled in the main view and in the captures of the probes
+// themselves (planar reflections and the sky-only default probe see the sky).
 fn probes_on() -> bool {
-    return probe_set.enabled != 0u && !in_reflection_pass();
+    return probe_set.enabled != 0u && (!in_reflection_pass() || (frame.light_mode.z & PROBE_CAPTURE_LIT) != 0u);
+}
+
+// What the pass multiplies the probes' irradiance by (refParams.x).
+fn probe_pass_ambiance() -> f32 {
+    return select(1.0, 0.0, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
+}
+
+// What the pass multiplies the probes' radiance by (refParams.y).
+fn probe_pass_radiance() -> f32 {
+    return select(1.0, 0.5, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
 }
 
 fn probe_max_lod() -> f32 {
@@ -926,8 +972,66 @@ fn atmos_eval(dir: vec3<f32>, for_clouds: bool) -> Atmos {
     return a;
 }
 
+// The login illustration's four curtain waves (ui/aurora_bg.rs), lifted
+// onto sky directions so water and material reflections see the same sky.
+// Palette colours and time are supplied only by the local studio frame.
+fn studio_sky_color(dir: vec3<f32>) -> vec3<f32> {
+    let d = normalize(dir);
+    let yaw = frame.studio_aurora[1].w;
+    let x = -d.x * cos(yaw) - d.y * sin(yaw);
+    let y = d.x * sin(yaw) - d.y * cos(yaw);
+    let u = atan2(y, x) / 1.5 + 0.5;
+    let h = 0.58 - asin(clamp(d.z, -1.0, 1.0)) * 2.8;
+    let t = frame.studio_aurora[2].w;
+    let navy = frame.studio_aurora[0].rgb;
+    let teal = frame.studio_aurora[1].rgb;
+    let violet = frame.studio_aurora[2].rgb;
+    let indigo = frame.studio_aurora[3].rgb;
+    var c = mix(navy * 0.55, mix(navy, indigo, 0.22), clamp(h, 0.0, 1.0));
+    let bases = array<f32, 4>(0.30, 0.38, 0.24, 0.46);
+    let heights = array<f32, 4>(0.26, 0.20, 0.16, 0.14);
+    let speeds = array<f32, 4>(0.050, -0.035, 0.028, -0.020);
+    let phases = array<f32, 4>(0.0, 1.7, 3.1, 4.6);
+    let tops = array<vec3<f32>, 4>(violet, indigo, teal, mix(violet, vec3<f32>(1.0), 0.2));
+    let lows = array<vec3<f32>, 4>(teal, violet, indigo, teal);
+    for (var k = 0u; k < 4u; k++) {
+        let phase = phases[k];
+        let speed = speeds[k];
+        let wave = sin(u * 5.3 + t * speed * 6.0 + phase) * 0.045
+                 + sin(u * 11.7 - t * speed * 9.0 + phase * 2.0) * 0.018
+                 + sin(u * 2.1 + t * 0.03 + phase) * 0.03;
+        let base = bases[k] + wave;
+        let height = heights[k] * (0.75 + 0.25 * sin(u * 7.0 + phase + t * 0.1));
+        let q = (base - h) / height;
+        // Continuous version of the illustration's four vertex rows.
+        let upper = 0.55 * clamp((1.0 - q) / 0.65, 0.0, 1.0);
+        let lower = mix(1.0, 0.55, clamp(q / 0.35, 0.0, 1.0));
+        let below = clamp(1.0 + (base - h) / 0.035, 0.0, 1.0);
+        let brightness = select(select(upper, lower, q < 0.35), below, q < 0.0);
+        let rays = 0.55 + 0.45 * pow(0.5 + 0.5 * sin(u * 38.0 + t * 0.35 + phase * 3.0), 1.5);
+        let ends = pow(max(sin(clamp(u, 0.0, 1.0) * 3.14159265), 0.0), 0.6);
+        let breathe = 0.8 + 0.2 * sin(t * 0.25 + phase + u * 3.0);
+        let tint = mix(tops[k], lows[k], 0.5 + 0.5 * sin(u * 3.0 + phase + t * 0.05));
+        c += mix(tint, lows[k], clamp(1.0 - q, 0.0, 1.0))
+           * brightness * (0.34 - f32(k) * 0.05) * rays * ends * breathe;
+    }
+    // Low distant ridgelines, leaving the water and avatar unobstructed.
+    for (var k = 0u; k < 2u; k++) {
+        let seed = select(0.7, 2.9, k == 1u);
+        let n = sin(u * 3.1 + seed) * 0.5 + sin(u * 7.3 + seed * 2.0) * 0.28
+              + sin(u * 17.0 + seed * 3.0) * 0.12 + sin(u * 41.0 + seed) * 0.06;
+        let ridge = 0.59 - 0.035 * (0.5 + 0.5 * n) + f32(k) * 0.025;
+        let shade = select(mix(navy, indigo, 0.16), navy * 0.65, k == 1u);
+        c = mix(c, shade, smoothstep(ridge - 0.002, ridge + 0.002, h));
+    }
+    return srgb_to_linear(c);
+}
+
 /// Linear HDR sky radiance for a direction, without clouds (reflections).
 fn sky_color(dir: vec3<f32>) -> vec3<f32> {
+    if (frame.studio_aurora[0].w > 0.0) {
+        return studio_sky_color(dir);
+    }
     let a = atmos_eval(dir, false);
     let c = clamp(a.color * 2.0, vec3<f32>(0.0), vec3<f32>(5.0));
     return srgb_to_linear(c) * frame.sky_cloud_pd2.w;
@@ -1683,10 +1787,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         // occlusion only), in one walk of the probes
         let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
         if (s.a.w > 0.0) {
-            amb = s.a.rgb;
+            amb = s.a.rgb * probe_pass_ambiance();
         }
         if (s.b.w > 0.0) {
-            env = s.b.rgb;
+            env = s.b.rgb * probe_pass_radiance();
             occl = spec_ao;
         }
     }
@@ -1914,18 +2018,18 @@ fn ll_light_atten(d: f32, falloff: f32) -> f32 {
 
 // Last level of the projected texture's chain (LL's proj_lod).
 fn projector_levels(slot: u32) -> f32 {
-    let loc = tex_loc[slot];
-    return f32(textureNumLevels(tex_pages[loc >> 16u])) - 1.0;
+    let loc = tex_loc.values[slot];
+    return f32(textureNumLevels(tex_pages[texture_page_index(loc)])) - 1.0;
 }
 
 // The projected texture at `lod`, linear, kept inside the image (the
 // atlas sampler repeats; LL clamps).
 fn projector_sample(slot: u32, tc: vec2<f32>, lod: f32) -> vec4<f32> {
-    let loc = tex_loc[slot];
-    let size = vec2<f32>(textureDimensions(tex_pages[loc >> 16u]));
+    let loc = tex_loc.values[slot];
+    let size = vec2<f32>(textureDimensions(tex_pages[texture_page_index(loc)]));
     let half_texel = 0.5 * exp2(ceil(lod)) / size;
     let uv = clamp(vec2<f32>(tc.x, 1.0 - tc.y), half_texel, vec2<f32>(1.0) - half_texel);
-    let c = textureSampleLevel(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, lod);
+    let c = textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, lod);
     return vec4<f32>(srgb_to_linear(c.rgb), c.a);
 }
 

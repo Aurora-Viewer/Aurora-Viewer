@@ -38,6 +38,16 @@
 //! Past the budget the viewer has only its textures to give back: two
 //! viewers on that card, 6.6 and 5.9 GB, overfilled it, and Windows moved
 //! memory to system RAM (GPU frames of 1 s, then a device lost).
+//!
+//! wgpu keeps the extension from its own use on RADV, every AMD GPU under
+//! Linux: it turns a budget into allocation failures, and RADV before
+//! Mesa 26.2.0 charges an imported dmabuf to one heap and credits it to
+//! another (gfx-rs/wgpu#9742, mesa#15725; the viewer imports none). That
+//! removes it from the list wgpu keeps, not from the driver, so the
+//! driver's list is asked here ([`lists_memory_budget`]). A device-level
+//! extension's physical-device queries need no logical device with it
+//! enabled, and the viewer only reads the figures. A wrapped figure is no
+//! reading ([`plausible`]).
 
 #[cfg(not(target_os = "macos"))]
 use ash::vk;
@@ -166,17 +176,25 @@ fn forced_budget() -> Option<u64> {
 /// How long a higher budget must hold before it is given out (module).
 pub const BUDGET_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The lowest budget of the last [`BUDGET_WINDOW`]: the readings that could
+/// The lowest value of the last [`BUDGET_WINDOW`]: the readings that could
 /// still be the lowest, oldest first, each lower than the next (a sliding
 /// minimum, constant time per reading).
-#[derive(Debug, Default)]
-pub struct BudgetFloor {
-    readings: std::collections::VecDeque<(std::time::Instant, u64)>,
+#[derive(Debug)]
+pub struct SlidingMin<T> {
+    readings: std::collections::VecDeque<(std::time::Instant, T)>,
 }
 
-impl BudgetFloor {
-    /// Take the driver's figure of `now`; the budget to give out.
-    pub fn update(&mut self, raw: u64, now: std::time::Instant) -> u64 {
+impl<T> Default for SlidingMin<T> {
+    fn default() -> Self {
+        SlidingMin {
+            readings: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl<T: Ord + Copy> SlidingMin<T> {
+    /// Take the reading of `now`; the lowest of the window.
+    pub fn update(&mut self, raw: T, now: std::time::Instant) -> T {
         while self.readings.back().is_some_and(|&(_, b)| b >= raw) {
             self.readings.pop_back();
         }
@@ -191,6 +209,20 @@ impl BudgetFloor {
         // (the reading just pushed is always there)
         self.readings.front().map_or(raw, |&(_, b)| b)
     }
+}
+
+/// The lowest budget of the last [`BUDGET_WINDOW`] (module).
+pub type BudgetFloor = SlidingMin<u64>;
+
+/// One complete sample of the sampling thread: the budget given out, the
+/// usage, and the tightest headroom (budget less usage, negative past the
+/// budget) of the last [`BUDGET_WINDOW`], for the crash report only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sample {
+    budget: u64,
+    usage: u64,
+    shared_budget: u64,
+    headroom: i64,
 }
 
 /// The driver can block even a physical-device memory query (#1992: the
@@ -208,7 +240,7 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(250);
 /// The query runs without the cache lock. A stuck driver leaves the last
 /// budget available and cannot hold up a frame or the viewer's shutdown.
 struct BudgetSampler {
-    latest: Arc<parking_lot::Mutex<Option<(u64, u64, u64)>>>,
+    latest: Arc<parking_lot::Mutex<Option<Sample>>>,
     stopped: Arc<AtomicBool>,
 }
 
@@ -220,6 +252,7 @@ impl BudgetSampler {
         let spawned = std::thread::Builder::new().name("aurora-vram".into()).spawn(move || {
             let mut floor = BudgetFloor::default();
             let mut shared_floor = BudgetFloor::default();
+            let mut tightest = SlidingMin::<i64>::default();
             let mut logged = None::<u64>;
             while !stop.load(Ordering::Acquire) {
                 if let Some((dedicated_budget, dedicated_usage, shared_budget, shared_usage)) = query() {
@@ -235,7 +268,17 @@ impl BudgetSampler {
                         shared_floor = BudgetFloor::default();
                         0
                     };
-                    *output.lock() = Some((budget, usage, shared_budget));
+                    // (the headroom follows the figure the viewer is given,
+                    // forced or not: the figure of the report's other rows;
+                    // noted for the report, nothing reads it otherwise)
+                    let given = forced_budget().unwrap_or(raw);
+                    let headroom = tightest.update(given as i64 - usage as i64, now);
+                    *output.lock() = Some(Sample {
+                        budget,
+                        usage,
+                        shared_budget,
+                        headroom,
+                    });
                     if logged.is_none_or(|last| budget.abs_diff(last) >= BUDGET_LOG_STEP) {
                         logged = Some(budget);
                         log::info!(
@@ -258,7 +301,11 @@ impl BudgetSampler {
     }
 
     fn read(&self) -> Option<(u64, u64, u64)> {
-        *self.latest.lock()
+        self.latest.lock().map(|s| (s.budget, s.usage, s.shared_budget))
+    }
+
+    fn headroom(&self) -> Option<i64> {
+        self.latest.lock().map(|s| s.headroom)
     }
 }
 
@@ -276,6 +323,23 @@ const BUDGET_LOG_STEP: u64 = 256 << 20;
 const SOURCE: &str = "VK_EXT_memory_budget";
 #[cfg(target_os = "macos")]
 const SOURCE: &str = "MTLDevice working set";
+
+/// Whether the driver lists VK_EXT_memory_budget.
+#[cfg(not(target_os = "macos"))]
+fn lists_memory_budget(extensions: &[vk::ExtensionProperties]) -> bool {
+    extensions
+        .iter()
+        .any(|e| e.extension_name_as_c_str() == Ok(ash::ext::memory_budget::NAME))
+}
+
+/// Whether a reading can be used: a driver that fills nothing in reports no
+/// budget, and a figure wrapped below zero (mesa#15725 read
+/// 18446744073709367296 on a 256 MB heap, not the one read here on a
+/// discrete GPU) would be past any budget, which pauses a window behind and
+/// takes its textures, or a budget without a limit.
+fn plausible(budget: u64, usage: u64) -> bool {
+    budget > 0 && budget.max(usage) <= i64::MAX as u64
+}
 
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
@@ -322,6 +386,15 @@ impl VideoMemoryProbe {
         })
     }
 
+    /// The tightest headroom of the last [`BUDGET_WINDOW`], in bytes: the
+    /// budget given to the viewer less what the driver counted for it at
+    /// the same reading, negative while the viewer was past the budget
+    /// (the crash report's "Video memory headroom" row, #2072). None until
+    /// the first reading. Read by the crash state only.
+    pub fn tightest_headroom(&self) -> Option<i64> {
+        self.sampler.headroom()
+    }
+
     /// The card's identity for the system's adapter-wide counters (the LUID
     /// Windows names its adapters by, `high << 32 | low`), the size of its
     /// largest device-local heap, and whether that heap is the card's own
@@ -355,7 +428,7 @@ impl VideoMemoryProbe {
                 .raw_instance()
                 .get_physical_device_memory_properties(hal.raw_physical_device())
         };
-        // (the heap budget_heap picks, without its memory_budget condition:
+        // (the heaps budget_heaps picks, without its memory_budget condition:
         // only the size is read here, never the blocking budget query)
         let total = memory
             .memory_heaps_as_slice()
@@ -382,9 +455,17 @@ impl VideoMemoryProbe {
         let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
         let shared = hal.shared_instance();
         // get_physical_device_memory_properties2 is core since Vulkan 1.1
-        if shared.instance_api_version() < vk::API_VERSION_1_1
-            || !hal.physical_device_capabilities().supports_extension(ash::ext::memory_budget::NAME)
-        {
+        if shared.instance_api_version() < vk::API_VERSION_1_1 {
+            return None;
+        }
+        // (the driver's list, not wgpu's, see the module)
+        // SAFETY: as above.
+        let extensions = unsafe {
+            shared
+                .raw_instance()
+                .enumerate_device_extension_properties(hal.raw_physical_device())
+        };
+        if !extensions.is_ok_and(|list| lists_memory_budget(&list)) {
             return None;
         }
         // SAFETY: as above.
@@ -412,13 +493,15 @@ impl VideoMemoryProbe {
                 .raw_instance()
                 .get_physical_device_memory_properties2(hal.raw_physical_device(), &mut props);
         }
+        // A heap whose figures are not usable (`plausible`: nothing filled in,
+        // or a wrapped figure) counts as no heap, so the other one still reads.
         let sample = |heap: Option<usize>| {
-            heap.map(|i| (*budget.heap_budget.get(i).unwrap_or(&0), *budget.heap_usage.get(i).unwrap_or(&0)))
+            heap.and_then(|i| Some((*budget.heap_budget.get(i)?, *budget.heap_usage.get(i)?)))
+                .filter(|&(budget, usage)| plausible(budget, usage))
                 .unwrap_or((0, 0))
         };
         let (dedicated_budget, dedicated_usage) = sample(roles.dedicated);
         let (shared_budget, shared_usage) = sample(roles.shared);
-        // (a driver that fills nothing in reports no budget)
         (dedicated_budget > 0 || shared_budget > 0).then_some((dedicated_budget, dedicated_usage, shared_budget, shared_usage))
     }
 
@@ -483,6 +566,74 @@ mod tests {
             // The query is still blocked until after both operations.
             release_tx.send(()).expect("release the sampling thread");
         }
+    }
+
+    /// wgpu drops the extension from its own list on RADV: only the
+    /// driver's list says the budget can be read there.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_budget_extension_is_found_in_the_list_of_the_driver() {
+        let named = |name: &std::ffi::CStr| {
+            let mut e = vk::ExtensionProperties::default();
+            for (to, from) in e.extension_name.iter_mut().zip(name.to_bytes()) {
+                *to = *from as std::ffi::c_char;
+            }
+            e
+        };
+        let swapchain = named(ash::khr::swapchain::NAME);
+        assert!(lists_memory_budget(&[swapchain, named(ash::ext::memory_budget::NAME)]));
+        assert!(!lists_memory_budget(&[swapchain]));
+        assert!(!lists_memory_budget(&[]));
+    }
+
+    #[test]
+    fn a_reading_without_a_budget_or_with_a_wrapped_figure_is_no_reading() {
+        // the 610M under RADV, the viewer's own use just above nothing
+        assert!(plausible(21_990 * MB, 0));
+        // past the budget is a true reading: a window behind reacts to it
+        assert!(plausible(8_000 * MB, 9_000 * MB));
+        assert!(!plausible(0, 0));
+        // the figure of mesa#15725, as a usage and as a budget
+        assert!(!plausible(268_435_456, 18_446_744_073_709_367_296));
+        assert!(!plausible(18_446_744_073_709_367_296, 0));
+    }
+
+    #[test]
+    fn the_tightest_headroom_of_the_minute_is_kept_negative_included() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut h = SlidingMin::<i64>::default();
+        let mb = |n: i64| n * MB as i64;
+        assert_eq!(h.update(mb(9_000), at(0)), mb(9_000));
+        // another program takes the card: the viewer past its budget
+        assert_eq!(h.update(mb(-512), at(5)), mb(-512));
+        assert_eq!(h.update(mb(2_000), at(6)), mb(-512));
+        // the minute after that reading, the headroom since
+        assert_eq!(h.update(mb(2_000), at(66)), mb(2_000));
+    }
+
+    #[test]
+    fn the_sampler_publishes_the_headroom_of_its_readings() {
+        let readings = std::sync::Arc::new(std::sync::Mutex::new(vec![
+            (7_000 * MB, 3_000 * MB, 0, 0),
+            (5_000 * MB, 5_500 * MB, 0, 0),
+        ]));
+        let source = readings.clone();
+        let sampler = BudgetSampler::new(
+            move || {
+                let mut r = source.lock().unwrap();
+                if r.is_empty() { None } else { Some(r.remove(0)) }
+            },
+            Duration::from_millis(1),
+        );
+        let start = Instant::now();
+        while sampler.read() != Some((5_000 * MB, 5_500 * MB, 0)) && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // the budget given out is the lowest, the headroom the tightest:
+        // 500 MB short at the second reading
+        assert_eq!(sampler.read(), Some((5_000 * MB, 5_500 * MB, 0)));
+        assert_eq!(sampler.headroom(), Some(-(500 * MB as i64)));
     }
 
     #[test]

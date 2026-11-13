@@ -335,9 +335,11 @@ pub struct AvatarAppearance {
     /// the block.
     pub appearance_version: u8,
     pub hover_height: f32,
-    /// Worn objects the simulator lists (AttachmentBlock entries with an
-    /// id, each once: LLVOAvatar::mSimAttachments).
-    pub attachments: u32,
+    /// Worn objects the simulator lists: object id and attachment point of
+    /// the AttachmentBlock entries with an id, each id once
+    /// (LLVOAvatar::mSimAttachments). The Dev Toolbox's J2 compares them
+    /// with the objects that came (issue #2747).
+    pub attachments: Vec<(Uuid, u8)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -374,6 +376,12 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "destination-guide-url": the grid's Destination Guide page
+    /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
+    /// does not name the key: only then does the login response's page
+    /// count; a key given empty means "no guide" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub destination_guide_url: Option<String>,
     /// "whisper-range", "say-range", "shout-range": how far the region's
     /// chat carries, in meters (None: the usual 10, 20 and 100 m).
     pub whisper_range: Option<f32>,
@@ -416,6 +424,9 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            destination_guide_url: extras
+                .has("destination-guide-url")
+                .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
             whisper_range: figure("whisper-range"),
             say_range: figure("say-range"),
             shout_range: figure("shout-range"),
@@ -427,12 +438,16 @@ impl OpenSimExtras {
 
 #[derive(Debug, Clone)]
 pub enum NetEvent {
+    /// GrantGodlikePowers: the god level the region gives us (0: none,
+    /// 200 and more: an administrator of the grid or of the region).
+    GodLevel(u8),
     /// OpenRegionInfo's MaxLinkCount, in children (LLWorld::setMaxLinkedPrims).
     RegionLinkLimit {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
-    /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
+    /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
+    /// empty on the server.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
     Groups(Vec<crate::social::GroupMembership>),
@@ -498,6 +513,13 @@ pub enum NetEvent {
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
     },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
+    },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
     /// Answer of a voice call request: the body, or the HTTP status of the
@@ -523,6 +545,8 @@ pub enum NetEvent {
     /// `tos_required` / `critical_required`: the Terms of Service to accept
     /// (reason "tos") or a message to read (reason "critical"), each with
     /// its own flag in the next request; `error` is then the server's text.
+    /// `next_server`: the login server sends the login on to this other
+    /// server (`LoginError::NextServer`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -530,6 +554,7 @@ pub enum NetEvent {
         critical_required: bool,
         bad_credentials: bool,
         previous_session: bool,
+        next_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
@@ -606,6 +631,13 @@ pub enum NetEvent {
     Capabilities {
         handle: RegionHandle,
         caps: Arc<HashMap<String, String>>,
+    },
+    /// A region's answer to the GET of `AvatarRenderInfo` with both counts
+    /// (render_info.rs): of the viewers around that report on us,
+    /// `over_limit` draw our avatar as a silhouette.
+    AvatarRenderInfo {
+        handle: RegionHandle,
+        visibility: crate::render_info::Visibility,
     },
     /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox",
     /// RenderMaterials limits read by LLViewerRegion::resetMaterialsCapThrottle
@@ -694,10 +726,16 @@ pub enum NetEvent {
     RegionRemoved {
         handle: RegionHandle,
     },
-    TeleportStarted,
-    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest").
+    /// TeleportStart, with its TeleportFlags (TELEPORT_FLAGS_DISABLE_CANCEL:
+    /// the teleport screen offers no Cancel).
+    TeleportStarted {
+        flags: u32,
+    },
+    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest"),
+    /// with its TeleportFlags.
     TeleportProgress {
         message: String,
+        flags: u32,
     },
     /// TeleportFinish: the destination region is known, connecting to it.
     TeleportFinished {
@@ -935,6 +973,11 @@ pub enum NetEvent {
         object_name: String,
         object_id: Uuid,
         message: String,
+        url: String,
+    },
+    /// The simulator asks for a web window on this URL (llOpenFloater, the
+    /// "URLFloater" GenericMessage; `url_floater.rs`).
+    UrlFloater {
         url: String,
     },
     /// llMapDestination (ScriptTeleportRequest): a place to show on the
@@ -1371,6 +1414,8 @@ pub enum NetEvent {
         item_id: Uuid,
         running: bool,
         mono: Option<bool>,
+        /// The event queue's Luau and LuauLanguage flags; `Off` when absent.
+        luau: crate::scripts::Luau,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -1559,10 +1604,22 @@ pub enum NetCommand {
         target: Uuid,
         permissions: u32,
     },
+    /// Make the region release every control the scripts took
+    /// (llTakeControls): Advanced › Release Keys
+    /// (LLAgent::forceReleaseControls). The region answers with
+    /// ScriptControlChange releases.
+    ForceScriptControlRelease,
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,
         session: Uuid,
+    },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
     },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.
@@ -1600,6 +1657,10 @@ pub enum NetCommand {
         local_ids: Vec<u32>,
     },
     TeleportHome,
+    /// The teleport screen's Cancel (LLAgent::teleportCancel): TeleportCancel
+    /// to the region we are leaving. The simulator may ignore it or get it
+    /// too late; a TeleportFinish then still comes.
+    TeleportCancel,
     /// The content rating the agent wants (UpdateAgentInformation,
     /// LLAgent::sendMaturityPreferenceToServer); answered by
     /// `NetEvent::MaturityPreference`.
@@ -1650,8 +1711,6 @@ pub enum NetCommand {
         position: Vec3,
         look_at: Vec3,
     },
-    /// Change the draw distance used in AgentUpdate (`Far`).
-    SetDrawDistance(f32),
     /// No connection to the neighbouring regions while true
     /// (FSDisableNeighbourRegionConnections): the viewer sends false while
     /// the agent is outside its region, so that a crossing still connects.
@@ -1812,12 +1871,15 @@ pub enum NetCommand {
         object: Uuid,
     },
     /// Sent only after the user confirms the displayed price (ObjectBuy).
+    /// `group_id` is the agent's active group at that moment (nil for
+    /// none): the simulator sets it as the bought object's group.
     BuyObject {
         handle: RegionHandle,
         local_id: u32,
         folder: Uuid,
         sale_type: u8,
         price: i32,
+        group_id: Uuid,
     },
     /// Payment to the clicked prim, not directly to its owner.
     PayObject {
@@ -1980,6 +2042,13 @@ pub enum NetCommand {
     Land(crate::land::LandCommand),
     /// Region / Estate window (estate.rs).
     Estate(crate::estate::EstateCommand),
+    /// Request / Leave Admin Status (RequestGodlikePowers): `godlike` asks
+    /// the region for its god level, false gives it back.
+    RequestGodlikePowers {
+        godlike: bool,
+    },
+    /// Advanced › Admin (god.rs), with the god level the region granted.
+    God(crate::god::GodCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,
@@ -2221,6 +2290,9 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        /// A script (asset type 10) written in Lua ([`crate::scripts::lua_source`]):
+        /// compiled for "luau", never "mono".
+        lua: bool,
         data: Vec<u8>,
     },
     /// Create a named notecard, then upload its text after the matching
@@ -2231,6 +2303,18 @@ pub enum NetCommand {
         name: String,
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
+    },
+    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// onCreateScript): CreateInventoryItem, then its text through
+    /// UpdateScriptAgent, compiled for Mono. Answered by
+    /// `InventoryContentSaved`, with the new item's id when it was created
+    /// but its text could not be saved.
+    CreateScriptItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through
@@ -2376,6 +2460,8 @@ pub struct AgentControls {
     pub camera_at: Vec3,
     pub camera_left: Vec3,
     pub camera_up: Vec3,
+    /// The draw distance (RenderFarClip): AgentUpdate's `Far` follows it by
+    /// the steps of `agent_update::FarStep`.
     pub far: f32,
     /// The render state (LLAgent::getRenderState): `AGENT_STATE_TYPING`
     /// while we type in the nearby chat.
@@ -2428,6 +2514,7 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
@@ -2437,6 +2524,18 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(
+            read.destination_guide_url.as_deref(),
+            Some("https://guide.example/[GRID_LOWERCASE]/")
+        );
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("destination-guide-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).destination_guide_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).destination_guide_url, None);
         // a GridURL given without a scheme, as most grids do
         let bare = Llsd::Map(
             [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]

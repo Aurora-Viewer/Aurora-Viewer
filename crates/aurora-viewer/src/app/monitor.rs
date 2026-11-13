@@ -120,6 +120,10 @@ impl App {
             (self.search_ui.web_process_id(), aurora_i18n::tr!("monitor-media-search")),
             (self.marketplace_ui.web_process_id(), aurora_i18n::tr!("monitor-media-marketplace")),
             (self.web_browser_ui.web_process_id(), aurora_i18n::tr!("web-browser-title")),
+            (
+                self.destinations_ui.web_process_id(),
+                aurora_i18n::tr!("toolbar-command-destinations"),
+            ),
         ];
         for (pid, label) in pages {
             if let Some(pid) = pid {

@@ -517,6 +517,20 @@ in English and must be **readable by a human in two minutes**:
   was tested).
 - **Limits and follow-up**: what is not done, ⬜ lines added to TASKS.md.
 
+**Keep the template's headings** (`## What it is for`, `## Legacy Viewer
+origin`, `## What changes`, `## Screenshots`, `## Tests`, `## Limits and
+follow-up`), the issue line first: the **PR description** workflow reads
+them on every pull request, the team's included. When the issue line is
+missing, or one of `What it is for`, `Legacy Viewer origin`, `What changes`
+and `Tests` is missing or left as the template has it, it posts a comment
+opening with `## Changes requested` and the `needs-description` label; both
+go away once the description is edited. Check your draft before
+`gh pr create`:
+
+```powershell
+./scripts/check-pr-description.ps1 -BodyFile .scratch/pr.md   # lists what it misses, sends nothing
+```
+
 Labels (created by `scripts/setup-labels.ps1`):
 
 - **one type**, for PRs only, which files the PR in the release notes:
@@ -534,6 +548,21 @@ Labels (created by `scripts/setup-labels.ps1`):
   showing it. An agent neither reviews nor merges a PR on hold. When the
   human resumes it, remove the label (`--remove-label on-hold`). Issues use
   the board's `On hold` Status instead (section 15).
+- **`needs-description`**, set and removed by the PR description workflow
+  (above), never by hand. Do not review a PR that carries it: its author
+  completes the description first. An outside contributor's PR that still
+  carries it 3 days after the workflow's comment is closed by the
+  workflow's daily sweep; the team's PRs never are.
+- **`waiting-for-slot`**, set and removed by the Review slots workflow:
+  an outside contributor has at most 10 PRs in review, the others carry
+  this label and come back on their own, oldest first, when a slot frees
+  up. The PR panel of `aurora-tools.cmd` hides them, like `on-hold`. Do not
+  review a PR that carries it. Never add it by hand; removing it by hand
+  is how a maintainer gives that PR a slot (when its author asks, or the
+  human wants it reviewed first): the author's newest other PR in review
+  then waits instead. A PR a maintainer has started reviewing (a team
+  `## Review`, `## Maintainer review` or `## Changes requested` comment),
+  or that is in the merge queue, keeps its slot.
 
 ### Link the PR and its issues
 
@@ -612,7 +641,11 @@ explain it to the human and propose 2–3 solutions.
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. When you ask the author of someone else's PR for changes,
+the repository. **Someone else's PR** is reviewed only once its description
+is complete (no `needs-description` label) and its PR CI is green: an
+outside contributor's CI waits for a maintainer's "Approve and run", so ask
+your human to approve it, and do not read the code before. When you ask the
+author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
 commit of its own (a merge of main does not count). Structure of your review (keep the `## Review` heading and the
@@ -829,7 +862,7 @@ stands:
 | `In progress` | actively worked on | the agent that takes the issue |
 | `On hold` | paused on purpose, until something named in a comment unblocks it | an agent or the project manager |
 | `Waiting for user response` | waiting for an answer from the reporter or another user: information, a file, a reproduction, a test | the agent that asked for it |
-| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md) | the agent, at the end of the work |
+| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md); closed once the fix is released ("Reply and close") | the agent, at the end of the work |
 | `Done` | resolved and closed | the agent, or GitHub after `Closes #<n>` |
 
 - **`Waiting for user response`**: as soon as a comment asks the reporter (or
@@ -968,7 +1001,8 @@ both are done:
   once and for all. Run it alone, with no `cd` or `;`.
 
 - **Resolved**: close only when the solution covers the whole issue, has
-  been verified (human validation if needed) and, if it requires a change to
+  been verified (human validation if needed, or its fix released: next
+  point) and, if it requires a change to
   the repository, its PR is merged. A question can be resolved by a verified
   answer with a link to the relevant documentation. `Closes #<n>` in the
   body of a PR to `main` closes the issue automatically on merge; use
@@ -978,6 +1012,16 @@ both are done:
   Post a summary with the link of every PR that fixed it, the tests and the
   available version, or state that the fix is still waiting for a release.
   Check the final state, including after an automatic close.
+- **Fix released, validation pending** (🟡 in TASKS.md, `Waiting Review`):
+  once every PR that fixes the issue is in a published release, close it
+  with `--reason completed`, even before the QA's or the reporter's
+  validation. The comment names the PRs and the first version that has
+  them, says that the testers will still check it, and asks the reporter
+  to reply on the issue if the problem is still there, so that it is
+  reopened (a reporter cannot reopen an issue a maintainer closed). The 🟡
+  line stays in TASKS.md for the QA. Keep the issue open while a part is
+  left (a ⬜ line, an open PR that names it, a reporter who says it still
+  happens), and do not close an epic this way.
 - **Established duplicate**: explain the link with the reference issue (its
   number in the comment), then close with
   `gh issue close <n> --repo Aurora-Viewer/Aurora-Viewer --duplicate-of <reference-number>`.
@@ -987,7 +1031,22 @@ both are done:
 - **Missing information, unreadable attachment, problem not reproduced or
   partial fix**: keep the issue open, say in a comment what is missing and
   set its Status to `Waiting for user response` when the reporter has to
-  answer, `On hold` when something else blocks it (above). A lack
-  of reply and a mere hypothesis are not enough to close it. If new evidence
+  answer, `On hold` when something else blocks it (above). A mere
+  hypothesis is not enough to close it. If new evidence
   invalidates the resolution, reopen it (`gh issue reopen`), explain why and
   resume the triage.
+- **No reply for a week**: when the last comment is the team's question or
+  request to the reporter and nobody answered for more than 7 days, close
+  the issue with `--reason "not planned"`. The comment says that we asked
+  and did not hear back, and that a reply on the issue reopens it. Not when
+  the last comment is from another user the team has not answered, nor
+  when an open PR names the issue.
+- **Old crash reports** (sent from the crash window, the
+  `<!-- aurora-crash v1 -->` marker): a report from a version older than
+  0.9.4 lacks the details that tell its cause apart (the settings that were
+  on, the first GPU loss, what the card was doing). Close it with
+  `--reason "not planned"` and ask for a new report from the crash window
+  if the crash happens again on a current version. Reports of 0.9.4 and
+  later are grouped by the Crash triage workflow (docs/BUG_REPORTING.md,
+  "Crash triage"), never by their title alone: "GPU device lost" is a
+  symptom, not a cause.

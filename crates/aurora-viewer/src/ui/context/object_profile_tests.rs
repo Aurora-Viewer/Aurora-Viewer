@@ -119,14 +119,14 @@ fn object_profile_edits_name_and_description_directly_through_native_messages() 
     h.type_and_commit("Profile renamed");
     let (commands, _, _) = h.profile.take_output();
     assert!(commands.iter().any(
-        |command| matches!(command, NetCommand::Build(BuildCmd::SetName { handle, local_id, name })
-        if *handle == h.key.region && *local_id == h.key.local_id && name == "Profile renamed")
+        |command| matches!(command, NetCommand::Build(BuildCmd::SetName { handle, local_ids, name })
+        if *handle == h.key.region && local_ids == &[h.key.local_id] && name == "Profile renamed")
     ));
     h.click("Original description");
     h.type_and_commit("Changed description");
     assert!(h.profile.take_output().0.iter().any(
-        |command| matches!(command, NetCommand::Build(BuildCmd::SetDescription { local_id, description, .. })
-        if *local_id == h.key.local_id && description == "Changed description")
+        |command| matches!(command, NetCommand::Build(BuildCmd::SetDescription { local_ids, description, .. })
+        if local_ids == &[h.key.local_id] && description == "Changed description")
     ));
 }
 
@@ -265,8 +265,8 @@ fn object_profile_hud_edits_only_its_root_and_resolves_the_group_name() {
     h.click("HUD root");
     h.type_and_commit("Edited HUD");
     assert!(h.profile.take_output().0.iter().any(
-        |command| matches!(command, NetCommand::Build(BuildCmd::SetName { local_id, name, .. })
-        if *local_id == key.local_id && name == "Edited HUD")
+        |command| matches!(command, NetCommand::Build(BuildCmd::SetName { local_ids, name, .. })
+        if local_ids == &[key.local_id] && name == "Edited HUD")
     ));
 }
 

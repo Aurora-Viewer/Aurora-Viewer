@@ -23,13 +23,6 @@ pub(super) fn clothing_kind(inv: &Inventory, link: &OutfitLink) -> Option<u32> {
         .map(|it| it.flags & 0xff)
 }
 
-/// A link's place in the outfit, `@<type * 100 + index>` in its
-/// description (LLAppearanceMgr::updateClothingOrderingInfo), compared as
-/// a number: as text, "@1400" (a tattoo) would come before "@500" (pants).
-pub(super) fn order(link: &OutfitLink) -> Option<u32> {
-    link.desc.strip_prefix('@').and_then(|n| n.parse().ok())
-}
-
 /// `links`, sorted closest to the body first, with each clothing type's
 /// layers reversed in their own places: the furthest from the body on top,
 /// as the Legacy Viewer lists them.
@@ -316,12 +309,5 @@ mod tests {
         furthest_first(&inv, &mut links);
         let order: Vec<_> = links.iter().map(|l| l.target.as_u128()).collect();
         assert_eq!(order, [1, 5, 3, 4, 2]);
-        // a tattoo's place comes after the pants', as a number
-        let placed = |desc: &str| OutfitLink {
-            desc: desc.into(),
-            ..link(1)
-        };
-        assert!(super::order(&placed("@1400")) > super::order(&placed("@500")));
-        assert_eq!(super::order(&placed("")), None);
     }
 }

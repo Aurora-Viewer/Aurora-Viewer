@@ -83,7 +83,6 @@ impl Blur {
     }
 
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: [u32; 2], scale: f32) -> Self {
-        use wgpu::util::DeviceExt;
         let texture = |label, size: [u32; 2]| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -149,11 +148,12 @@ impl Blur {
             (&intermediate, [0.0, STEP * scale / size[1] as f32, 0.0, 0.0]),
         ]
         .map(|(source, direction)| {
-            let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("UI backdrop direction"),
-                contents: bytemuck::cast_slice(&direction),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+            let uniform = crate::gpu_alloc::buffer_init(
+                device,
+                "UI backdrop direction",
+                bytemuck::cast_slice(&direction),
+                wgpu::BufferUsages::UNIFORM,
+            );
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("UI backdrop"),
                 layout: &layout,

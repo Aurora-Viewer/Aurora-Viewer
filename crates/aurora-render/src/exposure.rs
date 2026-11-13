@@ -8,11 +8,11 @@
 //! its mip chain and reads one texel; here one compute workgroup averages
 //! the same grid (`shaders/exposure.wgsl`) and the result is copied into the
 //! post pass's uniforms, with no read back to the CPU. Classic skies (probe
-//! ambiance 0) get the exposure 1, as there.
+//! ambiance 0) get the exposure 1, as there. A truly dark scene stays darker
+//! than in the Legacy Viewer, on purpose (`shaders/exposure.wgsl`).
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
@@ -50,12 +50,14 @@ pub(crate) fn range(tone_mapped: bool, hdr_scale: f32) -> (f32, f32) {
     }
 }
 
-/// exposureF.glsl's target for an average luminance (mirrors the shader,
-/// for the tests).
+/// exposureF.glsl's target for an average luminance, and Aurora's dark scene
+/// term (mirrors the shader, for the tests).
 #[cfg(test)]
 fn target(average: f32, (lo, hi): (f32, f32)) -> f32 {
     let l = average.clamp(0.0, COEFFICIENT) / COEFFICIENT;
-    hi + (lo - hi) * l * l
+    let t = ((average - 0.003) / (0.015 - 0.003)).clamp(0.0, 1.0);
+    let dark = if hi > 1.0 { 0.4 + 0.6 * t * t * (3.0 - 2.0 * t) } else { 1.0 };
+    (hi + (lo - hi) * l * l) * dark
 }
 
 /// `AURORA_AUTO_EXPOSURE`: `0` off (exposure 1 on every sky), `1` or unset
@@ -95,7 +97,6 @@ impl Override {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ExposureU {
-    inv_view_proj: [[f32; 4]; 4],
     a: [f32; 4],
     b: [f32; 4],
 }
@@ -113,7 +114,6 @@ pub(crate) struct FrameExposure {
     pub(crate) hold: bool,
     /// The glow of the last frame is there to add (RenderGlow).
     pub(crate) glow: bool,
-    pub(crate) inv_view_proj: Mat4,
 }
 
 pub(crate) struct Exposure {
@@ -207,7 +207,7 @@ impl Exposure {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("auto exposure read back"),
-            size: 16,
+            size: crate::readback::readback_size(16),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -330,7 +330,6 @@ impl Exposure {
         let reset = on == self.was_off || Override::from_env() == Override::Alternate || !f.hdr;
         self.was_off = !on;
         let u = ExposureU {
-            inv_view_proj: f.inv_view_proj.to_cols_array_2d(),
             a: [dt, DIFFUSE_SCALE, if f.glow { 1.0 } else { 0.0 }, if reset { 1.0 } else { 0.0 }],
             b: [COEFFICIENT, lo, hi, if f.hold { -1.0 } else { -SPEED_ERROR.ln() / SPEED_TARGET }],
         };
@@ -368,11 +367,23 @@ mod tests {
         // the library Midday: gamma 1, hdr scale sqrt(1) x 2
         let r = range(true, 2.0);
         assert_eq!(r, (0.5, 2.0));
-        // a dark scene opens up, a bright one closes down, on a square curve
-        assert_eq!(target(0.0, r), 2.0);
+        // a dim scene opens up, a bright one closes down, on a square curve
+        assert!((target(0.015, r) - 2.0).abs() < 1e-2);
         assert_eq!(target(COEFFICIENT, r), 0.5);
         assert_eq!(target(10.0, r), 0.5);
         assert!((target(COEFFICIENT * 0.5, r) - 1.625).abs() < 1e-6);
+    }
+
+    #[test]
+    fn truly_dark_scenes_stay_dark() {
+        let r = range(true, 2.0);
+        // an Aurora difference: the Legacy Viewer lifts them to 2
+        assert!((target(0.002, r) - 0.8).abs() < 1e-3);
+        // a dim interior and daylight keep the Legacy Viewer's exposure
+        assert!((target(0.02, r) - 1.9976).abs() < 1e-3);
+        assert!((target(0.17, r) - (2.0 - 1.5 * 0.1156)).abs() < 1e-3);
+        // no exposure to lower on a classic sky
+        assert_eq!(target(0.002, range(false, 2.0)), 1.0);
     }
 
     #[test]

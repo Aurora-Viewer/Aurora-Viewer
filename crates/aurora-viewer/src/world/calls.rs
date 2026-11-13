@@ -862,7 +862,7 @@ impl World {
                     self.social.session_mut(inv.from);
                 }
                 self.call_note(conversation, aurora_i18n::tr!("world-calls-auto-rejected").to_owned());
-                let text = self.status.cfg.dnd_text.clone();
+                let text = self.dnd_response_to(&inv.from);
                 self.auto_im(inv.from, inv.session, &text);
             }
             self.decline_voice_invite(&inv);

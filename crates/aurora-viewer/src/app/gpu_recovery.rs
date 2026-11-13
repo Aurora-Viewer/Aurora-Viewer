@@ -32,6 +32,7 @@ impl App {
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
         crate::window_hold::install(&window);
+        crate::slurl_handoff::window_ready(&window);
         Ok(window)
     }
 

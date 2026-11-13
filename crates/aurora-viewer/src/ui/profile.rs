@@ -1581,6 +1581,8 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
                 super::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)),
             );
         }
+        let ctx = ui.ctx().clone();
+        super::context::admin_submenu(ui, p, world, id, |a| super::context::request(&ctx, a));
     });
 }
 

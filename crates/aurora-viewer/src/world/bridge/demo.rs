@@ -371,6 +371,7 @@ impl Demo {
                     item_id: *item_id,
                     running: self.installed,
                     mono: Some(true),
+                    luau: aurora_net::scripts::Luau::Off,
                 }])
             }
             _ => None,

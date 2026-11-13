@@ -169,6 +169,7 @@ impl Harness {
                     item_id,
                     running,
                     mono,
+                    ..
                 } => {
                     self.tool.contents.running.insert((object_id, item_id), (running, mono));
                 }
@@ -525,7 +526,7 @@ fn failed_link_after_contents_copy_removes_only_added_contents() {
     assert_eq!(h.run(), Stage::Failed);
     assert_eq!(h.ids(demo::ROOT), original);
     assert!(h.tool.contents.objects[&demo::id(demo::SOURCE)].items.is_empty());
-    assert_eq!(h.tool.contents.objects[&demo::id(demo::TARGET)].items.len(), 3);
+    assert_eq!(h.tool.contents.objects[&demo::id(demo::TARGET)].items.len(), 4);
 }
 
 #[test]

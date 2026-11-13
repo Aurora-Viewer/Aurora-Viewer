@@ -541,6 +541,21 @@ impl MeshStreamer {
         self.entries.get(id).is_some_and(|e| e.gone || e.failures > EXPECTED_FAILURES)
     }
 
+    /// "Reload avatar" (`app/avatar_reload.rs`): a mesh given up or waiting
+    /// for its next retry is asked again at once, with its failures
+    /// forgotten, as if no download had failed. A mesh loaded or on its way
+    /// is left alone. Whether it was asked again.
+    pub fn retry_failed(&mut self, id: &Uuid) -> bool {
+        let Some(e) = self.entries.get_mut(id).filter(|e| !e.local && e.failures > 0) else {
+            return false;
+        };
+        e.failures = 0;
+        e.gone = false;
+        e.retry_at = None;
+        Self::attend(&mut self.todo, *id, e);
+        true
+    }
+
     /// Diagnostic: the state of a mesh asset, without requesting it.
     pub fn describe(&self, id: &Uuid) -> String {
         let Some(e) = self.entries.get(id) else {
@@ -965,7 +980,7 @@ fn build_mesh_lod(
                 .as_ref()
                 .filter(|s| !s.joint_names.is_empty())
                 .map(|s| (0..s.joint_names.len()).map(|i| i.min(255) as u8).collect());
-            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), 1.0, pool)
+            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), (1.0, 0.0), pool)
         }
         Err(e) => {
             log::debug!("mesh {id} lod {lod}: {e}");
@@ -1371,6 +1386,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Err(format!("HTTP {status}")),
+            cancelled: false,
         }
     }
 
@@ -1424,6 +1440,7 @@ mod tests {
             complete: false,
             offset: offset as u64,
             data: Ok(data.to_vec()),
+            cancelled: false,
         }
     }
 
@@ -1801,6 +1818,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(vec![1, 2, 3]),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1868,6 +1886,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(asset),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1927,6 +1946,33 @@ mod tests {
         assert_eq!(s.entries[&id].stage, Stage::Failed);
         assert!(s.todo.is_empty());
         assert!(s.by_key.is_empty());
+    }
+
+    #[test]
+    fn reload_asks_a_given_up_mesh_again_at_once() {
+        let (jobs, _rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig.clone();
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(1);
+        for _ in 0..=EXPECTED_FAILURES {
+            let key = mesh_fetching(&mut s, id);
+            s.on_fetch(failed(key, 404), &jobs);
+        }
+        assert!(s.failed(&id));
+        assert!(!s.entries[&id].retries());
+        // no wait for its retry time (ten minutes for a missing asset)
+        assert!(s.retry_failed(&id));
+        assert!(!s.failed(&id));
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
+        assert!(!s.by_key.is_empty(), "asked again");
+        // a mesh on its way, unknown or held in memory is left alone
+        assert!(!s.retry_failed(&id));
+        assert!(!s.retry_failed(&Uuid::from_u128(2)));
+        let local = Uuid::from_u128(3);
+        s.insert_demo_static(local);
+        assert!(!s.retry_failed(&local));
     }
 
     fn denim_override() -> PbrOverride {

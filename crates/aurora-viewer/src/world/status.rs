@@ -9,6 +9,7 @@
 //! applyGlobalOnlineStatusChange in llviewercontrol.cpp), moved to the
 //! status choices at the human's request.
 
+use super::contact_sets::ResponseMode;
 use super::notifications::im as d;
 use super::social::{Friend, Social, rights};
 use super::{ChatKind, ChatLine, Origin, World};
@@ -271,17 +272,19 @@ impl Status {
         }
     }
 
-    /// Some automatic response mode is on (getAutoresponseTextForAvatar).
-    fn response_for(&self, friend: bool) -> Option<&str> {
+    /// Some automatic response mode is on (getAutoresponseTextForAvatar):
+    /// its global text, and the mode a contact set may answer with its own
+    /// (none for the away response).
+    fn response_for(&self, friend: bool) -> Option<(Option<ResponseMode>, &str)> {
         let c = &self.cfg;
         if self.dnd {
-            Some(&c.dnd_text)
+            Some((Some(ResponseMode::Busy), &c.dnd_text))
         } else if c.autorespond_nonfriends && !friend {
-            Some(&c.nonfriends_text)
+            Some((Some(ResponseMode::NonFriends), &c.nonfriends_text))
         } else if c.autorespond {
-            Some(&c.autorespond_text)
+            Some((Some(ResponseMode::Autorespond), &c.autorespond_text))
         } else if self.away && c.send_away {
-            Some(&c.away_text)
+            Some((None, &c.away_text))
         } else {
             None
         }
@@ -291,6 +294,33 @@ impl Status {
 impl World {
     pub(super) fn is_friend(&self, id: &Uuid) -> bool {
         self.social.friends.iter().any(|f| f.id == *id)
+    }
+
+    /// The automatic response `from` gets, if any: the text of their
+    /// smallest contact set that has its own for the mode, else the global
+    /// one (getAutoresponseTextForAvatar, getAutoresponseForFriend).
+    pub(super) fn response_to(&self, from: &Uuid) -> Option<String> {
+        let (mode, text) = self.status.response_for(self.is_friend(from))?;
+        let own = mode.and_then(|m| self.set_response_to(from, m));
+        Some(own.unwrap_or(text).to_owned())
+    }
+
+    /// The do not disturb response `from` gets (send_do_not_disturb_message
+    /// asks getAutoresponseTextForAvatar in the BUSY mode only).
+    pub(super) fn dnd_response_to(&self, from: &Uuid) -> String {
+        self.set_response_to(from, ResponseMode::Busy)
+            .unwrap_or(&self.status.cfg.dnd_text)
+            .to_owned()
+    }
+
+    /// A contact set's own text for `mode`. Under RLVa @sendim the do not
+    /// disturb one is not used, like the global text Preferences locks
+    /// then: stricter than the Legacy Viewer, whose set texts stay free.
+    fn set_response_to(&self, from: &Uuid, mode: ResponseMode) -> Option<&str> {
+        if mode == ResponseMode::Busy && self.rlva.has("sendim") {
+            return None;
+        }
+        self.contact_sets.response_for(from, mode)
     }
 
     pub(super) fn auto_im(&mut self, to: Uuid, session: Uuid, text: &str) {
@@ -394,7 +424,7 @@ impl World {
             let t = self.status.cfg.muted_text.clone();
             self.auto_im(im.from_agent_id, im.session_id, &t);
         } else if self.status.dnd && !self.social.has_session(&im.from_agent_id) {
-            let t = self.status.cfg.dnd_text.clone();
+            let t = self.dnd_response_to(&im.from_agent_id);
             self.auto_im(im.from_agent_id, im.session_id, &t);
         }
     }
@@ -426,7 +456,7 @@ impl World {
                     self.auto_im(from, im.session_id, &t);
                     return true;
                 }
-                if let Some(t) = self.status.response_for(friend).map(str::to_owned) {
+                if let Some(t) = self.response_to(&from) {
                     self.auto_im(from, Uuid::nil(), &t);
                 }
                 false
@@ -479,7 +509,7 @@ impl World {
         if !self.rlva_allows_im("recvim", im.from_agent_id) || super::mutes::is_linden(&im.from_name) {
             return None;
         }
-        self.status.response_for(self.is_friend(&im.from_agent_id)).map(str::to_owned)
+        self.response_to(&im.from_agent_id)
     }
 
     /// Send it and note it in the conversation (FIRE-5389).
@@ -704,11 +734,65 @@ mod tests {
         s.away = true;
         assert!(s.response_for(false).is_none(), "away answers only with the option");
         s.cfg.send_away = true;
-        assert_eq!(s.response_for(false), Some(s.cfg.away_text.as_str()));
+        assert_eq!(s.response_for(false), Some((None, s.cfg.away_text.as_str())));
         s.cfg.autorespond_nonfriends = true;
-        assert_eq!(s.response_for(false), Some(s.cfg.nonfriends_text.as_str()));
-        assert_eq!(s.response_for(true), Some(s.cfg.away_text.as_str()));
+        assert_eq!(
+            s.response_for(false),
+            Some((Some(ResponseMode::NonFriends), s.cfg.nonfriends_text.as_str()))
+        );
+        assert_eq!(s.response_for(true), Some((None, s.cfg.away_text.as_str())));
         s.dnd = true;
-        assert_eq!(s.response_for(true), Some(s.cfg.dnd_text.as_str()));
+        assert_eq!(s.response_for(true), Some((Some(ResponseMode::Busy), s.cfg.dnd_text.as_str())));
+    }
+
+    /// getAutoresponseTextForAvatar: a member of a set with its own text for
+    /// the mode gets it, anyone else the global text; the away response has
+    /// no set text; under RLVa @sendim the do not disturb one is global.
+    #[test]
+    fn a_contact_set_answers_its_members_with_its_own_text() {
+        use crate::world::contact_sets::SetResponse;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(99);
+        let (member, other) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let sets = &mut world.contact_sets;
+        sets.add_set("Close");
+        sets.add_to_set(&[member], "Close", |_| true);
+        for (mode, text) in [
+            (ResponseMode::Busy, "Busy, close"),
+            (ResponseMode::Autorespond, "Auto, close"),
+            (ResponseMode::NonFriends, "Hello, close"),
+        ] {
+            let response = SetResponse {
+                enabled: true,
+                text: text.into(),
+            };
+            sets.set_response("Close", mode, response);
+        }
+        assert_eq!(world.response_to(&member), None, "no mode on");
+        world.status.away = true;
+        world.status.cfg.send_away = true;
+        assert_eq!(world.response_to(&member), Some(world.status.cfg.away_text.clone()));
+        world.status.cfg.autorespond = true;
+        assert_eq!(world.response_to(&member).as_deref(), Some("Auto, close"));
+        assert_eq!(world.response_to(&other), Some(world.status.cfg.autorespond_text.clone()));
+        world.status.cfg.autorespond_nonfriends = true;
+        assert_eq!(world.response_to(&member).as_deref(), Some("Hello, close"));
+        world.status.dnd = true;
+        assert_eq!(world.response_to(&member).as_deref(), Some("Busy, close"));
+        assert_eq!(world.dnd_response_to(&member), "Busy, close");
+        assert_eq!(world.dnd_response_to(&other), world.status.cfg.dnd_text);
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Controller".into(),
+            source_id: Uuid::from_u128(0x5e),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@sendim=n".into(),
+        }));
+        assert!(world.rlva.has("sendim"));
+        assert_eq!(world.dnd_response_to(&member), world.status.cfg.dnd_text);
+        assert_eq!(world.response_to(&member), Some(world.status.cfg.dnd_text.clone()));
     }
 }

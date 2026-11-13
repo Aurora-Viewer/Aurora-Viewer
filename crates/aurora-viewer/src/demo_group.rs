@@ -148,6 +148,8 @@ pub fn my_powers() -> u64 {
     match scenario() {
         Scenario::Owner => u64::MAX,
         Scenario::Officer => DEFAULT_OFFICER,
+        // AURORA_DEMO_CONV_MODERATE: every ability, to moderate its chat
+        _ if crate::ui::chat::moderation::demo_mode().is_some() => u64::MAX,
         // AURORA_DEMO_SOCIAL_MENU: someone to invite into it
         _ if super::social_menu::step().is_some() => DEFAULT_OFFICER,
         _ => DEFAULT_MEMBER,

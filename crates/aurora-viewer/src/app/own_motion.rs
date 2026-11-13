@@ -74,7 +74,20 @@ impl App {
                 let (local_id, full_id, position, size) = (o.key.local_id, o.full_id, o.position, o.scale);
                 log::info!("demo sit: on {local_id} at {position:.1?}");
                 self.demo_seat = Some((position, size));
-                self.demo_answer(crate::demo::sit_on_prim(local_id, full_id, size));
+                let mut events = crate::demo::sit_on_prim(local_id, full_id, size);
+                if demo_sit_tp_ao() {
+                    // A seat without a sit animation of its own: the
+                    // simulator plays the stock sit, which the AO overrides,
+                    // and keeps what the agent asked for.
+                    for ev in &mut events {
+                        if let NetEvent::AvatarAnimations { anims, .. } = ev {
+                            anims.retain(|(id, _)| *id != crate::demo::SEAT_ANIM);
+                            anims.push((crate::ao::State::Sitting.motion(), 1));
+                            anims.extend(self.demo_requested_animations());
+                        }
+                    }
+                }
+                self.demo_answer(events);
                 true
             }
             NetCommand::OneShotControl(f) if f & control::STAND_UP != 0 => {
@@ -93,15 +106,33 @@ impl App {
     /// nearest prim of the plaza, at frame 420 it teleports from the seat,
     /// in the region or to another one; at frame 700 the log says whether
     /// it still sits (the stale seat of a teleport, LLAgent::teleportCore).
+    /// `ao-local|ao-region`: the same with the demo's AO on (frame 240), the
+    /// seat playing the stock sit that the AO overrides (issue #2700).
     pub(super) fn demo_sit_teleport(&mut self) {
-        if !self.demo || !matches!(self.frame_count, 300 | 420 | 700) {
+        if !self.demo || !matches!(self.frame_count, 240 | 300 | 420 | 700) {
             return;
         }
         let Ok(mode) = std::env::var("AURORA_DEMO_SIT_TP") else {
             return;
         };
+        let ao = demo_sit_tp_ao();
+        let mode = mode.trim().trim_start_matches("ao-");
         let me = self.world.agent.position;
         match self.frame_count {
+            240 if ao => {
+                crate::ao::demo::assets(&mut self.scene);
+                crate::ao::demo::inventory_services(&mut self.world, true);
+                let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.settings.ao.accounts.insert(
+                    self.world.agent_id,
+                    crate::ao::Account {
+                        enabled: true,
+                        selected,
+                        ..Default::default()
+                    },
+                );
+            }
+            240 => {}
             300 => {
                 let seat = self
                     .world
@@ -123,7 +154,7 @@ impl App {
                 log::info!("demo sit tp: before the teleport, seated {}", self.world.agent.seated);
                 let (x, y) = (me.x - 6.0, me.y - 4.0);
                 let to = Vec3::new(x, y, crate::demo::floor_at(x, y) + 0.9);
-                let region = if mode.trim() == "region" {
+                let region = if mode == "region" {
                     aurora_i18n::tr!("app-aurora-elsewhere")
                 } else {
                     aurora_i18n::tr!("common-aurora-demo")
@@ -137,13 +168,13 @@ impl App {
                     .index_of_uuid(&self.world.agent_id)
                     .and_then(|i| self.world.objects.get(i))
                     .map_or(0, |o| o.parent_id);
+                let drawn = self.world.animations_of(&self.world.agent_id);
                 log::info!(
-                    "demo sit tp: arrived, seated {}, parent {parent}, seat animation {}",
+                    "demo sit tp: arrived, seated {}, parent {parent}, seat animation {}, AO state {:?}, AO sit cover {}",
                     self.world.agent.seated,
-                    self.world
-                        .animations_of(&self.world.agent_id)
-                        .iter()
-                        .any(|a| a.id == crate::demo::SEAT_ANIM)
+                    drawn.iter().any(|a| a.id == crate::demo::SEAT_ANIM),
+                    self.ao_runtime.current,
+                    drawn.iter().any(|a| a.id == crate::ao::SIT_GENERIC)
                 );
             }
         }
@@ -156,12 +187,31 @@ impl App {
     pub(super) fn demo_unseat_on_teleport(&mut self) {
         if self.demo_seat.take().is_some() {
             log::info!("demo sit: the simulator unseats us for the teleport");
+            let mut anims = vec![(crate::demo::IDLE_ANIM, 1)];
+            if demo_sit_tp_ao() {
+                // What the agent asked for (its AO's) stays playing.
+                anims.extend(self.demo_requested_animations());
+            }
             self.demo_answer(vec![NetEvent::AvatarAnimations {
                 avatar: crate::demo::DEMO_AGENT,
-                anims: vec![(crate::demo::IDLE_ANIM, 1)],
+                anims,
                 sources: Vec::new(),
             }]);
         }
+    }
+
+    /// Our avatar's animations that the agent asked for (AgentAnimation),
+    /// which the demo's simulator keeps when its own state changes: all but
+    /// its stock states and the demo's idle and seat animations.
+    fn demo_requested_animations(&self) -> Vec<(uuid::Uuid, i32)> {
+        self.world
+            .animations
+            .get(&self.world.agent_id)
+            .into_iter()
+            .flatten()
+            .filter(|a| crate::ao::State::from_motion(a.id).is_none() && a.id != crate::demo::IDLE_ANIM && a.id != crate::demo::SEAT_ANIM)
+            .map(|a| (a.id, a.sequence))
+            .collect()
     }
 
     /// The root prim of `target` when it is a prim of the scene (not an
@@ -282,6 +332,9 @@ impl App {
             None
         };
         self.world.agent.step_prediction(intent, rtt, dt, now);
+        if self.input.stop {
+            self.world.agent.prediction.brake();
+        }
         self.world.constrain_agent_lead();
         // a local start or stop waits this long for the simulator's signal
         self.world
@@ -295,4 +348,9 @@ impl App {
             self.own_motion_logged = Some(now);
         }
     }
+}
+
+/// `AURORA_DEMO_SIT_TP=ao-local|ao-region` (`App::demo_sit_teleport`).
+fn demo_sit_tp_ao() -> bool {
+    std::env::var("AURORA_DEMO_SIT_TP").is_ok_and(|m| m.trim().starts_with("ao-"))
 }

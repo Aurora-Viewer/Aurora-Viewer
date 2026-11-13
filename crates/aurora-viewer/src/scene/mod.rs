@@ -8,6 +8,7 @@ pub mod animesh;
 pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
+pub mod avatar_studio;
 pub mod banlines;
 pub mod blend_order;
 mod blender_live;
@@ -17,6 +18,7 @@ pub mod complexity;
 pub mod creation_preview;
 pub(crate) mod default_motions;
 pub mod describe;
+pub mod draw_limits;
 pub mod drawn;
 pub mod fetch_priority;
 pub(crate) mod flexible;
@@ -32,6 +34,7 @@ pub mod impostors;
 pub mod inspect;
 pub mod jobs;
 pub(crate) mod joint_overrides;
+pub mod legacy_bump;
 pub mod legacy_mat;
 pub mod lights;
 mod list_index;
@@ -50,6 +53,7 @@ pub mod picking;
 mod plants;
 pub mod portals;
 pub mod probes;
+pub mod render_types;
 pub mod rez;
 mod sculpt_watch;
 mod selection_demo;
@@ -61,9 +65,11 @@ pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
+pub mod surface_area;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+mod tree_detail;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -341,10 +347,17 @@ pub struct FaceDraw {
     /// Normal, specular / metallic-roughness and emissive maps (sized like
     /// the base texture).
     pub aux_tex: [Uuid; 3],
+    /// Height asset behind a generated texture-entry normal. Its streaming
+    /// size follows this face even though the generated normal is local.
+    pub bump_height_source: Uuid,
     pub te_alpha: f32,
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
     pub legacy_alpha: Option<u8>,
+    /// Its legacy material has a glossiness or an environment intensity:
+    /// blended, its reflections show even where its texture is transparent
+    /// (`legacy_glare` in object.wgsl).
+    pub legacy_glare: bool,
     pub two_sided: bool,
     /// The smaller of the texture entry's two scales, or of the frame grid of
     /// its texture animation: every texture of the face is loaded for it
@@ -378,6 +391,14 @@ impl FaceDraw {
     /// genDrawInfo, indra/newview/llvovolume.cpp, originally LGPL 2.1).
     pub fn fully_transparent(&self) -> bool {
         self.te_alpha < 0.004 && matches!(self.pbr_alpha, None | Some(1))
+    }
+
+    /// A legacy material drawn blended (its alpha mode, or a face color
+    /// alpha below 1) with a glossiness or an environment: its alpha is
+    /// max(texture alpha, glare) in materialF.glsl, so a transparent
+    /// texture still shows its reflections.
+    fn glares_when_blended(&self) -> bool {
+        self.legacy_glare && self.pbr_alpha.is_none() && (self.legacy_alpha == Some(legacy_mat::alpha_mode::BLEND) || self.te_alpha < 0.999)
     }
 
     /// Alpha mode bits of the face's draw record (shaders, shadows). A
@@ -424,10 +445,11 @@ pub struct ObjGpu {
     pub built_faces: usize,
     pub is_avatar: bool,
     pub parcel_hidden: bool,
-    /// Left out by the photo's isolation (`snapshot::isolate`): kept, only
-    /// flagged for the GPU lists (`object_flags::PHOTO_HIDDEN`) and left
-    /// out of the CPU ones, so that it comes back at once.
-    pub photo_hidden: bool,
+    /// Left out by the photo's isolation (`snapshot::isolate`) or by a
+    /// hidden rendering type (`render_types`): kept, only flagged for the
+    /// GPU lists (`object_flags::HIDDEN`) and left out of the CPU ones and
+    /// of the picking, so that it comes back at once.
+    pub hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -520,7 +542,7 @@ impl ObjGpu {
             (avatar.is_some() || self.skeleton_owner.is_some(), object_flags::NO_PROBE),
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
-            (self.photo_hidden, object_flags::PHOTO_HIDDEN),
+            (self.hidden, object_flags::HIDDEN),
         ] {
             if on {
                 fl |= bit;
@@ -656,6 +678,9 @@ fn note_face_usage(usage: &mut Vec<(Uuid, f32, bool)>, f: &FaceDraw, px: f32, in
     for t in f.aux_tex.iter().filter(|t| !t.is_nil()) {
         usage.push((*t, px, in_view));
     }
+    if !f.bump_height_source.is_nil() {
+        usage.push((f.bump_height_source, px, in_view));
+    }
 }
 
 /// GPU face table entry of a face of object `idx`.
@@ -688,8 +713,16 @@ fn is_special(faces: &[FaceDraw]) -> bool {
 struct TerrainChunk {
     alloc: MeshAlloc,
     record: u32,
+    /// Region-local, like the mesh vertices; the current region offset is
+    /// applied for every visibility, shadow and reflection bound.
     center: Vec3,
     radius: f32,
+}
+
+impl TerrainChunk {
+    fn world_center(&self, offset: Vec3) -> Vec3 {
+        self.center + offset
+    }
 }
 
 struct RegionGpu {
@@ -834,6 +867,14 @@ pub struct Scene {
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
+    studio_visible: bool,
+    pub studio_stage: avatar_studio::Stage,
+    pub studio_pose: crate::avatar_studio::Pose,
+    pub studio_floor_offset: f32,
+    /// The kinds of objects not drawn (Advanced › Rendering types), set by
+    /// the app at each frame, and those the objects were last flagged for.
+    pub hidden_types: render_types::Hidden,
+    hidden_types_applied: render_types::Hidden,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
     /// not at the clock's.
@@ -841,6 +882,13 @@ pub struct Scene {
     /// The avatars and linksets chosen for the photo, every prim and
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
+    /// The avatar whose part the poser shows (its object index): its body
+    /// and what it wears go to `part_faces`, the part kept on its skinned
+    /// faces by the frame's `part_joints`.
+    pub poser_part: Option<usize>,
+    /// Whether the last lists drew any of that avatar's skinned faces (its
+    /// body or a rigged mesh): without, the poser keeps the bone outline.
+    pub poser_part_skinned: bool,
     /// The avatar an inventory drag would give to, and what it wears,
     /// outlined like the photo's (`mark_give_target`, #991).
     give_marks: (Option<usize>, std::collections::HashSet<usize>),
@@ -872,6 +920,8 @@ pub struct Scene {
     /// class only the faces using it are classified again.
     slot_users: std::collections::BTreeSet<(u32, u32)>,
     alpha_changes_tmp: Vec<u32>,
+    /// `rebuild_reslotted`'s list, kept for its room.
+    reslotted_tmp: Vec<Uuid>,
     /// Main-thread time a frame gives to the full syncs that can wait
     /// (new objects, geometry bound, faces rebuilt); the others wait in
     /// the backlog (sync_sets.rs). Set by the app from the frame time.
@@ -963,6 +1013,15 @@ pub struct Scene {
     pub attached_lights: bool,
     /// Surface area of the generated sculpts (attachment area limit).
     pub sculpt_area: HashMap<GeomKey, f32>,
+    /// The swept grid's area of generated prims and sculpts, and the large
+    /// surface protection that reads it (surface_area.rs).
+    grid_area: HashMap<GeomKey, f32>,
+    pub surface_protection: surface_area::Protection,
+    surface_measured: HashMap<usize, surface_area::Measure>,
+    surface_hidden: std::collections::HashSet<usize>,
+    /// How many geometries were measured at the last look for objects not
+    /// measured yet (surface_area.rs).
+    surface_scanned: usize,
     /// LOD triangle counts by prim shape (complexity.rs).
     prim_triangles: std::sync::Mutex<HashMap<u64, [u32; 4]>>,
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
@@ -1016,6 +1075,8 @@ pub struct Scene {
     last_sync: Option<Instant>,
     frame: u32,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor (`tree_detail.rs`).
+    pub tree_lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
@@ -1197,6 +1258,12 @@ pub fn lod_for(radius: f32, distance: f32, lod_factor: f32, fov_y: f32) -> u8 {
     }
 }
 
+/// The detail level of object `o`: a plant's (`plants::plant_lod`), else
+/// a volume's (`lod_for`).
+pub(super) fn object_lod(o: &Object, radius: f32, distance: f32, lod_factor: f32, tree_factor: f32, fov_y: f32) -> u8 {
+    plants::plant_lod(o, distance, tree_factor, lod_factor).unwrap_or_else(|| lod_for(radius, distance, lod_factor, fov_y))
+}
+
 /// Prim material code of light sources (material_codes.h LL_MCODE_LIGHT).
 const LL_MCODE_LIGHT: u8 = 7;
 
@@ -1219,7 +1286,7 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
     // specular color, glossiness and environment are its shininess
     // (LLFace: vertex alpha = 0, .25, .5, .75)
     let s = [0.0f32, 0.25, 0.5, 0.75][shiny as usize & 3];
-    if shiny > 0 {
+    if shiny > 0 || matches!(f.bump(), 1..=17) {
         fl |= flags::LEGACY_MAT;
     }
     let sl = s.powf(2.2);
@@ -1284,6 +1351,28 @@ fn tex_anim_record(
         offset: [tf.offset_s, tf.offset_t],
     };
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
+}
+
+/// Layer rank of a rigged face (`DrawRecord::set_layer_rank`).
+///
+/// Worn layers are often made from the body's own mesh, so their faces lie
+/// exactly on the body's. Equal depths are then won by the draw record drawn
+/// first (cull.wgsl keeps the record order), and records are recycled from a
+/// free list whenever an object is rebuilt: the winner changed face by face,
+/// showing bands of the body through a layer, bands that moved with every
+/// rebuild (the transparency overlay's Ctrl+Alt+T rebuilds them all).
+///
+/// The Legacy Viewer draws a layer whole and in a lasting order, sorted by
+/// skin, material and texture (CompareBatchBreakerRigged,
+/// indra/newview/llvovolume.cpp). Here the skin (a face showing a bake)
+/// stays at rank 0 and every other face of an object takes one rank of 1 to
+/// `LAYER_RANK_MAX`, chosen from its id: a layer covers the skin it lies on,
+/// and two layers that lie on each other keep the same winner everywhere.
+fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
+    if skin_face {
+        return 0;
+    }
+    1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
 }
 
 /// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
@@ -1491,8 +1580,16 @@ impl Scene {
             too_complex: Default::default(),
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
+            studio_visible: false,
+            studio_stage: Default::default(),
+            studio_pose: Default::default(),
+            studio_floor_offset: 0.0,
+            hidden_types: Default::default(),
+            hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
+            poser_part: None,
+            poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
@@ -1510,6 +1607,7 @@ impl Scene {
             preview_images: HashMap::new(),
             slot_users: Default::default(),
             alpha_changes_tmp: Vec::new(),
+            reslotted_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
@@ -1553,6 +1651,11 @@ impl Scene {
             loading_bars: true,
             attached_lights: true,
             sculpt_area: HashMap::new(),
+            grid_area: HashMap::new(),
+            surface_protection: Default::default(),
+            surface_measured: HashMap::new(),
+            surface_hidden: Default::default(),
+            surface_scanned: 0,
             prim_triangles: Default::default(),
             avatar_area: HashMap::new(),
             complexity_rules: 0,
@@ -1580,6 +1683,7 @@ impl Scene {
             last_sync: None,
             frame: 0,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             draw_distance: 96.0,
             last_origin: None,
             blend_tmp: Vec::new(),
@@ -1737,7 +1841,7 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_volume(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
                 });
             }
             GeomKey::Flexible { lod, .. } => {
@@ -1748,7 +1852,7 @@ impl Scene {
                     let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
                     let mesh =
                         aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             GeomKey::Sculpt { lod, .. } => {
@@ -1763,7 +1867,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::SculptPlaceholder { lod, .. } => {
@@ -1772,7 +1881,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::sculpt_placeholder(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::Mesh { id, lod } => {
@@ -1784,7 +1898,7 @@ impl Scene {
                 self.jobs.spawn(move || {
                     let s = aurora_prim::tree::tree_species(Some(species));
                     let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             // (built at once by `request_grass`, which needs the ground)
@@ -1809,7 +1923,7 @@ impl Scene {
             self.jobs.spawn(move || match lib.parts.get(part as usize) {
                 Some(p) => {
                     let (face, min, max) = morph::morphed(p, &w);
-                    JobResult::geometry(key, (vec![Some(face)], min, max), 1.0, pool.as_deref())
+                    JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
                 }
                 None => JobResult::GeometryFailed { key },
             });
@@ -1968,7 +2082,17 @@ impl Scene {
                 // staged in the pool of a GPU device lost since (`forget_gpu`):
                 // dropped, the next sync asks for it again
                 JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
-                JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
+                JobResult::Geometry {
+                    key,
+                    geom,
+                    area,
+                    grid_area,
+                } => {
+                    if grid_area > 0.0 {
+                        self.grid_area.insert(key, grid_area);
+                    }
+                    self.finish_geometry(renderer, key, geom, area)
+                }
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
                         self.meshes.on_geometry_done(&id, lod);
@@ -1982,6 +2106,9 @@ impl Scene {
                 JobResult::MeshCache { id, arrival } => self.meshes.on_cache(id, arrival.map(|a| *a)),
                 JobResult::MeshPart { id, arrival } => self.meshes.on_part(id, *arrival, &self.jobs),
                 JobResult::Material { id, material } => self.materials.on_material(id, material),
+                bump @ JobResult::LegacyBump { .. } => {
+                    self.textures.on_legacy_bump_job(bump);
+                }
                 JobResult::Done => {}
                 other => self.textures.on_job(other),
             }
@@ -2022,6 +2149,22 @@ impl Scene {
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
+        }
+    }
+
+    /// Takes an object's drawing away while it stays in the world (a
+    /// stopped plant, a hidden large surface).
+    fn stop_drawing(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize) {
+        if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+            self.release_obj(renderer, idx, &mut g);
+        }
+        self.anchors.forget(idx);
+        self.pick.remove(idx);
+        self.list_index.remove(idx);
+        if let Some(object) = world.objects.get_mut_untracked(idx) {
+            object.render.needs_records = false;
+            object.shape_dirty = false;
+            object.material_dirty = false;
         }
     }
 
@@ -2135,6 +2278,7 @@ impl Scene {
             r.surface.free(renderer, &mut self.textures);
         }
         self.water.clear(renderer);
+        self.studio_stage.clear(renderer);
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
@@ -2186,6 +2330,10 @@ impl Scene {
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
         self.sculpt_area.clear();
+        self.grid_area.clear();
+        self.surface_measured.clear();
+        self.surface_hidden.clear();
+        self.surface_scanned = 0;
         self.grass.clear();
         self.impostors = Default::default();
         self.far_avatars.clear();
@@ -2381,9 +2529,16 @@ impl Scene {
                     .tree_species
                     .filter(|&s| (s as usize) < aurora_prim::tree::TREE_SPECIES.len())
                     .unwrap_or(0);
+                // (a trunk past the finest four: not drawn, tree_detail.rs)
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Tree { species, lod: lod.min(3) });
             }
             LL_PCODE_LEGACY_GRASS => {
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Grass {
                     id: o.full_id,
                     hash: plants::grass_hash(o),
@@ -2504,7 +2659,9 @@ impl Scene {
         };
         if parent.is_avatar() && o.state != 0 {
             // attachment root: relative to the attachment point (the frame
-            // the GPU places worn objects from, anchors.rs)
+            // the GPU places worn objects from, anchors.rs), at most 3.5 m
+            // from it (draw_limits.rs)
+            let p = draw_limits::attachment_offset(p);
             let anchors::AttachFrame { pos: apos, rot: arot, hud } = anchors::attach_frame(world, parent, o.attachment_point());
             if hud {
                 let offset = if parent.full_id == world.agent_id {
@@ -2524,28 +2681,32 @@ impl Scene {
         ))
     }
 
-    /// The photo's isolation (`snapshot::isolate`): what it leaves out is
-    /// flagged, every object again when it changes, else those synced this
-    /// frame (an object arriving); and while choosing in the scene, what
-    /// is chosen is outlined, every prim and attachment of it.
+    /// The photo's isolation (`snapshot::isolate`) and the hidden rendering
+    /// types (`render_types`): what they leave out is flagged, every object
+    /// again when one of them changes, else those synced this frame (an
+    /// object arriving, one attached or linked); and while choosing in the
+    /// scene, what is chosen is outlined, every prim and attachment of it.
     fn sync_photo_isolation(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize]) {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
-        if self.photo_isolation_version != iso.version {
+        let types = self.hidden_types;
+        // (a HUD is no rendering type: it stays)
+        let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
+        if self.photo_isolation_version != iso.version || self.hidden_types_applied != types || self.studio_visible != world.avatar_studio {
             self.photo_isolation_version = iso.version;
-            for idx in 0..self.gpu.len() {
-                let hidden = !isolate::object_visible(world, idx);
-                let g = &mut self.gpu[idx];
-                if g.photo_hidden != hidden {
-                    g.photo_hidden = hidden;
+            self.hidden_types_applied = types;
+            self.studio_visible = world.avatar_studio;
+            for (idx, g) in self.gpu.iter_mut().enumerate() {
+                let hidden = left_out(idx, g.hud);
+                if g.hidden != hidden {
+                    g.hidden = hidden;
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.applied() {
+        } else if iso.applied() || types.any_object() || world.avatar_studio {
             for &idx in synced {
-                let hidden = !isolate::object_visible(world, idx);
                 if let Some(g) = self.gpu.get_mut(idx) {
-                    g.photo_hidden = hidden;
+                    g.hidden = left_out(idx, g.hud);
                 }
             }
         }
@@ -2617,6 +2778,37 @@ impl Scene {
         }
     }
 
+    /// LLWorld::shiftRegions (indra/newview/llworld.cpp) and
+    /// LLPipeline::shiftObjects (indra/newview/pipeline.cpp): an origin shift
+    /// changes transforms, not the region-local terrain mesh.
+    fn update_origin(&mut self, world: &mut World) -> bool {
+        let origin = world.main_origin();
+        if origin == self.last_origin {
+            return false;
+        }
+        if let (Some(old), Some(new)) = (self.last_origin, origin) {
+            let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
+            for state in self.flexibles.values_mut() {
+                state.sim.shift(shift);
+            }
+        }
+        // clear/forget_gpu discards all allocations but keeps the world's
+        // received heightmaps. A fresh renderer still needs a full upload.
+        if self.last_origin.is_none() {
+            for region in world.regions.values_mut() {
+                region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+            }
+        }
+        self.last_origin = origin;
+        for (idx, object) in world.objects.slots.iter_mut().enumerate() {
+            if let Some(object) = object {
+                object.render.needs_records = true;
+                self.sets.dirty.insert(idx);
+            }
+        }
+        true
+    }
+
     /// Bring GPU records up to date, visiting only the objects that need it
     /// (sync_sets.rs): what moves (avatars, their attachments, moving
     /// linksets), what changed, what waits for its geometry, and this
@@ -2628,6 +2820,7 @@ impl Scene {
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         self.finish_mesh_lod_resets(world, Instant::now());
+        self.update_surface_protection(world);
         if self.parcel_visibility_version != world.parcel_visibility.version {
             self.parcel_visibility_version = world.parcel_visibility.version;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
@@ -2657,6 +2850,7 @@ impl Scene {
                 }
             }
         }
+        self.rebuild_reslotted(world);
         use crate::frame_profile::Part;
         let t0 = Instant::now();
         let mut slow = self.sync_slow.map(|limit| sync_slow::SlowSync::new(limit, t0));
@@ -2686,37 +2880,13 @@ impl Scene {
             }
         }
 
-        // Render origin changed: every transform is stale.
-        let origin = world.main_origin();
-        if origin != self.last_origin {
-            if let (Some(old), Some(new)) = (self.last_origin, origin) {
-                let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
-                for state in self.flexibles.values_mut() {
-                    state.sim.shift(shift);
-                }
-            }
-            self.last_origin = origin;
+        if self.update_origin(world) {
             renderer.cut_motion_history();
-            for (idx, o) in world.objects.slots.iter_mut().enumerate() {
-                if let Some(o) = o {
-                    o.render.needs_records = true;
-                    self.sets.dirty.insert(idx);
-                }
-            }
-            for r in self.regions.values_mut() {
-                for (_, c) in r.chunks.drain() {
-                    renderer.free_mesh(c.alloc);
-                    renderer.records.free(c.record);
-                }
-            }
-            for reg in world.regions.values_mut() {
-                reg.dirty_chunks.extend(0..reg.heightmap.chunk_count());
-            }
             self.water.clear(renderer);
         }
 
         step(&mut slow, "origin");
-        self.sync_terrain(renderer, world);
+        self.sync_terrain(renderer, world, view.eye);
         self.water.sync(renderer, world);
         step(&mut slow, "terrain");
 
@@ -2771,7 +2941,7 @@ impl Scene {
         // detail level checks: by events, or the slice of every object
         let events = !sync_sets::slice_mode();
         let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
-        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y, self.tree_lod_factor);
         if events {
             self.note_hud_changes(world);
         }
@@ -3017,6 +3187,45 @@ impl Scene {
         }
     }
 
+    /// Textures given a slot after a full table, or rebound to/from local
+    /// files (`TextureStreamer::take_reslotted`): the objects and avatars
+    /// whose faces still hold the previous slot are built again. One pass
+    /// over the objects only after a slot transition, never for pixel-only
+    /// local reloads.
+    fn rebuild_reslotted(&mut self, world: &mut World) {
+        let mut ids = std::mem::take(&mut self.reslotted_tmp);
+        self.textures.take_reslotted(&mut ids);
+        if !ids.is_empty() {
+            let t0 = Instant::now();
+            let wanted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+            let mut rebuilt = 0;
+            for (idx, g) in self.gpu.iter_mut().enumerate() {
+                if !g.tex_ids.iter().any(|t| wanted.contains(t)) {
+                    continue;
+                }
+                let Some(o) = world.objects.get_mut_untracked(idx) else {
+                    continue;
+                };
+                o.render.needs_records = true;
+                o.material_dirty = true;
+                if g.is_avatar {
+                    // (the body parts: `needs_full`)
+                    g.tex_generation = u64::MAX;
+                }
+                self.sets.dirty.insert(idx);
+                rebuilt += 1;
+            }
+            log::info!(
+                "texture table: {rebuilt} objects drawing {} textures given a slot again are built again ({} objects looked at in {:.2} ms)",
+                wanted.len(),
+                self.gpu.len(),
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
+            ids.clear();
+        }
+        self.reslotted_tmp = ids;
+    }
+
     /// Classify again the faces whose base texture is in one of `slots`
     /// (found through `slot_users`, not by a pass over every face of the
     /// scene, which ran in most frames while textures arrive); the changed
@@ -3167,7 +3376,7 @@ impl Scene {
         }
         self.anchors.placed(world, idx, m.anchor);
         if let Some((radius, distance)) = m.lod {
-            self.watch_lod(idx, m.anchor.is_some(), radius, distance);
+            self.watch_lod(world, idx, m.anchor.is_some(), radius, distance);
         }
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
@@ -3182,11 +3391,15 @@ impl Scene {
     /// turn (sync_sets.rs); the others when the camera has travelled far
     /// enough to change their level (lod_watch.rs). An object whose turn
     /// came before that keeps the wait it has.
-    fn watch_lod(&mut self, idx: usize, anchored: bool, radius: f32, distance: f32) {
+    fn watch_lod(&mut self, world: &World, idx: usize, anchored: bool, radius: f32, distance: f32) {
         if anchored || self.sets.follows_motion(idx) {
             self.sets.lod.forget(idx);
         } else if !(self.sets.only_checked(idx) && self.sets.lod.is_watched(idx)) {
-            let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
+            let plant = world
+                .objects
+                .get(idx)
+                .and_then(|o| plants::plant_slack(o, distance, self.tree_lod_factor, self.lod_factor));
+            let slack = plant.unwrap_or_else(|| lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y));
             self.sets.lod.watch(idx, slack);
         }
     }
@@ -3397,14 +3610,22 @@ impl Scene {
             &self.mesh_lod_overrides,
             o,
             hud,
-            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y),
+            object_lod(o, lod_radius, lod_dist, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         // (whatever comes of this sync; what the GPU places leaves below)
-        self.watch_lod(idx, false, lod_radius, lod_dist);
+        self.watch_lod(world, idx, false, lod_radius, lod_dist);
         let Some(o) = world.objects.get(idx) else {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
+        // a plant the trees' detail stops (tree_detail.rs), or a large
+        // surface the protection hides (surface_area.rs): its drawing goes,
+        // as for a parcel that hides it, but it stays watched and synced so
+        // that it comes back when that changes
+        if lod == plants::NOT_DRAWN || self.count_surface(idx, wanted) {
+            self.stop_drawing(renderer, world, idx);
+            return;
+        }
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         let first_person_hidden = Self::attachment_first_person_hidden(world, idx);
@@ -3582,9 +3803,21 @@ impl Scene {
         }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
-        let rig_order = skeleton_owner
-            .filter(|_| rigged)
-            .map(|(_, skeleton)| blend_order::RigOrder::of(world, idx, skeleton));
+        let rig_order = skeleton_owner.filter(|_| rigged).map(|(_, skeleton)| {
+            // eyelashes, brows: the joints of a nonzero weight all of the face
+            let skin = match geom_key {
+                GeomKey::Mesh { id, .. } => self.meshes.meta(&id).and_then(|m| m.skin),
+                _ => None,
+            };
+            let face_detail = skin.is_some_and(|skin| {
+                blend_order::face_detail(
+                    geom.joint_bounds
+                        .iter()
+                        .filter_map(|b| skin.joint_names.get(b.joint as usize).map(String::as_str)),
+                )
+            });
+            blend_order::RigOrder::of(world, idx, skeleton, face_detail)
+        });
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
@@ -3798,6 +4031,7 @@ impl Scene {
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
+            let mut legacy_glare = false;
             let local_normal = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Normal);
             let local_specular = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Specular);
             if mat_id.is_none() && (!tf.material_id.is_nil() || local_normal.is_some() || local_specular.is_some()) {
@@ -3854,6 +4088,7 @@ impl Scene {
                         )
                     };
                     rec.legacy = [lm.normal_rot, lm.specular_rot, gloss, env];
+                    legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
                     if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
@@ -3864,6 +4099,7 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
+            let skin_face = avatar::bake_slot_for(&base_tex).is_some();
             let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
             base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
@@ -3878,10 +4114,48 @@ impl Scene {
                 base_tex = texture;
                 source = TexSource::Asset;
             }
+            // Texture-entry bump presets fill the normal slot only when no
+            // explicit normal map is present. PBR faces take the earlier
+            // material branch and never reach this Legacy Viewer path.
+            let bump_mode = tf.bump();
+            let mut bump_height_source = Uuid::nil();
+            if legacy_bump::should_apply(
+                bump_mode,
+                mat_id.is_some(),
+                local_normal.is_some_and(|id| !id.is_nil()) || !aux_tex[0].is_nil(),
+            ) {
+                let bump_source = match legacy_bump::bump_source(bump_mode) {
+                    legacy_bump::BumpSource::Brightness | legacy_bump::BumpSource::Darkness => Some(base_tex),
+                    legacy_bump::BumpSource::Standard(id) => Some(id),
+                    legacy_bump::BumpSource::None => None,
+                };
+                if let Some(source_id) = bump_source
+                    && !source_id.is_nil()
+                {
+                    bump_height_source = source_id;
+                    let generated = self.textures.request_legacy_bump(renderer, source_id, bump_mode);
+                    // Hold the height source while its image is decoded and
+                    // while finer resident levels improve its cached normal.
+                    let height_kind = if source_id == base_tex { source.clone() } else { TexSource::Asset };
+                    let _ = self.textures.acquire(renderer, source_id, height_kind);
+                    g.tex_ids.push(source_id);
+                    if let Some(generated) = generated {
+                        g.tex_ids.push(generated);
+                        aux_tex[0] = generated;
+                        rec.tex[1] = self.textures.acquire(renderer, generated, TexSource::Asset);
+                        // A texture-entry bump follows the diffuse mapping,
+                        // even when a material with no normal map supplies a
+                        // separate normal transform.
+                        rec.mat_uv = rec.uv_st;
+                        rec.legacy[0] = rec.params[0];
+                    }
+                }
+            }
             if !base_tex.is_nil() {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
+            let rigged = rigged_owner.is_some();
             if let Some((owner, _, binds)) = rigged_owner {
                 rec.flags[0] |= flags::SKINNED;
                 rec.flags[1] = self.palette_base(owner);
@@ -3916,6 +4190,9 @@ impl Scene {
                     && matches!(pbr_alpha, None | Some(1))
                     && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
             );
+            if rigged {
+                rec.set_layer_rank(rigged_layer_rank(skin_face, &o.full_id));
+            }
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -3931,9 +4208,11 @@ impl Scene {
                 base_slot: rec.tex[0],
                 tex_id: base_tex,
                 aux_tex,
+                bump_height_source,
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
+                legacy_glare,
                 two_sided,
                 repeats,
                 glow: rec.emissive[3] > 0.0,
@@ -4237,9 +4516,11 @@ impl Scene {
                     base_slot: slot,
                     tex_id: tex.unwrap_or(Uuid::nil()),
                     aux_tex: [Uuid::nil(); 3],
+                    bump_height_source: Uuid::nil(),
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
+                    legacy_glare: false,
                     two_sided: false,
                     repeats: 1.0,
                     glow: false,
@@ -4328,10 +4609,13 @@ impl Scene {
         let pass_view = self.pass_view;
         let dd = self.draw_distance;
         let shadow_dist = dd.min(256.0);
-        // terrain
-        for (&handle, r) in &self.regions {
+        // terrain (none while the Surface Patch rendering type is hidden:
+        // not drawn, casting no shadow, in no reflection)
+        let terrain_regions = if self.hidden_types.terrain { None } else { Some(&self.regions) };
+        for (&handle, r) in terrain_regions.into_iter().flatten() {
             for c in r.chunks.values() {
-                if (c.center - view.eye).length() - c.radius > dd * 1.5 {
+                let center = c.world_center(r.offset);
+                if (center - view.eye).length() - c.radius > dd * 1.5 {
                     continue;
                 }
                 let cmd = DrawCmd {
@@ -4344,7 +4628,7 @@ impl Scene {
                 if shadows {
                     self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
-                        center: c.center,
+                        center,
                         radius: c.radius,
                         alpha: r.surface.masked,
                     });
@@ -4352,14 +4636,14 @@ impl Scene {
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
-                    let reflected = cmd.with_bounds(c.center, c.radius);
+                    let reflected = cmd.with_bounds(center, c.radius);
                     if r.surface.pbr {
                         self.lists.reflection_terrain_pbr.push(reflected);
                     } else {
                         self.lists.reflection_terrain.push(reflected);
                     }
                 }
-                if view.sphere_visible(c.center, c.radius) {
+                if view.sphere_visible(center, c.radius) {
                     // one shader per kind of terrain (env.wgsl)
                     if r.surface.masked {
                         self.lists.terrain_mask.push(cmd);
@@ -4374,7 +4658,10 @@ impl Scene {
                 }
             }
         }
-        self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+        // (a hidden water draws neither itself nor its reflection pass)
+        if !self.hidden_types.water {
+            self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+        }
 
         // nearest avatars in full (own avatar always), the others as
         // impostors (RenderAvatarMaxNonImpostors)
@@ -4396,14 +4683,14 @@ impl Scene {
         let mut avatars: Vec<(f32, usize)> = if by_index {
             self.list_index
                 .with(list_index::AVATAR)
-                .filter_map(|(i, _)| Some(i).zip(self.gpu.get(i).filter(|g| !g.photo_hidden)))
+                .filter_map(|(i, _)| Some(i).zip(self.gpu.get(i).filter(|g| !g.hidden)))
                 .map(|(i, g)| (avatar_distance(i, g), i))
                 .collect()
         } else {
             self.gpu
                 .iter()
                 .enumerate()
-                .filter(|(_, g)| g.is_avatar && !g.photo_hidden)
+                .filter(|(_, g)| g.is_avatar && !g.hidden)
                 .map(|(i, g)| (avatar_distance(i, g), i))
                 .collect()
         };
@@ -4516,6 +4803,8 @@ impl Scene {
             let debug = debug_alpha.is_some() || pass_view;
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
+            // the poser's hovered part: its avatar and what it wears
+            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -4531,6 +4820,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
+                        || self.gpu.get(i).is_some_and(|g| posed(g, i))
                     {
                         visit.push((i, usage));
                     }
@@ -4550,6 +4840,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || captured(g, i)
+                        || posed(g, i)
                     {
                         visit.push((i, usage));
                     }
@@ -4575,10 +4866,18 @@ impl Scene {
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
+        let poser_part = self.poser_part;
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
-        let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
+        let under_water_plane = self.water.height.filter(|h| !self.studio_visible && view.eye.z >= *h);
+        let face_sort = blend_order::face_sort_enabled();
+        // Tests and secondary cameras may not supply the texture-importance
+        // direction. The near plane faces into the same view frustum.
+        let alpha_forward = view
+            .forward
+            .try_normalize()
+            .unwrap_or_else(|| view.planes[4].truncate().normalize_or_zero());
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4596,6 +4895,8 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            part_faces: Vec<DrawCmd>,
+            part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
@@ -4620,6 +4921,8 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            part_faces: Vec::new(),
+            part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
@@ -4636,7 +4939,7 @@ impl Scene {
             if g.faces.is_empty() || g.hud {
                 return l;
             }
-            if g.photo_hidden {
+            if g.hidden {
                 // left out of the photo, not of the scene: its textures held
                 // as out of view, so that memory pressure lowers them like
                 // any other out of view instead of down to nothing, and the
@@ -4715,6 +5018,22 @@ impl Scene {
             let rig = g.rig_order.filter(|_| g.rigged);
             let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
             let blend_d = (blend_center - view.eye).length();
+            // Rigged meshes retain their attachment order. For ordinary faces,
+            // use the exact placement written to the GPU, including this frame's
+            // moving/worn anchor, without visiting the world's parent chain.
+            let face_depth = (face_sort && in_view && !g.rigged && !g.is_avatar && g.faces.iter().any(|f| f.pass == Pass::Blend))
+                .then(|| {
+                    let record = renderer.records.get(g.faces.first()?.record)?;
+                    let mut model = Mat4::from_cols_array_2d(&record.model);
+                    if let Some(anchor) = record.anchor() {
+                        model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
+                    }
+                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                        return None;
+                    };
+                    Some((blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom))
+                })
+                .flatten();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -4765,6 +5084,14 @@ impl Scene {
                     {
                         l.select_faces.push(cmd);
                     }
+                    // the poser's hovered part: the subject's body and what it
+                    // wears (the shader keeps the part's own skinned
+                    // triangles; an unrigged worn object is coverage alone,
+                    // so the halo does not cross it)
+                    if poser_part.is_some() && avatar == poser_part && pass != Pass::Hidden {
+                        l.part_faces.push(cmd);
+                        l.part_skinned += usize::from(g.rigged || g.is_avatar);
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -4812,7 +5139,16 @@ impl Scene {
                 match pass {
                     Pass::Blend => {
                         let entry = blend_order::BlendEntry {
-                            distance: blend_d,
+                            distance: if face_sort && !g.rigged {
+                                face_depth
+                                    .as_ref()
+                                    .and_then(|(depth, geom)| {
+                                        geom.pick_faces.get(f.te_index as usize)?.as_ref().map(|face| depth.of(face.bounds))
+                                    })
+                                    .unwrap_or_else(|| (g.center - view.eye).dot(alpha_forward))
+                            } else {
+                                blend_d
+                            },
                             cmd,
                             glow: f.glow,
                             double_sided: f.two_sided,
@@ -4858,6 +5194,8 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.part_faces.append(&mut b.part_faces);
+            a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -4880,8 +5218,12 @@ impl Scene {
             ]
             .into_iter()
             .flat_map(|(cmds, glow, double_sided)| {
-                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                    distance: *d,
+                cmds.iter().map(move |(point, c)| blend_order::BlendEntry {
+                    distance: if face_sort {
+                        (*point - view.eye).dot(alpha_forward)
+                    } else {
+                        view.eye.distance(*point)
+                    },
                     cmd: *c,
                     glow,
                     double_sided,
@@ -4900,6 +5242,11 @@ impl Scene {
             _ => blend_order::rig_runs,
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Layers {
+            blend_order::quiet_runs(&self.blend_tmp, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
+        } else {
+            self.lists.blend_depth_quiet.clear();
+        }
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         // under the water: back to front, the rigged first
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
@@ -4915,6 +5262,8 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.part_faces = result.part_faces;
+        self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
@@ -5354,6 +5703,16 @@ impl Scene {
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
         let neutral_owner = (self.neutral_pose_test == Some(true)).then_some(world.agent_id);
+        let studio_pose = if world.avatar_studio {
+            self.studio_pose
+        } else {
+            crate::avatar_studio::Pose::Animated
+        };
+        let studio_ground = world
+            .avatar_models
+            .get(&world.agent_id)
+            .copied()
+            .map(|model| (model, model.transform_point3(world.avatar_lib.pelvis).z + self.studio_floor_offset));
         let physics_rig = self.physics_rig.clone();
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
@@ -5381,6 +5740,9 @@ impl Scene {
                 for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                     *dst = matrix.to_cols_array_2d();
                 }
+            }
+            if *owner == world.agent_id {
+                avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
             }
         });
         drop(jobs);
@@ -5432,6 +5794,9 @@ impl Scene {
                     for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                         *dst = matrix.to_cols_array_2d();
                     }
+                }
+                if *owner == world.agent_id {
+                    avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
                 }
             });
         }
@@ -5490,6 +5855,9 @@ impl Scene {
 impl Scene {
     /// World position of an avatar's head as posed last frame.
     pub fn head_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            return self.joint_world(world, id, "mHead", now);
+        }
         let idx = world.objects.index_of_uuid(id)?;
         let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
         Some(match self.motions.get(id).and_then(|c| c.head_pos()) {
@@ -5501,6 +5869,13 @@ impl Scene {
     /// The point between an avatar's eyes, animated (`anim::Controller::eyes_pos`),
     /// else its head (`head_world`).
     pub fn eyes_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            return self
+                .joint_world(world, id, "mEyeLeft", now)
+                .zip(self.joint_world(world, id, "mEyeRight", now))
+                .map(|(left, right)| (left + right) * 0.5)
+                .or_else(|| self.head_world(world, id, now));
+        }
         let idx = world.objects.index_of_uuid(id)?;
         let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
         match self.motions.get(id).and_then(|c| c.eyes_pos()) {
@@ -5864,8 +6239,10 @@ fn te_invisible(o: &Object, face: usize) -> bool {
 
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
-    // mesh heads and bodies): nothing to draw
-    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none()) {
+    // mesh heads and bodies): nothing to draw. A blended legacy material
+    // that glares still shows its reflections there, as materialF.glsl
+    // draws it (#1420): the "shine" layers of heads and eyes.
+    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none() && !f.glares_when_blended()) {
         return Pass::Hidden;
     }
     // A system body part: the avatar pool decides, not the texture alone.
@@ -5923,9 +6300,69 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 }
 
 #[cfg(test)]
+mod layer_rank_tests {
+    use super::*;
+
+    #[test]
+    fn the_skin_stays_under_every_worn_layer() {
+        let ids = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
+        for id in ids {
+            assert_eq!(rigged_layer_rank(true, &id), 0);
+            let rank = rigged_layer_rank(false, &id);
+            assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
+            // the same object keeps its rank on every rebuild
+            assert_eq!(rigged_layer_rank(false, &id), rank);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn saved_material_local_maps_rebuild_the_object_after_local_slot_restoration() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let objects: Vec<_> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| !o.is_avatar())
+            .take(2)
+            .map(|(idx, _)| idx)
+            .collect();
+        let id = Uuid::from_u128(900);
+        let asset = Uuid::from_u128(901);
+        let material = aurora_assets::PbrMaterial {
+            base_color_texture: Some(id),
+            ..Default::default()
+        };
+        let bytes = material.encode_asset().expect("saved material");
+        let loaded = aurora_assets::parse_material_asset(&bytes).expect("reopened material");
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        scene.materials.insert(asset, loaded);
+        scene.gpu.resize_with(world.objects.slots.len(), Default::default);
+        scene.gpu[objects[0]].tex_ids = vec![scene.materials.get(&asset).expect("material").base_color_texture.expect("local ID")];
+        scene.gpu[objects[1]].tex_ids = vec![Uuid::from_u128(902)];
+        for &idx in &objects {
+            let object = world.objects.get_mut_untracked(idx).expect("object");
+            object.material_dirty = false;
+            object.render.needs_records = false;
+        }
+        scene.textures.register_local_image(id, 20, AlphaKind::Opaque, false);
+        scene.textures.register_local_image(id, 30, AlphaKind::Opaque, false);
+        scene.rebuild_reslotted(&mut world);
+        assert!(world.objects.get(objects[0]).expect("material user").render.needs_records);
+        assert!(!world.objects.get(objects[1]).expect("unrelated object").render.needs_records);
+        assert_eq!(
+            scene.materials.get(&asset).expect("material unchanged").base_color_texture,
+            Some(id)
+        );
+    }
 
     #[test]
     fn texture_animation_moves_its_face_or_every_face_for_all_sides() {
@@ -6197,6 +6634,91 @@ mod tests {
             Scene::object_geom_key(&Object::from_update(1, update), 3),
             Some(GeomKey::Mesh { id: map, lod: 3 })
         );
+    }
+
+    #[test]
+    fn studio_pose_is_local_and_releasing_it_restores_the_running_animation() {
+        use crate::avatar_studio::Pose;
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = lib.rig.clone();
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        let mut other = crate::demo::action_avatar(false);
+        other.local_id = 9001;
+        other.full_id = crate::demo::DEMO_LOUP;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false), other],
+        });
+        let animation_id = Uuid::from_u128(0xaaaa1235);
+        let mut animation = crate::demo::deform::animation(&rig);
+        animation.joints = vec![aurora_assets::anim::JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![
+                aurora_assets::anim::PosKey {
+                    time: 0.0,
+                    position: Vec3::Z * 0.1,
+                },
+                aurora_assets::anim::PosKey {
+                    time: 2.0,
+                    position: Vec3::Z * 0.5,
+                },
+            ],
+        }];
+        animation.looping = true;
+        animation.ease_in = 0.0;
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.anims.insert(animation_id, Arc::new(anim::BoundAnim::bind(animation, &rig)));
+        for avatar in [world.agent_id, crate::demo::DEMO_LOUP] {
+            scene.palette_base(avatar);
+            world.apply(NetEvent::AvatarAnimations {
+                sources: Vec::new(),
+                avatar,
+                anims: vec![(animation_id, 1)],
+            });
+        }
+        let now = Instant::now();
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let signals = world.animations_of(&world.agent_id).to_vec();
+        let foot = rig.names["mFootLeft"];
+        let before = world.avatar_poses[&world.agent_id][foot];
+        let original_foot = scene.joint_world(&world, &world.agent_id, "mFootLeft", now).expect("foot");
+        let own_index = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
+        let root = Scene::object_transform(&world, own_index, now, 0).expect("root").0;
+        scene.studio_floor_offset = original_foot.z - crate::avatar_studio::SOLE_HEIGHT - root.z;
+        world.avatar_studio = true;
+        for (i, pose) in [Pose::T, Pose::A].into_iter().enumerate() {
+            scene.studio_pose = pose;
+            scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(300 + i as u64 * 300));
+            let foot_now = scene.joint_world(&world, &world.agent_id, "mFootLeft", now).expect("posed foot");
+            assert!((foot_now.z - original_foot.z).abs() < 1e-5, "preset feet remain at the pedestal");
+            assert_eq!(
+                scene.head_world(&world, &world.agent_id, now),
+                scene.joint_world(&world, &world.agent_id, "mHead", now),
+                "photo autofocus follows the grounded preset head"
+            );
+            assert!(!world.avatar_poses[&crate::demo::DEMO_LOUP][foot].abs_diff_eq(world.avatar_poses[&world.agent_id][foot], 1e-4));
+            assert_eq!(world.animations_of(&world.agent_id), signals);
+        }
+        scene.studio_pose = Pose::Animated;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(900));
+        let resumed = world.avatar_poses[&world.agent_id][foot];
+        assert!(resumed.abs_diff_eq(world.avatar_poses[&crate::demo::DEMO_LOUP][foot], 1e-5));
+        assert!(
+            !resumed.abs_diff_eq(before, 1e-4),
+            "animation progressed while the studio pose was displayed"
+        );
+        assert_eq!(world.animations_of(&world.agent_id), signals);
+        scene.studio_pose = Pose::T;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(1200));
+        // Leaving releases the override even if the saved menu still says T.
+        world.avatar_studio = false;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(1500));
+        assert!(world.avatar_poses[&world.agent_id][foot].abs_diff_eq(world.avatar_poses[&crate::demo::DEMO_LOUP][foot], 1e-5));
+        assert_eq!(world.animations_of(&world.agent_id), signals);
     }
 
     #[test]
@@ -6493,7 +7015,7 @@ mod tests {
             appearance_version: 1,
             // Our preference must survive a stale simulator appearance.
             hover_height: -0.5,
-            attachments: 0,
+            attachments: Vec::new(),
         }));
         let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
         let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");
@@ -6808,9 +7330,11 @@ mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
+            bump_height_source: Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
+            legacy_glare: false,
             two_sided: false,
             repeats: 1.0,
             glow,
@@ -6820,6 +7344,42 @@ mod tests {
             system: None,
             first_person_hidden: false,
         }
+    }
+
+    #[test]
+    fn generated_bump_height_source_receives_face_texture_usage() {
+        let source = Uuid::from_u128(42);
+        let mut face = test_face(Pass::Opaque, false);
+        face.bump_height_source = source;
+        face.repeats = 2.0;
+        let mut usage = Vec::new();
+        note_face_usage(&mut usage, &face, 256.0, true);
+        assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
+    }
+
+    /// materialF.glsl (blend): a transparent texture under a glossy or shiny
+    /// legacy material still shows its reflections (alpha = max(texture
+    /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
+    /// one, or not blended, the transparent texture stays hidden.
+    #[test]
+    fn transparent_texture_under_a_glaring_legacy_material_is_blended() {
+        let face = |glare: bool, legacy: Option<u8>, te_alpha: f32| FaceDraw {
+            base_slot: aurora_render::textures::TRANSPARENT,
+            legacy_glare: glare,
+            legacy_alpha: legacy,
+            te_alpha,
+            ..test_face(Pass::Hidden, false)
+        };
+        let blend = Some(legacy_mat::alpha_mode::BLEND);
+        let none = Some(legacy_mat::alpha_mode::NONE);
+        let mask = Some(legacy_mat::alpha_mode::MASK);
+        assert_eq!(classify(&face(true, blend, 1.0), AlphaKind::Mask), Pass::Blend);
+        assert_eq!(classify(&face(true, none, 0.5), AlphaKind::Mask), Pass::Blend);
+        assert_eq!(classify(&face(false, blend, 1.0), AlphaKind::Mask), Pass::Hidden);
+        assert_eq!(classify(&face(true, none, 1.0), AlphaKind::Mask), Pass::Hidden);
+        assert_eq!(classify(&face(true, mask, 1.0), AlphaKind::Mask), Pass::Hidden);
+        // a zero face color alpha hides it whatever the material
+        assert_eq!(classify(&face(true, blend, 0.0), AlphaKind::Mask), Pass::Hidden);
     }
 
     #[test]
@@ -7211,6 +7771,7 @@ mod tests {
             0.0,
             [Mat4::IDENTITY; 3],
             [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
+            None,
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];

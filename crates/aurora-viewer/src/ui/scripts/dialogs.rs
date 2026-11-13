@@ -166,7 +166,7 @@ impl Search {
         }
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-query"));
-            self.query_field(ui, id, source, 220.0);
+            self.query_field(ui, p, id, source, 220.0);
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-replacement"));
@@ -194,15 +194,13 @@ impl Search {
         ui.label(RichText::new(&self.status).color(p.muted));
     }
 
-    fn query_field(&mut self, ui: &mut egui::Ui, id: Id, source: &str, width: f32) {
-        let response = ui
-            .add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .id(Id::unique(Self::WINDOW).with("query"))
-                    .hint_text(aurora_i18n::tr!("script-search-query"))
-                    .desired_width(width),
-            )
-            .on_hover_text(aurora_i18n::tr!("script-search-query"));
+    fn query_field(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &str, width: f32) {
+        let response = crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| {
+            edit.id(Id::unique(Self::WINDOW).with("query"))
+                .hint_text(aurora_i18n::tr!("script-search-query"))
+                .desired_width(width)
+        })
+        .on_hover_text(aurora_i18n::tr!("script-search-query"));
         if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
             editing::select(ui.ctx(), response.id, 0..self.query.chars().count(), true);
         }
@@ -223,7 +221,7 @@ impl Search {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
-            self.query_field(ui, id, source, Self::INLINE_FIELD_WIDTH);
+            self.query_field(ui, p, id, source, Self::INLINE_FIELD_WIDTH);
             crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
             crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
             if !self.status.is_empty() {
@@ -433,7 +431,7 @@ impl Help {
                 }
                 crate::ui::widgets::checkbox(ui, p, &mut settings.help_follows_cursor, aurora_i18n::tr!("script-help-follow"));
             });
-            ui.text_edit_singleline(&mut self.filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| edit);
             let mut selected = None;
             egui::ComboBox::from_id_salt((id, "help_word"))
                 .selected_text(&self.keyword)
@@ -443,7 +441,7 @@ impl Help {
                         .iter()
                         .filter(|e| self.filter.is_empty() || e.name.to_lowercase().contains(&self.filter.to_lowercase()))
                     {
-                        if ui.selectable_label(entry.name == self.keyword, &entry.name).clicked() {
+                        if crate::ui::widgets::search_list_item(ui, entry.name == self.keyword, &entry.name).clicked() {
                             selected = Some(entry.name.clone());
                         }
                     }

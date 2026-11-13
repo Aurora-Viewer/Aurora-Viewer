@@ -96,7 +96,6 @@ impl App {
                 let d = amount.apply(self.settings.draw_distance);
                 // Aurora's draw distance range (Firestorm does not clamp here).
                 self.settings.draw_distance = d.clamp(32.0, 512.0);
-                self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
                 self.report_command(aurora_i18n::tr!(
                     "app-chat-commands-draw-distance-set-to-m",
                     value0 = format!("{:.0}", self.settings.draw_distance)
@@ -125,8 +124,8 @@ impl App {
             }
             Command::Music(url) => {
                 // startInternetStreamWithAutoFade: until the parcel stream changes.
-                self.music_override = Some(url);
-                self.music_playing = true;
+                self.parcel_music.play(url);
+                self.remember_music_choice();
             }
             Command::KeyToName(id) => {
                 self.world.social.avatar_names.want(&id);

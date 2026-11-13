@@ -20,6 +20,7 @@
 //! `indra/llwebrtc/llwebrtc.cpp`, Copyright (C) Linden Research, Inc. and
 //! The Phoenix Firestorm Project, licensed under the GNU originally LGPL 2.1.
 
+mod link_stats;
 pub mod protocol;
 mod session;
 mod state;

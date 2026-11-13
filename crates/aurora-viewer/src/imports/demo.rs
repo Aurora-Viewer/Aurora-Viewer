@@ -163,7 +163,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-confirm" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
         | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
-        "animation" | "animation-own" | "animation-custom" => Choice::Animation,
+        "animation" | "animation-own" | "animation-custom" | "animation-native-metadata" => Choice::Animation,
         "sound" | "sound-split" | "sound-folder" | "sound-confirm" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
         _ => Choice::Bulk,
@@ -256,6 +256,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                     Choice::Mesh if mode == "mesh-multiple" => &[("mesh-multiple.dae", Choice::Mesh)],
                     Choice::Mesh => &[("mesh-demo.dae", Choice::Mesh)],
                     Choice::Animation if mode == "animation-custom" => &[("tail-preview.anim", Choice::Animation)],
+                    Choice::Animation if mode == "animation-native-metadata" => &[("animation-demo.anim", Choice::Animation)],
                     Choice::Animation => &[
                         ("animation-demo.bvh", Choice::Animation),
                         ("animation-demo.anim", Choice::Animation),

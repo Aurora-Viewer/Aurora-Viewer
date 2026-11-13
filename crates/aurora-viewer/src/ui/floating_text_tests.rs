@@ -213,7 +213,7 @@ fn world_objects_use_the_same_baselines_without_changing_avatar_tags() {
             &proj,
             Vec3::new(0.0, -4.0, 0.3),
             false,
-            false,
+            hud::AvatarTags::Hidden,
             &settings,
             &mut hud::NameTagVisibility::default(),
             &std::collections::HashMap::new(),

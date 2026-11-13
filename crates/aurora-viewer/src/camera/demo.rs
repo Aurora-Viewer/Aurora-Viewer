@@ -19,6 +19,10 @@
 //! - `zoom-resident`: the People list's Zoom on the nearest standing resident
 //!   at frame 600, who then walks south from 660 to 760 and west until 860:
 //!   the camera keeps facing them all along
+//! - `zoom-unloaded` (with `AURORA_DEMO_PEOPLE=rows`): the same Zoom at
+//!   frame 600 on a far resident only known by its coarse location: the
+//!   camera looks at that point; its avatar is drawn at 700 and the camera
+//!   follows it from then on (the log's `focus_object`)
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
@@ -30,6 +34,10 @@
 //! - `ml-eyes-on-body-on|ml-eyes-off-body-on`: animate the head with optional
 //!   eye following; prefix `ground-` to exercise ground sitting.
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
+//! - `wheel-chat`: the Conversations window opened at 560, its field taking
+//!   the keyboard, 12 wheel clicks in at 650 (into mouselook: the window
+//!   goes and the field lets the keyboard go, #2897), out at 700 (the
+//!   window back, the keyboard still free)
 //! - `ml-zoom`: into mouselook at 600, right button held at 640 (no zoom
 //!   yet: the normal angle stays until the wheel sets one), 3 wheel clicks in at
 //!   650, released at 680 (the normal angle), held again at 720 (the
@@ -74,6 +82,9 @@ pub enum Step {
     /// Enable toggle crouch and hold / release its Down input.
     Crouch(bool),
     ToggleMouselook,
+    /// Communicate › Nearby Chat: the Conversations window, its field
+    /// taking the keyboard.
+    FocusChat,
     GroundSit,
     /// Wheel clicks, SL sign (positive zooms out).
     Wheel(f32),
@@ -85,6 +96,11 @@ pub enum Step {
     ZoomResident,
     /// Slide the demo resident by (x, y) metres, as if it walked.
     MoveResident(f32, f32),
+    /// The radar's double click on the first far resident of
+    /// AURORA_DEMO_PEOPLE, only a coarse location yet.
+    ZoomUnloadedResident,
+    /// That resident's avatar arrives from the simulator.
+    DrawUnloadedResident,
     Log,
 }
 
@@ -239,6 +255,16 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 _ => {}
             }
         }
+        "zoom-unloaded" => {
+            match frame {
+                600 => out.push(Step::ZoomUnloadedResident),
+                700 => out.push(Step::DrawUnloadedResident),
+                _ => {}
+            }
+            if matches!(frame, 600 | 650 | 700 | 702 | 760) {
+                out.push(Step::Log);
+            }
+        }
         "zoom-resident" => {
             match frame {
                 600 => out.push(Step::ZoomResident),
@@ -348,6 +374,13 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             600 => out.extend([Step::Wheel(3.0), Step::Log]),
             650 => out.extend([Step::Wheel(-12.0), Step::Log]),
             610 | 630 | 660 => out.push(Step::Log),
+            _ => {}
+        },
+        "wheel-chat" => match frame {
+            560 => out.push(Step::FocusChat),
+            600 | 662 | 712 => out.push(Step::Log),
+            650 => out.extend([Step::Wheel(-12.0), Step::Log]),
+            700 => out.extend([Step::ToggleMouselook, Step::Log]),
             _ => {}
         },
         mode @ ("sit"
@@ -538,6 +571,14 @@ mod tests {
         assert_eq!(steps("ml-alt", 650), vec![alt(false)]);
         assert_eq!(steps("ml-alt", 660), vec![Step::Drag(8.0, 0.0)]);
         assert!(steps("ml-alt", 700).contains(&Step::ToggleMouselook));
+    }
+
+    #[test]
+    fn wheel_chat_scenario_types_then_wheels_into_mouselook() {
+        assert_eq!(steps("wheel-chat", 560), vec![Step::FocusChat]);
+        assert!(steps("wheel-chat", 650).contains(&Step::Wheel(-12.0)));
+        assert!(steps("wheel-chat", 700).contains(&Step::ToggleMouselook));
+        assert!(steps("wheel-chat", 800).is_empty());
     }
 
     #[test]

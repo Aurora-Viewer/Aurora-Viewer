@@ -142,7 +142,11 @@ impl BuildTool {
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?
+    /// A god may, whatever the object (isGodlike() first).
     pub fn contents_editable(&self, world: &World, idx: usize) -> bool {
+        if world.god_level > 0 {
+            return world.objects.get(idx).is_some();
+        }
         if !self.can_modify(world, idx) {
             return false;
         }

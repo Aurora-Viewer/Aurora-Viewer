@@ -888,7 +888,17 @@ pub fn check_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bo
 /// Check entry that leaves the menu open (several options in a row, like
 /// the blocked properties of a block list entry).
 pub fn toggle(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool) -> bool {
-    let clicked = row(ui, p, icon, label, true, End::Check(*on), false).clicked();
+    toggle_keys(ui, p, icon, label, on, "")
+}
+
+/// `toggle` with the keys of its shortcut (an empty `keys` shows none).
+pub fn toggle_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, keys: &str) -> bool {
+    let end = if keys.is_empty() {
+        End::Check(*on)
+    } else {
+        End::CheckKeys(*on, keys)
+    };
+    let clicked = row(ui, p, icon, label, true, end, false).clicked();
     if clicked {
         *on = !*on;
     }

@@ -326,6 +326,10 @@ impl View {
         self.rows.get(i)
     }
 
+    pub fn is_filtered(&self) -> bool {
+        !self.filter.is_empty()
+    }
+
     /// Bring a row in sight at the next `show`.
     pub fn scroll_to(&mut self, row: usize) {
         self.scroll_to = Some(row);

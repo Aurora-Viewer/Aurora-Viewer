@@ -408,6 +408,16 @@ mod tests {
     }
 
     #[test]
+    fn an_integrated_gpu_keeps_its_setting_until_the_shared_memory_runs_short() {
+        // a Radeon 610M under RADV: 21,982 MB of budget for 522 MB used
+        // (the system's memory) leaves the 2 GB of auto_texture_budget
+        let setting = 2 * GB;
+        assert_eq!(texture_target(setting, 4 * MB, video(21_982 * MB, 522 * MB)), setting);
+        // the other programs fill the memory: the budget says so
+        assert_eq!(texture_target(setting, GB, video(2 * GB, GB + GB / 2)), GB);
+    }
+
+    #[test]
     fn target_leaves_room_for_the_rest_of_the_process() {
         // 8 GB card: the process may hold 80 % of the 7.5 GB it is given;
         // with 1.5 GB of render targets and geometry, textures get the rest
