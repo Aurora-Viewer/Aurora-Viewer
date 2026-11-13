@@ -3664,6 +3664,7 @@ pub(crate) mod tests {
             selected: false,
             remove: false,
             source_folder: Uuid::nil(),
+            from_task: Uuid::nil(),
         };
         let updates: Vec<_> = (0..16_000)
             .map(|n| {

@@ -85,6 +85,10 @@ pub struct GroupData {
     pub notice: Option<NoticeView>,
     asked_notice: Option<Uuid>,
     accessed: u64,
+    /// A ban asked before the members and roles were known
+    /// (mPendingBanRequest, mPendingBanMemberID): sent once they are; the
+    /// resident, then us.
+    pending_ban: Option<(Uuid, Uuid)>,
 }
 
 impl GroupData {
@@ -93,6 +97,17 @@ impl GroupData {
         self.members
             .values()
             .filter(|m| m.last_seen == aurora_net::groups::LastSeen::Online)
+    }
+
+    /// A ban waits for the group's members and roles (mPendingBanRequest).
+    pub fn ban_pending(&self) -> bool {
+        self.pending_ban.is_some()
+    }
+
+    /// The members, their roles and the role / member pairs are all known
+    /// (isMemberDataComplete, isRoleDataComplete, isRoleMemberDataComplete).
+    fn loaded(&self) -> bool {
+        self.members_complete && self.roles_complete && self.role_members_complete && !self.members.is_empty()
     }
 
     /// The title we wear (the selected one of GroupTitlesReply).
@@ -132,6 +147,9 @@ pub struct GroupMgr {
     read: HashMap<Uuid, HashSet<Uuid>>,
     read_path: Option<PathBuf>,
     pub out: Vec<NetCommand>,
+    /// (group, resident) banned by `ban_member`, to be told
+    /// (the EjectAvatarFromGroup notice).
+    pub banned: Vec<(Uuid, Uuid)>,
 }
 
 impl GroupMgr {
@@ -327,6 +345,66 @@ impl GroupMgr {
         self.eject(group, members, me);
     }
 
+    /// LLGroupMgrGroupData::banMemberById, from a group chat's members: a
+    /// group whose members and roles are not known yet asks for them and
+    /// keeps the ban until they come; a resident not in the list asks for
+    /// it once more, then gives up; an owner is never banned. The ban, the
+    /// ejection, then the members asked again.
+    pub fn ban_member(&mut self, group: Uuid, member: Uuid, me: Uuid) {
+        if group.is_nil() || member.is_nil() || member == me {
+            return;
+        }
+        let g = self.data(group);
+        if !g.loaded() {
+            g.pending_ban = Some((member, me));
+            let (members, roles, pairs) = (
+                g.members_complete && !g.members.is_empty(),
+                g.roles_complete,
+                g.role_members_complete,
+            );
+            if !members {
+                self.request_members(group);
+            }
+            if !roles {
+                self.request_roles(group);
+            }
+            // the pairs, whose reply sends the ban (processGroupRoleMembersReply)
+            if !members || !roles || !pairs {
+                self.request_role_members(group);
+            }
+            return;
+        }
+        let owner = match g.members.get(&member) {
+            // isInRole(mOwnerRole): the members' list says it
+            Some(m) => m.is_owner,
+            None => {
+                // not in the list: asked once more, then dropped
+                if g.pending_ban.take().is_none() {
+                    g.pending_ban = Some((member, me));
+                    self.request_members(group);
+                    self.request_role_members(group);
+                }
+                return;
+            }
+        };
+        g.pending_ban = None;
+        if owner {
+            log::info!("group {group}: an owner is not banned");
+            return;
+        }
+        self.ban(group, vec![member], me);
+        self.request_members(group);
+        self.request_role_members(group);
+        self.banned.push((group, member));
+    }
+
+    /// The ban kept by `ban_member`, once the group is known.
+    fn send_pending_ban(&mut self, group: Uuid) {
+        if let Some((member, me)) = self.groups.get(&group).filter(|g| g.loaded()).and_then(|g| g.pending_ban) {
+            self.ban_member(group, member, me);
+        }
+    }
+
     /// The ban list (getGroupBanRequestCoro).
     pub fn request_bans(&mut self, group: Uuid) {
         self.out.push(NetCommand::GroupBans {
@@ -352,6 +430,20 @@ impl GroupMgr {
             ids,
             refresh: true,
         });
+    }
+
+    /// A ban the server took outside this window (a ban in all our groups):
+    /// our copy of the list follows, when we have one (createBanEntry /
+    /// removeBanEntry).
+    pub fn note_ban(&mut self, group: Uuid, agent: Uuid, ban: bool) {
+        let Some(bans) = self.groups.get_mut(&group).and_then(|g| g.bans.as_mut()) else {
+            return;
+        };
+        bans.retain(|(id, _)| *id != agent);
+        if ban {
+            // no date, as `ban` adds them
+            bans.push((agent, 0.0));
+        }
     }
 
     /// LLPanelGroupBulkBan::submit: residents banned by name (not ourselves,
@@ -753,6 +845,7 @@ impl GroupMgr {
             }
             g.role_members_complete = true;
             g.role_members_request = None;
+            self.send_pending_ban(page.group);
         }
     }
 }
@@ -995,5 +1088,93 @@ mod tests {
         assert_eq!(mgr.groups.len(), MAX_CACHED_GROUPS);
         assert!(mgr.get(&Uuid::from_u128(1)).is_none(), "the oldest one went");
         assert!(mgr.get(&Uuid::from_u128(21)).is_some());
+    }
+    /// Answer what the manager asked: the members (owners marked), the
+    /// "everyone" role, and the pairs once asked.
+    fn answer(mgr: &mut GroupMgr, members: &[(u128, bool)]) -> Vec<NetCommand> {
+        let mut sent = Vec::new();
+        for _ in 0..4 {
+            let cmds = mgr.take_commands();
+            if cmds.is_empty() {
+                break;
+            }
+            for c in &cmds {
+                let ev = match c {
+                    NetCommand::GroupMembersRequest { group, request } => NetEvent::GroupMembers(Box::new(MembersPage {
+                        group: *group,
+                        request: *request,
+                        total: members.len() as i32,
+                        members: members
+                            .iter()
+                            .map(|(id, owner)| GroupMember {
+                                is_owner: *owner,
+                                ..member(*id, true)
+                            })
+                            .collect(),
+                        whole: true,
+                    })),
+                    NetCommand::GroupRoleDataRequest { group, request } => NetEvent::GroupRoles(Box::new(RolesPage {
+                        group: *group,
+                        request: *request,
+                        total: 1,
+                        roles: vec![role(0, "Everyone")],
+                    })),
+                    NetCommand::GroupRoleMembersRequest { group, request } => NetEvent::GroupRoleMembers(Box::new(RoleMembersPage {
+                        group: *group,
+                        request: *request,
+                        total_pairs: 0,
+                        pairs: Vec::new(),
+                    })),
+                    _ => continue,
+                };
+                mgr.on_event(&ev);
+            }
+            sent.extend(cmds);
+        }
+        sent
+    }
+
+    fn banned_and_ejected(cmds: &[NetCommand], who: Uuid) -> bool {
+        cmds.iter().any(
+            |c| matches!(c, NetCommand::GroupBans { action: Some(a), ids, .. } if *a == aurora_net::groups::ban::CREATE && ids == &[who]),
+        ) && cmds
+            .iter()
+            .any(|c| matches!(c, NetCommand::EjectGroupMembers { members, .. } if members == &[who]))
+    }
+
+    #[test]
+    fn a_ban_from_a_chat_waits_for_the_group_then_goes_out() {
+        let (me, bob) = (Uuid::from_u128(1), Uuid::from_u128(10));
+        let mut mgr = GroupMgr::default();
+        mgr.ban_member(G, bob, me);
+        assert!(mgr.get(&G).is_some_and(GroupData::ban_pending));
+        assert!(!banned_and_ejected(&mgr.out, bob), "nothing sent before the group is known");
+        let cmds = answer(&mut mgr, &[(1, false), (10, false), (12, true)]);
+        assert!(banned_and_ejected(&cmds, bob), "{cmds:?}");
+        assert!(!mgr.get(&G).is_some_and(GroupData::ban_pending));
+        assert_eq!(mgr.banned, [(G, bob)]);
+    }
+
+    #[test]
+    fn a_ban_from_a_chat_never_reaches_an_owner_ourselves_or_a_stranger() {
+        let me = Uuid::from_u128(1);
+        let mut mgr = GroupMgr::default();
+        mgr.ban_member(G, Uuid::from_u128(12), me);
+        let cmds = answer(&mut mgr, &[(1, false), (10, false), (12, true)]);
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, NetCommand::GroupBans { .. } | NetCommand::EjectGroupMembers { .. })),
+            "{cmds:?}"
+        );
+        mgr.ban_member(G, me, me);
+        assert!(mgr.take_commands().is_empty());
+        // not in the list: asked once more, then given up
+        mgr.ban_member(G, Uuid::from_u128(77), me);
+        let cmds = answer(&mut mgr, &[(1, false), (10, false), (12, true)]);
+        assert!(cmds.iter().any(|c| matches!(c, NetCommand::GroupMembersRequest { .. })));
+        assert!(!cmds.iter().any(|c| matches!(c, NetCommand::GroupBans { .. })));
+        assert!(!mgr.get(&G).is_some_and(GroupData::ban_pending));
+        assert!(mgr.banned.is_empty());
     }
 }

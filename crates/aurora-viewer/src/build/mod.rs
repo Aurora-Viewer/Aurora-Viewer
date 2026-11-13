@@ -38,6 +38,8 @@ pub mod particle_editor;
 pub mod place;
 mod property_query;
 pub mod replace;
+#[cfg(test)]
+mod save_to_contents_tests;
 pub mod script_queue;
 #[cfg(test)]
 mod selection_tests;
@@ -1623,6 +1625,66 @@ impl BuildTool {
             .find(|f| !f.library && f.info.type_default == t)
             .map(|f| f.info.id)
             .unwrap_or_default()
+    }
+
+    /// The root "Save back to object contents" sends, and the object it was
+    /// rezzed from (enable_save_into_task_inventory,
+    /// indra/newview/llviewermenu.cpp): the first root node of the
+    /// selection, the latest linkset selected, once its full properties
+    /// name a source object, never an attachment. With "Edit linked parts"
+    /// the prims are individual selections, which are no root nodes
+    /// (LLObjectSelection::is_root): nothing.
+    pub fn save_to_contents_target(&self, world: &World) -> Option<(usize, Uuid)> {
+        if self.selection_linked {
+            return None;
+        }
+        let root = root_of(world, world.objects.index_of(self.selection.first()?)?);
+        let object = world.objects.get(root)?;
+        if object.parent_id != 0 {
+            return None;
+        }
+        let from = self.props.get(&object.full_id).filter(|p| p.full)?.from_task_id;
+        (!from.is_nil()).then_some((root, from))
+    }
+
+    /// Build › Save back to object contents (LLToolsSaveToObjectInventory,
+    /// save_object_back_to_contents and derez_objects): a copy of the
+    /// target root alone goes into the contents of the object it was
+    /// rezzed from, in one DeRezObject (DRD_SAVE_INTO_TASK_INVENTORY) with
+    /// the active group. Like the Legacy Viewer, the other selected roots
+    /// stay out, no permission is asked here (the simulator decides) and
+    /// the selection stays.
+    ///
+    /// Unlike the Legacy Viewer, which says nothing, a notice in the nearby
+    /// chat names the object being saved (the simulator sends no reply to
+    /// a save), and the source object's Contents list is read again.
+    pub fn save_to_contents(&mut self, world: &mut World) {
+        let Some((root, from)) = self.save_to_contents_target(world) else {
+            return;
+        };
+        let Some(object) = world.objects.get(root) else {
+            return;
+        };
+        let (handle, local_id) = (object.key.region, object.key.local_id);
+        let name = self
+            .props
+            .get(&object.full_id)
+            .map(|p| p.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| aurora_i18n::tr!("common-object").to_string());
+        self.send(BuildCmd::DeRez {
+            handle,
+            local_ids: vec![local_id],
+            destination: derez::SAVE_INTO_TASK_INVENTORY,
+            destination_id: from,
+            group_id: world.groups.active,
+        });
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
+        world.system_notice(
+            aurora_i18n::tr!("ui-bars-save-to-object-contents-sent", name = name),
+            crate::world::notice_topics::Topic::Items,
+        );
+        self.contents_changed(from);
     }
 
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).
