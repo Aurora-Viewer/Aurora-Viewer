@@ -598,6 +598,10 @@ pub mod ban {
     pub const DELETE: i32 = 2;
 }
 
+/// The pause between two groups of a ban in all our groups
+/// (banFromAllGroupsCoro: suspendUntilTimeout(0.5f)).
+pub const BAN_IN_GROUPS_PAUSE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The body of a ban POST (postGroupBanRequestCoro).
 pub fn ban_body(action: i32, ids: &[Uuid]) -> Llsd {
     llsd_map! {
