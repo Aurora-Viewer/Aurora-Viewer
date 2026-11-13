@@ -70,13 +70,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let single = tool.sel_prims(world).len() == 1;
     let editable = tool.can_modify(world, idx) && !crate::build::linking::permanent(world, crate::build::root_of(world, idx));
     let enabled = editable && single;
-    let (extra, volume, material, click, flexible) = (
-        o.extra.clone(),
-        o.volume,
-        o.prim_material,
-        o.click_action,
-        o.has_flexible_path(),
-    );
+    let (extra, volume, material, click, flexible) = (o.extra.clone(), o.volume, o.prim_material, o.click_action, o.has_flexible_path());
     let mesh = volume.is_mesh();
     let legacy_canvas =
         super::legacy::active(ui).then(|| egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 460.0)));
