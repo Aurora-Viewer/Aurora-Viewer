@@ -2422,6 +2422,43 @@ impl App {
         }
     }
 
+fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
+    match inv_type {
+        10 => "script",
+        6 => "object",
+        7 => "notecard",
+        0 => "texture",
+        1 => "sound",
+        2 => "calling_card",
+        3 => "landmark",
+        18 => "wearable",
+        19 => "animation",
+        20 => "gesture",
+        22 => "mesh",
+        25 => "settings",
+        26 => "material",
+        _ => match asset_type {
+            0 | 12 => "texture",
+            1 | 17 => "sound",
+            2 => "calling_card",
+            3 => "landmark",
+            4 | 10 | 11 => "script",
+            5 => "clothing",
+            6 => "object",
+            7 => "notecard",
+            13 => "bodypart",
+            20 => "animation",
+            21 => "gesture",
+            24 => "link",
+            25 => "link_folder",
+            49 => "mesh",
+            56 => "settings",
+            57 => "material",
+            _ => "unknown",
+        },
+    }
+}
+
     fn handle_mcp_inventory_browse(
         &self,
         folder_uuid: Option<Uuid>,
@@ -2535,19 +2572,36 @@ impl App {
         let show_asset_uuid =
             crate::world::inventory::actions::asset_uuid_shown(&self.world.inventory, item.asset_id);
         let mask = crate::world::inventory::actions::agent_mask(item, self.world.agent_id);
+        let can_copy = (mask & perm::COPY) != 0;
+        let can_modify = (mask & perm::MODIFY) != 0;
+        let can_transfer = (mask & perm::TRANSFER) != 0;
+        let type_name = Self::inventory_item_type_str(item.asset_type, item.inv_type);
+        let is_object = item.asset_type == 6 || item.inv_type == 6;
+        let is_script = item.asset_type == 10 || item.asset_type == 4 || item.inv_type == 10;
+        let is_notecard = item.asset_type == 7 || item.inv_type == 7;
+
         json!({
             "item_id": item.id.to_string(),
             "parent_id": item.parent.to_string(),
             "name": item.name,
             "description": item.desc,
+            "type": type_name,
             "asset_type": item.asset_type,
             "inv_type": item.inv_type,
+            "is_object": is_object,
+            "is_script": is_script,
+            "is_notecard": is_notecard,
+            "creator_id": item.creator.to_string(),
+            "owner_id": item.owner.to_string(),
             "is_link": item.asset_type == 24 || item.asset_type == 25,
             "asset_id": if show_asset_uuid { Some(item.asset_id.to_string()) } else { None },
+            "is_no_copy": !can_copy,
+            "is_no_modify": !can_modify,
+            "is_no_transfer": !can_transfer,
             "permissions": {
-                "copy": (mask & perm::COPY) != 0,
-                "modify": (mask & perm::MODIFY) != 0,
-                "transfer": (mask & perm::TRANSFER) != 0,
+                "copy": can_copy,
+                "modify": can_modify,
+                "transfer": can_transfer,
             }
         })
     }
@@ -3706,6 +3760,14 @@ impl App {
             ))));
             return;
         };
+        if item.asset_type != 6 && item.inv_type != 6 {
+            let type_str = Self::inventory_item_type_str(item.asset_type, item.inv_type);
+            let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                "Cannot rez inventory item '{}': item is a '{}' (asset_type {}), only 'object' items can be rezzed into the world",
+                item.name, type_str, item.asset_type
+            ))));
+            return;
+        }
         let known_local_ids: HashSet<u32> = self
             .world
             .objects
