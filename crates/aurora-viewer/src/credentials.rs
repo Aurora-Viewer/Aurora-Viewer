@@ -1,7 +1,9 @@
 //! Remembered login password, like Firestorm's "Remember password": only the
 //! `$1$` + md5 form the login sends is kept (never the password itself), in
-//! the system credential store (Windows Credential Manager, protected by the
-//! user's session) instead of Firestorm's bin_conf.dat file.
+//! the system credential store (Windows Credential Manager, the macOS
+//! keychain, the Secret Service on Linux, each protected by the user's
+//! session) instead of the Legacy Viewer's bin_conf.dat file. With no store
+//! at hand nothing is kept: there is no fallback file.
 
 const SERVICE: &str = "Aurora Viewer";
 const MFA_SERVICE: &str = "Aurora Viewer MFA";
@@ -182,15 +184,30 @@ pub fn load(grid: &str, username: &str) -> Option<String> {
     }
 }
 
-pub fn store(grid: &str, username: &str, hash: &str) {
+/// Keep `hash` for this user on this grid; false when it was not kept (Linux
+/// without a running Secret Service, a refused write).
+#[must_use]
+pub fn store(grid: &str, username: &str, hash: &str) -> bool {
     if !is_hash(hash) {
-        return;
+        return false;
     }
-    if let Some(e) = entry(grid, username)
-        && let Err(err) = e.set_password(hash)
-    {
-        log::warn!("password not remembered: {err}");
+    let Some(e) = entry(grid, username) else {
+        return false;
+    };
+    match e.set_password(hash) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("password not remembered: {err}");
+            false
+        }
     }
+}
+
+/// Whether "Remember password" stays on after a login: a password that was
+/// typed must have reached the store, or the account would claim a password
+/// it does not have; the one read back from the store is already there.
+pub fn stays_remembered(typed: bool, stored: impl FnOnce() -> bool) -> bool {
+    !typed || stored()
 }
 
 pub fn forget(grid: &str, username: &str) {
@@ -268,6 +285,14 @@ mod tests {
         assert_eq!(account(" Second Life ", " Prenom.Nom "), "Second Life|prenom.nom");
     }
 
+    #[test]
+    fn a_failed_save_turns_remember_password_off() {
+        assert!(stays_remembered(true, || true));
+        assert!(!stays_remembered(true, || false));
+        // Logging in with the stored hash saves nothing, and cannot fail.
+        assert!(stays_remembered(false, || panic!("nothing to save")));
+    }
+
     /// Real round trip through the system store (run by hand:
     /// `cargo test -p aurora-viewer credentials -- --ignored`).
     #[test]
@@ -275,7 +300,7 @@ mod tests {
     fn store_round_trip() {
         let (grid, user) = ("test-grid", "aurora-selftest");
         let h = "$1$00000000000000000000000000000000";
-        store(grid, user, h);
+        assert!(store(grid, user, h));
         assert_eq!(load(grid, user).as_deref(), Some(h));
         forget(grid, user);
         assert_eq!(load(grid, user), None);

@@ -4119,8 +4119,22 @@ impl App {
                 // the remembered one was used); otherwise forgotten
                 let (uri, user) = (self.settings.login_uri(), self.settings.username.clone());
                 if self.settings.remember_password {
-                    if !self.login_form.password.is_empty() {
-                        crate::credentials::store(&uri, &user, &aurora_net::login::login_hash(&uri, &self.login_form.password));
+                    let typed = !self.login_form.password.is_empty();
+                    let refused = self.demo && std::env::var_os("AURORA_DEMO_REMEMBER_REFUSED").is_some();
+                    let kept = !refused
+                        && crate::credentials::stays_remembered(typed, || {
+                            crate::credentials::store(&uri, &user, &aurora_net::login::login_hash(&uri, &self.login_form.password))
+                        });
+                    if !kept {
+                        // Aurora's own: the Legacy Viewer's bin_conf.dat file has no store to miss.
+                        self.settings.remember_password = false;
+                        self.world.system_notice(
+                            aurora_i18n::tr!("app-password-not-remembered"),
+                            crate::world::notice_topics::Topic::Warning,
+                        );
+                        if !self.demo {
+                            self.settings.save();
+                        }
                     }
                 } else {
                     crate::credentials::forget(&uri, &user);
