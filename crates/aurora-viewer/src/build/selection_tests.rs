@@ -683,7 +683,7 @@ fn new_prim_is_selected_once_without_update_owner_id_and_deleted_without_false_w
     tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.out.len(), sends);
     tool.delete(&mut world);
-    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
+    assert!(tool.status.is_empty());
     assert!(tool.selection.is_empty());
 }
 
@@ -995,7 +995,7 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
     assert!(world.objects.get(world.objects.index_of(&key).unwrap()).unwrap().owner_id.is_nil());
     tool.out.clear();
     tool.delete(&mut world);
-    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
+    assert!(tool.status.is_empty());
     for cmd in std::mem::take(&mut tool.out) {
         if let NetCommand::Build(cmd) = cmd {
             for event in sim.reply(&world, &cmd) {
@@ -1177,7 +1177,7 @@ fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
 }
 
 #[test]
-fn selection_filters_persist_and_sit_under_the_reflection_probes() {
+fn selection_filters_persist_and_use_the_current_settings_defaults() {
     use layout::{Item, Layout, Panel};
     let mut settings = BuildSettings::default();
     assert!(!settings.select_owned_only && !settings.select_movable_only);
@@ -1187,19 +1187,36 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     assert!(restored.select_owned_only && restored.select_movable_only);
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
     assert!(!old.select_owned_only && !old.select_movable_only);
-    // a layout saved before the filters existed gets them right under the probes
+    // Missing filters return to Settings without losing the other entries' order.
     let mut saved = Layout::default();
+    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
+    let existing: Vec<_> = saved
+        .in_panel(Panel::Settings)
+        .into_iter()
+        .filter(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly))
+        .collect();
     saved.order.retain(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly));
     saved.locations.remove(&Item::OwnedOnly);
     saved.locations.remove(&Item::MovableOnly);
-    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
     saved.normalize();
     let panel = saved.in_panel(Panel::Settings);
-    let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
-    assert_eq!(panel[probes + 1..probes + 3], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(panel[..2], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(
+        panel
+            .into_iter()
+            .filter(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly))
+            .collect::<Vec<_>>(),
+        existing
+    );
     assert_eq!(
         Layout::default().in_panel(Panel::Settings)[..5],
-        [Item::Snap, Item::Highlight, Item::Probes, Item::OwnedOnly, Item::MovableOnly]
+        [
+            Item::OwnedOnly,
+            Item::MovableOnly,
+            Item::Surrounding,
+            Item::LandGroup,
+            Item::FollowEdit
+        ]
     );
     // notecards exported before them still load, with the filters off
     let (_, tool, _) = fixture();
@@ -1444,6 +1461,33 @@ fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
     assert!(!tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::Delink { .. }))));
     world.objects.get_mut(b).unwrap().update_flags |= OBJECT_MODIFY;
     assert!(tool.can_link(&world) && tool.can_unlink(&world));
+}
+
+#[test]
+fn local_duplicates_follow_the_real_build_command_and_copy_permission_gate() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MOVE};
+    for allowed in [false, true] {
+        let (mut world, mut tool, settings) = fixture();
+        let handle = world.main_region.unwrap();
+        let mut update = crate::demo::action_avatar(false);
+        update.local_id = 99990;
+        update.full_id = Uuid::new_v4();
+        update.parent_id = 0;
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.update_flags = OBJECT_MOVE | if allowed { OBJECT_COPY } else { 0 };
+        let index = world.objects.upsert(handle, update.clone());
+        let local = LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(index).unwrap().render.local_appearance.insert(Some(2), local);
+        tool.click_select(&mut world, &settings, Some(index), false);
+        tool.duplicate(&mut world, &settings, Vec3::X, true);
+        update.local_id += 1;
+        update.full_id = Uuid::new_v4();
+        update.position += Vec3::X;
+        update.update_flags |= FLAGS_CREATE_SELECTED;
+        let copy = world.objects.upsert(handle, update);
+        assert_eq!(world.objects.get(copy).unwrap().local_appearance(2), allowed.then_some(local));
+        assert_eq!(world.objects.take_local_duplicate_changes().len(), usize::from(allowed));
+    }
 }
 
 #[test]

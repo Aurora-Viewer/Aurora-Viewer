@@ -1,10 +1,10 @@
 //! Preferences › Confirmations: what Aurora asks before acting (the
 //! "ignore" boxes of the Legacy Viewer's alerts: TeleportFromLandmark,
-//! ReturnToOwner, AttachmentDrop, ConfirmScriptModify, FSConfirmPayments,
-//! ChangeObjectBonusFactor, ConfirmTextureHeights, and the Marketplace
-//! listings' ConfirmMerchantMoveInventory, ConfirmMerchantActiveChange,
-//! ConfirmMerchantClearVersion, ConfirmListingCutOrDelete,
-//! ConfirmMerchantUnlist), the alerts of the
+//! DeleteItems, ReturnToOwner, AttachmentDrop, ConfirmScriptModify,
+//! FSConfirmPayments, ChangeObjectBonusFactor, ConfirmTextureHeights, and
+//! the Marketplace listings' ConfirmMerchantMoveInventory,
+//! ConfirmMerchantActiveChange, ConfirmMerchantClearVersion,
+//! ConfirmListingCutOrDelete, ConfirmMerchantUnlist), the alerts of the
 //! region (FSShowServerVersionChangeNotice, FSReportTotalScriptCountChanges,
 //! FSUseNewRegionRestartNotification…) and the collisions
 //! (FSCollisionMessagesInChat, FSReportCollisionMessages).
@@ -29,6 +29,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-confirm-teleports"),
             tr!("ui-options-ask-before-teleporting-to-a-landmark-a-history-entry"),
             &field!(confirm_teleports),
+        );
+        cx.toggle(
+            tr!("ui-options-confirm-inventory-delete"),
+            tr!("ui-options-confirm-inventory-delete-help"),
+            &field!(inventory.confirm_delete),
         );
         cx.toggle(
             tr!("ui-options-warn-hypergrid-suitcase"),

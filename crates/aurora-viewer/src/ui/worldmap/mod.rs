@@ -41,6 +41,9 @@ const ZOOM_TIME: f32 = 0.3;
 const ZOOM_MAX_INTERP: f32 = 0.5;
 /// Pan smoothing time constants (MAP_ITERP_TIME_CONSTANT, centering).
 const PAN_TAU: f32 = 0.75;
+/// The side panel layout's column, and the least room its map keeps beside it.
+const SIDE_W: f32 = 236.0;
+const SIDE_MAP_MIN: (f32, f32) = (120.0, 160.0);
 const PAN_TAU_CENTER: f32 = 0.1;
 /// Items clickable within this many points.
 const ITEM_PICK: f32 = 6.0;
@@ -213,24 +216,33 @@ impl WorldMapUi {
             return actions;
         }
         let default_pos = pos2((screen.width() - 700.0).max(0.0) * 0.5, 60.0);
-        Floater::new("worldmap", aurora_i18n::tr!("common-world-map"), default_pos, vec2(700.0, 600.0))
+        let mut floater = Floater::new("worldmap", aurora_i18n::tr!("common-world-map"), default_pos, vec2(700.0, 600.0));
+        floater.min_size = side_panel_min_size(ctx);
+        floater
             .help(aurora_i18n::tr!(
                 "ui-worldmap-click-place-marker-double-click-teleport-wheel-zoom-drag"
             ))
+            // The side column's rows (X / Y / Z, the buttons) can measure
+            // wider than `side` with a wide font or a larger text, and the
+            // map takes all the rest: egui's frame followed the body, so the
+            // window grew by that excess at every frame up to the screen's
+            // width, and snapped back after each drag of an edge (#2669).
+            // The body is laid out in the window's rect instead.
+            .steady_size()
             .show(ctx, p, open, |ui| {
                 let avail = ui.available_size();
-                let side = 236.0;
-                // exact fit: anything wider would grow the window every frame
                 let gap = ui.spacing().item_spacing.x;
                 ui.horizontal_top(|ui| {
-                    let map_size = vec2((avail.x - side - gap).max(120.0).floor(), avail.y.max(160.0).floor());
+                    let map_size = vec2(
+                        (avail.x - SIDE_W - gap).max(SIDE_MAP_MIN.0).floor(),
+                        avail.y.max(SIDE_MAP_MIN.1).floor(),
+                    );
                     self.map(ui, p, world, tiles, cam, opts, map_size, None);
                     ui.vertical(|ui| {
-                        ui.set_width(side);
-                        ui.set_max_width(side);
+                        ui.set_width(SIDE_W);
+                        ui.set_max_width(SIDE_W);
                         ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                        let footer_id = egui::Id::unique("worldmap-position-height");
-                        let footer_height = ui.ctx().data(|d| d.get_temp::<f32>(footer_id)).unwrap_or(180.0);
+                        let footer_height = side_footer_height(ui.ctx());
                         let scroll_height = (avail.y - footer_height - ui.spacing().item_spacing.y).max(0.0);
                         egui::ScrollArea::vertical()
                             .id_salt("worldmap-side")
@@ -240,7 +252,8 @@ impl WorldMapUi {
                                 self.side_panel(ui, p, world, cam, opts, &mut actions);
                             });
                         let footer = ui.vertical(|ui| self.position_panel(ui, p, world, cam, &mut actions));
-                        ui.ctx().data_mut(|d| d.insert_temp(footer_id, footer.response.rect.height()));
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(side_footer_id(), footer.response.rect.height()));
                     });
                 });
             });
@@ -637,7 +650,8 @@ impl WorldMapUi {
                 None
             };
             let teleport = resp.double_clicked() && opts.world_double_click_tp;
-            let z = world.agent.position.z;
+            // a god arrives at 200 m (GODLY_TELEPORT_HEIGHT, LLWorldMapView)
+            let z = if world.god_level > 0 { 200.0 } else { world.agent.position.z };
             match item.filter(|h| !matches!(h.1, ItemKind::Infohub | ItemKind::Telehub)) {
                 Some((_, kind, i)) => {
                     let ty = item_type(kind);
@@ -721,21 +735,27 @@ impl WorldMapUi {
         ui.label(RichText::new(&name).size(12.5).color(p.ink));
         let (mut lx, mut ly, mut lz) = ((x - ox) as f32, (y - oy) as f32, z);
         let before = (lx, ly, lz);
-        let responses = ui
-            .horizontal(|ui| {
-                [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)].map(|(label, value, max)| {
-                    ui.label(RichText::new(label).size(12.0).color(p.muted));
-                    ui.add(
-                        egui::DragValue::new(value)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .range(0.0..=max)
-                            .speed(1.0)
-                            .max_decimals(0)
-                            .update_while_editing(false),
-                    )
+        // each axis keeps its letter beside its field when the row wraps
+        let width = SIDE_W.min(ui.available_width());
+        let responses = column_row(ui, width, |ui| {
+            [("X", &mut lx, 8191.0), ("Y", &mut ly, 8191.0), ("Z", &mut lz, 10000.0)].map(|(label, value, max)| {
+                column_item(ui, egui::Id::unique(("worldmap-axis", label)), |ui| {
+                    let pair = ui.horizontal(|ui| {
+                        ui.label(RichText::new(label).size(12.0).color(p.muted));
+                        ui.add(
+                            egui::DragValue::new(value)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .range(0.0..=max)
+                                .speed(1.0)
+                                .max_decimals(0)
+                                .update_while_editing(false),
+                        )
+                    });
+                    let width = pair.response.rect.width();
+                    (pair.inner, width)
                 })
             })
-            .inner;
+        });
         // TextEdit reports a change while a DragValue is still typing.
         // Track only a committed numeric change (or a drag of the value).
         if (lx, ly, lz) != before {
@@ -903,6 +923,7 @@ impl WorldMapUi {
         ui.horizontal(|ui| {
             let r = widgets::search_field(
                 ui,
+                p,
                 &mut self.search,
                 aurora_i18n::tr!("ui-worldmap-regions-by-name"),
                 ui.available_width() - 84.0,
@@ -958,7 +979,7 @@ impl WorldMapUi {
                                 } else {
                                     format!("{name}  ·  {}", access_label(*access))
                                 };
-                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                                widgets::search_list_item(ui, sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
                             })
                             .inner;
                         if clicked {
@@ -986,6 +1007,9 @@ impl WorldMapUi {
     }
 
     fn position_panel(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, cam: &MapCamera, actions: &mut Vec<WorldMapAction>) {
+        // the column's own width: the rows above (the list's, the X / Y / Z
+        // fields) can have widened the layout past it
+        let width = SIDE_W.min(ui.available_width());
         ui.add_space(4.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-worldmap-position"))
@@ -1022,10 +1046,12 @@ impl WorldMapUi {
         // greyed when RLVa would refuse it (the same check as the send)
         let tp_allowed = tp_target.as_ref().is_some_and(|c| world.rlva_allows_command(c, Uuid::nil()));
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(tp_allowed, egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
-                .clicked()
+        let id = |button: &str| egui::Id::unique(("worldmap-footer", button));
+        column_row(ui, width, |ui| {
+            if column_widget(ui, id("teleport"), |ui| {
+                ui.add_enabled(tp_allowed, egui::Button::new(aurora_i18n::tr!("common-teleport-3")))
+            })
+            .clicked()
                 && let Some(c) = tp_target.clone()
             {
                 match c {
@@ -1040,21 +1066,23 @@ impl WorldMapUi {
                     glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z),
                 ))
             });
-            if ui
-                .add_enabled(
+            if column_widget(ui, id("slurl"), |ui| {
+                ui.add_enabled(
                     slurl.is_some() && !world.rlva.has("showloc"),
                     egui::Button::new(aurora_i18n::tr!("common-copy-slurl")),
                 )
-                .clicked()
+            })
+            .clicked()
                 && !world.rlva.has("showloc")
                 && let Some(u) = slurl
             {
                 ui.ctx().copy_text(u);
             }
             let tracked = world.map.track.as_ref().map(|t| (t.x, t.y));
-            if ui
-                .add_enabled(tracked.is_some(), egui::Button::new(aurora_i18n::tr!("ui-worldmap-show-selection")))
-                .clicked()
+            if column_widget(ui, id("show"), |ui| {
+                ui.add_enabled(tracked.is_some(), egui::Button::new(aurora_i18n::tr!("ui-worldmap-show-selection")))
+            })
+            .clicked()
                 && let Some((x, y)) = tracked
             {
                 self.center_on(world, cam, x, y);
@@ -1067,17 +1095,18 @@ impl WorldMapUi {
                 .as_ref()
                 .filter(|_| !world.rlva.has("showloc"))
                 .and_then(|t| world.map.sim_at_global(t.x, t.y).map(|(_, s)| s.name.clone()));
-            if ui
-                .add_enabled(
+            if column_widget(ui, id("track"), |ui| {
+                ui.add_enabled(
                     track_name.is_some(),
                     egui::Button::new(aurora_i18n::tr!("region-tracker-track-region")),
                 )
-                .clicked()
+            })
+            .clicked()
                 && let Some(name) = track_name
             {
                 actions.push(WorldMapAction::TrackRegion(name));
             }
-            self.clear_button(ui, world);
+            column_widget(ui, id("clear"), |ui| self.clear_button(ui, world));
         });
     }
 
@@ -1560,5 +1589,308 @@ mod coordinate_tests {
         let t = b.world.map.track.as_ref().expect("typed destination awaiting metadata");
         assert_eq!((t.x, t.y, t.z), (256600.0, 256700.0, 30.0));
         assert!(t.pending && !t.teleport);
+    }
+}
+
+/// Where the side column's position footer keeps its measured height.
+fn side_footer_id() -> egui::Id {
+    egui::Id::unique("worldmap-position-height")
+}
+
+/// The position footer's height until it has been measured once.
+const SIDE_FOOTER_GUESS: f32 = 180.0;
+
+/// A row of the side column that wraps within `width`, as
+/// `horizontal_wrapped` would within the column. egui widens a layout's
+/// rect to whatever it holds: with the text twice as large, the scrolled
+/// list (its widest rows) and the X / Y / Z fields measured wider than the
+/// column and gave the rows under them that extra room, so they no longer
+/// wrapped and the column cut them. A button wider than `width` wraps its
+/// label on two lines. Its items sit at the top of their line: centred,
+/// a group taller than the line's first height (an axis and its field at
+/// a large text) came out lower than the one before it.
+fn column_row<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let layout = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+    ui.allocate_ui_with_layout(vec2(width, ui.spacing().interact_size.y), layout, add)
+        .inner
+}
+
+/// One item of a `column_row`: it starts a new line when its width on one
+/// line, as `add` measured it last frame (a float kept under `id`, stored
+/// again only when it changes), does not fit what is left of the current
+/// one. egui's own wrap makes a new line as tall as the tallest line above
+/// it (a label on two lines spread the buttons under it apart), and moves
+/// an axis' letter without its field; a line started here
+/// (`Ui::end_row`) is as tall as its own items.
+fn column_item<R>(ui: &mut egui::Ui, id: egui::Id, add: impl FnOnce(&mut egui::Ui) -> (R, f32)) -> R {
+    let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    if ui.cursor().min.x > ui.max_rect().min.x && ui.available_size_before_wrap().x < width {
+        ui.end_row();
+    }
+    let (inner, measured) = add(ui);
+    if measured != width {
+        ui.data_mut(|d| d.insert_temp(id, measured));
+    }
+    inner
+}
+
+/// A widget as a `column_item`, measured by its unwrapped width (a button
+/// whose label wraps on two lines reports its label on one).
+fn column_widget(ui: &mut egui::Ui, id: egui::Id, add: impl FnOnce(&mut egui::Ui) -> egui::Response) -> egui::Response {
+    column_item(ui, id, |ui| {
+        let response = add(ui);
+        let width = response.intrinsic_size().map_or(response.rect.width(), |s| s.x);
+        (response, width)
+    })
+}
+
+/// The position footer's height as last measured.
+fn side_footer_height(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(side_footer_id())).unwrap_or(SIDE_FOOTER_GUESS)
+}
+
+/// The side panel layout's smallest window: the map's floor beside the
+/// whole column, and the position footer whole under the title, at the
+/// interface's text size. Before `steady_size` (#2669), egui's frame
+/// followed the body and kept that room by accident; without a minimum the
+/// column and its buttons could be dragged out of the window. The Legacy
+/// Viewer's floater keeps 263 x 386 (floater_world_map.xml); its column
+/// is narrower, so ours needs more width.
+fn side_panel_min_size(ctx: &egui::Context) -> Vec2 {
+    let style = ctx.global_style();
+    let spacing = &style.spacing;
+    let footer = side_footer_height(ctx);
+    let chrome = widgets::floater_chrome(ctx);
+    // a few rows of the column's scrolled list (search, landmarks, layers)
+    // stay reachable above the footer
+    let list = 3.0 * (spacing.interact_size.y + spacing.item_spacing.y);
+    vec2(
+        SIDE_MAP_MIN.0 + spacing.item_spacing.x + SIDE_W + chrome.x,
+        (list + spacing.item_spacing.y + footer + chrome.y)
+            .max(SIDE_MAP_MIN.1 + chrome.y)
+            .max(386.0),
+    )
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use crate::ui::widgets::elide_tests::{Frames, Text};
+    use std::sync::Arc;
+
+    struct Map {
+        ui: WorldMapUi,
+        world: World,
+        tiles: MapTiles,
+        opts: MapSettings,
+    }
+
+    impl Map {
+        /// The map with a tracked place, so that the position panel shows
+        /// its every button.
+        fn new(library: &Arc<AvatarLibrary>) -> Self {
+            let mut world = World::new(library.clone());
+            world.main_region = Some(aurora_net::origin_to_handle(256000, 256000));
+            world.map.track_location(256200.0, 256150.0, 25.0, false);
+            Map {
+                ui: WorldMapUi::default(),
+                world,
+                tiles: MapTiles::new(),
+                opts: MapSettings::default(),
+            }
+        }
+
+        fn show(&mut self, ctx: &egui::Context, p: &Palette, style: WorldMapStyle) {
+            let cam = MapCamera {
+                pos: glam::Vec3::new(128.0, 128.0, 30.0),
+                dir: glam::Vec3::X,
+                hfov: 1.2,
+                far: 128.0,
+            };
+            let images = HashMap::new();
+            let pictures = MapPictures {
+                images: &images,
+                avatars: &images,
+            };
+            let mut open = true;
+            self.ui.show(
+                ctx,
+                p,
+                &mut self.world,
+                &mut self.tiles,
+                &cam,
+                &mut self.opts,
+                style,
+                &pictures,
+                &mut open,
+            );
+        }
+    }
+
+    /// Both layouts at the default size, at the full-frame layout's (the
+    /// size the side panel inherits when the setting changes with the map
+    /// open, #2669) and at a small one: the window never grows by itself,
+    /// whatever the interface scale and text size.
+    fn assert_steady(style: WorldMapStyle, bottom: &str) {
+        let library = Arc::new(AvatarLibrary::load());
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "worldmap",
+            &[vec2(700.0, 600.0), vec2(1040.0, 640.0), vec2(420.0, 420.0)],
+            bottom,
+            || Map::new(&library),
+            |m, ctx, p| m.show(ctx, p, style),
+        );
+    }
+
+    #[test]
+    fn the_side_panel_layout_keeps_its_size() {
+        assert_steady(WorldMapStyle::Legacy, aurora_i18n::tr!("ui-waypoint-remove"));
+    }
+
+    #[test]
+    fn the_full_frame_layout_keeps_its_size() {
+        assert_steady(WorldMapStyle::Aurora, aurora_i18n::tr!("common-copy-slurl"));
+    }
+
+    /// The side panel layout in a window placed at (40, 40) with `size`,
+    /// the interface at `zoom` and `text` size, shown frame after frame.
+    struct SidePanel {
+        frames: Frames,
+        map: Map,
+        p: Palette,
+    }
+
+    impl SidePanel {
+        fn new(library: &Arc<AvatarLibrary>, zoom: f32, text: f32, size: Vec2) -> Self {
+            let frames = Frames::new();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&frames.ctx, text);
+            crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
+            frames.ctx.set_zoom_factor(zoom);
+            crate::ui::widgets::place_floater(&frames.ctx, "worldmap", pos2(40.0, 40.0), size);
+            SidePanel {
+                frames,
+                map: Map::new(library),
+                p: theme.palette(),
+            }
+        }
+
+        /// One frame with `events`: the window's rect and the texts drawn.
+        fn frame(&mut self, events: Vec<egui::Event>) -> (Rect, Vec<Text>) {
+            let (map, p) = (&mut self.map, &self.p);
+            let texts = self.frames.run(events, |ui| map.show(ui.ctx(), p, WorldMapStyle::Legacy));
+            let rect = self
+                .frames
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::unique("worldmap")))
+                .expect("the window is shown");
+            (rect, texts)
+        }
+
+        /// Ten frames without input: the window's settled rect.
+        fn settle(&mut self) -> Rect {
+            (0..10).map(|_| self.frame(vec![]).0).last().expect("ten frames")
+        }
+
+        /// `grip` dragged to `target` in ten steps and let go, as a user
+        /// resizing the window by an edge or a corner, then 30 frames
+        /// without input: the window's rect at each, the texts of the last.
+        fn drag(&mut self, grip: Pos2, target: Pos2) -> (Vec<Rect>, Vec<Text>) {
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(grip)]);
+            self.frame(vec![button(grip, true)]);
+            for i in 1..=10 {
+                self.frame(vec![egui::Event::PointerMoved(grip.lerp(target, i as f32 / 10.0))]);
+            }
+            self.frame(vec![button(target, false)]);
+            let mut texts = Vec::new();
+            let rects = (0..30)
+                .map(|_| {
+                    let (rect, shown) = self.frame(vec![]);
+                    texts = shown;
+                    rect
+                })
+                .collect();
+            (rects, texts)
+        }
+    }
+
+    /// The side panel layout made as small as it goes: the position footer's
+    /// buttons and coordinates stay whole inside the window, across and
+    /// down, at every interface scale and text size. Without a minimum,
+    /// `steady_size` let the column slide out of the window's right edge;
+    /// with the text twice as large, the list's widest rows and the X / Y / Z
+    /// row widened the column's layout and the buttons ran past the column.
+    #[test]
+    fn the_side_panel_layout_at_its_smallest_keeps_its_buttons_whole() {
+        let library = Arc::new(AvatarLibrary::load());
+        let labels = [
+            aurora_i18n::tr!("common-copy-slurl"),
+            aurora_i18n::tr!("common-teleport-3"),
+            aurora_i18n::tr!("ui-worldmap-show-selection"),
+        ];
+        for (zoom, text) in [(1.0f32, 1.0f32), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)] {
+            let mut side = SidePanel::new(&library, zoom, text, vec2(700.0, 600.0));
+            let rect = side.settle();
+            // the bottom-right corner dragged far up and to the left, as a
+            // user shrinking the window as far as it goes
+            let (rects, texts) = side.drag(rect.right_bottom() - vec2(1.0, 1.0), rect.left_top() + vec2(20.0, 20.0));
+            let window = rects[rects.len() - 1];
+            assert!(
+                window.width() < rect.width() - 100.0,
+                "the drag made the window smaller: {rect:?} then {window:?}"
+            );
+            let case = format!("zoom {zoom}, text {text}, window {window:?}");
+            // inside the body (the frame's margin and outline), with room for
+            // the button's own padding around its text
+            let ctx = &side.frames.ctx;
+            let across = crate::ui::widgets::floater_chrome(ctx).x / 2.0;
+            let padding = ctx.global_style().spacing.button_padding;
+            let room = window.shrink(across).shrink2(padding).expand(0.5);
+            // a label wider than the column (French at text × 2) wraps on
+            // two lines inside it; the X / Y / Z fields of the tracked place
+            // (200, 150, 25) wrap with their letter instead of running out of
+            // the column, at that size in every language
+            for label in labels.into_iter().chain(["X", "Y", "Z", "200", "150", "25"]) {
+                let found: Vec<_> = texts.iter().filter(|t| t.source == label).collect();
+                assert!(!found.is_empty(), "{case}: {label:?} is drawn");
+                for t in found {
+                    assert!(room.contains_rect(t.rect), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
+                }
+            }
+            // the column's list keeps a few rows above the footer
+            let me = aurora_i18n::tr!("common-me");
+            assert!(
+                texts.iter().any(|t| t.source == me && room.contains_rect(t.rect)),
+                "{case}: the side list's first row {me:?} is shown"
+            );
+        }
+    }
+
+    /// #2669: with a side column wider than its room (the text twice as
+    /// large), the right edge dragged in stays where it was let go.
+    #[test]
+    fn the_side_panel_layout_narrows_by_its_edge() {
+        let library = Arc::new(AvatarLibrary::load());
+        let mut side = SidePanel::new(&library, 1.0, 2.0, vec2(1040.0, 640.0));
+        let rect = side.settle();
+        let grip = pos2(rect.right() - 1.0, rect.center().y);
+        let (rects, _) = side.drag(grip, grip - vec2(400.0, 0.0));
+        let last = rects[rects.len() - 1];
+        assert!(
+            rects.iter().all(|r| *r == last),
+            "the window moved or grew after the drag: {rects:?}"
+        );
+        assert!(
+            (last.width() - (rect.width() - 400.0)).abs() <= 2.0,
+            "narrowed by the drag: {rect:?} then {last:?}"
+        );
+        assert_eq!(last.left(), rect.left(), "the left edge stays");
     }
 }

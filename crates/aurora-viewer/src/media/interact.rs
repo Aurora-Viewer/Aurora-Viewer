@@ -94,12 +94,23 @@ impl MediaManager {
     /// The nearest media face along a ray (objects with media data only),
     /// unless something drawn is in front (`depth_t`: distance of the
     /// picked depth).
-    pub fn hit_test(&mut self, world: &World, scene: &Scene, origin: Vec3, dir: Vec3, depth_t: Option<f32>, hud: bool) -> Option<MediaHit> {
+    /// `picked`: the object the click's own pick found (a HUD's): only its
+    /// faces count, as LLToolPie::handleMediaClick looks at mPick's face.
+    pub fn hit_test(
+        &mut self,
+        world: &World,
+        scene: &Scene,
+        origin: Vec3,
+        dir: Vec3,
+        depth_t: Option<f32>,
+        hud: bool,
+        picked: Option<usize>,
+    ) -> Option<MediaHit> {
         let now = Instant::now();
         let candidates: Vec<(Uuid, usize, Vec<bool>)> = self
             .objects
             .iter()
-            .filter(|(_, om)| om.hud == hud)
+            .filter(|(_, om)| om.hud == hud && picked.is_none_or(|p| p == om.idx))
             .filter(|(_, om)| {
                 !hud || scene
                     .gpu
@@ -130,9 +141,16 @@ impl MediaManager {
             let Some(faces) = self.cpu_faces(world, scene, idx) else {
                 continue;
             };
+            // LLVOVolume::lineSegmentIntersect: a face at alpha 0 is not
+            // picked unless its own prim shows the special cursor
+            // (specialHoverCursor: physics, a touch script, a click action),
+            // so a hidden media panel in front of a HUD button lets the
+            // button take the click
+            let special_cursor = crate::interaction::special_hover_cursor(o);
+            let shown = |fi: usize| special_cursor || self.build_mode || o.te.as_ref().is_none_or(|te| te.face(fi).color[3] > 0.0);
             let tris = faces.iter().enumerate().filter_map(|(fi, f)| {
                 let f = f.as_ref()?;
-                with_media.get(fi).copied().unwrap_or(false).then_some(FaceTris {
+                (with_media.get(fi).copied().unwrap_or(false) && shown(fi)).then_some(FaceTris {
                     face: fi,
                     positions: &f.positions,
                     uvs: &f.uvs,
@@ -205,11 +223,12 @@ impl MediaManager {
         settings: &MediaSettings,
         mods: Modifiers,
         hud: bool,
+        picked: Option<usize>,
     ) -> bool {
         if !settings.enabled || !settings.prim_media {
             return false;
         }
-        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud) else {
+        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud, picked) else {
             self.unfocus();
             return false;
         };
@@ -284,7 +303,9 @@ impl MediaManager {
         hud: bool,
     ) -> Option<String> {
         let focus = self.focus?;
-        let hit = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus)?;
+        let hit = self
+            .hit_test(world, scene, ray.0, ray.1, depth_t, hud, None)
+            .filter(|h| h.key == focus)?;
         let position = Some(ray.0 + ray.1 * hit.t);
         if !self.may_touch(world, &focus, position) {
             self.unfocus();
@@ -315,7 +336,10 @@ impl MediaManager {
         let Some(focus) = self.focus else {
             return false;
         };
-        let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus) else {
+        let Some(hit) = self
+            .hit_test(world, scene, ray.0, ray.1, depth_t, hud, None)
+            .filter(|h| h.key == focus)
+        else {
             return false;
         };
         let position = Some(ray.0 + ray.1 * hit.t);
@@ -338,6 +362,7 @@ impl MediaManager {
     pub fn on_key(
         &mut self,
         world: &World,
+        letter: Option<char>,
         code: winit::keyboard::KeyCode,
         scancode: u32,
         pressed: bool,
@@ -356,7 +381,7 @@ impl MediaManager {
         let Some(p) = self.focused_mut().and_then(|m| m.plugin.as_mut()) else {
             return pressed;
         };
-        keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
+        keys::edit(p, letter, code, pressed, repeat, mods) || keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
     }
 
     /// Release the focus (LLViewerMediaFocus::clearFocus).
@@ -387,6 +412,169 @@ impl MediaManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_press_reaches_media_behind_a_plain_invisible_panel() {
+        let (mut world, mut scene, front, back) = crate::scene::picking::tests::scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        let mut media = MediaManager::default();
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = parent;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            o.click_action = crate::interaction::code::NONE;
+            o.update_flags = 0;
+            let id = o.full_id;
+            let cache_key = o.visual_volume().cache_key() ^ (3u64 << 60);
+            let key = MediaKey::Prim { object: id, face: 0 };
+            media.objects.insert(
+                id,
+                ObjMedia {
+                    idx,
+                    data: Some(ObjectMediaData {
+                        faces: vec![Some(MediaEntry {
+                            current_url: "https://example.invalid/media".into(),
+                            ..Default::default()
+                        })],
+                        ..Default::default()
+                    }),
+                    hud: true,
+                    ..Default::default()
+                },
+            );
+            media
+                .impls
+                .push(MediaImpl::new(key, "https://example.invalid/media".into(), "text/html".into()));
+            media.pick_cache.insert(
+                id,
+                (
+                    cache_key,
+                    Arc::new(vec![Some(CpuFace {
+                        positions: vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
+                        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        indices: vec![0, 2, 1, 0, 3, 2],
+                    })]),
+                ),
+            );
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.lod = 3;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        for idx in [front, back] {
+            // the server marks a face with prim media (TEM_MEDIA_MASK)
+            Arc::make_mut(world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].media_flags |= 1;
+        }
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
+        crate::scene::picking::tests::index_test_objects(&mut scene);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
+        let cursor = (640.0, 360.0);
+        let press = |media: &mut MediaManager, world: &World, scene: &Scene| {
+            let (idx, point, ray) = scene.hud_click_pick(world, cursor).unwrap();
+            let distance = (point - ray.0).dot(ray.1);
+            assert!(media.on_click(
+                world,
+                scene,
+                ray,
+                Some(distance),
+                &MediaSettings::default(),
+                Modifiers::default(),
+                true,
+                Some(idx),
+            ));
+            idx
+        };
+        assert_eq!(press(&mut media, &world, &scene), back);
+        assert_eq!(
+            media.focus,
+            Some(MediaKey::Prim {
+                object: world.objects.get(back).unwrap().full_id,
+                face: 0
+            })
+        );
+
+        // A touch script makes the transparent front face a deliberate clicker.
+        world.objects.get_mut(front).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(press(&mut media, &world, &scene), front);
+    }
+
+    #[test]
+    fn a_media_face_at_alpha_zero_lets_the_click_through_unless_its_prim_is_touchable() {
+        let library = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        for event in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(970)).unwrap();
+        let object = world.objects.get_mut(idx).unwrap();
+        object.position = Vec3::X * 3.0;
+        // facing the ray
+        object.rotation = glam::Quat::from_rotation_z(std::f32::consts::PI);
+        object.scale = Vec3::ONE;
+        object.click_action = 0;
+        object.update_flags = 0;
+        let id = object.full_id;
+        let cache_key = object.visual_volume().cache_key() ^ (3u64 << 60);
+        let scene = Scene::new(std::path::PathBuf::new(), library);
+        let mut media = MediaManager::default();
+        media.objects.insert(
+            id,
+            ObjMedia {
+                idx,
+                data: Some(ObjectMediaData {
+                    faces: vec![Some(MediaEntry {
+                        current_url: "https://example.invalid/media".into(),
+                        ..Default::default()
+                    })],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        media.pick_cache.insert(
+            id,
+            (
+                cache_key,
+                Arc::new(vec![Some(CpuFace {
+                    positions: vec![[0.0, -0.5, -0.5], [0.0, 0.5, -0.5], [0.0, 0.5, 0.5], [0.0, -0.5, 0.5]],
+                    uvs: vec![[0.0; 2]; 4],
+                    indices: vec![0, 1, 2, 0, 2, 3],
+                })]),
+            ),
+        );
+        let set_alpha = |world: &mut World, alpha: f32| {
+            let o = world.objects.get_mut(idx).unwrap();
+            let mut te = o.te.as_deref().cloned().unwrap_or_default();
+            for f in &mut te.faces {
+                f.color[3] = alpha;
+            }
+            o.te = Some(Arc::new(te));
+        };
+        set_alpha(&mut world, 1.0);
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
+        // a click whose own pick found another object in front (a HUD button
+        // with a partly transparent texture) is not the media's
+        assert!(
+            media
+                .hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, Some(idx))
+                .is_some()
+        );
+        assert!(
+            media
+                .hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, Some(idx + 1))
+                .is_none()
+        );
+        // a web HUD's collapsed panel: hidden in front of its root button
+        set_alpha(&mut world, 0.0);
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_none());
+        // a prim with its own touch handler still takes it (specialHoverCursor)
+        world.objects.get_mut(idx).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
+    }
 
     #[test]
     fn invisible_back_of_a_media_face_cannot_steal_world_clicks() {
@@ -429,9 +617,9 @@ mod tests {
                 })]),
             ),
         );
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_none());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_none());
         world.objects.get_mut(idx).unwrap().rotation = glam::Quat::from_rotation_z(std::f32::consts::PI);
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
         world.objects.get_mut(idx).unwrap().rotation = glam::Quat::IDENTITY;
         let material = Uuid::from_u128(8896);
         world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(0, material)];
@@ -442,6 +630,6 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false).is_some());
+        assert!(media.hit_test(&world, &scene, Vec3::ZERO, Vec3::X, None, false, None).is_some());
     }
 }
