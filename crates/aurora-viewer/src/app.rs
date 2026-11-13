@@ -1425,6 +1425,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
         settings.max_avatars = v;
     }
+    if let Some(v) = std::env::var("AURORA_LOCAL_LIGHTS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.local_light_count = v.min(crate::scene::lights::MAX_LIGHTS as u32);
+    }
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
@@ -3913,18 +3916,16 @@ impl App {
                 object_id,
                 item_id,
                 running,
-                mono,
-                luau,
+                compile,
             } => {
-                self.build.contents.running.insert((object_id, item_id), (running, mono));
+                self.build.contents.running.insert((object_id, item_id), (running, compile));
                 self.script_editors.running(
                     aurora_net::scripts::ScriptTarget {
                         object: object_id,
                         item: item_id,
                     },
                     running,
-                    mono,
-                    luau,
+                    compile,
                 );
             }
             NetEvent::PhysicsProperties(list) => {
@@ -11649,6 +11650,7 @@ impl App {
                     gfx.renderer.max_texture_dimension(),
                 ),
                 others_attached_lights: self.settings.others_attached_lights,
+                max_lights: self.settings.local_light_count as usize,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
@@ -16980,6 +16982,16 @@ impl App {
                         &self.look_at_settings(),
                         &mut self.look_at_fades,
                     );
+                    ui::beams::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        &self.scene,
+                        projector,
+                        self.camera.position,
+                        &self.settings.beams,
+                        self.settings.lookat.show_names,
+                    );
                     self.draw_walk_mark(&ctx, &p, projector);
                 }
                 let classic_tags = self.classic_name_tags();
@@ -20216,6 +20228,9 @@ impl ApplicationHandler for App {
                 } else if v == "monitor-scene-objects" {
                     ui::perf::set_full(&self.egui_ctx, true);
                     self.monitor.show_scene_objects();
+                } else if v == "monitor-scene-worn" || v == "monitor-scene-huds" {
+                    ui::perf::set_full(&self.egui_ctx, true);
+                    self.monitor.show_scene_worn(v.ends_with("huds"));
                 } else if let Some(tab) = v.strip_prefix("monitor-").and_then(ui::monitor::Tab::from_key) {
                     ui::perf::set_full(&self.egui_ctx, true);
                     ui::monitor::demo_tab(&self.egui_ctx, tab);
@@ -22373,7 +22388,8 @@ impl ApplicationHandler for App {
                 }
                 self.settings.show_huds = mode != "hidden";
                 self.panels.inventory = false;
-                self.panels.perf = false;
+                // (kept with AURORA_DEMO_PERF: its Scene › HUDs lists these)
+                self.panels.perf &= std::env::var_os("AURORA_DEMO_PERF").is_some();
                 self.panels.chat = false;
                 self.panels.appearance = false;
                 self.panels.settings = false;
