@@ -45,6 +45,12 @@ fn object_im() -> NetEvent {
     })
 }
 
+/// The location kept with the newest chat line of object `id`.
+fn origin(w: &World, id: Uuid) -> String {
+    let line = w.chat.iter().rev().find(|l| l.source == id).expect("a line of the object");
+    w.chat_object(line).expect("the line's origin").slurl.clone()
+}
+
 /// Everything the nearby chat receives in the scenario: a person, an
 /// object's line, owner-say and llRegionSayTo, an object's IM, a notice.
 fn receive_all(w: &mut World) {
@@ -115,7 +121,7 @@ fn an_object_ims_line_belongs_to_the_object_and_names_its_owner() {
     let object = Uuid::from_u128(0x0B20);
     let line = w.chat.back().expect("the object's IM line");
     assert_eq!((line.kind, line.source), (ChatKind::ObjectIm, object));
-    let o = &w.chat_objects[&object];
+    let o = w.chat_object(line).expect("the line's origin");
     assert_eq!((o.id, o.owner, o.group_owned), (object, VENDOR, false));
     assert_eq!(o.name, "Plaza Vendor");
     assert_eq!(o.slurl, format!("{}/128/128/25", crate::slurl::encode("Aurora Demo")));
@@ -159,4 +165,127 @@ fn an_objects_owner_is_anonymous_in_its_inspector_under_shownames() {
     );
     o.group_owned = true;
     assert_eq!(crate::ui::remote_object::hidden_owner(&w, &o), None);
+}
+
+/// RLVa @showloc: the location of an object's IM or nearby chat line from
+/// one of our regions is masked when it arrives, as in the Legacy Viewer.
+/// The decision stays with the kept origin: neither a region change nor the
+/// restriction's end reveals it; a line from elsewhere keeps its location.
+#[test]
+fn an_objects_location_masked_under_showloc_stays_masked_after_a_region_change() {
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        w.apply(event);
+    }
+    w.rlva_configure(true);
+    let here = w.region_name();
+    assert!(!here.is_empty());
+    let owner_say = |w: &World, message: &str| {
+        NetEvent::Chat(ChatMessage {
+            from_name: "RLVa test object".into(),
+            source_id: Uuid::from_u128(0x0C01),
+            owner_id: w.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: message.into(),
+        })
+    };
+    w.apply(owner_say(&w, "@showloc=n"));
+    assert!(w.rlva_private_region(&here));
+    let im = |session: u128, region: &str| {
+        NetEvent::InstantMessage(InstantMessage {
+            from_agent_id: VENDOR,
+            from_name: "Plaza Vendor".into(),
+            to_agent_id: w.agent_id,
+            dialog: 19,
+            session_id: Uuid::from_u128(session),
+            message: "Your gift is ready".into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: format!("{region}/128/128/25\0").into_bytes(),
+            timestamp: 0,
+        })
+    };
+    let (nearby_im, far_im, speaker) = (Uuid::from_u128(0x0B21), Uuid::from_u128(0x0B22), Uuid::from_u128(0x0B23));
+    let (a, b) = (im(0x0B21, &here), im(0x0B22, "Far Away"));
+    w.apply(a);
+    w.apply(b);
+    w.apply(said(speaker, ChatSourceType::Object, ChatType::Normal));
+    assert_eq!(origin(&w, nearby_im), "", "an object IM from our region");
+    assert_eq!(origin(&w, speaker), "", "an object's nearby chat");
+    assert_eq!(
+        origin(&w, far_im),
+        format!("{}/128/128/25", crate::slurl::encode("Far Away")),
+        "a region we are not in stays shown"
+    );
+    // the old region leaves the list while the restriction holds
+    w.regions.clear();
+    assert!(!w.rlva_private_region(&here));
+    assert_eq!(origin(&w, nearby_im), "");
+    assert_eq!(origin(&w, speaker), "");
+    // nor does the end of the restriction bring it back
+    w.apply(owner_say(&w, "@clear"));
+    assert!(!w.rlva.has("showloc"));
+    assert_eq!(origin(&w, nearby_im), "");
+    assert_eq!(origin(&w, speaker), "");
+}
+
+/// LLWorld::getRegionFromPosAgent: an object's nearby chat line takes the
+/// region under its position, a neighbour's included, with the position
+/// within it; outside every region we know, no location rather than ours.
+#[test]
+fn an_objects_chat_origin_is_the_region_under_its_position() {
+    let mut w = world(false);
+    let here: RegionHandle = (1000 * 256) << 32 | (1000 * 256);
+    let east: RegionHandle = (1001 * 256) << 32 | (1000 * 256);
+    w.set_main_region(here);
+    w.ensure_region(here, (256, 256)).name = "Home Region".into();
+    w.ensure_region(east, (256, 256)).name = "East Region".into();
+    let at = |id: u128, x: f32| {
+        NetEvent::Chat(ChatMessage {
+            from_name: "Speaker".into(),
+            source_id: Uuid::from_u128(id),
+            owner_id: OWNER,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::Normal,
+            position: glam::Vec3::new(x, 40.0, 22.0),
+            message: "hello".into(),
+        })
+    };
+    w.apply(at(1, 100.0));
+    w.apply(at(2, 270.0));
+    w.apply(at(3, 600.0));
+    let slurl = |id: u128| origin(&w, Uuid::from_u128(id));
+    assert_eq!(slurl(1), format!("{}/100/40/22", crate::slurl::encode("Home Region")));
+    assert_eq!(slurl(2), format!("{}/14/40/22", crate::slurl::encode("East Region")));
+    assert_eq!(slurl(3), "", "no region known there");
+}
+
+/// Each line keeps its own origin, as each Legacy Viewer line carries its
+/// own `objectim` SLURL: an object that moves and speaks again does not
+/// move its earlier line's location.
+#[test]
+fn each_object_chat_line_keeps_its_own_origin() {
+    let mut w = world(false);
+    let here: RegionHandle = (1000 * 256) << 32 | (1000 * 256);
+    w.set_main_region(here);
+    w.ensure_region(here, (256, 256)).name = "Home Region".into();
+    for x in [10.0, 200.0] {
+        w.apply(NetEvent::Chat(ChatMessage {
+            from_name: "Walker".into(),
+            source_id: VENDOR,
+            owner_id: OWNER,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::Normal,
+            position: glam::Vec3::new(x, 50.0, 21.0),
+            message: "step".into(),
+        }));
+    }
+    let lines: Vec<_> = w.chat.iter().filter(|l| l.source == VENDOR).collect();
+    assert_eq!(lines.len(), 2);
+    assert_ne!(lines[0].time, lines[1].time);
+    let at = |line: &ChatLine| w.chat_object(line).unwrap().slurl.clone();
+    assert_eq!(at(lines[0]), format!("{}/10/50/21", crate::slurl::encode("Home Region")));
+    assert_eq!(at(lines[1]), format!("{}/200/50/21", crate::slurl::encode("Home Region")));
 }

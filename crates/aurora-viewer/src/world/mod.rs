@@ -380,8 +380,10 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
-    /// Latest accepted nearby-chat origin per object; bounded by chat history.
-    pub chat_objects: HashMap<Uuid, crate::slapp::RemoteObject>,
+    /// The origin of each object's chat line (its object and the line's
+    /// time), as the Legacy Viewer links each line to its own `objectim`
+    /// SLURL; bounded by chat history.
+    pub chat_objects: HashMap<(Uuid, SystemTime), crate::slapp::RemoteObject>,
     /// What each avatar said lately, for the bubbles above its head.
     pub bubble_chat: bubble_chat::BubbleChat,
     /// Follows `chat` for the view.
@@ -1991,14 +1993,42 @@ impl World {
         origin + clipped
     }
 
-    /// The object of a chat line, for its name's inspector
-    /// (`AppLink::ObjectIm`): kept while a retained line names it.
-    fn remember_chat_object(&mut self, object: crate::slapp::RemoteObject) {
-        if self.chat_objects.len() >= MAX_CHAT && !self.chat_objects.contains_key(&object.id) {
-            let retained: HashSet<_> = self.chat.iter().map(|line| line.source).collect();
-            self.chat_objects.retain(|id, _| retained.contains(id));
+    /// LLWorld::getRegionFromPosAgent: the known region under a position
+    /// given relative to the main region (a chat message's), with the
+    /// position within that region. None outside every known region.
+    fn region_at_main_offset(&self, pos: Vec3) -> Option<(&Region, Vec3)> {
+        let main = self.main_region?;
+        if !pos.is_finite() {
+            return None;
         }
-        self.chat_objects.insert(object.id, object);
+        let x = (main >> 32) as f64 + f64::from(pos.x);
+        let y = (main & 0xffff_ffff) as f64 + f64::from(pos.y);
+        self.regions.iter().find_map(|(&handle, r)| {
+            let (x0, y0) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
+            let (w, d) = (f64::from(r.heightmap.size_x), f64::from(r.heightmap.size_y));
+            (x >= x0 && x < x0 + w && y >= y0 && y < y0 + d).then(|| (r, Vec3::new((x - x0) as f32, (y - y0) as f32, pos.z)))
+        })
+    }
+
+    /// The object of a chat line about to be pushed, for its name's
+    /// inspector (`AppLink::ObjectIm`): kept while the line is. Returns the
+    /// line's time, made unique for the object so each line keeps its own.
+    fn remember_chat_object(&mut self, object: crate::slapp::RemoteObject) -> SystemTime {
+        let mut time = SystemTime::now();
+        while self.chat_objects.contains_key(&(object.id, time)) {
+            time += std::time::Duration::from_micros(1);
+        }
+        if self.chat_objects.len() >= MAX_CHAT {
+            let retained: HashSet<_> = self.chat.iter().map(|line| (line.source, line.time)).collect();
+            self.chat_objects.retain(|key, _| retained.contains(key));
+        }
+        self.chat_objects.insert((object.id, time), object);
+        time
+    }
+
+    /// The origin kept with an object's chat line (owner, location).
+    pub fn chat_object(&self, line: &ChatLine) -> Option<&crate::slapp::RemoteObject> {
+        self.chat_objects.get(&(line.source, line.time))
     }
 
     fn push_chat(&mut self, line: ChatLine) {
@@ -4516,27 +4546,28 @@ impl World {
             }
         }
         // LLViewerChat::getObjectImSLURL uses the message's owner and
-        // position, even when the speaking object is not in the scene.
+        // position, even when the speaking object is not in the scene: the
+        // region under the position (LLWorld::getRegionFromPosAgent), none
+        // when no region we know holds it.
+        let mut time = SystemTime::now();
         if matches!(kind, ChatKind::Object(_)) && !c.source_id.is_nil() {
-            let region = self
-                .objects
-                .index_of_uuid(&c.source_id)
-                .and_then(|idx| self.objects.get(idx))
-                .and_then(|o| self.regions.get(&o.key.region))
-                .or_else(|| self.main());
-            let slurl = region
-                .filter(|r| !r.name.is_empty() && c.position.is_finite())
-                .map(|r| {
+            // RLVa @showloc: the location is masked when the line arrives,
+            // so a later region change cannot reveal it (the inspector also
+            // hides one kept from before the restriction)
+            let slurl = self
+                .region_at_main_offset(c.position)
+                .filter(|(r, _)| !r.name.is_empty() && !self.rlva_private_region(&r.name))
+                .map(|(r, pos)| {
                     format!(
                         "{}/{:.0}/{:.0}/{:.0}",
                         crate::slurl::encode(&r.name),
-                        c.position.x.round(),
-                        c.position.y.round(),
-                        c.position.z.round()
+                        pos.x.round(),
+                        pos.y.round(),
+                        pos.z.round()
                     )
                 })
                 .unwrap_or_default();
-            self.remember_chat_object(crate::slapp::RemoteObject {
+            time = self.remember_chat_object(crate::slapp::RemoteObject {
                 id: c.source_id,
                 name: from.clone(),
                 owner: c.owner_id,
@@ -4545,7 +4576,7 @@ impl World {
             });
         }
         self.push_chat(ChatLine {
-            time: SystemTime::now(),
+            time,
             from,
             text: c.message,
             kind,
@@ -4666,8 +4697,13 @@ impl World {
         // muted the owner, hiding all their chat and objects. An older
         // region gives no session id: no object to link then.
         let source = if im.dialog == 19 { im.session_id } else { im.from_agent_id };
+        let mut time = SystemTime::now();
         if im.dialog == 19 && !im.session_id.is_nil() {
+            // RLVa @showloc masks the location of an object's IM from a
+            // nearby region when it is received, as the Legacy Viewer does:
+            // kept with the line, not checked against the regions of later
             let slurl = object_im_filter::origin(&im.binary_bucket)
+                .filter(|o| !self.rlva_private_region(&o.region))
                 .map(|o| match o.pos {
                     Some(p) => format!(
                         "{}/{:.0}/{:.0}/{:.0}",
@@ -4679,7 +4715,7 @@ impl World {
                     None => crate::slurl::encode(&o.region),
                 })
                 .unwrap_or_default();
-            self.remember_chat_object(crate::slapp::RemoteObject {
+            time = self.remember_chat_object(crate::slapp::RemoteObject {
                 id: im.session_id,
                 name: from.clone(),
                 owner: im.from_agent_id,
@@ -4715,7 +4751,7 @@ impl World {
             }
         }
         self.push_chat(ChatLine {
-            time: SystemTime::now(),
+            time,
             from,
             text,
             kind,
