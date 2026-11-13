@@ -12,6 +12,8 @@ pub mod arena;
 pub mod bc7;
 mod blend_exact;
 #[cfg(test)]
+mod blend_exact_tests;
+#[cfg(test)]
 mod blend_tests;
 mod bloom;
 mod contact_shadows;

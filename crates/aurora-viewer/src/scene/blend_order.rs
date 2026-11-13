@@ -639,6 +639,12 @@ mod tests {
         assert_eq!(depth_mode_in(Mode::Sorted, false), RiggedBlendDepth::Write);
         assert_eq!(depth_mode_in(Mode::Alternate, false), RiggedBlendDepth::Layers);
         assert_eq!(depth_mode_in(Mode::Alternate, true), RiggedBlendDepth::Split);
+        assert_eq!(depth_mode_in(Mode::Exact, false), RiggedBlendDepth::Exact);
+        assert_eq!(depth_mode_in(Mode::Exact, true), RiggedBlendDepth::Exact);
+        assert_eq!(depth_mode_in(Mode::ExactHiding, false), RiggedBlendDepth::ExactHiding);
+        // against the default, one second in three
+        assert_eq!(depth_mode_in(Mode::ExactAlternate, false), RiggedBlendDepth::Exact);
+        assert_eq!(depth_mode_in(Mode::ExactAlternate, true), RiggedBlendDepth::Layers);
     }
 
     #[test]
