@@ -32,6 +32,7 @@ pub mod entry;
 pub mod filter;
 mod interact;
 pub mod keys;
+pub mod nearby;
 pub mod openid;
 pub mod pack;
 pub mod pick;
@@ -721,12 +722,6 @@ impl MediaManager {
     pub fn focused_mut(&mut self) -> Option<&mut MediaImpl> {
         let k = self.focus?;
         self.find_mut(&k)
-    }
-
-    /// The system id of the focused face's plugin process, which tells one
-    /// page's clipboard from another's.
-    pub fn focused_pid(&self) -> Option<u32> {
-        self.focused()?.plugin.as_ref()?.pid()
     }
 
     /// Parcel media started (button state).
