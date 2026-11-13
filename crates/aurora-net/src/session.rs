@@ -1047,6 +1047,7 @@ impl Session<'_> {
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
+                    let lua_scripts = v["LuaScriptsEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1065,6 +1066,7 @@ impl Session<'_> {
                         materials_rate,
                         materials_max,
                         lsl_syntax_id,
+                        lua_scripts,
                         grid_status_feed,
                         grid_status_page,
                         currency_base_uri,

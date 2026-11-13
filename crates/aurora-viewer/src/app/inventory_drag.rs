@@ -1108,6 +1108,7 @@ mod tests {
                 voice_server: String::new(),
                 avatar_hover_height: false,
                 lsl_syntax_id: None,
+                lua_scripts: false,
                 materials_limits: Default::default(),
                 max_tasks: 0,
                 grid_status: Default::default(),

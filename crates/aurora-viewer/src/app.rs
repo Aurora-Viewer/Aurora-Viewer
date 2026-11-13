@@ -3909,18 +3909,16 @@ impl App {
                 object_id,
                 item_id,
                 running,
-                mono,
-                luau,
+                compile,
             } => {
-                self.build.contents.running.insert((object_id, item_id), (running, mono));
+                self.build.contents.running.insert((object_id, item_id), (running, compile));
                 self.script_editors.running(
                     aurora_net::scripts::ScriptTarget {
                         object: object_id,
                         item: item_id,
                     },
                     running,
-                    mono,
-                    luau,
+                    compile,
                 );
             }
             NetEvent::PhysicsProperties(list) => {

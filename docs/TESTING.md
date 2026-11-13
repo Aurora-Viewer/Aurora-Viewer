@@ -2514,7 +2514,7 @@ reading of a personal script without the Modify right. Saved sources can be
 closed then reopened in the same session. Typing `AURORA_DEMO_SYNTAX_ERROR`
 simulates a server error; the demo does not run a local LSL compiler.
 `lua` opens an inventory script whose item subtype says Lua (SLua), with a Lua
-source: the editor shows "Lua" instead of the Mono box, and at frame 320 it
+source: the compile target shows "Lua", and at frame 320 it
 saves an edit; the log line
 `demo scripts: saved … for target luau` gives the compile target sent.
 `syntax` and `object-syntax` show the colouring of types, variables, native
