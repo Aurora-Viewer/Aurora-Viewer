@@ -53,6 +53,15 @@ default
 }
 "#;
 
+/// `AURORA_DEMO_SCRIPTS=lua`: a Lua (SLua) source, item subtype SST_LUA.
+const LUA_DEMO_SOURCE: &str = r#"-- A Lua script: saved for the Luau VM, never as LSL
+local function greet(name: string)
+    ll.Say(0, "Hello, " .. name .. "!")
+end
+
+greet("Avatar")
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -274,6 +283,12 @@ impl App {
                 self.panels.inventory = true;
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 let target = ScriptTarget { object: Uuid::nil(), item };
+                if mode == "lua"
+                    && let Some(it) = self.world.inventory.items.get_mut(&item)
+                {
+                    it.flags = (it.flags & !0xff) | 1;
+                    self.demo_script_sources.insert(target, LUA_DEMO_SOURCE.into());
+                }
                 if syntax_demo {
                     self.demo_script_sources.insert(
                         target,
@@ -412,6 +427,18 @@ impl App {
             } else if matches!(mode.as_str(), "indent" | "object-indent") {
                 self.script_editors.demo_indent(target, &self.egui_ctx, mode == "object-indent");
             } else if let Some(action) = self.script_editors.demo_experience(target, Uuid::from_u128(9001)) {
+                self.apply_script_action(action);
+            }
+        }
+        if self.frame_count == 320 && mode == "lua" {
+            let target = ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(8102),
+            };
+            if let Some(action) = self
+                .script_editors
+                .demo_edit(target, LUA_DEMO_SOURCE.replace("Avatar", "Aurora"), true)
+            {
                 self.apply_script_action(action);
             }
         }
@@ -818,6 +845,11 @@ impl App {
                 // A named marker simulates a server diagnostic in demo mode;
                 // this is deliberately not a local LSL compiler.
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
+                log::info!(
+                    "demo scripts: saved {} for target {}",
+                    target.item,
+                    options.compile.name()
+                );
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);

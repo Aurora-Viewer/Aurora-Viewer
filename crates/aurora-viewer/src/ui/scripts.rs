@@ -612,7 +612,12 @@ impl Editors {
 
     pub fn running(&mut self, target: ScriptTarget, running: bool, compile: Option<CompileTarget>) {
         if let Some(e) = self.documents.iter_mut().find(|e| e.target == target) {
+            // LLLiveLSLEditor::processScriptRunningReply: the first reply
+            // names the VM. A Lua source (its item subtype, which set Luau
+            // when the editor opened) stays Lua whatever the reply says:
+            // saved as LSL it would fail or break.
             if e.running.is_none()
+                && e.baseline_compile != CompileTarget::Luau
                 && let Some(compile) = compile
             {
                 e.compile = compile;
@@ -1557,6 +1562,45 @@ mod tests {
             object: Uuid::nil(),
             item: Uuid::from_u128(n),
         }
+    }
+
+    #[test]
+    fn a_lua_script_is_saved_for_luau_without_the_lsl_preprocessor() {
+        let target = target(80);
+        let mut editors = Editors::default();
+        // SST_LUA in the item's low byte; other flag bits do not count
+        let load = editors.open(target, "Lua".into(), true, true, 0x0100_0001).unwrap();
+        editors.loaded(load, target, Ok("print(\"hi\")".into()));
+        // A running reply that says Mono does not turn a Lua source into LSL.
+        editors.running(target, true, Some(CompileTarget::Mono));
+        let e = &mut editors.documents[0];
+        e.processor_settings.preprocessor = true;
+        e.source = "#include \"x\"
+print(\"bye\")".into();
+        let Some(Action::Save { options, source, .. }) = e.save() else {
+            panic!("a Lua source is saved at once, not preprocessed")
+        };
+        assert!(e.processing.is_none());
+        assert_eq!(source, "#include \"x\"
+print(\"bye\")");
+        assert_eq!(options.compile, CompileTarget::Luau);
+    }
+
+    #[test]
+    fn an_lsl_script_on_the_luau_vm_keeps_it_and_the_first_reply_wins() {
+        let target = target(81);
+        let mut editors = Editors::default();
+        let load = editors.open(target, "LSL on Luau".into(), true, true, 0).unwrap();
+        editors.loaded(load, target, Ok("default {}".into()));
+        editors.running(target, true, Some(CompileTarget::LslLuau));
+        editors.running(target, false, None);
+        let e = &mut editors.documents[0];
+        e.source = "default { state_entry() {} }".into();
+        let Some(Action::Save { options, .. }) = e.save() else {
+            panic!("save")
+        };
+        assert_eq!(options.compile, CompileTarget::LslLuau);
+        assert!(!options.running);
     }
 
     #[test]

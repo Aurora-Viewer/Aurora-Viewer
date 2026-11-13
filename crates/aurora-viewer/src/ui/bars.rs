@@ -39,11 +39,13 @@ pub enum AdminAction {
 
 #[derive(Default)]
 pub enum BarAction {
-    ToggleVr,
+    VrView(crate::camera::VrView),
     IkEdit,
     Poser,
     /// Build › Edit particles (Object.EditParticles).
     EditParticles,
+    /// Build › Save back to object contents (Tools.SaveToObjectInventory).
+    SaveToObjectContents,
     Portals,
     CheckUpdates,
     ReportBug,
@@ -360,6 +362,9 @@ pub struct StatusInfo<'a> {
     /// Build › Edit particles applies: an object we own is selected
     /// (Object.EnableEditParticles).
     pub edit_particles: bool,
+    /// Build › Save back to object contents applies: the selection was
+    /// rezzed from an object's contents (Tools.EnableSaveToObjectInventory).
+    pub save_to_contents: bool,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -425,7 +430,11 @@ pub fn maturity_name(sim_access: u8) -> &'static str {
 /// opacity, over the windows' blur (`widgets::finish_bar_glass`).
 fn bar_frame(p: &Palette) -> egui::Frame {
     egui::Frame::new()
-        .fill(Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha))
+        .fill(super::surface_opacity::frame_fill(
+            p,
+            Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha),
+            super::surface_opacity::bars(),
+        ))
         .inner_margin(egui::Margin::symmetric(6, 0))
 }
 
@@ -1376,7 +1385,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action, &st.ik_keys, st.edit_particles);
+        build_menu(ui, p, panels, action, &st.ik_keys, st.edit_particles, st.save_to_contents);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1587,7 +1596,25 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
+fn build_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    panels: &mut Panels,
+    action: &mut BarAction,
+    ik_keys: &str,
+    edit_particles: bool,
+    save_to_contents: bool,
+) {
+    if menu::check(
+        ui,
+        p,
+        "man-filled",
+        aurora_i18n::tr!("avatar-studio-title"),
+        panels.avatar_studio,
+        true,
+    ) {
+        *action = run_command(ui.ctx(), "avatar_studio", panels);
+    }
     if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }
@@ -1619,6 +1646,22 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
         },
     ) {
         *action = BarAction::EditParticles;
+    }
+    // menu_viewer.xml: Build › Object › Save Back to Object Contents, right
+    // after Edit Particles
+    if menu::item_tip(
+        ui,
+        p,
+        "package-import",
+        aurora_i18n::tr!("ui-bars-save-to-object-contents"),
+        save_to_contents,
+        if save_to_contents {
+            ""
+        } else {
+            aurora_i18n::tr!("ui-bars-save-to-object-contents-tip")
+        },
+    ) {
+        *action = BarAction::SaveToObjectContents;
     }
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
@@ -2333,6 +2376,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "texture_library" => toggle(panels.texture_library_presentation.window(), &mut panels.texture_library),
         "gestures" => toggle("gestures", &mut panels.gestures),
         "appearance" => toggle("appearance", &mut panels.appearance),
+        "avatar_studio" => panels.avatar_studio = !panels.avatar_studio,
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
@@ -2422,7 +2466,6 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "marketplacelistings" => return BarAction::ToggleMarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
-        "vr_view" => return BarAction::ToggleVr,
         "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
@@ -2443,6 +2486,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "texture_library" => panels.texture_library,
         "gestures" => panels.gestures,
         "appearance" => panels.appearance,
+        "avatar_studio" => panels.avatar_studio,
         "minimap" => panels.minimap,
         "worldmap" => panels.world_map,
         "places" => panels.places,
@@ -3299,6 +3343,27 @@ pub(crate) fn toolbar_row(
             }
             continue;
         }
+        if b.command == "vr_view" {
+            use crate::camera::VrView;
+            menu::dropdown_placed(
+                &response,
+                p,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                Some((egui::RectAlign::TOP, 7.0)),
+                |ui| {
+                    for (mode, label) in [
+                        (VrView::FirstPerson, aurora_i18n::tr!("ui-options-camera-vr-view-first-person")),
+                        (VrView::Avatar, aurora_i18n::tr!("vr-mode-avatar")),
+                        (VrView::Flycam, aurora_i18n::tr!("vr-mode-flycam")),
+                    ] {
+                        if menu::item(ui, p, "", label) {
+                            *action = BarAction::VrView(mode);
+                        }
+                    }
+                },
+            );
+            continue;
+        }
         if b.command == "ao" {
             toolbar.ao_quick.anchor(&response, look(b).opens);
             continue;
@@ -4034,6 +4099,24 @@ mod tests {
         assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
         assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
         assert!(!panels.ao);
+    }
+
+    #[test]
+    fn avatar_studio_toolbar_toggles_and_lights_without_changing_windows() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let before = (panels.appearance, panels.inventory, panels.snapshot);
+        let command = super::super::toolbar::COMMANDS
+            .iter()
+            .find(|c| c.id == "avatar_studio")
+            .expect("configurable command");
+        assert!(command.ready);
+        assert_eq!(command.key, "avatar-studio-title");
+        for active in [true, false] {
+            run_command(&ctx, command.id, &mut panels);
+            assert_eq!(command_active(command.id, &panels, false, false, false), active);
+            assert_eq!((panels.appearance, panels.inventory, panels.snapshot), before);
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
 // mod report;
-mod software;
+pub(crate) mod software;
 mod summary;
 mod threads;
 mod watchdog;
