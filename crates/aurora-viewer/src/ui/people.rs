@@ -295,6 +295,10 @@ pub struct PeopleUi {
     anchor: Option<Uuid>,
     /// The contact set the friends tab shows alone.
     friend_set: Option<String>,
+    /// Contact sets: only the members online, and the narrow window's
+    /// list of sets unfolded.
+    sets_online_only: bool,
+    sets_picker_open: bool,
     /// The nickname being typed in the sheet, and whose.
     nick: Option<(Uuid, String)>,
     /// What the sheets ask of the contact list's dialogs.

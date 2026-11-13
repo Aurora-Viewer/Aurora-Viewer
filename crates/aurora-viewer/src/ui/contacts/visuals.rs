@@ -1,135 +1,49 @@
-//! Optional visual overrides and a preview using the actual nameplate painter.
+//! A contact set's tile: the set as the interface shows it, in its look.
 
 use super::*;
-use crate::world::contact_sets::appearance::{ICON_LABELS, ICONS, MARKER_FADE_DEFAULT, MARKER_FADE_RANGE};
-use crate::world::contact_sets::{MarkerScope, MarkerShape, PlateSize, Visuals};
+use crate::world::contact_sets::appearance::ICONS;
 
-pub(super) fn editor(ui: &mut egui::Ui, p: &Palette, world: &mut World, name: &str, original: &Visuals) {
-    let mut v = original.clone();
-    let order = world.contact_sets.ordered_set_names();
-    let position = order.iter().position(|s| s == name).unwrap_or(0);
-    ui.horizontal(|ui| {
-        ui.label(aurora_i18n::tr!(
-            "contact-visual-priority",
-            rank = position + 1,
-            total = order.len()
-        ));
-        if widgets::icon_button(ui, p, "arrow-up", aurora_i18n::tr!("contact-visual-higher"), position > 0) {
-            world.contact_sets.move_priority(name, true);
-        }
-        if widgets::icon_button(
-            ui,
-            p,
-            "arrow-down",
-            aurora_i18n::tr!("contact-visual-lower"),
-            position + 1 < order.len(),
-        ) {
-            world.contact_sets.move_priority(name, false);
-        }
-    });
-    ui.label(
-        egui::RichText::new(aurora_i18n::tr!("contact-visual-inherit-hint"))
-            .small()
-            .color(p.muted),
-    );
-    ui.label(aurora_i18n::tr!("contact-visual-marker"));
-    for (scope, key) in [
-        (MarkerScope::Off, "contact-visual-marker-off"),
-        (MarkerScope::Parcel, "contact-visual-marker-parcel"),
-        (MarkerScope::Region, "contact-visual-marker-region"),
-    ] {
-        widgets::radio_value(ui, p, &mut v.marker, scope, aurora_i18n::text(key));
+/// A contact set's tile, wherever the interface shows the set (People's
+/// list of sets, its picker, the set's editor, Quick sort): its badge in
+/// its colour, else its first letter, on a wash of its colour when its
+/// plates have a background and ringed in it when they have a border, so
+/// that the tile wears the set's look as its members' plates do. Aurora's
+/// own: the Legacy Viewer shows a set by its name only.
+pub(crate) fn set_tile(ui: &egui::Ui, p: &Palette, tile: egui::Rect, set: &crate::world::contact_sets::ContactSet) {
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(set.color));
+    let fill = if set.visuals.background {
+        color.gamma_multiply(0.2)
+    } else {
+        p.raised.gamma_multiply(0.6)
+    };
+    ui.painter().rect_filled(tile, radius, fill);
+    if set.visuals.border {
+        ui.painter()
+            .rect_stroke(tile.shrink(0.75), radius, egui::Stroke::new(1.5, color), egui::StrokeKind::Inside);
     }
-    ui.label(
-        egui::RichText::new(aurora_i18n::tr!("contact-visual-marker-hint"))
-            .small()
-            .color(p.muted),
-    );
-    if v.marker != MarkerScope::Off {
-        ui.label(aurora_i18n::tr!("contact-visual-marker-shape"));
-        for (shape, key) in [
-            (MarkerShape::Circle, "contact-visual-marker-shape-circle"),
-            (MarkerShape::Diamond, "contact-visual-marker-shape-diamond"),
-        ] {
-            widgets::radio_value(ui, p, &mut v.marker_shape, shape, aurora_i18n::text(key));
+    match set.visuals.icon.and_then(|i| ICONS.get(i)) {
+        Some(icon) => {
+            if let Some(texture) = crate::ui::icons::global(icon) {
+                let rect = egui::Rect::from_center_size(tile.center(), Vec2::splat((tile.height() * 0.48).round()));
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter().image(texture.id(), rect, uv, color);
+            }
         }
-        let mut fades = v.marker_fade.is_some();
-        if widgets::switch_labeled(ui, p, &mut fades, aurora_i18n::tr!("contact-visual-marker-fade")).changed() {
-            v.marker_fade = fades.then_some(MARKER_FADE_DEFAULT);
-        }
-        if let Some(fade) = &mut v.marker_fade {
-            ui.add(
-                egui::Slider::new(fade, MARKER_FADE_RANGE)
-                    .suffix(" m")
-                    .text(aurora_i18n::tr!("contact-visual-marker-fade-distance")),
+        None => {
+            let letter: String = set
+                .name
+                .chars()
+                .find(|c| c.is_alphanumeric())
+                .into_iter()
+                .flat_map(char::to_uppercase)
+                .collect();
+            let g = ui.painter().layout_no_wrap(
+                letter,
+                crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), tile.height() * 0.42, color).font_id,
+                color,
             );
-        }
-    }
-    for (value, key) in [
-        (&mut v.border, "contact-visual-border"),
-        (&mut v.background, "contact-visual-background"),
-        (&mut v.nameplate_name, "contact-visual-plate-name"),
-        (&mut v.ui_name, "contact-visual-ui-name"),
-        (&mut v.chat_name, "contact-visual-chat-name"),
-        (&mut v.chat_text, "contact-visual-chat-text"),
-        (&mut v.minimap, "contact-visual-minimap"),
-    ] {
-        widgets::switch_labeled(ui, p, value, aurora_i18n::text(key));
-    }
-    ui.label(aurora_i18n::tr!("contact-visual-size"));
-    for (size, key) in [
-        (PlateSize::Inherit, "contact-visual-size-inherit"),
-        (PlateSize::Expanded, "contact-visual-size-expanded"),
-        (PlateSize::Reduced, "contact-visual-size-reduced"),
-    ] {
-        widgets::radio_value(ui, p, &mut v.size, size, aurora_i18n::text(key));
-    }
-    ui.label(
-        egui::RichText::new(aurora_i18n::tr!("contact-visual-size-hint"))
-            .small()
-            .color(p.muted),
-    );
-    let mut has_icon = v.icon.is_some();
-    if widgets::switch_labeled(ui, p, &mut has_icon, aurora_i18n::tr!("contact-visual-icon")).changed() {
-        v.icon = has_icon.then_some(0);
-    }
-    if has_icon {
-        egui::Grid::new("contact-visual-icons")
-            .num_columns(8)
-            .spacing(Vec2::splat(3.0))
-            .show(ui, |ui| {
-                for (i, icon) in ICONS.iter().enumerate() {
-                    if widgets::icon_toggle(ui, p, icon, aurora_i18n::text(ICON_LABELS[i]), v.icon == Some(i)) {
-                        v.icon = Some(i);
-                    }
-                    if (i + 1) % 8 == 0 {
-                        ui.end_row();
-                    }
-                }
-            });
-        widgets::switch_labeled(ui, p, &mut v.replace_friend, aurora_i18n::tr!("contact-visual-replace-friend"));
-    }
-    world.contact_sets.set_visuals(name, v);
-    let mut stack = world.contact_sets.stack_icons;
-    if widgets::switch_labeled(ui, p, &mut stack, aurora_i18n::tr!("contact-visual-stack")).changed() {
-        world.contact_sets.set_stack_icons(stack);
-    }
-}
-
-pub(super) fn preview(ui: &mut egui::Ui, p: &Palette, world: &World, name: &str) {
-    ui.label(aurora_i18n::tr!("contact-visual-preview"));
-    if let Some(set) = world.contact_sets.set(name) {
-        // Preview this set alone, even when it has no members yet. This uses
-        // in-memory data only, and the same cascade/painter as live plates.
-        let mut sample = ContactSets::default();
-        sample.add_set(name);
-        sample.set_color(name, set.color);
-        sample.set_visuals(name, set.visuals.clone());
-        let id = Uuid::from_u128(1);
-        sample.add_to_set(&[id], name, |_| true);
-        crate::ui::nameplate::preview(ui, p, sample.appearance(&id).clone());
-        if let Some(marker) = sample.appearance(&id).marker {
-            crate::ui::contact_markers::preview(ui, p, &marker);
+            widgets::paint_ink_centered(ui.painter(), g, tile.center(), color);
         }
     }
 }

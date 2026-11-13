@@ -62,9 +62,44 @@ pub fn mode() -> Option<Mode> {
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
             "blocked" | "bloqué" | "blocked-empty" => Some(Mode::Blocked),
+            name if name.starts_with("sets-") => Some(Mode::Sets),
             _ => Some(Mode::Rows),
         }
     })
+}
+
+/// What a `sets-…` scenario opens over People's contact sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetsScene {
+    /// The Family set's editor at a tab, its badges unfolded, its preview
+    /// from afar.
+    Editor {
+        tab: crate::ui::contacts::EditorTab,
+        badges: bool,
+        far: bool,
+    },
+    QuickSort,
+    Options,
+    /// Two members chosen: the selection's bar.
+    Select,
+}
+
+pub fn sets_scene() -> Option<SetsScene> {
+    use crate::ui::contacts::EditorTab;
+    let value = std::env::var("AURORA_DEMO_PEOPLE").ok()?;
+    let editor = |tab, badges, far| Some(SetsScene::Editor { tab, badges, far });
+    match value.split(':').next()?.trim() {
+        "sets-editor" => editor(EditorTab::Look, false, false),
+        "sets-editor-badges" => editor(EditorTab::Look, true, false),
+        "sets-editor-far" => editor(EditorTab::Look, false, true),
+        "sets-editor-behaviour" => editor(EditorTab::Behaviour, false, false),
+        "sets-editor-replies" => editor(EditorTab::Replies, false, false),
+        "sets-editor-members" => editor(EditorTab::Members, false, false),
+        "sets-sort" => Some(SetsScene::QuickSort),
+        "sets-options" => Some(SetsScene::Options),
+        "sets-select" => Some(SetsScene::Select),
+        _ => None,
+    }
 }
 
 /// An explicit list width for offline responsive-layout checks.
@@ -103,7 +138,7 @@ pub fn window_size() -> Option<(f32, f32)> {
     match mode()? {
         Mode::Sheet | Mode::Friends => Some((860.0, 600.0)),
         Mode::Groups => Some((860.0, 500.0)),
-        Mode::Sets => Some((520.0, 430.0)),
+        Mode::Sets => Some((560.0, 640.0)),
         Mode::Recent | Mode::Blocked => Some((420.0, 300.0)),
         _ => None,
     }
@@ -115,7 +150,7 @@ const fn buddy(n: u128) -> Uuid {
 }
 
 /// The mock-up's non-friend of the family set, and the blocked residents.
-const ORION_EXAMPLE: Uuid = buddy(102);
+pub const ORION_EXAMPLE: Uuid = buddy(102);
 pub const ZED: Uuid = id(30);
 const KAEL: Uuid = id(31);
 const NOISY_SELLER: Uuid = id(32);
@@ -201,9 +236,36 @@ pub fn seed(world: &mut crate::world::World) {
         sets.set_color(name, color);
         sets.add_to_set(&members, name, is_friend);
     }
-    // the contact sets tab: the wolf's display name is his nickname
+    // the contact sets tab: the wolf's display name is his nickname; each
+    // set its badge and look, so that their tiles show the four cases
     if mode() == Some(Mode::Sets) {
+        use crate::world::contact_sets::{MarkerScope, Visuals};
         sets.set_pseudonym(&[DEMO_LOUP], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
+        if !visuals() {
+            for (name, icon, border, background, marker) in [
+                (aurora_i18n::tr!("demo-family"), 0, true, true, MarkerScope::Region),
+                ("Clubbing", 10, false, true, MarkerScope::Off),
+                (aurora_i18n::tr!("demo-shop"), 7, true, false, MarkerScope::Off),
+            ] {
+                sets.set_visuals(
+                    name,
+                    Visuals {
+                        icon: Some(icon),
+                        border,
+                        background,
+                        nameplate_name: true,
+                        ui_name: true,
+                        chat_name: true,
+                        minimap: true,
+                        marker,
+                        ..Default::default()
+                    },
+                );
+            }
+            // Nova in two sets: her chips
+            sets.add_to_set(&[NOVA], "Clubbing", is_friend);
+            sets.move_priority_to(aurora_i18n::tr!("demo-family"), 0);
+        }
     }
     if visuals() {
         use crate::world::contact_sets::{PlateSize, Visuals};

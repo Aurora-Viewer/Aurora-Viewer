@@ -1,211 +1,293 @@
-//! People â€º Contact sets in Aurora's look (the People mock-up v2): the
-//! contact sets of Conversations â€º Contacts (FSPanelContactSets,
-//! fspanelcontactsets.cpp, panel_fs_contacts_sets.xml, LGGContactSets) with
-//! the sets as colored pills, "New", and a gear for the set's color, name
-//! and deletion (FSFloaterContactSetConfiguration), the pseudo-sets (all,
-//! none, with a nickname, non-friends). The members
-//! are rich rows; under the pointer a row offers to move the resident to
-//! another set, to take them out of this one (confirmed) and its menu.
-//! Non-friends stay in their sets. Nicknames are in the sheet.
+//! People › Contact sets in Aurora's look: the contact sets of
+//! Conversations › Contacts (FSPanelContactSets, fspanelcontactsets.cpp,
+//! panel_fs_contacts_sets.xml, LGGContactSets) laid out as a list of sets
+//! beside their members. The sets come in their priority order, each with
+//! its tile, its members and how many are online, and the cog of its editor
+//! (FSFloaterContactSetConfiguration); the pseudo-sets of the Legacy
+//! Viewer's combo (all, no set, with a nickname, non-friends) are the smart
+//! lists under them. A window too narrow for two columns, or one with a
+//! sheet open beside, shows the sets in a picker above the members instead.
+//! The members are People's rows, with chips for their other sets, in parts
+//! online, offline and not friends when the set sorts by status
+//! (FSPanelContactSets::updateAvatarListSorting); the people chosen with a
+//! click, Ctrl or Shift get a bar of actions (add to a set, move, nickname,
+//! remove). Non-friends stay in their sets. Nicknames are in the sheet too.
+//!
+//! Visible differences from the Legacy Viewer, all Aurora's own: the sets
+//! are listed by priority rather than by name (the Legacy Viewer has no
+//! priority) and dragged to reorder it; Quick sort; the selection bar.
+
+mod sidebar;
 
 use super::rows::{self, RICH_GAP, RICH_H};
 use super::{Ctx, PeopleUi};
+use crate::theme::Palette;
+use crate::ui::contacts::SetEdit;
 use crate::ui::context::{self, AvatarList};
 use crate::ui::{menu, widgets};
+use crate::world::World;
 use crate::world::contact_sets::{self, ContactSets, DN_REMOVED};
-use egui::{Rect, Sense, Vec2};
+use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
+
+/// The width from which the list of sets gets a column of its own.
+const SIDEBAR_MIN: f32 = 470.0;
+/// Below this width the pane's buttons drop their labels.
+const LABELS_MIN: f32 = 640.0;
+/// Height of the selection bar, and of a heading over the members.
+const BAR_H: f32 = 40.0;
+const HEADING_H: f32 = 26.0;
+/// A chip of a member's other set.
+const CHIP_H: f32 = 16.0;
 
 /// The contact sets tab: the list, and the sheet of the person clicked.
 pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi) {
     super::split(ui, c, data, st, "people-sets-list", list, super::person_sheet);
 }
 
-/// The set shown: the one chosen while it exists, else the first set, else
-/// all of them (FSPanelContactSets::refreshSetList).
+/// The set shown: the one chosen while it exists, else the highest set,
+/// else all of them (FSPanelContactSets::refreshSetList, in Aurora's order).
 fn choice(c: &mut Ctx) -> String {
-    let names = c.world.contact_sets.set_names();
     let choice = match &c.contacts.set_choice {
         Some(s) if ContactSets::is_internal(s) || c.world.contact_sets.is_valid(s) => s.clone(),
-        _ => names.first().cloned().unwrap_or_else(|| contact_sets::ALL_SETS.to_owned()),
+        _ => c
+            .world
+            .contact_sets
+            .ordered_set_names()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| contact_sets::ALL_SETS.to_owned()),
     };
     c.contacts.set_choice = Some(choice.clone());
     choice
 }
 
-fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, beside_sheet: bool) {
-    let p = c.p;
-    if beside_sheet {
-        ui.set_max_width(ui.max_rect().width() - 10.0);
-    }
-    ui.spacing_mut().item_spacing.y = 0.0;
-    let set = choice(c);
-    let mutable = !ContactSets::is_internal(&set);
-    let world = c.world;
+/// The people of a set or smart list, and how many are online.
+pub(super) struct Members {
+    pub ids: Vec<Uuid>,
+    pub online: usize,
+}
+
+/// Whether a resident shows as online: a friend seen online (the status
+/// of the others is not known).
+fn is_online(world: &World, id: &Uuid) -> bool {
+    world.social.friends.iter().any(|f| f.id == *id && f.online)
+}
+
+/// The members of `set` (generateAvatarList) and how many are online.
+pub(super) fn members(world: &World, set: &str) -> Members {
     let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
-    let is_friend = |id: &Uuid| world.social.is_friend(id);
-    set_pills(ui, c, &set);
-    ui.add_space(6.0);
-    // search, and "Add" (residents chosen in the picker)
+    let ids = world.contact_sets.members(set, &friends, |id| world.social.is_friend(id));
+    let online = ids.iter().filter(|id| is_online(world, id)).count();
+    Members { ids, online }
+}
+
+/// "4 people · 2 online" under a set's name.
+pub(super) fn count_line(m: &Members) -> String {
+    let people = aurora_i18n::tr!("people-sets-people", count = m.ids.len());
+    if m.online == 0 {
+        people
+    } else {
+        format!("{people} · {}", aurora_i18n::tr!("people-sets-online", count = m.online))
+    }
+}
+
+fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, beside_sheet: bool) {
+    let set = choice(c);
+    let full = ui.available_rect_before_wrap();
+    if beside_sheet || full.width() < SIDEBAR_MIN {
+        let right = if beside_sheet { full.right() - 10.0 } else { full.right() };
+        let rect = Rect::from_min_max(full.min, Pos2::new(right, full.bottom()));
+        let mut pane = super::nearby::list_ui(ui, rect, "people-sets-pane", true);
+        sidebar::picker(&mut pane, c, st, &set);
+        members_pane(&mut pane, c, data, st, &set, true);
+    } else {
+        let side_w = (full.width() * 0.34).clamp(178.0, 232.0).round();
+        let side = Rect::from_min_max(full.min, Pos2::new(full.left() + side_w, full.bottom()));
+        let pane = Rect::from_min_max(Pos2::new(side.right() + 10.0, full.top()), full.max);
+        ui.painter().rect_filled(side, 0.0, c.p.bar);
+        let mut side_ui = super::nearby::list_ui(ui, side.shrink2(Vec2::new(6.0, 10.0)), "people-sets-side", true);
+        sidebar::column(&mut side_ui, c, st, &set);
+        let mut pane_ui = super::nearby::list_ui(ui, pane, "people-sets-pane", true);
+        members_pane(&mut pane_ui, c, data, st, &set, full.width() < LABELS_MIN);
+    }
+    ui.allocate_rect(full, Sense::hover());
+}
+
+/// The members of `set`: the toolbar, the rows, and the selection's bar.
+fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, set: &str, compact: bool) {
+    let p = c.p;
+    let world = c.world;
+    let mutable = !ContactSets::is_internal(set);
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.add_space(10.0);
+    let all = members(world, set);
+    // the friends in no set (generateAvatarList's NO_SETS lists friends only)
+    let quick_sort = set == contact_sets::NO_SETS && !all.ids.is_empty();
+    toolbar(ui, c, st, set, quick_sort, mutable, compact);
+    ui.add_space(4.0);
+    let filter = st.filter.trim().to_lowercase();
+    let mut ids = all.ids.clone();
+    ids.retain(|id| super::matches_name(world, id, &rows::display_name(world, id), &filter));
+    if st.sets_online_only {
+        ids.retain(|id| is_online(world, id));
+    }
+    let by_status = world.contact_sets.sorts_by_online(set);
+    // FSPanelContactSets::updateAvatarListSorting
+    ids.sort_by_cached_key(|id| {
+        (
+            by_status && !is_online(world, id),
+            by_status && !world.social.is_friend(id),
+            crate::natural_order::key(&rows::display_name(world, id)),
+        )
+    });
+    st.sel.retain(|id| ids.contains(id));
+    let parts = parts(p, world, &ids, by_status);
+    let bar = !st.sel.is_empty();
+    let rows_h = (ui.available_height() - if bar { BAR_H + 10.0 } else { 4.0 }).max(0.0);
+    let area = egui::ScrollArea::vertical()
+        .id_salt("people-sets-rows")
+        .auto_shrink([false, false])
+        .max_height(rows_h)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = RICH_GAP;
+            if ids.is_empty() {
+                let text = if all.ids.is_empty() {
+                    aurora_i18n::tr!("ui-contacts-this-contact-set-is-empty")
+                } else {
+                    aurora_i18n::tr!("people-sets-no-match")
+                };
+                rows::empty(ui, p, text);
+            }
+            for (label, dot, part) in &parts {
+                if let Some(label) = label {
+                    heading(ui, p, label, *dot);
+                }
+                for id in part {
+                    row(ui, c, data, st, set, *id, &rows::display_name(world, id), &ids);
+                }
+            }
+        });
+    let drop = ui.interact(area.inner_rect, ui.scope_id().with("contact_set_drop"), Sense::hover());
+    crate::ui::contacts::drag::set_target_with(&drop, set, &st.sel);
+    if bar {
+        ui.add_space(6.0);
+        selection_bar(ui, c, st, set, compact);
+    }
+}
+
+/// The members in their parts: online, offline, then the residents who
+/// are not friends (their status is not known), each with its heading;
+/// one part without heading when the set sorts by name.
+fn parts(p: &Palette, world: &World, ids: &[Uuid], by_status: bool) -> Vec<(Option<String>, Color32, Vec<Uuid>)> {
+    if !by_status {
+        return vec![(None, Color32::TRANSPARENT, ids.to_vec())];
+    }
+    let (mut online, mut offline, mut others) = (Vec::new(), Vec::new(), Vec::new());
+    for id in ids {
+        if is_online(world, id) {
+            online.push(*id);
+        } else if world.social.is_friend(id) {
+            offline.push(*id);
+        } else {
+            others.push(*id);
+        }
+    }
+    [
+        (aurora_i18n::tr!("people-sets-part-online", count = online.len()), p.success, online),
+        (
+            aurora_i18n::tr!("people-sets-part-offline", count = offline.len()),
+            p.muted_dim,
+            offline,
+        ),
+        (
+            aurora_i18n::tr!("people-sets-part-not-friends", count = others.len()),
+            p.muted_dim,
+            others,
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, _, ids)| !ids.is_empty())
+    .map(|(label, dot, ids)| (Some(label), dot, ids))
+    .collect()
+}
+
+/// "ONLINE · 2" over its part, after a dot of the status's colour.
+fn heading(ui: &mut egui::Ui, p: &Palette, label: &str, dot: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), HEADING_H), Sense::hover());
+    let y = rect.bottom() - 10.0;
+    ui.painter().circle_filled(Pos2::new(rect.left() + 5.5, y), 3.5, dot);
+    let g = ui.painter().layout_no_wrap(
+        label.to_uppercase(),
+        crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, p.muted).font_id,
+        p.muted,
+    );
+    widgets::paint_row_text(ui.painter(), g, rect.left() + 14.0, y, p.muted);
+}
+
+/// A button of the pane: its label when there is room, else its icon
+/// alone with the label as its hint.
+fn pane_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    kind: widgets::ActionKind,
+    compact: bool,
+    enabled: bool,
+) -> egui::Response {
+    let (text, w) = if compact { ("", rows::TOOLBAR_H) } else { (label, 0.0) };
+    let resp = widgets::action_button_if(ui, p, icon, text, kind, Vec2::new(w, rows::TOOLBAR_H), enabled);
+    if compact { resp.on_hover_text(label) } else { resp }
+}
+
+/// Search, all or online only, Quick sort for the friends in no set, and
+/// "Add people" (residents chosen in the picker).
+fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, quick_sort: bool, mutable: bool, compact: bool) {
+    let p = c.p;
     let line = Vec2::new(ui.available_width(), rows::TOOLBAR_H);
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let add = widgets::action_button_if(
+        let add = pane_button(
             ui,
             p,
             "user-plus",
-            aurora_i18n::tr!("common-add"),
+            aurora_i18n::tr!("people-sets-add-people"),
             widgets::ActionKind::Flat,
-            Vec2::new(0.0, rows::TOOLBAR_H),
+            compact,
             mutable,
-        )
-        .on_hover_text(aurora_i18n::tr!("ui-contacts-add-a-resident-to-the-selected-contact-set"));
+        );
         if add.clicked() {
-            c.contacts.pick_for_set(&set);
+            c.contacts.pick_for_set(set);
+        }
+        if quick_sort {
+            let sort = pane_button(
+                ui,
+                p,
+                "sparkles-filled",
+                aurora_i18n::tr!("people-sets-quick-sort"),
+                widgets::ActionKind::Primary,
+                compact,
+                true,
+            )
+            .on_hover_text(aurora_i18n::tr!("people-sets-quick-sort-tip"));
+            if sort.clicked() {
+                c.contacts.open_quick_sort(c.world);
+            }
+        }
+        let mut which = usize::from(st.sets_online_only);
+        let (all, online) = (aurora_i18n::tr!("common-all"), aurora_i18n::tr!("people-sets-online-only"));
+        if widgets::segmented(ui, p, &mut which, &[(all, false), (online, false)]) {
+            st.sets_online_only = which == 1;
         }
         let w = ui.available_width();
         widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("ui-contacts-filter-people"), w);
     });
-    ui.add_space(7.0);
-    let names = &world.social.avatar_names;
-    let o = names.options;
-    let name_of = |id: &Uuid| {
-        names
-            .get(id)
-            .map(|n| n.complete(&o))
-            .or_else(|| world.social.names.get(id).cloned())
-            .unwrap_or_else(|| "â€¦".into())
-    };
-    let online = |id: &Uuid| world.social.friends.iter().any(|f| f.id == *id && f.online);
-    let filter = st.filter.trim().to_lowercase();
-    let mut members = world.contact_sets.members(&set, &friends, is_friend);
-    members.retain(|id| super::matches_name(world, id, &name_of(id), &filter));
-    // FSPanelContactSets::updateAvatarListSorting
-    if world.contact_sets.sorts_by_online(&set) {
-        members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
-    } else {
-        members.sort_by_cached_key(|id| crate::natural_order::key(&name_of(id)));
-    }
-    st.sel.retain(|id| members.contains(id));
-    let area = egui::ScrollArea::vertical()
-        .id_salt("people-sets-rows")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = RICH_GAP;
-            if members.is_empty() {
-                rows::empty(ui, p, aurora_i18n::tr!("ui-contacts-this-contact-set-is-empty"));
-            }
-            for id in &members {
-                row(ui, c, data, st, &set, *id, &rows::display_name(world, id), &members);
-            }
-        });
-    let drop = ui.interact(area.inner_rect, ui.scope_id().with("contact_set_drop"), Sense::hover());
-    crate::ui::contacts::drag::set_target(&drop, &set);
-}
-
-/// The sets as pills with their member count (the chosen one lit), "New"
-/// and the gear; the sets that do not fit are in a "+2".
-fn set_pills(ui: &mut egui::Ui, c: &mut Ctx, set: &str) {
-    let p = c.p;
-    let world = c.world;
-    let names = world.contact_sets.set_names();
-    let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
-    let count = |s: &str| world.contact_sets.members(s, &friends, |id| world.social.is_friend(id)).len();
-    let new_w = widgets::filter_pill_width(ui, "plus", aurora_i18n::tr!("people-sets-new"));
-    let more_w = widgets::filter_pill_width(ui, "", "+00");
-    let mut chosen: Option<String> = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        // what "New" and the gear keep at the end of the line
-        let mut room = ui.available_width() - new_w - 5.0 - (rows::TOOLBAR_H - 2.0) - 5.0;
-        for (i, name) in names.iter().enumerate() {
-            let n = aurora_i18n::integer(count(name) as i64);
-            let w = widgets::dot_pill_width(ui, name, Some(&n), false);
-            let rest = names.len() - i - 1;
-            if w + if rest > 0 { 5.0 + more_w } else { 0.0 } > room {
-                let more = widgets::filter_pill(ui, p, "", &format!("+{}", names.len() - i), false);
-                menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    for s in &names[i..] {
-                        if menu::check(ui, p, "users-group", s, s == set, true) {
-                            chosen = Some(s.clone());
-                        }
-                    }
-                });
-                break;
-            }
-            let color = world
-                .contact_sets
-                .set(name)
-                .map_or(p.muted, |s| crate::ui::contacts::color32(s.color));
-            let response = widgets::dot_pill(ui, p, color, name, Some(&n), name == set, false).0;
-            crate::ui::contacts::drag::set_target(&response, name);
-            if response.clicked() {
-                chosen = Some(name.clone());
-            }
-            room -= w + 5.0;
-        }
-        if widgets::filter_pill(ui, p, "plus", aurora_i18n::tr!("people-sets-new"), false)
-            .on_hover_text(aurora_i18n::tr!("ui-contacts-add-a-new-contact-set"))
-            .clicked()
-        {
-            c.contacts.ask_new_set();
-        }
-        let gear = rows::gear(ui, p, aurora_i18n::tr!("people-sets-gear"));
-        let mutable = !ContactSets::is_internal(set);
-        let contacts = &mut *c.contacts;
-        menu::dropdown(&gear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            if menu::item_tip(
-                ui,
-                p,
-                "file-import",
-                aurora_i18n::tr!("contacts-import"),
-                contacts.can_import_contact_sets(),
-                aurora_i18n::tr!("contacts-import-hint"),
-            ) {
-                contacts.import_contact_sets(ui.ctx(), world.agent_id);
-            }
-            menu::separator(ui, p);
-            if menu::item_if(
-                ui,
-                p,
-                "adjustments-filled",
-                aurora_i18n::tr!("ui-contacts-configure-selected-contact-set"),
-                mutable,
-            ) {
-                contacts.configure_set(set);
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "trash-filled",
-                aurora_i18n::tr!("ui-contacts-delete-selected-contact-set"),
-                mutable,
-            ) {
-                contacts.ask_remove_set(set);
-            }
-            menu::separator(ui, p);
-            // the pseudo-sets of the contact sets' list
-            for s in [
-                contact_sets::ALL_SETS,
-                contact_sets::NO_SETS,
-                contact_sets::PSEUDONYM,
-                contact_sets::EXTRA_AVS,
-            ] {
-                if menu::check(ui, p, "users", &crate::ui::contacts::set_label(s), s == set, true) {
-                    chosen = Some(s.to_owned());
-                }
-            }
-        });
-    });
-    if let Some(s) = chosen {
-        c.contacts.set_choice = Some(s);
-    }
 }
 
 /// The second line of a member: their nickname's real name, "not a
 /// friend", or their legacy name.
-fn second_line(c: &Ctx, id: &Uuid) -> String {
-    let world = c.world;
+fn second_line(world: &World, id: &Uuid) -> String {
     let legacy = world
         .social
         .avatar_names
@@ -222,8 +304,93 @@ fn second_line(c: &Ctx, id: &Uuid) -> String {
     }
 }
 
-/// One member: picture and status, names, the friend's heart, or the
-/// quick actions under the pointer.
+/// The member's other sets, highest first: (name, colour).
+fn other_sets(world: &World, id: &Uuid, set: &str) -> Vec<(String, Color32)> {
+    world
+        .contact_sets
+        .ordered_set_names()
+        .into_iter()
+        .filter_map(|s| {
+            let cs = world.contact_sets.set(&s)?;
+            (s != set && cs.friends.contains(id)).then(|| {
+                let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(cs.color));
+                (s, color)
+            })
+        })
+        .collect()
+}
+
+/// A chip's text and width.
+fn chip_layout(ui: &egui::Ui, p: &Palette, name: &str) -> (std::sync::Arc<egui::Galley>, f32) {
+    let g = ui.painter().layout_no_wrap(name.to_owned(), FontId::proportional(10.5), p.ink);
+    let w = 16.0 + g.size().x + 6.0;
+    (g, w)
+}
+
+fn paint_chip(ui: &egui::Ui, p: &Palette, rect: Rect, g: std::sync::Arc<egui::Galley>, color: Color32) {
+    ui.painter()
+        .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised.gamma_multiply(0.55));
+    ui.painter()
+        .circle_filled(Pos2::new(rect.left() + 9.0, rect.center().y), 3.0, color);
+    widgets::paint_row_text(ui.painter(), g, rect.left() + 16.0, rect.center().y, p.ink);
+}
+
+/// The chips of `chips` that fit in `width` beside a second line kept 40
+/// points wide at least, in their order.
+fn fitting_chips(widths: &[f32], width: f32) -> usize {
+    let mut room = width - 40.0;
+    let mut n = 0;
+    for w in widths {
+        if w + 4.0 > room {
+            break;
+        }
+        room -= w + 4.0;
+        n += 1;
+    }
+    n
+}
+
+/// A member's two lines: the name (the friend's heart and the staff tag
+/// after it), then their second line and the chips of their other sets,
+/// as many as fit. Returns whether the name was cut.
+#[allow(clippy::too_many_arguments)]
+fn member_names(
+    ui: &egui::Ui,
+    p: &Palette,
+    rect: Rect,
+    left: f32,
+    right: f32,
+    name: &str,
+    color: Color32,
+    second: &str,
+    chips: &[(String, Color32)],
+    friend: bool,
+    mark: Option<crate::world::staff::Mark>,
+) -> bool {
+    let heart = friend.then_some(rows::SetMark::Icon("heart-filled", p.success));
+    // the first line alone, in the top half of the row
+    let first = Rect::from_center_size(Pos2::new(rect.center().x, rect.center().y - 7.0), Vec2::new(rect.width(), 18.0));
+    let cut = rows::person_names(ui, p, first, left, right, name, color, "", heart, None, mark);
+    let y = rect.center().y + 8.0;
+    let width = (right - left).max(0.0);
+    let layouts: Vec<_> = chips.iter().map(|(n, c)| (chip_layout(ui, p, n), *c)).collect();
+    let n = fitting_chips(&layouts.iter().map(|((_, w), _)| *w).collect::<Vec<_>>(), width);
+    let chips_w: f32 = layouts.iter().take(n).map(|((_, w), _)| w + 4.0).sum();
+    let mut job = egui::text::LayoutJob::single_section(second.to_owned(), egui::TextFormat::simple(FontId::proportional(11.5), p.muted));
+    job.wrap = egui::text::TextWrapping::truncate_at_width((width - chips_w - 2.0).max(0.0));
+    let g = ui.painter().layout_job(job);
+    let mut x = left + g.size().x + if second.is_empty() { 0.0 } else { 6.0 };
+    widgets::paint_row_text(ui.painter(), g, left, y, p.muted);
+    for ((g, w), c) in layouts.into_iter().take(n) {
+        let chip = Rect::from_min_size(Pos2::new(x, y - CHIP_H / 2.0), Vec2::new(w, CHIP_H));
+        paint_chip(ui, p, chip, g, c);
+        x += w + 4.0;
+    }
+    cut
+}
+
+/// One member: picture and status, names and chips, and the quick actions
+/// under the pointer.
 #[allow(clippy::too_many_arguments)]
 fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, set: &str, id: Uuid, name: &str, order: &[Uuid]) {
     let p = c.p;
@@ -249,9 +416,8 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
     let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
-    let friend = world.social.is_friend(&id);
     let mutable = !ContactSets::is_internal(set);
-    // under the pointer: move, take out, the menu; else the friend's heart
+    // under the pointer: move, take out, the menu
     let buttons: Option<Vec<(&str, &str)>> = hot.then(|| {
         let mut b = Vec::new();
         if mutable {
@@ -269,24 +435,15 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     });
     let widths: Vec<f32> = match &buttons {
         Some(b) => vec![rows::actions_width(b.len())],
-        None if friend => vec![13.0],
         None => Vec::new(),
     };
     let end = rows::end(rect, left, &widths, 8.0, false);
-    let mut tip = None;
-    match (&buttons, end.items.first()) {
-        (Some(buttons), Some(slot)) => hover_actions(ui, c, st, set, id, *slot, buttons),
-        (None, Some(cell)) => {
-            super::radar::icon(ui, "heart-filled", *cell, 13.0, p.success);
-            if resp.hover_pos().is_some_and(|at| cell.expand(2.0).contains(at)) {
-                tip = Some(aurora_i18n::tr!("ui-profile-aurora-friend").to_owned());
-            }
-        }
-        _ => {}
+    if let (Some(buttons), Some(slot)) = (&buttons, end.items.first()) {
+        hover_actions(ui, c, st, set, id, *slot, buttons);
     }
     let color = crate::ui::colors::resident_name(world, &id, p.ink);
-    let second = second_line(c, &id);
-    let cut = rows::person_names(
+    let chips = other_sets(world, &id, set);
+    let cut = member_names(
         ui,
         p,
         rect,
@@ -294,9 +451,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         end.names_right,
         name,
         color,
-        &second,
-        None,
-        None,
+        &second_line(world, &id),
+        &chips,
+        world.social.is_friend(&id),
         crate::world::staff::mark(world, &id),
     );
     let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
@@ -307,7 +464,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         c.actions.push(super::PeopleAction::OpenIm(id));
     }
     rows::person_menu(&resp, p, world, &st.sel, id);
-    let tip = tip.or_else(|| (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned()));
+    let tip = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned());
     rows::contact_tip(resp, tip.as_deref());
 }
 
@@ -315,6 +472,40 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
 /// part of it, else the row alone.
 fn targets(st: &PeopleUi, id: Uuid) -> Vec<Uuid> {
     if st.sel.contains(&id) { st.sel.clone() } else { vec![id] }
+}
+
+/// The sets of a "Move to" or "Add to set" menu, highest first, `from`
+/// left out; `add` adds to the set chosen (and offers a new set), else
+/// moves out of `from` into it.
+fn sets_menu(ui: &mut egui::Ui, c: &mut Ctx, from: &str, ids: &[Uuid], add: bool) {
+    let p = c.p;
+    let others: Vec<String> = c.world.contact_sets.ordered_set_names().into_iter().filter(|s| s != from).collect();
+    if others.is_empty() {
+        menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-contacts-no-other-contact-sets"), false);
+    }
+    for to in &others {
+        if menu::item(ui, p, "users-group", to) {
+            let edit = if add {
+                SetEdit::Add {
+                    set: to.clone(),
+                    ids: ids.to_vec(),
+                }
+            } else {
+                SetEdit::Move {
+                    from: from.to_owned(),
+                    to: to.clone(),
+                    ids: ids.to_vec(),
+                }
+            };
+            context::request(ui.ctx(), context::CtxAction::ContactSet(edit));
+        }
+    }
+    if add {
+        menu::separator(ui, p);
+        if menu::item(ui, p, "plus", aurora_i18n::tr!("people-sets-new-set-with")) {
+            c.contacts.ask_new_set_for(ids.to_vec());
+        }
+    }
 }
 
 fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, id: Uuid, slot: Rect, buttons: &[(&str, &str)]) {
@@ -325,23 +516,8 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, i
         match *icon {
             "arrows-exchange" => {
                 let ids = targets(st, id);
-                let others: Vec<String> = world.contact_sets.set_names().into_iter().filter(|s| s != set).collect();
                 menu_open |= menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    if others.is_empty() {
-                        menu::item_if(ui, p, "users-group", aurora_i18n::tr!("ui-contacts-no-other-contact-sets"), false);
-                    }
-                    for to in &others {
-                        if menu::item(ui, p, "users-group", to) {
-                            context::request(
-                                ui.ctx(),
-                                context::CtxAction::ContactSet(crate::ui::contacts::SetEdit::Move {
-                                    from: set.to_owned(),
-                                    to: to.clone(),
-                                    ids: ids.clone(),
-                                }),
-                            );
-                        }
-                    }
+                    sets_menu(ui, c, set, &ids, false);
                 });
             }
             "circle-minus" if resp.clicked() => c.contacts.ask_remove_from_set(set, targets(st, id)),
@@ -361,141 +537,159 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, i
     super::keep_row_menu(st, id, menu_open);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Modern rows always request their picture and use only explicit
-    /// UI-name attributes, resolved by set priority, rather than the old
-    /// smallest-set color fallback.
-    #[test]
-    fn modern_set_rows_keep_pictures_and_follow_appearance_priority() {
-        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
-        let p = crate::theme::Theme::default().palette();
-        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-        let id = Uuid::from_u128(0xF000);
-        world.social.friends.push(crate::world::social::Friend {
-            id,
-            online: true,
-            rights_given: 1,
-            rights_has: 1,
+/// The bar of the people chosen: how many, add them to a set, move them
+/// out of this one, their nickname, take them out; the cross forgets the
+/// choice. Labelled when there is room, icons with their hint otherwise.
+fn selection_bar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, compact: bool) {
+    let p = c.p;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAR_H), Sense::hover());
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.bar);
+    let mutable = !ContactSets::is_internal(set);
+    let ids = st.sel.clone();
+    let mut bar = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(5.0, 5.0)))
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+    );
+    bar.spacing_mut().item_spacing.x = 4.0;
+    if widgets::icon_button(&mut bar, p, "x", aurora_i18n::tr!("people-sets-clear-selection"), true) {
+        st.sel.clear();
+        st.anchor = None;
+    }
+    if mutable {
+        let remove = pane_button(
+            &mut bar,
+            p,
+            "circle-minus",
+            aurora_i18n::tr!("people-sets-remove"),
+            widgets::ActionKind::FlatDanger,
+            compact,
+            true,
+        );
+        if remove.clicked() {
+            c.contacts.ask_remove_from_set(set, ids.clone());
+        }
+    }
+    let nick = pane_button(
+        &mut bar,
+        p,
+        "edit-filled",
+        aurora_i18n::tr!("ui-contacts-nickname"),
+        widgets::ActionKind::Flat,
+        compact,
+        true,
+    );
+    if nick.clicked() {
+        c.contacts.ask_nickname(c.world, ids.clone());
+    }
+    if mutable {
+        let to = pane_button(
+            &mut bar,
+            p,
+            "arrows-exchange",
+            aurora_i18n::tr!("people-sets-move-to"),
+            widgets::ActionKind::Flat,
+            compact,
+            true,
+        );
+        menu::dropdown(&to, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            sets_menu(ui, c, set, &ids, false)
         });
-        world.social.names.insert(id, "Example Person".into());
-        for (name, color) in [("First", [0.7, 0.2, 0.6, 1.0]), ("Second", [0.2, 0.7, 0.6, 1.0])] {
-            world.contact_sets.add_set(name);
-            world.contact_sets.set_color(name, color);
-            world.contact_sets.add_to_set(&[id], name, |_| true);
-        }
-        let mut contacts = crate::ui::contacts::ContactsUi::default();
-        let mut friends = super::super::FriendsSettings::default();
-        let mut st = PeopleUi::default();
-        let mut actions = Vec::new();
-        let radar = crate::world::radar::Radar::default();
-        let mut radar_settings = super::super::RadarSettings::default();
-        let (voice, pics) = (std::collections::HashMap::new(), std::collections::HashMap::new());
-        let data = super::super::RadarData {
-            radar: &radar,
-            settings: &mut radar_settings,
-            voice: &voice,
-            draw_distance: 64.0,
-            second_life: true,
-            now: 0.0,
-            pics: &pics,
-        };
-        for enabled in [false, true, false] {
-            for name in ["First", "Second"] {
-                world.contact_sets.set_visuals(
-                    name,
-                    crate::world::contact_sets::Visuals {
-                        ui_name: enabled,
-                        ..Default::default()
-                    },
-                );
-            }
-            world.contact_sets.move_priority("Second", true);
-            let expected = if enabled {
-                crate::interface_colors::on_panel(crate::ui::colors::set_color([0.2, 0.7, 0.6, 1.0]))
-            } else {
-                p.ink
-            };
-            let shapes = frames.shapes(Vec::new(), |ui| {
-                let mut c = Ctx {
-                    p: &p,
-                    world: &world,
-                    contacts: &mut contacts,
-                    friends: &mut friends,
-                    images: &pics,
-                    actions: &mut actions,
-                    embedded_contacts: false,
-                    contact_sheet_on_click: false,
-                };
-                row(ui, &mut c, &data, &mut st, "First", id, "Example Person", &[id]);
-            });
-            let name = shapes
-                .iter()
-                .find_map(|shape| match shape {
-                    egui::Shape::Text(t) if t.galley.text() == "Example Person" => Some(t),
-                    _ => None,
-                })
-                .expect("the member's name is drawn");
-            assert_eq!(name.galley.job.sections[0].format.color, expected);
-            assert!(st.wanted_pics.contains(&id), "modern members always request their picture");
-        }
+    }
+    // the main action keeps its label
+    let add = pane_button(
+        &mut bar,
+        p,
+        "plus",
+        aurora_i18n::tr!("people-sets-add-to-set"),
+        widgets::ActionKind::Flat,
+        false,
+        true,
+    );
+    menu::dropdown(&add, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        sets_menu(ui, c, set, &ids, true)
+    });
+    let text = aurora_i18n::tr!("people-sets-selected", count = ids.len());
+    let g = bar.painter().layout_no_wrap(
+        text,
+        crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(bar.ctx()), 12.5, p.ink).font_id,
+        p.ink,
+    );
+    if g.size().x + 8.0 <= bar.available_width() {
+        widgets::paint_row_text(bar.painter(), g, rect.left() + 12.0, rect.center().y, p.ink);
     }
 }
 
 #[cfg(test)]
-mod import_tests {
+mod tests {
     use super::*;
-    use crate::ui::widgets::elide_tests::Frames;
 
     #[test]
-    fn contact_set_import_is_available_in_the_empty_people_list() {
-        let world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    fn chips_fit_while_the_second_line_keeps_its_room() {
+        // 40 kept for the second line, 4 between chips
+        assert_eq!(fitting_chips(&[50.0, 50.0], 200.0), 2);
+        assert_eq!(fitting_chips(&[50.0, 50.0], 120.0), 1);
+        assert_eq!(fitting_chips(&[50.0, 50.0], 80.0), 0);
+        // a chip that does not fit hides the ones after it, keeping the order
+        assert_eq!(fitting_chips(&[50.0, 200.0, 20.0], 160.0), 1);
+        assert_eq!(fitting_chips(&[], 300.0), 0);
+    }
+
+    fn world() -> World {
+        World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()))
+    }
+
+    fn friend(world: &mut World, n: u128, online: bool) -> Uuid {
+        let id = Uuid::from_u128(n);
+        world.social.friends.push(crate::world::social::Friend {
+            id,
+            online,
+            rights_given: 1,
+            rights_has: 1,
+        });
+        id
+    }
+
+    #[test]
+    fn members_come_in_parts_online_offline_then_not_friends() {
+        let mut world = world();
         let p = crate::theme::Theme::default().palette();
-        let mut contacts = crate::ui::contacts::ContactsUi::default();
-        let mut friends = super::super::FriendsSettings::default();
-        let images = std::collections::HashMap::new();
-        let mut actions = Vec::new();
-        let mut frames = Frames::new();
-        let gear = std::cell::Cell::new(egui::Pos2::ZERO);
-        let mut show = |ui: &mut egui::Ui| {
-            ui.set_width(400.0);
-            let new_w = widgets::filter_pill_width(ui, "plus", aurora_i18n::tr!("people-sets-new"));
-            gear.set(ui.cursor().min + egui::vec2(new_w + 5.0 + (rows::TOOLBAR_H - 2.0) * 0.5, (rows::TOOLBAR_H - 2.0) * 0.5));
-            let mut c = Ctx {
-                p: &p,
-                world: &world,
-                contacts: &mut contacts,
-                friends: &mut friends,
-                images: &images,
-                actions: &mut actions,
-                embedded_contacts: false,
-                contact_sheet_on_click: false,
-            };
-            set_pills(ui, &mut c, contact_sets::ALL_SETS);
-        };
-        for _ in 0..3 {
-            frames.run(Vec::new(), &mut show);
+        let on = friend(&mut world, 1, true);
+        let off = friend(&mut world, 2, false);
+        let stranger = Uuid::from_u128(3);
+        world.contact_sets.add_set("S");
+        let social = &world.social;
+        world.contact_sets.add_to_set(&[on, off, stranger], "S", |id| social.is_friend(id));
+        let ids = [on, off, stranger];
+        let parts = parts(&p, &world, &ids, true);
+        let kinds: Vec<Vec<Uuid>> = parts.iter().map(|(_, _, ids)| ids.clone()).collect();
+        assert_eq!(kinds, vec![vec![on], vec![off], vec![stranger]]);
+        assert!(parts.iter().all(|(label, _, _)| label.is_some()));
+        // sorted by name: one part, no heading
+        let parts = super::parts(&p, &world, &ids, false);
+        assert_eq!(parts.len(), 1);
+        assert!(parts[0].0.is_none());
+        // the counts of a set
+        let m = members(&world, "S");
+        assert_eq!((m.ids.len(), m.online), (3, 1));
+    }
+
+    #[test]
+    fn a_members_chips_are_their_other_sets_highest_first() {
+        let mut world = world();
+        let id = friend(&mut world, 1, true);
+        for name in ["A", "B", "C"] {
+            world.contact_sets.add_set(name);
+            world.contact_sets.add_to_set(&[id], name, |_| true);
         }
-        for pressed in [true, false] {
-            frames.run(
-                vec![
-                    egui::Event::PointerMoved(gear.get()),
-                    egui::Event::PointerButton {
-                        pos: gear.get(),
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-                &mut show,
-            );
-        }
-        let texts = frames.run(Vec::new(), &mut show);
-        assert!(
-            texts.iter().any(|text| text.source == aurora_i18n::tr!("contacts-import")),
-            "the migration action is visible even before any set exists"
-        );
+        world.contact_sets.move_priority_to("C", 0);
+        let names: Vec<String> = other_sets(&world, &id, "A").into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["C", "B"]);
+        // a smart list shows every set
+        let names: Vec<String> = other_sets(&world, &id, contact_sets::ALL_SETS)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(names, ["C", "A", "B"]);
     }
 }
