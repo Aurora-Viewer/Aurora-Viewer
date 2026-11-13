@@ -77,8 +77,18 @@ impl App {
                 if self.demo && std::env::var("AURORA_DEMO_AVATAR_STUDIO").is_ok_and(|mode| mode == "pedestal") {
                     self.avatar_studio.inspect_feet();
                 }
+                if self.demo
+                    && std::env::var("AURORA_DEMO_AVATAR_STUDIO")
+                        .is_ok_and(|mode| matches!(mode.as_str(), "hover-height" | "animation-editor-hover"))
+                {
+                    self.avatar_studio.hover_height = 0.35;
+                }
             } else {
+                let close_animation_editor = self.avatar_studio.animation_editor;
                 self.avatar_studio = Studio::default();
+                if close_animation_editor {
+                    self.ik_editor.close_animation_editor_from_studio();
+                }
                 self.scene.studio_stage.clear(renderer);
             }
             renderer.cut_motion_history();
@@ -89,6 +99,14 @@ impl App {
             && active
             && let Ok(mode) = std::env::var("AURORA_DEMO_AVATAR_STUDIO")
         {
+            if matches!(mode.as_str(), "animation-editor" | "animation-editor-hover" | "animation-jump") && self.frame_count == 800 {
+                self.avatar_studio.animation_editor = true;
+                if mode == "animation-jump" {
+                    self.ik_editor.demo_jump_animation_editor_from_studio(&self.world);
+                } else {
+                    self.ik_editor.demo_animation_editor_from_studio(&self.world);
+                }
+            }
             match mode.as_str() {
                 "t-pose" => self.avatar_studio.pose = Pose::T,
                 "a-pose" => self.avatar_studio.pose = Pose::A,
@@ -105,7 +123,18 @@ impl App {
             }
         }
         self.world.avatar_studio = active;
-        self.scene.studio_pose = if active { self.avatar_studio.pose } else { Pose::Animated };
+        if active
+            && self.avatar_studio.animation_editor
+            && !self.ik_editor.animation_editor_active()
+            && !self.ik_editor.animation_editor_return_pending()
+        {
+            self.avatar_studio.animation_editor = false;
+        }
+        self.scene.studio_pose = if active && !self.avatar_studio.animation_editor {
+            self.avatar_studio.pose
+        } else {
+            Pose::Animated
+        };
         self.scene.studio_floor_offset = self.avatar_studio.floor_offset;
         if !self.focused || self.studio_transition.busy() {
             self.avatar_studio.rotating = false;
@@ -113,6 +142,9 @@ impl App {
             self.avatar_studio.panning_plane = false;
         }
         self.avatar_studio.update(dt);
+        // Publish the eased value after updating it, so the rendered pose and
+        // the Studio's current state do not diverge by one frame.
+        self.scene.studio_hover_height = if active { self.avatar_studio.display_hover_height } else { 0.0 };
         self.studio_photo_frame(renderer);
     }
 
@@ -327,6 +359,7 @@ impl App {
             return;
         }
         let mut reset = false;
+        let mut reset_animation = false;
         egui::Area::new(egui::Id::unique("avatar_studio_controls"))
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
             .order(egui::Order::Middle)
@@ -401,27 +434,141 @@ impl App {
                             &mut self.avatar_studio.pose,
                             demo_menu.as_deref() == Some("pose-menu") && self.frame_count == 800,
                         );
+                        studio_hover_menu(
+                            ui,
+                            &self.palette,
+                            &mut self.avatar_studio.hover_height,
+                            demo_menu.as_deref() == Some("hover-menu") && self.frame_count == 800,
+                        );
                         studio_lighting_menu(
                             ui,
                             &self.palette,
                             &mut self.avatar_studio.lighting,
                             demo_menu.as_deref() == Some("lighting-menu") && self.frame_count == 800,
                         );
-                        reset = ui.button(reset_label).clicked();
+                        let animation_label = if self.avatar_studio.animation_editor {
+                            aurora_i18n::tr!("avatar-studio-animation-editor-close-short")
+                        } else {
+                            aurora_i18n::tr!("avatar-studio-animation-editor-short")
+                        };
+                        if crate::ui::widgets::action_button(
+                            ui,
+                            &self.palette,
+                            "timeline",
+                            animation_label,
+                            crate::ui::widgets::ActionKind::Flat,
+                            egui::vec2(0.0, crate::ui::bars::islands::SLOT),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("avatar-studio-animation-editor"))
+                        .clicked()
+                        {
+                            self.avatar_studio.animation_editor = !self.avatar_studio.animation_editor;
+                            if self.avatar_studio.animation_editor {
+                                self.ik_editor.open_animation_editor_from_studio(&self.world);
+                            } else {
+                                self.ik_editor.close_animation_editor_from_studio();
+                            }
+                        }
+                        if self.avatar_studio.animation_editor
+                            && self.ik_editor.animation_editor_active()
+                            && !self.ik_editor.studio_animation_timeline_open()
+                            && crate::ui::widgets::action_button(
+                                ui,
+                                &self.palette,
+                                "timeline",
+                                aurora_i18n::tr!("avatar-studio-animation-timeline-short"),
+                                crate::ui::widgets::ActionKind::Flat,
+                                egui::vec2(0.0, crate::ui::bars::islands::SLOT),
+                            )
+                            .on_hover_text(aurora_i18n::tr!("avatar-studio-animation-timeline-show"))
+                            .clicked()
+                        {
+                            self.ik_editor.show_studio_animation_timeline();
+                        }
+                        if ui.button(reset_label).clicked() {
+                            if self.avatar_studio.animation_editor {
+                                self.avatar_studio.reset_animation_confirm = true;
+                            } else {
+                                reset = true;
+                            }
+                        }
                         if ui.button(exit_label).clicked() {
                             self.panels.avatar_studio = false;
                         }
                     });
                 });
             });
+        if self.avatar_studio.animation_editor {
+            self.ik_editor.studio_animation_timeline(ctx, &self.palette, &self.world);
+        }
+        if self.avatar_studio.reset_animation_confirm {
+            let mut answer = None;
+            let modal = crate::ui::widgets::Modal::new(egui::Id::unique("avatar_studio_reset_animation")).show(ctx, |ui| {
+                ui.set_width(380.0);
+                ui.label(
+                    egui::RichText::new(aurora_i18n::tr!("avatar-studio-reset-animation-confirm"))
+                        .size(17.0)
+                        .color(self.palette.ink),
+                );
+                ui.add_space(8.0);
+                ui.label(aurora_i18n::tr!("avatar-studio-reset-animation-description"));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let size = egui::Vec2::new(0.0, 26.0);
+                    if crate::ui::widgets::action_button(
+                        ui,
+                        &self.palette,
+                        "refresh",
+                        aurora_i18n::tr!("avatar-studio-reset-animation-action"),
+                        crate::ui::widgets::ActionKind::Danger,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        answer = Some(true);
+                    }
+                    if crate::ui::widgets::action_button(
+                        ui,
+                        &self.palette,
+                        "x",
+                        aurora_i18n::tr!("common-cancel"),
+                        crate::ui::widgets::ActionKind::Flat,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if modal.should_close() && answer.is_none() {
+                answer = Some(false);
+            }
+            match answer {
+                Some(true) => {
+                    self.avatar_studio.reset_animation_confirm = false;
+                    reset = true;
+                    reset_animation = true;
+                }
+                Some(false) => self.avatar_studio.reset_animation_confirm = false,
+                None => {}
+            }
+        }
         if reset {
+            if reset_animation {
+                self.ik_editor.reset_animation_from_avatar_studio(&self.world);
+            }
             let offset = self.avatar_studio.floor_offset;
             let pose = self.avatar_studio.pose;
             let lighting = self.avatar_studio.lighting;
+            let animation_editor = self.avatar_studio.animation_editor;
+            let hover_height = self.avatar_studio.hover_height;
             self.avatar_studio.enter(self.avatar_studio.facing, self.studio_subject().1);
             self.avatar_studio.floor_offset = offset;
             self.avatar_studio.pose = pose;
             self.avatar_studio.lighting = lighting;
+            self.avatar_studio.animation_editor = animation_editor;
+            self.avatar_studio.hover_height = hover_height;
         }
     }
 }
@@ -492,6 +639,54 @@ fn studio_pose_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, pose: &mut Pos
     });
 }
 
+fn studio_hover_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, hover_height: &mut f32, open: bool) {
+    use crate::ui::{menu, widgets};
+    let height = format!("{:.2}", *hover_height);
+    let response = widgets::action_button(
+        ui,
+        p,
+        "arrows-vertical",
+        &aurora_i18n::tr!("avatar-studio-hover-height", height = height.as_str()),
+        widgets::ActionKind::Flat,
+        // Keep the toolbar and popup anchor fixed as the numeric value changes.
+        egui::vec2(154.0, crate::ui::bars::islands::SLOT),
+    );
+    if open {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+    let response = response.on_hover_text(aurora_i18n::tr!("avatar-studio-hover-height-hint"));
+    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.set_width(280.0);
+        ui.set_max_width(280.0);
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(aurora_i18n::tr!("avatar-studio-hover-height-hint")).wrap());
+        ui.add_space(8.0);
+        ui.add_sized(
+            egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+            egui::Slider::new(hover_height, 0.0..=1.0)
+                .step_by(0.01)
+                .fixed_decimals(2)
+                .suffix(aurora_i18n::tr!("avatar-studio-hover-height-suffix")),
+        );
+        ui.add_space(6.0);
+        studio_hover_reset_row(ui, hover_height);
+        ui.add_space(4.0);
+    });
+}
+
+fn studio_hover_reset_row(ui: &mut egui::Ui, hover_height: &mut f32) -> egui::Response {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            if ui.button(aurora_i18n::tr!("common-reset")).clicked() {
+                *hover_height = 0.0;
+            }
+        },
+    )
+    .response
+}
+
 fn studio_lighting_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, lighting: &mut Lighting, open: bool) {
     use crate::ui::{menu, widgets};
     let response = widgets::action_button(
@@ -519,4 +714,29 @@ fn studio_lighting_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, lighting: 
             }
         }
     });
+}
+
+#[cfg(test)]
+mod hover_menu_tests {
+    use super::*;
+
+    #[test]
+    fn hover_reset_row_stays_one_control_high_in_a_tall_popup() {
+        let ctx = egui::Context::default();
+        let mut row_height = None;
+        let mut hover_height = 0.35;
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| {
+                row_height = Some(studio_hover_reset_row(ui, &mut hover_height).rect.height());
+            },
+        );
+        output.textures_delta.clear();
+        assert!(row_height.is_some_and(|height| height <= 40.0));
+        assert_eq!(hover_height, 0.35);
+    }
 }
