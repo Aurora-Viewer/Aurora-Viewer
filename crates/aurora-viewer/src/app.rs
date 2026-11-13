@@ -226,6 +226,8 @@ struct Gfx {
     /// Revealed only once the renderer has presented its first image.
     shown: bool,
     maximize_on_show: bool,
+    /// The active keyboard layout, on the window's connection (Wayland).
+    layout_watch: Option<crate::keybinds::LayoutWatch>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1818,6 +1820,7 @@ impl App {
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
+            settings.defaults_follow_reported_layout = true;
         }
         apply_test_overrides(&mut settings);
         // AURORA_DEMO_OMNIFILTER: on, on the demo's rules, for this run
@@ -7330,6 +7333,23 @@ impl App {
             self.settings.parcel_music_accounts.remove(&self.world.agent_id);
         }
         self.settings.save();
+    }
+
+    /// The active keyboard layout changed (Wayland reports it once the
+    /// window has the focus): the labels follow on their own; defaults placed
+    /// for the layout that stood in move to the reported one, once.
+    fn follow_keyboard_layout(&mut self) {
+        let Some(change) = self.gfx.as_mut().and_then(|g| g.layout_watch.as_mut()).and_then(|w| w.poll()) else {
+            return;
+        };
+        // any report ends the wait; only the one that replaces a stand-in
+        // (always the first) moves the defaults
+        let waiting = std::mem::take(&mut self.settings.defaults_follow_reported_layout);
+        if waiting && change.guessed {
+            log::info!("keyboard layout: the default shortcuts move to the reported layout");
+            self.settings.keybinds.follow_layout_change(&change);
+            self.settings.save();
+        }
     }
 
     /// MuteWhenMinimized (audio_update_volume): every sound stops while the
@@ -22171,12 +22191,14 @@ impl ApplicationHandler for App {
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
         self.cursor_shown.forget();
+        let layout_watch = crate::keybinds::LayoutWatch::new(&window);
         self.gfx = Some(Gfx {
             window,
             shown: false,
             maximize_on_show: self.settings.window_maximized && !self.settings.window_fullscreen && !capture,
             renderer,
             egui_state,
+            layout_watch,
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
@@ -25720,6 +25742,9 @@ impl ApplicationHandler for App {
                 crate::slurl_handoff::focused();
                 self.focused = true;
                 self.gaming_mode_focused();
+                if let Some(watch) = self.gfx.as_mut().and_then(|g| g.layout_watch.as_mut()) {
+                    watch.focused();
+                }
                 if !self.demo
                     && matches!(self.screen, Screen::Login)
                     && !self.login_form.editing
@@ -26213,6 +26238,7 @@ impl ApplicationHandler for App {
             return;
         }
         self.sync_minimized_mute();
+        self.follow_keyboard_layout();
         if self.settings.window_fullscreen != self.fullscreen_applied {
             self.apply_fullscreen_setting();
         }
