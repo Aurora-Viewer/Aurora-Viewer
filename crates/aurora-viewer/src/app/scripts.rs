@@ -845,11 +845,7 @@ impl App {
                 // A named marker simulates a server diagnostic in demo mode;
                 // this is deliberately not a local LSL compiler.
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
-                log::info!(
-                    "demo scripts: saved {} for target {}",
-                    target.item,
-                    options.compile.name()
-                );
+                log::info!("demo scripts: saved {} for target {}", target.item, options.compile.name());
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);

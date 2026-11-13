@@ -1576,13 +1576,17 @@ mod tests {
         let e = &mut editors.documents[0];
         e.processor_settings.preprocessor = true;
         e.source = "#include \"x\"
-print(\"bye\")".into();
+print(\"bye\")"
+            .into();
         let Some(Action::Save { options, source, .. }) = e.save() else {
             panic!("a Lua source is saved at once, not preprocessed")
         };
         assert!(e.processing.is_none());
-        assert_eq!(source, "#include \"x\"
-print(\"bye\")");
+        assert_eq!(
+            source,
+            "#include \"x\"
+print(\"bye\")"
+        );
         assert_eq!(options.compile, CompileTarget::Luau);
     }
 
