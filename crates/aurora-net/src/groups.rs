@@ -229,7 +229,11 @@ pub fn role_members_reply(m: &msgs::GroupRoleMembersReply) -> RoleMembersPage {
     }
 }
 
-/// LLGroupMgr::processGroupTitlesReply: titles left empty are not offered.
+/// GroupTitlesReply. The Legacy Viewer drops a title left empty
+/// (`LLGroupMgr::processGroupTitlesReply`, `llgroupmgr.cpp`). Aurora keeps
+/// it so the Group titles window can list that role. Legacy Viewer origin:
+/// no, extends it (#3147). The group profile's "Title shown" combo filters
+/// the blank title out again.
 pub fn titles_reply(m: &msgs::GroupTitlesReply) -> Vec<GroupTitle> {
     m.group_data
         .iter()
@@ -238,7 +242,6 @@ pub fn titles_reply(m: &msgs::GroupTitlesReply) -> Vec<GroupTitle> {
             role: d.role_id,
             selected: d.selected,
         })
-        .filter(|t| !t.title.is_empty())
         .collect()
 }
 
@@ -793,8 +796,9 @@ mod tests {
             ..Default::default()
         };
         let titles = titles_reply(&t);
-        assert_eq!(titles.len(), 2, "an empty title is not offered");
-        assert!(titles[1].selected && titles[1].role == Uuid::from_u128(5));
+        assert_eq!(titles.len(), 3, "an empty title is kept");
+        assert!(titles.iter().any(|t| t.title.is_empty() && t.role == Uuid::from_u128(6)));
+        assert!(titles.iter().any(|t| t.selected && t.role == Uuid::from_u128(5)));
     }
 
     #[test]

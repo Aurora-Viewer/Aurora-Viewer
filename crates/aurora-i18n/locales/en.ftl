@@ -6314,6 +6314,7 @@ ui-place-details-title = Title:
 ui-contacts-titles = Titles
 group-titles-filter = Filter group titles
 group-titles-no-title = <No group title>
+group-titles-blank = <Blank title>
 group-titles-col-title = Title
 group-titles-col-regions = Auto regions
 group-titles-default-tip = Default title worn in regions without an assignment
