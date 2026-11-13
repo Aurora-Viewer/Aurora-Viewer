@@ -75,8 +75,9 @@ pub struct ChatUi {
     /// The slash press reserved for `start_gesture`, until its release.
     gesture_key_down: Option<winit::keyboard::KeyCode>,
     pub has_focus: bool,
-    /// The local chat field keeps the keyboard after a message is sent
-    /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
+    /// The local chat field keeps the keyboard after a message is sent,
+    /// and an empty Enter leaves it there (Preferences › Chat; the Legacy
+    /// Viewer's CloseChatOnReturn off, FSNearbyChatControl::autohide).
     pub keep_focus: bool,
     /// The chat bar shows only while it is used (Preferences › Chat; the
     /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
@@ -743,31 +744,73 @@ impl SendKey {
     }
 }
 
-/// Classify the Enter event once: releasing a modifier later in the same
-/// frame must change neither permission to send, OOC wrapping nor volume.
+/// Classify one Enter. Releasing a modifier later in the same frame must
+/// change neither permission to send, OOC wrapping nor volume.
 /// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
 /// the event's mask; Alt alone is OOC, other Alt chords stay unclaimed.
+fn classify_enter(modifiers: &egui::Modifiers) -> Option<SendKey> {
+    if modifiers.alt {
+        ooc_key(modifiers).then_some(SendKey::Ooc)
+    } else if modifiers.ctrl {
+        Some(SendKey::Shout)
+    } else if modifiers.shift {
+        Some(SendKey::Whisper)
+    } else {
+        Some(SendKey::Normal)
+    }
+}
+
+/// The first Enter of the pass. Conversations send once per frame.
 fn send_enter(i: &egui::InputState) -> Option<SendKey> {
-    i.events.iter().find_map(|event| {
-        let egui::Event::Key {
-            key: egui::Key::Enter,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        else {
-            return None;
-        };
-        if modifiers.alt {
-            ooc_key(modifiers).then_some(SendKey::Ooc)
-        } else if modifiers.ctrl {
-            Some(SendKey::Shout)
-        } else if modifiers.shift {
-            Some(SendKey::Whisper)
-        } else {
-            Some(SendKey::Normal)
+    enter_pass(i).keys.into_iter().next()
+}
+
+/// Every Enter of this pass, in order, and the characters inserted after
+/// the first one. The editor has already applied the whole pass
+/// (`return_key(None)` leaves Enter in the queue). Return is one key at a
+/// time (LLViewerWindow::handleUnicodeChar); a second Enter, and letters
+/// after the first, belong to the next line.
+struct EnterPass {
+    keys: Vec<SendKey>,
+    after: String,
+}
+
+fn enter_pass(i: &egui::InputState) -> EnterPass {
+    let mut keys = Vec::new();
+    let mut after = String::new();
+    let mut seen = false;
+    for event in &i.events {
+        match event {
+            egui::Event::Key {
+                key: egui::Key::Enter,
+                pressed: true,
+                modifiers,
+                ..
+            } => {
+                if let Some(key) = classify_enter(modifiers) {
+                    keys.push(key);
+                    seen = true;
+                }
+            }
+            egui::Event::Text(text) if seen => after.push_str(text),
+            egui::Event::Paste(text) if seen => after.push_str(text),
+            _ => {}
         }
-    })
+    }
+    EnterPass { keys, after }
+}
+
+/// The field split around the first Enter: the line to send, and what was
+/// typed after it. The caret is at the end of the chat bar, so those
+/// characters are a suffix.
+fn split_on_enter(field: &str, after: &str) -> (String, String) {
+    if !after.is_empty()
+        && let Some(head) = field.strip_suffix(after)
+    {
+        (head.to_owned(), after.to_owned())
+    } else {
+        (field.to_owned(), String::new())
+    }
 }
 
 /// Alt+Enter alone sends ((OOC)) chat (FSUseAltOOC, on by default).
@@ -4496,9 +4539,12 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 
 /// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
-/// gestures' completion; Enter on an empty field returns to movement. Shared
-/// by the full-width bar and the chat island (`bars/dock.rs`), which draws
-/// its own frame (`build` dresses the field) and shows emoji pictures.
+/// gestures' completion. With `keep_focus` (CloseChatOnReturn off,
+/// FSNearbyChatControl::autohide), Enter on an empty field leaves the
+/// keyboard there; without it, that Enter returns to movement. A second
+/// Enter in the same pass takes the bar back. Shared by the full-width bar
+/// and the chat island (`bars/dock.rs`), which draws its own frame (`build`
+/// dresses the field) and shows emoji pictures.
 pub(crate) fn bar_input(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -4562,41 +4608,56 @@ pub(crate) fn bar_input(
         }
     }
     st.has_focus = resp.has_focus();
-    // The editor leaves ordinary Enter to this send path.
-    let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
-        ui.input(send_enter)
+    // The editor leaves ordinary Enter to this send path. The Enter that
+    // asked for the keyboard is not one of them (`focusing`).
+    let pass = if !focusing && (resp.has_focus() || resp.lost_focus()) {
+        ui.input(enter_pass)
     } else {
-        None
+        EnterPass {
+            keys: Vec::new(),
+            after: String::new(),
+        }
     };
-    let enter = send.is_some();
+    let enter = !pass.keys.is_empty();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
-    if enter {
-        resp.surrender_focus();
-    }
-    if let Some(send) = send
-        && !st.input.trim().is_empty()
-    {
-        st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let mut text = st.suggest.expand(None, st.input.trim());
-        if send == SendKey::Ooc {
-            text = ooc(&text);
+    if let Some(send) = pass.keys.first().copied() {
+        let another = pass.keys.len() > 1;
+        let (body, remainder) = split_on_enter(&st.input, &pass.after);
+        if !body.trim().is_empty() {
+            st.input_history.entry(None).or_default().record(bar_input_id(), &body);
+            let mut text = st.suggest.expand(None, body.trim());
+            if send == SendKey::Ooc {
+                text = ooc(&text);
+            }
+            let (channel, message) = channel::resolve(&text, st.selector_channel());
+            out = Some(OutgoingChat {
+                message,
+                channel,
+                chat_type: send.chat_type(ChatType::Normal),
+            });
+            st.input = remainder;
+            cursor_to_end(ui.ctx(), resp.id, &st.input);
+            // CloseChatOnReturn off keeps the keyboard. A second Enter in
+            // this pass is start-chat even when that preference is off
+            // (the bar was let go by the first Enter).
+            if st.keep_focus || another {
+                st.focus_request = true;
+            } else {
+                resp.surrender_focus();
+            }
+        } else if st.keep_focus {
+            // FSNearbyChatControl::autohide(true) calls setFocus(false)
+            // only when CloseChatOnReturn is on. Escape and a click in
+            // the world still leave.
+        } else {
+            resp.surrender_focus();
+            if another {
+                st.focus_request = true;
+            }
         }
-        let (channel, message) = channel::resolve(&text, st.selector_channel());
-        out = Some(OutgoingChat {
-            message,
-            channel,
-            chat_type: send.chat_type(ChatType::Normal),
-        });
-        st.input.clear();
-        if st.keep_focus {
-            // ready for the next message; only Enter on the empty bar or a
-            // click elsewhere gives the keyboard back to the world
-            st.focus_request = true;
-        }
     }
-    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
