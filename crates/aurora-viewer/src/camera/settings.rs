@@ -37,15 +37,21 @@ mod first_person_tests {
         let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
         assert!(!migrated.show_avatar_in_mouselook);
         assert!(!migrated.mouselook_follow_eyes);
+        assert_eq!(migrated.third_person_follow_joint, None);
+        assert_eq!(migrated.third_person_follow_intensity, 100);
         let chosen = CameraSettings {
             show_avatar_in_mouselook: true,
             mouselook_follow_eyes: true,
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            third_person_follow_intensity: 75,
             ..migrated
         };
         let saved = serde_json::to_string(&chosen).unwrap();
         let loaded: CameraSettings = serde_json::from_str(&saved).unwrap();
         assert!(loaded.show_avatar_in_mouselook);
         assert!(loaded.mouselook_follow_eyes);
+        assert_eq!(loaded.third_person_follow_joint, Some(CameraFollowJoint::Head));
+        assert_eq!(loaded.third_person_follow_intensity, 75);
     }
 }
 
@@ -214,6 +220,126 @@ impl ViewValues {
     }
 }
 
+/// Skeleton joint available as the anchor for the third-person bone camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CameraFollowJoint {
+    Head,
+    Neck,
+    Chest,
+    Torso,
+    Pelvis,
+    LeftCollar,
+    RightCollar,
+    LeftShoulder,
+    RightShoulder,
+    LeftElbow,
+    RightElbow,
+    LeftWrist,
+    RightWrist,
+    LeftHip,
+    RightHip,
+    LeftKnee,
+    RightKnee,
+    LeftAnkle,
+    RightAnkle,
+    LeftFoot,
+    RightFoot,
+    LeftToe,
+    RightToe,
+}
+
+impl CameraFollowJoint {
+    pub const ALL: [Self; 23] = [
+        Self::Head,
+        Self::Neck,
+        Self::Chest,
+        Self::Torso,
+        Self::Pelvis,
+        Self::LeftCollar,
+        Self::RightCollar,
+        Self::LeftShoulder,
+        Self::RightShoulder,
+        Self::LeftElbow,
+        Self::RightElbow,
+        Self::LeftWrist,
+        Self::RightWrist,
+        Self::LeftHip,
+        Self::RightHip,
+        Self::LeftKnee,
+        Self::RightKnee,
+        Self::LeftAnkle,
+        Self::RightAnkle,
+        Self::LeftFoot,
+        Self::RightFoot,
+        Self::LeftToe,
+        Self::RightToe,
+    ];
+
+    pub const fn rig_name(self) -> &'static str {
+        match self {
+            Self::Head => "mHead",
+            Self::Neck => "mNeck",
+            Self::Chest => "mChest",
+            Self::Torso => "mTorso",
+            Self::Pelvis => "mPelvis",
+            Self::LeftCollar => "mCollarLeft",
+            Self::RightCollar => "mCollarRight",
+            Self::LeftShoulder => "mShoulderLeft",
+            Self::RightShoulder => "mShoulderRight",
+            Self::LeftElbow => "mElbowLeft",
+            Self::RightElbow => "mElbowRight",
+            Self::LeftWrist => "mWristLeft",
+            Self::RightWrist => "mWristRight",
+            Self::LeftHip => "mHipLeft",
+            Self::RightHip => "mHipRight",
+            Self::LeftKnee => "mKneeLeft",
+            Self::RightKnee => "mKneeRight",
+            Self::LeftAnkle => "mAnkleLeft",
+            Self::RightAnkle => "mAnkleRight",
+            Self::LeftFoot => "mFootLeft",
+            Self::RightFoot => "mFootRight",
+            Self::LeftToe => "mToeLeft",
+            Self::RightToe => "mToeRight",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Head => aurora_i18n::tr!("ui-options-camera-joint-head"),
+            Self::Neck => aurora_i18n::tr!("ui-options-camera-joint-neck"),
+            Self::Chest => aurora_i18n::tr!("ui-options-camera-joint-chest"),
+            Self::Torso => aurora_i18n::tr!("ui-options-camera-joint-torso"),
+            Self::Pelvis => aurora_i18n::tr!("ui-options-camera-joint-pelvis"),
+            Self::LeftCollar => aurora_i18n::tr!("ui-options-camera-joint-left-collar"),
+            Self::RightCollar => aurora_i18n::tr!("ui-options-camera-joint-right-collar"),
+            Self::LeftShoulder => aurora_i18n::tr!("ui-options-camera-joint-left-shoulder"),
+            Self::RightShoulder => aurora_i18n::tr!("ui-options-camera-joint-right-shoulder"),
+            Self::LeftElbow => aurora_i18n::tr!("ui-options-camera-joint-left-elbow"),
+            Self::RightElbow => aurora_i18n::tr!("ui-options-camera-joint-right-elbow"),
+            Self::LeftWrist => aurora_i18n::tr!("ui-options-camera-joint-left-wrist"),
+            Self::RightWrist => aurora_i18n::tr!("ui-options-camera-joint-right-wrist"),
+            Self::LeftHip => aurora_i18n::tr!("ui-options-camera-joint-left-hip"),
+            Self::RightHip => aurora_i18n::tr!("ui-options-camera-joint-right-hip"),
+            Self::LeftKnee => aurora_i18n::tr!("ui-options-camera-joint-left-knee"),
+            Self::RightKnee => aurora_i18n::tr!("ui-options-camera-joint-right-knee"),
+            Self::LeftAnkle => aurora_i18n::tr!("ui-options-camera-joint-left-ankle"),
+            Self::RightAnkle => aurora_i18n::tr!("ui-options-camera-joint-right-ankle"),
+            Self::LeftFoot => aurora_i18n::tr!("ui-options-camera-joint-left-foot"),
+            Self::RightFoot => aurora_i18n::tr!("ui-options-camera-joint-right-foot"),
+            Self::LeftToe => aurora_i18n::tr!("ui-options-camera-joint-left-toe"),
+            Self::RightToe => aurora_i18n::tr!("ui-options-camera-joint-right-toe"),
+        }
+    }
+
+    pub fn choices() -> [(Option<Self>, &'static str); 24] {
+        let mut choices: [(Option<Self>, &'static str); 24] = [(None, aurora_i18n::tr!("common-disabled")); 24];
+        for (choice, joint) in choices[1..].iter_mut().zip(Self::ALL) {
+            *choice = (Some(joint), joint.label());
+        }
+        choices
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraSettings {
@@ -257,6 +383,10 @@ pub struct CameraSettings {
     pub show_avatar_in_mouselook: bool,
     /// Optional animated eye position; mouse aim never follows head rotation.
     pub mouselook_follow_eyes: bool,
+    /// Move the third-person avatar camera and focus with this animated joint.
+    pub third_person_follow_joint: Option<CameraFollowJoint>,
+    /// Strength of the selected joint's translation, in percent (100 = full).
+    pub third_person_follow_intensity: u16,
     /// FSScrollWheelExitsMouselook.
     pub wheel_exits_mouselook: bool,
     /// The angle of the right-button zoom in mouselook, remembered from one
@@ -347,6 +477,8 @@ impl Default for CameraSettings {
             enable_mouselook: true,
             show_avatar_in_mouselook: false,
             mouselook_follow_eyes: false,
+            third_person_follow_joint: None,
+            third_person_follow_intensity: 100,
             wheel_exits_mouselook: true,
             // no zoom until the wheel is turned once while the button is held
             mouselook_zoom_fov: None,
