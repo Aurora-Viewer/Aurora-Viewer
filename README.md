@@ -111,37 +111,34 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.6 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.9 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>A showcase for your outfits</h3>
-      Appearance's Outfit gallery shows each outfit as a large picture, with
-      favourites, folders and one-click wear. Auto portrait frames you in a
-      studio, and Take the portraits does every outfit in one go.
+      <h3>Aurora Weather</h3>
+      Rain, snow, wind, thunder and northern lights, with puddles, lying
+      snow and footprints. Choose yours in the Environment window, or let
+      regions set it (off by default).
     </td>
     <td width="50%" valign="top">
-      <h3>65 photo looks built in</h3>
-      The photo LUT tab comes with 20 looks by Czar Fenris and 45 by Nanner
-      Pudding, shared with every Aurora user. Import several .cube files of
-      your own at once.
+      <h3>Avatar Studio</h3>
+      A calm space to dress, pose and photograph your avatar, with its own
+      animation editor: keyframes, a timeline, ANIM and BVH import.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>The Milky Way from real stars</h3>
-      The night sky's band is drawn from the 2.5 million stars of the
-      Tycho-2 Catalogue, and Star hour can follow the real clock.
-      Advanced › Rendering types hides parts of the world, like the Legacy
-      Viewer.
+      <h3>Lua scripts</h3>
+      SLua scripts get a real editor: Lua colours, completion, hover help,
+      and the compile target of your choice. New script can create a Lua
+      script on a region with SLua.
     </td>
     <td valign="top">
-      <h3>Poser, building and inventory</h3>
-      Space brakes your avatar like the Legacy Viewer, the poser gets
-      Save as…, move handles are easier to grab, land selections snap to
-      the parcel grid, and Favorites lists starred items without their
-      folders.
+      <h3>Gamepad and VR</h3>
+      Switch between First Person, Avatar Mode and Flycam with a gamepad,
+      on the desktop or in VR. The camera can also follow an animated
+      body part.
     </td>
   </tr>
 </table>
@@ -1161,6 +1158,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |

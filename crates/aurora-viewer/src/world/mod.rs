@@ -13,6 +13,7 @@ pub mod calling_cards;
 
 mod arrival_wait;
 pub mod beacons;
+pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
@@ -39,6 +40,7 @@ pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;
+pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -163,6 +165,8 @@ pub struct Region {
     pub avatar_hover_height: bool,
     /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
     pub lsl_syntax_id: Option<Uuid>,
+    /// SimulatorFeatures' LuaScriptsEnabled: the region runs SLua scripts.
+    pub lua_scripts: bool,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -180,6 +184,9 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
+    /// post links in chat applies here, so the role editor shows it.
+    pub group_chat_post_links: bool,
     pub max_link_children: Option<u32>,
     pub animated_object_max_tris: u32,
 }
@@ -471,6 +478,8 @@ pub struct World {
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
+    /// Selection and give beams, ours and the others' (`beams`).
+    pub beams: beams::Beams,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
@@ -617,6 +626,11 @@ pub struct World {
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
     /// filter by `parcel_object_visibility`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
+    /// Local dressing-room visibility; independent of photo choices.
+    pub avatar_studio: bool,
+    /// Avatar Studio's display-only hover height (metres) that our avatar's
+    /// entry of `avatar_poses` carries, as the scene last posed it.
+    pub avatar_studio_lift: f32,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -697,6 +711,8 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// A ban (or its lifting) on its way to all our groups.
+    pub ban_all: group_ban_all::BanAll,
     /// The group title worn by region, and every group's titles for the
     /// Group titles window (FSGroupTitleRegionMgr).
     pub region_titles: region_titles::RegionTitles,
@@ -718,6 +734,13 @@ pub struct World {
     pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
+    /// "Teleport completed from <SLURL>" in nearby chat after a teleport to
+    /// another region (FSShowBackSLURL, from the settings).
+    pub show_back_slurl: bool,
+    /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
+    /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
+    /// there) and said on its arrival.
+    tp_back_slurl: Option<String>,
     /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -872,6 +895,7 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
+            beams: beams::Beams::default(),
             object_im_filter: object_im_filter::Settings::default(),
             anti_spam: Default::default(),
             appearance_counter: 1,
@@ -953,6 +977,8 @@ impl World {
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
             photo_isolation: Default::default(),
+            avatar_studio: false,
+            avatar_studio_lift: 0.0,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -978,6 +1004,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            ban_all: Default::default(),
             region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
@@ -999,6 +1026,8 @@ impl World {
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
+            show_back_slurl: true,
+            tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),
             cache_dir: None,
@@ -1075,6 +1104,32 @@ impl World {
         crate::grids::here(Some(home), Some(&region.opensim))
     }
 
+    /// LLAgentUI::buildSLURL (indra/newview/llagentui.cpp): where the agent
+    /// is now, on the main region's grid. None before the first arrival,
+    /// with no region name yet, or under RLVa `@showloc` (stricter than the
+    /// Legacy Viewer, whose line names the place left even then).
+    fn back_slurl(&self) -> Option<String> {
+        if !self.arrived_once || self.rlva.has("showloc") {
+            return None;
+        }
+        let handle = self.main_region?;
+        let name = self.regions.get(&handle).map(|r| r.name.as_str()).filter(|n| !n.is_empty())?;
+        Some(crate::slurl::make_on(self.grid_of(handle).as_deref(), name, self.agent.position))
+    }
+
+    /// process_agent_movement_complete (indra/newview/llviewermessage.cpp,
+    /// FSShowBackSLURL): the teleport's "completed_from" message
+    /// (teleport_strings.xml) in nearby chat, a ChatSystemMessageTip.
+    fn say_back_slurl(&mut self, slurl: &str) {
+        if !self.show_back_slurl || self.rlva.has("showloc") {
+            return;
+        }
+        self.system_notice(
+            aurora_i18n::tr!("world-mod-teleport-completed-from", slurl = slurl.to_owned()),
+            notice_topics::Topic::Teleport,
+        );
+    }
+
     /// An arrival whose parcel did not come within a few seconds is saved
     /// with what is known (the region name).
     pub fn flush_arrival(&mut self, now: Instant) {
@@ -1115,6 +1170,8 @@ impl World {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.beams
+            .forget(std::time::Instant::now(), |id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -2154,6 +2211,7 @@ impl World {
             voice_server: String::new(),
             avatar_hover_height: false,
             lsl_syntax_id: None,
+            lua_scripts: false,
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
@@ -2163,6 +2221,7 @@ impl World {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -2604,7 +2663,7 @@ impl World {
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
-                self.chat_log.login(l.agent_id);
+                self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 if self.chat_log.cfg.import_at_login
                     && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
                 {
@@ -2719,21 +2778,25 @@ impl World {
                 materials_rate,
                 materials_max,
                 lsl_syntax_id,
+                lua_scripts,
                 grid_status_feed,
                 grid_status_page,
                 currency_base_uri,
                 opensim,
                 currency_symbol,
                 export_supported,
+                group_chat_post_links,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
+                r.lua_scripts = lua_scripts;
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.opensim = opensim;
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
+                r.group_chat_post_links = group_chat_post_links;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -2773,8 +2836,8 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
-            NetEvent::LslSyntax { id, keywords } => {
-                self.on_lsl_syntax(id, keywords);
+            NetEvent::LslSyntax { id, keywords, lua } => {
+                self.on_lsl_syntax(id, keywords, lua);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {
@@ -2872,6 +2935,9 @@ impl World {
                 if self.teleporting {
                     self.friends_only_teleport_arrival();
                     self.tp_cancel.on_end();
+                }
+                if let Some(slurl) = self.tp_back_slurl.take().filter(|_| self.teleporting) {
+                    self.say_back_slurl(&slurl);
                 }
                 self.teleporting = false;
                 self.park_far_regions();
@@ -3090,6 +3156,7 @@ impl World {
             | NetEvent::SessionStarted { .. }
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
+            | NetEvent::SessionModerationFailed { .. }
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
                 match &ev {
@@ -3252,6 +3319,9 @@ impl World {
                     log::info!("Restoring canceled teleport request");
                     self.tp_failed = false;
                 }
+                // the region left is still the main one: the session changes
+                // it right after this event (switch_region)
+                self.tp_back_slurl = self.back_slurl();
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
@@ -3315,6 +3385,7 @@ impl World {
                 self.cancel_friend_join();
                 self.tp_history.failed();
                 self.tp_cancel.on_end();
+                self.tp_back_slurl = None;
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.system_notice(
@@ -3327,6 +3398,10 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                None
+            }
+            NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
+                log::info!("alert muted during a ban in all groups: {message}");
                 None
             }
             NetEvent::Alert { message } => {
@@ -3359,11 +3434,14 @@ impl World {
                 self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
                 None
             }
-            // process_script_question drops only the questions of a blocked
-            // object (LLMuteList::isMuted(taskid)): not those of a blocked
-            // owner, nor on any other condition (no click needed, object out
-            // of view or unknown, another region, Do Not Disturb)
-            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
+            // A permission question follows the same block rule as script
+            // dialogs and URLs (`object_blocked`): a blocked object, by id or
+            // by name, or the blocked owner of an object in the scene.
+            // process_script_question checks the object id alone
+            // (LLMuteList::isMuted(taskid)); the owner and name checks are
+            // stricter. No other condition drops it (no click needed, object
+            // out of view or unknown, another region, Do Not Disturb).
+            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
@@ -3993,6 +4071,10 @@ impl World {
                 self.search.events.insert(e.id, *e);
                 None
             }
+            NetEvent::GroupBanInGroup { group, agent, ban, ok } => {
+                self.on_group_ban_in_group(group, agent, ban, ok);
+                None
+            }
             ev @ (NetEvent::GroupMembers(_)
             | NetEvent::GroupRoles(_)
             | NetEvent::GroupRoleMembers(_)
@@ -4306,6 +4388,25 @@ impl World {
                     .is_some_and(|o| o.is_avatar());
                 if source != self.agent_id && known {
                     self.point_at.receive(effect, source, target, offset, kind);
+                }
+                None
+            }
+            NetEvent::Beam {
+                effect,
+                source,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                // LLHUDEffectSpiral::unpackData: its source and its target
+                // object must be in the world; ours are drawn on their own
+                if source != self.agent_id {
+                    let objects = &self.objects;
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
                 }
                 None
             }
@@ -5325,6 +5426,13 @@ impl World {
     /// (LLAvatarNameCache::get with a callback).
     pub fn flush_online_notices(&mut self) {
         for (id, n, online) in self.social.take_online_notices() {
+            // a set with "Show notifications" brings them as a toast and in
+            // nearby chat when the global choices are off
+            // (LLNotificationTipHandler::processNotification,
+            // on_avatar_name_cache_notify; FIRE-3522)
+            let for_set = self.contact_sets.notify_for(&id);
+            let toast = self.notifications.toasts.presence || (self.contact_sets.notices_toast && for_set);
+            let in_chat = self.notifications.toasts.presence_in_chat || (self.contact_sets.notices_chat && for_set);
             // FIRE-2731 (on_avatar_name_cache_notify)
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
@@ -5337,7 +5445,7 @@ impl World {
             }
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
-            if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
+            if toast && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
                 let notification = self.notifications.push_presence(id, n.clone(), online);
                 self.notifications
                     .link_name(notification, self.social.name_of(&id), notifications::NameTarget::Avatar(id));
@@ -5353,7 +5461,7 @@ impl World {
             }
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
-            if self.notifications.toasts.presence_in_chat {
+            if in_chat {
                 // checked as nearby chat (LLAvatarTracker::processNotify),
                 // unless notices are kept quiet (#741)
                 if self.alerts(ChatKind::System) {
@@ -5504,6 +5612,12 @@ impl World {
     /// (LFSimFeatureHandler::simSupportsExport).
     pub fn export_supported(&self) -> bool {
         self.main().is_some_and(|r| r.export_supported)
+    }
+
+    /// The region we are in applies the ability to post links in group
+    /// chat (LLViewerRegion::groupChatPostLinksEnabled for gAgent's region).
+    pub fn group_chat_post_links(&self) -> bool {
+        self.main().is_some_and(|r| r.group_chat_post_links)
     }
 
     /// The status feed and page the agent's region names for its OpenSim
@@ -7219,6 +7333,80 @@ mod motion_tests {
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
     }
 
+    /// FSShowBackSLURL: a teleport through TeleportFinish says, on its
+    /// arrival, the SLURL of the place left; a local teleport, a failed one,
+    /// the setting off or RLVa `@showloc` say nothing.
+    #[test]
+    fn a_teleport_to_another_region_says_where_it_came_from() {
+        fn back_lines(world: &World) -> Vec<String> {
+            world
+                .chat
+                .iter()
+                .filter(|l| l.text.contains("/Demo%20Start/40/50/30"))
+                .map(|l| l.text.clone())
+                .collect()
+        }
+        fn hop(world: &mut World, from: RegionHandle, fail: bool) -> RegionHandle {
+            let to = from + (256_u64 << 32);
+            world.begin_teleport(true);
+            world.apply(NetEvent::TeleportStarted { flags: 0 });
+            world.apply(NetEvent::TeleportFinished { handle: to, flying: false });
+            if fail {
+                world.apply(NetEvent::TeleportFailed { reason: "no".into() });
+                return from;
+            }
+            world.apply(NetEvent::MainRegionChanged { handle: to });
+            world.apply(NetEvent::AgentMovementComplete {
+                handle: to,
+                position: Vec3::new(10.0, 10.0, 20.0),
+                look_at: Vec3::X,
+            });
+            to
+        }
+        let (mut world, handle) = teleport_fixture();
+        world.regions.get_mut(&handle).expect("region").name = "Demo Start".into();
+        hop(&mut world, handle, false);
+        let lines = back_lines(&world);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].contains("http://maps.secondlife.com/secondlife/Demo%20Start/40/50/30"),
+            "{lines:?}"
+        );
+
+        let (mut world, handle) = teleport_fixture();
+        world.regions.get_mut(&handle).expect("region").name = "Demo Start".into();
+        // the failed teleport's SLURL is not said by the next arrival
+        hop(&mut world, handle, true);
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportLocal { flying: false });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(back_lines(&world).is_empty(), "local or failed teleport");
+
+        world.show_back_slurl = false;
+        hop(&mut world, handle, false);
+        assert!(back_lines(&world).is_empty(), "setting off");
+
+        let (mut world, handle) = teleport_fixture();
+        world.regions.get_mut(&handle).expect("region").name = "Demo Start".into();
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Controller".to_owned(),
+            source_id: Uuid::from_u128(2),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: Vec3::ZERO,
+            message: "@showloc=n".to_owned(),
+        }));
+        assert!(world.rlva.has("showloc"));
+        hop(&mut world, handle, false);
+        assert!(back_lines(&world).is_empty(), "@showloc");
+    }
+
     #[test]
     fn remote_teleport_applies_both_flight_states_and_the_explicit_arrival_preference() {
         for previous in [false, true] {
@@ -8710,12 +8898,14 @@ mod motion_tests {
                 materials_rate: None,
                 materials_max: None,
                 lsl_syntax_id: Uuid::nil(),
+                lua_scripts: false,
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

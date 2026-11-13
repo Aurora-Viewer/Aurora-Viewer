@@ -513,6 +513,13 @@ pub enum NetEvent {
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
     },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
+    },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
     /// Answer of a voice call request: the body, or the HTTP status of the
@@ -616,6 +623,18 @@ pub enum NetEvent {
         target: Uuid,
         animations: bool,
     },
+    /// A selection or give beam (ViewerEffect, LLHUDEffectSpiral of type
+    /// LL_HUD_EFFECT_BEAM): from `source` to the `target` object, or to the
+    /// global `position` when the target is nil; the sender's RGBA colour,
+    /// shown for `duration` seconds unless sent again.
+    Beam {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -648,6 +667,8 @@ pub enum NetEvent {
         /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
         /// when the region names none.
         lsl_syntax_id: Uuid,
+        /// "LuaScriptsEnabled": the region runs SLua scripts.
+        lua_scripts: bool,
         /// "OpenSimExtras" "GridStatusRSS" and "GridStatus": an OpenSim
         /// grid's status feed and page (Help › Grid status); empty when
         /// not given, always on Second Life.
@@ -665,6 +686,9 @@ pub enum NetEvent {
         /// "OpenSimExtras" "ExportSupported": the region honours the export
         /// permission (LFSimFeatureHandler::simSupportsExport).
         export_supported: bool,
+        /// "GroupChatPostLinksEnabled": the region applies the group ability
+        /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
+        group_chat_post_links: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -770,6 +794,9 @@ pub enum NetEvent {
     LslSyntax {
         id: Uuid,
         keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+        /// The region's SLua keywords (ScriptDefinitions); None keeps the
+        /// bundled ones.
+        lua: Option<Vec<crate::lsl_syntax::Keyword>>,
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
@@ -968,6 +995,11 @@ pub enum NetEvent {
         message: String,
         url: String,
     },
+    /// The simulator asks for a web window on this URL (llOpenFloater, the
+    /// "URLFloater" GenericMessage; `url_floater.rs`).
+    UrlFloater {
+        url: String,
+    },
     /// llMapDestination (ScriptTeleportRequest): a place to show on the
     /// world map. Despite its name it never teleports by itself.
     ScriptTeleportRequest {
@@ -1063,6 +1095,14 @@ pub enum NetEvent {
     GroupBanList {
         group: Uuid,
         bans: Vec<(Uuid, f64)>,
+    },
+    /// One group of a `BanInGroups`: whether the server took the ban (or
+    /// its lifting).
+    GroupBanInGroup {
+        group: Uuid,
+        agent: Uuid,
+        ban: bool,
+        ok: bool,
     },
     /// The group's parcels and land totals (PlacesReply), one packet.
     GroupLand(Box<crate::group_money::GroupLandReply>),
@@ -1396,12 +1436,12 @@ pub enum NetEvent {
         serial: Option<i16>,
         result: Result<Vec<crate::build::TaskItem>, String>,
     },
-    /// ScriptRunningReply (and the event queue's Mono flag when given).
+    /// ScriptRunningReply (and the event queue's VM flags when given).
     ScriptRunning {
         object_id: Uuid,
         item_id: Uuid,
         running: bool,
-        mono: Option<bool>,
+        compile: Option<crate::scripts::CompileTarget>,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -1600,6 +1640,13 @@ pub enum NetCommand {
         method: crate::social::SessionMethod,
         session: Uuid,
     },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.
     Call {
@@ -1725,6 +1772,16 @@ pub enum NetCommand {
         effect: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// Our selection or give beam (LLHUDEffectSpiral::packData, type
+    /// LL_HUD_EFFECT_BEAM): to the `target` object, or to the global
+    /// `position` when it is nil.
+    Beam {
+        effect: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -1958,6 +2015,14 @@ pub enum NetCommand {
         ids: Vec<Uuid>,
         /// BAN_UPDATE: the list asked again after the action.
         refresh: bool,
+    },
+    /// The GroupAPIv1 capability, one group after the other, half a second
+    /// apart: `agent` banned (or unbanned) in each of `groups`; each answer
+    /// is a `GroupBanInGroup` (LLGroupActions::banFromAllGroupsCoro).
+    BanInGroups {
+        agent: Uuid,
+        groups: Vec<Uuid>,
+        ban: bool,
     },
     /// GroupRoleUpdate (LLGroupMgrGroupData::sendRoleChanges).
     GroupRoleUpdate {
@@ -2269,6 +2334,9 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
+        /// A script (asset type 10) written in Lua ([`crate::scripts::is_slua_item`]):
+        /// compiled for "luau", never "mono".
+        lua: bool,
         data: Vec<u8>,
     },
     /// Create a named notecard, then upload its text after the matching
@@ -2279,6 +2347,18 @@ pub enum NetCommand {
         name: String,
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
+    },
+    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// onCreateScript): CreateInventoryItem, then its text through
+    /// UpdateScriptAgent, compiled for Mono. Answered by
+    /// `InventoryContentSaved`, with the new item's id when it was created
+    /// but its text could not be saved.
+    CreateScriptItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
     },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through

@@ -8,6 +8,8 @@ pub mod animesh;
 pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
+pub mod avatar_snow;
+pub mod avatar_studio;
 pub mod banlines;
 pub mod blend_order;
 mod blender_live;
@@ -52,6 +54,8 @@ pub mod picking;
 mod plants;
 pub mod portals;
 pub mod probes;
+mod rain_ground;
+pub mod rain_sound;
 pub mod render_types;
 pub mod rez;
 mod sculpt_watch;
@@ -60,6 +64,8 @@ pub mod settings;
 pub mod shape;
 mod shown_bakes;
 mod skin_binds;
+pub mod snow_detail;
+pub mod snow_trail;
 pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
@@ -68,6 +74,7 @@ pub mod surface_area;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+pub mod thunder;
 mod tree_detail;
 mod world_overlays;
 pub use sync_plan::LodInfo;
@@ -454,6 +461,8 @@ pub struct ObjGpu {
     /// Avatar wearing this object (attachments), for the avatar limit.
     pub owner_avatar: Option<usize>,
     pub first_person_hidden: bool,
+    /// Physical (FLAGS_USE_PHYSICS): out of the rain's shelter map.
+    pub physical: bool,
     /// Reflection probe flagged as a mirror (box); listed in
     /// `Scene::mirror_objects`.
     pub mirror: bool,
@@ -542,6 +551,7 @@ impl ObjGpu {
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
             (self.hidden, object_flags::HIDDEN),
+            (self.physical, object_flags::PHYSICAL),
         ] {
             if on {
                 fl |= bit;
@@ -599,6 +609,9 @@ struct CullCtx<'a> {
     reflection_distance: f32,
     shadows: bool,
     reflections: bool,
+    /// The CPU lists are built: the rain's shelter map takes what stands
+    /// still in its square, shadows or not (`DrawLists::shelter_casters`).
+    shelter: bool,
 }
 
 /// An object that passed the tests: its culling sphere and the views it
@@ -612,6 +625,8 @@ struct ObjVis {
     /// renderer knows (`ProbeCapture::reach`), so the camera's reach and
     /// small object culling do not apply.
     probes: bool,
+    /// In the rain's shelter map (`CullCtx::shelter`).
+    shelters: bool,
 }
 
 /// Object tests of the CPU lists, the same as `face_mask` in cull.wgsl:
@@ -650,7 +665,17 @@ fn object_visibility(
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
     let probes = ctx.reflections;
-    if !in_view && !casts && !reflects && !probes {
+    // the shelter map's square (renderer.rs `rain_shelter_matrix`: 40 m
+    // each way, 60 m up and down), what stands still (cull.wgsl `moves`)
+    let half = Vec3::new(40.0, 40.0, 60.0) + Vec3::splat(sr);
+    let shelters = ctx.shelter
+        && !g.is_avatar
+        && !g.rigged
+        && !g.physical
+        && g.owner_avatar.is_none()
+        && avatar.is_none()
+        && (sc - ctx.view.eye).abs().cmple(half).all();
+    if !in_view && !casts && !reflects && !probes && !shelters {
         return None;
     }
     // tiny objects far away are culled (LL-like small object culling)
@@ -664,6 +689,7 @@ fn object_visibility(
         casts: casts && large,
         reflects: reflects && large,
         probes,
+        shelters: shelters && large,
     })
 }
 
@@ -809,6 +835,12 @@ pub struct AvatarSample {
 }
 
 pub struct Scene {
+    /// Aurora Weather: the lying snow's detail texture.
+    pub snow_detail: snow_detail::SnowDetail,
+    /// Aurora Weather: the snow gathered on the avatars near the camera.
+    pub avatar_snow: avatar_snow::AvatarSnow,
+    /// Aurora Weather: the feet watched for footprints in the snow.
+    pub snow_trails: snow_trail::SnowTrails,
     auto_hover: auto_hover::AutoHover,
     remote_soles: auto_hover::RemoteSoles,
     foot_scope: foot_scope::Scope,
@@ -866,6 +898,12 @@ pub struct Scene {
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
+    studio_visible: bool,
+    studio_roots: Vec<Uuid>,
+    pub studio_stage: avatar_studio::Stage,
+    pub studio_pose: crate::avatar_studio::Pose,
+    pub studio_floor_offset: f32,
+    pub studio_hover_height: f32,
     /// The kinds of objects not drawn (Advanced › Rendering types), set by
     /// the app at each frame, and those the objects were last flagged for.
     pub hidden_types: render_types::Hidden,
@@ -877,6 +915,13 @@ pub struct Scene {
     /// The avatars and linksets chosen for the photo, every prim and
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
+    /// The avatar whose part the poser shows (its object index): its body
+    /// and what it wears go to `part_faces`, the part kept on its skinned
+    /// faces by the frame's `part_joints`.
+    pub poser_part: Option<usize>,
+    /// Whether the last lists drew any of that avatar's skinned faces (its
+    /// body or a rigged mesh): without, the poser keeps the bone outline.
+    pub poser_part_skinned: bool,
     /// The avatar an inventory drag would give to, and what it wears,
     /// outlined like the photo's (`mark_give_target`, #991).
     give_marks: (Option<usize>, std::collections::HashSet<usize>),
@@ -958,6 +1003,9 @@ pub struct Scene {
     light_scratch: lights::Scratch,
     /// The projectors that cast shadows (`lights.rs`).
     spot_shadows: lights::SpotShadowSlots,
+    /// Rain prototype: the terrain's heights around the camera
+    /// (`rain_ground.rs`).
+    rain_ground: rain_ground::RainGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1075,7 +1123,7 @@ pub struct Scene {
     /// How muffled each world sound is behind walls (sound_occlusion.rs).
     sound_occlusion: sound_occlusion::SoundOcclusion,
     /// The reverb of the surroundings (sound_reverb.rs).
-    sound_reverb: sound_reverb::SoundReverb,
+    pub sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -1532,6 +1580,9 @@ impl Scene {
         default_motions::register(&mut anims, &avatar_lib.rig);
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
+            snow_detail: Default::default(),
+            avatar_snow: Default::default(),
+            snow_trails: Default::default(),
             jobs,
             job_rx,
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
@@ -1568,10 +1619,18 @@ impl Scene {
             too_complex: Default::default(),
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
+            studio_visible: false,
+            studio_roots: Vec::new(),
+            studio_stage: Default::default(),
+            studio_pose: Default::default(),
+            studio_floor_offset: 0.0,
+            studio_hover_height: 0.0,
             hidden_types: Default::default(),
             hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
+            poser_part: None,
+            poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
@@ -1607,6 +1666,7 @@ impl Scene {
             light_textures: HashMap::new(),
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
+            rain_ground: Default::default(),
             mirror_objects: Default::default(),
             selection_wire: Default::default(),
             inspected_mesh: None,
@@ -1816,26 +1876,38 @@ impl Scene {
             }
             return matches!(e.state, GeomState::Ready(_));
         }
+        // (a failed build is a geometry that failed: drawn without it)
+        let failed = move || JobResult::GeometryFailed { key };
         match key {
             GeomKey::Prim { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let mesh = aurora_prim::generate_volume(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let mesh = aurora_prim::generate_volume(&params, detail);
+                        JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
+                    },
+                    failed,
+                );
             }
             GeomKey::Flexible { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
-                    let mesh =
-                        aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
+                        let mesh = aurora_prim::volume::generate_flexible_volume(
+                            &params,
+                            detail,
+                            &sim.path(Vec3::ZERO, Quat::IDENTITY),
+                            Vec3::ONE,
+                        );
+                        JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
+                    },
+                    failed,
+                );
             }
             GeomKey::Sculpt { lod, .. } => {
                 let params = obj.volume;
@@ -1847,29 +1919,35 @@ impl Scene {
                     return false; // wait for the sculpt texture
                 };
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    JobResult::geometry(
-                        key,
-                        jobs::volume_to_faces(&mesh),
-                        (mesh.surface_area, mesh.grid_area),
-                        pool.as_deref(),
-                    )
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
+                        JobResult::geometry(
+                            key,
+                            jobs::volume_to_faces(&mesh),
+                            (mesh.surface_area, mesh.grid_area),
+                            pool.as_deref(),
+                        )
+                    },
+                    failed,
+                );
             }
             GeomKey::SculptPlaceholder { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let mesh = aurora_prim::sculpt_placeholder(&params, detail);
-                    JobResult::geometry(
-                        key,
-                        jobs::volume_to_faces(&mesh),
-                        (mesh.surface_area, mesh.grid_area),
-                        pool.as_deref(),
-                    )
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let mesh = aurora_prim::sculpt_placeholder(&params, detail);
+                        JobResult::geometry(
+                            key,
+                            jobs::volume_to_faces(&mesh),
+                            (mesh.surface_area, mesh.grid_area),
+                            pool.as_deref(),
+                        )
+                    },
+                    failed,
+                );
             }
             GeomKey::Mesh { id, lod } => {
                 self.meshes.want(id, lod);
@@ -1877,11 +1955,14 @@ impl Scene {
             }
             GeomKey::Tree { species, lod } => {
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let s = aurora_prim::tree::tree_species(Some(species));
-                    let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let s = aurora_prim::tree::tree_species(Some(species));
+                        let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
+                        JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
+                    },
+                    failed,
+                );
             }
             // (built at once by `request_grass`, which needs the ground)
             GeomKey::Grass { .. } => return false,
@@ -1902,13 +1983,16 @@ impl Scene {
         let key = GeomKey::AvatarMorph { part, weights: hash };
         if !self.geoms.contains_key(&key) {
             let pool = self.staging.clone();
-            self.jobs.spawn(move || match lib.parts.get(part as usize) {
-                Some(p) => {
-                    let (face, min, max) = morph::morphed(p, &w);
-                    JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
-                }
-                None => JobResult::GeometryFailed { key },
-            });
+            self.jobs.spawn_or(
+                move || match lib.parts.get(part as usize) {
+                    Some(p) => {
+                        let (face, min, max) = morph::morphed(p, &w);
+                        JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
+                    }
+                    None => JobResult::GeometryFailed { key },
+                },
+                move || JobResult::GeometryFailed { key },
+            );
             self.geom_insert(key, GeomState::Pending);
         }
         Some(key)
@@ -2260,6 +2344,7 @@ impl Scene {
             r.surface.free(renderer, &mut self.textures);
         }
         self.water.clear(renderer);
+        self.studio_stage.clear(renderer);
         self.banlines.clear(renderer);
         self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
@@ -2673,9 +2758,20 @@ impl Scene {
         let types = self.hidden_types;
         // (a HUD is no rendering type: it stays)
         let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
-        if self.photo_isolation_version != iso.version || self.hidden_types_applied != types {
+        let studio_roots = if world.avatar_studio {
+            isolate::studio_roots(world)
+        } else {
+            Vec::new()
+        };
+        if self.photo_isolation_version != iso.version
+            || self.hidden_types_applied != types
+            || self.studio_visible != world.avatar_studio
+            || self.studio_roots != studio_roots
+        {
             self.photo_isolation_version = iso.version;
             self.hidden_types_applied = types;
+            self.studio_visible = world.avatar_studio;
+            self.studio_roots = studio_roots;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
                 let hidden = left_out(idx, g.hud);
                 if g.hidden != hidden {
@@ -2683,7 +2779,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.applied() || types.any_object() {
+        } else if iso.applied() || types.any_object() || world.avatar_studio {
             for &idx in synced {
                 if let Some(g) = self.gpu.get_mut(idx) {
                     g.hidden = left_out(idx, g.hud);
@@ -2854,7 +2950,13 @@ impl Scene {
         // environment selector's items)
         for id in world.eep.wanted_settings() {
             match self.settings.get(id) {
-                settings::SettingsState::Ready(s) => world.eep.on_settings(id, Some(s)),
+                settings::SettingsState::Ready(s) => {
+                    // its Aurora Weather, from its name, before it applies
+                    if let settings::MapState::Ready(map) = self.settings.map(id) {
+                        world.eep.note_asset_weather(id, crate::weather::region::of_settings(&map));
+                    }
+                    world.eep.on_settings(id, Some(s));
+                }
                 settings::SettingsState::Failed => world.eep.on_settings(id, None),
                 settings::SettingsState::Pending => {}
             }
@@ -3316,9 +3418,12 @@ impl Scene {
     fn apply_move(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, m: MoveSync) {
         self.note_light(world, idx);
         let posed = self.posed_of(renderer, self.gpu.get(idx).and_then(|g| g.geom), m.posed_rest);
+        // (as `sync_object`: what moves is out of the rain's shelter map)
+        let physical = world.objects.get(idx).is_some_and(|o| o.update_flags & 1 != 0) || Self::linkset_moving(world, idx);
         let Some(g) = self.gpu.get_mut(idx) else {
             return;
         };
+        g.physical = physical;
         g.posed = posed;
         g.wide = g.wide.filter(|_| posed.is_some());
         g.hud = m.xf.2;
@@ -3623,6 +3728,11 @@ impl Scene {
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         g.first_person_hidden = first_person_hidden;
+        // FLAGS_USE_PHYSICS, or moving now (its linkset reported with a
+        // velocity or a spin: keyframed motion, a scripted walker): the
+        // snow is laid where it stands from the ground's memory, so on what
+        // moves it slid over it
+        g.physical = o.update_flags & 1 != 0 || Self::linkset_moving(world, idx);
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -3783,9 +3893,21 @@ impl Scene {
         }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
-        let rig_order = skeleton_owner
-            .filter(|_| rigged)
-            .map(|(_, skeleton)| blend_order::RigOrder::of(world, idx, skeleton));
+        let rig_order = skeleton_owner.filter(|_| rigged).map(|(_, skeleton)| {
+            // eyelashes, brows: the joints of a nonzero weight all of the face
+            let skin = match geom_key {
+                GeomKey::Mesh { id, .. } => self.meshes.meta(&id).and_then(|m| m.skin),
+                _ => None,
+            };
+            let face_detail = skin.is_some_and(|skin| {
+                blend_order::face_detail(
+                    geom.joint_bounds
+                        .iter()
+                        .filter_map(|b| skin.joint_names.get(b.joint as usize).map(String::as_str)),
+                )
+            });
+            blend_order::RigOrder::of(world, idx, skeleton, face_detail)
+        });
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
@@ -4202,6 +4324,24 @@ impl Scene {
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
         self.gpu[idx] = g;
+    }
+
+    /// Whether object `idx` or a prim it is linked to (up to its root) was
+    /// last reported moving or turning.
+    fn linkset_moving(world: &World, mut idx: usize) -> bool {
+        for _ in 0..16 {
+            let Some(o) = world.objects.get(idx) else {
+                return false;
+            };
+            if o.velocity.length_squared() > 1e-4 || o.angular_velocity.length_squared() > 1e-4 {
+                return true;
+            }
+            let Some(parent) = world.objects.parent_of(o) else {
+                return false;
+            };
+            idx = parent;
+        }
+        false
     }
 
     /// For an attachment, the wearing avatar (full id, object index).
@@ -4771,6 +4911,8 @@ impl Scene {
             let debug = debug_alpha.is_some() || pass_view;
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
+            // the poser's hovered part: its avatar and what it wears
+            let posed = |g: &ObjGpu, i: usize| self.poser_part.is_some() && g.avatar(i) == self.poser_part;
             if by_index {
                 // (the pictured avatars and what they wear: read in the
                 // objects, on the frames a picture is taken)
@@ -4786,6 +4928,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
+                        || self.gpu.get(i).is_some_and(|g| posed(g, i))
                     {
                         visit.push((i, usage));
                     }
@@ -4805,6 +4948,7 @@ impl Scene {
                         || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || captured(g, i)
+                        || posed(g, i)
                     {
                         visit.push((i, usage));
                     }
@@ -4823,6 +4967,7 @@ impl Scene {
             reflection_distance: refl_dist,
             shadows,
             reflections,
+            shelter: full,
         };
 
         // objects in parallel
@@ -4830,10 +4975,11 @@ impl Scene {
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
+        let poser_part = self.poser_part;
         let give_marks = &self.give_marks.1;
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
-        let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
+        let under_water_plane = self.water.height.filter(|h| !self.studio_visible && view.eye.z >= *h);
         let face_sort = blend_order::face_sort_enabled();
         // Tests and secondary cameras may not supply the texture-importance
         // direction. The near plane faces into the same view frustum.
@@ -4858,10 +5004,13 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            part_faces: Vec<DrawCmd>,
+            part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
             casters: Vec<ShadowCaster>,
+            shelter: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
             probe: Vec<ShadowCaster>,
             visible: usize,
@@ -4882,10 +5031,13 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            part_faces: Vec::new(),
+            part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
             casters: Vec::new(),
+            shelter: Vec::new(),
             refl: Vec::new(),
             probe: Vec::new(),
             visible: 0,
@@ -4954,6 +5106,7 @@ impl Scene {
                 casts,
                 reflects,
                 probes,
+                shelters,
             }) = object_visibility(
                 g,
                 idx,
@@ -5043,6 +5196,14 @@ impl Scene {
                     {
                         l.select_faces.push(cmd);
                     }
+                    // the poser's hovered part: the subject's body and what it
+                    // wears (the shader keeps the part's own skinned
+                    // triangles; an unrigged worn object is coverage alone,
+                    // so the halo does not cross it)
+                    if poser_part.is_some() && avatar == poser_part && pass != Pass::Hidden {
+                        l.part_faces.push(cmd);
+                        l.part_skinned += usize::from(g.rigged || g.is_avatar);
+                    }
                 }
                 if pass == Pass::Hidden {
                     // LLVolumeGeometryManager excludes attachments and rigged
@@ -5058,6 +5219,16 @@ impl Scene {
                     // alpha-tested shadow (fs_shadow)
                     if casts && (pass != Pass::Blend || g.rigged || g.is_avatar || blend_casts) {
                         l.casters.push(ShadowCaster {
+                            cmd,
+                            center: sc,
+                            radius: sr,
+                            alpha: pass.record_flags() != 0,
+                        });
+                    }
+                    // the rain's shelter map: blended faces too (glass keeps
+                    // the rain off as well as tiles)
+                    if shelters {
+                        l.shelter.push(ShadowCaster {
                             cmd,
                             center: sc,
                             radius: sr,
@@ -5145,7 +5316,10 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.part_faces.append(&mut b.part_faces);
+            a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
+            a.shelter.append(&mut b.shelter);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
             a.visible += b.visible;
@@ -5191,6 +5365,11 @@ impl Scene {
             _ => blend_order::rig_runs,
         };
         runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Layers {
+            blend_order::quiet_runs(&self.blend_tmp, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
+        } else {
+            self.lists.blend_depth_quiet.clear();
+        }
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         // under the water: back to front, the rigged first
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
@@ -5202,10 +5381,13 @@ impl Scene {
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
+        self.lists.shelter_casters.extend(result.shelter);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.part_faces = result.part_faces;
+        self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {
@@ -5645,6 +5827,16 @@ impl Scene {
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
         let neutral_owner = (self.neutral_pose_test == Some(true)).then_some(world.agent_id);
+        let studio_pose = if world.avatar_studio {
+            self.studio_pose
+        } else {
+            crate::avatar_studio::Pose::Animated
+        };
+        let studio_ground = world
+            .avatar_models
+            .get(&world.agent_id)
+            .copied()
+            .map(|model| (model, model.transform_point3(world.avatar_lib.pelvis).z + self.studio_floor_offset));
         let physics_rig = self.physics_rig.clone();
         frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
@@ -5671,6 +5863,12 @@ impl Scene {
                 let neutral = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
                 for (dst, matrix) in chunk.iter_mut().zip(neutral) {
                     *dst = matrix.to_cols_array_2d();
+                }
+            }
+            if *owner == world.agent_id {
+                avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
+                if world.avatar_studio {
+                    avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
                 }
             }
         });
@@ -5724,6 +5922,12 @@ impl Scene {
                         *dst = matrix.to_cols_array_2d();
                     }
                 }
+                if *owner == world.agent_id {
+                    avatar_studio::write_inspection_pose(&rig, base, studio_pose, studio_ground, chunk);
+                    if world.avatar_studio {
+                        avatar_studio::lift_display_pose(studio_ground.map(|(model, _)| model), self.studio_hover_height, chunk);
+                    }
+                }
             });
         }
         self.palettes = pal;
@@ -5758,6 +5962,12 @@ impl Scene {
         // only the skeletons posed this frame are uploaded (the others
         // keep their last pose), by the sync: with the anchors of what they
         // wear, which need their owner's place in this frame
+        // the snow on each avatar, after its pose (which fills its entries)
+        for (id, slot) in &self.palette_slots {
+            if let Some(m) = self.palettes.get_mut(*slot as usize * anim::PALETTE_JOINTS + anim::AVATAR_SNOW) {
+                *m = [[self.avatar_snow.amount(id), 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
+            }
+        }
         self.posed_slots.clear();
         self.posed_slots.extend(posed.iter().map(|p| p.1));
         for (owner, slot) in posed {
@@ -5765,6 +5975,10 @@ impl Scene {
             let Some(src) = self.palettes.get(base..base + joints) else {
                 continue;
             };
+            if owner == world.agent_id {
+                // the lift this stored pose carries, for the editors' `Frame`
+                world.avatar_studio_lift = if world.avatar_studio { self.studio_hover_height } else { 0.0 };
+            }
             let dst = world.avatar_poses.entry(owner).or_default();
             dst.clear();
             // rest -> posed (attachment points are given in the default pose)
@@ -5781,6 +5995,9 @@ impl Scene {
 impl Scene {
     /// World position of an avatar's head as posed last frame.
     pub fn head_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            return self.joint_world(world, id, "mHead", now);
+        }
         let idx = world.objects.index_of_uuid(id)?;
         let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
         Some(match self.motions.get(id).and_then(|c| c.head_pos()) {
@@ -5792,6 +6009,13 @@ impl Scene {
     /// The point between an avatar's eyes, animated (`anim::Controller::eyes_pos`),
     /// else its head (`head_world`).
     pub fn eyes_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<Vec3> {
+        if world.avatar_studio && *id == world.agent_id && self.studio_pose != crate::avatar_studio::Pose::Animated {
+            return self
+                .joint_world(world, id, "mEyeLeft", now)
+                .zip(self.joint_world(world, id, "mEyeRight", now))
+                .map(|(left, right)| (left + right) * 0.5)
+                .or_else(|| self.head_world(world, id, now));
+        }
         let idx = world.objects.index_of_uuid(id)?;
         let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
         match self.motions.get(id).and_then(|c| c.eyes_pos()) {
@@ -5804,6 +6028,33 @@ impl Scene {
     /// Camera placement can then apply the hover-camera preference directly.
     pub fn eyes_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
         Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
+    }
+
+    /// A posed skeleton joint's displacement from the avatar's own shaped
+    /// rest pose, in avatar-local space: only what animation moves. The
+    /// shape and the joint offsets of worn meshes are part of the rest pose,
+    /// so a still avatar of any shape gives zero.
+    pub fn joint_offset(&self, world: &World, id: &Uuid, name: &str) -> Option<Vec3> {
+        let rig = &world.avatar_lib.rig;
+        let joint = *rig.names.get(name)?;
+        let skeleton = self.skeletons.get(id)?;
+        let neutral = skeleton.neutral_joints.get_or_init(|| {
+            let base = &skeleton.base;
+            rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale)
+                .iter()
+                .map(|m| m.w_axis.truncate())
+                .collect()
+        });
+        // An animation that keys the pelvis drops a mesh pelvis override:
+        // the still reference follows the evaluation's rule.
+        let still = match self.motions.get(id) {
+            Some(controller) => controller.still_joint(rig, neutral, joint)?,
+            None => *neutral.get(joint)?,
+        };
+        // A palette matrix maps the default rig's rest to the posed joint.
+        let rest = rig.default_world_inv[joint].inverse().w_axis.truncate();
+        let posed = world.avatar_poses.get(id)?.get(joint)?.transform_point3(rest);
+        Some(posed - still)
     }
 
     /// Stable name tag above the avatar root, also used for click depth.
@@ -5971,6 +6222,7 @@ impl Scene {
                 neutral_root_height,
                 neutral_body_height,
                 neutral_shape_hover: hover,
+                neutral_joints: std::sync::OnceLock::new(),
                 members,
                 physics,
             },
@@ -6139,6 +6391,10 @@ struct AvatarSkeleton {
     /// Shape-only body height, before mesh overrides, as used by server baking.
     neutral_body_height: f32,
     neutral_shape_hover: f32,
+    /// Joint positions of `base` with no animation, filled on first use by
+    /// the third-person body-part camera (`Scene::joint_offset`), so it is
+    /// computed once per shape or mesh-override change, not every frame.
+    neutral_joints: std::sync::OnceLock<Vec<Vec3>>,
     /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
     members: Vec<usize>,
     /// Body physics its appearance asks for (body_physics.rs).
@@ -6553,6 +6809,131 @@ mod tests {
     }
 
     #[test]
+    fn a_still_shaped_avatar_has_no_follow_joint_offset() {
+        // The third-person body-part camera follows animation only: a tall
+        // shape (or mesh joint offsets) is part of the rest pose, not motion.
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = lib.rig.clone();
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: world.agent_id,
+            texture_entry: None,
+            visual_params: lib.shape_params.values_with(&[(33, 1.0)]),
+            cof_version: 1,
+            appearance_version: 1,
+            hover_height: 0.0,
+            attachments: Vec::new(),
+        }));
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        scene.palette_base(world.agent_id);
+        scene.update_poses(&mut world, Vec3::ZERO, Instant::now());
+        for name in ["mHead", "mPelvis", "mWristLeft", "mFootRight"] {
+            let joint = rig.names[name];
+            let default_rest = rig.default_world_inv[joint].inverse().w_axis.truncate();
+            let shaped_rest = world.avatar_poses[&world.agent_id][joint].transform_point3(default_rest);
+            if name == "mHead" {
+                assert!(
+                    shaped_rest.distance(default_rest) > 0.01,
+                    "the test shape must move the head away from the default rig"
+                );
+            }
+            let offset = scene.joint_offset(&world, &world.agent_id, name).expect("posed joint");
+            assert!(offset.length() < 1e-4, "{name}: still avatar offset {offset}");
+        }
+    }
+
+    #[test]
+    fn studio_pose_is_local_and_releasing_it_restores_the_running_animation() {
+        use crate::avatar_studio::Pose;
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = lib.rig.clone();
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        let mut other = crate::demo::action_avatar(false);
+        other.local_id = 9001;
+        other.full_id = crate::demo::DEMO_LOUP;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false), other],
+        });
+        let animation_id = Uuid::from_u128(0xaaaa1235);
+        let mut animation = crate::demo::deform::animation(&rig);
+        animation.joints = vec![aurora_assets::anim::JointMotion {
+            joint_name: "mPelvis".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![
+                aurora_assets::anim::PosKey {
+                    time: 0.0,
+                    position: Vec3::Z * 0.1,
+                },
+                aurora_assets::anim::PosKey {
+                    time: 2.0,
+                    position: Vec3::Z * 0.5,
+                },
+            ],
+        }];
+        animation.looping = true;
+        animation.ease_in = 0.0;
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.anims.insert(animation_id, Arc::new(anim::BoundAnim::bind(animation, &rig)));
+        for avatar in [world.agent_id, crate::demo::DEMO_LOUP] {
+            scene.palette_base(avatar);
+            world.apply(NetEvent::AvatarAnimations {
+                sources: Vec::new(),
+                avatar,
+                anims: vec![(animation_id, 1)],
+            });
+        }
+        let now = Instant::now();
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let signals = world.animations_of(&world.agent_id).to_vec();
+        let foot = rig.names["mFootLeft"];
+        let before = world.avatar_poses[&world.agent_id][foot];
+        let original_foot = scene.joint_world(&world, &world.agent_id, "mFootLeft", now).expect("foot");
+        let own_index = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
+        let root = Scene::object_transform(&world, own_index, now, 0).expect("root").0;
+        scene.studio_floor_offset = original_foot.z - crate::avatar_studio::SOLE_HEIGHT - root.z;
+        world.avatar_studio = true;
+        for (i, pose) in [Pose::T, Pose::A].into_iter().enumerate() {
+            scene.studio_pose = pose;
+            scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(300 + i as u64 * 300));
+            let foot_now = scene.joint_world(&world, &world.agent_id, "mFootLeft", now).expect("posed foot");
+            assert!((foot_now.z - original_foot.z).abs() < 1e-5, "preset feet remain at the pedestal");
+            assert_eq!(
+                scene.head_world(&world, &world.agent_id, now),
+                scene.joint_world(&world, &world.agent_id, "mHead", now),
+                "photo autofocus follows the grounded preset head"
+            );
+            assert!(!world.avatar_poses[&crate::demo::DEMO_LOUP][foot].abs_diff_eq(world.avatar_poses[&world.agent_id][foot], 1e-4));
+            assert_eq!(world.animations_of(&world.agent_id), signals);
+        }
+        scene.studio_pose = Pose::Animated;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(900));
+        let resumed = world.avatar_poses[&world.agent_id][foot];
+        assert!(resumed.abs_diff_eq(world.avatar_poses[&crate::demo::DEMO_LOUP][foot], 1e-5));
+        assert!(
+            !resumed.abs_diff_eq(before, 1e-4),
+            "animation progressed while the studio pose was displayed"
+        );
+        assert_eq!(world.animations_of(&world.agent_id), signals);
+        scene.studio_pose = Pose::T;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(1200));
+        // Leaving releases the override even if the saved menu still says T.
+        world.avatar_studio = false;
+        scene.update_poses(&mut world, Vec3::ZERO, now + std::time::Duration::from_millis(1500));
+        assert!(world.avatar_poses[&world.agent_id][foot].abs_diff_eq(world.avatar_poses[&crate::demo::DEMO_LOUP][foot], 1e-5));
+        assert_eq!(world.animations_of(&world.agent_id), signals);
+    }
+
+    #[test]
     fn local_neutral_test_matches_auto_hover_rest_and_preserves_live_animations() {
         let lib = Arc::new(AvatarLibrary::load());
         let rig = lib.rig.clone();
@@ -6696,6 +7077,7 @@ mod tests {
                 build_mode: false,
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
+                follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
                 draw_distance: 128.0,
                 region_width: 256.0,
                 aspect: 1.0,
@@ -6760,6 +7142,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
+            follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
             draw_distance: 128.0,
             region_width: 256.0,
             aspect: 1.0,
@@ -7579,6 +7962,7 @@ mod tests {
             reflection_distance: 64.0,
             shadows: true,
             reflections: true,
+            shelter: false,
         };
         let gview = GpuCullView {
             first_person: None,
