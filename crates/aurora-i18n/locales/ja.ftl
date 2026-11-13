@@ -13909,6 +13909,7 @@ scene-nav-vertical = 垂直のキャラクター
 # About Aurora Viewer (#1126)
 about-tab-info = 情報
 about-tab-licences = ライセンス
+about-tab-libraries = ライブラリ
 about-copy = クリップボードにコピー
 about-copied = コピーしました
 about-copy-hint = サポートへの問い合わせやバグレポート用に、上記のすべてを英語でコピーします。

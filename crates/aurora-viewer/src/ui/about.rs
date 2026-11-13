@@ -4,12 +4,14 @@
 //! information with "Copy to clipboard", and the licences. Redrawn in the
 //! Aurora look: a banner with the logo and the version, the information in
 //! cards (a click on a value copies it alone), the licences read from
-//! NOTICE.md (`about/notice.rs`). The copy stays in English whatever the
+//! NOTICE.md (`about/notice.rs`), and the Rust libraries' licences read
+//! from THIRD-PARTY-LICENSES.md (`about/libraries.rs`). The copy stays in English whatever the
 //! interface language, as the Legacy Viewer's (strings.xml: "this info
 //! sometimes gets sent to support"). The Legacy Viewer's credits tabs name
 //! its own teams: Aurora names the authors of the code it follows in the
 //! licences, as NOTICE.md does.
 
+pub mod libraries;
 pub mod notice;
 
 use super::sheet::{self, Tone};
@@ -95,6 +97,7 @@ pub enum Tab {
     #[default]
     Info,
     Licences,
+    Libraries,
 }
 
 #[derive(Default)]
@@ -160,6 +163,7 @@ impl AboutUi {
                 let tabs = [
                     (Tab::Info, "info-circle-filled", aurora_i18n::tr!("about-tab-info")),
                     (Tab::Licences, "license", aurora_i18n::tr!("about-tab-licences")),
+                    (Tab::Libraries, "packages", aurora_i18n::tr!("about-tab-libraries")),
                 ];
                 for (tab, icon, label) in tabs {
                     if widgets::pill_tab(ui, p, icon, label, None, false, self.tab == tab, true).clicked() {
@@ -171,6 +175,7 @@ impl AboutUi {
             match self.tab {
                 Tab::Info => self.info(ui, p, &view.sections),
                 Tab::Licences => licences(ui, p, std::mem::take(&mut self.scroll_to_end)),
+                Tab::Libraries => library_licences(ui, p, std::mem::take(&mut self.scroll_to_end)),
             }
         });
     }
@@ -410,6 +415,29 @@ fn licences(ui: &mut egui::Ui, p: &Palette, to_end: bool) {
                 ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
             }
         });
+}
+
+/// The Libraries tab: THIRD-PARTY-LICENSES.md as it is written, in a card,
+/// only the lines in view laid out.
+fn library_licences(ui: &mut egui::Ui, p: &Palette, to_end: bool) {
+    let lines = libraries::lines();
+    let font = egui::FontId::monospace(11.0);
+    let row_h = ui.fonts_mut(|f| f.row_height(&font));
+    let mut card = sheet::card_begin(ui);
+    let c = &mut card.child;
+    let mut scroll = egui::ScrollArea::vertical()
+        .id_salt("about_libraries")
+        .auto_shrink([false, false]);
+    if to_end {
+        scroll = scroll.vertical_scroll_offset(f32::MAX);
+    }
+    scroll.show_rows(c, row_h, lines.len(), |ui, rows| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for line in &lines[rows] {
+            ui.add(egui::Label::new(RichText::new(*line).font(font.clone()).color(p.ink)).extend());
+        }
+    });
+    sheet::card_end(ui, p, card);
 }
 
 /// The GNU GPL version 3, Aurora's licence.
