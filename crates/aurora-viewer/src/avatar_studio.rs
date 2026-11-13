@@ -172,6 +172,8 @@ pub struct Studio {
     pub hover_height: f32,
     /// Smoothed display value, so small changes do not visibly step the rig.
     pub display_hover_height: f32,
+    /// Furniture root and linkset-bounds centre in that root's local frame.
+    pub podium_center: Option<(uuid::Uuid, Vec3)>,
     height: f32,
     focus_height: f32,
     target_height: f32,
