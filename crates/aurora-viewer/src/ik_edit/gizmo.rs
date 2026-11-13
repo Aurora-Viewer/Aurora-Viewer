@@ -12,6 +12,16 @@ use crate::{
 use egui::Pos2;
 use glam::{Quat, Vec3, Vec4};
 
+pub(super) const DEFAULT_SENSITIVITY: f32 = 0.5;
+
+pub(super) fn sensitivity_scale(sensitivity: f32) -> f32 {
+    if sensitivity.is_finite() {
+        sensitivity.clamp(0.05, 2.0) / DEFAULT_SENSITIVITY
+    } else {
+        1.0
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Tool {
     #[default]
@@ -263,10 +273,11 @@ struct Drag {
     part: Part,
     pose: Pose,
     motion: Motion,
+    sensitivity: f32,
 }
 
 impl Drag {
-    fn new(geometry: Geometry, part: Part, pointer: Pos2, pose: Pose) -> Option<Self> {
+    fn new(geometry: Geometry, part: Part, pointer: Pos2, pose: Pose, sensitivity: f32) -> Option<Self> {
         let (o, d) = geometry.cam.ray(pointer.x * geometry.cam.ppp, pointer.y * geometry.cam.ppp);
         let axis = geometry.part_axis(part);
         let pivot = geometry.pivot;
@@ -311,6 +322,7 @@ impl Drag {
             part,
             pose,
             motion,
+            sensitivity: sensitivity_scale(sensitivity),
         })
     }
 
@@ -321,11 +333,11 @@ impl Drag {
         let mut pose = self.pose;
         let angle = match &mut self.motion {
             Motion::Axis(start) => {
-                pose.position += axis * (nearest_on_line(o, d, g.pivot, g.pivot + axis)? - *start);
+                pose.position += axis * (nearest_on_line(o, d, g.pivot, g.pivot + axis)? - *start) * self.sensitivity;
                 return Some(pose);
             }
             Motion::Plane(start) => {
-                pose.position += ray_plane(o, d, g.pivot, axis)? - *start;
+                pose.position += (ray_plane(o, d, g.pivot, axis)? - *start) * self.sensitivity;
                 return Some(pose);
             }
             Motion::Ring { start, last, total } => {
@@ -338,7 +350,7 @@ impl Drag {
             }
             Motion::Edge { origin, tangent, radius } => (pointer - *origin).dot(*tangent) / *radius,
         };
-        pose.rotation = (Quat::from_axis_angle(axis, angle) * pose.rotation).normalize();
+        pose.rotation = (Quat::from_axis_angle(axis, angle * self.sensitivity) * pose.rotation).normalize();
         Some(pose)
     }
 }
@@ -365,6 +377,7 @@ impl Gizmo {
         geometry: Geometry,
         pose: Pose,
         allow_hover: bool,
+        sensitivity: f32,
     ) -> (bool, Option<(Pose, Tool)>) {
         let (pointer, pressed, down, released, alt) = ctx.input(|i| {
             (
@@ -387,7 +400,7 @@ impl Gizmo {
             })
             .and_then(|p| geometry.pick(p));
         if pressed && let (Some(part), Some(pointer)) = (hover, pointer) {
-            self.drag = Drag::new(geometry, part, pointer, pose);
+            self.drag = Drag::new(geometry, part, pointer, pose, sensitivity);
         } else if self.drag.is_none() {
             geometry.draw(ctx, palette, hover);
         }

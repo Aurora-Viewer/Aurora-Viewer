@@ -434,13 +434,13 @@ fn frame_card(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn bar_block(
+fn bar_block<const N: usize>(
     ui: &mut egui::Ui,
     p: &Palette,
     title: &str,
     total: &str,
-    values: &[f32; 7],
-    names: &[&'static str; 7],
+    values: &[f32; N],
+    names: &[&'static str; N],
     colors: &[Color32],
     scale: f64,
 ) {
