@@ -106,6 +106,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the LSL and SLua keywords together, ahead of LSLSyntax (LLSyntaxDefCache)
+    "ScriptDefinitions",
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
@@ -243,6 +245,7 @@ mod language_tests {
     fn the_minor_simulator_capabilities_are_requested() {
         for cap in [
             "LSLSyntax",
+            "ScriptDefinitions",
             "SendPostcard",
             "ServerReleaseNotes",
             "SimConsoleAsync",
