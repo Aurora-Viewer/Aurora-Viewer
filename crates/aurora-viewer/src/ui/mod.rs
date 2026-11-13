@@ -20,6 +20,7 @@ pub mod voice_controls;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod beacons;
+pub mod beams;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
