@@ -4656,8 +4656,13 @@ Avatar Studio (`avatar_studio.rs`, `app/avatar_studio.rs`,
 `scene/avatar_studio.rs`) is a session-local dressing-room presentation,
 toggled by the configurable `avatar_studio` toolbar command or the wolf menu's
 Build > Avatar Studio entry, before Poser and IK Edit. Both share the same
-toggle and active indication. Left-drag orbits;
-right-drag adjusts the avatar-relative focus height without avatar-height bounds.
+toggle and active indication. Seated entry uses the avatar's resolved world
+rotation through the seat/link hierarchy to frame its front; standing entry
+retains the agent's heading.
+The seated podium uses the furniture linkset's bounds, excluding sitters and
+attachments. Its centre is cached in the furniture root's local frame and follows
+that root without a per-frame linkset scan; the camera still focuses on the avatar.
+Left-drag orbits; right-drag adjusts the avatar-relative focus height without avatar-height bounds.
 Right clicks retain the native avatar and attachment context menus. The shared
 10-point right-gesture threshold separates a click from a focus-height drag;
 dragging never opens a menu on release. Attachment editing keeps native
@@ -4733,7 +4738,13 @@ finish using the renderer's built-in neutral textures. Its supplemental CPU
 draw is included in the main view and both water captures, alongside GPU
 avatar draws; the reflected camera therefore sees the same solid occluder.
 The existing isolation visibility path selects the live avatar and its
-attachments without replacing photo choices. Terrain isolation also clears
+attachments without replacing photo choices. When seated, it also includes
+the seat's complete linkset and avatars seated on any prim of that linkset,
+with their body attachments but not their HUDs. The sorted root set invalidates
+GPU visibility when sitters join, stand or change seats; existing hidden render
+types and avatar detail limits still apply. The entry floor accounts for the
+furniture's rotated bounds so the podium does not intersect its base.
+Terrain isolation also clears
 the separate classic/PBR terrain lists used by water reflection and refraction,
 including offscreen land. Region terrain, water and
 particles are replaced by the local stage; native windows and worn HUDs
