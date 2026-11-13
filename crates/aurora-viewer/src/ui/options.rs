@@ -756,7 +756,8 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
         Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
         Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
         Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
-        Failure::Unsupported => aurora_i18n::tr!("media-plugins-error-unsupported"),
+        // the media pack goes to the data folder: never a drive root's
+        Failure::Unsupported | Failure::DriveRoot => aurora_i18n::tr!("media-plugins-error-unsupported"),
     }
 }
 
