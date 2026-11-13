@@ -811,10 +811,12 @@ impl Camera {
                 self.pitch = 0.0;
             }
         } else if self.focus_on_avatar && !on {
-            // keep the focus point where it was, now unlocked
+            // LLAgentCamera::setFocusOnAvatar (indra/newview/llagentcamera.cpp)
+            // keeps our avatar as the unlocked target, so camera keys still track it.
             let focus = self.avatar.position + self.frame_rotation(agent) * s.focus_offset();
+            let own = (!self.own.is_nil()).then_some(self.own);
             self.focus_on_avatar = false;
-            self.set_focus_global(Some(focus), None, None, s);
+            self.set_focus_global(Some(focus), own, None, s);
             self.joint_follow_unlocked = true;
         }
         if on {
@@ -877,7 +879,7 @@ impl Camera {
     }
 
     fn update_focus_offset(&mut self) {
-        if self.gamepad_follow_avatar && self.focus_object == Some(self.own) {
+        if self.focus_object == Some(self.own) {
             self.focus_object_offset = self.focus_target - self.avatar.position;
         } else if let Some(g) = self.focus_geom {
             self.focus_object_offset = self.focus_target - g.position;
@@ -2206,10 +2208,14 @@ impl Camera {
             self.focus_geom = None;
             return;
         };
-        if self.gamepad_follow_avatar && id == self.own {
+        if id == self.own {
             // The normal player camera uses AvatarFrame too. Its position is
             // available before our object arrives and follows seated motion.
-            self.focus_target = self.avatar.position + self.focus_object_offset;
+            if self.gamepad_follow_avatar || track {
+                self.focus_target = self.avatar.position + self.focus_object_offset;
+            } else {
+                self.focus_object_offset = self.focus_target - self.avatar.position;
+            }
             return;
         }
         match focus_geometry(world, &id, now, self.vr_tracks_other_avatar()) {
@@ -5119,6 +5125,53 @@ mod tests {
                 camera.apply_keys(keys, &mut world.agent, &settings, 0.1);
                 assert!(camera.mouselook());
                 assert_eq!(camera.roll, roll, "mouselook rejects roll keys");
+            }
+        }
+    }
+
+    #[test]
+    fn unlocked_roll_and_pan_track_the_walking_avatar() {
+        for track in [false, true] {
+            for reset in [false, true] {
+                for (roll_left, roll_right, pan_up) in [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)] {
+                    let settings = CameraSettings {
+                        track_focus_object: track,
+                        smoothing: 0.0,
+                        zoom_time: 0.0,
+                        disable_constraints: true,
+                        ..Default::default()
+                    };
+                    let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+                    world.agent_id = crate::demo::DEMO_AGENT;
+                    let mut camera = Camera::default();
+                    settle(&mut camera, &mut world, &settings);
+                    let keys = CameraKeys {
+                        roll_left,
+                        roll_right,
+                        pan_up,
+                        ..Default::default()
+                    };
+                    let step = Vec3::X * 0.1;
+                    for _ in 0..20 {
+                        if reset {
+                            camera.reset_view(&mut world.agent, &settings, true, false, true, false);
+                        }
+                        camera.apply_keys(keys, &mut world.agent, &settings, 0.1);
+                        let target = camera.focus_target;
+                        let eye = target + camera.focus_offset_target;
+                        world.agent.position += step;
+                        camera.update(&mut world, &settings, &frame(0.1));
+                        let delta = if track { step } else { Vec3::ZERO };
+                        assert!(
+                            camera.target.abs_diff_eq(target + delta, 1e-4),
+                            "focus follows: track={track}, reset={reset}"
+                        );
+                        assert!(
+                            camera.position.abs_diff_eq(eye + delta, 1e-4),
+                            "eye follows: track={track}, reset={reset}"
+                        );
+                    }
+                }
             }
         }
     }
