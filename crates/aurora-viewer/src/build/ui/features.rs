@@ -70,11 +70,10 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let single = tool.sel_prims(world).len() == 1;
     let editable = tool.can_modify(world, idx) && !crate::build::linking::permanent(world, crate::build::root_of(world, idx));
     let enabled = editable && single;
-    let (extra, volume, material, is_root, click, flexible) = (
+    let (extra, volume, material, click, flexible) = (
         o.extra.clone(),
         o.volume,
         o.prim_material,
-        o.parent_id == 0,
         o.click_action,
         o.has_flexible_path(),
     );
@@ -125,7 +124,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         animated,
         false,
         aurora_i18n::tr!("build-ui-features-animated-mesh"),
-        enabled && is_root && mesh,
+        tool.animated_mesh_editable(world),
     ) {
         let flags = extra.extended_mesh_flags.unwrap_or(0);
         let f = if v {

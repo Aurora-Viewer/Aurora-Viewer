@@ -1643,3 +1643,56 @@ fn face_edits_on_a_hollow_sphere_keep_the_inner_face_separate() {
     tool.edit_faces(&mut world, |f, _, _| f.color = [0.0, 0.0, 1.0, 0.5]);
     assert_eq!(colors(&world), vec![[0.0, 0.0, 1.0, 0.5]; n]);
 }
+
+/// Two linked mesh prims (root 970000, child 970001) and a lone mesh 970002.
+fn mesh_linkset_fixture(update_flags: u32) -> (World, BuildTool, BuildSettings, [usize; 3]) {
+    let (mut world, tool, settings) = fixture();
+    let handle = world.main_region.expect("demo region");
+    let updates = [(970_000, 0), (970_001, 970_000), (970_002, 0)]
+        .map(|(local_id, parent_id)| {
+            let mut update = crate::demo::action_avatar(false);
+            update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+            update.local_id = local_id;
+            update.full_id = Uuid::from_u128(u128::from(local_id));
+            update.parent_id = parent_id;
+            update.update_flags = update_flags;
+            update.extra = Default::default();
+            update.volume.sculpt = Some(aurora_prim::params::SculptParams {
+                texture: Uuid::from_u128(1),
+                sculpt_type: 5,
+            });
+            update
+        })
+        .to_vec();
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    let idx = [970_000u32, 970_001, 970_002].map(|id| world.objects.index_of_uuid(&Uuid::from_u128(u128::from(id))).unwrap());
+    (world, tool, settings, idx)
+}
+
+#[test]
+fn animated_mesh_checkbox_takes_a_whole_linkset_like_the_legacy_panel() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let (mut world, mut tool, mut settings, [root, child, lone]) = mesh_linkset_fixture(OBJECT_MODIFY | OBJECT_MOVE);
+    assert_eq!(root_of(&world, child), root);
+    // A whole two-prim linkset: one root, its two prims.
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert_eq!(tool.sel_prims(&world).len(), 2);
+    assert!(tool.animated_mesh_editable(&world));
+    // A lone mesh prim.
+    tool.click_select(&mut world, &settings, Some(lone), false);
+    assert!(tool.animated_mesh_editable(&world));
+    // Two linksets.
+    tool.click_select(&mut world, &settings, Some(root), true);
+    assert!(!tool.animated_mesh_editable(&world));
+    // Edit linked: the root prim alone, then the child prim alone.
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(root), false);
+    assert!(tool.animated_mesh_editable(&world));
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert!(!tool.animated_mesh_editable(&world));
+
+    // No modify right on the linkset.
+    let (mut world, mut tool, settings, [_, child, _]) = mesh_linkset_fixture(OBJECT_MOVE);
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert!(!tool.animated_mesh_editable(&world));
+}
