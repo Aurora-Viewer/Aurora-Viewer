@@ -68,12 +68,12 @@ Aurora Viewer declares itself as a game to macOS, so macOS turns on its
 Game Mode automatically when the viewer is in native full screen on Apple
 Silicon with macOS 14 Sonoma or later. To enter full screen, move the
 pointer over the green button in the title bar and choose **Enter Full
-Screen**; maximizing the window (double-clicking the title bar, or the
-**Zoom** command) does not enter full screen. The Game Mode notice and the
-game controller icon in the menu bar confirm that it is on; the icon's menu
-also turns it off for the game. Game Mode gives the viewer priority over
-background work and lowers the latency of Bluetooth controllers and
-headphones.
+Screen**, or press Control+Command+F; maximizing the window (double-clicking
+the title bar, or the **Zoom** command) does not enter full screen. The Game
+Mode notice and the game controller icon in the menu bar confirm that it is
+on; the icon's menu also turns it off for the game. Game Mode gives the
+viewer priority over background work and lowers the latency of Bluetooth
+controllers and headphones.
 
 Game Mode belongs to the installed application: running a bare
 `aurora-viewer` executable from a terminal has no application bundle, so
@@ -90,10 +90,17 @@ and Command does not change the camera wheel.
 A few shortcuts are labeled with the Control key (⌃), the same list as the
 Legacy Viewer: Nearby Chat (⌃H), Conversations (⌃T), the World Map (⌃M),
 Highlight Transparent (⌃⌥T), Snapshot to Disk (⌃`). Command runs those too,
-except Nearby Chat. Command+H hides the application, as it does in the
-Legacy Viewer, and Control+H opens Nearby Chat (or brings it forward, or
-closes it when it is already in front). The others are labeled with
-Command (⌘), then Option (⌥) and Shift (⇧).
+except Nearby Chat and the World Map: macOS keeps Command+M for minimizing,
+so the World Map stays Control+M. Command+H hides the application, as it
+does in the Legacy Viewer, and Control+H opens Nearby Chat (or brings it
+forward, or closes it when it is already in front). The others are labeled
+with Command (⌘), then Option (⌥) and Shift (⇧).
+
+The native **Window** menu holds the standard macOS actions: **Minimize**
+(Command+M) minimizes the viewer to the Dock, and **Enter Full Screen**
+(Control+Command+F) enters or leaves native full screen, the same as the
+green button, as in the Legacy Viewer.
+
 Text fields accept both keys for copy, paste, undo and the rest.
 Select All is Command+A (or Control+A). Command+Shift+A still opens People,
 as in the Legacy Viewer, even while a field is focused.

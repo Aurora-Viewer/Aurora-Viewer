@@ -14465,6 +14465,10 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
 
+# macOS Window menu (mac_window_menu.rs)
+app-mac-window-menu = Fenêtre
+app-mac-minimize = Réduire
+app-mac-enter-full-screen = Passer en plein écran
 
 vr-preferences-title = VR
 vr-preferences-about = Déplacement, confort et rendu du casque.

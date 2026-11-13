@@ -14388,6 +14388,10 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
 
+# macOS Window menu (mac_window_menu.rs)
+app-mac-window-menu = ウインドウ
+app-mac-minimize = 最小化
+app-mac-enter-full-screen = フルスクリーンにする
 
 vr-preferences-title = VR
 vr-preferences-about = ヘッドセットの移動、快適性、描画。

@@ -14465,6 +14465,11 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
 
+# macOS Window menu (mac_window_menu.rs)
+app-mac-window-menu = Window
+app-mac-minimize = Minimize
+app-mac-enter-full-screen = Enter Full Screen
+
 ui-options-camera-vr-view-first-person = First Person
 
 
