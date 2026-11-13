@@ -160,6 +160,7 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
                 row(ui, c, data, st, set, *id, &rows::display_name(world, id), &ids);
             }
         });
+    carried_card(ui, c, data, st, set);
     let drop = ui.interact(area.inner_rect, ui.scope_id().with("contact_set_drop"), Sense::hover());
     crate::ui::contacts::drag::set_target_with(&drop, set, &st.sel);
     if bar {
@@ -397,6 +398,24 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         crate::world::staff::mark(world, &id),
     );
     let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
+    // dragged toward a set: the row is carried as a card (`carried_card`)
+    if resp.drag_started()
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+    {
+        let carry = MemberCarry {
+            id,
+            grab: origin - rect.min,
+            width: rect.width(),
+        };
+        ui.ctx().data_mut(|d| d.insert_temp(member_carry_key(), carry));
+    }
+    // the rows being carried wait, dimmed, in their places
+    if let Some(drag) = egui::DragAndDrop::payload::<crate::ui::call_invite::PersonDrag>(ui.ctx())
+        && (drag.0 == id || (st.sel.contains(&drag.0) && st.sel.contains(&id)))
+    {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.panel.gamma_multiply(0.6));
+    }
     if action.sheet {
         super::nearby::open_sheet(st, id);
     }
@@ -406,6 +425,77 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::person_menu(&resp, p, world, &st.sel, id);
     let tip = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned());
     rows::contact_tip(resp, tip.as_deref());
+}
+
+/// A member being dragged toward a set: who, where the pointer holds the
+/// row (from its corner), and the row's width.
+#[derive(Clone, Copy, Debug)]
+struct MemberCarry {
+    id: Uuid,
+    grab: Vec2,
+    width: f32,
+}
+
+fn member_carry_key() -> egui::Id {
+    egui::Id::unique("people-set-member-carry")
+}
+
+/// The member dragged, carried as a lifted card under the pointer, with
+/// how many go along when the people chosen are dragged together.
+fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &PeopleUi, set: &str) {
+    let p = c.p;
+    let world = c.world;
+    let drag = egui::DragAndDrop::payload::<crate::ui::call_invite::PersonDrag>(ui.ctx());
+    let carry: Option<MemberCarry> = ui.ctx().data(|d| d.get_temp(member_carry_key()));
+    let (Some(drag), Some(carry), Some(at)) = (drag, carry, ui.input(|i| i.pointer.interact_pos())) else {
+        return;
+    };
+    if drag.0 != carry.id {
+        return;
+    }
+    let id = carry.id;
+    let rect = Rect::from_min_size(at - carry.grab, Vec2::new(carry.width, RICH_H));
+    let layer = egui::LayerId::new(egui::Order::Tooltip, member_carry_key());
+    let mut card = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
+    card.set_clip_rect(ui.ctx().content_rect());
+    let radius = card.visuals().widgets.inactive.corner_radius;
+    card.painter()
+        .rect_filled(rect.translate(Vec2::new(0.0, 5.0)).expand(2.0), radius, p.navy.gamma_multiply(0.45));
+    card.painter().rect_filled(rect, radius, p.raised);
+    card.painter()
+        .rect_stroke(rect, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
+    let name = rows::display_name(world, &id);
+    let left = rows::picture(&card, p, world, rect, data.pics.get(&id), id, &name, false);
+    let color = crate::ui::colors::resident_name(world, &id, p.ink);
+    member_names(
+        &card,
+        p,
+        rect,
+        left,
+        rect.right() - 10.0,
+        &name,
+        color,
+        &second_line(world, &id),
+        &other_sets(world, &id, set),
+        world.social.is_friend(&id),
+        crate::world::staff::mark(world, &id),
+    );
+    // the others chosen go along: their number on the card's corner
+    let along = if st.sel.contains(&id) { st.sel.len() } else { 1 };
+    if along > 1 {
+        let g = card.painter().layout_no_wrap(
+            aurora_i18n::integer(along as i64),
+            crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(card.ctx()), 11.5, p.on_accent).font_id,
+            p.on_accent,
+        );
+        let w = (g.size().x + 12.0).max(20.0);
+        let pill = Rect::from_center_size(Pos2::new(rect.right() - 4.0, rect.top() + 2.0), Vec2::new(w, 20.0));
+        card.painter().rect_filled(pill, radius, p.violet);
+        let gw = g.size().x;
+        widgets::paint_row_text(card.painter(), g, pill.center().x - gw / 2.0, pill.center().y, p.on_accent);
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    ui.ctx().request_repaint();
 }
 
 /// The residents a row's action applies to: the selection when the row is

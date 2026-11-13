@@ -34,7 +34,7 @@ mod visuals;
 
 pub use set_editor::DemoScroll;
 pub(crate) use set_editor::EditorTab;
-pub(crate) use visuals::set_tile;
+pub(crate) use visuals::{TileNumber, set_tile, set_tile_number};
 #[cfg(test)]
 mod window_tests;
 

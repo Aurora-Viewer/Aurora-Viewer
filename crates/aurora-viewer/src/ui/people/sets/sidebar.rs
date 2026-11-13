@@ -233,7 +233,13 @@ struct Slide {
     /// A set released, until the new order shows (the edit is applied
     /// after this frame): drawn where it was dropped meanwhile.
     dropped: Option<Dropped>,
+    /// While sets are reordered, each tile shows its place: the number
+    /// shown, the one before, and when it changed (ui time).
+    numbers: std::collections::HashMap<String, (usize, Option<usize>, f64)>,
 }
+
+/// How long a tile's number takes to turn over.
+const NUMBER_TURN: f64 = 0.22;
 
 /// A set released at `to`, its card at `card_top`, over `order` (the order
 /// when it was released); `frames` it has waited.
@@ -284,6 +290,7 @@ fn paint_set_row(
     face: Option<egui::Color32>,
     cog: bool,
     compact: bool,
+    number: Option<crate::ui::contacts::TileNumber>,
 ) {
     let p = c.p;
     let radius = ui.visuals().widgets.inactive.corner_radius;
@@ -292,7 +299,14 @@ fn paint_set_row(
     }
     let side = if compact { 26.0 } else { 28.0 };
     let tile = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + side / 2.0, rect.center().y), Vec2::splat(side));
-    crate::ui::contacts::set_tile(ui, p, tile, set);
+    match number {
+        Some(number) => {
+            // a little lift as the number turns over
+            let pop = (number.turn.clamp(0.0, 1.0) * std::f32::consts::PI).sin() * 2.0;
+            crate::ui::contacts::set_tile_number(ui, p, tile.expand(pop), set, number);
+        }
+        None => crate::ui::contacts::set_tile(ui, p, tile, set),
+    }
     let m: Members = members(c.world, &set.name);
     let text_right = if cog { rect.right() - 31.0 } else { rect.right() - 6.0 };
     if compact {
@@ -440,6 +454,33 @@ fn set_rows(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, he
         }
         moving = true;
     }
+    // the places shown on the tiles while a set is held
+    let now = ui.input(|i| i.time);
+    match held {
+        Some((from, _, to)) => {
+            for (i, name) in names.iter().enumerate() {
+                let place = if i == from { to } else { shifted_slot(i, from, to) } + 1;
+                let entry = slide.numbers.entry(name.clone()).or_insert((place, None, now));
+                if entry.0 != place {
+                    *entry = (place, Some(entry.0), now);
+                }
+                if now - entry.2 < NUMBER_TURN {
+                    moving = true;
+                }
+            }
+        }
+        None => slide.numbers.clear(),
+    }
+    let number_of = |name: &str| {
+        slide
+            .numbers
+            .get(name)
+            .map(|(now_shown, before, changed)| crate::ui::contacts::TileNumber {
+                now: *now_shown,
+                before: *before,
+                turn: ((now - changed) / NUMBER_TURN) as f32,
+            })
+    };
     let carrying = slide
         .carry
         .as_ref()
@@ -463,19 +504,40 @@ fn set_rows(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, he
                 .rect_filled(at.translate(Vec2::new(0.0, 4.0)).expand(2.0), radius, p.navy.gamma_multiply(0.45));
             card.painter()
                 .rect_stroke(at, radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
-            paint_set_row(&card, c, at, set, Some(p.raised.lerp_to_gamma(p.ink, 0.06)), false, compact);
+            paint_set_row(
+                &card,
+                c,
+                at,
+                set,
+                Some(p.raised.lerp_to_gamma(p.ink, 0.06)),
+                false,
+                compact,
+                number_of(name),
+            );
             continue;
         }
         let hovered = carrying.is_none() && (resp.hovered() || resp.contains_pointer());
-        let face = if on {
+        // a resident carried over the set: it lights up to take them
+        let taking = egui::DragAndDrop::has_payload_of_type::<crate::ui::call_invite::PersonDrag>(ui.ctx()) && resp.contains_pointer();
+        let face = if taking {
+            Some(p.violet.gamma_multiply(0.22))
+        } else if on {
             Some(p.raised)
         } else if hovered {
             Some(p.raised.gamma_multiply(0.5))
         } else {
             None
         };
-        let cog_shown = carrying.is_none() && (on || hovered);
-        paint_set_row(ui, c, at, set, face, cog_shown, compact);
+        let cog_shown = carrying.is_none() && (on || hovered) && !egui::DragAndDrop::has_any_payload(ui.ctx());
+        paint_set_row(ui, c, at, set, face, cog_shown && !taking, compact, number_of(name));
+        if taking {
+            ui.painter().rect_stroke(
+                at,
+                ui.visuals().widgets.inactive.corner_radius,
+                egui::Stroke::new(1.5, p.violet),
+                egui::StrokeKind::Inside,
+            );
+        }
         if cog_shown {
             let radius = ui.visuals().widgets.inactive.corner_radius;
             let cog = Rect::from_center_size(Pos2::new(rect.right() - 15.0, rect.center().y), Vec2::splat(24.0));
@@ -634,6 +696,11 @@ mod tests {
             "the card is under the pointer: {card} vs {}",
             at.y - 20.0
         );
+        // every tile shows the place it would have: A third, B and C up one
+        let slide: Slide = frames.ctx.data(|d| d.get_temp(key)).unwrap_or_default();
+        let places: Vec<usize> = ["A", "B", "C", "D"].iter().map(|n| slide.numbers[*n].0).collect();
+        assert_eq!(places, [3, 1, 2, 4], "the numbers follow the card");
+        assert_eq!(slide.numbers["A"].1, Some(2), "A's number turned over from 2");
         // let go: the edit waits for the app, the card stays put
         frame(&mut frames, &world, vec![button(at, false)]);
         assert!((drawn_top(&frames.ctx, key, "A", tops[0]) - card).abs() < 1.0, "jumped on release");
@@ -661,6 +728,8 @@ mod tests {
             (drawn_top(&frames.ctx, key, "A", tops[slot]) - tops[slot]).abs() < 0.5,
             "settled in its place"
         );
+        let slide: Slide = frames.ctx.data(|d| d.get_temp(key)).unwrap_or_default();
+        assert!(slide.numbers.is_empty(), "the badges come back once it has landed");
     }
 
     #[test]
