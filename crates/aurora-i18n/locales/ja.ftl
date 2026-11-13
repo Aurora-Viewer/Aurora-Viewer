@@ -4389,6 +4389,10 @@ ui-inventory-dialogs-no-copy-will-leave = { $count ->
    *[other] コピー不可のアイテム{ $number }個がインベントリからなくなります。
 }
 ui-inventory-dialogs-items-will-be-moved-to-trash = アイテムをごみ箱に移動します。
+ui-inventory-dialogs-detach-and-delete = 取り外して削除
+ui-inventory-dialogs-detach-and-delete-body = 一部のアイテムはアバターが着用中です。取り外してからごみ箱に移動します。
+ui-inventory-delete-detach-cannot = 着用中のアイテムを取り外して削除できなくなりました。
+ui-inventory-delete-detach-timeout = 着用中のアイテムを取り外せなかったため、何も削除されませんでした。
 ui-environment-sunrise = 日の出
 ui-bars-sunrise = 日の出
 build-ui-tools-link = リンク

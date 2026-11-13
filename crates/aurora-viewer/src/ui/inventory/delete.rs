@@ -14,6 +14,162 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
         .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
 }
 
+/// The worn items a Delete of `ids` would take with it: the selected worn
+/// items and those inside a selected folder.
+pub(super) fn worn_in(inv: &Inventory, ids: &[Uuid], facts: &Facts) -> Vec<Uuid> {
+    let mut worn: Vec<_> = facts
+        .worn
+        .iter()
+        .copied()
+        .filter(|item| rules::ancestors(inv, *item).any(|a| ids.contains(&a)))
+        .collect();
+    worn.sort();
+    worn
+}
+
+/// LLInventoryAction::doToSelected "delete" (llinventoryfunctions.cpp, LGPL
+/// 2.1): a selection holding worn items may still be deleted once they are
+/// taken off ("DeleteWornItems"), unless one is a body part
+/// ("CantDeleteRequiredClothing") or RLVa keeps it on. The Trash move must
+/// then be allowed with those items off.
+pub(super) fn detach_allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreferences, facts: &Facts) -> bool {
+    if ids.is_empty() || facts.appearance_busy || !ids.iter().all(|id| rules::removable(inv, *id, &prefs.protected)) {
+        return false;
+    }
+    let worn = worn_in(inv, ids, facts);
+    if worn.is_empty()
+        || !worn
+            .iter()
+            .all(|id| inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6)) && facts.rlva.can_remove(*id))
+    {
+        return false;
+    }
+    let left: HashSet<_> = facts.worn.iter().copied().filter(|id| !worn.contains(id)).collect();
+    rules::system(inv, 14).is_some_and(|to| rules::move_selection(inv, ids, to, &prefs.protected, &left).is_ok())
+}
+
+/// How long a Detach and Delete waits for the items to come off.
+const DETACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// A confirmed Detach and Delete: the worn items were asked off, the Trash
+/// move follows once none is worn (LLInventoryAction::onItemsRemovalConfirmation
+/// moves them in removeItemsFromAvatar's callback).
+pub(crate) struct DetachDelete {
+    ids: Vec<Uuid>,
+    worn: Vec<Uuid>,
+    started: std::time::Instant,
+    /// The selection as it was on confirm, so a later click is not undone.
+    selection: DeleteSelection,
+    /// Started from the worn object's menu: say failures in chat, since the
+    /// Inventory window may be closed.
+    from_world: bool,
+    /// The outfit update was seen running; until then a refused take-off
+    /// leaves the items worn with nothing under way.
+    seen_busy: bool,
+    idle_frames: u8,
+}
+
+/// Say why a Detach and Delete stopped: in the window, and in chat when it
+/// was asked from the worn object's menu.
+fn detach_failed(st: &mut InventoryUi, actions: &mut Vec<InvAction>, from_world: bool, reason: String) {
+    if from_world {
+        actions.push(InvAction::Notice(reason.clone()));
+    }
+    st.message = reason;
+}
+
+/// Confirmed "Detach and Delete": take the worn items off now, delete later.
+pub(super) fn start_detach(
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+    ids: Vec<Uuid>,
+) {
+    let from_world = std::mem::take(&mut st.detach_from_world);
+    if !detach_allowed(inv, &ids, prefs, facts) {
+        detach_failed(
+            st,
+            actions,
+            from_world,
+            aurora_i18n::tr!("ui-inventory-delete-detach-cannot").into(),
+        );
+        return;
+    }
+    let worn = worn_in(inv, &ids, facts);
+    let mut selection = DeleteSelection::of(inv, st, &ids);
+    // The worn object's menu deletes something this window did not select.
+    selection.advance = !from_world;
+    st.message.clear();
+    actions.push(InvAction::Appearance(crate::world::appearance::Action::RemoveItems(worn.clone())));
+    st.detach_delete = Some(DetachDelete {
+        ids,
+        worn,
+        started: std::time::Instant::now(),
+        selection,
+        from_world,
+        seen_busy: false,
+        idle_frames: 0,
+    });
+}
+
+/// Each frame: once the items are off and the outfit update is done, move
+/// the selection to the Trash; give up with a message after a while.
+pub(super) fn finish_detach(
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let Some(pending) = &mut st.detach_delete else { return };
+    pending.seen_busy |= facts.appearance_busy;
+    let off = !facts.appearance_busy && !pending.worn.iter().any(|id| facts.worn.contains(id));
+    if !off {
+        // The take-off is applied after the frame that asked for it, so the
+        // outfit update shows as running by the next one. Still idle a frame
+        // later: it was refused (the reason is already in the message).
+        if !pending.seen_busy {
+            pending.idle_frames = pending.idle_frames.saturating_add(1);
+        }
+        let refused = !pending.seen_busy && pending.idle_frames > 2;
+        if refused || pending.started.elapsed() > DETACH_TIMEOUT {
+            let from_world = pending.from_world;
+            st.detach_delete = None;
+            let reason = if !refused {
+                aurora_i18n::tr!("ui-inventory-delete-detach-timeout").into()
+            } else if st.message.is_empty() {
+                aurora_i18n::tr!("ui-inventory-delete-detach-cannot").into()
+            } else {
+                std::mem::take(&mut st.message)
+            };
+            detach_failed(st, actions, from_world, reason);
+        }
+        return;
+    }
+    if st.pending.is_some() || st.pending_delete.is_some() {
+        return;
+    }
+    let Some(pending) = st.detach_delete.take() else { return };
+    let ids: Vec<_> = pending
+        .ids
+        .into_iter()
+        .filter(|id| inv.items.contains_key(id) || inv.folders.contains_key(id))
+        .collect();
+    if ids.is_empty() {
+        return;
+    }
+    match plan(inv, &ids, false, prefs, facts) {
+        Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::with_selection(
+            inv,
+            pending.selection,
+            change,
+        )))),
+        Err(reason) => detach_failed(st, actions, pending.from_world, reason),
+    }
+}
+
 /// Build the mutation for a confirmed Delete: Trash move, or permanent purge
 /// when every selected entry is already in the Trash.
 pub(super) fn plan(inv: &Inventory, ids: &[Uuid], purge: bool, prefs: &InventoryPreferences, facts: &Facts) -> Result<Mutation, String> {
@@ -59,11 +215,16 @@ pub(super) fn confirm_or_run(
     actions: &mut Vec<InvAction>,
     mut ids: Vec<Uuid>,
 ) {
-    if st.pending.is_some() || st.pending_delete.is_some() || st.dialog.is_some() {
+    if st.pending.is_some() || st.pending_delete.is_some() || st.detach_delete.is_some() || st.dialog.is_some() {
         return;
     }
     ids.sort();
     if !allowed(inv, &ids, prefs, facts) {
+        // "DeleteWornItems" asks every time; it has no ignore box.
+        if detach_allowed(inv, &ids, prefs, facts) {
+            st.detach_from_world = false;
+            st.dialog = Some(EditDialog::DetachDelete(ids));
+        }
         return;
     }
     // A selection spanning trash and another folder first moves to trash.
@@ -129,7 +290,11 @@ pub(super) fn button(
     actions: &mut Vec<InvAction>,
 ) {
     let ids: Vec<_> = st.selection.iter().copied().collect();
-    let enabled = st.pending.is_none() && st.pending_delete.is_none() && st.dialog.is_none() && allowed(inv, &ids, prefs, facts);
+    let enabled = st.pending.is_none()
+        && st.pending_delete.is_none()
+        && st.detach_delete.is_none()
+        && st.dialog.is_none()
+        && (allowed(inv, &ids, prefs, facts) || detach_allowed(inv, &ids, prefs, facts));
     let button =
         ui.scope(|ui| super::super::widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("inventory-delete-shortcut"), enabled));
     if cfg!(test) || demo_mode().is_some() {
@@ -316,6 +481,246 @@ mod tests {
         assert!(st.dialog.is_none(), "no confirmation when the preference is off");
         assert!(matches!(actions.as_slice(), [InvAction::Delete(request)] if request.change.move_only()));
     }
+
+    /// A shirt (10) and a body part (11), both worn, in the root (1) beside the Trash (14).
+    fn worn_inventory() -> Inventory {
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        for (folder, parent, kind, children, items) in [(1, 0, 8, vec![id(14)], vec![id(10), id(11)]), (14, 1, 14, Vec::new(), Vec::new())]
+        {
+            inv.folders.insert(
+                id(folder),
+                crate::world::inventory::Folder {
+                    info: aurora_net::inventory::InvFolder {
+                        id: id(folder),
+                        parent: id(parent),
+                        type_default: kind,
+                        name: format!("{folder}"),
+                        ..Default::default()
+                    },
+                    children,
+                    items,
+                    state: crate::world::inventory::FetchState::Fetched,
+                    library: false,
+                },
+            );
+        }
+        for (item, kind) in [(10, 5), (11, 13)] {
+            inv.items.insert(
+                id(item),
+                aurora_net::inventory::InvItem {
+                    id: id(item),
+                    parent: id(1),
+                    name: format!("{item}"),
+                    asset_type: kind,
+                    owner_mask: 0x7fff_ffff,
+                    ..Default::default()
+                },
+            );
+        }
+        inv
+    }
+
+    /// A worn shirt: Delete asks "Detach and Delete", takes it off, then
+    /// moves it to the Trash once it is no longer worn. A body part never.
+    #[test]
+    fn worn_items_are_taken_off_before_the_trash_move() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        assert!(!allowed(&inv, &[id(10)], &prefs, &facts));
+        assert!(detach_allowed(&inv, &[id(10)], &prefs, &facts));
+        assert!(!detach_allowed(&inv, &[id(11)], &prefs, &facts), "body parts stay on");
+        assert!(!detach_allowed(&inv, &[id(10), id(11)], &prefs, &facts));
+
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(10)]),
+            selected: Some(id(10)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(actions.is_empty());
+        let Some(EditDialog::DetachDelete(ids)) = st.dialog.take() else {
+            panic!("Delete on a worn item asks to detach first");
+        };
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, ids);
+        assert!(
+            matches!(actions.as_slice(), [InvAction::Appearance(crate::world::appearance::Action::RemoveItems(worn))] if *worn == [id(10)])
+        );
+        actions.clear();
+        // Still worn: nothing is deleted, and no second Delete starts.
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(actions.is_empty() && st.dialog.is_none());
+        // The outfit update is running: still waiting.
+        facts.worn.remove(&id(10));
+        facts.appearance_busy = true;
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(actions.is_empty());
+        facts.appearance_busy = false;
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(matches!(actions.as_slice(), [InvAction::Delete(request)] if request.change.move_only()));
+        assert!(st.detach_delete.is_none());
+    }
+
+    /// The take-off was refused (RLVa, an incomplete outfit): nothing came
+    /// off and no outfit update ran, so the wait ends at once with a reason
+    /// instead of blocking Delete for the whole timeout.
+    #[test]
+    fn a_refused_take_off_ends_the_wait() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi::default();
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10)]);
+        actions.clear();
+        // the reason the outfit update was refused, as the app reports it
+        st.message = "RLVa keeps it on".into();
+        for _ in 0..3 {
+            finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        }
+        assert!(st.detach_delete.is_none());
+        assert_eq!(st.message, "RLVa keeps it on", "the real reason stays");
+        assert!(actions.is_empty(), "nothing deleted, no chat line from Inventory");
+
+        // Once the update is seen running, only the timeout ends the wait.
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10)]);
+        let busy = Facts {
+            worn: facts.worn.clone(),
+            appearance_busy: true,
+            ..Default::default()
+        };
+        finish_detach(&inv, &mut st, &prefs, &busy, &mut actions);
+        for _ in 0..5 {
+            finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        }
+        assert!(st.detach_delete.is_some());
+    }
+
+    /// The selection is the one confirmed: a click elsewhere during the wait
+    /// is not taken for the deleted rows.
+    #[test]
+    fn the_selection_is_saved_on_confirm() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(10)]),
+            selected: Some(id(10)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10)]);
+        actions.clear();
+        st.selection = HashSet::from([id(11)]);
+        st.selected = Some(id(11));
+        facts.worn.remove(&id(10));
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        let [InvAction::Delete(request)] = actions.as_slice() else {
+            panic!("the Trash move follows the take-off");
+        };
+        assert_eq!(request.selection.selected, Some(id(10)));
+        assert!(request.selection.advance);
+        st.begin_delete(id(90), request.selection.clone());
+        assert!(st.pending_delete.is_some());
+        assert!(!reconcile_selection(&inv, &mut st), "a changed selection is left alone");
+        assert_eq!(st.selected, Some(id(11)));
+    }
+
+    /// A secondary window closed while its items come off stays in the list,
+    /// so its Trash move still runs; with nothing pending it goes.
+    #[test]
+    fn a_closed_window_keeps_its_pending_detach() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10)]),
+            ..Default::default()
+        };
+        let mut w = crate::ui::inventory::InventoryWindow {
+            id: id(500),
+            root: Uuid::nil(),
+            additional: false,
+            state: Box::default(),
+            open: false,
+        };
+        assert!(!super::super::keeps_window(&w), "a closed idle window goes");
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut w.state, &prefs, &facts, &mut actions, vec![id(10)]);
+        assert!(w.state.detach_delete.is_some());
+        assert!(super::super::keeps_window(&w), "a pending Detach and Delete keeps it");
+    }
+
+    /// From the worn object's menu: refusals are said in chat, and the
+    /// Inventory window's own selection is not moved.
+    #[test]
+    fn the_worn_object_menu_reports_in_chat_and_keeps_the_selection() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi::default();
+        assert!(st.ask_detach_delete(&inv, &prefs, &facts, Uuid::nil()).is_err());
+        assert!(st.ask_detach_delete(&inv, &prefs, &facts, id(11)).is_err(), "body parts stay on");
+        assert!(st.ask_detach_delete(&inv, &prefs, &facts, id(99)).is_err(), "an item not loaded");
+        assert!(st.dialog.is_none());
+
+        // confirmed, then the item is found locked: a chat line
+        assert!(st.ask_detach_delete(&inv, &prefs, &facts, id(10)).is_ok());
+        let Some(EditDialog::DetachDelete(ids)) = st.dialog.take() else {
+            panic!("the confirmation opens");
+        };
+        let mut actions = Vec::new();
+        let busy = Facts {
+            worn: facts.worn.clone(),
+            appearance_busy: true,
+            ..Default::default()
+        };
+        start_detach(&inv, &mut st, &prefs, &busy, &mut actions, ids);
+        assert!(matches!(actions.as_slice(), [InvAction::Notice(_)]));
+        assert!(st.detach_delete.is_none());
+
+        // confirmed and done: the Trash move leaves the selection alone
+        actions.clear();
+        st.ask_detach_delete(&inv, &prefs, &facts, id(10)).unwrap();
+        let Some(EditDialog::DetachDelete(ids)) = st.dialog.take() else {
+            panic!("the confirmation opens");
+        };
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, ids);
+        actions.clear();
+        facts.worn.remove(&id(10));
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        let [InvAction::Delete(deletion)] = actions.as_slice() else {
+            panic!("the Trash move follows the take-off");
+        };
+        st.begin_delete(id(90), deletion.selection.clone());
+        assert!(st.pending_delete.is_none());
+
+        // a confirmation from the menu, cancelled: Inventory's own Delete
+        // is not taken for the menu's
+        st.detach_from_world = true;
+        st.selection = HashSet::from([id(10)]);
+        st.selected = Some(id(10));
+        facts.worn.insert(id(10));
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(matches!(st.dialog, Some(EditDialog::DetachDelete(_))));
+        assert!(!st.detach_from_world);
+    }
 }
 
 /// A Delete keeps its originating window and selection through any additional
@@ -338,6 +743,9 @@ pub(crate) struct DeleteSelection {
     deleted: HashSet<Uuid>,
     candidates: Vec<Uuid>,
     next: Option<Uuid>,
+    /// False when the Delete did not come from this window's selection (the
+    /// in-world Detach and Delete): the window's selection is left alone.
+    advance: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,16 +794,15 @@ pub(super) struct PendingDelete {
 
 impl DeleteRequest {
     pub(crate) fn new(inv: &Inventory, st: &InventoryUi, ids: &[Uuid], change: Mutation) -> Self {
-        let gone: HashSet<_> = ids.iter().copied().collect();
-        let order = keyboard::shown_order(st);
-        let last = st
-            .selected
-            .filter(|id| gone.contains(id))
-            .or_else(|| order.iter().rev().find(|id| gone.contains(id)).copied());
-        let next = last.and_then(|last| next_row(inv, order, &gone, last));
+        Self::with_selection(inv, DeleteSelection::of(inv, st, ids), change)
+    }
+
+    /// A Delete whose selection was saved earlier (Detach and Delete saves it
+    /// at confirm time, before waiting for the items to come off).
+    pub(crate) fn with_selection(inv: &Inventory, mut selection: DeleteSelection, change: Mutation) -> Self {
         // Watch only actual moves, to their requested destination. A mixed
         // selection can include roots already in Trash, which need no update.
-        let moves = change
+        selection.moves = change
             .operations
             .iter()
             .filter_map(|operation| match operation {
@@ -406,6 +813,19 @@ impl DeleteRequest {
                 _ => None,
             })
             .collect();
+        Self { change, selection }
+    }
+}
+
+impl DeleteSelection {
+    fn of(inv: &Inventory, st: &InventoryUi, ids: &[Uuid]) -> Self {
+        let gone: HashSet<_> = ids.iter().copied().collect();
+        let order = keyboard::shown_order(st);
+        let last = st
+            .selected
+            .filter(|id| gone.contains(id))
+            .or_else(|| order.iter().rev().find(|id| gone.contains(id)).copied());
+        let next = last.and_then(|last| next_row(inv, order, &gone, last));
         // LLFolderView::getNextUnselectedItem (indra/llui/llfolderview.cpp):
         // below the last selected row, then above it. Skip whole deleted
         // subtrees too; their descendants leave the list with their parent.
@@ -415,19 +835,17 @@ impl DeleteRequest {
                 order[index + 1..].iter().chain(order[..index].iter().rev()).copied().collect()
             });
         Self {
-            change,
-            selection: DeleteSelection {
-                window: st.ui_id,
-                root: inv.root,
-                selected: st.selected,
-                selection: st.selection.clone(),
-                anchor: st.anchor,
-                view: DeleteView::of(st),
-                moves,
-                deleted: gone,
-                candidates,
-                next,
-            },
+            window: st.ui_id,
+            root: inv.root,
+            selected: st.selected,
+            selection: st.selection.clone(),
+            anchor: st.anchor,
+            view: DeleteView::of(st),
+            moves: Vec::new(),
+            deleted: gone,
+            candidates,
+            next,
+            advance: true,
         }
     }
 }
@@ -435,6 +853,9 @@ impl DeleteRequest {
 impl InventoryUi {
     /// Called only for the mutation that carries this Delete's context.
     pub(crate) fn begin_delete(&mut self, request: Uuid, selection: DeleteSelection) {
+        if !selection.advance {
+            return;
+        }
         let window = selection.window;
         let target = if self.ui_id == window {
             Some(self)

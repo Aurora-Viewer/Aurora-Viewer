@@ -310,6 +310,7 @@ impl App {
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
+            InvAction::Notice(text) => self.world.system_message(text),
             InvAction::Edit(change) => self.edit_inventory(change, false),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {

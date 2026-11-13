@@ -294,6 +294,9 @@ pub enum CtxAction {
     ForgetHudScale(ObjKey),
     SetHudMoveLock(ObjKey, bool),
     Detach(ObjKey),
+    /// Take a worn attachment off, then move its item to the Trash, after
+    /// Inventory's "Detach and Delete" confirmation.
+    DetachDelete(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),
     /// "Touch" / "Edit" of a worn item in the inventory or the
