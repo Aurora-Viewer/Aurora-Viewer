@@ -9035,6 +9035,7 @@ update-error-integrity = Le fichier téléchargé ne correspond pas à l’empre
 update-error-filesystem = Impossible de préparer l’installation. Vérifiez l’espace libre et les droits d’écriture du dossier, puis fermez les autres instances d’Aurora.
 update-error-package = Le paquet est incomplet ou invalide. L’installation actuelle est conservée.
 update-error-unsupported = Cette release ne permet pas l’installation automatique depuis ce dossier. Téléchargez-la depuis sa page et décompressez-la dans un dossier dédié.
+update-error-drive-root = Aurora ne peut pas se mettre à jour dans un dossier placé à la racine d’un disque, comme E:\Aurora Viewer. Déplacez le dossier d’un niveau, par exemple dans E:\Jeux\Aurora Viewer, lancez Aurora depuis cet endroit, puis mettez à jour.
 update-error-unsupported-macos = Sur macOS, une nouvelle version s’installe à la main. Téléchargez-la depuis sa page, puis remplacez Aurora Viewer dans votre dossier Applications par la nouvelle.
 update-error-startup = L’auxiliaire de mise à jour n’a pas pu démarrer. L’installation actuelle est conservée.
 update-rollback = La nouvelle version n’a pas démarré correctement. L’ancienne installation a été restaurée.
