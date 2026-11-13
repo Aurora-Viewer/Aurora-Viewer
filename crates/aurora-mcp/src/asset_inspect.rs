@@ -8,11 +8,95 @@
 use crate::bridge::McpError;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+const MAX_INSPECT_ASSET_BYTES: u64 = 64 * 1024 * 1024;
+const ALLOWED_ASSET_EXTENSIONS: &[&str] = &[
+    "gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif",
+];
+
+/// Validates that `raw_path` points to a regular file with an allowed extension
+/// inside an approved local root (current working directory, `aurora-mcp-captures`,
+/// `aurora-live-mesh`, or `AURORA_MCP_ASSET_ROOTS`) and within `max_bytes`.
+pub fn validate_local_file_path(
+    raw_path: &str,
+    allowed_exts: &[&str],
+    max_bytes: Option<u64>,
+) -> Result<PathBuf, McpError> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err(McpError::InvalidParams("file_path cannot be empty".into()));
+    }
+    let canonical = std::fs::canonicalize(Path::new(trimmed))
+        .map_err(|e| McpError::InvalidParams(format!("cannot resolve '{trimmed}': {e}")))?;
+
+    let meta = std::fs::metadata(&canonical)
+        .map_err(|e| McpError::InvalidParams(format!("cannot stat '{}': {e}", canonical.display())))?;
+    if !meta.is_file() {
+        return Err(McpError::InvalidParams(format!(
+            "'{}' is not a regular file",
+            canonical.display()
+        )));
+    }
+    if let Some(limit) = max_bytes
+        && meta.len() > limit
+    {
+        return Err(McpError::InvalidParams(format!(
+            "file '{}' ({} bytes) exceeds maximum allowed size ({limit} bytes)",
+            canonical.display(),
+            meta.len()
+        )));
+    }
+
+    let ext = canonical
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !allowed_exts.iter().any(|allowed| *allowed == ext) {
+        return Err(McpError::PermissionDenied(format!(
+            "file extension '.{ext}' is not permitted; allowed: {}",
+            allowed_exts.join(", ")
+        )));
+    }
+
+    let mut allowed_roots: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(c) = std::fs::canonicalize(cwd)
+    {
+        allowed_roots.push(c);
+    }
+    for sub in ["aurora-mcp-captures", "aurora-live-mesh"] {
+        let dir = std::env::temp_dir().join(sub);
+        if let Ok(c) = std::fs::canonicalize(dir) {
+            allowed_roots.push(c);
+        }
+    }
+    if let Ok(env_roots) = std::env::var("AURORA_MCP_ASSET_ROOTS") {
+        for entry in std::env::split_paths(&env_roots) {
+            if let Ok(c) = std::fs::canonicalize(entry) {
+                allowed_roots.push(c);
+            }
+        }
+    }
+
+    if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
+        return Err(McpError::PermissionDenied(format!(
+            "path '{}' is outside allowed asset roots (cwd, capture/temp dirs, or AURORA_MCP_ASSET_ROOTS)",
+            canonical.display()
+        )));
+    }
+
+    Ok(canonical)
+}
 
 pub fn inspect_local_asset(file_path: &str) -> Result<Value, McpError> {
-    let path = Path::new(file_path.trim());
-    let bytes = std::fs::read(path)
+    let path = validate_local_file_path(
+        file_path,
+        ALLOWED_ASSET_EXTENSIONS,
+        Some(MAX_INSPECT_ASSET_BYTES),
+    )?;
+    let bytes = std::fs::read(&path)
         .map_err(|e| McpError::InvalidParams(format!("cannot read '{}': {e}", path.display())))?;
 
     let mut hasher = Sha256::new();
@@ -26,11 +110,11 @@ pub fn inspect_local_asset(file_path: &str) -> Result<Value, McpError> {
         .to_ascii_lowercase();
 
     match ext.as_str() {
-        "gltf" => inspect_gltf_json(&bytes, path, &sha256, "gltf"),
-        "glb" => inspect_glb(&bytes, path, &sha256),
-        "dae" => inspect_collada(&bytes, path, &sha256),
+        "gltf" => inspect_gltf_json(&bytes, &path, &sha256, "gltf"),
+        "glb" => inspect_glb(&bytes, &path, &sha256),
+        "dae" => inspect_collada(&bytes, &path, &sha256),
         "png" | "jpg" | "jpeg" | "tga" | "bmp" | "webp" | "gif" => {
-            inspect_texture(&bytes, path, &sha256, &ext)
+            inspect_texture(&bytes, &path, &sha256, &ext)
         }
         _ => Ok(json!({
             "filename": path.display().to_string(),
@@ -312,5 +396,24 @@ mod tests {
         assert_eq!(res["total_triangles"], 12);
         assert_eq!(res["bounding_box_dimensions"], json!([1.0, 1.0, 2.0]));
         assert_eq!(res["material_slots"], json!(["Hull", "Glass"]));
+    }
+
+    #[test]
+    fn mcp_asset_inspector_rejects_disallowed_extensions_and_outside_paths() {
+        let dir = std::env::temp_dir().join("aurora-mcp-test-outside");
+        let _ = std::fs::create_dir_all(&dir);
+        let secret_txt = dir.join("secret.txt");
+        let _ = std::fs::write(&secret_txt, b"secret");
+        assert!(matches!(
+            inspect_local_asset(&secret_txt.display().to_string()),
+            Err(McpError::PermissionDenied(_))
+        ));
+
+        let outside_png = dir.join("outside.png");
+        let _ = std::fs::write(&outside_png, b"not-a-png");
+        assert!(matches!(
+            inspect_local_asset(&outside_png.display().to_string()),
+            Err(McpError::PermissionDenied(_))
+        ));
     }
 }

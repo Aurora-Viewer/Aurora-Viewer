@@ -8,11 +8,14 @@ use crate::router::{McpProfile, McpRouter};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, watch};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+const MAX_HTTP_BODY_BYTES: usize = 2 * 1024 * 1024;
+const HTTP_IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct McpServerHandle {
     pub bind_addr: SocketAddr,
@@ -194,9 +197,16 @@ async fn handle_http_connection(
 
     let mut content_length = 0usize;
     let mut wants_sse = false;
+    let mut host_header: Option<String> = None;
+    let mut origin_header: Option<String> = None;
+    let mut auth_header: Option<String> = None;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 || line == "\r\n" || line == "\n" {
+        let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_line(&mut line)).await;
+        let Ok(Ok(n)) = read_res else {
+            return Ok(());
+        };
+        if n == 0 || line == "\r\n" || line == "\n" {
             break;
         }
         if let Some((k, v)) = line.split_once(':') {
@@ -206,13 +216,43 @@ async fn handle_http_connection(
                 content_length = v.parse::<usize>().unwrap_or(0);
             } else if k == "accept" && v.contains("text/event-stream") {
                 wants_sse = true;
+            } else if k == "host" {
+                host_header = Some(v.to_owned());
+            } else if k == "origin" {
+                origin_header = Some(v.to_owned());
+            } else if k == "authorization" {
+                auth_header = Some(v.to_owned());
             }
         }
     }
 
+    if !is_allowed_host(host_header.as_deref()) {
+        let mut stream = reader.into_inner();
+        write_http_response(
+            &mut stream,
+            "403 Forbidden",
+            "application/json",
+            b"{\"error\":\"forbidden host\"}",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    if !is_allowed_origin(origin_header.as_deref()) {
+        let mut stream = reader.into_inner();
+        write_http_response(
+            &mut stream,
+            "403 Forbidden",
+            "application/json",
+            b"{\"error\":\"forbidden origin\"}",
+        )
+        .await?;
+        return Ok(());
+    }
+
     if method == "OPTIONS" {
         let mut stream = reader.into_inner();
-        let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Accept, Mcp-Session-Id\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let resp = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         stream.write_all(resp.as_bytes()).await?;
         return Ok(());
     }
@@ -229,9 +269,25 @@ async fn handle_http_connection(
         return Ok(());
     }
 
+    let expected_token = std::env::var("AURORA_MCP_TOKEN")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty());
+    if !is_authorized(auth_header.as_deref(), expected_token.as_deref()) {
+        let mut stream = reader.into_inner();
+        write_http_response(
+            &mut stream,
+            "401 Unauthorized",
+            "application/json",
+            b"{\"error\":\"unauthorized\"}",
+        )
+        .await?;
+        return Ok(());
+    }
+
     if method == "GET" && (path.starts_with("/sse") || (path.starts_with("/mcp") && wants_sse)) {
         let mut stream = reader.into_inner();
-        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n";
+        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
         stream.write_all(headers.as_bytes()).await?;
         stream
             .write_all(b"event: endpoint\ndata: /message\n\n")
@@ -250,8 +306,25 @@ async fn handle_http_connection(
     }
 
     if method == "POST" {
-        let mut body = vec![0u8; content_length.min(16 * 1024 * 1024)];
-        reader.read_exact(&mut body).await?;
+        if content_length > MAX_HTTP_BODY_BYTES {
+            let mut stream = reader.into_inner();
+            write_http_response(
+                &mut stream,
+                "413 Payload Too Large",
+                "application/json",
+                b"{\"error\":\"request body exceeds 2 MiB limit\"}",
+            )
+            .await?;
+            return Ok(());
+        }
+        let mut body = vec![0u8; content_length];
+        if content_length > 0 {
+            let read_res =
+                tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_exact(&mut body)).await;
+            if !matches!(read_res, Ok(Ok(_))) {
+                return Ok(());
+            }
+        }
         let mut stream = reader.into_inner();
 
         let parsed: Value = match serde_json::from_slice(&body) {
@@ -273,21 +346,12 @@ async fn handle_http_connection(
             let mut replies = Vec::new();
             for item in batch {
                 if let Some(r) = handle_jsonrpc_message(&router, item).await {
-                    if let Ok(s) = serde_json::to_string(&r) {
-                        let _ = sse_tx.send(s);
-                    }
                     replies.push(r);
                 }
             }
             (!replies.is_empty()).then_some(Value::Array(replies))
         } else {
-            let r = handle_jsonrpc_message(&router, parsed).await;
-            if let Some(ref val) = r
-                && let Ok(s) = serde_json::to_string(val)
-            {
-                let _ = sse_tx.send(s);
-            }
-            r
+            handle_jsonrpc_message(&router, parsed).await
         };
 
         match reply_opt {
@@ -312,6 +376,53 @@ async fn handle_http_connection(
     .await
 }
 
+fn is_allowed_host(host: Option<&str>) -> bool {
+    let Some(raw) = host else {
+        return true;
+    };
+    let h = raw.trim().to_ascii_lowercase();
+    let host_only = if h.starts_with('[') {
+        h.split(']').next().unwrap_or("")
+    } else {
+        h.split(':').next().unwrap_or("")
+    };
+    matches!(host_only, "127.0.0.1" | "localhost" | "[::1" | "::1")
+}
+
+fn is_allowed_origin(origin: Option<&str>) -> bool {
+    let Some(raw) = origin else {
+        return true;
+    };
+    let o = raw.trim().to_ascii_lowercase();
+    o.starts_with("http://127.0.0.1")
+        || o.starts_with("http://localhost")
+        || o.starts_with("http://[::1]")
+}
+
+fn is_authorized(auth_header: Option<&str>, expected_token: Option<&str>) -> bool {
+    let Some(expected) = expected_token else {
+        return true;
+    };
+    let Some(header) = auth_header else {
+        return false;
+    };
+    let Some(provided) = header.strip_prefix("Bearer ").or_else(|| header.strip_prefix("bearer "))
+    else {
+        return false;
+    };
+    // Constant-length XOR comparison to avoid trivial timing leaks.
+    let a = provided.trim().as_bytes();
+    let b = expected.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 async fn write_http_response(
     stream: &mut TcpStream,
     status: &str,
@@ -319,7 +430,7 @@ async fn write_http_response(
     body: &[u8],
 ) -> std::io::Result<()> {
     let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes()).await?;
@@ -408,6 +519,22 @@ mod tests {
             .expect("status text");
         assert!(text.contains("Aurora Plaza"));
         assert!(text.contains("test-suite"));
+    }
+
+    #[test]
+    fn mcp_server_rejects_foreign_host_origin_and_bad_tokens() {
+        assert!(is_allowed_host(Some("127.0.0.1:3847")));
+        assert!(is_allowed_host(Some("localhost:3847")));
+        assert!(!is_allowed_host(Some("evil.example.com:3847")));
+
+        assert!(is_allowed_origin(None));
+        assert!(is_allowed_origin(Some("http://127.0.0.1:3000")));
+        assert!(!is_allowed_origin(Some("https://evil.example.com")));
+
+        assert!(is_authorized(None, None));
+        assert!(is_authorized(Some("Bearer secret-123"), Some("secret-123")));
+        assert!(!is_authorized(Some("Bearer wrong"), Some("secret-123")));
+        assert!(!is_authorized(None, Some("secret-123")));
     }
 
     async fn post_jsonrpc(addr: SocketAddr, payload: Value) -> Value {

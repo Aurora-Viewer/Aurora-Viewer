@@ -2050,7 +2050,7 @@ impl McpRouter {
                 let mfa_token = args.get("mfa_token").and_then(Value::as_str).map(str::to_owned);
                 let resp = self
                     .send_to_viewer(
-                        None,
+                        lease_id,
                         ViewerRequest::ViewerLogin {
                             username,
                             password,

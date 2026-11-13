@@ -679,8 +679,6 @@ impl ViewerRequest {
             | ViewerRequest::UiGetValue { .. }
             | ViewerRequest::UiListMenus { .. }
             | ViewerRequest::NotecardRead { .. }
-            | ViewerRequest::ViewerLogin { .. }
-            | ViewerRequest::ViewerShutdown
             | ViewerRequest::AvatarAnimationsList
             | ViewerRequest::EconomyGetBalance
             | ViewerRequest::ParcelInfoQuery
@@ -751,7 +749,9 @@ impl ViewerRequest {
             | ViewerRequest::EnvironmentApplyPreset { .. }
             | ViewerRequest::VoiceSetUserVolume { .. }
             | ViewerRequest::VoiceSetUserMute { .. }
-            | ViewerRequest::VoiceTransmit { .. } => true,
+            | ViewerRequest::VoiceTransmit { .. }
+            | ViewerRequest::ViewerLogin { .. }
+            | ViewerRequest::ViewerShutdown => true,
         }
     }
 }
@@ -765,10 +765,7 @@ fn is_readonly_viewer_call(api: &str, operation: &str) -> bool {
             | ("LLAgent", "getposition" | "getstatus" | "getgroups")
             | ("LLWorld", "getobjects" | "getavatars" | "getregion")
             | ("LLInventory", "search" | "browse" | "getworn")
-    ) || op.starts_with("get")
-        || op.starts_with("list")
-        || op.starts_with("read")
-        || op.starts_with("inspect")
+    )
 }
 
 /// Creates a bounded channel pair connecting the Tokio MCP server to the viewer main thread.

@@ -197,6 +197,7 @@ pub struct McpBridge {
     local_mesh_auto_reload: bool,
     pub sse_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub last_voice_speaking: HashMap<Uuid, bool>,
+    session_lindens_spent: i32,
 }
 
 impl McpBridge {
@@ -1238,6 +1239,23 @@ impl App {
                     ))));
                     return;
                 };
+                let leaf = canonical_key
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(&canonical_key)
+                    .to_ascii_lowercase();
+                if matches!(
+                    leaf.as_str(),
+                    "rlva_enabled" | "login_uri" | "username" | "password" | "mfa_token"
+                ) || matches!(
+                    canonical_key.to_ascii_lowercase().as_str(),
+                    "rlva.enabled" | "account.login_uri" | "account.username"
+                ) {
+                    let _ = reply_tx.send(Err(McpError::PermissionDenied(format!(
+                        "Setting '{canonical_key}' is security-sensitive and cannot be mutated via MCP"
+                    ))));
+                    return;
+                }
                 match crate::settings::registry::set(
                     &mut self.settings,
                     &canonical_key,
@@ -2160,8 +2178,10 @@ impl App {
         commands: Vec<String>,
     ) -> Result<ViewerResponse, McpError> {
         if !self.settings.rlva_enabled {
-            self.settings.rlva_enabled = true;
-            self.world.rlva_configure(true);
+            return Err(McpError::PermissionDenied(
+                "RLVa is disabled in viewer settings; enable RLVa manually before using rlva_execute"
+                    .into(),
+            ));
         }
         let source_id = Uuid::from_u128(0x726c7661);
         let mut executed = Vec::new();
@@ -2771,20 +2791,24 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let Some(obj) = self.world.objects.get(obj_idx) else {
             return Err(McpError::InvalidParams("Object not found".into()));
         };
-        if !obj.owner_id.is_nil() && obj.owner_id != self.world.agent_id && self.world.god_level == 0
-        {
-            return Err(McpError::PermissionDenied(
-                "you do not have Modify rights on this object".into(),
-            ));
-        }
-        if let Some(props) = self.build.props.get(&obj.full_id)
-            && (props.owner_mask & perm::MODIFY) == 0
-            && !props.owner_id.is_nil()
-            && self.world.god_level == 0
-        {
-            return Err(McpError::PermissionDenied(
-                "object lacks Modify permission".into(),
-            ));
+        if self.world.god_level == 0 {
+            if obj.owner_id.is_nil() {
+                return Err(McpError::PermissionDenied(
+                    "object ownership is unknown; fetch object properties before modifying".into(),
+                ));
+            }
+            if obj.owner_id != self.world.agent_id {
+                return Err(McpError::PermissionDenied(
+                    "you do not have Modify rights on this object".into(),
+                ));
+            }
+            if let Some(props) = self.build.props.get(&obj.full_id)
+                && (props.owner_mask & perm::MODIFY) == 0
+            {
+                return Err(McpError::PermissionDenied(
+                    "object lacks Modify permission".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -3213,9 +3237,9 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             item.item_id
         } else {
             let template_script = self.world.inventory.items.values().find(|it| {
+                let mask = crate::world::inventory::actions::agent_mask(it, self.world.agent_id);
                 (it.asset_type == 10 || it.inv_type == 10)
-                    && (it.owner_mask & perm::COPY) != 0
-                    && (it.owner_mask & perm::MODIFY) != 0
+                    && (mask & (perm::COPY | perm::MODIFY)) == (perm::COPY | perm::MODIFY)
             });
             if let Some(template) = template_script {
                 if let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, template, running) {
@@ -4046,13 +4070,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         dialog_id: i64,
         filename: &str,
     ) -> Result<ViewerResponse, McpError> {
-        let path = std::path::PathBuf::from(filename);
-        if !path.exists() {
-            return Err(McpError::InvalidParams(format!(
-                "File does not exist: {}",
-                path.display()
-            )));
-        }
+        let path = aurora_mcp::asset_inspect::validate_local_file_path(
+            filename,
+            &["gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif"],
+            Some(128 * 1024 * 1024),
+        )?;
         let choice = self.imports.choice;
         let local = choice == crate::imports::Choice::Local;
         self.imports.open = true;
@@ -4524,7 +4546,9 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     "Task notecard {item_id} not found on object {lid}"
                 )));
             };
-            if (meta.owner_mask & crate::world::inventory::actions::COPY) == 0 {
+            let mask =
+                crate::world::inventory::actions::agent_mask(&meta, self.world.agent_id);
+            if (mask & crate::world::inventory::actions::COPY) == 0 && self.world.god_level == 0 {
                 return Err(McpError::PermissionDenied(
                     "Creator permissions forbid reading this task notecard (no Copy)".into(),
                 ));
@@ -4551,9 +4575,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 "Inventory notecard {item_id} not found"
             )));
         };
-        if (item.owner_mask & crate::world::inventory::actions::COPY) == 0
-            && self.world.god_level == 0
-        {
+        let item_mask = crate::world::inventory::actions::agent_mask(item, self.world.agent_id);
+        if (item_mask & crate::world::inventory::actions::COPY) == 0 && self.world.god_level == 0 {
             return Err(McpError::PermissionDenied(
                 "Creator permissions forbid reading this notecard (no Copy)".into(),
             ));
@@ -4813,6 +4836,13 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 "screen": format!("{:?}", self.screen),
                 "agent_id": self.world.agent_id.to_string(),
             })));
+        }
+
+        let allow_creds = std::env::var("AURORA_MCP_ALLOW_CREDENTIALS").as_deref() == Ok("1");
+        if (password.is_some() || mfa_token.is_some()) && !allow_creds {
+            return Err(McpError::PermissionDenied(
+                "Passing raw passwords or MFA tokens over MCP is disabled (set AURORA_MCP_ALLOW_CREDENTIALS=1 only for local test harnesses)".into(),
+            ));
         }
 
         if let Some(user) = username {
@@ -5310,14 +5340,34 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_economy_pay_avatar(
-        &mut self,
-        target_uuid_str: &str,
-        amount: i32,
-        message: Option<String>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn check_and_record_economy_spend(&mut self, amount: i32) -> Result<i32, McpError> {
         if amount <= 0 {
             return Err(McpError::InvalidParams("amount must be greater than 0".into()));
+        }
+        let max_per_tx = std::env::var("AURORA_MCP_MAX_PAY_LINDENS")
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok())
+            .unwrap_or(100);
+        if max_per_tx <= 0 {
+            return Err(McpError::PermissionDenied(
+                "MCP L$ payments are disabled (AURORA_MCP_MAX_PAY_LINDENS <= 0)".into(),
+            ));
+        }
+        if amount > max_per_tx {
+            return Err(McpError::PermissionDenied(format!(
+                "payment of L${amount} exceeds per-transaction MCP cap of L${max_per_tx} (AURORA_MCP_MAX_PAY_LINDENS)"
+            )));
+        }
+        let session_cap = std::env::var("AURORA_MCP_SESSION_PAY_LIMIT")
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok())
+            .unwrap_or(500);
+        let next_total = self.mcp_bridge.session_lindens_spent.saturating_add(amount);
+        if next_total > session_cap {
+            return Err(McpError::PermissionDenied(format!(
+                "payment of L${amount} would exceed session MCP cap of L${session_cap} (already spent L${})",
+                self.mcp_bridge.session_lindens_spent
+            )));
         }
         let balance = self.world.balance.unwrap_or(0);
         if balance < amount {
@@ -5325,6 +5375,17 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 "insufficient funds: balance is L${balance}, required L${amount}"
             )));
         }
+        self.mcp_bridge.session_lindens_spent = next_total;
+        Ok(balance)
+    }
+
+    fn handle_mcp_economy_pay_avatar(
+        &mut self,
+        target_uuid_str: &str,
+        amount: i32,
+        message: Option<String>,
+    ) -> Result<ViewerResponse, McpError> {
+        let balance = self.check_and_record_economy_spend(amount)?;
         let target = Uuid::parse_str(target_uuid_str.trim())
             .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
 
@@ -5342,6 +5403,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             "amount": amount,
             "message": msg,
             "balance_before": balance,
+            "session_spent": self.mcp_bridge.session_lindens_spent,
             "status": "payment_dispatched",
         })))
     }
@@ -5352,15 +5414,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         amount: i32,
         description: Option<String>,
     ) -> Result<ViewerResponse, McpError> {
-        if amount <= 0 {
-            return Err(McpError::InvalidParams("amount must be greater than 0".into()));
-        }
-        let balance = self.world.balance.unwrap_or(0);
-        if balance < amount {
-            return Err(McpError::InvalidParams(format!(
-                "insufficient funds: balance is L${balance}, required L${amount}"
-            )));
-        }
+        let balance = self.check_and_record_economy_spend(amount)?;
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
@@ -5381,6 +5435,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             "amount": amount,
             "description": desc,
             "balance_before": balance,
+            "session_spent": self.mcp_bridge.session_lindens_spent,
             "status": "payment_dispatched",
         })))
     }

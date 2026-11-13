@@ -162,9 +162,7 @@ impl LeaseManager {
             return Ok((None, Vec::new()));
         };
         if !active.is_expired(now)
-            && let Some(requested_id) = lease_id
-            && !requested_id.is_empty()
-            && requested_id != active.lease_id
+            && !lease_id.is_some_and(|id| !id.is_empty() && id == active.lease_id)
         {
             return Err(McpError::LeaseConflict {
                 holder: active.owner.clone(),
@@ -197,10 +195,7 @@ impl LeaseManager {
             *guard = None;
         }
         if let Some(active) = guard.as_ref() {
-            if let Some(id) = lease_id
-                && !id.is_empty()
-                && id != active.lease_id
-            {
+            if !lease_id.is_some_and(|id| !id.is_empty() && id == active.lease_id) {
                 return Err(McpError::LeaseConflict {
                     holder: active.owner.clone(),
                     remaining_secs: active.expires_at.saturating_duration_since(now).as_secs(),
@@ -270,6 +265,20 @@ mod tests {
         // Another owner cannot steal an active lease.
         let conflict = mgr.acquire("agent-beta", 60, None);
         assert!(matches!(conflict, Err(McpError::LeaseConflict { .. })));
+
+        // Omitting lease_id cannot hijack or release an active lease.
+        assert!(matches!(
+            mgr.verify_for_mutation(None),
+            Err(McpError::LeaseConflict { .. })
+        ));
+        assert!(matches!(
+            mgr.verify_for_mutation(Some("")),
+            Err(McpError::LeaseConflict { .. })
+        ));
+        assert!(matches!(
+            mgr.release(None),
+            Err(McpError::LeaseConflict { .. })
+        ));
 
         // Same owner can renew.
         let (renewed, _) = mgr

@@ -1,13 +1,17 @@
 //! Off-thread Viewport PNG Encoding, Downscaling, Orbit Manifests, and Visual Image Diffing.
 
+use crate::asset_inspect::validate_local_file_path;
 use crate::bridge::{CaptureBufferType, McpError, RawCapturedFrame};
 use base64::Engine;
 use image::{ ImageBuffer, Rgba, RgbaImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
+
+const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tga", "bmp", "webp", "gif"];
+const MAX_COMPARE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncodedCapture {
@@ -127,10 +131,20 @@ pub fn encode_captured_frame(
 /// Compare two images on disk (`image_compare`), computing RMSE, MAE, max channel
 /// difference, changed pixel percentage, and writing a visual diff PNG.
 pub fn compare_images(reference_path: &str, observed_path: &str) -> Result<Value, McpError> {
-    let ref_img = image::open(Path::new(reference_path.trim()))
+    let ref_path = validate_local_file_path(
+        reference_path,
+        ALLOWED_IMAGE_EXTENSIONS,
+        Some(MAX_COMPARE_IMAGE_BYTES),
+    )?;
+    let obs_path = validate_local_file_path(
+        observed_path,
+        ALLOWED_IMAGE_EXTENSIONS,
+        Some(MAX_COMPARE_IMAGE_BYTES),
+    )?;
+    let ref_img = image::open(&ref_path)
         .map_err(|e| McpError::InvalidParams(format!("cannot open reference '{reference_path}': {e}")))?
         .to_rgba8();
-    let obs_img = image::open(Path::new(observed_path.trim()))
+    let obs_img = image::open(&obs_path)
         .map_err(|e| McpError::InvalidParams(format!("cannot open observed '{observed_path}': {e}")))?
         .to_rgba8();
 
