@@ -27,7 +27,7 @@ use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use glam::{Quat, Vec3};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -130,6 +130,9 @@ pub struct LocalEnv {
     pub length: f64,
     pub offset: f64,
     generation: u64,
+    /// The Aurora Weather of the sky or day applied (its name's code,
+    /// weather/region.rs): mine while it stays, whatever the regions set.
+    pub weather: Option<crate::weather::region::RegionDay>,
 }
 
 impl LocalEnv {
@@ -141,6 +144,7 @@ impl LocalEnv {
             length: eep::DEFAULT_DAY_LENGTH,
             offset: eep::DEFAULT_DAY_OFFSET,
             generation,
+            weather: None,
         }
     }
 
@@ -355,6 +359,8 @@ pub struct EnvSelector {
     /// The preset was dropped by another local change: the panels follow.
     preset_dropped: bool,
     pending: VecDeque<Pending>,
+    /// Aurora Weather by settings asset (`note_asset_weather`).
+    asset_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
     /// Assets that could not be loaded, for the FailedToFindSettings message.
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
@@ -791,10 +797,18 @@ impl EnvSelector {
         match kind {
             SettingsKind::Sky => {
                 l.sky = None;
+                // the weather came with a sky or a day: the day's, if one stays
+                l.weather = l.day.as_ref().and_then(|(asset, _)| self.asset_weather.get(asset).cloned());
                 self.drop_preset();
             }
             SettingsKind::Water => l.water = None,
-            SettingsKind::Day => l.day = None,
+            SettingsKind::Day => {
+                l.day = None;
+                l.weather = match l.sky.as_ref().map(|(o, _)| o) {
+                    Some(LocalOrigin::Item(asset)) => self.asset_weather.get(asset).cloned(),
+                    _ => None,
+                };
+            }
         }
         let empty = self.local.as_ref().is_none_or(|l| {
             l.day.is_none()
@@ -808,6 +822,32 @@ impl EnvSelector {
             self.clear_local();
         } else {
             self.local_dirty = true;
+        }
+    }
+
+    /// The applied sky's or day's Aurora Weather, kept with the local
+    /// environment (an editor's "Apply only to myself").
+    pub fn set_local_weather(&mut self, weather: Option<crate::weather::region::RegionDay>) {
+        if let Some(l) = &mut self.local {
+            l.weather = weather;
+        }
+    }
+
+    /// The Aurora Weather of the local environment in place.
+    pub fn local_weather(&self) -> Option<&crate::weather::region::RegionDay> {
+        self.local.as_ref().and_then(|l| l.weather.as_ref())
+    }
+
+    /// The Aurora Weather of settings assets, read from their names as they
+    /// load (scene/mod.rs): an item applied to myself carries it.
+    pub fn note_asset_weather(&mut self, asset: Uuid, weather: Option<crate::weather::region::RegionDay>) {
+        match weather {
+            Some(w) => {
+                self.asset_weather.insert(asset, w);
+            }
+            None => {
+                self.asset_weather.remove(&asset);
+            }
         }
     }
 
@@ -836,7 +876,15 @@ impl EnvSelector {
                 return;
             };
             match p.state {
-                PendingState::Ready(s, origin) => self.apply_settings(p.asset, &s, origin, p.timing),
+                PendingState::Ready(s, origin) => {
+                    self.apply_settings(p.asset, &s, origin, p.timing);
+                    // a sky or a day sets the weather (or clears it); a water
+                    // has none and leaves the sky's
+                    if !matches!(*s, super::eep::Settings::Water(_)) {
+                        let weather = self.asset_weather.get(&p.asset).cloned();
+                        self.set_local_weather(weather);
+                    }
+                }
                 PendingState::Failed if p.preset != 0 => {
                     log::warn!(
                         "library sky {} of time of day preset {} could not be loaded: built-in sky with the preset's sun",
@@ -907,7 +955,10 @@ impl EnvSelector {
 
     fn apply_sky(&mut self, origin: LocalOrigin, sky: SkyFrame) {
         log::info!("local environment: sky {origin:?}");
-        self.local_mut().sky = Some((origin, sky));
+        // another sky: its weather, if any, is set after (set_local_weather)
+        let l = self.local_mut();
+        l.sky = Some((origin, sky));
+        l.weather = None;
         match origin {
             // the preset's own sky: the panels keep showing it
             LocalOrigin::Preset(n) => {
@@ -1837,6 +1888,47 @@ mod tests {
         assert!((gamma(&mut sel, 10.0) - 1.9).abs() < 1e-6);
         assert!((gamma(&mut sel, 12.5) - 1.1).abs() < 1e-5, "halfway through 5 s");
         assert!((gamma(&mut sel, 15.0) - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_water_applied_over_a_coded_sky_keeps_its_weather() {
+        use crate::weather::region::{RegionDay, SkyWeather};
+        let mut sel = region_selector();
+        sel.note_asset_weather(SKY, Some(RegionDay::fixed(SkyWeather::CLEAR)));
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        assert!(sel.local_weather().is_some(), "the coded sky's weather");
+        // a water has no weather: the sky's stays (review of #2410)
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        sel.frame(&input(2.0));
+        assert!(sel.local_weather().is_some(), "kept under a new water");
+        // another sky without a code clears it
+        let plain = Uuid::from_u128(0x54);
+        sel.request_local(plain, SettingsKind::Sky);
+        sel.on_settings(plain, Some(sky_asset(1.2)));
+        sel.frame(&input(3.0));
+        assert!(sel.local_weather().is_none());
+    }
+
+    #[test]
+    fn clearing_a_coded_sky_drops_its_weather_and_keeps_the_waters_override() {
+        use crate::weather::region::{RegionDay, SkyWeather};
+        let mut sel = region_selector();
+        sel.note_asset_weather(SKY, Some(RegionDay::fixed(SkyWeather::CLEAR)));
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        sel.frame(&input(1.0));
+        assert!(sel.local_weather().is_some());
+        // "Based on day cycle" for the sky: the water stays, the sky's
+        // weather goes with it
+        sel.clear_local_kind(SettingsKind::Sky);
+        sel.frame(&input(2.0));
+        assert!(sel.has_local(), "the water override stays");
+        assert!(sel.local_weather().is_none());
     }
 
     #[test]
