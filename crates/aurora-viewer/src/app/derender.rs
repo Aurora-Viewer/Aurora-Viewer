@@ -53,6 +53,12 @@ impl App {
             return;
         }
         let idx = w.objects.index_of_uuid(&id);
+        // with RLVa on, never one of our own attachments, whatever path
+        // asked (derenderObject's RLVa-1.4.5 check)
+        if w.rlva.enabled() && idx.is_some_and(|i| crate::ui::context::wearer(w, i) == Some(w.agent_id)) {
+            log::info!("derender {id} refused: our own attachment while RLVa is on");
+            return;
+        }
         let avatar = idx.and_then(|i| w.objects.get(i)).is_none_or(|o| o.is_avatar());
         let (target, entry) = if avatar {
             // FirstName / LastName of the avatar, or its user name

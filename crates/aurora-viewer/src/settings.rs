@@ -616,6 +616,8 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// The weather of this viewer (the Environment window's "Weather").
+    pub weather: crate::weather::WeatherSettings,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -922,6 +924,33 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// Opacity of the background of the window with the focus
+    /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
+    pub window_opacity_active: f32,
+    /// Opacity of the background of the other windows
+    /// (InactiveFloaterTransparency; 1 here where the Legacy Viewer has 0.95:
+    /// Aurora's windows are glass already).
+    pub window_opacity_inactive: f32,
+    /// Opacity of the Conversations window and the detached conversations
+    /// while not focused (FSIMOpacity, 1; there the lower of it and the
+    /// inactive windows').
+    pub conversations_opacity: f32,
+    /// Conversations takes the active window's opacity while it has the
+    /// focus (FSImActiveOpacityOverride, off).
+    pub conversations_active_opacity_override: bool,
+    /// Opacity of the background of the bars (Aurora's own, 1).
+    pub bar_opacity: f32,
+    /// Opacity of the menus' background (FSMenuBackgroundAlpha, 1).
+    pub menu_opacity: f32,
+    /// Opacity of the chat cards over the world (ConsoleBackgroundOpacity;
+    /// 0.75 here where the Legacy Viewer has 0.5: Aurora's cards always had it).
+    pub console_opacity: f32,
+    /// Opacity of the mini-map's background (FSMiniMapOpacity, 0.66).
+    pub minimap_opacity: f32,
+    /// The pie menu takes `pie_opacity` (OverridePieColors, off).
+    pub pie_opacity_override: bool,
+    /// Opacity of the pie menu when overridden (PieMenuOpacity, 0.85).
+    pub pie_opacity: f32,
     /// The entry of a conversation that receives a message while another
     /// is shown flashes in violet, then stays tinted until read
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
@@ -1329,6 +1358,10 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Selecting an object, or right-clicking it, while the camera is off the
+    /// avatar turns the avatar to face it (the Legacy Viewer's
+    /// FSTurnAvatarToSelectedObject, on; app/selection_turn.rs).
+    pub turn_to_selected: bool,
     /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
     /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
     /// only).
@@ -1348,6 +1381,9 @@ pub struct Settings {
     /// off). RLVa can still take it away; the simulator ignores the cancel of
     /// a teleport it will not cancel.
     pub always_show_tp_cancel: bool,
+    /// After a teleport to another region, "Teleport completed from <SLURL>"
+    /// in nearby chat (the Legacy Viewer's FSShowBackSLURL, on).
+    pub show_back_slurl: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
     /// Quickjump: jump and land without waiting for the pre-jump and landing
@@ -1861,6 +1897,12 @@ pub struct AudioSettings {
     /// Play the parcel music automatically when entering a parcel
     /// (FSParcelMusicAutoPlay, off by default: the radio toggle starts it).
     pub music_autoplay: bool,
+    /// Fade the parcel music when its station changes (the Legacy Viewer's
+    /// FSFadeAudioStream, on), over these seconds in and out
+    /// (FSAudioMusicFadeIn 3, FSAudioMusicFadeOut 2; 0 to 10).
+    pub music_fade: bool,
+    pub music_fade_in: f32,
+    pub music_fade_out: f32,
     /// Play parcel media automatically.
     pub media_autoplay: bool,
     /// Where the parcel music's title is told when it changes (the Legacy
@@ -1939,6 +1981,9 @@ impl Default for AudioSettings {
             muted: [false; 7],
             enabled: [true; 7],
             music_autoplay: false,
+            music_fade: true,
+            music_fade_in: 3.0,
+            music_fade_out: 2.0,
             media_autoplay: false,
             stream_title: StreamTitleShow::Chat,
             stream_title_announce: false,
@@ -2056,6 +2101,7 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            weather: Default::default(),
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -2182,6 +2228,16 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            window_opacity_active: 1.0,
+            window_opacity_inactive: 1.0,
+            conversations_opacity: 1.0,
+            conversations_active_opacity_override: false,
+            bar_opacity: 1.0,
+            menu_opacity: 1.0,
+            console_opacity: crate::ui::surface_opacity::CONSOLE,
+            minimap_opacity: crate::ui::surface_opacity::MINIMAP,
+            pie_opacity_override: false,
+            pie_opacity: crate::ui::surface_opacity::PIE,
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
@@ -2326,11 +2382,13 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            turn_to_selected: true,
             avatar_turn_speed: 0.0,
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
             always_show_tp_cancel: false,
+            show_back_slurl: true,
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
@@ -2887,6 +2945,10 @@ impl Settings {
         }
         self.fps_limit = self.fps_limit.clamp(10, 500);
         self.background_fps_limit = self.background_fps_limit.clamp(1, 120);
+        // the Legacy Viewer's sliders: 0 to 10 s
+        for (secs, default) in [(&mut self.audio.music_fade_in, 3.0), (&mut self.audio.music_fade_out, 2.0)] {
+            *secs = if secs.is_finite() { secs.clamp(0.0, 10.0) } else { default };
+        }
         if self.settings_version < 6 {
             // new defaults: texture memory from the detected VRAM, 20 GB disk cache
             self.texture_budget_auto = true;
@@ -3217,6 +3279,22 @@ impl Settings {
         } else {
             0.5
         };
+        for opacity in [
+            &mut self.window_opacity_active,
+            &mut self.window_opacity_inactive,
+            &mut self.conversations_opacity,
+            &mut self.bar_opacity,
+            &mut self.menu_opacity,
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        for (opacity, default) in [
+            (&mut self.console_opacity, crate::ui::surface_opacity::CONSOLE),
+            (&mut self.minimap_opacity, crate::ui::surface_opacity::MINIMAP),
+            (&mut self.pie_opacity, crate::ui::surface_opacity::PIE),
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
+        }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
@@ -3465,6 +3543,8 @@ impl Settings {
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            // set each frame by the app while it rains
+            rain_surfaces: false,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
         }

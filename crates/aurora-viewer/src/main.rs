@@ -108,6 +108,7 @@ mod updater;
 mod url_scheme;
 mod voice;
 mod wearable_editor;
+mod weather;
 mod window_hold;
 mod window_show;
 mod world;
