@@ -1435,6 +1435,25 @@ ui-inventory-properties-creator-unknown-multiple = (inconnu / multiple)
 ui-inventory-properties-creator-unknown-multiple-hint = Le simulateur ne donne pas de créateur pour cet objet : un objet dont les parties ont été créées par plusieurs résidents n’en a pas.
 world-groups-action-denied = Action refusée
 world-groups-error-while-moderating = Erreur lors de la modération.
+world-ban-all-title = Bannissements de groupe
+world-ban-all-started = { $count ->
+    [one] Mise à jour du bannissement de { $name } dans { $count } groupe. Un rapport suivra à la fin.
+   *[other] Mise à jour des bannissements de { $name } dans { $count } groupes, un groupe à la fois. Un rapport suivra à la fin.
+}
+world-ban-all-report =
+    { $done ->
+        [one] { $name } : bannissement réussi dans { $done } groupe sur { $count }.
+       *[other] { $name } : bannissement réussi dans { $done } groupes sur { $count }.
+    }
+    Réussi dans : { $succeeded }
+    Échec dans : { $failed }
+world-unban-all-report =
+    { $done ->
+        [one] { $name } : bannissement levé dans { $done } groupe sur { $count }.
+       *[other] { $name } : bannissement levé dans { $done } groupes sur { $count }.
+    }
+    Levé dans : { $succeeded }
+    Échec dans : { $failed }
 common-enable = Activer
 common-activate = Activer
 ui-options-enable-this-channel = Activer ce canal
@@ -4622,6 +4641,16 @@ ui-chat-eject-from-group = Expulser du groupe
 ui-chat-allow-text-chat = Autoriser le chat texte
 ui-chat-forbid-text-chat = Interdire le chat texte
 ui-chat-ban-member = Bannir le membre
+ui-chat-ban-from-all-groups = Bannir de tous mes groupes
+ui-chat-unban-from-all-groups = Débannir de tous mes groupes
+ui-chat-ban-from-all-groups-confirm = { $count ->
+    [one] Vous allez bannir { $name } du seul groupe où vous pouvez gérer les bannissements :
+   *[other] Vous allez bannir { $name } des { $count } groupes où vous pouvez gérer les bannissements :
+}
+ui-chat-unban-from-all-groups-confirm = { $count ->
+    [one] Vous allez lever le bannissement de { $name } dans le seul groupe où vous pouvez gérer les bannissements :
+   *[other] Vous allez lever le bannissement de { $name } dans les { $count } groupes où vous pouvez gérer les bannissements :
+}
 common-moderate = Modéré
 ui-worldmap-moderate = Modérés
 common-me = Moi

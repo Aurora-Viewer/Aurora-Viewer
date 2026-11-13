@@ -402,6 +402,12 @@ pub enum CtxAction {
         group: Uuid,
         agent: Uuid,
     },
+    /// "Ban from all my groups" / "Unban from all my groups", asked first
+    /// (`world::group_ban_all`).
+    BanFromAllGroups {
+        agent: Uuid,
+        ban: bool,
+    },
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
     /// LLSpeakerVolumeStorage).
     SetVoiceVolume(Uuid, f32),
