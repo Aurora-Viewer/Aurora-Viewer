@@ -540,7 +540,9 @@ fn lightning_glow(dir: vec3<f32>) -> vec3<f32> {
     let flat_len = length(dir.xy);
     let toward = select(0.0, max(dot(dir.xy / max(flat_len, 1e-4), l.xy), 0.0), flat_len > 1e-4);
     let around = pow(toward, 3.0);
-    let height = exp(-pow((dir.z - l.z) / 0.3, 2.0));
+    // (squared by hand: pow of a negative base is undefined in SPIR-V and MSL)
+    let dz = (dir.z - l.z) / 0.3;
+    let height = exp(-dz * dz);
     let above = smoothstep(-0.05, 0.08, dir.z);
     return vec3<f32>(0.78, 0.82, 1.0) * l.w * above * (around * height * 1.6 + 0.15);
 }
@@ -2239,7 +2241,8 @@ fn rain_ripples_layer(xy: vec2<f32>, time: f32, cell: f32, period: f32, salt: u3
             let d = xy - centre;
             let dist = length(d);
             let radius = age * cell * 0.58 * size;
-            let ring = exp(-pow((dist - radius) * 28.0, 2.0)) * (1.0 - age) * min(size, 1.0);
+            let edge = (dist - radius) * 28.0;
+            let ring = exp(-edge * edge) * (1.0 - age) * min(size, 1.0);
             slope += d / max(dist, 1e-4) * ring * sin((dist - radius) * 60.0);
         }
     }
@@ -2498,8 +2501,10 @@ fn rain_wet_memory(world: vec3<f32>) -> f32 {
     let f = fract(pos);
     var w = vec4<f32>(0.0);
     let offs = array<vec2<i32>, 4>(vec2<i32>(0, 0), vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
+    // (the last row and column: their neighbour clamped, weighted zero)
+    let last = vec2<i32>(i32(size) - 1);
     for (var k = 0; k < 4; k++) {
-        let s = textureLoad(rain_wetness, i + offs[k], 0);
+        let s = textureLoad(rain_wetness, min(i + offs[k], last), 0);
         w[k] = smoothstep(-0.3, -0.05, world.z - s.x) * s.y;
     }
     return mix(mix(w.x, w.y, f.x), mix(w.z, w.w, f.x), f.y);
@@ -3271,9 +3276,12 @@ fn rain_surface_height(xy: vec2<f32>, near_z: f32) -> f32 {
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return -1e9; }
-    let dims = vec2<f32>(textureDimensions(shadow_map));
     let tile = rain_shelter_tile();
-    let at = clamp(vec2<i32>(tile.xy + uv * tile.z), vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+    // within the shelter map's own square, not the whole atlas (a texel past
+    // its edge is another map's)
+    let lo = vec2<i32>(tile.xy);
+    let hi = vec2<i32>(tile.xy + vec2<f32>(tile.z)) - vec2<i32>(1);
+    let at = clamp(vec2<i32>(tile.xy + uv * tile.z), lo, hi);
     let d = textureLoad(shadow_map, at, 0);
     if (d >= 0.999) { return -1e9; }
     // the map's depth is m[2].z * z + m[3].z (seen straight down)
