@@ -200,18 +200,6 @@ fn edit_repeats(cmd: EditCommand) -> bool {
     matches!(cmd, EditCommand::Undo | EditCommand::Redo | EditCommand::Paste)
 }
 
-/// Whether the page reads the clipboard through the viewer: on Linux, where
-/// `edit_paste` finds nothing to paste. Under Wayland, Chromium picks its
-/// Wayland backend and the page, drawn off screen, never has the keyboard
-/// focus that a Wayland client needs to read the clipboard; the viewer's
-/// window has that focus. Under X11 the plugin's Chromium neither reads the
-/// X clipboard nor answers for it (`page_cuts`); a compositor that serves
-/// the X clipboard only to a focused X window (Hyprland) leaves it nothing
-/// either.
-pub fn paste_through_viewer() -> bool {
-    cfg!(target_os = "linux")
-}
-
 /// Whether Cut and Copy go to the page as `edit_cut` and `edit_copy`: on
 /// every system but Linux under X11 (`cuts_on`).
 pub fn page_cuts() -> bool {
@@ -226,81 +214,20 @@ fn cuts_on(linux: bool, wayland: bool) -> bool {
     !linux || wayland
 }
 
-/// What a Paste press gave the page (`paste_text`), which the repeats of
-/// that same key give again without reading the clipboard each time. Any
-/// other key's press, and that key's release, forget it: a repeat never
-/// pastes the text of an older press (V held, then Ctrl pressed, makes the
-/// repeats Ctrl+V), and the clipboard's text is not kept once the key is up.
-/// None held sends the repeats as `edit_paste`, as the press was.
-#[derive(Debug, Default)]
-pub struct HeldPaste(Option<(KeyCode, String)>);
-
-impl HeldPaste {
-    /// Every key event the page gets, before its Paste is looked at.
-    pub fn on_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
-        let ends = if pressed {
-            !repeat
-        } else {
-            self.0.as_ref().is_some_and(|(k, _)| *k == code)
-        };
-        if ends {
-            self.0 = None;
-        }
-    }
-
-    /// A Paste press of `code` that gives the page `text`.
-    pub fn press(&mut self, code: KeyCode, text: Option<String>) {
-        self.0 = text.map(|t| (code, t));
-    }
-
-    /// The text for a Paste press or repeat of `code`.
-    pub fn text(&self, code: KeyCode) -> Option<String> {
-        self.0.as_ref().filter(|(k, _)| *k == code).map(|(_, t)| t.clone())
-    }
-}
-
-/// The text a Paste puts into a page, from the system clipboard's text
-/// now and its text when a page last cut or copied (`page_copy`): None, so
-/// the page pastes from its own clipboard, while the system clipboard has
-/// not changed since that cut or copy, which under Wayland never reaches it.
-pub fn paste_text(page_copy: Option<&Option<String>>, now: Option<String>) -> Option<String> {
-    match page_copy {
-        Some(at_copy) if *at_copy == now => None,
-        _ => now,
-    }
-}
-
-/// How many pages' last cut or copy the viewer remembers (`record_copy`).
-pub const PAGE_COPIES: usize = 8;
-
-/// Remember that page `pid` cut or copied while the system clipboard held
-/// `text`: its own entry replaced and moved last, the oldest page dropped
-/// past `PAGE_COPIES`, so one page's copy leaves another's record alone.
-pub fn record_copy(copies: &mut Vec<(u32, Option<String>)>, pid: u32, text: Option<String>) {
-    copies.retain(|(p, _)| *p != pid);
-    copies.push((pid, text));
-    if copies.len() > PAGE_COPIES {
-        copies.remove(0);
-    }
-}
-
 /// Run an Edit menu shortcut on a page instead of sending it the key: the
 /// command on the press (and on a repeat when it allows one). True when the
 /// key press is a shortcut, which the page then never gets, on every system;
 /// the release still goes to the page, as in the Legacy Viewer, whose menus
 /// take only the key down (LLMenuItemCallGL::handleAcceleratorKey,
-/// indra/llui/llmenugl.cpp). `clipboard` is the text the
-/// viewer read for a Paste (`paste_through_viewer`): `paste_script` puts it into
-/// the page instead of `edit_paste`.
-pub fn edit(
-    p: &mut MediaPlugin,
-    letter: Option<char>,
-    code: KeyCode,
-    pressed: bool,
-    repeat: bool,
-    mods: Modifiers,
-    clipboard: Option<&str>,
-) -> bool {
+/// indra/llui/llmenugl.cpp). Paste is `edit_paste` on every system, as in
+/// the Legacy Viewer (LLViewerMediaImpl::paste): the plugin pastes into the
+/// focused frame alone. Never paste by script instead: a script runs in the
+/// page's main frame, among the page's own scripts, which would see text
+/// meant for a frame of another origin. On Linux the page, drawn off
+/// screen, cannot read the system clipboard, so text copied in another
+/// program does not paste there, as in the Legacy Viewer; a page's own cut
+/// or copy still does.
+pub fn edit(p: &mut MediaPlugin, letter: Option<char>, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
     let Some(cmd) = edit_shortcut(letter, code, mods) else {
         return false;
     };
@@ -308,10 +235,7 @@ pub fn edit(
         return false;
     }
     if (!repeat || edit_repeats(cmd)) && sent(cmd, page_cuts()) {
-        match clipboard {
-            Some(text) if cmd == EditCommand::Paste => p.execute_javascript(&paste_script(text)),
-            _ => p.edit(cmd),
-        }
+        p.edit(cmd);
     }
     true
 }
@@ -321,39 +245,6 @@ pub fn edit(
 /// plugin drops a printable key with Control held.
 fn sent(cmd: EditCommand, cuts: bool) -> bool {
     cuts || !matches!(cmd, EditCommand::Cut | EditCommand::Copy)
-}
-
-/// The script that pastes `text` into the page's focused field, where the
-/// Legacy Viewer sends `edit_paste` (LLViewerMediaImpl::paste,
-/// indra/newview/llviewermedia.cpp) and the page reads the clipboard itself.
-/// As a real paste: a `paste` event carrying the text first, so a page that
-/// handles pastes gets it, then, unless the page cancelled it, the text
-/// inserted as plain text (`insertText`, one undo step, line breaks and
-/// tabs kept). It follows the focus into open shadow roots and into
-/// frames and embedded documents of the same origin; one of another origin
-/// is out of the script's reach and gets nothing, not even the paste event.
-/// An empty text pastes nothing. The script runs among the page's own
-/// scripts, which can replace the functions it calls: a page that holds a
-/// frame of another origin could take the text pasted into that frame, which
-/// `edit_paste` would give the frame alone. The text is one JSON string literal, never
-/// code, with U+FFFE and U+FFFF escaped: XML, which carries the message to
-/// the plugin, does not allow them.
-pub fn paste_script(text: &str) -> String {
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let literal = serde_json::to_string(&text)
-        .unwrap_or_else(|_| "\"\"".into())
-        .replace('\u{FFFE}', "\\ufffe")
-        .replace('\u{FFFF}', "\\uffff");
-    format!(
-        "(function(t){{if(!t)return;var d=document,e=d.activeElement;\
-         for(;;){{if(e&&e.shadowRoot&&e.shadowRoot.activeElement){{e=e.shadowRoot.activeElement;continue}}\
-         if(e&&/^(I?FRAME|OBJECT|EMBED|FENCEDFRAME)$/.test(e.tagName)){{try{{d=e.contentDocument;e=d.activeElement}}catch(x){{return}}continue}}\
-         break}}\
-         if(!e)return;var go=true;\
-         try{{var dt=new DataTransfer();dt.setData('text/plain',t);\
-         go=e.dispatchEvent(new ClipboardEvent('paste',{{clipboardData:dt,bubbles:true,cancelable:true,composed:true}}))}}catch(x){{}}\
-         if(go)d.execCommand('insertText',false,t)}})({literal})"
-    )
 }
 
 /// UTF-16 code units of a text, one WM_CHAR each.
@@ -722,64 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn each_page_keeps_its_own_copy() {
-        let mut c = Vec::new();
-        record_copy(&mut c, 1, Some("a".into()));
-        record_copy(&mut c, 2, Some("b".into()));
-        // page 1's record outlives page 2's copy
-        assert_eq!(c.iter().find(|(p, _)| *p == 1).map(|(_, t)| t.clone()), Some(Some("a".into())));
-        record_copy(&mut c, 1, Some("c".into()));
-        assert_eq!(c, vec![(2, Some("b".into())), (1, Some("c".into()))]);
-        for pid in 10..20 {
-            record_copy(&mut c, pid, None);
-        }
-        assert_eq!(c.len(), PAGE_COPIES);
-        assert_eq!(c.last().map(|(p, _)| *p), Some(19));
-    }
-
-    #[test]
-    fn a_held_paste_keeps_its_text_only_while_its_key_is_down() {
-        let mut h = HeldPaste::default();
-        h.on_key(KeyCode::KeyV, true, false);
-        h.press(KeyCode::KeyV, Some("a".into()));
-        // its repeats, and another key's release (Shift up), keep it
-        h.on_key(KeyCode::KeyV, true, true);
-        h.on_key(KeyCode::ShiftLeft, false, false);
-        assert_eq!(h.text(KeyCode::KeyV), Some("a".into()));
-        // its release forgets it
-        h.on_key(KeyCode::KeyV, false, false);
-        assert_eq!(h.text(KeyCode::KeyV), None);
-        // V held, then Ctrl pressed: the repeats get no older paste's text
-        h.press(KeyCode::KeyV, Some("old".into()));
-        h.on_key(KeyCode::KeyV, true, false);
-        h.on_key(KeyCode::ControlLeft, true, false);
-        h.on_key(KeyCode::KeyV, true, true);
-        assert_eq!(h.text(KeyCode::KeyV), None);
-        // another key's press forgets it, and only its own key gets it
-        h.press(KeyCode::KeyV, Some("b".into()));
-        assert_eq!(h.text(KeyCode::KeyZ), None);
-        h.on_key(KeyCode::KeyZ, true, false);
-        assert_eq!(h.text(KeyCode::KeyV), None);
-        // a press the page pastes itself holds nothing
-        h.press(KeyCode::KeyV, None);
-        assert_eq!(h.text(KeyCode::KeyV), None);
-    }
-
-    #[test]
-    fn paste_text_after_a_page_copy() {
-        let t = |s: &str| Some(s.to_owned());
-        // no page copied: the system clipboard is typed
-        assert_eq!(paste_text(None, t("outside")), t("outside"));
-        assert_eq!(paste_text(None, None), None);
-        // a page copied and nothing changed since: the page's own clipboard
-        assert_eq!(paste_text(Some(&t("old")), t("old")), None);
-        assert_eq!(paste_text(Some(&None), None), None);
-        // another program copied since: its text is typed
-        assert_eq!(paste_text(Some(&t("old")), t("new")), t("new"));
-        assert_eq!(paste_text(Some(&None), t("new")), t("new"));
-    }
-
-    #[test]
     fn x11_keeps_cut_and_copy_from_the_page() {
         // Linux under X11: no edit_cut or edit_copy, the page never takes the X clipboard
         assert!(!cuts_on(true, false));
@@ -794,33 +627,6 @@ mod tests {
         assert!(sent(EditCommand::Redo, false));
         assert!(sent(EditCommand::Cut, true));
         assert!(sent(EditCommand::Copy, true));
-        assert_eq!(paste_through_viewer(), cfg!(target_os = "linux"));
-    }
-
-    #[test]
-    fn paste_script_quotes_the_text() {
-        // the text is one JSON string literal at the end of the script, line breaks as \n
-        let lit = |t: &str| {
-            let s = paste_script(t);
-            let start = s.rfind("})(").expect("call") + 3;
-            serde_json::from_str::<String>(&s[start..s.len() - 1]).expect("literal")
-        };
-        assert_eq!(lit("https://example.com/watch?v=1"), "https://example.com/watch?v=1");
-        assert_eq!(lit("one\r\ntwo\rthree\tx"), "one\ntwo\nthree\tx");
-        assert_eq!(lit(""), "");
-        // quotes, backslashes and script ends stay text, never code
-        let nasty = "\"); alert(1); (\"\\ ' ` ${x} </script> \u{2028} é😀";
-        assert_eq!(lit(nasty), nasty);
-        assert!(!paste_script(nasty).contains("alert(1); (\"\\"));
-        // a paste event first, then the insert unless the page cancelled it
-        let s = paste_script("x");
-        assert!(s.find("ClipboardEvent('paste'").expect("event") < s.find("if(go)").expect("insert"));
-        // XML refuses U+FFFE and U+FFFF, so they go escaped and still arrive
-        let odd = "a\u{FFFE}b\u{FFFF}";
-        assert!(!paste_script(odd).contains('\u{FFFE}') && !paste_script(odd).contains('\u{FFFF}'));
-        assert_eq!(lit(odd), odd);
-        // the focus is followed into shadow roots and embedded documents
-        assert!(s.contains("e.shadowRoot.activeElement") && s.contains("OBJECT|EMBED|FENCEDFRAME"));
     }
 
     #[test]

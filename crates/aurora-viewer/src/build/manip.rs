@@ -436,28 +436,28 @@ impl Manip {
         let dt = self.last.map(|t| now.duration_since(t).as_secs_f32()).unwrap_or(0.016);
         self.last = Some(now);
         let k = 1.0 - 0.5f32.powf(dt / SCALE_HALF_LIFE);
-        for i in 0..3 {
+        for (i, scale) in self.arrow_scale.iter_mut().enumerate() {
             let a = if active == Some(Part::Arrow(i)) {
                 SELECTED_ARROW_SCALE
             } else {
                 1.0
             };
-            self.arrow_scale[i] += (a - self.arrow_scale[i]) * k;
-            if self.arrow_scale[i] == 0.0 {
-                self.arrow_scale[i] = 1.0;
+            *scale += (a - *scale) * k;
+            if *scale == 0.0 {
+                *scale = 1.0;
             }
         }
-        for i in 0..5 {
+        for (i, scale) in self.ring_scale.iter_mut().enumerate() {
             let part = match i {
                 0..=2 => Part::Ring(i),
                 3 => Part::Roll,
                 _ => Part::Free,
             };
             let t = if active == Some(part) { 1.05 } else { 1.0 };
-            if self.ring_scale[i] == 0.0 {
-                self.ring_scale[i] = 1.0;
+            if *scale == 0.0 {
+                *scale = 1.0;
             }
-            self.ring_scale[i] += (t - self.ring_scale[i]) * k;
+            *scale += (t - *scale) * k;
         }
     }
 
