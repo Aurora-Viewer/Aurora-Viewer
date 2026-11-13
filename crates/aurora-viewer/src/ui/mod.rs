@@ -10,6 +10,7 @@ pub mod aurora_bg;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
 pub mod backdrop;
+pub mod balance_gains;
 pub mod bars;
 pub mod bidi;
 pub mod blacklist;
@@ -28,12 +29,14 @@ pub mod click_away_focus;
 pub mod close_key;
 pub mod color_picker;
 pub mod colors;
+pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
+pub mod destinations;
 pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
@@ -83,6 +86,7 @@ pub mod monitor;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
+pub mod nearby_media;
 pub mod news;
 pub mod notification_center;
 pub mod notifications;
@@ -106,6 +110,7 @@ pub mod quick_prefs;
 pub mod region;
 pub mod region_message_prompt;
 pub mod region_restart;
+pub mod region_tracker;
 pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
@@ -124,6 +129,7 @@ pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
 pub mod stream_title;
+pub mod surface_opacity;
 pub(crate) mod text_menu;
 pub mod texture_library;
 pub mod texture_picker;
@@ -162,6 +168,7 @@ pub struct Panels {
     pub minimap: bool,
     /// World map (Ctrl+M).
     pub world_map: bool,
+    pub region_tracker: bool,
     pub beacons: bool,
     pub owned_land: bool,
     pub settings: bool,
@@ -176,6 +183,7 @@ pub struct Panels {
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
     pub appearance: bool,
+    pub avatar_studio: bool,
     pub ao: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
@@ -205,6 +213,8 @@ pub struct Panels {
     pub grid_status: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Destination Guide (toolbar `destinations`, World › Destinations).
+    pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
@@ -243,6 +253,7 @@ impl Panels {
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
+            region_tracker: false,
             beacons: false,
             owned_land: false,
             settings: false,
@@ -254,6 +265,7 @@ impl Panels {
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
             appearance: settings.show_appearance,
+            avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
             contacts: false,
@@ -271,6 +283,7 @@ impl Panels {
             bumps: false,
             grid_status: false,
             web_browser: false,
+            destinations: false,
             quick_prefs: false,
             voice_controls: false,
             about: false,

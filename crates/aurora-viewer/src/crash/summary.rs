@@ -109,13 +109,16 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     }
     // Without the watcher's word, the last sign of life stands for the end.
     let tick = number("tick");
-    let end = stopped.or(tick);
+    // An `alive.txt` emptied by a system that stopped at once still has its
+    // date: without it, a Windows restart would never be told (#3056).
+    let seen = tick.or_else(|| super::watchdog::alive_written(dir));
+    let end = stopped.or(seen);
     if let Some(duration) = end.and_then(|end| end.checked_sub(record.started_unix)) {
         let approximate = if stopped.is_none() { " (last sign of life)" } else { "" };
         rows.push(("Session duration", format!("{duration} s{approximate}")));
     }
     if stopped.is_none() {
-        rows.push(("End of session", unseen_end(tick, boot_unix).to_owned()));
+        rows.push(("End of session", unseen_end(seen, boot_unix).to_owned()));
     }
     // `freeze.txt` is the watchdog's word that the window was frozen at the
     // end; it answers for 5 s more than its last `responsive`, itself up to
@@ -833,7 +836,16 @@ pub(crate) fn state_value(value: &str) -> Option<String> {
     ];
     let screens = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
     // the passes of `GpuElement::key`
-    let passes = ["shadows_depth", "effects", "terrain_sky", "objects", "water", "transparent", "post"];
+    let passes = [
+        "shadows_depth",
+        "effects",
+        "terrain_sky",
+        "objects",
+        "water",
+        "transparent",
+        "weather",
+        "post",
+    ];
     let numeric = |v: &str| {
         let digits = v.strip_prefix('-').unwrap_or(v);
         !digits.is_empty() && v.len() <= 12 && digits.bytes().all(|b| b.is_ascii_digit() || b == b'.')
@@ -1746,6 +1758,38 @@ mod tests {
         assert!(body.contains("| Window | answering until the end |"), "{body}");
         // Windows started long after: nothing says it went down with it.
         let body = build_at(&record, &dir, Some(90_000)).body;
+        assert!(
+            body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_sign_of_life_emptied_by_a_stopped_system_still_dates_the_end() {
+        let (dir, record) = session();
+        // What a power cut leaves of a file renamed without a flush.
+        let alive = dir.join("alive.txt");
+        std::fs::write(&alive, [0u8; 300]).unwrap();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1500);
+        std::fs::File::options()
+            .append(true)
+            .open(&alive)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+        let body = build_at(&record, &dir, Some(1600)).body;
+        assert!(body.contains("| Session duration | 500 s (last sign of life) |"), "{body}");
+        assert!(
+            body.contains("| End of session | not seen: Windows started again right after"),
+            "{body}"
+        );
+        // The content is lost: nothing to say about the window.
+        assert!(!body.contains("| Window |"), "{body}");
+        // A session that ended before its first sign of life stays unknown.
+        std::fs::remove_file(&alive).unwrap();
+        let body = build_at(&record, &dir, Some(1600)).body;
+        assert!(!body.contains("Session duration"), "{body}");
         assert!(
             body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
             "{body}"

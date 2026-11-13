@@ -36,6 +36,12 @@
 //! (`saved.rs`) does restore the Glow it was saved with, as the Legacy
 //! Viewer's graphics presets do (RenderGlow is in
 //! app_settings/graphic_preset_controls.xml).
+//!
+//! A Mac has a sixth set of values (`mac_mid_high`), the Legacy Viewer's Mac
+//! "MidHigh" table: not a level of the row (it does not rise from Medium in
+//! every setting), but a new Mac profile's default where other systems start
+//! on Medium, and the one-time move of a Mac profile still exactly on that
+//! former default.
 
 use crate::settings::{MAX_TEXTURE_RESOLUTION, Settings};
 
@@ -287,12 +293,104 @@ impl Preset {
         }
         .write(s);
         s.graphics_saved_active = None;
+        // the weather's quality follows the level, but is not one of its
+        // values: choosing it in the Weather section keeps the level shown
+        s.weather.quality = self.weather_quality();
+    }
+
+    /// The Weather quality a level sets.
+    pub fn weather_quality(self) -> crate::weather::WeatherQuality {
+        use crate::weather::WeatherQuality;
+        match self {
+            Preset::Potato | Preset::Low => WeatherQuality::Low,
+            Preset::Medium => WeatherQuality::Medium,
+            Preset::High | Preset::Deluxe => WeatherQuality::High,
+        }
     }
 
     /// The level whose settings are exactly those of `s`, if any.
     pub fn matching(s: &Settings) -> Option<Preset> {
         let current = Values::read(s).as_shown();
         Preset::ALL.into_iter().find(|p| p.values().as_shown() == current)
+    }
+}
+
+/// The Legacy Viewer's Mac "MidHigh" default: indra/newview/featuretable_mac.txt,
+/// the list of GPU class 3, at which `LLFeatureManager::loadGPUClass`
+/// (indra/newview/llfeaturemanager.cpp) caps Apple GPUs ("high throughput,
+/// low capability"). Applied on macOS only, but built and tested on every
+/// system.
+pub(crate) mod mac_mid_high {
+    use super::{Preset, Settings, Values};
+
+    /// The values of a new Mac profile: the Mac "MidHigh" list mapped onto
+    /// Aurora's Medium level. It keeps the moderate distance, LOD and
+    /// particle budget, turns the ambient occlusion off (RenderDeferredSSAO
+    /// 0), uses FXAA, manual probes and no screen-space effects; the avatar
+    /// budget (RenderAvatarMaxNonImpostors 9), complexity (250 000), probe
+    /// count (64) and anisotropy (2) follow the Mac table. Specular AA, an
+    /// Aurora improvement with no measurable cost, stays as the user has it.
+    pub(crate) fn values() -> Values {
+        Values {
+            max_avatars: 9,
+            max_complexity: 250_000,
+            ssao: 0,
+            ao_method: 0,
+            gtao_quality: 2,
+            probe_count: 64,
+            anisotropy: 2,
+            ..Preset::Medium.values()
+        }
+    }
+
+    /// Writes the Mac default (a new Mac profile's level, and the one-time
+    /// move of a Mac profile still exactly on the former Medium default).
+    pub(crate) fn apply(s: &mut Settings) {
+        values().write(s);
+        s.graphics_saved_active = None;
+    }
+
+    /// Whether the profile is exactly the Mac default.
+    pub(crate) fn matches(s: &Settings) -> bool {
+        Values::read(s).as_shown() == values().as_shown()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::graphics_presets::Effects;
+
+        #[test]
+        fn the_mac_default_is_the_legacy_mac_mid_high_table() {
+            let v = values();
+            assert_eq!(v.draw_distance, 128.0);
+            assert_eq!(v.lod_factor, 2.0);
+            assert_eq!(v.max_avatars, 9);
+            assert_eq!(v.max_complexity, 250_000);
+            assert_eq!(v.max_particles, 4096);
+            assert_eq!((v.shadow_quality, v.ssao), (0, 0));
+            assert!(!v.projector_shadows);
+            assert_eq!((v.water_reflections, v.mirrors, v.ssr), (0, 0, false));
+            assert_eq!((v.reflection_probes, v.probe_count), (1, 64));
+            assert_eq!((v.antialiasing, v.anisotropy), (1, 2));
+            assert_eq!(v.sharpen, 0.0);
+            assert!(v.glow && v.hdr_emissive);
+            assert_eq!(v.effects, Effects::OFF);
+        }
+
+        #[test]
+        fn the_mac_default_is_recognized_and_is_not_a_level() {
+            let mut s = Settings::default();
+            apply(&mut s);
+            assert!(matches(&s));
+            assert_eq!(Preset::matching(&s), None, "it is the Mac default, not a row level");
+            Preset::Medium.apply(&mut s);
+            assert!(!matches(&s));
+            // a single setting moved by hand is Custom again
+            apply(&mut s);
+            s.draw_distance = 200.0;
+            assert!(!matches(&s));
+        }
     }
 }
 
@@ -749,6 +847,20 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn levels_set_the_weather_quality_and_choosing_it_keeps_the_level() {
+        use crate::weather::WeatherQuality;
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Low);
+        s.weather.quality = WeatherQuality::High;
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        Preset::Medium.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Medium);
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::High);
+    }
 
     #[test]
     fn each_level_matches_itself_after_applying() {

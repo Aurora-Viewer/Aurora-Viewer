@@ -195,6 +195,7 @@ impl Stack {
                 Some(Sample {
                     animation: r.clip.clone()?,
                     frame: r.frame,
+                    time_seconds: None,
                 })
             })
             .collect()
@@ -391,7 +392,9 @@ impl Stack {
                     self.replacement = None;
                 }
                 if self.picker {
-                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(aurora_i18n::tr!("ik-edit-animation-search")));
+                    crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                        edit.hint_text(aurora_i18n::tr!("ik-edit-animation-search"))
+                    });
                     if self.cache.as_ref() != Some(&(inv.generation, self.filter.clone())) {
                         let filter = self.filter.to_lowercase();
                         self.candidates = inv

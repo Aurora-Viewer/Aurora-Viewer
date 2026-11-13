@@ -7,6 +7,8 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// Aurora's own marked in its gradient, outside Preferences too.
+pub(crate) use pages::aurora::aurora_word;
 mod saved_graphics;
 mod scale;
 
@@ -48,6 +50,7 @@ pub enum Page {
     #[default]
     Graphics,
     Camera,
+    Vr,
     Avatars,
     Build,
     Chat,
@@ -62,6 +65,7 @@ pub enum Page {
     Confirmations,
     Inventory,
     Controls,
+    Gamepad,
     Shortcuts,
     Commands,
     System,
@@ -70,10 +74,11 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 22] = [
+    pub const ALL: [Page; 24] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
+        Page::Vr,
         Page::Avatars,
         Page::Build,
         Page::Chat,
@@ -88,6 +93,7 @@ impl Page {
         Page::Confirmations,
         Page::Inventory,
         Page::Controls,
+        Page::Gamepad,
         Page::Shortcuts,
         Page::Commands,
         Page::System,
@@ -101,6 +107,7 @@ impl Page {
             Page::Aurora => "aurora",
             Page::Graphics => "graphics",
             Page::Camera => "camera",
+            Page::Vr => "vr",
             Page::Avatars => "avatars",
             Page::Build => "build",
             Page::Chat => "chat",
@@ -115,6 +122,7 @@ impl Page {
             Page::Confirmations => "confirmations",
             Page::Inventory => "inventory",
             Page::Controls => "controls",
+            Page::Gamepad => "gamepad",
             Page::Shortcuts => "shortcuts",
             Page::Commands => "commands",
             Page::System => "system",
@@ -128,6 +136,7 @@ impl Page {
             Page::Aurora => aurora_i18n::tr!("ui-options-aurora"),
             Page::Graphics => aurora_i18n::tr!("ui-options-graphics"),
             Page::Camera => aurora_i18n::tr!("common-camera"),
+            Page::Vr => aurora_i18n::tr!("vr-preferences-title"),
             Page::Avatars => aurora_i18n::tr!("ui-options-avatars"),
             Page::Build => aurora_i18n::tr!("common-build"),
             Page::Chat => aurora_i18n::tr!("common-chat"),
@@ -142,6 +151,7 @@ impl Page {
             Page::Confirmations => aurora_i18n::tr!("ui-options-page-confirmations"),
             Page::Inventory => aurora_i18n::tr!("common-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-page-controls"),
+            Page::Gamepad => aurora_i18n::tr!("joystick-gamepad"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-shortcuts"),
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
@@ -156,6 +166,7 @@ impl Page {
             Page::Aurora => aurora_i18n::tr!("ui-options-aurora-intro"),
             Page::Graphics => aurora_i18n::tr!("ui-options-about-graphics"),
             Page::Camera => aurora_i18n::tr!("ui-options-about-camera"),
+            Page::Vr => aurora_i18n::tr!("vr-preferences-about"),
             Page::Avatars => aurora_i18n::tr!("ui-options-about-avatars"),
             Page::Build => aurora_i18n::tr!("ui-options-about-build"),
             Page::Chat => aurora_i18n::tr!("ui-options-about-chat"),
@@ -170,6 +181,7 @@ impl Page {
             Page::Confirmations => aurora_i18n::tr!("ui-options-about-confirmations"),
             Page::Inventory => aurora_i18n::tr!("ui-options-about-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-about-controls"),
+            Page::Gamepad => aurora_i18n::tr!("ui-options-about-gamepad"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"),
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
@@ -183,6 +195,7 @@ impl Page {
             Page::Aurora => "sparkles-filled",
             Page::Graphics => "device-desktop-filled",
             Page::Camera => "camera-filled",
+            Page::Vr => "device-vision-pro-filled",
             Page::Avatars => "user-filled",
             // the build tools' icon (Command_Build_Icon)
             Page::Build => "box",
@@ -198,6 +211,7 @@ impl Page {
             Page::Confirmations => "circle-check-filled",
             Page::Inventory => "box",
             Page::Controls => "mouse-filled",
+            Page::Gamepad => "device-gamepad-filled",
             Page::Shortcuts => "keyboard-filled",
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
@@ -371,6 +385,7 @@ pub struct OptionsUi {
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
     pub rlva_sendim_locked: bool,
     pub joystick: crate::joystick::Snapshot,
+    pub vr_default_resolution: Option<[u32; 2]>,
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
@@ -425,6 +440,8 @@ pub struct OptionsUi {
     /// The session's "Show my favorite landmarks at login", while logged in
     /// with an account the login screen remembers (set by the app).
     pub login_favorites: Option<bool>,
+    /// The account's "Show Friends Only", while logged in (set by the app).
+    pub friends_only: Option<bool>,
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
@@ -669,6 +686,8 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// "Show my favorite landmarks at login" switched (Privacy).
     pub login_favorites: Option<bool>,
+    /// "Show Friends Only" switched (Controls).
+    pub friends_only: Option<bool>,
     /// "Keep Show Friends Only after teleporting" switched (Controls).
     pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
@@ -940,11 +959,7 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
     let changed = super::widgets::segmented(ui, p, &mut selected, &options);
     if current.is_none() && !changed {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-options-preset-custom"))
-                .size(12.0)
-                .color(p.violet_pale),
-        );
+        ui.label(RichText::new(preset_label(s)).size(12.0).color(p.violet_pale));
     }
     match Preset::ALL.get(selected) {
         Some(level) if changed => {
@@ -952,6 +967,16 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// The line under the level row when no level matches: the Mac's own
+/// default on macOS, "Custom" otherwise.
+fn preset_label(s: &Settings) -> &'static str {
+    if cfg!(target_os = "macos") && crate::graphics_presets::mac_mid_high::matches(s) {
+        aurora_i18n::tr!("ui-options-preset-mac-mid-high")
+    } else {
+        aurora_i18n::tr!("ui-options-preset-custom")
     }
 }
 
