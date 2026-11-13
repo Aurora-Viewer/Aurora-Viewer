@@ -2836,8 +2836,8 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
-            NetEvent::LslSyntax { id, keywords } => {
-                self.on_lsl_syntax(id, keywords);
+            NetEvent::LslSyntax { id, keywords, lua } => {
+                self.on_lsl_syntax(id, keywords, lua);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {

@@ -794,6 +794,9 @@ pub enum NetEvent {
     LslSyntax {
         id: Uuid,
         keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+        /// The region's SLua keywords (ScriptDefinitions); None keeps the
+        /// bundled ones.
+        lua: Option<Vec<crate::lsl_syntax::Keyword>>,
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
