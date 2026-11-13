@@ -18334,6 +18334,10 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiChat, t);
                 let second_life = self.second_life();
+                // the rows selected in People › Near you, ringed on its map
+                // (the floater's map rings nobody); the map is drawn above
+                // the rows, so it could not see a newer selection anyway
+                self.people_map_ui.set_selected(self.people_ui.map_selection());
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
