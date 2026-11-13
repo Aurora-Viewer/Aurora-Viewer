@@ -11231,6 +11231,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CHAT_TEXT_SIZE=<size>` | Chat text size for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
+| `AURORA_MAPPABLE_MB=<n>` | The video memory the CPU can map taken as n MB, a card with no Resizable BAR on one that has it |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
@@ -11444,6 +11445,16 @@ What the inventory must show with these scenarios:
     the goal: 3,571 lowered, 105 MB left). The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
+- **`AURORA_MAPPABLE_MB=<n>`**: the size of the video memory the CPU can
+  map is taken as n MB (`aurora-render/src/vram.rs`, `mappable_mb`). A
+  discrete GPU with no Resizable BAR gives the CPU a window of about
+  256 MB, shared by every program that draws; under 1024 MB the viewer
+  keeps its staging pool to 64 MB (2 × 32 MB instead of 8 × 32 MB; an
+  integrated GPU or a card under 4 GB keeps its 4 × 16 MB). 246 is the figure of an NVIDIA card without Resizable
+  BAR. The log line `staging pool: … MB in … MB chunks (mappable video memory: …)` says
+  which pool was made; on Linux with an NVIDIA card,
+  `nvidia-smi -q` (`BAR1 Memory Usage`) shows what the viewer takes of
+  the window, before and after.
 - **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer
   is taken as n MB (at least 256), what the texture budget and the
   Performance window then read (`aurora-render/src/vram.rs`); what the
