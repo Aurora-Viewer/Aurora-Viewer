@@ -862,10 +862,11 @@ pub struct Settings {
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
-    /// The local chat bar keeps the keyboard after a message is sent; Enter
-    /// on the empty bar gives it back to the world (the Legacy Viewer's
-    /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
-    /// off, the bar lets go after sending.
+    /// The local chat bar keeps the keyboard after a message is sent, and
+    /// an empty Enter leaves it there (the Legacy Viewer's CloseChatOnReturn
+    /// off, FSNearbyChatControl::autohide). On by default (human choice of
+    /// 2026-10-16, empty Enter kept since #3349). Off, sending lets the
+    /// keyboard go and the next Enter takes the bar back.
     pub chat_keep_focus: bool,
     /// The nearby chat fields complete a gesture's trigger after `/`, with
     /// the list of the matching ones (FSChatbarGestureAutoCompleteEnable, on).

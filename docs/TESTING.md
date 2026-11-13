@@ -1718,6 +1718,14 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).
+- **Chat bar Enter** ([#3349](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3349)): no new demo
+  variable. With `AURORA_DEMO=1` (the ordinary chat bar), at a normal frame
+  rate and again with `AURORA_FPS_LIMIT=10`: type a line, Enter, Enter, type,
+  twenty times. Each line is sent and the avatar stays still. Preferences ›
+  Chat › Nearby chat › "Keep the chat bar active after sending" on (the
+  default): Enter on the empty bar leaves the keyboard in the bar. Escape, or
+  a click in the world, returns to moving. With that preference off: Enter
+  after a message lets the bar go, and the next Enter takes it back.
 
 ## Objects and building
 
