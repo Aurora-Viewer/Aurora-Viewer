@@ -458,37 +458,47 @@ fn look(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsUi, 
     if std::mem::take(&mut st.editor.reveal_marker) {
         ui.scroll_to_cursor(Some(egui::Align::TOP));
     }
-    labelled(ui, p, aurora_i18n::tr!("set-editor-marker-show"), |ui| marker_scope(ui, p, &mut v));
-    if v.marker != MarkerScope::Off {
-        ui.add_space(12.0);
-        let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(cfg.color));
-        labelled(ui, p, aurora_i18n::tr!("set-editor-marker-shape"), |ui| {
-            marker_shapes(ui, p, &mut v, color)
-        });
-        ui.add_space(12.0);
-        labelled(ui, p, aurora_i18n::tr!("set-editor-marker-fade"), |ui| {
-            let mut fades = v.marker_fade.is_some();
-            if widgets::switch(ui, p, &mut fades)
-                .on_hover_text(aurora_i18n::tr!("contact-visual-marker-fade"))
-                .changed()
-            {
-                v.marker_fade = fades.then_some(MARKER_FADE_DEFAULT);
+    // the marker's choices belong together: one darker group, edged
+    egui::Frame::new()
+        .fill(p.field.gamma_multiply(0.6))
+        .stroke(egui::Stroke::new(1.0, p.raised.gamma_multiply(0.7)))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            labelled(ui, p, aurora_i18n::tr!("set-editor-marker-show"), |ui| marker_scope(ui, p, &mut v));
+            if v.marker != MarkerScope::Off {
+                ui.add_space(12.0);
+                let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(cfg.color));
+                labelled(ui, p, aurora_i18n::tr!("set-editor-marker-shape"), |ui| {
+                    marker_shapes(ui, p, &mut v, color)
+                });
+                ui.add_space(12.0);
+                labelled(ui, p, aurora_i18n::tr!("set-editor-marker-fade"), |ui| {
+                    let mut fades = v.marker_fade.is_some();
+                    if widgets::switch(ui, p, &mut fades)
+                        .on_hover_text(aurora_i18n::tr!("contact-visual-marker-fade"))
+                        .changed()
+                    {
+                        v.marker_fade = fades.then_some(MARKER_FADE_DEFAULT);
+                    }
+                    if let Some(fade) = &mut v.marker_fade {
+                        ui.add_space(8.0);
+                        ui.add(egui::Slider::new(fade, MARKER_FADE_RANGE).suffix(" m"));
+                    }
+                });
+                ui.add_space(6.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(aurora_i18n::tr!("contact-visual-marker-hint"))
+                            .size(11.0)
+                            .color(p.muted),
+                    )
+                    .wrap(),
+                );
             }
-            if let Some(fade) = &mut v.marker_fade {
-                ui.add_space(8.0);
-                ui.add(egui::Slider::new(fade, MARKER_FADE_RANGE).suffix(" m"));
-            }
         });
-        ui.add_space(6.0);
-        ui.add(
-            egui::Label::new(
-                RichText::new(aurora_i18n::tr!("contact-visual-marker-hint"))
-                    .size(11.0)
-                    .color(p.muted),
-            )
-            .wrap(),
-        );
-    }
     ui.add_space(28.0);
     // plate size
     section(ui, p, aurora_i18n::tr!("contact-visual-size"));
@@ -649,11 +659,10 @@ fn badge(ui: &mut egui::Ui, p: &Palette, st: &mut ContactsUi, v: &mut Visuals, c
     }
 }
 
-/// The custom colour: a dashed circle with a plus, ringed while the set's
-/// colour is none of the presets, that opens the colour picker under it.
+/// The custom colour: a dashed circle with a plus that opens the colour
+/// picker under it.
 fn custom_colour(ui: &mut egui::Ui, p: &Palette, world: &mut World, set: &str, cfg: &ContactSet) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
-    let custom = !PRESETS.iter().any(|(_, rgb)| is_preset(cfg.color, *rgb));
     let ink = if resp.hovered() { p.ink } else { p.muted };
     let points: Vec<Pos2> = (0..=48)
         .map(|i| {
@@ -667,9 +676,6 @@ fn custom_colour(ui: &mut egui::Ui, p: &Palette, world: &mut World, set: &str, c
         let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         ui.painter()
             .image(t.id(), Rect::from_center_size(rect.center(), Vec2::splat(12.0)), uv, ink);
-    }
-    if custom {
-        ui.painter().circle_stroke(rect.center(), 15.0, egui::Stroke::new(2.0, p.ink));
     }
     let resp = resp.on_hover_text(aurora_i18n::tr!("set-editor-colour-custom"));
     let id = ui.make_persistent_id("set-editor-custom-colour");
