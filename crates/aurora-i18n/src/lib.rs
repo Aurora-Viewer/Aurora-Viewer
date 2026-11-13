@@ -417,4 +417,25 @@ mod tests {
         assert_eq!(language(), "en");
         select("default", None);
     }
+
+    /// English interface text uses American spelling. Message ids already
+    /// say "color"; only the values are checked.
+    #[test]
+    fn english_catalog_values_spell_color() {
+        let source = include_str!("../locales/en.ftl");
+        let mut hits = Vec::new();
+        for (number, line) in source.lines().enumerate() {
+            let value = if let Some((_, value)) = line.split_once(" = ") {
+                value
+            } else if line.starts_with(' ') || line.starts_with('\t') {
+                line
+            } else {
+                continue;
+            };
+            if value.to_ascii_lowercase().contains("colour") {
+                hits.push(number + 1);
+            }
+        }
+        assert!(hits.is_empty(), "en.ftl values still spell colour: {hits:?}");
+    }
 }
