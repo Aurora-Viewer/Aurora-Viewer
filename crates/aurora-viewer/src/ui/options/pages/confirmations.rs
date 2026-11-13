@@ -8,8 +8,55 @@
 //! region (FSShowServerVersionChangeNotice, FSReportTotalScriptCountChanges,
 //! FSUseNewRegionRestartNotification…) and the collisions
 //! (FSCollisionMessagesInChat, FSReportCollisionMessages).
+//!
+//! It is also the one list of every "don't ask / don't show again" answer,
+//! as the Legacy Viewer's Alerts tab (panel_preferences_alerts.xml,
+//! `all_popups`, over the ignore state of each LLNotifications template):
+//! the questions other pages own are shown here too (`Cx::borrow`, the same
+//! rows), and the warnings and notices with no page of their own (the
+//! Debug Settings warning, ConfirmHideUI, FirstUseFlyOverride, the poser's
+//! close question, the old graphics driver and the skipped update) can be
+//! turned back on.
 
+use super::super::Page;
 use super::super::cx::{Cx, field, fields};
+use crate::ui::widgets;
+
+/// A switch that is on while the warning `ignored` is not: the settings
+/// that remember a dismissal ("ignored", "warned") read the other way.
+fn shown(ui: &mut egui::Ui, p: &crate::theme::Palette, ignored: &mut bool) -> bool {
+    let mut on = !*ignored;
+    let changed = widgets::switch(ui, p, &mut on).changed();
+    if changed {
+        *ignored = !on;
+    }
+    changed
+}
+
+/// "Show again" for a notice dismissed for one thing (a driver, a
+/// version): `dismissed` names it, empty while nothing is dismissed.
+fn show_again(ui: &mut egui::Ui, p: &crate::theme::Palette, dismissed: &mut String) -> bool {
+    ui.horizontal(|ui| {
+        if !dismissed.is_empty() {
+            ui.label(egui::RichText::new(dismissed.as_str()).size(12.0).color(p.muted));
+        }
+        let again = widgets::action_button_if(
+            ui,
+            p,
+            "eye-filled",
+            aurora_i18n::tr!("ui-options-show-again"),
+            widgets::ActionKind::Flat,
+            egui::vec2(0.0, 26.0),
+            !dismissed.is_empty(),
+        )
+        .clicked();
+        if again {
+            dismissed.clear();
+        }
+        again
+    })
+    .inner
+}
 
 /// A script channel.
 fn channel(ui: &mut egui::Ui, v: &mut i32) -> bool {
@@ -193,6 +240,54 @@ pub fn page(cx: &mut Cx) {
                 channel(ui, &mut s.collisions.channel)
             });
         });
+    });
+    // the questions of other pages, their own rows: one list of them all
+    cx.group(tr!("ui-options-asked-elsewhere"), |cx| {
+        cx.borrow(
+            Page::Inventory,
+            0,
+            &["inventory.warn_task_move", "inventory.warn_scripted_task_move"],
+        );
+        cx.borrow(Page::Graphics, 2, &["confirm_no_transfer_settings"]);
+        cx.borrow(Page::Protections, 0, &["warn_external_links"]);
+        cx.borrow(Page::Chat, 5, &["group_snooze_ask"]);
+    });
+    let p = cx.p;
+    cx.group(tr!("ui-options-warnings-and-notices"), |cx| {
+        cx.toggle(
+            tr!("ui-options-confirm-hide-interface"),
+            tr!("ui-options-confirm-hide-interface-help"),
+            &field!(confirm_hide_interface),
+        );
+        cx.toggle(
+            tr!("poser-confirm-close"),
+            tr!("ui-options-poser-confirm-close-help"),
+            &field!(poser.confirm_close),
+        );
+        cx.row(
+            tr!("ui-options-debug-settings-warning"),
+            tr!("ui-options-debug-settings-warning-help"),
+            &field!(debug_settings_warning_ignored),
+            |ui, s| shown(ui, &p, &mut s.debug_settings_warning_ignored),
+        );
+        cx.row(
+            tr!("ui-options-fly-override-caution"),
+            tr!("ui-options-fly-override-caution-help"),
+            &field!(fly_override_warned),
+            |ui, s| shown(ui, &p, &mut s.fly_override_warned),
+        );
+        cx.row(
+            tr!("ui-options-driver-warning"),
+            tr!("ui-options-driver-warning-help"),
+            &field!(gpu_driver_dismissed),
+            |ui, s| show_again(ui, &p, &mut s.gpu_driver_dismissed),
+        );
+        cx.row(
+            tr!("ui-options-skipped-update"),
+            tr!("ui-options-skipped-update-help"),
+            &field!(ignored_update),
+            |ui, s| show_again(ui, &p, &mut s.ignored_update),
+        );
     });
     // the rest of these two, as the former Interface page reset them whole
     cx.track(&fields!(region_restart, collisions));

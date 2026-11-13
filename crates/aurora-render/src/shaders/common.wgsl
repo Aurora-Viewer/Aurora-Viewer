@@ -960,7 +960,14 @@ fn atmos_eval(dir: vec3<f32>, for_clouds: bool) -> Atmos {
     combined_haze = exp(-combined_haze * density_dist);
 
     a.light_dot = dot(rel_norm, lightnorm);
-    var haze_glow = max(1.0 - a.light_dot, 0.001);
+    // The glow's angle is taken from the view direction, not from rel_norm:
+    // skyF.glsl / cloudsF.glsl measure it from the dome point raised by 50 m,
+    // which on the low dome (about 600-850 m away overhead) puts the hotspot
+    // some 3 degrees under the sun or moon. The Legacy Viewer as it renders
+    // shows the glow centred on the body (compared on Agni, #2782): a
+    // deliberate difference from its source, kept to the glow alone (the
+    // haze colour, rainbow and halo still use rel_norm).
+    var haze_glow = max(1.0 - dot(d, lightnorm), 0.001);
     haze_glow *= glow.x;
     haze_glow = pow(haze_glow, glow.z);
     if (for_clouds) {

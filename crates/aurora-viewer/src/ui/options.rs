@@ -305,6 +305,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
+        "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
         _ => None,
     };
     let audio = match what {

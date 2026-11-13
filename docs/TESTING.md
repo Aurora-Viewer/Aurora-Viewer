@@ -7126,6 +7126,12 @@ failure. Grid validation and any paid upload are performed by the human.
     real shortcut handler and restores the demo's saved bindings. Both
     `demo altgr shortcuts` log lines must say `captured=true opened=true`;
     the toolbox stays open, the shortcut page shows its ordinary binding.
+  - `alerts` on `confirmations`: reveals its last two groups, the one list
+    of every "don't ask / don't show again" answer: the questions of other
+    pages (their own rows, still counted on their page) and the warnings
+    with no page of their own. "Show again" stays greyed while nothing is
+    dismissed; dismiss the driver warning on the login screen or skip an
+    update first to see it bring the notice back.
   - `group-titles` on `avatars/1`: reveals the group-title dropdown with
     All except mine selected. The separate hide-own-title switch is absent;
     check None / Only mine / All except mine / All and the French labels.
