@@ -140,6 +140,46 @@ fn water_walk_descent_keeps_support_and_uses_ground_crouch_states() {
 }
 
 #[test]
+fn only_a_teleport_a_load_the_free_camera_or_autopilot_suspends_the_aids() {
+    // A window without the focus has none of these: its aids keep running.
+    assert!(!aids_suspended(false, false, false, false));
+    for reason in 0..4 {
+        let mut pauses = [false; 4];
+        pauses[reason] = true;
+        let [teleporting, loading, free_camera, autopilot] = pauses;
+        assert!(aids_suspended(teleporting, loading, free_camera, autopilot), "reason {reason}");
+    }
+}
+
+#[test]
+fn water_walk_keeps_its_support_behind_another_window_while_a_held_walk_stops() {
+    let now = Instant::now();
+    let prefs = Preferences {
+        water_walk: true,
+        ..Default::default()
+    };
+    let mut r = Runtime::default();
+    let mut f = frame();
+    f.position.z = 20.85;
+    f.on_ground = false;
+    f.suspended = aids_suspended(false, false, false, false);
+    let walking = MoveInput {
+        forward: true,
+        ..Default::default()
+    };
+    assert_eq!(r.update(&prefs, &f, &walking, now).motion.mode, 13);
+    assert_eq!(r.water_walk.signal(now).unwrap().0, crate::ao::State::Walking);
+    // LLViewerWindow::handleFocusLost: the held keys are released, nothing else.
+    for tick in 1..=200 {
+        let later = now + Duration::from_millis(50 * tick);
+        let step = r.update(&prefs, &f, &MoveInput::default(), later);
+        assert_eq!(step.motion.mode, 13, "support held at {tick}");
+        assert_eq!(r.state, State::WaterWalking);
+        assert_eq!(r.water_walk.signal(later).unwrap().0, crate::ao::State::Standing);
+    }
+}
+
+#[test]
 fn water_walk_jump_keeps_motor_ownership_and_suppresses_automatic_flight_until_landing() {
     let now = Instant::now();
     let prefs = Preferences {
@@ -904,7 +944,7 @@ fn passage_keeps_one_action_and_offset_until_its_deadline_without_enabling_fligh
 }
 
 #[test]
-fn passage_cancels_on_sitting_focus_loss_or_a_movelock_hold() {
+fn passage_cancels_on_sitting_a_suspension_or_a_movelock_hold() {
     let now = Instant::now();
     for reason in 0..3 {
         let mut runtime = Runtime::default();
@@ -1273,7 +1313,7 @@ fn running_support_uses_the_avatar_contact_plane_on_platforms_and_respects_airbo
 }
 
 #[test]
-fn movement_focus_pause_keeps_the_original_flight_preference() {
+fn movement_pause_keeps_the_original_flight_preference() {
     let mut runtime = Runtime::default();
     let mut f = frame();
     let now = Instant::now();
@@ -1287,7 +1327,7 @@ fn movement_focus_pause_keeps_the_original_flight_preference() {
     runtime.update(&prefs(), &f, &MoveInput::default(), now);
     f.ground = Some(19.5);
     let dry = runtime.update(&prefs(), &f, &MoveInput::default(), now);
-    assert_eq!(dry.flying, Some(false), "focus loss must not turn a swimmer into a flyer on shore");
+    assert_eq!(dry.flying, Some(false), "a pause must not turn a swimmer into a flyer on shore");
 }
 
 #[test]
