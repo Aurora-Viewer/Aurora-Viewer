@@ -2126,6 +2126,9 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Controls
 
+- 🟡 The Home key is labelled Home ([#3415](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3415)): Preferences › Shortcuts showed "Origin" in English and "原点" in Japanese for Fly/Land, a translation of the French "Origine". The Legacy Viewer names KEY_HOME "Home" (`indra/llwindow/llkeyboard.cpp`, `addKeyName`). English and Japanese now say Home; French stays Origine. The message id stays `keybinds-origin`. No new demo: `AURORA_DEMO_OPTIONS=shortcuts` opens that page (Movement is the first tab).
+  - ⬜ QA: Preferences › Shortcuts › Movement, Fly/Land shows Home in English and Japanese, and Origine in French.
+
 - 🟡 Advanced › Release keys, like the Legacy Viewer (parity list 2026-11-11; task `release-keys`; no issue; [PR #3326](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/3326)): the last entry of Advanced sends ForceScriptControlRelease (LLAgent::forceReleaseControls) when a broken vehicle, weapon or HUD keeps the controls (llTakeControls). Greyed while no script holds a control (anyControlGrabbed) or while RLVa locks an attachment against removal (hasLockedAttachmentPoint(RLV_LOCK_REMOVE)); no shortcut, as in the Legacy Viewer. Demo: `AURORA_DEMO_RELEASE_KEYS=1`.
   - ⬜ QA on the grid: sit on a vehicle (or wear a HUD) that takes the controls and stops the arrow keys moving the avatar; Advanced (Ctrl+Alt+D) › Release keys is enabled; choose it: the arrow keys move the avatar (or the camera) again and the entry is greyed. With nothing grabbing the controls (stand up, take the HUD off), the entry is greyed. With RLVa on and a worn object locked (`@detach=n`), the entry is greyed even while the controls are taken.
 
