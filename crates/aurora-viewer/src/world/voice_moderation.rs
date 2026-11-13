@@ -54,10 +54,11 @@ impl World {
             .filter(|p| p.is_group_owned)
             .and_then(|p| self.groups.group(&p.owner_id))
             .map(|g| g.powers);
-        let manages_estate = self
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|i| i.is_estate_manager || i.owner == self.agent_id);
+        let manages_estate = self.god_level > 0
+            || self
+                .main()
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.is_estate_manager || i.owner == self.agent_id);
         may_moderate(parcel, self.agent_id, powers, manages_estate).then_some(moderated)
     }
 

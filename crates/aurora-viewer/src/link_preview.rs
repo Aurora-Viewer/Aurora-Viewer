@@ -757,8 +757,9 @@ fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
 /// The name resolver of the previews: the system's, keeping only the
 /// public addresses (`link_trust::is_public_ip`). The connection uses the
 /// very addresses kept here, so a name that resolves to the local network,
-/// now or on a second lookup, is never reached.
-struct PublicOnly;
+/// now or on a second lookup, is never reached. The Destination Guide's
+/// pictures use it too (`destination_guide.rs`).
+pub(crate) struct PublicOnly;
 
 impl reqwest::dns::Resolve for PublicOnly {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {

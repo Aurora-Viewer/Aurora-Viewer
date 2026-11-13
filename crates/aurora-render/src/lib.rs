@@ -40,6 +40,7 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+mod part_pick;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]
@@ -81,7 +82,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
-pub use vr_control::VrState;
+pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
 /// on macOS yet (its Metal path is unvalidated).
@@ -178,6 +179,12 @@ mod shader_tests {
         validate(include_str!("shaders/rlva_overlay.wgsl"));
         validate(include_str!("shaders/rlva_resolution.wgsl"));
     }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn headset_grade_shader_is_valid() {
+        validate(crate::vr_mirror::HEADSET_GRADE_SHADER);
+    }
+
     fn validate(src: &str) {
         let module = match naga::front::wgsl::parse_str(src) {
             Ok(m) => m,
@@ -1061,10 +1068,13 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         let (count, hard) = crate::contact_shadows::samples(100.0);
         validate(&crate::contact_shadows::shader_source(count, hard));
         // the diagnostic variants (AURORA_CONTACT_VARIANT)
-        use crate::contact_shadows::{Variant, variant_source};
+        use crate::contact_shadows::{Variant, photo_source, variant_source};
         for v in [Variant::NoEarlyOut, Variant::NoShared, Variant::Short] {
             validate(&variant_source(v));
         }
+        // a photo's on the RX 9000 cards, up to the most samples
+        validate(&photo_source(Variant::NoShared, 192, 13));
+        validate(&photo_source(Variant::NoShared, count, hard));
     }
 
     #[test]

@@ -11,6 +11,7 @@ use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+pub(crate) mod batch;
 mod clipboard;
 mod folders;
 mod gallery;
@@ -19,6 +20,7 @@ pub(crate) mod json;
 mod layers;
 #[cfg(test)]
 mod perf_tests;
+pub(crate) mod portrait;
 mod selection;
 mod showcase;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
@@ -653,6 +655,15 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> egui::R
 
 fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl FnOnce(&mut egui::Ui)) {
     let response = icon_button(ui, p, name, tip);
+    if name == "settings-filled"
+        && ui
+            .ctx()
+            .data_mut(|data| data.remove_temp::<bool>(egui::Id::unique("appearance_xml_demo")))
+            .unwrap_or(false)
+    {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
@@ -1161,7 +1172,7 @@ fn outfit_list(
                     });
                     ui.add_space(2.0);
                     let mut links = model::folder_links(&world.inventory, *id);
-                    items::sort_links(&world.inventory, &mut links, false);
+                    items::sort_links(&world.inventory, &mut links);
                     let order: Vec<_> = links
                         .iter()
                         .filter(|l| !l.folder && world.inventory.items.contains_key(&l.target))
@@ -1282,7 +1293,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             });
         }
     }
-    items::sort_links(inv, &mut links, true);
+    items::sort_links(inv, &mut links);
     // each clothing type's layers as shown, furthest from the body first
     let mut groups: HashMap<u32, Vec<Uuid>> = HashMap::new();
     for link in &links {
@@ -1980,6 +1991,16 @@ pub fn show(
                     ui,
                     p,
                     "file-export",
+                    aurora_i18n::tr!("appearance-xml-export-mine"),
+                    idle && crate::world::appearance_xml::ready(world),
+                ) {
+                    st.json.export_appearance(ui.ctx(), world);
+                }
+
+                if menu::item_if(
+                    ui,
+                    p,
+                    "file-export",
                     aurora_i18n::tr!("outfit-json-export"),
                     idle && export.is_some_and(|id| model::complete(&world.inventory, id)),
                 ) && let Some(folder) = export
@@ -2271,6 +2292,27 @@ mod tests {
             let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
             assert_eq!(restored.appearance_fill_previews, fill);
         }
+    }
+
+    #[test]
+    fn appearance_xml_menu_disables_export_until_own_appearance_is_available() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        let mut state = AppearanceUi::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut state, None);
+        }
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("appearance_xml_demo"), true));
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut state, None);
+        }
+        assert!(!crate::world::appearance_xml::ready(&world));
+        assert!(click_menu(&ctx, &mut world, &mut state, aurora_i18n::tr!("appearance-xml-export-mine")).is_empty());
+        assert!(!state.json.busy());
     }
 
     #[test]
@@ -3923,7 +3965,7 @@ mod tests {
         };
         // right click an item of the open outfit, then draw the whole list
         let mut links = model::folder_links(&world.inventory, outfit);
-        items::sort_links(&world.inventory, &mut links, false);
+        items::sort_links(&world.inventory, &mut links);
         let label = links
             .into_iter()
             .find_map(|l| world.inventory.items.get(&l.target).map(|it| it.name.clone()))
