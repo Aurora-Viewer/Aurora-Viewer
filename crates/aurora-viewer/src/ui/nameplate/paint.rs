@@ -200,7 +200,7 @@ pub(super) struct State {
 type Line = (Arc<Galley>, Option<Arc<Galley>>);
 
 /// A plate at one level, laid out.
-struct Face {
+pub(super) struct Face {
     metrics: Metrics,
     layout: Layout,
     name: Arc<Galley>,
@@ -208,7 +208,7 @@ struct Face {
     badges: Badges,
     dot: Option<Presence>,
     /// A team member's "Aurora Team" tag, and the time of its light.
-    staff: Option<(Arc<Galley>, Look, f32)>,
+    pub(super) staff: Option<(Arc<Galley>, Look, f32)>,
 }
 
 fn lerp(range: (f32, f32), t: f32) -> f32 {
@@ -223,7 +223,7 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
     crate::ui::bidi::galley(env.painter.ctx(), job, crate::ui::bidi::Base::Auto)
 }
 
-fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
+pub(super) fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     let p = env.p;
     let m = Metrics::of(level, SCALE);
     let color = c
@@ -266,16 +266,7 @@ fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     // the staff's tag, its letters in the mark's colors; not on the far pill
     let staff = c.mark.filter(|_| level != Level::Far).map(|mark| {
         let look = Look::new(mark);
-        let label = look.label();
-        let n = label.chars().count();
-        let mut job = LayoutJob {
-            break_on_newline: false,
-            ..Default::default()
-        };
-        for (i, ch) in label.chars().enumerate() {
-            let format = crate::ui::fonts::semibold_format(&env.semibold, aurora::TAG_TEXT * m.scale, look.letter(p, i, n, t));
-            job.append(ch.encode_utf8(&mut [0; 4]), 0.0, format);
-        }
+        let job = crate::ui::staff::label_job(env.painter.ctx(), p, &look, aurora::TAG_TEXT * m.scale, t);
         (env.painter.layout_job(job), look, t)
     });
     let lead = staff.as_ref().map_or(0.0, |(g, ..)| aurora::tag_width(g.size().x, m.scale));
