@@ -108,7 +108,7 @@ fn entry(
     selected: bool,
     left: f32,
 ) -> egui::Response {
-    entry_tinted(ui, p, icon, label, count, waiting, selected, left, None)
+    entry_tinted(ui, p, icon, label, count, waiting, selected, left, None, None)
 }
 
 /// An entry whose icon has the user's folder color, if given.
@@ -122,6 +122,7 @@ fn entry_tinted(
     selected: bool,
     left: f32,
     color: Option<egui::Color32>,
+    texture: Option<&egui::TextureHandle>,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     let hot = response.hovered() || response.dnd_hover_payload::<InvDrag>().is_some();
@@ -131,7 +132,13 @@ fn entry_tinted(
     }
     let icon_center = Pos2::new(rect.left() + left + ICON / 2.0, rect.center().y);
     let tint = color.unwrap_or(if selected { p.violet_pale } else { p.muted });
-    widgets::paint_glyph(ui.painter(), icon, icon_center, ICON, tint);
+    if let Some(texture) = texture {
+        let rect = egui::Rect::from_center_size(icon_center, Vec2::splat(ICON));
+        ui.painter()
+            .image(texture.id(), rect, egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), tint);
+    } else {
+        widgets::paint_glyph(ui.painter(), icon, icon_center, ICON, tint);
+    }
     let mut end = rect.right() - 8.0;
     if waiting > 0 {
         let badge = widgets::unread_count(
@@ -286,7 +293,7 @@ fn smart_searches(
 pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
-    _icons: &Icons,
+    icons: &Icons,
     inv: &mut Inventory,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
@@ -432,14 +439,9 @@ pub(super) fn show(
             let left = 4.0 + row.depth as f32 * INDENT + CARET + 4.0;
             let selected = st.tab == 0 && st.browse == row.id;
             let name = folder_name(inv, row.id);
-            let icon = match tree::folder_icon(folder.info.type_default, row.open) {
-                "Inv_TrashClosed" => "trash-filled",
-                "Inv_SuitcaseOpen" | "Inv_SuitcaseClosed" => "briefcase-filled",
-                "Inv_FolderOpen" => "folder-open-filled",
-                _ => "folder-filled",
-            };
+            let icon = tree::folder_icon(folder.info.type_default, row.open);
             let color = folder_colors::tint(prefs, row.id);
-            let response = entry_tinted(ui, p, icon, &name, None, 0, selected, left, color);
+            let response = entry_tinted(ui, p, icon, &name, None, 0, selected, left, color, icons.get(icon));
             #[cfg(test)]
             st.side.drawn.insert(row.id, response.rect);
             let caret_center = Pos2::new(

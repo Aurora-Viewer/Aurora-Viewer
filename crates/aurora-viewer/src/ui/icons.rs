@@ -568,6 +568,62 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_SuitcaseClosed", "briefcase-filled"),
     ("Inv_SuitcaseOpen", "briefcase-filled"),
     ("Inv_SysClosed", "folder-filled"),
+    ("Inv_TexturesOpen", "photo-filled"),
+    ("Inv_TexturesClosed", "photo-filled"),
+    ("Inv_SoundOpen", "file-music-filled"),
+    ("Inv_SoundClosed", "file-music-filled"),
+    ("Inv_CallingCardOpen", "id-filled"),
+    ("Inv_CallingCardClosed", "id-filled"),
+    ("Inv_LandmarksOpen", "map-pin-filled"),
+    ("Inv_LandmarksClosed", "map-pin-filled"),
+    ("Inv_SysOpen", "folder-filled"),
+    ("Inv_ScriptsOpen", "code"),
+    ("Inv_ScriptsClosed", "code"),
+    ("Inv_BodyPartsOpen", "man-filled"),
+    ("Inv_BodyPartsClosed", "man-filled"),
+    ("Inv_SnapshotsOpen", "camera-filled"),
+    ("Inv_SnapshotsClosed", "camera-filled"),
+    ("Inv_LostAndFoundOpen", "files-filled"),
+    ("Inv_LostAndFoundClosed", "files-filled"),
+    ("Inv_LostOpen", "files-filled"),
+    ("Inv_LostClosed", "files-filled"),
+    ("Inv_AnimationsOpen", "run"),
+    ("Inv_AnimationsClosed", "run"),
+    ("Inv_GesturesOpen", "hand-move"),
+    ("Inv_GesturesClosed", "hand-move"),
+    ("Inv_FavoritesOpen", "star-filled"),
+    ("Inv_FavoritesClosed", "star-filled"),
+    ("Inv_LookFolderOpen", "shirt-filled"),
+    ("Inv_LookFolderClosed", "shirt-filled"),
+    ("Inv_MeshOpen", "cube-3d-sphere"),
+    ("Inv_MeshClosed", "cube-3d-sphere"),
+    ("Inv_StockOpen", "archive-filled"),
+    ("Inv_StockClosed", "archive-filled"),
+    ("Inv_VersionOpen", "history"),
+    ("Inv_VersionClosed", "history"),
+    ("Inv_SettingsOpen", "sun-filled"),
+    ("Inv_SettingsClosed", "sun-filled"),
+    ("Inv_MaterialOpen", "droplet-filled"),
+    ("Inv_MaterialClosed", "droplet-filled"),
+    ("Inv_ClothingOpen", "shirt-filled"),
+    ("Inv_ClothingClosed", "shirt-filled"),
+    ("Inv_ObjectsOpen", "box"),
+    ("Inv_ObjectsClosed", "box"),
+    ("Inv_NotecardsOpen", "file-text-filled"),
+    ("Inv_NotecardsClosed", "file-text-filled"),
+    ("Inv_TrashOpen", "trash-filled"),
+    ("Inv_MeshesOpen", "cube-3d-sphere"),
+    ("Inv_MeshesClosed", "cube-3d-sphere"),
+    ("Inv_StockFolderOpen", "archive-filled"),
+    ("Inv_StockFolderClosed", "archive-filled"),
+    ("Inv_VersionFolderOpen", "history"),
+    ("Inv_VersionFolderClosed", "history"),
+    ("Inv_MaterialsOpen", "droplet-filled"),
+    ("Inv_MaterialsClosed", "droplet-filled"),
+    ("Inv_InboxOpen", "inbox"),
+    ("Inv_InboxClosed", "inbox"),
+    ("Inv_OutboxOpen", "send-filled"),
+    ("Inv_OutboxClosed", "send-filled"),
     ("Inv_Invalid", "help-circle-filled"),
 ];
 
@@ -762,6 +818,14 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
         "Inv_TrashClosed" => "Inv_TrashClosed_Link",
         "Inv_SysClosed" => "Inv_SysClosed_Link",
         "Inv_Invalid" => "Inv_Invalid_Link",
+        // every other folder (the badged system folders) uses the folder link
+        _ if crate::ui::inventory::tree::is_folder_icon(base) => {
+            if base.ends_with("Open") {
+                "Inv_FolderOpen_Link"
+            } else {
+                "Inv_FolderClosed_Link"
+            }
+        }
         _ => "Inv_LinkItem",
     }
 }
@@ -821,6 +885,32 @@ fn rasterize_mask(bytes: &[u8], px: u32, shortcut: bool) -> Option<egui::ColorIm
         .flat_map(|p| [255, 255, 255, if shortcut { p[0] } else { p[3] }])
         .collect();
     Some(egui::ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &rgba))
+}
+
+fn embedded_svg(name: &str) -> Option<&'static [u8]> {
+    OUTLINE
+        .iter()
+        .chain(FILLED)
+        .find_map(|(candidate, bytes)| (*candidate == name).then_some(*bytes))
+}
+
+fn folder_badge(base: &[u8], badge: &[u8]) -> Option<egui::ColorImage> {
+    let mut image = rasterize_mask(base, RASTER_PX, false)?;
+    let badge = rasterize_mask(badge, 24, false)?;
+    // Both masks receive the same folder tint. Clear the corner first so
+    // the badge's holes and surrounding gap remain visible on a solid folder.
+    for y in 36..RASTER_PX as usize {
+        for x in 36..RASTER_PX as usize {
+            image.pixels[y * RASTER_PX as usize + x] = egui::Color32::TRANSPARENT;
+        }
+    }
+    for y in 0..24 {
+        for x in 0..24 {
+            let dst = (y + 38) * RASTER_PX as usize + x + 38;
+            image.pixels[dst] = badge.pixels[y * 24 + x];
+        }
+    }
+    Some(image)
 }
 
 /// Re-center an icon on its visible content (brand artwork does not sit in
@@ -892,6 +982,24 @@ impl Icons {
         for (alias, target) in ALIASES {
             if let Some(t) = map.get(*target).cloned() {
                 map.insert((*alias).to_owned(), t);
+            }
+        }
+        for (alias, target) in ALIASES {
+            if crate::ui::inventory::tree::is_folder_icon(alias)
+                && !alias.starts_with("Inv_Folder")
+                && !alias.starts_with("Inv_Sys")
+                && !alias.starts_with("Inv_Suitcase")
+                && let (Some(base), Some(badge)) = (
+                    embedded_svg(if alias.ends_with("Open") {
+                        "folder-open-filled"
+                    } else {
+                        "folder-filled"
+                    }),
+                    embedded_svg(target),
+                )
+                && let Some(image) = folder_badge(base, badge)
+            {
+                map.insert((*alias).to_owned(), ctx.load_texture(*alias, image, opts));
             }
         }
         if let Some(dir) = override_dir
@@ -968,6 +1076,55 @@ mod tests {
         for (alias, target) in ALIASES {
             assert!(names.contains(target), "{alias} -> {target} is not embedded");
         }
+    }
+
+    #[test]
+    fn default_inventory_folder_names_load_and_link_as_folders() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        for kind in [
+            0, 1, 2, 3, 5, 6, 7, 8, 10, 13, 14, 15, 16, 20, 21, 23, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 100,
+        ] {
+            for open in [false, true] {
+                let name = crate::ui::inventory::tree::folder_icon(kind, open);
+                assert!(icons.get(name).is_some(), "folder icon {kind} {open}: {name}");
+                let link = inventory_link_name(name);
+                assert_ne!(link, "Inv_LinkItem", "folder link {name}");
+                assert!(icons.get(link).is_some(), "folder link icon {link}");
+            }
+        }
+        // a folder with its own link art keeps it (Trash, the system folders)
+        assert_eq!(
+            inventory_link_name(crate::ui::inventory::tree::folder_icon(14, false)),
+            "Inv_TrashClosed_Link"
+        );
+        assert_eq!(inventory_link_name("Inv_SysClosed"), "Inv_SysClosed_Link");
+    }
+
+    #[test]
+    fn typed_folder_icon_has_a_corner_badge_and_keeps_folder_tinting() {
+        let ctx = egui::Context::default();
+        let icons = Icons::load(&ctx, None);
+        let base = rasterize_mask(embedded_svg("folder-filled").unwrap(), RASTER_PX, false).unwrap();
+        let image = folder_badge(embedded_svg("folder-filled").unwrap(), embedded_svg("photo-filled").unwrap()).unwrap();
+        assert!(image.pixels.iter().any(|pixel| pixel.a() > 0));
+        let added_corner_pixels = (38..62)
+            .flat_map(|y| (38..62).map(move |x| y * RASTER_PX as usize + x))
+            .filter(|index| image.pixels[*index].a() > base.pixels[*index].a())
+            .count();
+        assert!(added_corner_pixels > 0, "badge adds coverage in the lower-right corner");
+        let cutout_pixels = (36..62)
+            .flat_map(|y| (36..62).map(move |x| y * RASTER_PX as usize + x))
+            .filter(|index| base.pixels[*index].a() > 200 && image.pixels[*index].a() == 0)
+            .count();
+        assert!(cutout_pixels > 0, "the solid folder must not fill the badge's holes and gap");
+        assert!(icons.get("Inv_TexturesClosed").is_some());
+        assert!(crate::ui::inventory::tree::is_folder_icon("Inv_TexturesClosed"));
+        assert_ne!(
+            icons.get("Inv_TexturesClosed").unwrap().id(),
+            icons.get("Inv_FolderClosed").unwrap().id(),
+            "typed folder should have its own composited texture"
+        );
     }
 
     #[test]

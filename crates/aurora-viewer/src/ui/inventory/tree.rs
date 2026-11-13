@@ -25,10 +25,177 @@ pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
     resp
 }
 
-/// The icon of a folder by its preferred type.
+/// The Legacy Viewer icon name of a folder by its preferred type.
 pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
     match type_default {
-        14 => "Inv_TrashClosed",
+        0 => {
+            if open {
+                "Inv_TexturesOpen"
+            } else {
+                "Inv_TexturesClosed"
+            }
+        }
+        1 => {
+            if open {
+                "Inv_SoundOpen"
+            } else {
+                "Inv_SoundClosed"
+            }
+        }
+        2 => {
+            if open {
+                "Inv_CallingCardOpen"
+            } else {
+                "Inv_CallingCardClosed"
+            }
+        }
+        3 => {
+            if open {
+                "Inv_LandmarksOpen"
+            } else {
+                "Inv_LandmarksClosed"
+            }
+        }
+        5 => {
+            if open {
+                "Inv_ClothingOpen"
+            } else {
+                "Inv_ClothingClosed"
+            }
+        }
+        6 => {
+            if open {
+                "Inv_ObjectsOpen"
+            } else {
+                "Inv_ObjectsClosed"
+            }
+        }
+        7 => {
+            if open {
+                "Inv_NotecardsOpen"
+            } else {
+                "Inv_NotecardsClosed"
+            }
+        }
+        50 => {
+            if open {
+                "Inv_InboxOpen"
+            } else {
+                "Inv_InboxClosed"
+            }
+        }
+        51 => {
+            if open {
+                "Inv_OutboxOpen"
+            } else {
+                "Inv_OutboxClosed"
+            }
+        }
+        8 | 52 | 53 => {
+            if open {
+                "Inv_SysOpen"
+            } else {
+                "Inv_SysClosed"
+            }
+        }
+        10 => {
+            if open {
+                "Inv_ScriptsOpen"
+            } else {
+                "Inv_ScriptsClosed"
+            }
+        }
+        13 => {
+            if open {
+                "Inv_BodyPartsOpen"
+            } else {
+                "Inv_BodyPartsClosed"
+            }
+        }
+        14 => {
+            if open {
+                "Inv_TrashOpen"
+            } else {
+                "Inv_TrashClosed"
+            }
+        }
+        15 => {
+            if open {
+                "Inv_SnapshotsOpen"
+            } else {
+                "Inv_SnapshotsClosed"
+            }
+        }
+        16 => {
+            if open {
+                "Inv_LostOpen"
+            } else {
+                "Inv_LostClosed"
+            }
+        }
+        20 => {
+            if open {
+                "Inv_AnimationsOpen"
+            } else {
+                "Inv_AnimationsClosed"
+            }
+        }
+        21 => {
+            if open {
+                "Inv_GesturesOpen"
+            } else {
+                "Inv_GesturesClosed"
+            }
+        }
+        23 => {
+            if open {
+                "Inv_FavoritesOpen"
+            } else {
+                "Inv_FavoritesClosed"
+            }
+        }
+        46..=48 => {
+            if open {
+                "Inv_LookFolderOpen"
+            } else {
+                "Inv_LookFolderClosed"
+            }
+        }
+        49 => {
+            if open {
+                "Inv_MeshesOpen"
+            } else {
+                "Inv_MeshesClosed"
+            }
+        }
+        54 => {
+            if open {
+                "Inv_StockFolderOpen"
+            } else {
+                "Inv_StockFolderClosed"
+            }
+        }
+        55 => {
+            if open {
+                "Inv_VersionFolderOpen"
+            } else {
+                "Inv_VersionFolderClosed"
+            }
+        }
+        56 => {
+            if open {
+                "Inv_SettingsOpen"
+            } else {
+                "Inv_SettingsClosed"
+            }
+        }
+        57 => {
+            if open {
+                "Inv_MaterialsOpen"
+            } else {
+                "Inv_MaterialsClosed"
+            }
+        }
         // FT_MY_SUITCASE (llviewerfoldertype.cpp: Inv_SuitcaseOpen / Closed)
         100 if open => "Inv_SuitcaseOpen",
         100 => "Inv_SuitcaseClosed",
@@ -37,11 +204,15 @@ pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
     }
 }
 
+pub fn is_folder_icon(name: &str) -> bool {
+    name.starts_with("Inv_") && (name.ends_with("Open") || name.ends_with("Closed"))
+}
+
 /// The type icon of a row: folders in the light accent, items in ink, or
 /// `tint` when given (a state the row shows by its icon).
 pub fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette, tint: Option<egui::Color32>) {
     if let Some(t) = icons.get(name) {
-        let tint = tint.unwrap_or(if name.starts_with("Inv_Folder") { p.violet_light } else { p.ink });
+        let tint = tint.unwrap_or(if is_folder_icon(name) { p.violet_light } else { p.ink });
         ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
     } else {
         ui.add_space(16.0);
@@ -171,4 +342,52 @@ pub fn drop_outline(ui: &egui::Ui, p: &Palette, rect: egui::Rect, allowed: bool)
 /// The footer line of a tree window: small text, a message colour.
 pub fn status_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text).size(11.0).color(color)).truncate())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_system_folder_types_have_specific_open_and_closed_icons() {
+        let expected = [
+            (0, "Inv_TexturesClosed", "Inv_TexturesOpen"),
+            (1, "Inv_SoundClosed", "Inv_SoundOpen"),
+            (2, "Inv_CallingCardClosed", "Inv_CallingCardOpen"),
+            (3, "Inv_LandmarksClosed", "Inv_LandmarksOpen"),
+            (5, "Inv_ClothingClosed", "Inv_ClothingOpen"),
+            (6, "Inv_ObjectsClosed", "Inv_ObjectsOpen"),
+            (7, "Inv_NotecardsClosed", "Inv_NotecardsOpen"),
+            (8, "Inv_SysClosed", "Inv_SysOpen"),
+            (10, "Inv_ScriptsClosed", "Inv_ScriptsOpen"),
+            (13, "Inv_BodyPartsClosed", "Inv_BodyPartsOpen"),
+            (14, "Inv_TrashClosed", "Inv_TrashOpen"),
+            (15, "Inv_SnapshotsClosed", "Inv_SnapshotsOpen"),
+            (16, "Inv_LostClosed", "Inv_LostOpen"),
+            (20, "Inv_AnimationsClosed", "Inv_AnimationsOpen"),
+            (21, "Inv_GesturesClosed", "Inv_GesturesOpen"),
+            (23, "Inv_FavoritesClosed", "Inv_FavoritesOpen"),
+            (46, "Inv_LookFolderClosed", "Inv_LookFolderOpen"),
+            (47, "Inv_LookFolderClosed", "Inv_LookFolderOpen"),
+            (48, "Inv_LookFolderClosed", "Inv_LookFolderOpen"),
+            (49, "Inv_MeshesClosed", "Inv_MeshesOpen"),
+            (50, "Inv_InboxClosed", "Inv_InboxOpen"),
+            (51, "Inv_OutboxClosed", "Inv_OutboxOpen"),
+            (52, "Inv_SysClosed", "Inv_SysOpen"),
+            (53, "Inv_SysClosed", "Inv_SysOpen"),
+            (54, "Inv_StockFolderClosed", "Inv_StockFolderOpen"),
+            (55, "Inv_VersionFolderClosed", "Inv_VersionFolderOpen"),
+            (56, "Inv_SettingsClosed", "Inv_SettingsOpen"),
+            (57, "Inv_MaterialsClosed", "Inv_MaterialsOpen"),
+            (100, "Inv_SuitcaseClosed", "Inv_SuitcaseOpen"),
+        ];
+        for (kind, closed, opened) in expected {
+            assert_eq!(folder_icon(kind, false), closed, "closed folder type {kind}");
+            assert_eq!(folder_icon(kind, true), opened, "open folder type {kind}");
+            assert!(is_folder_icon(closed));
+            assert!(is_folder_icon(opened));
+        }
+        assert!(!is_folder_icon("Inv_Material"), "material items keep the item tint");
+        assert!(!is_folder_icon("Inv_Mesh"), "mesh items keep the item tint");
+    }
 }
