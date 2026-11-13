@@ -110,7 +110,7 @@ struct Frame {
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
-    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
     // the last frame's for the same positions, and this frame's clip space
@@ -118,8 +118,20 @@ struct Frame {
     motion_vp: mat4x4<f32>,
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
+    rain: vec4<f32>,            // rain prototype: x how hard it rains (0..1)
+    rain_wet: vec4<f32>,        // wetness memory: corner xy, size z (0: none), w the rain that wetted
+    rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
+    rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
+    rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it, w the detail texture's slot (0: none)
+    snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
+    snow_trail_step: vec4<f32>, // xy my avatar (the footprints' and deep snow's centre), zw unused
+    snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
+    lightning: vec4<f32>,       // the lightning's glow: xy the way to it, z its height (sine), w how bright
+    aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
+    snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -187,6 +199,10 @@ const FLAG_LIP_SYNC: u32 = 8192u;
 const SKELETON_ANCHOR: u32 = 208u;
 // the weights of a skeleton's live morphs, after its anchors (object.wgsl)
 const LIVE_MORPH_WEIGHTS: u32 = 256u;
+// the snow on an avatar (x of its first column), and the entries per
+// skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
+const AVATAR_SNOW: u32 = 260u;
+const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)

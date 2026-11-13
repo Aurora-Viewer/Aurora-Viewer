@@ -10,6 +10,9 @@ pub const FPS: f32 = 30.0;
 pub struct Sample {
     pub animation: Arc<BoundAnim>,
     pub frame: u32,
+    /// Optional exact sample time for timeline scrubbing; ordinary avatar
+    /// layers retain the viewer's 30 Hz inspection grid.
+    pub time_seconds: Option<f32>,
 }
 
 pub fn last_frame(duration: f32) -> u32 {
@@ -28,7 +31,11 @@ pub fn apply(rig: &Rig, pose: &mut LocalPose, pelvis: Vec3, samples: &[Sample]) 
     let mut positions: Vec<Option<(i32, Vec3)>> = vec![None; rig.len()];
     for sample in samples.iter().rev() {
         let animation = &sample.animation.anim;
-        let time = (sample.frame.min(last_frame(animation.duration)) as f32 / FPS).min(animation.duration);
+        let time = sample
+            .time_seconds
+            .filter(|time| time.is_finite())
+            .unwrap_or_else(|| (sample.frame.min(last_frame(animation.duration)) as f32 / FPS).min(animation.duration))
+            .clamp(0.0, animation.duration);
         if !time.is_finite() {
             continue;
         }
@@ -73,6 +80,7 @@ mod tests {
     fn sample(rig: &Rig, base_priority: i32, joint_priority: i32, q: Quat, frame: u32) -> Sample {
         Sample {
             frame,
+            time_seconds: None,
             animation: Arc::new(BoundAnim::bind(
                 Animation {
                     base_priority,
@@ -142,6 +150,18 @@ mod tests {
         );
         assert_eq!(last_frame(2.015), 61);
         assert_eq!(last_frame(f32::NAN), 0);
+    }
+
+    #[test]
+    fn exact_scrub_times_bypass_the_legacy_frame_grid() {
+        let lib = AvatarLibrary::load();
+        let rig = &lib.rig;
+        let head = rig.names["mHead"];
+        let mut sample = sample(rig, 2, -1, Quat::from_rotation_z(1.0), 0);
+        sample.time_seconds = Some(0.25);
+        let mut pose = local(rig);
+        apply(rig, &mut pose, Vec3::ZERO, &[sample]);
+        assert!(pose.rotations[head].dot(Quat::from_rotation_z(0.125)).abs() > 0.99999);
     }
 
     #[test]
