@@ -88,6 +88,7 @@ mod debug_settings;
 mod draw_stepping;
 mod graphics_start;
 mod grid_status;
+mod group_chat_moderation;
 mod group_titles;
 mod hover_height;
 mod hover_tips;
@@ -135,11 +136,13 @@ mod safe_graphics;
 mod script_clicks;
 mod script_recovery;
 mod scripts;
+mod selection_turn;
 mod settings_backup;
 mod shape_editor;
 mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
+mod stand_fidget;
 mod stream_list;
 mod suggest_demo;
 mod task_notecards;
@@ -597,6 +600,12 @@ pub struct App {
     double_click: crate::autopilot::DoubleClickDetector,
     double_press: bool,
     autopilot: Option<crate::autopilot::AutoPilot>,
+    /// The yaw the avatar turns to, facing what it selected
+    /// (FSTurnAvatarToSelectedObject, app/selection_turn.rs).
+    selection_turn: Option<f32>,
+    /// The stock stand variants of a standing avatar without an AO
+    /// (LLAgent::fidget, app/stand_fidget.rs).
+    stand_fidget: stand_fidget::Fidget,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     /// Build › Edit particles (ParticleEditor).
@@ -705,6 +714,8 @@ pub struct App {
     moderation_ask: Option<land_moderation::Ask>,
     /// A resident's Admin › Kick / Freeze / Unfreeze, waiting for its message.
     god_kick_ask: Option<admin_status::KickAsk>,
+    /// A group chat moderator's ejection or ban, asked first.
+    group_chat_confirm: Option<ui::chat::moderation::Confirm>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -917,6 +928,10 @@ pub struct App {
     /// Settings last applied to the engine and the authorized stream URL.
     applied_audio: Option<crate::settings::AudioSettings>,
     stream_url: String,
+    /// The parcel music's fade between stations (FSFadeAudioStream) and the
+    /// fade volume last given to the Music channel.
+    music_fade: parcel_music::Fade,
+    music_fade_gain: f32,
     /// The parcel music's title last told (ShowStreamMetadata).
     stream_title_said: Option<String>,
     /// Every sound is cut because the window is minimised (MuteWhenMinimized).
@@ -1694,6 +1709,8 @@ impl App {
             double_click: Default::default(),
             double_press: false,
             autopilot: None,
+            selection_turn: None,
+            stand_fidget: Default::default(),
             autopilot_flags: 0,
             autopilot_stop_pending: false,
             mic_on: false,
@@ -1743,6 +1760,7 @@ impl App {
             delete_confirm: None,
             moderation_ask: None,
             god_kick_ask: None,
+            group_chat_confirm: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -1887,6 +1905,8 @@ impl App {
             },
             applied_audio: None,
             stream_url: String::new(),
+            music_fade: Default::default(),
+            music_fade_gain: 1.0,
             stream_title_said: None,
             minimized_mute: audio_mute::MinimizedMute::default(),
             crash_state_at: None,
@@ -3116,9 +3136,12 @@ impl App {
     fn back_to_login(&mut self, error: Option<String>) {
         self.parcel_music.enter(false);
         self.stream_url.clear();
+        self.music_fade.reset();
+        self.music_fade_gain = 1.0;
         self.music_status = Default::default();
         if let Some(engine) = &self.audio_engine {
             engine.stop_stream();
+            engine.set_volume(aurora_audio::Channel::Music, self.settings.audio.volume[4]);
         }
         // the next login's arrival steps again; steps under way end with
         // the session, the user's draw distance back
@@ -3291,6 +3314,14 @@ impl App {
             if let NetEvent::InventoryEdited { request, .. } = ev {
                 self.world_edits.remove(&request);
             }
+            return;
+        }
+        // llOpenFloater (LLUrlFloaterDispatchHandler): the Legacy Viewer
+        // opens its web_content window at once. Aurora takes the way of any
+        // other link instead: refused schemes, the question for a dangerous
+        // or unknown address, and the resident's choice of browser.
+        if let NetEvent::UrlFloater { url } = ev {
+            self.open_web_link(url, None);
             return;
         }
         if let NetEvent::TeleportRegionResolved { request, result } = ev {
@@ -3815,6 +3846,7 @@ impl App {
                 item_id,
                 running,
                 mono,
+                luau,
             } => {
                 self.build.contents.running.insert((object_id, item_id), (running, mono));
                 self.script_editors.running(
@@ -3824,6 +3856,7 @@ impl App {
                     },
                     running,
                     mono,
+                    luau,
                 );
             }
             NetEvent::PhysicsProperties(list) => {
@@ -5791,8 +5824,9 @@ impl App {
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
-            presence: self.settings.toast_friends_online,
-            presence_in_chat: self.settings.friends_online_in_chat,
+            // AURORA_DEMO_SET_NOTICES: only the contact set's notices
+            presence: self.settings.toast_friends_online && !(self.demo && crate::demo::set_notices::active()),
+            presence_in_chat: self.settings.friends_online_in_chat && !(self.demo && crate::demo::set_notices::active()),
             im: self.settings.toast_im,
             // AURORA_DEMO_TOASTS shows a group message too (off by default)
             group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
@@ -6186,14 +6220,26 @@ impl App {
         if !self.settings.audio.enabled[4] {
             engine.set_enabled(aurora_audio::Channel::Music, false);
         }
-        if want != self.stream_url {
-            if want.is_empty() {
-                engine.stop_stream();
-            } else {
-                log::info!("parcel music: {want}");
-                engine.play_stream(&want);
+        // A change of station fades (FSFadeAudioStream); a stop by hand, the
+        // channel turned off or leaving the world cuts at once.
+        let smooth = in_world && self.settings.audio.enabled[4] && self.parcel_music.requested();
+        let times = parcel_music::FadeTimes {
+            on: self.settings.audio.music_fade,
+            fade_in: self.settings.audio.music_fade_in,
+            fade_out: self.settings.audio.music_fade_out,
+        };
+        let (change, gain) = self.music_fade.step(&want, smooth, times, Instant::now());
+        match change {
+            Some(parcel_music::StreamChange::Play(url)) => {
+                log::info!("parcel music: {url}");
+                engine.play_stream(&url);
+                self.stream_url = url;
             }
-            self.stream_url = want;
+            Some(parcel_music::StreamChange::Stop) => {
+                engine.stop_stream();
+                self.stream_url.clear();
+            }
+            None => {}
         }
         if self.applied_audio.as_ref() != Some(&self.settings.audio) {
             let a = &self.settings.audio;
@@ -6204,11 +6250,18 @@ impl App {
             }
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
-                engine.set_volume(*ch, a.volume[i]);
+                let fade = if *ch == aurora_audio::Channel::Music { gain } else { 1.0 };
+                engine.set_volume(*ch, a.volume[i] * fade);
                 engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute.active));
                 engine.set_enabled(*ch, i == 0 || a.enabled[i]);
             }
             self.applied_audio = Some(a.clone());
+            self.music_fade_gain = gain;
+        }
+        if gain != self.music_fade_gain {
+            // the mixer smooths each change (no zipper noise)
+            engine.set_volume(aurora_audio::Channel::Music, self.settings.audio.volume[4] * gain);
+            self.music_fade_gain = gain;
         }
         let status = engine.stream_status();
         self.music_status = ui::audio::MusicStatus::read(
@@ -7475,6 +7528,16 @@ impl App {
             mods,
         );
         self.flush_build();
+        // LLToolSelect::handleObjectSelection turns the avatar to what the
+        // Edit tool's click selected (lltoolcomp.cpp: move, rotate, stretch;
+        // not Create, Grab or Land) (app/selection_turn.rs)
+        if let Some(idx) = target
+            && self.build.tool == crate::build::Tool::Edit
+            && !self.build.selection.is_empty()
+            && let Some(bounds) = self.build.bounds(&self.world, Instant::now())
+        {
+            self.turn_to_selection(idx, bounds.center);
+        }
         if used {
             self.left_down = true;
         }
@@ -8616,6 +8679,12 @@ impl App {
             ContactsAction::GroupTitles => {
                 ui::widgets::toggle_floater(&self.egui_ctx, ui::group_titles::WINDOW, &mut self.panels.group_titles);
             }
+            ContactsAction::Conference(ids) => self.on_ctx_action(ui::context::CtxAction::Conference(ids)),
+            ContactsAction::SearchGroups => {
+                self.panels.search = true;
+                self.search_ui.open_tab(crate::world::search::Tab::Groups);
+            }
+            ContactsAction::GroupInvite(group) => self.group_profile_ui.invite.show_for_group(group),
             ContactsAction::ToggleTornOff => {
                 let torn_off = !self.settings.contacts.torn_off;
                 self.settings.contacts.torn_off = torn_off;
@@ -9710,6 +9779,7 @@ impl App {
             };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
+            self.world.show_back_slurl = self.settings.show_back_slurl;
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
@@ -9920,6 +9990,7 @@ impl App {
             self.input = input;
         }
         self.update_autopilot(dt);
+        self.update_selection_turn(dt);
         self.vr_update_body_follow(typing, dt);
         if self.in_world() && self.settings.automatic_land {
             self.world.auto_land(&self.input);
@@ -10434,6 +10505,7 @@ impl App {
                 crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
             }
             self.update_ao(now);
+            self.update_stand_fidget(now);
             if self.demo && crate::demo::animation_edit_demo() {
                 match self.frame_count {
                     420 | 750 => {
@@ -12787,6 +12859,55 @@ impl App {
                 }
             }
         }
+        if self.demo
+            && let Some(mode) = crate::demo::set_notices::mode()
+        {
+            use crate::demo::set_notices as demo;
+            if self.frame_count == demo::SETUP {
+                demo::setup(&mut self.world);
+                self.panels.perf = false;
+                self.panels.appearance = false;
+                if mode.starts_with("config") {
+                    self.panels.chat = false;
+                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                } else {
+                    self.panels.chat = true;
+                }
+            }
+            if self.frame_count == demo::DND {
+                self.world.set_dnd(true);
+            }
+            // once the window has its height
+            if self.frame_count == demo::SETUP + 30 {
+                self.contacts_ui.demo_scroll = match mode.as_str() {
+                    "config-responses" => Some(ui::contacts::DemoScroll::Responses),
+                    "config-bottom" => Some(ui::contacts::DemoScroll::Bottom),
+                    _ => None,
+                };
+            }
+            if self.frame_count == demo::MESSAGE + 5 {
+                let reply = self
+                    .world
+                    .social
+                    .ims
+                    .iter()
+                    .find(|s| s.other == crate::demo::DEMO_FRIEND)
+                    .and_then(|s| {
+                        s.lines
+                            .iter()
+                            .rev()
+                            .find(|l| l.kind == crate::world::ChatKind::System)
+                            .map(|l| l.text.clone())
+                    });
+                log::info!("demo set notices: {reply:?}");
+            }
+            let agent = self.world.agent_id;
+            for event in demo::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         if self.demo && crate::demo::im_announce::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::im_announce::events(self.frame_count, agent) {
@@ -13190,12 +13311,51 @@ impl App {
         if self.demo && self.frame_count == 60 && std::env::var("AURORA_DEMO_STATUSMENU").is_ok_and(|v| v == "invisible") {
             self.world.status.invisible.on = true;
         }
+        // AURORA_DEMO_MUSIC=fade: the radio on at frame 300, the parcel's
+        // station changed at frame 600 (the log gives the fade out, then in);
+        // the media filter's question about each station is answered "allow
+        // once", as a click on it would
+        if self.demo && (300..=900).contains(&self.frame_count) && std::env::var("AURORA_DEMO_MUSIC").as_deref() == Ok("fade") {
+            if self.frame_count == 300 && !self.parcel_music.requested() {
+                self.parcel_music.toggle();
+            }
+            if let Some(parcel) = self.world.parcel.as_mut().filter(|_| self.frame_count == 600) {
+                std::sync::Arc::make_mut(parcel).music_url = format!("{}next", crate::demo::land::MUSIC_URL);
+            }
+            if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
+                self.world.media_filter.answer(&url, true, crate::media::filter::Remember::Once);
+            }
+        }
+        // AURORA_DEMO_URL_FLOATER=1: at frame 300 the simulator's llOpenFloater
+        // ("URLFloater", read by aurora-net's url_floater) asks for a web
+        // window on an unknown address: the link question comes up
+        if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_URL_FLOATER").is_some() {
+            let message = br#"{'action':'OpenURL','action_data':{'floater_title':'web_content','floater_url':'https%3A%2F%2Fexample.invalid%2Fwelcome','floater_params':{'trusted_content':1}}}"#;
+            if let Some(url) = aurora_net::url_floater::url(message) {
+                log::info!("demo URLFloater: {url}");
+                self.on_app_event(NetEvent::UrlFloater { url });
+            }
+        }
+        // AURORA_DEMO_TURN_SELECT=1: the camera off the avatar, then an
+        // object to its side selected (app/selection_turn.rs)
+        if self.demo && (300..=480).contains(&self.frame_count) && std::env::var_os("AURORA_DEMO_TURN_SELECT").is_some() {
+            self.demo_selection_turn();
+        }
         // AURORA_DEMO_CONTACTS: contact sets and aliases to show, once logged in
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
             crate::demo::seed_contact_sets(&mut self.world);
             if std::env::var("AURORA_DEMO_CONTACTS").as_deref() == Ok("empty") {
                 self.world.social.friends.clear();
             }
+        }
+        // AURORA_DEMO_CONTACTS=conference|map|invite: what the buttons need
+        // selected, once the friends and groups are in
+        if self.demo
+            && self.frame_count == 600
+            && let Ok(mode) = std::env::var("AURORA_DEMO_CONTACTS")
+        {
+            let (friends, group) = ui::contacts::demo_selection(&self.world, &mode);
+            self.contacts_ui.demo_select(friends, group);
         }
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {
@@ -14070,6 +14230,7 @@ impl App {
                 let mods = aurora_media::Modifiers::default();
                 self.media.on_key(
                     &self.world,
+                    ch.chars().next(),
                     code,
                     0x1E,
                     k.is_multiple_of(2),
@@ -14077,6 +14238,37 @@ impl App {
                     k.is_multiple_of(2).then_some(ch),
                     mods,
                 );
+            }
+            // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
+            // the field reads "auroraaurora" when the shortcuts reach the page
+            // and the cut reaches the clipboard. The clipboard holds "stale"
+            // first: a cut that does nothing leaves "stalestale", not a pass
+            // from an earlier run's clipboard. `paste`: the clipboard holds
+            // "pasted", set by the viewer as another program would, then
+            // Ctrl+V, so the field reads "aurorapasted" where the page reads
+            // the system clipboard (not on Linux: keys::edit).
+            let edit = v.split(',').any(|s| s.trim() == "edit");
+            let paste = v.split(',').any(|s| s.trim() == "paste");
+            if (edit || paste) && f == 864 {
+                self.egui_ctx.copy_text(if paste { "pasted" } else { "stale" }.to_owned());
+            }
+            let keys = if edit {
+                &[KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][..]
+            } else if paste {
+                &[KeyCode::KeyV][..]
+            } else {
+                &[][..]
+            };
+            if (870..870 + 2 * keys.len() as u64).contains(&f) {
+                let k = (f - 870) as usize;
+                let code = keys[k / 2];
+                let pressed = k.is_multiple_of(2);
+                let mods = aurora_media::Modifiers {
+                    control: !cfg!(target_os = "macos"),
+                    command: cfg!(target_os = "macos"),
+                    ..Default::default()
+                };
+                self.media.on_key(&self.world, None, code, 0, pressed, false, None, mods);
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -14604,6 +14796,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
             BarAction::EditParticles => self.open_particle_editor(),
+            BarAction::SaveToObjectContents => self.build.save_to_contents(&mut self.world),
             BarAction::ToggleNameTags => {
                 self.settings.show_name_tags = !self.settings.show_name_tags;
                 self.settings.save();
@@ -16713,6 +16906,7 @@ impl App {
                         .map(|b| b.label())
                         .unwrap_or_default(),
                     edit_particles: self.particle_editor_target().is_some(),
+                    save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -18046,6 +18240,7 @@ impl App {
                 }
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
+                self.group_chat_moderation_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -20101,7 +20296,7 @@ impl ApplicationHandler for App {
                 self.chat_ui.contacts = true;
                 self.settings.show_contacts_tab = v != "hidden";
                 self.settings.contacts.tab = match v.as_str() {
-                    "groups" | "groupes" => 1,
+                    "groups" | "groupes" | "invite" => 1,
                     "sets" | "cercles" => 2,
                     _ => 0,
                 };
@@ -22297,12 +22492,16 @@ impl ApplicationHandler for App {
                         shift: self.shift,
                         command: self.command,
                     };
+                    let letter = crate::media::keys::layout_letter(&ke.logical_key);
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods) || pressed {
+                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
+                            || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
+                            || pressed
+                        {
                             return;
                         }
                     }
@@ -22318,7 +22517,7 @@ impl ApplicationHandler for App {
                         };
                         if self
                             .media
-                            .on_key(&self.world, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
+                            .on_key(&self.world, letter, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
                             && pressed
                         {
                             return;

@@ -1882,10 +1882,14 @@ impl AnimStreamer {
                 let rig = rig.clone();
                 let id = *id;
                 jobs.spawn(move || {
-                    let a = crate::cache::read_touch(&path)
-                        .ok()
-                        .and_then(|d| aurora_assets::anim::parse_animation_with_constraints(&d).ok())
-                        .map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)));
+                    // (a failed parse is a cache miss: the animation is downloaded)
+                    let a = super::jobs::caught(|| {
+                        crate::cache::read_touch(&path)
+                            .ok()
+                            .and_then(|d| aurora_assets::anim::parse_animation_with_constraints(&d).ok())
+                            .map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)))
+                    })
+                    .flatten();
                     let _ = tx.send((id, a, true));
                     super::jobs::JobResult::Done
                 });
@@ -1920,13 +1924,17 @@ impl AnimStreamer {
                 let tx = self.tx.clone();
                 let rig = rig.clone();
                 jobs.spawn(move || {
-                    let a = aurora_assets::anim::parse_animation_with_constraints(&d).ok();
-                    if a.is_some() {
-                        let _ = crate::cache::write(path, &d);
-                    } else {
-                        log::debug!("animation {id} failed to parse");
-                    }
-                    let a = a.map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)));
+                    // (a failed parse counts as a failure: retried later)
+                    let a = super::jobs::caught(|| {
+                        let a = aurora_assets::anim::parse_animation_with_constraints(&d).ok();
+                        if a.is_some() {
+                            let _ = crate::cache::write(path, &d);
+                        } else {
+                            log::debug!("animation {id} failed to parse");
+                        }
+                        a.map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)))
+                    })
+                    .flatten();
                     let _ = tx.send((id, a, false));
                     super::jobs::JobResult::Done
                 });
