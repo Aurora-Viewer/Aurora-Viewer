@@ -223,6 +223,18 @@ fn bundled_lua() -> &'static Catalog {
     LUA.get_or_init(Catalog::lua)
 }
 
+/// Reads the bundled SLua catalog on a background thread (about 8 ms in a
+/// development build), once: the first SLua script then opens without a
+/// hitch. A frame that needs it before then waits for the same reading.
+pub fn warm_lua() {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !STARTED.swap(true, Ordering::Relaxed) {
+        std::thread::spawn(|| {
+            bundled_lua();
+        });
+    }
+}
+
 /// The SLua catalog in use: the region's, else the bundled one.
 pub fn lua() -> &'static Catalog {
     lua_registry().current_or(bundled_lua)

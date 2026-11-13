@@ -98,13 +98,24 @@ pub async fn load_definitions(http: &reqwest::Client, cap_url: &str, dir: &Path,
         lsl: cached(&lsl_file).await,
         lua: cached(&lua_file).await,
     };
-    if cache.lsl.is_some() || cache.lua.is_some() {
+    // both cached; an LSL file alone may come from LSLSyntax, which has no
+    // SLua: ask once more (a region without SLua keywords costs one request
+    // per session, lsl_syntax_asked)
+    if cache.lsl.is_some() && cache.lua.is_some() {
         return Ok(cache);
     }
-    let reply = crate::caps::get_llsd(http, cap_url).await.map_err(|e| e.to_string())?;
+    let reply = match crate::caps::get_llsd(http, cap_url).await {
+        Ok(reply) => reply,
+        Err(_) if cache.lsl.is_some() => return Ok(cache),
+        Err(e) => return Err(e.to_string()),
+    };
     let files = &reply["files"];
     if files.as_map().is_none() {
-        return Err("no files in the ScriptDefinitions reply".into());
+        return if cache.lsl.is_some() {
+            Ok(cache)
+        } else {
+            Err("no files in the ScriptDefinitions reply".into())
+        };
     }
     let mut defs = Definitions::default();
     for (name, file, slot) in [
@@ -122,6 +133,9 @@ pub async fn load_definitions(http: &reqwest::Client, cap_url: &str, dir: &Path,
             );
         }
     }
+    // a language the reply left out keeps what the cache had
+    defs.lsl = defs.lsl.or(cache.lsl);
+    defs.lua = defs.lua.or(cache.lua);
     Ok(defs)
 }
 
@@ -333,6 +347,20 @@ mod tests {
         // the second time comes from the cache: no server any more
         let cached = load_definitions(&http, "http://127.0.0.1:9/none", &dir, id).await.expect("cached");
         assert!(cached.lsl.is_some() && cached.lua.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn an_lsl_file_cached_alone_is_kept_when_the_definitions_cannot_be_fetched() {
+        // LSLSyntax caches LSL alone: ScriptDefinitions is asked for SLua,
+        // and when it fails the cached LSL still serves
+        let dir = std::env::temp_dir().join(format!("aurora-defs-{}", Uuid::new_v4()));
+        let id = Uuid::from_u128(0xdee);
+        std::fs::create_dir_all(&dir).expect("test folder");
+        std::fs::write(cache_file(&dir, id), aurora_llsd::to_xml(&doc())).expect("cached LSL");
+        let http = reqwest::Client::new();
+        let defs = load_definitions(&http, "http://127.0.0.1:9/none", &dir, id).await.expect("cached LSL");
+        assert!(defs.lsl.is_some() && defs.lua.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

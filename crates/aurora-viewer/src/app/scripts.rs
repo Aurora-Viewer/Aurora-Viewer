@@ -581,6 +581,11 @@ impl App {
             .script_editors
             .open(target, info.name, info.can_read, info.can_edit, info.flags)
         {
+            // an SLua script, or one that may become one: its keywords are
+            // read while the source loads, not on the frame that draws it
+            if aurora_net::scripts::is_slua_item(info.flags) || self.world.main().is_some_and(|r| r.lua_scripts) {
+                crate::lsl_keywords::warm_lua();
+            }
             self.send(NetCommand::LoadScript {
                 request,
                 target,
