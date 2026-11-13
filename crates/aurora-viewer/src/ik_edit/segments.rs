@@ -28,7 +28,7 @@ pub(super) fn pick(segments: &[Segment], pointer: Pos2) -> Option<&Segment> {
 impl Editor {
     pub(super) fn bone_visible(&self, name: &str) -> bool {
         if self.poser.active {
-            poser::group(name) == self.poser.group
+            self.poser_bone_visible(name)
         } else {
             self.visibility.visible(name)
         }

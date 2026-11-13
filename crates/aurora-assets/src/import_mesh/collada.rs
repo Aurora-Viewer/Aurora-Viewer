@@ -51,15 +51,52 @@ fn reference<'a>(ids: &HashMap<String, &'a Element>, uri: &str) -> Result<&'a El
         .ok_or_else(|| AssetError::invalid("unresolved Collada element"))
 }
 fn index_ids<'a>(root: &'a Element, ids: &mut HashMap<String, &'a Element>) -> Result<(), AssetError> {
-    if let Some(id) = root.attr("id")
-        && ids.insert(id.into(), root).is_some()
-    {
-        return Err(AssetError::invalid("too many or duplicate Collada IDs"));
+    if let Some(id) = root.attr("id") {
+        let key = id.to_string();
+
+        if ids.contains_key(&key) {
+            // Check whether the conflict is between two identical elements, i.e an armature
+            if !equivalent(root, ids[&key]) {
+                return Err(AssetError::invalid(format!(
+                    "duplicate Collada ID for non-equivalent elements: {id:.64}"
+                )));
+            }
+        }
+
+        ids.entry(key).or_insert(root);
     }
     for element in root.elements() {
         index_ids(element, ids)?;
     }
     Ok(())
+}
+fn equivalent(a: &Element, b: &Element) -> bool {
+    if a.name != b.name {
+        return false;
+    }
+
+    // XML attribute order is not significant.
+    if a.attrs.len() != b.attrs.len() || !a.attrs.iter().all(|(name, value)| b.attr(name) == Some(value.as_str())) {
+        return false;
+    }
+
+    // Treat formatting whitespace as insignificant.
+    let a_text = a.text();
+    let b_text = b.text();
+    if !a_text.split_whitespace().eq(b_text.split_whitespace()) {
+        return false;
+    }
+
+    let mut a_children = a.elements();
+    let mut b_children = b.elements();
+
+    loop {
+        match (a_children.next(), b_children.next()) {
+            (Some(a_child), Some(b_child)) if equivalent(a_child, b_child) => {}
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
 }
 struct FloatSource {
     values: Vec<f32>,
@@ -71,8 +108,18 @@ impl FloatSource {
     fn parse(element: &Element) -> Result<Self, AssetError> {
         let array = child(element, "float_array").ok_or_else(|| AssetError::invalid("Collada source has no floats"))?;
         let values = numbers(&array.text())?;
-        if count(array, "count", values.len())? != values.len() {
-            return Err(AssetError::invalid("Collada float count"));
+        // The Legacy Viewer reads the values the array holds
+        // (`domListOfFloats::getCount`, LLDAELoader in
+        // indra/llprimitive/lldaeloader.cpp) and never its count attribute:
+        // some exporters write count="0" on a full bind-pose array. The
+        // accessor check below still refuses an array too short for its use.
+        let declared = count(array, "count", values.len())?;
+        if declared != values.len() {
+            log::warn!(
+                "Collada float_array {:?} declares {declared} values and holds {}; using the values it holds",
+                array.attr("id").unwrap_or_default(),
+                values.len()
+            );
         }
         let accessor = descendant(element, "accessor").ok_or_else(|| AssetError::invalid("Collada source accessor"))?;
         let stride = count(accessor, "stride", 1)?;

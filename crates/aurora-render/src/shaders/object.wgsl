@@ -140,6 +140,13 @@ fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
     return normalize(n);
 }
 
+// The terrain tangent: two snorm16 values in the first two unorm16 weights
+// (types.rs pack_terrain_frame).
+fn terrain_tangent(weights: vec4<f32>) -> vec3<f32> {
+    let w = vec2<u32>(round(weights.xy * 65535.0));
+    return terrain_direction(vec4<u32>(w.x & 0xffu, w.x >> 8u, w.y & 0xffu, w.y >> 8u));
+}
+
 fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
     if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
     return in.normal.xyz + lip_delta(rec, in)[1];
@@ -277,6 +284,19 @@ fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
     return placed_model(rec, in, frame.eye.xyz);
 }
 
+// Clip position of an eye view (`ep` relative to the eye) with the face's
+// layer rank (DrawRecord::set_layer_rank): a higher rank comes a few depth
+// steps nearer, about 2^-20 of the distance each (some micrometres), so a
+// worn layer lying exactly on the body wins on every face whatever the order
+// of the draw records. Rank 0 leaves the depth untouched. Every pass that
+// tests depth against another goes through it (prepasses and scene pass).
+fn eye_clip(rec: DrawRecord, ep: vec4<f32>) -> vec4<f32> {
+    let clip = frame.eye_view_proj * ep;
+    let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
+    // reverse Z: a greater depth is nearer
+    return vec4<f32>(clip.xy, clip.z * (1.0 + f32(rank) * LAYER_DEPTH_STEP), clip.w);
+}
+
 struct VsOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
@@ -295,6 +315,11 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
+    // Aurora Weather: how much snow is on the avatar wearing it (0..1),
+    // and how much this point faces up on the avatar standing (its rest
+    // pose: the snow stays where it built up as the avatar moves)
+    @location(11) @interpolate(flat) snow: f32,
+    @location(12) snow_up: f32,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -526,6 +551,8 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
 fn vs_land_overlay(in: VsIn) -> VsOut {
     let rec = records[in.instance];
     var out: VsOut;
+    out.snow = 0.0;
+    out.snow_up = 0.0;
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
     if (rec.params.x > 0.5) {
@@ -544,9 +571,16 @@ fn vs_main(in: VsIn) -> VsOut {
     // (lighting, shadows and fog keep region coordinates)
     let wp = vec4<f32>(ep.xyz + frame.eye.xyz, ep.w);
     var out: VsOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
+    // snow on avatars, judged by the facing just found (before it, the
+    // normal was zero: its up a NaN, and no snow ever showed)
+    out.snow = avatar_snow(rec);
+    out.snow_up = 0.0;
+    if (out.snow > 0.0) {
+        out.snow_up = avatar_rest_up(rec, in, out.normal);
+    }
     var st = face_st(in, rec);
     let animated = has_tex_anim(rec);
     if (animated) {
@@ -653,7 +687,7 @@ fn vs_depth(in: VsIn) -> DepthOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.record = in.instance;
     return out;
@@ -702,7 +736,7 @@ fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthNormalOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.normal = cofactor(model) * vertex_normal(rec, in);
     let motion = motion_clips(rec, in, ep);
     out.motion_cur = motion[0];
@@ -729,7 +763,7 @@ fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthMaskOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
     out.uv = diffuse_uv(face_st(in, rec), rec, frame.anim_clock.zw);
@@ -884,7 +918,71 @@ fn shadow_normal(m: Material) -> vec3<f32> {
     return m.geo_n;
 }
 
+// Aurora Weather: how much snow is on the avatar a record belongs to: in
+// its skeleton's palette (AVATAR_SNOW), a rigged mesh's from its base, a
+// worn prim's from its anchor's skeleton (palettes are PALETTE_STRIDE
+// apart); none for the rest.
+fn avatar_snow(rec: DrawRecord) -> f32 {
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        return clamp(palettes[rec.flags.y + AVATAR_SNOW][0][0], 0.0, 1.0);
+    }
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        let base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
+        return clamp(palettes[base + AVATAR_SNOW][0][0], 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+// How much a point faces up on its avatar: its facing against the
+// skeleton's own up (the avatar turned, leaning, flying tilted or lying as
+// a whole does not move the snow; a limb moving does a little). Not a
+// rigged mesh's normal before the skinning: its axes are the mesh's own,
+// not always the avatar's (a head made facing up snowed its face).
+fn avatar_rest_up(rec: DrawRecord, in: VsIn, world_n: vec3<f32>) -> f32 {
+    var base = rec.flags.y;
+    if ((rec.flags.x & FLAG_SKINNED) == 0u) {
+        base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
+    }
+    let skel = palettes[base + SKELETON_ANCHOR];
+    let up = normalize(skel[2].xyz);
+    return dot(normalize(world_n), up);
+}
+
+// Snow on an avatar's material: on what faces up, in patches that follow
+// the face's texture (not the world: they stay put as it walks), the more
+// of it the more snow; a matte white, its shine and glow covered.
+fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
+    var m = m_in;
+    // on what faces up on the avatar standing; sliding off what now
+    // faces the ground (the avatar upside down)
+    let up = smoothstep(0.2, 0.75, in.snow_up) * smoothstep(-0.6, -0.1, m.n.z);
+    if (in.snow <= 0.001 || up <= 0.0 || hud_pass) { return m; }
+    let p = in.uv * 7.0;
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let h = vec4<f32>(
+        fract(sin(dot(i, vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(1.0, 0.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(0.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(1.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453));
+    let patches = mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+    let cover = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
+    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9), cover), m.color.a);
+    m.roughness = mix(m.roughness, 0.85, cover);
+    m.metallic *= 1.0 - cover;
+    m.legacy_spec *= 1.0 - cover;
+    m.legacy_env *= 1.0 - cover;
+    m.unlit *= 1.0 - cover;
+    m.emissive *= 1.0 - cover;
+    return m;
+}
+
 fn eval_material(in: VsOut, front: bool) -> Material {
+    return avatar_snow_on(eval_material_base(in, front), in);
+}
+
+fn eval_material_base(in: VsOut, front: bool) -> Material {
     portal_clip(records[in.record], in.world_pos);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -978,7 +1076,77 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     let fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
     let gtdenom = 2.0 * nh;
     let gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
-    return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
+    return legacy_finite(lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl));
+}
+
+// AURORA_LEGACY_NAN=off|check (frame.light_mode.z): `off` lets a legacy
+// highlight or environment term that is not a number through, as before
+// (0.9.8); `check` paints magenta where one was caught.
+const LEGACY_NAN_OFF: u32 = 0x200000u;
+const LEGACY_NAN_CHECK: u32 = 0x400000u;
+// Whether this fragment caught one (the `check` mode). Reset by
+// shade_material.
+var<private> legacy_nan: bool = false;
+
+fn not_finite(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7f800000u) == 0x7f800000u;
+}
+
+// A legacy lighting term (a highlight, an environment sample) that is not a
+// finite number gives none. The highlight's divisions and powers can give
+// a NaN at grazing angles, and the min, max and clamp that follow are left
+// to the card: NVIDIA returns the other operand (no highlight), AMD keeps
+// the NaN, which `finite_hdr` turns black: black eyebrows, beards and eye
+// layers on mesh heads in 0.9.8, after #3389 had only taken its alpha
+// away. Tested on the bits, as legacy_glare_alpha: a driver may fold
+// `x != x` to false.
+fn legacy_finite(x: f32) -> f32 {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return x;
+    }
+    let bad = not_finite(x);
+    legacy_nan = legacy_nan || bad;
+    return select(x, 0.0, bad);
+}
+
+fn legacy_finite3(c: vec3<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return c;
+    }
+    let bad = not_finite(c.x) || not_finite(c.y) || not_finite(c.z);
+    legacy_nan = legacy_nan || bad;
+    return select(c, vec3<f32>(0.0), bad);
+}
+
+// The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
+// DIFFUSE_ALPHA_MODE_BLEND): the brightness of its sharp environment
+// reflection times the environment intensity, plus its local light
+// highlights. The face's alpha is max(texture alpha, glare) (shade_material),
+// so a transparent layer with a specular map shows its reflections only:
+// the "wet" and "shine" layers worn over mesh bodies (#1420). The sun's
+// highlight does not count, as there. Reset by shade_material, written by
+// legacy_light and legacy_local_spec.
+var<private> legacy_glare: f32 = 0.0;
+
+// AURORA_LEGACY_GLARE=0 (frame.light_mode.z): no glare, the blended legacy
+// faces take their texture alpha and leave early as before #3259, to tell
+// a glare fault from another on a card we cannot test (#3259 follow-up:
+// squares on blended leaves and streaks in hair on AMD cards).
+const LEGACY_GLARE_OFF: u32 = 0x100000u;
+
+fn legacy_glare_on() -> bool {
+    return (frame.light_mode.z & LEGACY_GLARE_OFF) == 0u;
+}
+
+// The alpha the glare gives a face of emissive mask `unlit`, as
+// materialF.glsl: glare *= 1 - emissive, then min(glare, 1). A glare that
+// is not a number (a degenerate normal or environment sample) gives none:
+// min and clamp of a NaN are left to the card, and one card's 1 drew
+// whole quads of empty texels. Tested on the bits: a driver may fold
+// `g != g` to false.
+fn legacy_glare_alpha(unlit: f32) -> f32 {
+    let g = legacy_glare * (1.0 - clamp(unlit, 0.0, 1.0));
+    return select(clamp(g, 0.0, 1.0), 0.0, not_finite(g) || !legacy_glare_on());
 }
 
 // Legacy material lighting applied to the sun + sky result `col`, as
@@ -1028,8 +1196,8 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     }
     // sampleReflectionProbesLegacy clamps both: a very bright sky does not
     // wash a shiny face out
-    gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
-    env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    gloss_sky = clamp(legacy_finite3(gloss_sky), vec3<f32>(0.0), vec3<f32>(10.0));
+    env_sky = clamp(legacy_finite3(env_sky), vec3<f32>(0.0), vec3<f32>(10.0));
     // with GTAO, the glossy reflection fades in creases as a PBR one
     // (specular_occlusion; its roughness from the glossiness, as the probe
     // level above); the sharp environment is a mirror's lobe, which that
@@ -1052,8 +1220,33 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         var fresnel = 1.0 - dot(v, n);
         fresnel = min(fresnel * fresnel + env, 1.0);
         col = mix(col, env_sky * env * fresnel * 0.5, env);
+        legacy_glare += clamp(max(max(env_sky.r, env_sky.g), env_sky.b), 0.0, 1.0) * env;
     }
     return col;
+}
+
+// Whether an empty texel of a blended face may still glare: a legacy
+// material with an environment, or a glossy one with a local light or a
+// projector over it (the sun's highlight never glares). A glossy hair far
+// from any local light keeps leaving before the lighting (fs_blend).
+fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u || !legacy_glare_on()) {
+        return false;
+    }
+    if (m.legacy_env > 0.0) {
+        return true;
+    }
+    if (m.legacy_spec.a <= 0.0) {
+        return false;
+    }
+    let lights = light_walk(world_pos, frag);
+    return any((lights.held | lights.projectors) != vec2<u32>(0u));
+}
+
+// calcPointLightOrSpotLight's glare (materialF.glsl) from the highlight of
+// one local light, as written there: the red first, then the brightest.
+fn add_light_glare(sc: vec3<f32>) {
+    legacy_glare = max(legacy_glare, sc.r) + max(max(sc.r, sc.g), sc.b);
 }
 
 // Local light highlights of legacy materials (multiPointLightF). Our light
@@ -1077,7 +1270,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             if (dist < radius) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
                 let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
-                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                col += sc;
+                add_light_glare(sc);
             }
         }
     }
@@ -1088,7 +1283,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
         if (spec.a > 0.0) {
             let s = ll_spec(n, v, at.l, spec.a) * at.atten;
-            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            let sc = clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            col += sc;
+            add_light_glare(sc);
         }
         if (env > 0.0) {
             // the view reflected to the plane the projector emits from
@@ -1248,7 +1445,7 @@ fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
 // base texture's slot points at the shared placeholder layer
 // (`textures::PLACEHOLDER`, slot 4) until its first texels arrive.
 fn rez_still_grey(rec: DrawRecord) -> bool {
-    return tex_loc[rec.tex.x] == tex_loc[4u];
+    return tex_loc.values[rec.tex.x] == tex_loc.values[4u];
 }
 
 // Height of the fragment within its object (0 bottom, 1 top), for the
@@ -1385,6 +1582,8 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // may be discarded between `eval_material` and this (fs_blend).
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
+    legacy_glare = 0.0;
+    legacy_nan = false;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1454,13 +1653,37 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
-    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), m.color.a);
+    // Studio isolation leaves the live avatar and attachments in this pass.
+    // Blend the final radiance, preserving material alpha/cutouts and never
+    // editing their records. HUDs use fs_hud and scenery carries its own bit.
+    let white = select(0.0, clamp(frame.studio_aurora[3].w, 0.0, 1.0),
+        frame.studio_aurora[3].w > 0.0 && (rec.flags.w & FLAG_STUDIO_STAGE) == 0u);
+    col = mix(col, vec3<f32>(1.0), white);
+    // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
+    // the vertex alpha being the face color's (a fullbright face takes the
+    // other branch and has no glare, as emissive_brightness 1 there)
+    var alpha = m.color.a;
+    if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
+        alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
+    }
+    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
+    if ((frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
+        // magenta: a legacy term caught by legacy_finite; cyan: the colour
+        // is still not a number, from a source the guard does not cover
+        if (not_finite(col.x) || not_finite(col.y) || not_finite(col.z)) {
+            s.color = vec4<f32>(0.0, 4.0, 4.0, max(alpha, 0.5));
+        } else if (legacy_nan) {
+            s.color = vec4<f32>(4.0, 0.0, 4.0, max(alpha, 0.5));
+        }
+    }
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
         s.roughness = 1.0;
     }
+    s.roughness = mix(s.roughness, 1.0, white);
+    s.metallic *= 1.0 - white;
     return s;
 }
 
@@ -1606,7 +1829,9 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         }
     }
     let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+    // a legacy material's empty texels may still glare (materialF.glsl has
+    // no early test): lit first, their alpha is known after shade_material
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004 && !legacy_may_glare(records[in.record], m, in.world_pos, in.clip.xy)) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
@@ -1729,6 +1954,152 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }
 
+// The poser's hovered part on the subject's skinned faces (Aurora's own):
+// each vertex's share of skinning weight on the part's palette joints
+// (`frame.part_joints`), graded across the mesh where the weights turn from
+// one part to the next. The position is vs_main's, so the depth test
+// against the scene matches.
+struct PoserPartOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) part: f32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+};
+
+// The diffuse coordinates as vs_main gives them, texture animation included,
+// for the part's alpha test.
+fn poser_part_uv(rec: DrawRecord, in: VsIn) -> vec2<f32> {
+    var st = face_st(in, rec);
+    let animated = has_tex_anim(rec);
+    if (animated) {
+        st = tex_anim_st(st, rec, frame.anim_clock.zw);
+    }
+    if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
+        return vec2<f32>(st.x, 1.0 - st.y);
+    }
+    return te_uv(st, rec);
+}
+
+// What of a face the part shows and picks: an alpha-masked face as it is
+// cut out; a blended one where it can be seen (a hair card's or a fishnet's
+// clear texels are not the avatar); others whole.
+const POSER_PART_BLEND_ALPHA: f32 = 0.1;
+fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>, front: bool) -> bool {
+    // Match the colour/depth passes: only double-sided materials show backs.
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { return false; }
+    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+    let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
+    if (!masked && !blended) {
+        return true;
+    }
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (masked && rec.base_color.a >= 0.004 && alpha < rec.params.w) {
+        return false;
+    }
+    return !(blended && alpha < POSER_PART_BLEND_ALPHA);
+}
+
+fn in_poser_part(joint: u32) -> bool {
+    let word = frame.part_joints[(joint >> 7u) & 1u][(joint >> 5u) & 3u];
+    return joint < 256u && ((word >> (joint & 31u)) & 1u) != 0u;
+}
+
+@vertex
+fn vs_part_mask(in: VsIn) -> PoserPartOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPartOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.part = 0.0;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let w = in.weights;
+        var share = 0.0;
+        for (var k = 0u; k < 4u; k++) {
+            if (w[k] > 0.0 && in_poser_part(skin_binds[rec.flags.z + in.joints[k]].joint.x)) {
+                share += w[k];
+            }
+        }
+        out.part = share / max(w.x + w.y + w.z + w.w, 1e-4);
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    // the part's share, eased so the tint fades where the weights pass to
+    // the next part (Overlay::new_part); green: the subject is here
+    return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
+}
+
+// The pick interpolates each part's summed skinning weights, as the mask
+// interpolates its share. A flat joint ID makes the first vertex decide
+// for the entire triangle and changes when a mesh reorders its indices.
+struct PoserPickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) parts_lo: vec4<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+    @location(4) parts_hi: vec4<f32>,
+};
+
+fn poser_pick_class(joint: u32) -> u32 {
+    if (joint >= 256u) { return 0u; }
+    let word = joint >> 3u;
+    return (frame.part_classes[word >> 2u][word & 3u] >> ((joint & 7u) * 4u)) & 15u;
+}
+
+@vertex
+fn vs_part_pick(in: VsIn) -> PoserPickOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPickOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.parts_lo = vec4<f32>(0.0);
+    out.parts_hi = vec4<f32>(0.0);
+    let total = dot(in.weights, vec4<f32>(1.0));
+    if ((rec.flags.x & FLAG_SKINNED) != 0u && total > 1e-4) {
+        for (var k = 0u; k < 4u; k++) {
+            if (in.weights[k] <= 0.0) { continue; }
+            let part_id = poser_pick_class(skin_binds[rec.flags.z + in.joints[k]].joint.x);
+            let part = select(0u, part_id, part_id <= 6u);
+            let weight = in.weights[k] / total;
+            // FXC cannot address a dynamic component of an output struct's
+            // vector. Whole-vector additions keep the same per-part sums.
+            out.parts_lo += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(0u, 1u, 2u, 3u));
+            out.parts_hi += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(4u, 5u, 6u, 7u));
+        }
+    } else {
+        // Unrigged accessories still win depth and occlude the body.
+        out.parts_lo.x = 1.0;
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_pick(in: PoserPickOut, @builtin(front_facing) front: bool) -> @location(0) vec4<u32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    var best = 0u;
+    var weight = in.parts_lo.x;
+    for (var part = 1u; part <= 6u; part++) {
+        var share = 0.0;
+        if (part < 4u) { share = in.parts_lo[part]; }
+        else { share = in.parts_hi[part - 4u]; }
+        if (share > weight) { best = part; weight = share; }
+    }
+    return vec4<u32>(best, 0u, 0u, 0u);
+}
+
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment
@@ -1765,7 +2136,7 @@ fn vs_pick(in: VsIn) -> PickOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: PickOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     let st = face_st(in, rec);
     out.st = st;
     out.uv = diffuse_uv(st, rec, frame.anim_clock.zw);
@@ -1853,6 +2224,8 @@ struct ShadowOut {
 struct ShadowParams {
     vp: mat4x4<f32>,
     anim_clock: vec4<u32>,  // the animation clocks, as Frame's
+    // x: 1 for the rain prototype's shelter map
+    kind: vec4<u32>,
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -1887,6 +2260,12 @@ fn fs_shadow(in: ShadowOut) {
     portal_clip(rec, in.world_pos);
     let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
+    // the rain's shelter map: any blended texel that is there at all keeps
+    // the rain off (glass); masked ones as they cast
+    if (shadow_params.kind.x == 1u && (rec.flags.x & FLAG_ALPHA_BLEND) != 0u) {
+        if (alpha < 0.02) { discard; }
+        return;
+    }
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
             if (alpha < rec.params.w) { discard; }
@@ -1907,6 +2286,7 @@ const PART_EMISSIVE: u32 = 1u;
 const PART_ADDITIVE: u32 = 2u;
 const PART_AXIS: u32 = 4u;
 const PART_FOLLOW_VELOCITY: u32 = 8u;
+const PART_LINE: u32 = 16u;
 
 struct PartIn {
     @location(0) pos: vec3<f32>,
@@ -1990,7 +2370,11 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
     // slot 0 is white: the default particle is a soft round dot
     let ts = sample_tex(in.texture, in.uv);
     var tex = vec4<f32>(srgb_to_linear(ts.rgb), ts.a);
-    if (in.texture == 0u) {
+    if ((in.flags & PART_LINE) != 0u) {
+        // a line's segment: soft across, even along (its neighbours carry on)
+        let a = clamp(1.0 - abs(in.uv.x * 2.0 - 1.0), 0.0, 1.0);
+        tex = vec4<f32>(1.0, 1.0, 1.0, a * a);
+    } else if (in.texture == 0u) {
         let d = length(in.uv * 2.0 - vec2<f32>(1.0));
         let a = clamp(1.0 - d, 0.0, 1.0);
         tex = vec4<f32>(1.0, 1.0, 1.0, a * a);

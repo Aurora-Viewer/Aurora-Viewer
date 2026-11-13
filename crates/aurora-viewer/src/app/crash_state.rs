@@ -348,6 +348,10 @@ pub(super) struct KeptState {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct Live {
     swapchain_10s: u64,
+    /// The tightest video memory headroom of the last minute (MB, negative
+    /// when over budget), taken at the loss itself: a dip between the last
+    /// note and the loss is the one the report row is there to show.
+    headroom_min_mb: Option<i64>,
     sample: Sample,
     /// How the GPU was lost, once it is.
     loss: Option<(&'static str, &'static str, &'static str)>,
@@ -368,6 +372,9 @@ impl Live {
         state.loss = self.loss;
         state.stall_ms = stall_ms;
         state.swapchain_10s = self.swapchain_10s;
+        if self.headroom_min_mb.is_some() {
+            state.vram_headroom_min_mb = self.headroom_min_mb;
+        }
         state.gpu_ms = gpu_ms;
         state.gpu_peak_ms = peak.map(|p| p.0);
         state.gpu_peak_pass = peak.and_then(|p| p.1);
@@ -422,6 +429,8 @@ impl App {
         let swapchain_10s = self.crash_swapchain.note(now, aurora_render::present::recreations(), lost);
         let live = Live {
             swapchain_10s,
+            // the sampler's cached minimum of the last minute: no GPU call
+            headroom_min_mb: renderer.video_memory.tightest_headroom().map(|b| b >> 20),
             sample: self.crash_recent.note(now, lost),
             loss: if lost { aurora_render::loss_details() } else { None },
         };
@@ -461,6 +470,7 @@ impl App {
             },
             vram_used_mb: video.map(|v| v.usage >> 20),
             vram_budget_mb: video.map(|v| v.budget >> 20),
+            vram_headroom_min_mb: renderer.video_memory.tightest_headroom().map(|b| b >> 20),
             texture_pressure: (
                 u32::from(self.scene.textures.stats.pressure),
                 u32::from(crate::scene::texture_budget::MAX_PRESSURE),
@@ -642,10 +652,19 @@ mod tests {
         }
     }
 
+    /// `elements`: every GPU element but the weather's (which these cases
+    /// leave at 0), in `GpuElement::ALL`'s order.
     fn stats(gpu_ms: f32, elements: [f32; 7]) -> aurora_render::RenderStats {
+        let mut all = [0.0; aurora_render::GpuElement::ALL.len()];
+        let mut given = elements.into_iter();
+        for (slot, element) in all.iter_mut().zip(aurora_render::GpuElement::ALL) {
+            if element != aurora_render::GpuElement::Weather {
+                *slot = given.next().unwrap_or(0.0);
+            }
+        }
         aurora_render::RenderStats {
             gpu_ms: Some(gpu_ms),
-            gpu_elements: Some(elements),
+            gpu_elements: Some(all),
             ..Default::default()
         }
     }
@@ -890,5 +909,36 @@ mod tests {
         let mut kept = KeptState::default();
         assert_eq!(kept.next(true, live(2), || state(60.0, 0)), Some(state(60.0, 2)));
         assert_eq!(kept.next(true, live(2), || state(15.0, 2)), None);
+    }
+
+    #[test]
+    fn a_headroom_dip_between_the_last_note_and_the_loss_is_reported() {
+        let noted = |headroom| crate::crash::State {
+            vram_headroom_min_mb: headroom,
+            ..state(85.0, 3)
+        };
+        let mut kept = KeptState::default();
+        let live_with = |swapchain_10s, headroom_min_mb| Live {
+            headroom_min_mb,
+            ..live(swapchain_10s)
+        };
+        assert_eq!(
+            kept.next(false, live_with(3, Some(120)), || noted(Some(120))),
+            Some(noted(Some(120)))
+        );
+        // the sampler sees the budget overrun after that note, then the loss
+        let at_loss = kept.next(true, live_with(5, Some(-40)), || panic!("no fresh state once lost"));
+        let expected = crate::crash::State {
+            vram_headroom_min_mb: Some(-40),
+            ..state(85.0, 5)
+        };
+        assert_eq!(at_loss, Some(expected));
+        // without a reading at the loss, the last noted one stays
+        let mut kept = KeptState::default();
+        kept.next(false, live_with(3, Some(120)), || noted(Some(120)));
+        assert_eq!(
+            kept.next(true, live_with(3, None), || panic!("no fresh state once lost")),
+            Some(noted(Some(120)))
+        );
     }
 }

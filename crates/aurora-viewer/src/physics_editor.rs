@@ -260,6 +260,10 @@ pub struct State {
     edit_when_worn: Option<Uuid>,
     /// AURORA_DEMO_PHYSICS_EDIT=drag: when the sliders start moving.
     pub(crate) demo_drag: Option<std::time::Instant>,
+    /// Import of an appearance XML into the draft.
+    pub xml: crate::shape_editor::xml_import::Import,
+    /// Export of the draft to an appearance XML.
+    pub xml_export: crate::shape_editor::xml_export::Export,
 }
 
 impl State {

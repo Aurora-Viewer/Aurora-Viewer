@@ -227,9 +227,14 @@ pub(crate) struct PcmSource {
     bus: usize,
     cons: rtrb::Consumer<f32>,
     playing: bool,
+    started: bool,
     prebuffer: usize,
+    rebuffer: usize,
     max_latency: Option<usize>,
     kill: Option<Arc<AtomicBool>>,
+    starved: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    underruns: usize,
     fade: f32,
 }
 
@@ -242,14 +247,33 @@ impl PcmSource {
         max_latency_frames: Option<usize>,
         kill: Option<Arc<AtomicBool>>,
     ) -> Self {
+        Self::new_with_rebuffer(channel, cons, prebuffer_frames, prebuffer_frames, max_latency_frames, kill, None)
+    }
+
+    /// Creates a source with a deeper resume threshold and an optional
+    /// nonblocking starvation signal for its producer thread.
+    pub(crate) fn new_with_rebuffer(
+        channel: Channel,
+        cons: rtrb::Consumer<f32>,
+        prebuffer_frames: usize,
+        rebuffer_frames: usize,
+        max_latency_frames: Option<usize>,
+        kill: Option<Arc<AtomicBool>>,
+        starved: Option<Arc<AtomicBool>>,
+    ) -> Self {
         Self {
             // Master is not a bus; route stray master sources to UI.
             bus: channel.bus().unwrap_or(0),
             cons,
             playing: false,
+            started: false,
             prebuffer: prebuffer_frames * ENGINE_CHANNELS,
+            rebuffer: rebuffer_frames * ENGINE_CHANNELS,
             max_latency: max_latency_frames.map(|f| f * ENGINE_CHANNELS),
             kill,
+            starved,
+            #[cfg(test)]
+            underruns: 0,
             fade: 0.0,
         }
     }
@@ -279,8 +303,10 @@ impl PcmSource {
 
         let mut avail = self.cons.slots() & !1;
         if !self.playing {
-            if avail >= self.prebuffer.max(ENGINE_CHANNELS) || (abandoned && avail > 0) {
+            let threshold = if self.started { self.rebuffer } else { self.prebuffer };
+            if avail >= threshold.max(ENGINE_CHANNELS) || (abandoned && avail > 0) {
                 self.playing = true;
+                self.started = true;
                 self.fade = 0.0;
             } else {
                 return !(abandoned && avail == 0);
@@ -307,7 +333,14 @@ impl PcmSource {
             }
         }
         if n < want {
-            // Underrun: wait for the jitter buffer to refill.
+            // Underruns only signal the producer; logging stays off the audio callback.
+            if let Some(starved) = &self.starved {
+                starved.store(true, Ordering::Relaxed);
+            }
+            #[cfg(test)]
+            {
+                self.underruns += 1;
+            }
             self.playing = false;
         }
         !(abandoned && self.cons.is_empty())
@@ -343,6 +376,12 @@ impl ClipVoice {
             pos: 0,
             gain: sanitize_volume(gain),
         }
+    }
+
+    /// Plays from sample `pos` (a rotated clip's start).
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
     }
 
     fn mix_into(&mut self, bus: &mut [f32]) -> bool {
@@ -543,6 +582,13 @@ impl WorldVoice {
     /// A voice placed by direction from its start (3D sound for
     /// headphones): `gain` the distance gain, `direction` in the listener's
     /// frame (x right, y ahead, z up).
+    /// Plays from sample `pos` (a rotated clip's start); a looping voice
+    /// wraps round to the beginning as usual.
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
+    }
+
     pub(crate) fn new_binaural(id: u64, channel: Channel, data: Arc<[f32]>, looped: bool, gain: f32, direction: [f32; 3]) -> Self {
         let mut v = Self::new(id, channel, data, looped, (0.0, 0.0));
         v.start_binaural = Some((gain, direction));
@@ -1123,6 +1169,32 @@ mod tests {
         buf
     }
 
+    /// A looping voice started part-way through shared samples (a rotated
+    /// clip, the rain's speakers) renders exactly as the rotated copy it
+    /// replaces did, wrapping round included.
+    #[test]
+    fn looping_voice_started_at_an_offset_matches_a_rotated_copy() {
+        let data: Arc<[f32]> = (0..4_800).map(|i| ((i * 37) % 101) as f32 / 101.0 - 0.5).collect();
+        let start = 1_234 * 2;
+        let copy: Arc<[f32]> = data[start..].iter().chain(&data[..start]).copied().collect();
+        let render = |voice: WorldVoice| {
+            let (mut m, _p, tx) = mixer();
+            tx.send(Command::PlayWorld(voice)).unwrap();
+            let mut buf = vec![0.0; 9_600];
+            m.render(&mut buf);
+            buf
+        };
+        let shared = render(WorldVoice::new(1, Channel::Sfx, data.clone(), true, (1.0, 1.0)).starting_at(start));
+        assert_eq!(shared, render(WorldVoice::new(1, Channel::Sfx, copy, true, (1.0, 1.0))));
+        let clip = crate::SoundClip {
+            samples: data.clone(),
+            start: 0,
+        };
+        let rotated = clip.rotated(0.5).rotated(0.75);
+        assert!(Arc::ptr_eq(&rotated.samples, &data), "rotating shares the samples");
+        assert_eq!(rotated.start, (1_200 + 1_800) % 2_400 * 2);
+    }
+
     #[test]
     fn occluded_voice_loses_its_highs_and_some_level() {
         // a tone at the Nyquist frequency and one at 100 Hz
@@ -1255,6 +1327,39 @@ mod tests {
     }
 
     #[test]
+    fn decoded_clip_edges_stay_smooth_in_ui_world_and_looped_playback() {
+        let clip = crate::SoundClip::decode(&crate::decode::tests::wav_bytes(48_000, 1, &[16_384; 512])).unwrap();
+        for mode in 0..3 {
+            let (mut m, _params, tx) = mixer();
+            settle(&mut m);
+            let command = match mode {
+                0 => Command::PlayClip(ClipVoice::new(Channel::Ui, clip.samples.clone(), 1.0)),
+                _ => Command::PlayWorld(WorldVoice::new(1, Channel::Sfx, clip.samples.clone(), mode == 2, (1.0, 1.0))),
+            };
+            tx.send(command).unwrap();
+            let mut out = Vec::new();
+            // Audio callback boundaries deliberately cut through the fades
+            // and through loop wraps; the envelope belongs to the clip.
+            for frames in [37, 191, 3, 1024, 500] {
+                let mut block = vec![0.0; frames * 2];
+                m.render(&mut block);
+                out.extend(block);
+            }
+            assert_eq!(out[0], 0.0, "start in mode {mode}");
+            assert_eq!(out[2 * 511], 0.0, "end in mode {mode}");
+            assert_eq!(out[2 * 512], 0.0, "wrap/silence in mode {mode}");
+            let step = out
+                .as_chunks::<2>()
+                .0
+                .windows(2)
+                .map(|w| (w[1][0] - w[0][0]).abs())
+                .fold(0.0f32, f32::max);
+            assert!(step < 0.01, "step {step} in mode {mode}");
+            assert_eq!(m.source_count(), usize::from(mode == 2));
+        }
+    }
+
+    #[test]
     fn mute_and_disable_silence_a_bus() {
         let (mut m, params, tx) = mixer();
         let data: Arc<[f32]> = vec![0.5f32; 96_000].into();
@@ -1324,6 +1429,53 @@ mod tests {
         // Fade-in reaches full level after SOURCE_FADE_FRAMES frames.
         assert!((out[1000] - 0.5).abs() < 1e-3, "{}", out[1000]);
         assert!(out[0] < 0.01);
+    }
+
+    #[test]
+    fn music_resumes_only_after_four_fifths_of_its_ring_refills() {
+        let ring_frames = 5 * ENGINE_SAMPLE_RATE as usize;
+        let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(ring_frames * ENGINE_CHANNELS);
+        let initial = vec![0.1; ring_frames * ENGINE_CHANNELS];
+        prod.push_entire_slice(&initial).unwrap();
+        let starved = Arc::new(AtomicBool::new(false));
+        let mut source = PcmSource::new_with_rebuffer(
+            Channel::Music,
+            cons,
+            ENGINE_SAMPLE_RATE as usize,
+            ring_frames * 4 / 5,
+            None,
+            None,
+            Some(starved.clone()),
+        );
+        let mut bus = vec![0.0; 480 * ENGINE_CHANNELS];
+        let mut tmp = Vec::new();
+
+        // A two-second source pause fits inside the deep ring.
+        for _ in 0..(2 * ENGINE_SAMPLE_RATE as usize / 480) {
+            assert!(source.mix_into(&mut bus, &mut tmp));
+        }
+        assert_eq!(source.underruns, 0);
+
+        // Drain what remains, then confirm the producer must refill to 80%
+        // before this source starts consuming again.
+        for _ in 0..(3 * ENGINE_SAMPLE_RATE as usize / 480) {
+            source.mix_into(&mut bus, &mut tmp);
+        }
+        source.mix_into(&mut bus, &mut tmp);
+        assert_eq!(source.underruns, 1);
+        assert!(starved.load(Ordering::Relaxed));
+        let below_threshold = vec![0.1; ring_frames * 7 / 10 * ENGINE_CHANNELS];
+        prod.push_entire_slice(&below_threshold).unwrap();
+        let queued = source.queued_samples();
+        source.mix_into(&mut bus, &mut tmp);
+        assert!(!source.playing);
+        assert_eq!(source.queued_samples(), queued);
+
+        let to_threshold = vec![0.1; ring_frames / 10 * ENGINE_CHANNELS];
+        prod.push_entire_slice(&to_threshold).unwrap();
+        source.mix_into(&mut bus, &mut tmp);
+        assert!(source.playing);
+        assert_eq!(source.underruns, 1);
     }
 
     #[test]
