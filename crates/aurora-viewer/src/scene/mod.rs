@@ -5914,6 +5914,33 @@ impl Scene {
         Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
     }
 
+    /// A posed skeleton joint's displacement from the avatar's own shaped
+    /// rest pose, in avatar-local space: only what animation moves. The
+    /// shape and the joint offsets of worn meshes are part of the rest pose,
+    /// so a still avatar of any shape gives zero.
+    pub fn joint_offset(&self, world: &World, id: &Uuid, name: &str) -> Option<Vec3> {
+        let rig = &world.avatar_lib.rig;
+        let joint = *rig.names.get(name)?;
+        let skeleton = self.skeletons.get(id)?;
+        let neutral = skeleton.neutral_joints.get_or_init(|| {
+            let base = &skeleton.base;
+            rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale)
+                .iter()
+                .map(|m| m.w_axis.truncate())
+                .collect()
+        });
+        // An animation that keys the pelvis drops a mesh pelvis override:
+        // the still reference follows the evaluation's rule.
+        let still = match self.motions.get(id) {
+            Some(controller) => controller.still_joint(rig, neutral, joint)?,
+            None => *neutral.get(joint)?,
+        };
+        // A palette matrix maps the default rig's rest to the posed joint.
+        let rest = rig.default_world_inv[joint].inverse().w_axis.truncate();
+        let posed = world.avatar_poses.get(id)?.get(joint)?.transform_point3(rest);
+        Some(posed - still)
+    }
+
     /// Stable name tag above the avatar root, also used for click depth.
     /// Its height includes shape, mesh offsets and translation deformers;
     /// neither body/head rotations nor animation bobbing move the anchor.
@@ -6079,6 +6106,7 @@ impl Scene {
                 neutral_root_height,
                 neutral_body_height,
                 neutral_shape_hover: hover,
+                neutral_joints: std::sync::OnceLock::new(),
                 members,
                 physics,
             },
@@ -6247,6 +6275,10 @@ struct AvatarSkeleton {
     /// Shape-only body height, before mesh overrides, as used by server baking.
     neutral_body_height: f32,
     neutral_shape_hover: f32,
+    /// Joint positions of `base` with no animation, filled on first use by
+    /// the third-person body-part camera (`Scene::joint_offset`), so it is
+    /// computed once per shape or mesh-override change, not every frame.
+    neutral_joints: std::sync::OnceLock<Vec<Vec3>>,
     /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
     members: Vec<usize>,
     /// Body physics its appearance asks for (body_physics.rs).
@@ -6661,6 +6693,46 @@ mod tests {
     }
 
     #[test]
+    fn a_still_shaped_avatar_has_no_follow_joint_offset() {
+        // The third-person body-part camera follows animation only: a tall
+        // shape (or mesh joint offsets) is part of the rest pose, not motion.
+        let lib = Arc::new(AvatarLibrary::load());
+        let rig = lib.rig.clone();
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        world.apply(NetEvent::MainRegionChanged { handle: 1 });
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: world.agent_id,
+            texture_entry: None,
+            visual_params: lib.shape_params.values_with(&[(33, 1.0)]),
+            cof_version: 1,
+            appearance_version: 1,
+            hover_height: 0.0,
+            attachments: Vec::new(),
+        }));
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        scene.palette_base(world.agent_id);
+        scene.update_poses(&mut world, Vec3::ZERO, Instant::now());
+        for name in ["mHead", "mPelvis", "mWristLeft", "mFootRight"] {
+            let joint = rig.names[name];
+            let default_rest = rig.default_world_inv[joint].inverse().w_axis.truncate();
+            let shaped_rest = world.avatar_poses[&world.agent_id][joint].transform_point3(default_rest);
+            if name == "mHead" {
+                assert!(
+                    shaped_rest.distance(default_rest) > 0.01,
+                    "the test shape must move the head away from the default rig"
+                );
+            }
+            let offset = scene.joint_offset(&world, &world.agent_id, name).expect("posed joint");
+            assert!(offset.length() < 1e-4, "{name}: still avatar offset {offset}");
+        }
+    }
+
+    #[test]
     fn studio_pose_is_local_and_releasing_it_restores_the_running_animation() {
         use crate::avatar_studio::Pose;
         let lib = Arc::new(AvatarLibrary::load());
@@ -6889,6 +6961,7 @@ mod tests {
                 build_mode: false,
                 edit_tracking: None,
                 eye_offset: scene.eyes_offset(&world, &owner),
+                follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
                 draw_distance: 128.0,
                 region_width: 256.0,
                 aspect: 1.0,
@@ -6953,6 +7026,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: scene.eyes_offset(&world, &owner),
+            follow_joint_offset: scene.joint_offset(&world, &owner, "mHead"),
             draw_distance: 128.0,
             region_width: 256.0,
             aspect: 1.0,

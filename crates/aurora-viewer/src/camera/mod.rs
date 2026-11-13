@@ -22,7 +22,9 @@ pub mod vr;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens};
+pub use settings::{
+    CameraFollowJoint, CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens,
+};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -186,6 +188,8 @@ pub struct FrameInput {
     /// Animated point between the eyes relative to the rendered avatar root.
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
+    /// Selected skeleton joint's displacement from rest, after pose evaluation.
+    pub follow_joint_offset: Option<Vec3>,
     pub draw_distance: f32,
     /// The main region's width (LLWorld::mWidth, which follows the region).
     pub region_width: f32,
@@ -333,6 +337,11 @@ pub struct Camera {
     gamepad_follow_avatar: bool,
     focus_geom: Option<FocusObject>,
     focus_object_offset: Vec3,
+    /// The focus left the avatar by unlocking the avatar shot in place (a
+    /// pan, an orbit or a zoom by keys or the Controls window), not by
+    /// picking another point: the body-part camera keeps following there.
+    /// Cleared as soon as the focus is set anywhere else.
+    joint_follow_unlocked: bool,
     /// mCameraFocusOffsetTarget / mCameraFocusOffset: camera minus focus.
     focus_offset_target: Vec3,
     focus_offset: Vec3,
@@ -430,6 +439,7 @@ impl Default for Camera {
             focus_on_avatar: true,
             focus_target: Vec3::ZERO,
             focus_object: None,
+            joint_follow_unlocked: false,
             gamepad_follow_avatar: false,
             focus_geom: None,
             focus_object_offset: Vec3::ZERO,
@@ -485,6 +495,15 @@ impl Default for Camera {
     }
 }
 
+/// The most an animated joint's movement may carry the body-part camera,
+/// before the intensity: animations move a joint well under this, so a
+/// larger offset is a reference mismatch, and the camera must not fly off.
+const FOLLOW_JOINT_MAX_OFFSET: f32 = 2.0;
+
+fn follow_joint_intensity_scale(percent: u16) -> f32 {
+    f32::from(percent.min(500)) / 100.0
+}
+
 impl Camera {
     pub fn mouselook(&self) -> bool {
         self.mode == CameraMode::Mouselook
@@ -498,6 +517,19 @@ impl Camera {
 
     pub fn needs_animated_eyes(&self, agent: &AgentState, s: &CameraSettings) -> bool {
         self.mouselook() && (agent.is_sitting() || s.mouselook_follow_eyes)
+    }
+
+    /// Body-part tracking needs the current skeleton pose before computing
+    /// the shot. It follows the avatar shot, the avatar itself picked as the
+    /// focus, and that shot reframed in place; a point picked on land, water
+    /// or another object stays still. Never in a VR view: the headset sits at
+    /// the camera position, and moving it with the avatar's head or pelvis
+    /// would bob the whole world in the headset (motion sickness).
+    pub fn needs_animated_joint(&self, s: &CameraSettings) -> bool {
+        self.third_person()
+            && self.vr_mode.is_none()
+            && s.third_person_follow_joint.is_some()
+            && (self.focus_on_avatar || self.joint_follow_unlocked || (!self.own.is_nil() && self.focus_object == Some(self.own)))
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -774,6 +806,7 @@ impl Camera {
             let focus = self.avatar.position + self.frame_rotation(agent) * s.focus_offset();
             self.focus_on_avatar = false;
             self.set_focus_global(Some(focus), None, None, s);
+            self.joint_follow_unlocked = true;
         }
         if on {
             self.gamepad_follow_avatar = false;
@@ -783,6 +816,7 @@ impl Camera {
 
     /// LLAgentCamera::setFocusGlobal. `None` = our head.
     fn set_focus_global(&mut self, focus: Option<Vec3>, object: Option<Uuid>, geom: Option<FocusObject>, s: &CameraSettings) {
+        self.joint_follow_unlocked = false;
         self.gamepad_follow_avatar = false;
         self.focus_object = object;
         self.focus_geom = geom;
@@ -819,6 +853,7 @@ impl Camera {
         if d2 > 0.0001 {
             self.start_animation(s);
         }
+        self.joint_follow_unlocked = false;
         self.gamepad_follow_avatar = false;
         self.focus_object = object.map(|o| o.0);
         self.focus_geom = object.map(|o| o.1);
@@ -1985,7 +2020,7 @@ impl Camera {
 
         let mut camera_target = self.calc_camera_target(world, s, f);
         self.virtual_position = camera_target;
-        let focus_target = self.calc_focus_target(world, s, f.now, camera_target);
+        let focus_target = self.calc_focus_target(world, s, f, camera_target);
         // field of view correction: the camera backs off, the view narrows
         // An edited object's growing extents must not move a frozen camera.
         if f.edit_tracking != Some(false) || offset_changed {
@@ -2208,7 +2243,7 @@ impl Camera {
                 Some(p) => p,
                 None => self.third_person_camera(agent, s, f),
             },
-            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset,
+            CameraMode::ThirdPerson | CameraMode::Follow => self.focus_target + self.focus_offset + self.third_person_joint_delta(s, f),
         };
         if !s.disable_constraints {
             let offset = camera - self.avatar.position;
@@ -2239,7 +2274,7 @@ impl Camera {
         let frame = self.frame_rotation(agent);
         // mThirdPersonHeadOffset: none when seated
         let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
-        let base = self.avatar.root + head_offset;
+        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f);
         let offset = frame * (s.camera_offset() * self.zoom_fraction * s.offset_scale);
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
@@ -2297,6 +2332,22 @@ impl Camera {
         camera - self.lag
     }
 
+    /// Keep camera and focus offsets unchanged while translating the shot with
+    /// the selected joint's movement from its neutral position.
+    fn third_person_joint_delta(&self, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+        if !self.needs_animated_joint(s) {
+            return Vec3::ZERO;
+        }
+        f.follow_joint_offset
+            .filter(|offset| offset.is_finite())
+            .map(|offset| {
+                self.avatar.render_rotation
+                    * offset.clamp_length_max(FOLLOW_JOINT_MAX_OFFSET)
+                    * follow_joint_intensity_scale(s.third_person_follow_intensity)
+            })
+            .unwrap_or(Vec3::ZERO)
+    }
+
     /// The mouselook view direction. LLAgentCamera::calcFocusPositionTargetGlobal
     /// (indra/newview/llagentcamera.cpp, originally LGPL 2.1): seated, the
     /// agent frame is the seat's, turned by the seat's render rotation unless
@@ -2317,17 +2368,19 @@ impl Camera {
     }
 
     /// LLAgentCamera::calcFocusPositionTargetGlobal.
-    fn calc_focus_target(&self, world: &World, s: &CameraSettings, now: Instant, camera_target: Vec3) -> Vec3 {
+    fn calc_focus_target(&self, world: &World, s: &CameraSettings, f: &FrameInput, camera_target: Vec3) -> Vec3 {
         let agent = &world.agent;
         match self.mode {
             CameraMode::Follow if self.focus_on_avatar => self.follow.at,
             // Keep the mouse's aim even if terrain or range constraints
             // move the eye away from its requested position.
             CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
-            CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => self.focus_target,
-            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, now, false) {
+            CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => {
+                self.focus_target + self.third_person_joint_delta(s, f)
+            }
+            CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, f.now, false) {
                 Some(p) => p,
-                None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset(),
+                None => self.avatar.position + self.frame_rotation(agent) * s.focus_offset() + self.third_person_joint_delta(s, f),
             },
         }
     }
@@ -3018,6 +3071,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn third_person_joint_intensity_scales_and_caps_translation() {
+        assert_eq!(follow_joint_intensity_scale(0), 0.0);
+        assert_eq!(follow_joint_intensity_scale(50), 0.5);
+        assert_eq!(follow_joint_intensity_scale(100), 1.0);
+        assert_eq!(follow_joint_intensity_scale(200), 2.0);
+        assert_eq!(follow_joint_intensity_scale(500), 5.0);
+        assert_eq!(follow_joint_intensity_scale(u16::MAX), 5.0);
+    }
+
+    #[test]
+    fn follow_joint_choices_exist_in_the_avatar_rig() {
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig;
+        for joint in CameraFollowJoint::ALL {
+            assert!(rig.names.contains_key(joint.rig_name()), "missing {}", joint.rig_name());
+        }
+    }
+
+    #[test]
     fn joystick_avatar_camera_pan_is_temporary_and_returns_to_configured_height() {
         let settings = CameraSettings {
             track_focus_object: false,
@@ -3486,6 +3557,216 @@ mod tests {
         }
     }
 
+    #[test]
+    fn third_person_joint_tracking_moves_the_camera_and_focus_together() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let mut settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        let before_position = camera.position;
+        let before_target = camera.target;
+        let before_forward = camera.forward();
+
+        input.follow_joint_offset = Some(Vec3::new(0.0, 0.0, 0.25));
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.position.abs_diff_eq(before_position + Vec3::Z * 0.25, 1e-4));
+        assert!(camera.target.abs_diff_eq(before_target + Vec3::Z * 0.25, 1e-4));
+        assert!(camera.forward().abs_diff_eq(before_forward, 1e-5));
+
+        settings.third_person_follow_joint = None;
+        let tracked_position = camera.position;
+        camera.update(&mut world, &settings, &input);
+        assert!(
+            camera.position.z < tracked_position.z,
+            "disabling tracking returns to the standard anchor"
+        );
+    }
+
+    #[test]
+    fn third_person_joint_tracking_survives_controls_reframing() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = uuid::Uuid::from_u128(0x1015);
+        let mut camera = Camera::default();
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+
+        // The Controls window uses these same keys. They unlock the view from
+        // the avatar so a hand-placed shot can be panned and kept.
+        camera.apply_keys(
+            CameraKeys {
+                pan_right: 1.0,
+                ..Default::default()
+            },
+            &mut world.agent,
+            &settings,
+            input.dt,
+        );
+        assert!(camera.needs_animated_joint(&settings));
+
+        let camera_before = camera.calc_camera_target(&world, &settings, &input);
+        let focus_before = camera.calc_focus_target(&world, &settings, &input, camera_before);
+        input.follow_joint_offset = Some(Vec3::new(0.0, 0.0, 0.25));
+        let camera_after = camera.calc_camera_target(&world, &settings, &input);
+        let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
+        assert!(camera_after.abs_diff_eq(camera_before + Vec3::Z * 0.25, 1e-4));
+        assert!(focus_after.abs_diff_eq(focus_before + Vec3::Z * 0.25, 1e-4));
+        assert!((camera_after.distance(focus_after) - camera_before.distance(focus_before)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn third_person_joint_tracking_stops_on_a_point_picked_on_land() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        world.agent_id = uuid::Uuid::from_u128(0x1015);
+        let mut camera = Camera::default();
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.needs_animated_joint(&settings));
+
+        // Alt+click on the ground 30 m away: the orbit centre is land.
+        let ground = Vec3::new(158.0, 128.0, 20.0);
+        let ray = (camera.position, (ground - camera.position).normalize());
+        camera.alt_focus(ground, None, ray, &mut world.agent, &settings);
+        assert!(
+            !camera.needs_animated_joint(&settings),
+            "a land focus must not shake with the avatar"
+        );
+        let camera_before = camera.calc_camera_target(&world, &settings, &input);
+        let focus_before = camera.calc_focus_target(&world, &settings, &input, camera_before);
+        input.follow_joint_offset = Some(Vec3::new(0.0, 0.0, 0.25));
+        let camera_after = camera.calc_camera_target(&world, &settings, &input);
+        let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
+        assert!(camera_after.abs_diff_eq(camera_before, 1e-5));
+        assert!(focus_after.abs_diff_eq(focus_before, 1e-5));
+
+        // A pan from there is still a land shot.
+        camera.apply_keys(
+            CameraKeys {
+                pan_right: 1.0,
+                ..Default::default()
+            },
+            &mut world.agent,
+            &settings,
+            input.dt,
+        );
+        assert!(!camera.needs_animated_joint(&settings));
+    }
+
+    #[test]
+    fn third_person_joint_tracking_follows_the_gamepad_shot_of_our_own_avatar() {
+        // A gamepad pan or orbit of our own avatar (#2386) keeps it as the
+        // focus object: like a pan from the Controls window, that reframes
+        // the avatar shot, so the body-part camera keeps following. A
+        // gamepad shot of another avatar does not.
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut camera = Camera::default();
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        for _ in 0..300 {
+            camera.update(&mut world, &settings, &input);
+        }
+        camera.gamepad_pan_vertical(-0.5, &mut world.agent, &settings);
+        for _ in 0..300 {
+            camera.update(&mut world, &settings, &input);
+        }
+        assert!(camera.gamepad_pan_follows_player());
+        assert!(camera.needs_animated_joint(&settings));
+        let (position, target) = (camera.position, camera.target);
+        input.follow_joint_offset = Some(Vec3::Z * 0.25);
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.position.abs_diff_eq(position + Vec3::Z * 0.25, 1e-3));
+        assert!(camera.target.abs_diff_eq(target + Vec3::Z * 0.25, 1e-3));
+
+        let id = crate::ui::people::nearby(&world)
+            .into_iter()
+            .find(|row| focus_object_geom(&world, &row.0, Instant::now()).is_some_and(|g| g.avatar))
+            .expect("demo residents")
+            .0;
+        let index = world.objects.index_of_uuid(&id).expect("loaded avatar");
+        let avatar = pick_focus_object(&world, index, Instant::now()).expect("focus geometry");
+        camera.zoom_avatar(avatar, &mut world.agent, &settings);
+        camera.gamepad_follow_head(avatar.1.position + Vec3::Z * 0.9, &mut world.agent, &settings);
+        assert_eq!(camera.gamepad_avatar_target(), Some(id));
+        assert!(
+            !camera.needs_animated_joint(&settings),
+            "another avatar's shot does not follow our body"
+        );
+    }
+
+    #[test]
+    fn third_person_joint_tracking_is_off_in_a_vr_view() {
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.needs_animated_joint(&settings), "desktop third person follows");
+
+        camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        assert!(camera.third_person());
+        assert!(!camera.needs_animated_joint(&settings), "the headset must not bob with the avatar");
+        let camera_before = camera.calc_camera_target(&world, &settings, &input);
+        let focus_before = camera.calc_focus_target(&world, &settings, &input, camera_before);
+        input.follow_joint_offset = Some(Vec3::Z * 0.25);
+        let camera_after = camera.calc_camera_target(&world, &settings, &input);
+        let focus_after = camera.calc_focus_target(&world, &settings, &input, camera_after);
+        assert!(camera_after.abs_diff_eq(camera_before, 1e-5));
+        assert!(focus_after.abs_diff_eq(focus_before, 1e-5));
+    }
+
+    #[test]
+    fn a_far_joint_offset_cannot_throw_the_camera_away() {
+        // The grid report on #2307: a reference mismatch of -10.7 m at 285%
+        // dropped the camera about 30 m. The applied movement is capped.
+        let settings = CameraSettings {
+            third_person_follow_joint: Some(CameraFollowJoint::Head),
+            third_person_follow_intensity: 285,
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let mut input = frame(1.0 / 60.0);
+        input.follow_joint_offset = Some(Vec3::ZERO);
+        camera.update(&mut world, &settings, &input);
+        input.follow_joint_offset = Some(Vec3::new(0.1, 0.4, -10.68));
+        let delta = camera.third_person_joint_delta(&settings, &input);
+        assert!(delta.length() <= FOLLOW_JOINT_MAX_OFFSET * 2.85 + 1e-4, "{delta}");
+        input.follow_joint_offset = Some(Vec3::Z * 0.2);
+        let small = camera.third_person_joint_delta(&settings, &input);
+        assert!(small.abs_diff_eq(Vec3::Z * 0.2 * 2.85, 1e-4), "a real movement is not capped");
+    }
+
     fn world_at(pos: Vec3) -> World {
         let mut w = World::new(std::sync::Arc::new(AvatarLibrary::load()));
         w.agent.position = pos;
@@ -3500,6 +3781,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             eye_offset: None,
+            follow_joint_offset: None,
             draw_distance: 128.0,
             region_width: REGION_WIDTH,
             aspect: 1.0,
