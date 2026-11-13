@@ -806,7 +806,7 @@ pub struct BuildTool {
     /// Whether the last frame edited HUDs; leaving that selection resets view zoom.
     hud_editing: bool,
     /// Last world pick, retained in the object's frame while it moves.
-    point_pick: Option<(ObjKey, glam::DVec3)>,
+    pub(crate) point_pick: Option<(ObjKey, glam::DVec3)>,
     /// "Select face" mode: the faces chosen on each selected prim (missing
     /// = all its faces; LLSelectNode::isTESelected).
     pub faces: HashMap<ObjKey, Vec<u8>>,
