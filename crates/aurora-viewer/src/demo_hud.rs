@@ -108,8 +108,8 @@ pub fn object(point: u8, active: bool) -> ObjectUpdate {
     o
 }
 
-pub fn events() -> Vec<NetEvent> {
-    let mut objects: Vec<_> = (31..=38).map(|point| object(point, false)).collect();
+/// The card linked to the top-left HUD.
+fn hud_child() -> ObjectUpdate {
     let mut child = object(31, false);
     child.local_id = CHILD;
     child.full_id = u(CHILD as u128);
@@ -120,7 +120,12 @@ pub fn events() -> Vec<NetEvent> {
     child.rotation = Quat::from_rotation_x(0.12);
     child.texture_entry = Some(te([0.3, 0.9, 0.8, 0.65], 0, false, 0.0));
     child.text.clear();
-    objects.push(child);
+    child
+}
+
+pub fn events() -> Vec<NetEvent> {
+    let mut objects: Vec<_> = (31..=38).map(|point| object(point, false)).collect();
+    objects.push(hud_child());
     let mut other = object(35, false);
     other.local_id = 8241;
     other.full_id = u(8241);
@@ -130,6 +135,20 @@ pub fn events() -> Vec<NetEvent> {
     other.owner_id = DEMO_LOUP;
     objects.push(other);
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// AURORA_DEMO_HUDS=slide: one report moves and grows the card linked to the
+/// top-left HUD, as a script's llSetLinkPrimitiveParamsFast does; the viewer
+/// eases it there with the Legacy Viewer's 0.06 s damping (#3369). A linkset's
+/// root prim instead shows a report at once.
+pub fn slide_events() -> Vec<NetEvent> {
+    let mut child = hud_child();
+    child.position.z += 0.05;
+    child.scale *= 1.6;
+    vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![child],
+    }]
 }
 
 /// A whole HUD remains movable/rotatable without Modify. A second HUD at

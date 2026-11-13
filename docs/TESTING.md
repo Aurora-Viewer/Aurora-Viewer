@@ -3337,6 +3337,11 @@ grid.
 - `touch-shift`: repeats the same interaction while Shift is held for the
   press, then releases Shift; the HUD must still receive the touch and turn
   green.
+- `slide`: the card linked to the top-left HUD is moved up and grown in one
+  report at frame 720, as a script's `llSetLinkPrimitiveParamsFast` does; it
+  must ease there with the Legacy Viewer's 0.06 s damping, not jump to its
+  new place and size at once (#3369). A linkset's root prim instead shows a
+  report at once. Capture at 719, 723 and 760.
 - `zoom`: scales down to 50%; `hidden`: hides the HUDs; `media`: shows the
   local test page on the centre HUD.
 - `scale`: five wheel notches with the HUD key (frame 720), on a
