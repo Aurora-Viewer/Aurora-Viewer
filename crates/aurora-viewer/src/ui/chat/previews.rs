@@ -721,16 +721,16 @@ pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, wi
     if ready.is_empty() {
         return text.into();
     }
-    let mut rest = text;
+    let mut at = 0;
     let mut out = String::with_capacity(text.len());
-    while let Some((at, len, seg)) = super::next_link(rest) {
-        out.push_str(&rest[..at]);
+    for (i, len, seg) in super::link_spans(text) {
+        out.push_str(&text[at..i]);
         if !matches!(seg, Seg::Url(url) if ready.iter().any(|u| u == web_target(url).as_ref())) {
-            out.push_str(&rest[at..at + len]);
+            out.push_str(&text[i..i + len]);
         }
-        rest = &rest[at + len..];
+        at = i + len;
     }
-    out.push_str(rest);
+    out.push_str(&text[at..]);
     out.trim().to_owned().into()
 }
 
