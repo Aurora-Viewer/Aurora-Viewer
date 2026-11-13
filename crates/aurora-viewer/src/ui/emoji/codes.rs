@@ -94,8 +94,19 @@ pub fn expand(text: &str) -> String {
 /// Up to `max` emoji whose code starts with `prefix` (then contains it),
 /// shortest codes first: (code, emoji). The picker's names, skin tones and
 /// emoji: those drawn as one picture (not flags nor sequences yet).
+///
+/// Leading `-` prefixes only match at the start (`:-1:`) or known `:-P`
+/// emoticon so `:-P` does not suggest `:non-potable_water:`.
 pub fn suggestions(prefix: &str, max: usize) -> Vec<(&'static str, &'static str)> {
     let prefix = prefix.to_ascii_lowercase();
+    if prefix == "-p" {
+        return emojis::get_by_shortcode("stuck_out_tongue")
+            .map(|e| ("stuck_out_tongue", e.as_str()))
+            .into_iter()
+            .take(max)
+            .collect();
+    }
+    let allow_contains = !prefix.starts_with('-');
     let mut found: Vec<(u8, &'static str, &'static str)> = Vec::new();
     for e in emojis::iter()
         .filter(|e| e.skin_tone().is_none_or(|t| t == emojis::SkinTone::Default))
@@ -106,7 +117,7 @@ pub fn suggestions(prefix: &str, max: usize) -> Vec<(&'static str, &'static str)
             .filter_map(|s| {
                 if s.starts_with(&prefix) {
                     Some((0, s))
-                } else if s.contains(&prefix) {
+                } else if allow_contains && s.contains(&prefix) {
                     Some((1, s))
                 } else {
                     None
@@ -451,5 +462,22 @@ mod tests {
         assert!(suggestions("thumb", 8).iter().any(|(_, e)| *e == "👍"));
         // flags are sequences the fields cannot draw yet
         assert!(!suggestions("thu", 8).iter().any(|(code, _)| *code == "lithuania"));
+    }
+
+    #[test]
+    fn colon_dash_p_suggests_tongue_out_not_non_potable_water() {
+        for prefix in ["-P", "-p"] {
+            assert_eq!(suggestions(prefix, 8), vec![("stuck_out_tongue", "😛")]);
+        }
+        assert!(suggestions("-1", 8).iter().any(|(code, e)| *code == "-1" && *e == "👎"));
+        assert!(suggestions("potable", 8).iter().any(|(code, _)| *code == "non-potable_water"));
+
+        let mut f = Field::new();
+        f.type_text(":-P");
+        let list = f.list();
+        assert!(list.shown());
+        assert_eq!(list.items, vec![("stuck_out_tongue", "😛")]);
+        assert!(!f.key(egui::Key::Enter));
+        assert_eq!(f.text, "😛");
     }
 }
