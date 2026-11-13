@@ -30,6 +30,8 @@ pub(super) struct QuickSort {
     loaded: Option<usize>,
     /// How many friends were put in a set.
     placed: BTreeSet<Uuid>,
+    /// The keyboard to take on the next frame (the window just opened).
+    grab: bool,
 }
 
 impl QuickSort {
@@ -40,6 +42,7 @@ impl QuickSort {
             picks: BTreeSet::new(),
             loaded: None,
             placed: BTreeSet::new(),
+            grab: true,
         }
     }
 
@@ -115,6 +118,11 @@ fn apply_picks(world: &mut World, id: Uuid, picks: &BTreeSet<String>) {
     }
 }
 
+/// What holds the keyboard for Quick sort's keys.
+fn focus_id() -> egui::Id {
+    egui::Id::unique("contact-set-quick-sort-keys")
+}
+
 fn plain(code: KeyCode) -> Binding {
     Binding {
         input: Input::key(code),
@@ -142,7 +150,9 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     };
     qs.load(world);
     // the keys, while the window is in front and no field takes them
-    let keys_ours = widgets::floater_is_front(ctx, WINDOW) && ctx.memory(|m| m.focused().is_none());
+    // The keys while the window holds the keyboard: its focus keeps them
+    // from the viewer's own shortcuts (S walks back, Enter opens the chat).
+    let keys_ours = widgets::floater_holds_keyboard(ctx, WINDOW) && ctx.memory(|m| m.focused()) == Some(focus_id());
     let names = world.contact_sets.ordered_set_names();
     if keys_ours && qs.current().is_some() {
         ctx.input_mut(|i| {
@@ -172,6 +182,15 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     .flush_body()
     .show(ctx, p, &mut open, |ui| {
         let full = ui.available_rect_before_wrap();
+        // the window takes the keyboard when it opens and on each click in it
+        // (a click on a tile would otherwise leave the keys to the world)
+        let holder = ui.interact(full, focus_id(), Sense::focusable_noninteractive());
+        let clicked_in = ui.input(|i| {
+            (i.pointer.any_pressed() || i.pointer.any_released()) && i.pointer.interact_pos().is_some_and(|at| full.contains(at))
+        });
+        if std::mem::take(&mut qs.grab) || clicked_in {
+            holder.request_focus();
+        }
         // progress, along the top
         let done = qs.index.min(qs.queue.len()) as f32 / qs.queue.len().max(1) as f32;
         let track = Rect::from_min_size(full.min, Vec2::new(full.width(), 3.0));
@@ -571,6 +590,78 @@ mod tests {
         });
         qs.load(&world);
         assert_eq!(qs.current(), Some(Uuid::from_u128(7)));
+    }
+
+    /// The real window over several frames: it takes the keyboard (so the
+    /// viewer's shortcuts, S walking back, Enter opening the chat, do not
+    /// get the keys), a number picks a set, Enter saves, S skips, and a
+    /// click on a tile keeps the keyboard.
+    #[test]
+    fn the_keys_go_to_quick_sort_and_not_to_the_world() {
+        let mut world = world_with(&[(1, true), (2, true), (3, true)]);
+        for s in ["A", "B"] {
+            world.contact_sets.add_set(s);
+        }
+        let p = crate::theme::Theme::default().palette();
+        let mut st = ContactsUi::default();
+        st.open_quick_sort(&world);
+        let pics = HashMap::new();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        type F = crate::ui::widgets::elide_tests::Frames;
+        let run = |frames: &mut F, world: &mut World, st: &mut ContactsUi, events: Vec<egui::Event>| {
+            frames.run(events, |ui| window(ui.ctx(), &p, world, st, &pics));
+        };
+        for _ in 0..3 {
+            run(&mut frames, &mut world, &mut st, Vec::new());
+        }
+        assert!(frames.ctx.egui_wants_keyboard_input(), "the world's shortcuts would get the keys");
+        run(&mut frames, &mut world, &mut st, vec![key(egui::Key::Num1)]);
+        run(&mut frames, &mut world, &mut st, vec![key(egui::Key::Enter)]);
+        run(&mut frames, &mut world, &mut st, Vec::new());
+        // the first friend (all online, by name) is in A, the second shown
+        assert_eq!(world.contact_sets.friend_sets(&Uuid::from_u128(1)), ["A"]);
+        run(&mut frames, &mut world, &mut st, vec![key(egui::Key::S)]);
+        run(&mut frames, &mut world, &mut st, Vec::new());
+        assert!(world.contact_sets.friend_sets(&Uuid::from_u128(2)).is_empty(), "skipped");
+        // a click inside the window keeps the keyboard for the next key
+        let inside = frames.ctx.content_rect().center();
+        run(
+            &mut frames,
+            &mut world,
+            &mut st,
+            vec![
+                egui::Event::PointerMoved(inside),
+                egui::Event::PointerButton {
+                    pos: inside,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run(
+            &mut frames,
+            &mut world,
+            &mut st,
+            vec![egui::Event::PointerButton {
+                pos: inside,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(frames.ctx.egui_wants_keyboard_input(), "a click let the keyboard go");
+        run(&mut frames, &mut world, &mut st, vec![key(egui::Key::Num2)]);
+        run(&mut frames, &mut world, &mut st, vec![key(egui::Key::Enter)]);
+        run(&mut frames, &mut world, &mut st, Vec::new());
+        assert_eq!(world.contact_sets.friend_sets(&Uuid::from_u128(3)), ["B"]);
     }
 
     #[test]

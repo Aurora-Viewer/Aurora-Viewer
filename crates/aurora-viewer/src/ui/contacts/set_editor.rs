@@ -227,7 +227,12 @@ fn identity(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contacts
             }
             ui.allocate_rect(rect, Sense::hover());
             if resp.lost_focus() {
-                rename(world, st, set);
+                // Escape gives the name back, anything else applies it
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    st.rename = set.to_owned();
+                } else {
+                    rename(world, st, set);
+                }
             }
             let online = cfg
                 .friends

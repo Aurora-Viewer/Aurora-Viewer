@@ -8731,10 +8731,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'
   global online notices (toast and nearby chat) are off for the run.
-  `config` opens the set's settings window on its switches
-  ("Show notifications"); `config-responses` scrolls it down to the three
-  custom responses, below the appearance options; `config-bottom` to "All
-  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  `config` opens the set's editor on its Behaviour tab
+  ("Show notifications"); `config-responses` on its Auto-replies tab (the
+  three custom responses); `config-bottom` opens the options of all contact
+  sets beside it (the two choices of the sets' notices). `chat` opens Conversations on
   nearby chat: at frames 300 and 360 Nova and another demo friend go
   offline and online, and only Nova gets the two lines; at 400 do not
   disturb comes on, at 420 Nova writes, and the log line `demo set

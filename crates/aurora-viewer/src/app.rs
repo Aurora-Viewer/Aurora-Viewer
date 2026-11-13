@@ -13211,7 +13211,8 @@ impl App {
                 self.panels.appearance = false;
                 if mode.starts_with("config") {
                     self.panels.chat = false;
-                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                    self.contacts_ui
+                        .configure_set_at(aurora_i18n::tr!("demo-family"), ui::contacts::EditorTab::Behaviour);
                 } else {
                     self.panels.chat = true;
                 }
