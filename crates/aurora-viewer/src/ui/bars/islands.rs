@@ -1217,6 +1217,7 @@ mod tests {
             interface_keys: String::new(),
             ik_keys: String::new(),
             edit_particles: false,
+            save_to_contents: false,
             health: Default::default(),
             hover_tips: Default::default(),
             world_overlays: Default::default(),
