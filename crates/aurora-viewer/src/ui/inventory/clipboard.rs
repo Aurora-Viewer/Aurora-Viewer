@@ -101,8 +101,23 @@ pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
 }
 
 pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ui.ctx().cumulative_frame_nr());
-    ui.memory_mut(|m| {
+    request_focus_ctx(ui.ctx(), st);
+}
+
+/// Hands the keyboard back to the list when a modal dialog over it closes.
+/// egui keeps the closed modal as the top layer for one more pass, which
+/// drops this request and blocks [`list_focus`]'s restore; the restore window
+/// is moved one pass on so the list takes the focus once the modal is gone.
+pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
+    request_focus_ctx(ctx, st);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 1);
+    // run those passes now, not at the next input
+    ctx.request_repaint();
+}
+
+fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
         m.set_focus_lock_filter(
             focus_id(st),
@@ -326,8 +341,11 @@ pub(super) fn shortcuts(
     if !list_has_focus(ui, st) {
         return;
     }
-    if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
-        super::delete::shortcut(ui, inv, st, prefs, facts);
+    if !actions
+        .iter()
+        .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_)))
+    {
+        super::delete::shortcut(ui, inv, st, prefs, facts, actions);
     }
     if st.dialog.is_some() {
         return;
@@ -346,7 +364,11 @@ pub(super) fn shortcuts(
         });
     });
     for event in events {
-        if st.pending.is_some() || actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
+        if st.pending.is_some()
+            || actions
+                .iter()
+                .any(|action| matches!(action, InvAction::Edit(_) | InvAction::Delete(_)))
+        {
             continue;
         }
         match event {
@@ -392,9 +414,16 @@ fn demo_mode() -> Option<&'static str> {
 
 pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) {
     if demo_mode().is_some() || super::delete::demo_enabled() || crate::demo::texture_library::inventory_drag_enabled() {
+        // The row's center can hit an inline action in the explorer. Delete
+        // fixtures select on the label side, like the native-input tests.
+        let point = if super::delete::demo_enabled() {
+            response.rect.left_center() + egui::vec2(response.rect.width().min(60.0) * 0.5, 0.0)
+        } else {
+            response.rect.center()
+        };
         response
             .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point));
     }
 }
 
@@ -858,6 +887,33 @@ mod tests {
                 .expect("trash button")
         }
 
+        fn row_face(&self, item: Uuid) -> Option<egui::Color32> {
+            let row = self
+                .ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", self.st.ui_id, item))))
+                .expect("drawn row");
+            fn face(shape: &Shape, row: egui::Rect) -> Option<egui::Color32> {
+                match shape {
+                    Shape::Rect(rect)
+                        if rect.rect.contains(row.center())
+                            && rect.rect.height() <= row.height() + 4.0
+                            && rect.rect.width() >= row.width() * 0.8
+                            && rect.fill.a() > 0 =>
+                    {
+                        Some(rect.fill)
+                    }
+                    Shape::Vec(shapes) => shapes.iter().rev().find_map(|shape| face(shape, row)),
+                    _ => None,
+                }
+            }
+            self.output
+                .shapes
+                .iter()
+                .rev()
+                .filter(|shape| shape.clip_rect.contains(row.center()))
+                .find_map(|shape| face(&shape.shape, row))
+        }
+
         fn add_trash(&mut self) -> Uuid {
             let trash = id(8020);
             let mut folder = self.world.inventory.folders[&id(8001)].clone();
@@ -1133,9 +1189,10 @@ mod tests {
             assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![received_item]));
             h.frame(Vec::new());
             let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
-            let [InvAction::Edit(change)] = &actions[..] else {
+            let [InvAction::Delete(deletion)] = &actions[..] else {
                 panic!("confirmed Received deletion must submit one mutation (classic={classic}, button={button})")
             };
+            let change = &deletion.change;
             assert!(change.move_only());
             assert_eq!(change.operations.len(), 1);
             rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete received item");
@@ -1160,9 +1217,10 @@ mod tests {
         assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
         h.frame(Vec::new());
         let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
-        let [InvAction::Edit(change)] = &actions[..] else {
+        let [InvAction::Delete(deletion)] = &actions[..] else {
             panic!("confirmed deletion must submit one mutation")
         };
+        let change = &deletion.change;
         assert!(change.move_only());
         assert_eq!(change.operations.len(), 2, "a selected descendant moves with its folder once");
         rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete");
@@ -1172,6 +1230,62 @@ mod tests {
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
     }
 
+    fn key(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn closing_the_delete_confirmation_gives_the_list_its_keyboard_back() {
+        // Enter, Escape and Cancel all hand the keyboard back to the list, as
+        // the Legacy alert restores the focus it saved; a click on the dimmed
+        // world behind the modal answers nothing.
+        for close in ["enter", "escape", "cancel"] {
+            let mut h = Harness::new();
+            h.add_trash();
+            h.frame(Vec::new());
+            h.select(id(8100), false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: Delete opens the confirmation");
+            h.frame(Vec::new());
+            assert!(h.click(Pos2::new(4.0, 4.0), Default::default()).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: a click outside the modal keeps it open");
+            h.frame(Vec::new());
+            let mut actions = match close {
+                "enter" => h.frame(vec![key(egui::Key::Enter)]),
+                "escape" => h.frame(vec![key(egui::Key::Escape)]),
+                _ => h.click(h.text(aurora_i18n::tr!("common-cancel")).center(), Default::default()),
+            };
+            // modal_keys clicks the default button on the pass after Enter
+            actions.extend(h.frame(Vec::new()));
+            assert_eq!(actions.len(), usize::from(close == "enter"), "{close}");
+            assert!(h.st.dialog.is_none(), "{close}: the confirmation closed");
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert!(
+                h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                "{close}: the list has the keyboard again"
+            );
+            if close != "enter" {
+                // released first, or egui reports the second press as a repeat
+                let release = Event::Key {
+                    key: egui::Key::Delete,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![release, delete_key(Default::default())]);
+                assert!(h.st.dialog.is_some(), "{close}: Delete reaches the list without a click");
+            }
+        }
+    }
+
     #[test]
     fn trash_button_is_right_of_loaded_count_and_opens_same_confirmation() {
         let mut h = Harness::new();
@@ -1179,7 +1293,7 @@ mod tests {
         let button = h.trash_button(h.st.ui_id);
         let count = h.text(&aurora_i18n::tr!(
             "ui-inventory-objects-loaded",
-            value0 = format!("{}", h.world.inventory.item_count())
+            value0 = aurora_i18n::integer(h.world.inventory.total_count() as i64)
         ));
         assert!(button.left() > count.right());
         assert!(button.left() - count.right() < 18.0, "the count sits beside the trash button");
@@ -1193,6 +1307,58 @@ mod tests {
         );
         assert!(h.st.dialog.is_none());
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn inventory_count_hover_shows_live_items_and_folders_in_both_layouts() {
+        fn collect(shape: &Shape, texts: &mut Vec<String>) {
+            match shape {
+                Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, texts)),
+                _ => {}
+            }
+        }
+        for (classic, width) in [(true, 680.0), (false, 680.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::size_floater(&h.ctx, "inventory", egui::vec2(width, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.world.inventory.item_count(), 14);
+            assert_eq!(h.world.inventory.folders.len(), 5);
+            for folders in [5, 4] {
+                if folders == 4 {
+                    h.world.inventory.remove(&[id(8001)]);
+                }
+                h.frame(Vec::new());
+                let total = aurora_i18n::integer(14 + folders);
+                let label = if classic {
+                    aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = total)
+                } else {
+                    aurora::item_count(&h.world.inventory, aurora::Layout::of_window(&h.ctx, "inventory"))
+                };
+                let position = h.text(&label).center();
+                h.frame(vec![Event::PointerMoved(position)]);
+                for _ in 0..8 {
+                    h.frame(Vec::new());
+                }
+                let details = aurora_i18n::tr!(
+                    "inventory-count-tooltip",
+                    items = aurora_i18n::integer(14),
+                    folders = aurora_i18n::integer(folders)
+                );
+                let tooltip = if classic { format!("{label}\n{details}") } else { details };
+                let mut texts = Vec::new();
+                for shape in &h.output.shapes {
+                    collect(&shape.shape, &mut texts);
+                }
+                assert!(
+                    texts.contains(&tooltip),
+                    "classic={classic}, width={width}, folders={folders}, expected={tooltip:?}, painted={texts:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1265,7 +1431,7 @@ mod tests {
         h.frame(Vec::new());
         let actions = h.click(h.text(aurora_i18n::tr!("ui-inventory-dialogs-purge")).center(), Default::default());
         assert!(
-            matches!(&actions[..], [InvAction::Edit(change)] if change.removed == vec![id(8100)] && matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Delete { id: item, folder: false }] if *item == id(8100)))
+            matches!(&actions[..], [InvAction::Delete(deletion)] if deletion.change.removed == vec![id(8100)] && matches!(&deletion.change.operations[..], [aurora_net::inventory::operations::Operation::Delete { id: item, folder: false }] if *item == id(8100)))
         );
     }
 
@@ -1681,5 +1847,146 @@ mod tests {
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if change.copies.len() == 1 && change.copies[0].parent == id(8001)));
         h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("unrelated_widget")));
         assert!(h.paste().is_empty());
+    }
+
+    /// Real Delete / Enter input, selection paint, scrolling and another Delete
+    /// in all four layouts, including the explorer's temporarily swapped tree.
+    #[test]
+    fn deletion_result_preserves_or_advances_the_visible_selection_in_every_layout() {
+        let mut failures = Vec::new();
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            for confirm in [true, false] {
+                for filtered in [false, true] {
+                    for outcome in ["success", "failure", "queued", "changed selection"] {
+                        let case = format!("classic={classic}, width={width}, confirm={confirm}, filtered={filtered}, {outcome}");
+                        // Report every layout in a single regression run.
+                        let result = std::panic::catch_unwind(|| {
+                            let mut h = Harness::new();
+                            h.classic = classic;
+                            h.ctx.global_style_mut(|style| style.animation_time = 0.0);
+                            h.add_trash();
+                            h.prefs.confirm_delete = confirm;
+                            super::super::super::widgets::place_floater(
+                                &h.ctx,
+                                "inventory",
+                                egui::pos2(10.0, 40.0),
+                                egui::vec2(width, 950.0),
+                            );
+                            h.st.show_original(&h.world.inventory, id(8100));
+                            if filtered {
+                                // Content names keep this search independent of the UI language.
+                                let source = h.world.inventory.items[&id(8100)].clone();
+                                h.world.inventory.add_items(
+                                    (0..3)
+                                        .map(|n| aurora_net::inventory::InvItem {
+                                            id: id(21_000 + n),
+                                            name: format!("Delete regression {n}"),
+                                            ..source.clone()
+                                        })
+                                        .collect(),
+                                );
+                                h.st.search = "Delete regression".into();
+                                h.st.expand_all = Some(true);
+                                h.st.reveal = None;
+                                h.st.reveal_path.clear();
+                            }
+                            for _ in 0..4 {
+                                h.frame(Vec::new());
+                            }
+                            let order = keyboard::shown_order(&h.st);
+                            assert_eq!(
+                                h.st.shown_order,
+                                if filtered {
+                                    keyboard::ShownOrder::Results
+                                } else if h.st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) {
+                                    keyboard::ShownOrder::Flat
+                                } else {
+                                    keyboard::ShownOrder::Plain
+                                }
+                            );
+                            let index = order
+                                .iter()
+                                .position(|row| h.world.inventory.items.contains_key(row))
+                                .unwrap_or_else(|| panic!("no item row: {case}; order={order:?}"));
+                            let (target, expected, other) = (order[index], order[index + 1], order[index + 2]);
+                            h.select(target, false);
+                            h.frame(Vec::new());
+                            let selected_face = h.row_face(target).expect("selected row has a painted highlight");
+                            assert_ne!(h.row_face(expected), Some(selected_face), "the successor starts unselected");
+                            let mut actions = h.frame(vec![delete_key(Default::default())]);
+                            if confirm {
+                                assert!(actions.is_empty() && h.st.dialog.is_some());
+                                h.frame(Vec::new());
+                                actions = h.frame(vec![key(egui::Key::Enter)]);
+                                actions.extend(h.frame(Vec::new()));
+                            } else {
+                                assert!(h.st.dialog.is_none(), "disabled confirmation submits directly");
+                            }
+                            let [InvAction::Delete(deletion)] = &actions[..] else {
+                                panic!("confirmed deletion must submit one mutation ({classic}, {width})")
+                            };
+                            assert_eq!(h.st.selection, HashSet::from([target]), "submission must not speculate");
+                            let request = id(90_000);
+                            h.st.begin_mutation(request, &deletion.change);
+                            h.st.begin_delete(request, deletion.selection.clone());
+                            if outcome == "changed selection" {
+                                // Let the progress footer settle before locating
+                                // the row the human can now click.
+                                h.frame(Vec::new());
+                                h.frame(Vec::new());
+                                h.select(other, false);
+                                assert_eq!(h.st.selected, Some(other), "the new click must reach its intended row");
+                            }
+                            let success = outcome != "failure";
+                            h.st.finish_delete(request, success, outcome == "queued");
+                            h.st.finish_mutation(success);
+                            if outcome == "queued" {
+                                h.frame(Vec::new());
+                                assert_eq!(h.st.selected, Some(target), "queued is not an observed move");
+                            }
+                            if success {
+                                rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, deletion.change.clone()).expect("delete");
+                            }
+                            for _ in 0..3 {
+                                h.frame(Vec::new());
+                            }
+                            let expected = match outcome {
+                                "failure" => target,
+                                "changed selection" => other,
+                                _ => expected,
+                            };
+                            assert_eq!(h.st.selection, HashSet::from([expected]), "{case}");
+                            assert_eq!((h.st.selected, h.st.anchor), (Some(expected), Some(expected)), "{case}");
+                            h.row(expected); // text, row and clipping must all be inside this list's viewport
+                            assert_eq!(
+                                h.row_face(expected),
+                                Some(selected_face),
+                                "the surviving row is visibly highlighted: {case}"
+                            );
+                            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))), "list focus: {case}");
+                            let mut release = delete_key(Default::default());
+                            if let Event::Key { pressed, .. } = &mut release {
+                                *pressed = false;
+                            }
+                            h.frame(vec![release]);
+                            let actions = h.frame(vec![delete_key(Default::default())]);
+                            if confirm {
+                                assert!(
+                                    actions.is_empty()
+                                        && matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![expected]),
+                                    "second Delete: {case}"
+                                );
+                            } else {
+                                assert!(matches!(&actions[..], [InvAction::Delete(_)]), "second Delete: {case}");
+                            }
+                        });
+                        if result.is_err() {
+                            failures.push(case);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "failed inventory layouts: {failures:#?}");
     }
 }

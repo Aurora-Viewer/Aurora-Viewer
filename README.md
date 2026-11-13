@@ -25,7 +25,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
-**High framerates and low frame time, ultra fast teleports/loading, thanks to modern technologies like Vulkan/Rust.**  
+**Multi-threaded from the ground up: parallel loading, ultra fast teleports, built for today's hardware with Vulkan and Rust.**  
 <img width="1920" height="1032" alt="Aurora Viewer in a Japanese garden, with the People, Controls, Places, Inventory, Performance and Conversations windows open" src="docs/screenshots/world.webp" />  
 
 
@@ -93,8 +93,8 @@ while rethinking the user interface.
 <table>
   <tr>
     <td width="25%" align="center" valign="top">
-      <h3>≈ 5×</h3>
-      the frame rate of a classic viewer in a busy store
+      <h3>Multi-core</h3>
+      the work shared across your processor while the graphics card draws
     </td>
     <td width="25%" align="center" valign="top">
       <h3>≈ ½</h3>
@@ -111,37 +111,33 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.4 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.8 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Debug settings, like the Legacy Viewer</h3>
-      Every setting by name in one window, from the toolbar or
-      Ctrl+Alt+Shift+S: search the names and descriptions, see the ones you
-      changed, and reset any of them to its default.
+      <h3>Building, like the Legacy Viewer</h3>
+      Edit Face selects the faces of what you wear again, and Derender
+      with Edit linked parts hides only the selected part.
     </td>
     <td width="50%" valign="top">
-      <h3>More of the Legacy Viewer's options</h3>
-      Build preferences for new prims, a progressive draw distance, the
-      Trees detail, large surface protection, particles from worn objects,
-      camera smoothing up to 300 and a limit for the chat lines above the
-      chat bar.
+      <h3>Chat and voice</h3>
+      The channel selector shows by every nearby chat input and keeps the
+      channel you chose. Nearby voice now connects on slow, high-latency
+      links too.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>A fuller world</h3>
-      Neighbouring regions appear at your draw distance, objects no longer
-      vanish at some camera angles, and the world comes back by itself
-      after video memory was full at login. Media screens in busy regions
-      load again.
+      <h3>Right on every graphics card</h3>
+      Tree leaves and mesh hair look right again on AMD cards, and
+      blended eyelashes stay visible behind mesh hair.
     </td>
     <td valign="top">
-      <h3>Calls, music and chat</h3>
-      Private calls stay connected across teleports, parcel music no longer
-      cuts out while you cam around, Ctrl+Tab cycles the conversations, and
-      the Japanese IME shows the active conversion segment.
+      <h3>Smoother starts</h3>
+      A small Aurora window shows while the viewer starts and after an
+      update's restart. The avatar complexity notice no longer repeats,
+      and invisible HUD buttons take a left click again.
     </td>
   </tr>
 </table>
@@ -151,10 +147,10 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Fast, and smooth
 
-- **Hundreds of frames per second in crowded places.** In a busy store of
-  about 16,000 objects, Aurora ran at around 340 fps where a classic viewer
-  gave 68, on the same PC and at the same spot
-  ([how it was measured](#performance)).
+- **Built for every core.** The work is shared across your processor: while
+  the render thread draws one frame, the main thread prepares the next, and
+  the big loops of a frame are split between helper threads
+  ([who does what](#performance)).
 - **The picture keeps moving when you arrive.** Textures and meshes are
   decoded on background threads and written straight into GPU memory, so
   landing in a busy region doesn't freeze the view.
@@ -166,8 +162,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Instant teleports within a region.** The other teleports show your last
   view, blurred, with real step-by-step progress.
 - **A graphics card that finally does the work.** It decides by itself what
-  is visible and draws thousands of objects in a handful of calls, while a
-  dedicated render thread keeps the frames coming.
+  is visible and draws thousands of objects in a handful of calls.
 - **Faster arrivals**: what you are looking at downloads first, and after a
   teleport the region shows about a second sooner. Downloads keep pace with
   your connection, so avatars come out of the cloud about three times
@@ -623,28 +618,26 @@ are planned or in progress: they are not in the viewer yet.
 
 ## Performance
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-firestorm.png" alt="Legacy Viewer statistics window in a busy store: 68 fps"><br>
-      <b>Legacy Viewer</b> · 68 fps
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
-      <b>Aurora Viewer</b> · 386 fps
-    </td>
-  </tr>
-</table>
+Aurora shares the work across your processor and hands the heavy lifting to
+your graphics card. A frame costs the longer of the main and render threads,
+not their sum: while one frame is drawn, the next is already being prepared.
 
-Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
-one busy store of about 16,000 objects. This is an informal test, not a
-benchmark:
+| Who | Does what, side by side |
+|---|---|
+| Main thread | The world and the interface: prepares the next frame |
+| Render thread | Draws the current frame, with two helpers that finish the GPU commands in parallel |
+| Frame helpers | Share the big loops of a frame: object placement, draw lists, poses, flexible prims |
+| Background tasks | Decode textures and build meshes at low priority, written straight into GPU memory |
+| Network | Downloads on its own runtime, from 24 up to 192 at once while your connection keeps up, what you look at first |
+| Graphics card | Decides what is visible and draws thousands of objects in a handful of calls (bindless textures, multi-draw-indirect, compute culling) |
 
-- 138 fps where the Legacy Viewer gave 68 fps at the same spot;
-- about 343 fps at that spot (median) once the render thread landed, 386 fps
-  in the capture above.
+Built for today's hardware: Vulkan on Windows and Linux, Metal on macOS
+(Apple Silicon), the dedicated graphics card picked on a laptop, AMD FSR 3.1
+on every brand of card, and a texture memory budget set automatically from
+the video memory your driver grants.
 
-The texture memory budget is set automatically from the detected VRAM.
+The resource monitor (Performance window) shows the time of each step of the
+frame on your own PC.
 
 ## What works today
 
@@ -806,7 +799,7 @@ setting is on by default, like the Legacy Viewer. The translations are in
 
 ### Frame limiter
 
-The frame limiter is enabled at **120 fps by default** and can be disabled
+The frame limiter is enabled at **60 fps by default** and can be disabled
 or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
 preserved.
 
@@ -873,6 +866,14 @@ and wears the confirmed copy; Copy permission is required. **Cancel** restores
 the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
+
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
 
 ### Hover height
 
@@ -970,36 +971,143 @@ offers Collapse all / Expand all.
 
 ### Buttons and menus
 
-Right-click a toolbar and choose **Customize buttons and menus…** to open the
+Right-click a toolbar and choose the final **Customize interface** action to open the
 command catalogue. Drag a command or a submenu from the Aurora menu to the top,
 bottom, left or right bar. Drag along a bar to reorder buttons, between bars to
-move them, or back into the catalogue to remove them. Empty bars show drop zones
-while dragging. Drag inside the Aurora menu to reorder entries or move them into
+move them, or away from destinations to remove them. The floating preview shows
+a trash badge before release; dropping outside the viewer cancels. Empty bars show drop zones
+throughout interface editing. Drag inside the Aurora menu to reorder entries or move them into
 another submenu; a group cannot be moved inside itself.
 
-The entire top row is one toolbar. Its navigation/SLURL, account, system,
-notification and conversation blocks can also move to the bottom or sides.
-The top row starts at the left by default, keeping Aurora in place when the
-address closes; an explicitly selected alignment applies to the whole row.
+Choose **Customize interface** from the Aurora menu, add its toolbar button, or open
+**Buttons and menus** to enter the visual editing mode. The four bars remain
+translucent and outlined, including empty destinations. Glass groups are called
+blocks; drag their compact dotted handle to move every control together. The
+adjacent settings gear changes only that block. Both controls face inward and
+stay centered together. Clicking any control selects it for
+editing, including the native status and audio blocks. The inspector and common
+right-click menu can split a block before/after a control or merge neighboring
+blocks. **Done**, or closing the catalogue, restores normal button actions.
+
+While dragging, the button appears in the provisional toolbar layout, at its
+eventual position and with the destination block's icon/label mode. Prospective separator space
+is visible directly between glass blocks. Move away to see the button as a
+small floating glass panel. Touching a block adds it there; dropping nearby with
+space creates a separate block. Hovering saves nothing. Returning an isolated
+block to the same place changes nothing; a detached block move reuses its
+existing separator boundary and size instead of accumulating gaps.
+
+Pause briefly over the centre of a button, then release when its folder badge
+appears to create a drawer. Both ends of the button remain insertion zones;
+a quick crossing or release reorders it instead. You can also use **Fold block into
+drawer** on an existing block. Move its button to any bar. **Drawer settings**,
+available from its right-click menu or selection inspector, shows its name,
+toggle display and icon before the default display of its contents (icons, labels
+or both). Click its icon button to open the picker beside the window; it flips
+to the left near the right screen edge. Individual button overrides retain priority. Drop a button or a whole
+block onto the drawer icon to append it, even when the drawer is closed. The
+icon highlights before release; hovering does not open it or save changes.
+Clicking the drawer
+opens/closes an anchored panel that fits its contents. Icon rows align with the
+toggle and retain its block height; scrolling appears only
+when the contents exceed the available viewport. While editing, drag commands into the open drawer, reorder
+them there, or drag them back to a bar. **Fold group into drawer** converts a
+group in place. Right-click its button and choose **Unfold as a block** to restore
+its contents as a separate block, preserving order and the drawer's content default.
+Drawer buttons support the same icon/presentation overrides as other buttons.
+Custom drawers have one level; ordinary native submenus remain available inside.
+The panel stays open while using its controls and closes with its button or
+Escape. Contents, names and placements survive restart; opening is temporary.
+
+The entire top row is one toolbar. Navigation/SLURL, availability status, balance,
+clock, latency, FPS, network traffic, media, music, volume, notifications and
+conversation icons can each move independently to the bottom or sides.
+Existing account/system blocks split in place, keeping the saved edge and order.
+The top row starts at the left by default. Each block's gear offers its own
+left/center/right alignment (top/center/bottom on a side bar), independently of
+its neighbours and the bar default. Anchors use available space while preserving
+block order and minimum gaps; explicit Fill sizing and elastic gaps still apply.
+The alignment follows the block through moves, folding and unfolding, and restart.
 A hollow catalogue tile can be dragged to move its existing toolbar entry.
-Drag **Separator** from the Interface category as often as needed, or choose
-**Add separator** from a bar's context menu. Each separator splits glass groups
-with a gap and can be moved or removed like a button. Open the editor to reveal
-all separator handles, including empty groups.
+Drag **Separator** above the button search, or choose **Add separator** from
+a bar's context menu, to add a line inside a block: vertical in a horizontal bar
+and horizontal on the sides. It can be moved or removed like a button.
+**Block spacing** adds the existing gap between glass blocks. Open the editor to
+reveal all gaps, including empty blocks.
+Right-click a gap and open **Block spacing settings** to set its size or
+enable **Fill available space**. Size becomes the minimum when stretching;
+multiple elastic separators share the space left by the controls. The same
+setting controls width in horizontal bars and height on the sides, follows the
+separator when moved, and is saved independently for each instance.
+The catalogue starts with **Main**, a compact selection of everyday buttons.
+**Advanced** contains specialist controls and detailed menu entries. Search finds
+commands in both sections. Conversation icons form a column on the left or right
+and a row at the top or bottom, keeping unread counters and the overflow menu.
 The catalogue groups commands by category, with a category filter and a search
 across labels. Known menu/toolbar aliases appear once. Drag the window's edges to
-resize it; the grid reflows, and **Toolbar settings** unfolds each bar's options.
+resize it; the grid reflows. Block settings are available from each block's gear.
 
-Each bar has its own alignment, sizing and icon / label mode. Right-click a
+Restore defaults keeps the integrated navigation/address field, groups the right-hand
+information together, places media, music and volume in their own block, and
+keeps notifications alone in the rightmost block.
+The nearby-chat input is a movable entry: edit the interface to drag its field
+or whole block to any edge or into a drawer. It participates in the bottom toolbar's
+ordinary layout even when it is the first block;
+input, drafts, keyboard focus and the width handle follow it.
+Restore defaults places its block at the left; explicit saved alignments stay in effect.
+
+The **Presets** section above the catalogue offers five complete arrangements:
+
+- **Aurora**: the supplied layout, with separate left-aligned chat and conversation blocks, grouped bottom tools with internal dividers, and navigation/status/audio/notifications across the top. A separate Customize interface block follows Bug report.
+- **Aurora OldSchool**: the supplied traditional layout, with VR in the bottom toolbar, Places on the left and separate Aurora, Bug report and Customize interface blocks before the six localized text menus.
+- **Aurora Builder**: the supplied building layout, with Aurora-style bottom tools and a top block for textures, sounds, animations, materials, meshes and local imports, followed by Save back to object contents. Imports are also in Advanced; Save back uses the native selection checks.
+- **Aurora Photographer**: the same bottom toolbar and Customize interface block as Aurora, with graphics preferences, quick preferences, environments and personal lighting at the top. The photo roll and immersive mode stay on the left; snapshot and camera controls use their shared bottom positions.
+- **Legacy**: the traditional arrangement and the existing global Legacy look.
+
+**Save to a notecard…** asks for a name and creates a native inventory notecard in `#Aurora/Aurora Interfaces`, creating missing folders before uploading. The Saved interfaces list reads this inventory folder automatically alongside the built-in presets; selecting a card restores it through the same guarded loader. It uses indented technical JSON containing the four bars, blocks, drawers, menu placements, separators and button appearances. **Load from a notecard…** browses your inventory and restores a validated configuration after you select a copyable notecard. The required `base` field restores Aurora or Legacy bars along with their layout; loading succeeds without a confirmation message. Other window styles, graphics preferences and window positions stay in effect. Cards use schema version 2; older cards are not supported. A download never replaces a layout or base you changed or locked while it was loading.
+
+Choosing a preset replaces the current toolbar arrangement. A locked layout must
+be unlocked first. Selecting a button no longer inserts actions into this window;
+use its context menu or its block's gear. Split before/after creates block gaps.
+
+Every toolbar control uses **Customize interface** as its final context-menu entry,
+including native status/audio controls and Report a bug. It selects the clicked
+control. Normal menus retain the control's actions and individual properties.
+Outside customization mode, choose Icon only, Label only, Icon and label, or Default
+directly in the context menu. **Change icon**, with a fixed small glyph, opens the icon picker beside
+the menu, flipping left when needed. The display choices, Change icon and
+**Customize interface** share the final group. A separator follows the four display
+choices; another separates any preceding button-specific actions. Default inherits
+the containing block or drawer. In customization mode, **Button appearance**
+stays immediately above **Customize interface**. A second right click without
+moving the pointer closes a toolbar context menu, even when it covers its button.
+The microphone keeps its native on/off glyph: presentation modes remain editable,
+but its icon cannot be customized.
+Live native
+readouts retain their content during editing; their functional gestures are intercepted.
+Click a gap between blocks in editing mode to open its individual size/stretch settings.
+Block/bar layout operations are grouped in customization mode. Split native controls
+show their own properties: clock settings on the clock, graphics presets on FPS,
+and status choices on status. Cross-field visibility switches stay in Preferences.
+Right-click the bug
+button for **Copy viewer version**, or the notification bell for **Do not disturb**.
+
+Each bar has its own alignment and defaults. A block's context menu or settings
+gear changes only that block's icon/label mode and Auto/Fixed/Fill sizing. Fixed
+equalizes its own buttons; Fill uses remaining space after elastic separators.
+Drag the handle to move a block.
+Right-click a
 button or menu entry and choose **Button appearance** to override just that
-command: icon, label, both, or the bar's default. The menu entry and its toolbar copy have independent overrides. The searchable
+command: icon, label, both, or the containing block/drawer/menu default. Individual
+button overrides retain priority. The menu entry and its toolbar copy have independent overrides. The searchable
 icon grid picks another bundled or skin icon; **Restore default icon** clears that override.
-The report-bug button retains its right-click version copy: customize its
-**Report a bug** entry from the catalogue.
+The **Report a bug** button offers version copying from its context menu;
+customize its appearance from the catalogue.
 
-The **SLURL address bar** button shows or hides the current address island. Opening
-it refreshes and selects the current SLURL, ready to copy or replace with a
-destination. **Ctrl+L** also opens it; this shortcut is configurable. Location
+The **SLURL address bar** button opens its own field beside the button, towards
+the inside of the viewport. Reclicking closes it. Opening refreshes and selects
+the current SLURL for copying or entering a destination, independently of the
+integrated navigation field. **Ctrl+L** opens integrated navigation; this shortcut is configurable. Location
 privacy restrictions still apply.
 
 Buttons, menu order, presentation and lock are shared by all accounts in the same
@@ -1153,9 +1261,13 @@ clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
-At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
-Saved photos render at their requested resolution. The default remains 100%.
+At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. Its **Match the display**
+switch follows the display's logical resolution instead (50% on a 2× display,
+67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default
+on macOS, where a new profile also starts from the Legacy Viewer's Mac
+Mid-High values; elsewhere it is off and the default remains 100%.
 With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
 Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its
@@ -1178,6 +1290,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |

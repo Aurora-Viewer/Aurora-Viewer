@@ -7,6 +7,8 @@
 //!   a mute flag and an "enabled" flag; gain changes are smoothed (no clicks).
 //! * Parcel music: Shoutcast/Icecast streams over HTTP(S) (MP3, AAC/ADTS,
 //!   Ogg Vorbis) with ICY `StreamTitle` metadata and automatic reconnection.
+//!   Radio URLs may also name PLS/M3U playlists or AzuraCast public players;
+//!   discovered links stay on the player's HTTP(S) origin.
 //! * PCM sinks ([`VoiceSink`]) used by the voice client (and later media)
 //!   to push 48 kHz audio with jitter buffering.
 //! * One-shot sounds ([`SoundClip`]) for UI / sound effects.
@@ -35,6 +37,7 @@ mod http;
 mod icy;
 mod mixer;
 mod output;
+mod playlist;
 mod processing;
 mod resample;
 mod reverb;
@@ -53,7 +56,7 @@ pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
 pub use reverb::ReverbParams;
-pub use stream::StreamStatus;
+pub use stream::{StreamError, StreamStatus};
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};

@@ -14,6 +14,7 @@ use crate::{
         widgets::{Floater, flat_button, icon_button},
     },
 };
+use aurora_net::scripts::Luau;
 use egui::{Id, RichText, Vec2};
 
 #[derive(Default)]
@@ -420,12 +421,24 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
                 }
             });
         }
-        ui.add_enabled_ui(
-            e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
-            |ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
-            },
-        );
+        // A script on the Luau VM keeps its target: no Mono box, which would
+        // turn a Lua source into LSL (choosing the target comes with SLua).
+        let luau = match e.luau {
+            Luau::Off => None,
+            Luau::Lsl => Some(aurora_i18n::tr!("script-luau-lsl")),
+            Luau::Lua => Some(aurora_i18n::tr!("script-luau-lua")),
+        };
+        if let Some(label) = luau {
+            ui.label(RichText::new(label).color(p.muted))
+                .on_hover_text(aurora_i18n::tr!("script-luau-hint"));
+        } else {
+            ui.add_enabled_ui(
+                e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
+                |ui| {
+                    crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                },
+            );
+        }
     });
     if !e.target.object.is_nil()
         && e.experience.show(ui, p, e.can_edit && e.loaded && e.saving.is_none())
@@ -678,12 +691,11 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
                     super::focus::claim(ui.ctx(), ui.layer_id(), id);
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
-                            .id(id.with("insert_filter"))
+                    let field = crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| {
+                        edit.id(id.with("insert_filter"))
                             .desired_width(260.0)
-                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
-                    );
+                            .hint_text(aurora_i18n::tr!("script-insert-filter"))
+                    });
                     if !e.tools.insertion_open {
                         field.request_focus();
                     }
@@ -788,7 +800,7 @@ pub(super) fn dialogs(
             Vec2::new(560.0, 480.0),
         )
         .show(ctx, p, &mut e.tools.library, |ui| {
-            ui.text_edit_singleline(&mut e.tools.insert_filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| edit);
             let filter = e.tools.insert_filter.to_lowercase();
             let mut keyword = None;
             egui::ScrollArea::vertical().show(ui, |ui| {

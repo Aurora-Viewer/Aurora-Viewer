@@ -60,7 +60,10 @@ pub fn native_styled(
         size: rect.size(),
         icon: islands::ICON,
         dock: true,
-        mode: appearance.mode.unwrap_or(mode),
+        mode: appearance
+            .mode
+            .or(crate::ui::toolbar::blocks::saved_style(ui.ctx(), &button.command).mode)
+            .unwrap_or(mode),
         left: false,
         opens: egui::RectAlign::BOTTOM_START,
         editing: false,
@@ -109,7 +112,9 @@ pub fn reserve(ui: &egui::Ui, settings: &ToolbarSettings, mut span: Rect, minimu
             0.0
         })
     .max(36.0);
-    let widths = sizing::fit(
+    let widths = sizing::toolbar(
+        ui.ctx(),
+        &settings.top,
         &natural,
         style.sizing,
         style.mode != crate::ui::toolbar::ButtonMode::IconsOnly,
@@ -117,9 +122,13 @@ pub fn reserve(ui: &egui::Ui, settings: &ToolbarSettings, mut span: Rect, minimu
         islands::GAP,
         islands::SLOT,
     );
-    let width = if settings.top.is_empty() && !dragging {
+    let width = if settings.top.is_empty() && !dragging && !ToolbarUi::editing(ui.ctx()) {
         0.0
-    } else if dragging || style.sizing == crate::ui::toolbar::Sizing::Fill {
+    } else if dragging
+        || ToolbarUi::editing(ui.ctx())
+        || style.sizing == crate::ui::toolbar::Sizing::Fill
+        || sizing::has_alignment(ui.ctx(), &settings.top)
+    {
         // LLToolBarView::draw exposes the whole destination during a drag.
         // The compact island alone leaves no room to append another button.
         room
@@ -153,10 +162,12 @@ pub fn show(
         return composed(ui, p, icons, toolbar, settings, panels, mic, base, classic);
     }
     let dragging = ToolbarUi::dragging(ui.ctx()) && !settings.locked;
-    if settings.top.is_empty() && !dragging {
+    if settings.top.is_empty() && !dragging && !ToolbarUi::editing(ui.ctx()) {
         return BarAction::None;
     }
     let style = settings.top_style.resolve(Bar::Top, !classic);
+    let display = crate::ui::toolbar::structure::Display::for_bar(ui.ctx(), Bar::Top, &settings.top, base.editing);
+    let buttons = display.buttons();
     let row = Row {
         bar: Bar::Top,
         style,
@@ -165,6 +176,7 @@ pub fn show(
     let mut action = BarAction::None;
     let mut body = |ui: &mut egui::Ui| {
         let zone = ui.max_rect();
+        crate::ui::toolbar::edit_mode::region(ui, p, Bar::Top, zone, buttons.is_empty());
         let target = ui.interact(zone, Id::unique("top_toolbar_background"), egui::Sense::click());
         toolbar.context(&target, p, Bar::Top, style, None, settings.locked);
         let rects = egui::ScrollArea::horizontal()
@@ -174,12 +186,13 @@ pub fn show(
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = islands::GAP;
-                    let natural: Vec<_> = settings
-                        .top
+                    let natural: Vec<_> = buttons
                         .iter()
                         .map(|button| natural_width(ui.ctx(), button, style.mode, islands::SLOT, islands::ICON, 38.0))
                         .collect();
-                    let widths = sizing::fit(
+                    let mut widths = sizing::toolbar(
+                        ui.ctx(),
+                        buttons,
                         &natural,
                         style.sizing,
                         style.mode != crate::ui::toolbar::ButtonMode::IconsOnly,
@@ -187,7 +200,8 @@ pub fn show(
                         islands::GAP,
                         islands::SLOT,
                     );
-                    let total = widths.iter().sum::<f32>() + islands::GAP * settings.top.len().saturating_sub(1) as f32;
+                    let aligned = sizing::alignment(ui.ctx(), buttons, &mut widths, zone.width(), islands::GAP, style);
+                    let total = widths.iter().sum::<f32>() + islands::GAP * buttons.len().saturating_sub(1) as f32;
                     // Expanding the destination must not move existing compact
                     // buttons away from the pointer that began the drag.
                     let aligned_width = if !classic && dragging && style.sizing != crate::ui::toolbar::Sizing::Fill {
@@ -195,10 +209,9 @@ pub fn show(
                     } else {
                         zone.width()
                     };
-                    ui.add_space(sizing::place(style.align, 0.0, aligned_width, total));
+                    ui.add_space(aligned.unwrap_or_else(|| sizing::place(style.align, 0.0, aligned_width, total)));
                     let look = |button: &crate::ui::skin::ToolButton| {
-                        let index = settings
-                            .top
+                        let index = buttons
                             .iter()
                             .position(|candidate| candidate.command == button.command)
                             .unwrap_or(0);
@@ -212,7 +225,7 @@ pub fn show(
                             editing: row.editing,
                         }
                     };
-                    let rects = toolbar_row(ui, p, icons, &settings.top, look, toolbar, panels, mic, &row, &mut action);
+                    let rects = toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, &row, &mut action);
                     if dragging {
                         let left = rects.last().map_or(zone.left(), |rect| rect.right() + islands::MARGIN);
                         crate::ui::widgets::paint_elided(
@@ -233,26 +246,39 @@ pub fn show(
         // not exclude blank space or the island's padding from a menu drop.
         let drop_zone = if classic { zone } else { zone.expand(islands::PAD) };
         let drop = ui.interact(drop_zone, Id::unique("top_toolbar_drop"), egui::Sense::hover());
-        toolbar.drop_bar(&drop, Bar::Top, &rects, p, settings.locked);
+        toolbar.drop_bar(&drop, Bar::Top, display.original(), &display.full_rects(&rects), settings.locked);
     };
     if classic {
         let shown = egui::Panel::top("custom_top_toolbar")
-            .frame(super::bar_frame(p))
+            .frame(if base.editing {
+                super::bar_frame(p).fill(p.bar.gamma_multiply(0.0))
+            } else {
+                super::bar_frame(p)
+            })
             .exact_size(36.0)
             .show(ui, |ui| {
                 let painter = ui.painter().clone();
                 let slot = painter.add(egui::Shape::Noop);
                 body(ui);
-                crate::ui::widgets::finish_bar_glass(&painter, slot, ui.max_rect(), p);
+                if !base.editing {
+                    crate::ui::widgets::finish_bar_glass(&painter, slot, ui.max_rect(), p);
+                }
             });
         let _ = shown;
     } else {
         let ctx = ui.ctx().clone();
         if let Some(rect) = ctx.data(|data| data.get_temp::<Rect>(rect_id())) {
-            islands::area(&ctx, p, "custom_top_toolbar", rect, |ui| {
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(islands::PAD)));
-                body(&mut child);
-            });
+            islands::area_surface(
+                &ctx,
+                p,
+                "custom_top_toolbar",
+                rect,
+                !base.editing && !sizing::has_alignment(&ctx, buttons),
+                |ui| {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(islands::PAD)));
+                    body(&mut child);
+                },
+            );
         }
     }
     action
@@ -279,10 +305,17 @@ fn composed(
     let display = crate::ui::toolbar::structure::Display::for_bar(ui.ctx(), Bar::Top, &settings.top, row.editing);
     let buttons = display.buttons();
     let mut action = BarAction::None;
+    let height = buttons
+        .iter()
+        .filter(|button| crate::ui::toolbar::structure::is_block(&button.command))
+        .map(|button| super::chrome::height(ui.ctx(), &button.command))
+        .fold(islands::HEIGHT, f32::max);
     let split = buttons
         .iter()
-        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command));
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command))
+        || sizing::has_alignment(ui.ctx(), buttons);
     let mut body = |ui: &mut egui::Ui, rect: Rect| {
+        crate::ui::toolbar::edit_mode::region(ui, p, Bar::Top, rect, buttons.is_empty());
         let target = ui.interact(rect, Id::unique("top_toolbar_background"), egui::Sense::click());
         toolbar.context(&target, p, Bar::Top, style, None, settings.locked);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(islands::PAD, 0.0))));
@@ -299,6 +332,7 @@ fn composed(
                         .map(|button| natural_width(ui.ctx(), button, style.mode, islands::SLOT, islands::ICON, 38.0))
                         .collect();
                     let mut widths = sizing::toolbar(
+                        ui.ctx(),
                         buttons,
                         &natural,
                         style.sizing,
@@ -308,13 +342,22 @@ fn composed(
                         islands::SLOT,
                     );
                     let total = widths.iter().sum::<f32>() + islands::GAP * buttons.len().saturating_sub(1) as f32;
-                    if let Some(index) = buttons.iter().position(|button| button.command == "bar_navigation")
+                    let aligned = sizing::alignment(
+                        ui.ctx(),
+                        buttons,
+                        &mut widths,
+                        rect.width() - islands::PAD * 2.0,
+                        islands::GAP,
+                        style,
+                    );
+                    if aligned.is_none()
+                        && let Some(index) = buttons.iter().position(|button| button.command == "bar_navigation")
                         && widths[index] > 0.0
                     {
                         widths[index] += (rect.width() - islands::PAD * 2.0 - total).max(0.0);
                     }
                     let total = widths.iter().sum::<f32>() + islands::GAP * buttons.len().saturating_sub(1) as f32;
-                    ui.add_space(sizing::place(style.align, 0.0, rect.width() - islands::PAD * 2.0, total));
+                    ui.add_space(aligned.unwrap_or_else(|| sizing::place(style.align, 0.0, rect.width() - islands::PAD * 2.0, total)));
                     let look = |button: &crate::ui::skin::ToolButton| {
                         let index = buttons
                             .iter()
@@ -336,12 +379,19 @@ fn composed(
             })
             .inner;
         let drop = ui.interact(rect, Id::unique("top_toolbar_drop"), egui::Sense::hover());
-        toolbar.drop_bar(&drop, Bar::Top, &display.full_rects(&rects), p, settings.locked);
+        toolbar.drop_bar(&drop, Bar::Top, display.original(), &display.full_rects(&rects), settings.locked);
     };
     if classic {
         egui::Panel::top("composed_top_toolbar")
-            .frame(super::bar_frame(p).inner_margin(egui::Margin::ZERO))
-            .exact_size(islands::HEIGHT)
+            .frame(
+                (if row.editing {
+                    super::bar_frame(p).fill(p.bar.gamma_multiply(0.0))
+                } else {
+                    super::bar_frame(p)
+                })
+                .inner_margin(egui::Margin::ZERO),
+            )
+            .exact_size(height)
             .show(ui, |ui| {
                 body(ui, ui.max_rect());
             });
@@ -349,11 +399,11 @@ fn composed(
         let screen = ui.ctx().content_rect();
         let rect = Rect::from_min_size(
             screen.min + Vec2::splat(islands::MARGIN),
-            Vec2::new(screen.width() - islands::MARGIN * 2.0, islands::HEIGHT),
+            Vec2::new(screen.width() - islands::MARGIN * 2.0, height),
         );
         let ctx = ui.ctx().clone();
         ctx.data_mut(|data| data.insert_temp(rect_id(), rect));
-        islands::area_surface(&ctx, p, "composed_top_toolbar", rect, !split, |ui| body(ui, rect));
+        islands::area_surface(&ctx, p, "composed_top_toolbar", rect, !split && !row.editing, |ui| body(ui, rect));
     }
     action
 }

@@ -70,11 +70,98 @@ fn enable_box(audio: &mut AudioSettings, i: usize) -> Option<&mut bool> {
     }
 }
 
+/// The requested radio can be on while its connection is still silent.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum MusicStatus {
+    #[default]
+    Unavailable,
+    Stopped,
+    Disabled,
+    Muted,
+    Waiting,
+    Blocked,
+    Connecting,
+    Playing,
+    /// The last attempt failed, with its reason; kept while a retry connects.
+    Error(aurora_audio::StreamError),
+    NoDevice,
+}
+
+/// Why the station cannot be heard, in the resident's language; the server's
+/// own text stays in the log.
+fn error_reason(error: aurora_audio::StreamError) -> String {
+    use aurora_audio::StreamError;
+    match error {
+        StreamError::WebPage => aurora_i18n::tr!("music-error-web-page").to_owned(),
+        StreamError::Playlist => aurora_i18n::tr!("music-error-playlist").to_owned(),
+        StreamError::HttpStatus(code) => aurora_i18n::tr!("music-error-http", code = code.to_string()),
+        StreamError::Tls => aurora_i18n::tr!("music-error-tls").to_owned(),
+        StreamError::Connection => aurora_i18n::tr!("music-error-connection").to_owned(),
+        StreamError::Address => aurora_i18n::tr!("music-error-address").to_owned(),
+        StreamError::AudioFormat => aurora_i18n::tr!("music-error-format").to_owned(),
+        StreamError::Interrupted => aurora_i18n::tr!("music-error-interrupted").to_owned(),
+        StreamError::Worker => aurora_i18n::tr!("music-error-worker").to_owned(),
+    }
+}
+
+impl MusicStatus {
+    pub fn read(
+        available: bool,
+        requested: bool,
+        audio: &AudioSettings,
+        minimized: bool,
+        verdict: crate::media::filter::Verdict,
+        stream: Option<&aurora_audio::StreamStatus>,
+    ) -> Self {
+        use crate::media::filter::Verdict;
+        if !available {
+            return Self::Unavailable;
+        }
+        if !requested {
+            return Self::Stopped;
+        }
+        if !audio.enabled[4] {
+            return Self::Disabled;
+        }
+        match verdict {
+            Verdict::Ask => return Self::Waiting,
+            Verdict::Deny => return Self::Blocked,
+            Verdict::Allow => {}
+        }
+        if minimized || audio.muted[0] || audio.muted[4] || audio.volume[0] <= 0.0 || audio.volume[4] <= 0.0 {
+            return Self::Muted;
+        }
+        match stream {
+            None => Self::NoDevice,
+            Some(aurora_audio::StreamStatus::Playing { .. }) => Self::Playing,
+            Some(aurora_audio::StreamStatus::Error(error)) => Self::Error(*error),
+            Some(_) => Self::Connecting,
+        }
+    }
+
+    pub fn text(self) -> String {
+        match self {
+            Self::Unavailable => aurora_i18n::tr!("ui-bars-tip-music-none"),
+            Self::Stopped => aurora_i18n::tr!("ui-bars-tip-music-stopped"),
+            Self::Playing => aurora_i18n::tr!("ui-bars-tip-music-playing"),
+            Self::Disabled => aurora_i18n::tr!("ui-music-disabled"),
+            Self::Muted => aurora_i18n::tr!("ui-music-muted"),
+            Self::Waiting => aurora_i18n::tr!("ui-music-waiting"),
+            Self::Blocked => aurora_i18n::tr!("ui-music-blocked"),
+            Self::Connecting => aurora_i18n::tr!("ui-music-connecting"),
+            Self::NoDevice => aurora_i18n::tr!("ui-music-no-device"),
+            Self::Error(error) => return aurora_i18n::tr!("music-state-error", reason = error_reason(error)),
+        }
+        .to_owned()
+    }
+}
+
 /// What the parcel offers and what is playing.
 #[derive(Default, Clone, Copy)]
 pub struct MediaState {
     pub music_available: bool,
     pub music_playing: bool,
+    pub music_status: MusicStatus,
     pub media_available: bool,
     pub media_playing: bool,
 }
@@ -157,6 +244,44 @@ pub fn top_controls(
     media: MediaState,
     slot: Vec2,
 ) -> AudioAction {
+    controls(ui, p, icons, audio, st, media, slot, None)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopControl {
+    Media,
+    Music,
+    Volume,
+}
+
+/// The same native control and volume panel, independently placed in a toolbar.
+/// Click rules follow LLStatusBar::onClickVolume/onClickStreamToggle/onClickMediaToggle
+/// (indra/newview/llstatusbar.cpp); moving a control does not change its availability.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn top_control(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    audio: &mut AudioSettings,
+    st: &mut AudioUi,
+    media: MediaState,
+    slot: Vec2,
+    control: TopControl,
+) -> AudioAction {
+    controls(ui, p, icons, audio, st, media, slot, Some(control))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    audio: &mut AudioSettings,
+    st: &mut AudioUi,
+    media: MediaState,
+    slot: Vec2,
+    only: Option<TopControl>,
+) -> AudioAction {
     let toggle = |ui: &mut egui::Ui, icon: &str, tip: &str, active: bool, enabled: bool| {
         slot_button(ui, p, icons, icon, active, enabled, slot).on_hover_text(tip)
     };
@@ -173,58 +298,77 @@ pub fn top_controls(
             ui.spacing_mut().item_spacing.x = ICON_GAP;
             // speaker: all sound on / off on click, the volume panel on
             // hover (no tooltip: the panel opens where it would show)
-            let master = speaker_icon(audio.volume[0], audio.muted[0] || demo_muted);
-            let sp = slot_button(ui, p, icons, master, st.panel_open, true, slot);
-            if sp.clicked() {
-                toggle_master_mute(audio);
-                action = AudioAction::Changed;
-            }
-            let music = toggle(
-                ui,
-                "radio",
-                if !media.music_available {
+            let sp = only.is_none_or(|control| control == TopControl::Volume).then(|| {
+                let master = speaker_icon(audio.volume[0], audio.muted[0] || demo_muted);
+                let sp = slot_button(ui, p, icons, master, st.panel_open, true, slot);
+                if sp.clicked() {
+                    toggle_master_mute(audio);
+                    action = AudioAction::Changed;
+                }
+                sp
+            });
+            if only.is_none_or(|control| control == TopControl::Music) {
+                let action_tip = if !media.music_available {
                     aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
                 } else if media.music_playing {
                     aurora_i18n::tr!("ui-audio-stop-parcel-music")
                 } else {
                     aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
-                },
-                media.music_playing,
-                media.music_available,
-            );
-            if music.clicked() && media.music_available {
-                action = AudioAction::ToggleMusic;
-            }
-            let med = toggle(
-                ui,
-                "brand-youtube-filled",
-                if !media.media_available {
-                    aurora_i18n::tr!("ui-audio-no-media-on-this-parcel")
-                } else if media.media_playing {
-                    aurora_i18n::tr!("ui-audio-stop-parcel-media")
+                };
+                // A parcel without music says so alone, without a second "none".
+                let music_tip = if media.music_available {
+                    format!("{action_tip}\n{}", media.music_status.text())
                 } else {
-                    aurora_i18n::tr!("ui-audio-play-parcel-media")
-                },
-                media.media_playing,
-                media.media_available,
-            );
-            if med.clicked() && media.media_available {
-                action = AudioAction::ToggleMedia;
+                    action_tip.to_owned()
+                };
+                let music = toggle(ui, "radio", &music_tip, media.music_playing, media.music_available);
+                if music.clicked() && media.music_available {
+                    action = AudioAction::ToggleMusic;
+                }
+            }
+            if only.is_none_or(|control| control == TopControl::Media) {
+                let med = toggle(
+                    ui,
+                    "brand-youtube-filled",
+                    if !media.media_available {
+                        aurora_i18n::tr!("ui-audio-no-media-on-this-parcel")
+                    } else if media.media_playing {
+                        aurora_i18n::tr!("ui-audio-stop-parcel-media")
+                    } else {
+                        aurora_i18n::tr!("ui-audio-play-parcel-media")
+                    },
+                    media.media_playing,
+                    media.media_available,
+                );
+                if med.clicked() && media.media_available {
+                    action = AudioAction::ToggleMedia;
+                }
             }
             sp
         })
         .inner;
 
+    let Some(sp) = sp else { return action };
+    if !ui.is_enabled() {
+        return action;
+    }
     let on_icon = sp.contains_pointer() || demo.is_some();
     if on_icon {
         st.hover(true, false, false, 0.0);
     }
     if st.panel_open {
-        let anchor = sp.rect.right_bottom() + Vec2::new(4.0, 6.0);
-        let area = egui::Area::new(egui::Id::unique("volume_panel"))
+        let id = egui::Id::unique("volume_panel");
+        let wanted = ui.ctx().memory(|memory| memory.area_rect(id)).map_or(250.0, |rect| rect.height());
+        let (anchor_y, above, _) = super::widgets::popup_vertical(ui.ctx().content_rect(), sp.rect, wanted, 6.0);
+        let anchor = egui::pos2(sp.rect.right() + 4.0, anchor_y);
+        let area = egui::Area::new(id)
             .fade_in(false)
             .order(egui::Order::Foreground)
-            .pivot(egui::Align2::RIGHT_TOP)
+            .pivot(if above {
+                egui::Align2::RIGHT_BOTTOM
+            } else {
+                egui::Align2::RIGHT_TOP
+            })
             .fixed_pos(anchor)
             .show(ui.ctx(), |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::symmetric(10, 8), |ui| {
@@ -309,6 +453,65 @@ pub fn top_controls(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parcel_music_status_distinguishes_intent_consent_and_engine_playback() {
+        use crate::media::filter::Verdict;
+        use aurora_audio::StreamStatus;
+        let mut audio = AudioSettings::default();
+        let playing = StreamStatus::Playing { title: None };
+        let failed = StreamStatus::Error(aurora_audio::StreamError::Connection);
+        let read = |audio: &AudioSettings, verdict, stream| MusicStatus::read(true, true, audio, false, verdict, stream);
+        assert_eq!(
+            read(&audio, Verdict::Allow, Some(&StreamStatus::Connecting)),
+            MusicStatus::Connecting
+        );
+        assert_eq!(
+            read(&audio, Verdict::Allow, Some(&failed)),
+            MusicStatus::Error(aurora_audio::StreamError::Connection)
+        );
+        assert_eq!(read(&audio, Verdict::Ask, Some(&playing)), MusicStatus::Waiting);
+        assert_eq!(read(&audio, Verdict::Deny, Some(&playing)), MusicStatus::Blocked);
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Playing);
+        audio.enabled[4] = false;
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Disabled);
+        audio.enabled[4] = true;
+        audio.muted[4] = true;
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Muted);
+        audio.muted[4] = false;
+        assert_eq!(read(&audio, Verdict::Allow, None), MusicStatus::NoDevice);
+        assert_eq!(
+            MusicStatus::read(true, false, &audio, false, Verdict::Allow, Some(&playing)),
+            MusicStatus::Stopped
+        );
+        assert_eq!(
+            MusicStatus::read(false, true, &audio, false, Verdict::Allow, Some(&playing)),
+            MusicStatus::Unavailable
+        );
+        assert_eq!(
+            MusicStatus::read(true, true, &audio, true, Verdict::Allow, Some(&playing)),
+            MusicStatus::Muted
+        );
+    }
+
+    #[test]
+    fn a_music_error_names_its_reason() {
+        use aurora_audio::StreamError;
+        let text = MusicStatus::Error(StreamError::HttpStatus(404)).text();
+        assert!(text.contains("404"), "{text}");
+        let reasons: Vec<_> = [
+            StreamError::WebPage,
+            StreamError::Playlist,
+            StreamError::Tls,
+            StreamError::Connection,
+        ]
+        .into_iter()
+        .map(|error| MusicStatus::Error(error).text())
+        .collect();
+        for (i, text) in reasons.iter().enumerate() {
+            assert!(reasons.iter().skip(i + 1).all(|other| other != text), "{reasons:?}");
+        }
+    }
 
     #[test]
     fn the_speaker_click_mutes_and_restores_all_sound() {

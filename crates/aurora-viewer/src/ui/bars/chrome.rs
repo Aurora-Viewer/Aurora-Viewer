@@ -14,9 +14,11 @@ use egui::{Id, Rect, Vec2};
 
 #[derive(Clone, Default)]
 struct Metrics {
-    widths: [f32; 5],
+    widths: [f32; structure::BLOCKS.len()],
     active: bool,
     editing: bool,
+    conversations_vertical: bool,
+    conversations_height: f32,
 }
 
 #[derive(Clone)]
@@ -39,33 +41,82 @@ fn slots_id() -> Id {
 }
 
 fn index(command: &str) -> Option<usize> {
+    structure::BLOCKS.iter().position(|id| *id == command)
+}
+
+fn system_item(command: &str) -> Option<islands::Item> {
     Some(match command {
-        "bar_navigation" => 0,
-        "bar_account" => 1,
-        "bar_system" => 2,
-        "bar_notifications" => 3,
-        "bar_conversations" => 4,
+        "bar_clock" => islands::Item::Clock,
+        "bar_ping" => islands::Item::Ping,
+        "bar_fps" => islands::Item::Fps,
+        "bar_network" => islands::Item::Net,
+        "bar_media" => islands::Item::MediaButton,
+        "bar_music" => islands::Item::Music,
+        "bar_volume" => islands::Item::Volume,
         _ => return None,
     })
 }
 
 pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSettings, editing: bool) {
-    let widths = [
+    let shown = ToolbarUi::layout_configuration(ui.ctx());
+    let settings = shown.as_deref().unwrap_or(settings);
+    // Side toolbars follow LLToolBarEnums::getOrientation (indra/llui/lltoolbar.cpp).
+    // Extending that orientation to conversation icons is a human-requested improvement.
+    let mut widths = [
         if settings.address_visible.unwrap_or(true) {
             super::place::minimum_width(ui, st)
         } else {
             0.0
         },
-        islands::account_width(ui, p, st),
+        islands::account_width(ui, st),
         islands::system_width(ui, st),
         islands::SLOT,
-        crate::ui::chat::thumbnails::top_width(
-            st.conversation_thumbnails,
-            islands::SLOT,
-            islands::PAD,
-            ui.ctx().content_rect().width() / 3.0,
-        ),
+        0.0,
+        islands::account_part_width(ui, p, st, islands::AccountPart::Status),
+        islands::account_part_width(ui, p, st, islands::AccountPart::Balance),
+        islands::system_part_width(ui, st, islands::Item::Clock),
+        islands::system_part_width(ui, st, islands::Item::Ping),
+        islands::system_part_width(ui, st, islands::Item::Fps),
+        islands::system_part_width(ui, st, islands::Item::Net),
+        islands::system_part_width(ui, st, islands::Item::MediaButton),
+        islands::system_part_width(ui, st, islands::Item::Music),
+        islands::system_part_width(ui, st, islands::Item::Volume),
+        super::dock::default_chat_width(ui.ctx().content_rect()),
     ];
+    let conversations_vertical = settings
+        .left
+        .iter()
+        .chain(&settings.right)
+        .any(|button| button.command == "bar_conversations")
+        || settings.drawer_of("bar_conversations").is_some_and(|id| {
+            let drawer = &settings.drawers[id];
+            let bar = settings.location(id, &crate::ui::skin::Layout::default()).unwrap_or(Bar::Left);
+            crate::ui::toolbar::drawers::vertical(
+                bar,
+                drawer
+                    .buttons
+                    .iter()
+                    .filter(|button| editing || index(&button.command).is_none_or(|i| i == 4 || widths[i] > 0.0)),
+                drawer.mode,
+                settings,
+            )
+        });
+    let screen = ui.ctx().content_rect();
+    let conversation_extent = crate::ui::chat::thumbnails::top_width(
+        st.conversation_thumbnails,
+        islands::SLOT,
+        islands::PAD,
+        if conversations_vertical {
+            screen.height() / 2.0
+        } else {
+            screen.width() / 3.0
+        },
+    );
+    widths[4] = if conversations_vertical && conversation_extent > 0.0 {
+        islands::HEIGHT
+    } else {
+        conversation_extent
+    };
     ui.ctx().data_mut(|data| {
         data.insert_temp(
             metrics_id(),
@@ -73,6 +124,8 @@ pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSe
                 widths,
                 active: settings.composed,
                 editing,
+                conversations_vertical,
+                conversations_height: conversation_extent,
             },
         );
         data.insert_temp(slots_id(), Vec::<Slot>::new());
@@ -82,16 +135,35 @@ pub fn prepare(ui: &egui::Ui, p: &Palette, st: &StatusInfo, settings: &ToolbarSe
 
 pub fn width(ctx: &egui::Context, command: &str) -> Option<f32> {
     let i = index(command)?;
-    Some(
-        ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
-            .map_or([220.0, 112.0, 360.0, 28.0, 0.0][i], |metrics| {
-                if metrics.editing && metrics.widths[i] == 0.0 {
-                    100.0
+    Some(ctx.data(|data| data.get_temp::<Metrics>(metrics_id())).map_or(
+        [
+            220.0, 112.0, 360.0, 28.0, 0.0, 42.0, 80.0, 110.0, 70.0, 50.0, 80.0, 36.0, 36.0, 36.0, 380.0,
+        ][i],
+        |metrics| {
+            if metrics.editing && metrics.widths[i] == 0.0 {
+                if i == 4 && metrics.conversations_vertical {
+                    islands::HEIGHT
                 } else {
-                    metrics.widths[i]
+                    100.0
                 }
-            }),
-    )
+            } else {
+                metrics.widths[i]
+            }
+        },
+    ))
+}
+
+pub fn height(ctx: &egui::Context, command: &str) -> f32 {
+    if command == "bar_chat" {
+        return crate::ui::chat::input::height(ctx, crate::ui::chat::bar_input_id(), islands::SLOT).max(islands::SLOT) + 8.0;
+    }
+    if command == "bar_conversations"
+        && let Some(metrics) = ctx.data(|data| data.get_temp::<Metrics>(metrics_id()))
+        && metrics.conversations_vertical
+    {
+        return metrics.conversations_height.max(islands::HEIGHT);
+    }
+    islands::HEIGHT
 }
 
 pub fn register(ui: &mut egui::Ui, button: &ToolButton, row: &super::Row, size: Vec2) -> Option<Rect> {
@@ -108,12 +180,17 @@ pub fn register(ui: &mut egui::Ui, button: &ToolButton, row: &super::Row, size: 
     let size = Vec2::new(
         size.x,
         if structure::is_block(&button.command) {
-            size.y.max(islands::HEIGHT)
+            size.y.max(height(ui.ctx(), &button.command))
         } else {
             size.y
         },
     );
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    register_at(ui, button, row, rect);
+    Some(rect)
+}
+
+pub(super) fn register_at(ui: &egui::Ui, button: &ToolButton, row: &super::Row, rect: Rect) {
     let placeholder = index(&button.command).is_some_and(|i| {
         ui.ctx()
             .data(|data| data.get_temp::<Metrics>(metrics_id()))
@@ -125,13 +202,78 @@ pub fn register(ui: &mut egui::Ui, button: &ToolButton, row: &super::Row, size: 
         clip: ui.clip_rect(),
         layer: ui.layer_id(),
         bar: row.bar,
-        style: row.style,
+        style: crate::ui::toolbar::blocks::style(ui.ctx(), &button.command, row.style),
         locked: row.locked,
         placeholder,
     };
     ui.ctx()
         .data_mut(|data| data.get_temp_mut_or_default::<Vec<Slot>>(slots_id()).push(slot));
-    Some(rect)
+}
+
+/// Chat shares the same slots and edit interception as all native controls,
+/// while its outgoing message still follows the existing local-chat handler.
+pub fn prepare_chat(ctx: &egui::Context, chat: &crate::ui::chat::ChatUi, width: f32) {
+    let width = super::chat_bar::width(ctx.content_rect(), width);
+    ctx.data_mut(|data| {
+        let metrics = data.get_temp_mut_or_default::<Metrics>(metrics_id());
+        metrics.widths[14] = if chat.bar_shown() || metrics.editing {
+            width
+        } else {
+            islands::SLOT + islands::PAD * 2.0
+        };
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn show_chat(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    panels: &mut Panels,
+    chat: &mut crate::ui::chat::ChatUi,
+    gestures: &crate::gestures::Manager,
+    mut emoji: Option<&mut crate::ui::emoji::Emoji>,
+    row: &super::Row,
+    width: &mut f32,
+) -> (Option<crate::ui::chat::OutgoingChat>, bool) {
+    if ToolbarUi::intercepting(ui.ctx()) {
+        return (None, false);
+    }
+    let slots = ui.ctx().data(|data| data.get_temp::<Vec<Slot>>(slots_id())).unwrap_or_default();
+    let mut out = None;
+    let mut committed = false;
+    for slot in slots
+        .into_iter()
+        .filter(|slot| slot.button.command == "bar_chat" && !slot.placeholder)
+    {
+        let _context = crate::ui::toolbar::native_context::Scope::new(ui.ctx(), "bar_chat");
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("toolbar_chat_input")
+                .layer_id(slot.layer)
+                .max_rect(slot.rect),
+        );
+        child.set_clip_rect(slot.clip);
+        let row = super::Row {
+            bar: slot.bar,
+            style: slot.style,
+            ..*row
+        };
+        out = super::chat_bar::show(
+            &mut child,
+            p,
+            icons,
+            panels,
+            chat,
+            gestures,
+            emoji.as_deref_mut(),
+            &row,
+            slot.rect,
+            width,
+            &mut committed,
+        );
+    }
+    (out, committed)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -152,6 +294,10 @@ pub fn show(
     let slots = ui.ctx().data(|data| data.get_temp::<Vec<Slot>>(slots_id())).unwrap_or_default();
     let mut action = BarAction::None;
     let mut audio_action = crate::ui::audio::AudioAction::None;
+    let mut volume_shown = false;
+    let tip_id = Id::unique("toolbar_system_tip_control");
+    let previous_tip = ui.ctx().data(|data| data.get_temp::<String>(tip_id)).unwrap_or_default();
+    let mut tip = None;
     for slot in slots {
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -160,13 +306,53 @@ pub fn show(
                 .max_rect(slot.rect),
         );
         child.set_clip_rect(slot.clip);
+        let intercepting = ToolbarUi::intercepting(child.ctx());
+        if intercepting && (slot.placeholder || slot.button.command == "bar_chat") {
+            let response = crate::ui::toolbar::edit_mode::cell(
+                &mut child,
+                p,
+                icons,
+                toolbar,
+                &slot.button,
+                slot.bar,
+                slot.style,
+                slot.locked,
+                super::ButtonLook {
+                    size: slot.rect.size(),
+                    icon: islands::ICON,
+                    dock: true,
+                    mode: slot.style.mode,
+                    left: slot.bar.vertical(),
+                    opens: egui::RectAlign::BOTTOM_START,
+                    editing: true,
+                },
+            );
+            crate::ui::toolbar::edit_mode::source_menu(&response, p, toolbar, settings, &slot.button.command);
+            continue;
+        }
+        if intercepting {
+            crate::ui::toolbar::edit_mode::preview(&mut child);
+        }
         let response = child.interact(
             slot.rect,
-            super::tool_button_id(&slot.button.command),
+            if intercepting {
+                Id::unique(("toolbar_chrome_preview", &slot.button.command))
+            } else {
+                super::tool_button_id(&slot.button.command)
+            },
             egui::Sense::click_and_drag(),
         );
-        toolbar.button(&response, slot.bar, slot.style, &slot.button, p, slot.locked);
+        if !intercepting && (slot.placeholder || matches!(slot.button.command.as_str(), "bar_chat" | "bar_conversations")) {
+            toolbar.button(&response, slot.bar, slot.style, &slot.button, p, slot.locked);
+        } else if !intercepting {
+            toolbar.button_source(&response, slot.bar, slot.style, &slot.button, slot.locked);
+        }
         if slot.placeholder {
+            if slot.bar.vertical() && slot.button.command == "bar_conversations" {
+                crate::ui::widgets::paint_glyph(child.painter(), "messages-filled", slot.rect.center(), islands::ICON, p.muted);
+                response.on_hover_text(crate::ui::toolbar::label(&slot.button));
+                continue;
+            }
             crate::ui::widgets::paint_elided(
                 &child,
                 crate::ui::toolbar::label(&slot.button),
@@ -177,6 +363,8 @@ pub fn show(
             );
             continue;
         }
+        let _context = (!intercepting && structure::is_block(&slot.button.command))
+            .then(|| crate::ui::toolbar::native_context::Scope::new(child.ctx(), &slot.button.command));
         match slot.button.command.as_str() {
             "bar_navigation" => {
                 let (rect, detail) = super::place::layout(&child, st, slot.rect);
@@ -196,21 +384,44 @@ pub fn show(
                 }
             }
             "bar_account" => islands::account(&mut child, p, st, slot.rect, &mut action),
-            "bar_system" => {
-                let (next, hovered) = islands::system(&mut child, p, icons, panels, st, audio, audio_ui, media, slot.rect, &mut action);
+            "bar_status" | "bar_balance" => islands::account_part(
+                &mut child,
+                p,
+                st,
+                slot.rect,
+                &mut action,
+                if slot.button.command == "bar_status" {
+                    islands::AccountPart::Status
+                } else {
+                    islands::AccountPart::Balance
+                },
+            ),
+            "bar_system" | "bar_clock" | "bar_ping" | "bar_fps" | "bar_network" | "bar_media" | "bar_music" | "bar_volume" => {
+                let item = system_item(&slot.button.command);
+                volume_shown |= item == Some(islands::Item::Volume) || (item.is_none() && st.system_island.media);
+                let (next, hovered) = islands::system_parts(
+                    &mut child,
+                    p,
+                    icons,
+                    panels,
+                    st,
+                    audio,
+                    audio_ui,
+                    media,
+                    slot.rect,
+                    &mut action,
+                    item,
+                );
                 if !matches!(next, crate::ui::audio::AudioAction::None) {
                     audio_action = next;
                 }
-                islands::system_tip(
-                    child.ctx(),
-                    p,
-                    icons,
-                    st,
-                    media,
-                    slot.rect,
-                    hovered && !audio_ui.panel_open,
-                    &mut action,
-                );
+                if item.is_none_or(|item| matches!(item, islands::Item::Clock | islands::Item::Ping | islands::Item::Net))
+                    && (hovered
+                        || (!tip.as_ref().is_some_and(|(_, _, hovered)| *hovered)
+                            && (tip.is_none() || slot.button.command == previous_tip)))
+                {
+                    tip = Some((slot.button.command.clone(), slot.rect, hovered));
+                }
             }
             "bar_notifications" => {
                 let rect = Rect::from_center_size(slot.rect.center(), Vec2::splat(islands::SLOT));
@@ -233,13 +444,18 @@ pub fn show(
                 if response.clicked() {
                     notif.open = !notif.open;
                 }
-                if response.secondary_clicked() {
+                if super::bell_menu(&response, p, bell.dnd) {
                     action = BarAction::SetStatus(crate::ui::notifications::bell_dnd_toggled(st.status));
                 }
             }
-            "bar_conversations" => {
-                crate::ui::chat::thumbnails::reserve_toolbar(child.ctx(), slot.rect, islands::SLOT, slot.layer, slot.clip)
-            }
+            "bar_conversations" => crate::ui::chat::thumbnails::reserve_toolbar(
+                child.ctx(),
+                slot.rect,
+                islands::SLOT,
+                slot.layer,
+                slot.clip,
+                slot.bar.vertical(),
+            ),
             "aurora_menu" => {
                 let response = super::top::native_styled(
                     &mut child,
@@ -247,7 +463,7 @@ pub fn show(
                     icons,
                     &slot.button,
                     slot.rect,
-                    Id::unique("bars_island_menu"),
+                    Id::unique(if intercepting { "bars_preview_menu" } else { "bars_island_menu" }),
                     slot.style.mode,
                 );
                 islands::menu_options(&response, p, st, &mut action, toolbar, settings.locked);
@@ -269,19 +485,63 @@ pub fn show(
                     icons,
                     &slot.button,
                     slot.rect,
-                    Id::unique("bars_island_bug"),
+                    Id::unique(if intercepting { "bars_preview_bug" } else { "bars_island_bug" }),
                     slot.style.mode,
                 );
                 toolbar.bar_source(&response, &slot.button, slot.bar, settings.locked);
-                if response.secondary_clicked() {
-                    action = BarAction::CopyVersion;
-                }
+                super::bug_menu(&response, p, toolbar, settings.locked, &mut action, false);
                 if response.clicked() {
                     action = BarAction::ReportBug;
                 }
             }
             _ => {}
         }
+        // A native field may consume the pointer without owning right-click
+        // actions. Give its remaining face the same final customization entry.
+        if !intercepting
+            && structure::is_block(&slot.button.command)
+            && !matches!(slot.button.command.as_str(), "bar_chat" | "bar_conversations")
+            && !crate::ui::toolbar::native_context::shown(child.ctx(), &slot.button.command)
+        {
+            let also = child
+                .ctx()
+                .input(|input| input.pointer.secondary_clicked().then_some(input.pointer.interact_pos()).flatten())
+                .is_some_and(|pos| slot.rect.contains(pos) && child.ctx().layer_id_at(pos) == Some(slot.layer));
+            crate::ui::menu::context_menu_also(&response, p, also, |_| {});
+        }
+        if intercepting {
+            let mut target = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("toolbar_chrome_edit", &slot.button.command))
+                    .layer_id(slot.layer)
+                    .max_rect(slot.rect),
+            );
+            target.set_clip_rect(slot.clip);
+            crate::ui::toolbar::edit_mode::native_target(
+                &mut target,
+                p,
+                toolbar,
+                &slot.button,
+                slot.bar,
+                slot.style,
+                slot.locked,
+                slot.rect,
+            );
+        }
+    }
+    if !volume_shown {
+        audio_ui.panel_open = false;
+    }
+    if let Some((command, rect, hovered)) = tip {
+        if hovered {
+            ui.ctx().data_mut(|data| data.insert_temp(tip_id, command));
+        }
+        islands::system_tip(ui.ctx(), p, icons, st, media, rect, hovered && !audio_ui.panel_open, &mut action);
+    }
+    if let Some(next) = toolbar.drawer_action.take()
+        && !matches!(next, BarAction::None)
+    {
+        action = next;
     }
     (action, audio_action)
 }

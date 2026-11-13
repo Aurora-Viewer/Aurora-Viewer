@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub(crate) struct Picker {
+    owner: Option<&'static str>,
     view: view::ViewCache,
     tree: view::TreeState,
     known: HashSet<Uuid>,
@@ -30,6 +31,13 @@ pub(crate) struct Picker {
 }
 
 impl Picker {
+    pub(crate) fn with_id(owner: &'static str) -> Self {
+        Self {
+            owner: Some(owner),
+            ..Default::default()
+        }
+    }
+
     pub(super) fn reveal(&mut self, item: Uuid) {
         self.reveal = Some(item);
     }
@@ -81,24 +89,36 @@ impl Picker {
         // the normal window layer. Retire the owner popup before opening.
         if !self.focus {
             egui::Popup::close_all(ctx);
+            if let Some(owner) = self.owner {
+                widgets::bring_floater_front(ctx, owner);
+            }
         }
         let mut open = true;
         let mut cancel = false;
         let mut chosen = None;
         widgets::Floater::new(
-            "inventory_menu_notecard_picker",
+            self.owner.unwrap_or("inventory_menu_notecard_picker"),
             aurora_i18n::tr!("inventory-menu-load-notecard"),
             ctx.content_rect().center() - egui::vec2(220.0, 240.0),
             egui::vec2(440.0, 480.0),
         )
         .show(ctx, p, &mut open, |ui| {
-            let filter = widgets::search_field(ui, query, aurora_i18n::tr!("build-layout-filter-notecards"), ui.available_width());
+            let filter = widgets::search_field(
+                ui,
+                p,
+                query,
+                aurora_i18n::tr!("build-layout-filter-notecards"),
+                ui.available_width(),
+            );
             if !self.focus {
                 filter.request_focus();
                 self.focus = true;
             }
             #[cfg(test)]
             ctx.data_mut(|d| d.insert_temp(egui::Id::unique("menu_note_search"), filter.rect));
+            if widgets::search_cleared(ui) {
+                self.reveal = *selected;
+            }
             self.prepare(ctx, inv, query);
             // A new query or inventory update must never submit an invisible,
             // deleted or newly restricted previous selection.
@@ -113,7 +133,8 @@ impl Picker {
                 if self.tree.rows.is_empty() {
                     ui.label(egui::RichText::new(aurora_i18n::tr!("build-layout-no-notecards")).color(p.muted));
                 }
-                egui::ScrollArea::vertical()
+                let selected_row = self.tree.rows.iter().position(|row| !row.folder && Some(row.id) == *selected);
+                widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, 22.0)
                     .id_salt("menu_note_tree")
                     .auto_shrink([false, false])
                     .max_height(ui.available_height())

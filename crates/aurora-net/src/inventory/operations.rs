@@ -974,6 +974,20 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
     Ok(bytes)
 }
 
+/// The first POST of a content save: a script names its compile target.
+fn content_body(item: Uuid, kind: i32, lua: bool) -> Llsd {
+    let mut body = llsd_map! { "item_id" => item };
+    if kind == 10 {
+        let luau = if lua {
+            crate::scripts::Luau::Lua
+        } else {
+            crate::scripts::Luau::Off
+        };
+        body.insert("target", Llsd::String(crate::scripts::compile_target(true, luau).into()));
+    }
+    body
+}
+
 /// LLPreviewNotecard::saveIfNeeded / LLPreviewLSL::saveIfNeeded:
 /// capability negotiation, binary POST to the returned uploader, then re-read.
 pub async fn save_content(
@@ -983,6 +997,22 @@ pub async fn save_content(
     owner: Uuid,
     item: Uuid,
     kind: i32,
+    data: Vec<u8>,
+) -> Result<InvItem, String> {
+    save_content_for(http, cap, fetch, owner, item, kind, false, data).await
+}
+
+/// [`save_content`], for a script written in Lua when `lua`: compiled for
+/// "luau", the only target of a Lua source (LLPreviewLSL::saveIfNeeded).
+#[allow(clippy::too_many_arguments)]
+pub async fn save_content_for(
+    http: &reqwest::Client,
+    cap: &str,
+    fetch: &str,
+    owner: Uuid,
+    item: Uuid,
+    kind: i32,
+    lua: bool,
     data: Vec<u8>,
 ) -> Result<InvItem, String> {
     if data.len() > 1024 * 1024 {
@@ -997,11 +1027,7 @@ pub async fn save_content(
     if kind == 57 {
         aurora_assets::parse_material_asset(&data).map_err(|e| e.to_string())?;
     }
-    let mut body = llsd_map! { "item_id" => item };
-    if kind == 10 {
-        body.insert("target", Llsd::String("mono".into()));
-    }
-    let ack = upload_content(http, cap, &body, data).await?;
+    let ack = upload_content(http, cap, &content_body(item, kind, lua), data).await?;
     if kind == 10 && !crate::scripts::compile_ok(&ack) {
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
@@ -1504,6 +1530,14 @@ mod tests {
             refresh: vec![id(1), id(100)],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_lua_script_saved_from_the_inventory_compiles_for_luau() {
+        let item = Uuid::from_u128(5);
+        assert_eq!(content_body(item, 10, false)["target"].as_str(), "mono");
+        assert_eq!(content_body(item, 10, true)["target"].as_str(), "luau");
+        assert!(content_body(item, 7, true).as_map().expect("map").get("target").is_none());
     }
 
     #[test]

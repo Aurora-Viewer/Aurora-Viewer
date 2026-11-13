@@ -1,6 +1,1997 @@
 use super::*;
 use crate::ui::{Panels, bars, chat::ChatUi, icons::Icons};
-use egui::{Pos2, Rect, Vec2};
+use egui::{Id, Pos2, Rect, Vec2};
+
+fn block_controls_fixture(bar: Bar, classic: bool, locked: bool) -> Bench {
+    let mut bench = Bench {
+        native_top: true,
+        menu_open: false,
+        classic,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.top.clear();
+    bench.settings.buttons = Some(Vec::new());
+    bench.settings.set_bar(
+        bar,
+        vec![
+            tests::button("inventory"),
+            structure::divider("inside"),
+            tests::button("people"),
+            structure::separator("boundary"),
+            tests::button("preferences"),
+        ],
+    );
+    bench.settings.locked = locked;
+    bench.state.open = true;
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    bench
+}
+
+fn open_block_settings(bench: &mut Bench, bar: Bar, command: &str) {
+    let point = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_block_settings", bar, command))))
+        .expect("settings gear")
+        .center();
+    bench.pointer(point, Some(true));
+    bench.pointer(point, Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(!ToolbarUi::dragging(&bench.ctx), "the gear must not start a drag");
+    assert!(
+        bench
+            .text
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-block-settings"))
+    );
+}
+
+fn menu_point(bench: &Bench, label: &str) -> Pos2 {
+    bench
+        .text
+        .iter()
+        .rev()
+        .find(|(text, _)| text == label)
+        .unwrap_or_else(|| panic!("missing menu row {label}"))
+        .1
+        .center()
+}
+
+#[test]
+fn nearby_chat_first_and_last_share_the_bottom_toolbar_layer_and_edit_zone() {
+    for classic in [false, true] {
+        for editing in [false, true] {
+            for first in [false, true] {
+                let mut bench = Bench {
+                    native_top: true,
+                    menu_open: false,
+                    classic,
+                    screen: Vec2::new(1536.0, 864.0),
+                    ..Default::default()
+                };
+                bench.settings.composed = true;
+                bench.settings.chat_composed = true;
+                let mut buttons = vec![
+                    tests::button("bar_chat"),
+                    structure::separator("chat-tools"),
+                    tests::button("inventory"),
+                ];
+                if !first {
+                    buttons.reverse();
+                }
+                bench.settings.buttons = Some(buttons);
+                bench.state.open = editing;
+                for _ in 0..5 {
+                    bench.frame(Vec::new());
+                }
+                let chat = bench.ctx.read_response(bars::tool_button_id("bar_chat")).expect("chat slot");
+                let bar = bench.ctx.read_response(Id::unique("toolbar_background")).expect("bottom toolbar");
+                assert_eq!(chat.layer_id, bar.layer_id, "first={first}, classic={classic}, editing={editing}");
+                assert!(
+                    bar.rect.contains_rect(chat.rect),
+                    "chat stays inside the same bar: first={first}, classic={classic}, editing={editing}: {:?}, {:?}",
+                    chat.rect,
+                    bar.rect
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn stationary_right_click_closes_and_reopens_bar_contexts_without_executing_actions() {
+    fn right_click(bench: &mut Bench, point: Pos2) {
+        for pressed in [true, false] {
+            bench.frame(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
+    }
+    for classic in [false, true] {
+        for editing in [false, true] {
+            for source in [
+                "inventory",
+                "aurora_menu",
+                "report_bug",
+                "bar_clock",
+                "bar_volume",
+                "bar_notifications",
+                "gap",
+                "drawer",
+                "background",
+            ] {
+                let mut bench = Bench {
+                    native_top: true,
+                    menu_open: false,
+                    classic,
+                    screen: Vec2::new(1920.0, 1080.0),
+                    ..Default::default()
+                };
+                bench.settings.compose_top();
+                let command = if source == "gap" {
+                    let gap = structure::separator("context-toggle");
+                    bench.settings.top = vec![tests::button("inventory"), gap.clone(), tests::button("preferences")];
+                    gap.command
+                } else if source == "drawer" {
+                    let id = drawers::create(&mut bench.settings, Bar::Top, &Layout::default());
+                    bench.settings.drawers.get_mut(&id).expect("drawer").buttons = vec![tests::button("preferences")];
+                    id
+                } else {
+                    source.into()
+                };
+                bench.state.open = editing;
+                for _ in 0..5 {
+                    bench.frame(Vec::new());
+                }
+                let point = if source == "background" {
+                    let rect = bench
+                        .ctx
+                        .read_response(Id::unique("top_toolbar_background"))
+                        .expect("bar background")
+                        .rect;
+                    rect.left_bottom() + Vec2::new(1.0, -1.0)
+                } else {
+                    bench
+                        .ctx
+                        .read_response(bars::tool_button_id(&command))
+                        .expect("control")
+                        .rect
+                        .center()
+                };
+                right_click(&mut bench, point);
+                for _ in 0..3 {
+                    bench.frame(Vec::new());
+                }
+                let popup = native_context::tracked_popup(&bench.ctx)
+                    .unwrap_or_else(|| panic!("context for {source}, classic={classic}, editing={editing}"));
+                assert!(egui::Popup::is_id_open(&bench.ctx, popup));
+                assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-add-spacer")));
+                right_click(&mut bench, point + Vec2::new(1.0, 1.0));
+                for _ in 0..2 {
+                    bench.frame(Vec::new());
+                }
+                assert!(
+                    !egui::Popup::is_id_open(&bench.ctx, popup),
+                    "second click closes {source}, classic={classic}, editing={editing}"
+                );
+                assert!(matches!(bench.action, bars::BarAction::None));
+                assert_eq!(bench.audio_action, crate::ui::audio::AudioAction::None);
+                right_click(&mut bench, point);
+                for _ in 0..2 {
+                    bench.frame(Vec::new());
+                }
+                assert!(
+                    egui::Popup::is_id_open(&bench.ctx, popup),
+                    "a later click reopens {source}, classic={classic}, editing={editing}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn direct_button_presentation_and_side_icon_picker_apply_without_entering_customization() {
+    for classic in [false, true] {
+        for bar in [Bar::Left, Bar::Right] {
+            let mut bench = Bench {
+                native_top: true,
+                menu_open: false,
+                classic,
+                screen: Vec2::new(1920.0, 1080.0),
+                ..Default::default()
+            };
+            let _icons = Icons::load(&bench.ctx, None);
+            bench.settings.composed = true;
+            bench.settings.buttons = Some(Vec::new());
+            bench.settings.set_bar(bar, vec![tests::button("inventory")]);
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let placement = bench.settings.command_placement("inventory", &Layout::default());
+            for phase in 0..2 {
+                let point = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("inventory"))
+                    .expect("inventory")
+                    .rect
+                    .center();
+                for pressed in [true, false] {
+                    bench.frame(vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Secondary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ]);
+                }
+                for _ in 0..3 {
+                    bench.frame(Vec::new());
+                }
+                if phase == 0 {
+                    let choice = menu_point(&bench, aurora_i18n::tr!("toolbar-button-text"));
+                    bench.pointer(choice, Some(true));
+                    bench.pointer(choice, Some(false));
+                    assert_eq!(bench.settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
+                    for _ in 0..3 {
+                        bench.frame(Vec::new());
+                    }
+                } else {
+                    let icon = bench
+                        .ctx
+                        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", "inventory"))))
+                        .expect("icon button");
+                    assert_eq!(
+                        bench.ctx.layer_id_at(icon.center()).map(|layer| layer.id),
+                        Some(bars::tool_button_id("inventory").with("context_menu")),
+                        "icon button must be exposed: {bar:?}, classic={classic}, {icon:?}"
+                    );
+                    bench.pointer(icon.center(), Some(true));
+                    bench.pointer(icon.center(), Some(false));
+                }
+            }
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let parent = bars::tool_button_id("inventory").with("context_menu");
+            let menu = bench.ctx.memory(|memory| memory.area_rect(parent)).expect("context menu");
+            let picker_id = Id::unique(("toolbar_icon_side_picker", "inventory"));
+            let picker = bench.ctx.memory(|memory| memory.area_rect(picker_id)).unwrap_or_else(|| {
+                panic!(
+                    "side picker: {bar:?}, classic={classic}, parent open={}",
+                    egui::Popup::is_id_open(&bench.ctx, parent)
+                )
+            });
+            assert!(picker.width() <= 365.0 && bench.ctx.content_rect().contains_rect(picker));
+            assert!(
+                if bar == Bar::Left {
+                    picker.left() >= menu.right()
+                } else {
+                    picker.right() <= menu.left()
+                },
+                "picker follows the available side: {bar:?}, {menu:?}, {picker:?}"
+            );
+            let search = menu_point(&bench, aurora_i18n::tr!("toolbar-icon-search"));
+            bench.pointer(search, Some(true));
+            bench.pointer(search, Some(false));
+            bench.frame(vec![egui::Event::Text("star".into())]);
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert!(
+                egui::Popup::is_id_open(&bench.ctx, parent),
+                "interacting with the picker retains its parent menu"
+            );
+            let choice = bench
+                .ctx
+                .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_choice", "inventory", "star-filled"))))
+                .expect("filtered star icon");
+            bench.pointer(choice.center(), Some(true));
+            bench.pointer(choice.center(), Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert_eq!(bench.settings.appearance["inventory"].icon.as_deref(), Some("star-filled"));
+            assert_eq!(bench.settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
+            assert!(egui::Popup::is_id_open(&bench.ctx, parent));
+            assert_eq!(bench.settings.command_placement("inventory", &Layout::default()), placement);
+            assert!(!bench.state.open);
+            assert!(matches!(bench.action, bars::BarAction::None));
+        }
+    }
+}
+
+#[test]
+fn normal_native_contexts_share_one_customization_entry_and_select_the_clicked_control() {
+    for classic in [false, true] {
+        for locked in [false, true] {
+            for command in [
+                "inventory",
+                "aurora_menu",
+                "report_bug",
+                "bar_navigation",
+                "bar_status",
+                "bar_balance",
+                "bar_clock",
+                "bar_ping",
+                "bar_fps",
+                "bar_network",
+                "bar_media",
+                "bar_music",
+                "bar_volume",
+                "bar_notifications",
+            ] {
+                let mut bench = Bench {
+                    native_top: true,
+                    menu_open: false,
+                    classic,
+                    screen: Vec2::new(1920.0, 1080.0),
+                    net_stats: true,
+                    ..Default::default()
+                };
+                bench.settings.compose_top();
+                bench.settings.locked = locked;
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let point = bench
+                    .ctx
+                    .read_response(bars::tool_button_id(command))
+                    .unwrap_or_else(|| panic!("visible native control {command}, classic={classic}, locked={locked}"))
+                    .rect
+                    .center();
+                let before = bench.settings.clone();
+                for pressed in [true, false] {
+                    bench.frame(vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Secondary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ]);
+                }
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                assert!(!bench.state.open, "right click opens options, not customization: {command}");
+                if command == "bar_status" {
+                    assert!(
+                        !bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("currency-menu")),
+                        "status must not offer currency actions"
+                    );
+                }
+                let entries: Vec<_> = bench
+                    .text
+                    .iter()
+                    .filter(|(text, _)| text == aurora_i18n::tr!("toolbar-interface-edit"))
+                    .collect();
+                assert_eq!(entries.len(), 1, "one shared entry: {command}, classic={classic}, locked={locked}");
+                if matches!(command, "inventory" | "aurora_menu" | "report_bug") {
+                    assert!(
+                        !bench
+                            .text
+                            .iter()
+                            .any(|(text, _)| text == aurora_i18n::tr!("toolbar-button-appearance"))
+                    );
+                    let choices = [
+                        "toolbar-button-icons",
+                        "toolbar-button-text",
+                        "toolbar-button-icons-text",
+                        "toolbar-button-inherit",
+                    ]
+                    .map(|key| menu_point(&bench, aurora_i18n::text(key)));
+                    for pair in choices.windows(2) {
+                        assert!(
+                            pair[0].y < pair[1].y && pair[1].y - pair[0].y < 26.0,
+                            "direct display choices stay together: {command}"
+                        );
+                    }
+                    let icon = bench
+                        .ctx
+                        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", command))))
+                        .expect("icon button");
+                    assert!(icon.height() <= 24.0, "changing the icon uses a normal menu row");
+                    assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-icon-change")));
+                    fn divider_between(shape: &egui::Shape, from: Pos2, to: Pos2) -> bool {
+                        match shape {
+                            egui::Shape::LineSegment { points, .. } => {
+                                (points[0].y - points[1].y).abs() < 0.5
+                                    && points[0].y > from.y
+                                    && points[0].y < to.y
+                                    && points[0].x < from.x
+                                    && points[1].x > from.x
+                            }
+                            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| divider_between(shape, from, to)),
+                            _ => false,
+                        }
+                    }
+                    assert!(
+                        bench
+                            .shapes
+                            .iter()
+                            .any(|shape| divider_between(&shape.shape, choices[3], icon.center())),
+                        "a separator follows the four presentation choices: {command}"
+                    );
+                    assert!(entries[0].1.top() >= icon.bottom() && entries[0].1.top() - icon.bottom() < 10.0);
+                    if command == "report_bug" {
+                        let copy = menu_point(&bench, aurora_i18n::tr!("bug-copy-version"));
+                        assert!(
+                            choices[0].y - copy.y > choices[1].y - choices[0].y + 4.0,
+                            "button-specific action is separated above the group"
+                        );
+                    }
+                }
+                for key in [
+                    "toolbar-locked",
+                    "toolbar-add-separator",
+                    "toolbar-add-spacer",
+                    "ui-bars-show-in-island",
+                    "ui-bars-show-clock",
+                    "ui-bars-show-fps",
+                    "ui-bars-show-media",
+                    "bug-toolbar",
+                ] {
+                    assert!(
+                        !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+                        "layout choices stay in customization: {command}, {key}"
+                    );
+                }
+                assert!(
+                    matches!(bench.action, bars::BarAction::None),
+                    "right click must not execute {command}"
+                );
+                let entry = entries[0].1.center();
+                bench.pointer(entry, Some(true));
+                bench.pointer(entry, Some(false));
+                assert!(bench.state.open, "entry opens customization: {command}");
+                assert_eq!(bench.state.selected.as_deref(), Some(command));
+                assert_eq!(bench.settings, before, "opening customization never writes the layout");
+            }
+        }
+    }
+}
+
+#[test]
+fn bug_and_notification_context_actions_remain_explicit_and_functional() {
+    for classic in [false, true] {
+        for (command, key) in [("report_bug", "bug-copy-version"), ("bar_notifications", "common-do-not-disturb")] {
+            let mut bench = Bench {
+                native_top: true,
+                menu_open: false,
+                classic,
+                screen: Vec2::new(1920.0, 1080.0),
+                ..Default::default()
+            };
+            bench.settings.compose_top();
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let point = bench
+                .ctx
+                .read_response(bars::tool_button_id(command))
+                .expect("button")
+                .rect
+                .center();
+            for pressed in [true, false] {
+                bench.frame(vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let choice = menu_point(&bench, aurora_i18n::text(key));
+            bench.pointer(choice, Some(true));
+            bench.pointer(choice, Some(false));
+            assert!(
+                match command {
+                    "report_bug" => matches!(bench.action, bars::BarAction::CopyVersion),
+                    _ => matches!(bench.action, bars::BarAction::SetStatus(status) if status.dnd),
+                },
+                "explicit {key} still runs"
+            );
+            assert!(!bench.state.open);
+        }
+    }
+}
+
+#[test]
+fn block_controls_stay_outside_buttons_and_highlight_the_whole_block() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for locked in [false, true] {
+                let mut bench = block_controls_fixture(bar, classic, locked);
+                let grip = bench
+                    .ctx
+                    .read_response(Id::unique(("toolbar_block_grip", bar, "inventory")))
+                    .expect("grip")
+                    .rect;
+                let gear = bench
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_block_settings", bar, "inventory"))))
+                    .expect("gear");
+                let body = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("inventory"))
+                    .expect("inventory")
+                    .rect
+                    .union(bench.ctx.read_response(bars::tool_button_id("people")).expect("people").rect);
+                assert!(!grip.intersect(gear).is_positive(), "overlapping controls: {grip:?}, {gear:?}");
+                assert!(
+                    (grip.size() - gear.size()).abs().max_elem() <= 1.0,
+                    "the grip stays button-sized: {grip:?}, {gear:?}"
+                );
+                let controls = grip.union(gear);
+                assert!(if bar.vertical() {
+                    gear.top() >= grip.bottom()
+                } else {
+                    gear.left() >= grip.right()
+                });
+                assert!(
+                    match bar {
+                        Bar::Top => grip.top() >= body.bottom(),
+                        Bar::Bottom => grip.bottom() <= body.top(),
+                        Bar::Left => grip.left() >= body.right(),
+                        Bar::Right => grip.right() <= body.left(),
+                    },
+                    "{bar:?}: {body:?}, {grip:?}"
+                );
+                for _ in 0..4 {
+                    bench.pointer(grip.center(), None);
+                }
+                let current = bench
+                    .ctx
+                    .read_response(Id::unique(("toolbar_block_grip", bar, "inventory")))
+                    .expect("hovered grip");
+                let visible_body = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("inventory"))
+                    .expect("visible inventory")
+                    .interact_rect
+                    .union(
+                        bench
+                            .ctx
+                            .read_response(bars::tool_button_id("people"))
+                            .expect("visible people")
+                            .interact_rect,
+                    );
+                let accent = crate::theme::Theme::default().palette().violet_light;
+                fn outline(shape: &egui::Shape, body: Rect, color: egui::Color32) -> Option<Rect> {
+                    match shape {
+                        egui::Shape::Rect(rect) => (rect.rect.contains_rect(body) && rect.stroke.color == color).then_some(rect.rect),
+                        egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| outline(shape, body, color)),
+                        _ => None,
+                    }
+                }
+                let highlight = bench
+                    .shapes
+                    .iter()
+                    .find_map(|shape| outline(&shape.shape, visible_body, accent))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "hover highlights the visible block: {bar:?}, classic={classic}, locked={locked}, body={visible_body:?}, grip={:?}, hovered={}, contains={}",
+                            current.rect,
+                            current.hovered(),
+                            current.contains_pointer()
+                        )
+                    });
+                // The visible frame includes padding clipped by its edge bar;
+                // the raw button hit boxes need not share that frame's center.
+                let center_offset = if bar.vertical() {
+                    controls.center().y - highlight.center().y
+                } else {
+                    controls.center().x - highlight.center().x
+                };
+                assert!(
+                    center_offset.abs() <= 1.0,
+                    "controls stay centered on {bar:?}: {controls:?}, {highlight:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn block_settings_remove_only_the_selected_block_and_respect_locks() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for locked in [false, true] {
+                let mut bench = block_controls_fixture(bar, classic, locked);
+                let before = bench.settings.clone();
+                open_block_settings(&mut bench, bar, "inventory");
+                assert_eq!(bench.settings, before, "opening settings never saves");
+                let footer = menu_point(&bench, aurora_i18n::tr!("toolbar-interface-edit"));
+                assert!(footer.y > menu_point(&bench, aurora_i18n::tr!("toolbar-locked")).y);
+                let remove = menu_point(&bench, aurora_i18n::tr!("toolbar-block-remove"));
+                bench.pointer(remove, Some(true));
+                bench.pointer(remove, Some(false));
+                if locked {
+                    assert_eq!(bench.settings, before);
+                } else {
+                    for command in ["inventory", "people", "divider:inside"] {
+                        assert!(bench.settings.location(command, &Layout::default()).is_none());
+                    }
+                    assert_eq!(bench.settings.location("preferences", &Layout::default()), Some(bar));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn old_school_text_menus_open_the_native_groups_and_dispatch_build_import() {
+    let settings = presets::Preset::OldSchool.layout(&Layout::default());
+    let menus = settings
+        .top
+        .iter()
+        .filter(|button| button.command.starts_with(commands::PREFIX))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(menus.len(), 6);
+    for menu in menus {
+        let mut bench = Bench {
+            settings: settings.clone(),
+            native_top: true,
+            menu_open: false,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            bench.frame(Vec::new());
+        }
+        assert!(bench.text.iter().any(|(text, _)| text == label(&menu)));
+        let source = bench
+            .ctx
+            .read_response(bars::tool_button_id(&menu.command))
+            .expect("text menu button")
+            .rect
+            .center();
+        bench.pointer(source, Some(true));
+        bench.pointer(source, Some(false));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        let catalogue = commands::catalogue(&bench.ctx);
+        let child = catalogue
+            .entries
+            .iter()
+            .find(|entry| entry.parent == menu.command && !entry.separator && !entry.info)
+            .expect("native menu child");
+        let rect = bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", &child.button.command))))
+            .expect("opened native menu child");
+        assert!(rect.is_positive() && bench.ctx.content_rect().intersects(rect));
+        assert!(
+            matches!(bench.action, bars::BarAction::None),
+            "opening a group executes no leaf action"
+        );
+        if menu.command == "menu:common-build" {
+            let import = bench
+                .ctx
+                .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", "menu:common-build/import-menu"))))
+                .expect("native import action")
+                .center();
+            bench.pointer(import, Some(true));
+            bench.pointer(import, Some(false));
+            let ctx = bench.ctx.clone();
+            let mut action = bars::BarAction::None;
+            let p = crate::theme::Theme::default().palette();
+            // The app dispatches queued menu requests after drawing. This
+            // focused toolbar fixture normally leaves them for its caller.
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                action = bars::dispatch_menu(ui, &p, &mut bench.panels, &bars::islands::tests::status(true, false));
+            });
+            assert!(matches!(action, bars::BarAction::Import));
+            assert!(commands::take_request(&ctx).is_none(), "the native request is consumed once");
+        }
+    }
+}
+
+#[test]
+fn photographer_controls_render_and_personal_lighting_uses_the_native_handler() {
+    let mut bench = Bench {
+        settings: presets::Preset::Photographer.layout(&Layout::default()),
+        native_top: true,
+        menu_open: false,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    for _ in 0..5 {
+        bench.frame(Vec::new());
+    }
+    for command in [
+        "snapshot",
+        "view",
+        "photo_roll",
+        "immersive",
+        "graphics_preferences",
+        "quickprefs",
+        "myenvironments",
+    ] {
+        let rect = bench
+            .ctx
+            .read_response(bars::tool_button_id(command))
+            .expect("photography control")
+            .rect;
+        assert!(
+            rect.is_positive() && bench.ctx.content_rect().contains_rect(rect),
+            "visible control {command}"
+        );
+    }
+    let lighting = "menu:common-world/common-environment/common-personal-lighting";
+    let point = bench
+        .ctx
+        .read_response(bars::tool_button_id(lighting))
+        .expect("personal lighting control")
+        .rect
+        .center();
+    assert!(!bench.panels.personal_lighting);
+    bench.pointer(point, Some(true));
+    bench.pointer(point, Some(false));
+    let ctx = bench.ctx.clone();
+    let p = crate::theme::Theme::default().palette();
+    let _ = ctx.run_ui(Default::default(), |ui| {
+        bars::dispatch_menu(ui, &p, &mut bench.panels, &bars::islands::tests::status(true, false));
+    });
+    assert!(bench.panels.personal_lighting);
+    assert!(commands::take_request(&ctx).is_none());
+}
+
+#[test]
+fn notecard_buttons_queue_save_and_load_and_honor_toolbar_locks() {
+    for classic in [false, true] {
+        for locked in [false, true] {
+            for (key, allowed) in [("toolbar-notecard-save", true), ("toolbar-notecard-load", !locked)] {
+                let mut bench = block_controls_fixture(Bar::Bottom, classic, locked);
+                assert!(!bench.state.notecards.active());
+                let point = menu_point(&bench, aurora_i18n::text(key));
+                bench.pointer(point, Some(true));
+                bench.pointer(point, Some(false));
+                assert_eq!(bench.state.notecards.active(), allowed, "{key}, locked={locked}, classic={classic}");
+            }
+        }
+    }
+}
+
+#[test]
+fn editor_presets_queue_all_choices_and_selection_keeps_the_catalogue_stable() {
+    for classic in [false, true] {
+        for locked in [false, true] {
+            for preset in presets::Preset::ALL {
+                let mut bench = block_controls_fixture(Bar::Bottom, classic, locked);
+                let before = bench.settings.clone();
+                let point = menu_point(&bench, preset.label());
+                bench.pointer(point, Some(true));
+                bench.pointer(point, Some(false));
+                assert_eq!(bench.state.preset_request, (!locked).then_some(preset));
+                assert_eq!(bench.settings, before, "the app applies a queued preset atomically after drawing");
+            }
+        }
+        let mut bench = block_controls_fixture(Bar::Bottom, classic, false);
+        let divider = Id::unique(("toolbar_catalogue", structure::DIVIDER));
+        let before = bench.ctx.data(|data| data.get_temp::<Rect>(divider)).expect("structural tile");
+        let source = bench
+            .ctx
+            .read_response(bars::tool_button_id("inventory"))
+            .expect("placed button")
+            .rect
+            .center();
+        bench.pointer(source, Some(true));
+        bench.pointer(source, Some(false));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        assert_eq!(bench.state.selected.as_deref(), Some("inventory"));
+        let after = bench.ctx.data(|data| data.get_temp::<Rect>(divider)).expect("structural tile");
+        assert_eq!(before, after, "selecting a control does not insert an action panel");
+        for key in [
+            "toolbar-button-appearance",
+            "toolbar-remove",
+            "toolbar-edit-split-before",
+            "toolbar-edit-split-after",
+        ] {
+            assert!(
+                !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+                "selection has no action strip: {key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn microphone_context_keeps_display_modes_and_hides_icon_editors() {
+    for classic in [false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            menu_open: false,
+            classic,
+            screen: Vec2::new(1536.0, 864.0),
+            ..Default::default()
+        };
+        bench.settings.composed = true;
+        bench.settings.chat_composed = true;
+        bench.settings.buttons = Some(vec![tests::button("speak")]);
+        bench.settings.bottom_style = BarStyle {
+            sizing: Some(Sizing::Auto),
+            align: Some(Align::Center),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            bench.frame(Vec::new());
+        }
+        let point = bench
+            .ctx
+            .read_response(Id::unique("toolbar_background"))
+            .expect("microphone bar")
+            .rect
+            .center();
+        for pressed in [true, false] {
+            bench.frame(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-icon-change")));
+        let text = menu_point(&bench, aurora_i18n::tr!("toolbar-button-text"));
+        bench.pointer(text, Some(true));
+        bench.pointer(text, Some(false));
+        assert_eq!(bench.settings.appearance["speak"].mode, Some(ButtonMode::TextOnly));
+        bench.state.edit_button(&tests::button("speak"));
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        for key in ["toolbar-icon-search", "toolbar-icon-default", "toolbar-icon-change"] {
+            assert!(
+                !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+                "no microphone icon editor: {key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn block_alignment_anchors_independently_on_every_edge_and_keeps_canonical_rects() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = block_controls_fixture(bar, classic, false);
+            bench.settings.chat_composed = true;
+            bench.settings.style_mut(bar).sizing = Some(Sizing::Auto);
+            let configure = |bench: &mut Bench, command: &str, align| {
+                bench.state.pending = Some(Edit::BlockStyle(
+                    bar,
+                    command.into(),
+                    BarStyle {
+                        align: Some(align),
+                        ..Default::default()
+                    },
+                ));
+                assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+                for _ in 0..5 {
+                    bench.frame(Vec::new());
+                }
+            };
+            configure(&mut bench, "inventory", Align::Start);
+            configure(&mut bench, "preferences", Align::End);
+            let bounds = |bench: &Bench| {
+                let id = match bar {
+                    Bar::Top => Id::unique("top_toolbar_background"),
+                    Bar::Bottom => Id::unique("toolbar_background"),
+                    Bar::Left => Id::unique(("toolbar_background", "toolbar_left")),
+                    Bar::Right => Id::unique(("toolbar_background", "toolbar_right")),
+                };
+                bench.ctx.read_response(id).expect("bar bounds").rect
+            };
+            let group = |bench: &Bench| {
+                bench
+                    .ctx
+                    .read_response(bars::tool_button_id("inventory"))
+                    .expect("first")
+                    .rect
+                    .union(bench.ctx.read_response(bars::tool_button_id("people")).expect("last").rect)
+            };
+            let zone = bounds(&bench);
+            let first = group(&bench);
+            let last = bench
+                .ctx
+                .read_response(bars::tool_button_id("preferences"))
+                .expect("other block")
+                .rect;
+            let start = |rect: Rect| if bar.vertical() { rect.top() } else { rect.left() };
+            let end = |rect: Rect| if bar.vertical() { rect.bottom() } else { rect.right() };
+            assert!(
+                (start(first) - start(zone)).abs() < 12.0,
+                "start: {bar:?}, classic={classic}: {first:?}, {zone:?}"
+            );
+            assert!(
+                (end(last) - end(zone)).abs() < 12.0,
+                "end: {bar:?}, classic={classic}: {last:?}, {zone:?}"
+            );
+            configure(&mut bench, "inventory", Align::Center);
+            let first = group(&bench);
+            let zone = bounds(&bench);
+            assert!(
+                ((start(first) + end(first)) / 2.0 - (start(zone) + end(zone)) / 2.0).abs() < 8.0,
+                "center: {bar:?}, classic={classic}: {first:?}, {zone:?}"
+            );
+            assert_eq!(bench.settings.block_styles["preferences"].align, Some(Align::End));
+            let restored: ToolbarSettings = serde_json::from_str(&serde_json::to_string(&bench.settings).expect("save")).expect("load");
+            assert_eq!(restored, bench.settings);
+        }
+    }
+}
+
+#[test]
+fn block_gears_change_only_their_block_and_split_at_the_chosen_boundary() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for locked in [false, true] {
+                for (label, change) in mode_rows()
+                    .map(|(mode, _, label)| {
+                        (
+                            label,
+                            BarStyle {
+                                mode: Some(mode),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .into_iter()
+                    .chain(sizing_rows().map(|(sizing, _, label)| {
+                        (
+                            label,
+                            BarStyle {
+                                sizing: Some(sizing),
+                                ..Default::default()
+                            },
+                        )
+                    }))
+                    .chain(align_rows(bar).map(|(align, _, label)| {
+                        (
+                            label,
+                            BarStyle {
+                                align: Some(align),
+                                ..Default::default()
+                            },
+                        )
+                    }))
+                {
+                    let mut bench = block_controls_fixture(bar, classic, locked);
+                    let before = bench.settings.clone();
+                    open_block_settings(&mut bench, bar, "inventory");
+                    assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-move")));
+                    let choice = menu_point(&bench, label);
+                    bench.pointer(choice, Some(true));
+                    bench.pointer(choice, Some(false));
+                    if locked {
+                        assert_eq!(bench.settings, before);
+                    } else {
+                        assert_eq!(bench.settings.block_styles["inventory"], change);
+                        assert_eq!(bench.settings.block_styles["people"], change);
+                        assert!(!bench.settings.block_styles.contains_key("preferences"));
+                        for bar in Bar::ALL {
+                            assert_eq!(bench.settings.style(bar), before.style(bar));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    {
+        let mut bench = block_controls_fixture(Bar::Top, false, false);
+        open_block_settings(&mut bench, Bar::Top, "inventory");
+        let point = menu_point(&bench, aurora_i18n::tr!("toolbar-block-split"));
+        for _ in 0..4 {
+            bench.pointer(point, None);
+        }
+        let split_button = tests::button("people");
+        let label = aurora_i18n::tr!("toolbar-block-split-before", button = label(&split_button));
+        let choice = menu_point(&bench, &label);
+        bench.pointer(choice, Some(true));
+        bench.pointer(choice, Some(false));
+        assert_eq!(edit_mode::group(&bench.settings.top, "inventory"), Some(0..2));
+        assert_ne!(
+            edit_mode::group(&bench.settings.top, "inventory"),
+            edit_mode::group(&bench.settings.top, "people")
+        );
+    }
+}
+
+#[test]
+fn drawer_context_unfolds_a_separate_block_without_entering_edit_mode() {
+    for classic in [false, true] {
+        for locked in [false, true] {
+            let mut bench = Bench {
+                native_top: true,
+                menu_open: false,
+                classic,
+                screen: Vec2::new(1600.0, 900.0),
+                ..Default::default()
+            };
+            bench.settings.composed = true;
+            bench.settings.top = vec![
+                tests::button("preferences"),
+                tests::button("drawer:tools"),
+                tests::button("inventory"),
+            ];
+            bench.settings.buttons = Some(Vec::new());
+            bench.settings.drawers.insert(
+                "drawer:tools".into(),
+                drawers::Drawer {
+                    buttons: vec![tests::button("people"), tests::button("worldmap")],
+                    mode: ButtonMode::TextOnly,
+                },
+            );
+            bench.settings.locked = locked;
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let before = bench.settings.clone();
+            let point = bench
+                .ctx
+                .read_response(bars::tool_button_id("drawer:tools"))
+                .expect("drawer toggle")
+                .rect
+                .center();
+            for pressed in [true, false] {
+                bench.frame(vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ]);
+            }
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            let unfold = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-unfold"));
+            bench.pointer(unfold, Some(true));
+            bench.pointer(unfold, Some(false));
+            assert!(!bench.state.open);
+            if locked {
+                assert_eq!(bench.settings, before);
+            } else {
+                assert!(!bench.settings.drawers.contains_key("drawer:tools"));
+                let range = edit_mode::group(&bench.settings.top, "people").expect("unfolded block");
+                assert_eq!(bench.settings.top[range], [tests::button("people"), tests::button("worldmap")]);
+                assert_eq!(bench.settings.block_styles["people"].mode, Some(ButtonMode::TextOnly));
+                assert!(!bench.settings.block_styles.contains_key("preferences"));
+                assert!(!bench.settings.block_styles.contains_key("inventory"));
+            }
+        }
+    }
+}
+
+#[test]
+fn customization_contexts_share_one_final_edit_interface_action_and_preserve_settings() {
+    for classic in [false, true] {
+        for locked in [false, true] {
+            for source in ["inventory", "aurora_menu", "drawer", "menu"] {
+                let mut bench = Bench {
+                    native_top: source != "menu",
+                    menu_open: true,
+                    classic,
+                    screen: Vec2::new(1600.0, 900.0),
+                    ..Default::default()
+                };
+                bench.settings.compose_top();
+                bench.settings.locked = locked;
+                let drawer = if source == "drawer" {
+                    Some(drawers::create(&mut bench.settings, Bar::Left, &Layout::default()))
+                } else {
+                    None
+                };
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let command = drawer.as_deref().unwrap_or(if source == "menu" {
+                    "menu:common-build/import-menu"
+                } else {
+                    source
+                });
+                let point = if source == "menu" {
+                    bench
+                        .ctx
+                        .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", command))))
+                        .expect("menu command")
+                        .center()
+                } else {
+                    bench
+                        .ctx
+                        .read_response(bars::tool_button_id(command))
+                        .expect("button")
+                        .rect
+                        .center()
+                };
+                let before = bench.settings.clone();
+                for pressed in [true, false] {
+                    bench.frame(vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Secondary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ]);
+                }
+                for _ in 0..3 {
+                    bench.frame(Vec::new());
+                }
+                let preceding = aurora_i18n::text(match source {
+                    "drawer" => "toolbar-drawer-settings",
+                    _ => "toolbar-button-inherit",
+                });
+                let preceding = bench.text.iter().rev().find(|(text, _)| text == preceding).expect("context row").1;
+                // The Aurora menu remains behind its context menu and also owns
+                // an Edit interface command. Count only this popup's text column.
+                let rows: Vec<_> = bench
+                    .text
+                    .iter()
+                    .filter(|(text, rect)| {
+                        text == aurora_i18n::tr!("toolbar-interface-edit") && (rect.left() - preceding.left()).abs() < 0.5
+                    })
+                    .collect();
+                assert_eq!(rows.len(), 1, "{source}, classic={classic}, locked={locked}");
+                let footer = rows[0].1;
+                assert!(footer.top() >= preceding.bottom(), "the edit action must be last: {source}");
+                bench.pointer(footer.center(), Some(true));
+                bench.pointer(footer.center(), Some(false));
+                assert!(bench.state.open);
+                assert_eq!(bench.settings, before);
+                assert!(commands::take_request(&bench.ctx).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn block_handles_move_all_members_on_every_edge_in_both_styles() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = Bench {
+                native_top: true,
+                classic,
+                screen: Vec2::new(1600.0, 900.0),
+                ..Default::default()
+            };
+            bench.settings.composed = true;
+            bench.settings.buttons = Some(Vec::new());
+            bench.settings.top = vec![tests::button("inventory"), structure::divider("inside"), tests::button("people")];
+            bench.state.open = true;
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let source = bench
+                .ctx
+                .read_response(egui::Id::unique(("toolbar_block_grip", Bar::Top, "inventory")))
+                .expect("block handle")
+                .rect
+                .center();
+            let target = match bar {
+                Bar::Top => egui::pos2(420.0, 20.0),
+                Bar::Bottom => egui::pos2(1300.0, 880.0),
+                Bar::Left => egui::pos2(16.0, 680.0),
+                Bar::Right => egui::pos2(1584.0, 680.0),
+            };
+            let before = bench.settings.clone();
+            bench.pointer(source, Some(true));
+            bench.pointer(source + Vec2::new(12.0, 0.0), None);
+            assert_eq!(
+                egui::DragAndDrop::payload::<Drag>(&bench.ctx).expect("whole payload").members.len(),
+                3
+            );
+            for _ in 0..4 {
+                bench.pointer(target, None);
+            }
+            assert_eq!(bench.settings, before, "preview is not saved");
+            assert_eq!(
+                drop_preview::current(&bench.ctx)
+                    .unwrap_or_else(|| panic!(
+                        "missing block preview on {bar:?}, classic={classic}, target={target:?}, layer={:?}, dock={:?}",
+                        bench.ctx.layer_id_at(target),
+                        bench
+                            .ctx
+                            .read_response(egui::Id::unique("dock_drop"))
+                            .map(|response| (response.rect, response.layer_id))
+                    ))
+                    .bar,
+                bar
+            );
+            let snapped = bench
+                .ctx
+                .read_response(bars::tool_button_id("inventory"))
+                .expect("snapped block")
+                .rect;
+            bench.pointer(target, Some(false));
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let placed = bench
+                .ctx
+                .read_response(bars::tool_button_id("inventory"))
+                .expect("placed block")
+                .rect;
+            assert!(
+                (snapped.min - placed.min).length() < 0.5 && (snapped.max - placed.max).length() < 0.5,
+                "{bar:?}, classic={classic}: snapped={snapped:?}, placed={placed:?}"
+            );
+            let layout = Layout::default();
+            let list = bench.settings.bar(bar, &layout);
+            assert_eq!(
+                list.iter().map(|button| button.command.as_str()).collect::<Vec<_>>(),
+                ["inventory", "divider:inside", "people"],
+                "{bar:?} classic={classic}"
+            );
+            let divider = bench
+                .ctx
+                .read_response(bars::tool_button_id("divider:inside"))
+                .expect("divider")
+                .rect;
+            assert!((if bar.vertical() { divider.height() } else { divider.width() } - structure::DIVIDER_SIZE).abs() < 0.5);
+            assert_eq!(
+                edit_mode::group(list, "people"),
+                Some(0..3),
+                "the internal divider does not split the block"
+            );
+        }
+    }
+}
+
+#[test]
+fn placed_button_drag_out_shows_removal_and_removes_while_catalogue_copies_cancel() {
+    for classic in [false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            classic,
+            ..Default::default()
+        };
+        bench.settings.composed = true;
+        bench.settings.buttons = Some(Vec::new());
+        bench.settings.top = vec![tests::button("inventory")];
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let source = bench
+            .ctx
+            .read_response(bars::tool_button_id("inventory"))
+            .expect("source")
+            .rect
+            .center();
+        let outside = egui::pos2(750.0, 400.0);
+        bench.pointer(source, Some(true));
+        bench.pointer(source + Vec2::new(12.0, 0.0), None);
+        for _ in 0..3 {
+            bench.pointer(outside, None);
+        }
+        assert!(
+            bench
+                .ctx
+                .data(|data| data.get_temp::<bool>(egui::Id::unique("toolbar_drag_remove")))
+                .unwrap_or(false)
+        );
+        assert!(bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-remove")));
+        bench.pointer(outside, Some(false));
+        assert_eq!(bench.settings.location("inventory", &Layout::default()), None);
+        bench.state.open = true;
+        bench.state.search = catalogue::find("inventory").expect("catalogue").label().into();
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let tile = bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", "inventory"))))
+            .expect("tile")
+            .center();
+        bench.pointer(tile, Some(true));
+        bench.pointer(tile + Vec2::new(12.0, 0.0), None);
+        for _ in 0..3 {
+            bench.pointer(outside, None);
+        }
+        assert!(
+            !bench
+                .ctx
+                .data(|data| data.get_temp::<bool>(egui::Id::unique("toolbar_drag_remove")))
+                .unwrap_or(false)
+        );
+        bench.pointer(outside, Some(false));
+        assert!(bench.settings.top.is_empty());
+    }
+}
+
+#[test]
+fn slurl_button_popup_is_anchored_and_keeps_integrated_navigation_placement() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = Bench {
+                native_top: true,
+                classic,
+                screen: Vec2::new(1600.0, 900.0),
+                ..Default::default()
+            };
+            bench.settings.compose_top();
+            bench.state.pending = Some(Edit::Insert(bar, bars::top::button("location_bar", "map-pin-filled"), 0));
+            bench.state.commit(&Layout::default(), &mut bench.settings);
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let before = bench.settings.clone();
+            let anchor = bench.ctx.read_response(bars::tool_button_id("location_bar")).expect("toggle").rect;
+            bench.pointer(anchor.center(), Some(true));
+            bench.pointer(anchor.center(), Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert!(bars::location_popup::is_open(&bench.ctx), "{bar:?} classic={classic}");
+            assert_eq!(bench.settings, before);
+            assert!(
+                bench.panels.nav_edit.is_none(),
+                "popup editing does not activate the integrated field"
+            );
+            let field = bench
+                .ctx
+                .read_response(bars::location_popup::field_id())
+                .expect("independent SLURL field")
+                .rect;
+            assert!(
+                match bar {
+                    Bar::Top => field.top() > anchor.bottom(),
+                    Bar::Bottom => field.bottom() < anchor.top(),
+                    Bar::Left => field.left() > anchor.right(),
+                    Bar::Right => field.right() < anchor.left(),
+                },
+                "{bar:?}: {anchor:?}, {field:?}"
+            );
+            assert!(bench.ctx.content_rect().contains_rect(field));
+            bench.pointer(anchor.center(), Some(true));
+            bench.pointer(anchor.center(), Some(false));
+            assert!(!bars::location_popup::is_open(&bench.ctx));
+            assert_eq!(bench.settings, before);
+            bench.location_hidden = true;
+            bench.pointer(anchor.center(), Some(true));
+            bench.pointer(anchor.center(), Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert!(
+                bench
+                    .text
+                    .iter()
+                    .any(|(text, _)| text == aurora_i18n::tr!("toolbar-location-hidden"))
+            );
+            assert!(bench.ctx.read_response(bars::location_popup::field_id()).is_none());
+        }
+    }
+}
+
+fn drawer_target(classic: bool, bar: Bar, editing: bool, open: bool) -> (Bench, String) {
+    let mut bench = Bench {
+        native_top: true,
+        classic,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.buttons = Some(Vec::new());
+    bench.settings.top = vec![tests::button("inventory")];
+    let id = drawers::create(&mut bench.settings, bar, &Layout::default());
+    bench.settings.drawers.get_mut(&id).expect("drawer").buttons = vec![tests::button("preferences")];
+    bench.state.open = editing;
+    drawers::set_open(&bench.ctx, &id, open);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    (bench, id)
+}
+
+fn start_toolbar_drag(bench: &mut Bench, command: &str) {
+    let source = bench
+        .ctx
+        .read_response(bars::tool_button_id(command))
+        .expect("source")
+        .rect
+        .center();
+    bench.pointer(source, Some(true));
+    bench.pointer(source + Vec2::new(12.0, 0.0), None);
+    assert!(ToolbarUi::dragging(&bench.ctx), "drag {command}");
+}
+
+fn move_gradually(bench: &mut Bench, target: Pos2) {
+    let start = bench.ctx.pointer_interact_pos().expect("drag pointer");
+    let steps = ((target - start).length() / 8.0).ceil() as usize;
+    for step in 1..=steps.max(1) {
+        bench.pointer(start.lerp(target, step as f32 / steps.max(1) as f32), None);
+    }
+}
+
+#[test]
+fn button_faces_create_drawers_with_the_targets_effective_display_on_every_edge() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for override_mode in [None, Some(ButtonMode::TextOnly)] {
+                let mut bench = Bench {
+                    native_top: true,
+                    classic,
+                    screen: Vec2::new(1600.0, 900.0),
+                    ..Default::default()
+                };
+                bench.settings.composed = true;
+                bench.settings.buttons = Some(Vec::new());
+                bench.settings.top = vec![tests::button("inventory")];
+                let mut list = bench.settings.bar(bar, &Layout::default()).to_vec();
+                list.push(tests::button("people"));
+                bench.settings.set_bar(bar, list);
+                bench.settings.style_mut(bar).mode = Some(ButtonMode::IconsWithText);
+                bench.settings.appearance.insert(
+                    "people".into(),
+                    appearance::Appearance {
+                        mode: override_mode,
+                        icon: Some("star-filled".into()),
+                    },
+                );
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let target = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("people"))
+                    .expect("target")
+                    .rect
+                    .center();
+                let before = bench.settings.clone();
+                start_toolbar_drag(&mut bench, "inventory");
+                move_gradually(&mut bench, target);
+                for _ in 0..4 {
+                    bench.pointer(target, None);
+                }
+                assert_eq!(bench.settings, before, "grouping hover never saves");
+                assert!(drop_preview::current(&bench.ctx).is_none());
+                bench.pointer(target, Some(false));
+                let id = bench
+                    .settings
+                    .drawer_of("inventory")
+                    .unwrap_or_else(|| panic!("missing group on {bar:?}, classic={classic}"));
+                assert_eq!(bench.settings.drawer_of("people"), Some(id));
+                assert_eq!(bench.settings.location(id, &Layout::default()), Some(bar));
+                assert_eq!(bench.settings.drawers[id].mode, override_mode.unwrap_or(ButtonMode::IconsWithText));
+                assert_eq!(
+                    bench.settings.drawers[id].buttons,
+                    [tests::button("people"), tests::button("inventory")]
+                );
+                assert_eq!(bench.settings.appearance["people"].icon.as_deref(), Some("star-filled"));
+            }
+        }
+    }
+}
+
+#[test]
+fn drawer_faces_and_grouping_accept_menu_sources_and_last_children() {
+    const IMPORT: &str = "menu:common-build/import-menu";
+    for group in [false, true] {
+        for source in ["menu", "drawer", "catalogue"] {
+            let (mut bench, id) = drawer_target(false, Bar::Right, false, false);
+            bench.settings.top.clear();
+            let target_command = if group {
+                bench.settings.right = vec![tests::button("people")];
+                bench.settings.drawers.remove(&id);
+                "people".to_owned()
+            } else {
+                id.clone()
+            };
+            let from = if source == "drawer" {
+                let from = drawers::create(&mut bench.settings, Bar::Left, &Layout::default());
+                bench.settings.drawers.get_mut(&from).expect("source").buttons = vec![tests::button("inventory")];
+                drawers::set_open(&bench.ctx, &from, true);
+                Some(from)
+            } else {
+                None
+            };
+            if source == "menu" {
+                bench.native_top = false;
+            }
+            if source == "catalogue" {
+                bench.state.open = true;
+                bench.state.search = catalogue::find("inventory").expect("command").label().into();
+            }
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let target = bench
+                .ctx
+                .read_response(bars::tool_button_id(&target_command))
+                .expect("target")
+                .rect
+                .center();
+            let command = if source == "menu" { IMPORT } else { "inventory" };
+            let start = match source {
+                "menu" => bench
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", IMPORT))))
+                    .expect("menu row")
+                    .center(),
+                "catalogue" => bench
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_catalogue", "inventory"))))
+                    .expect("catalogue tile")
+                    .center(),
+                _ => bench
+                    .ctx
+                    .read_response(bars::tool_button_id("inventory"))
+                    .expect("drawer child")
+                    .rect
+                    .center(),
+            };
+            bench.pointer(start, Some(true));
+            bench.pointer(start + Vec2::new(12.0, 0.0), None);
+            assert!(ToolbarUi::dragging(&bench.ctx));
+            move_gradually(&mut bench, target);
+            for _ in 0..if group { 4 } else { 3 } {
+                bench.pointer(target, None);
+            }
+            bench.pointer(target, Some(false));
+            let destination = bench
+                .settings
+                .drawer_of(command)
+                .unwrap_or_else(|| panic!("{source}, grouping={group}"));
+            if group {
+                assert_eq!(bench.settings.drawer_of("people"), Some(destination));
+            } else {
+                assert_eq!(destination, id);
+            }
+            if let Some(from) = from {
+                assert!(!bench.settings.drawers.contains_key(&from));
+                assert!(bench.settings.location(&from, &Layout::default()).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn toolbar_reordering_has_wide_insertion_corridors_and_requires_a_pause_to_group() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for mode in [ButtonMode::IconsOnly, ButtonMode::TextOnly] {
+                for gesture in [
+                    "edge",
+                    "trailing-edge",
+                    "gap",
+                    "quick-centre",
+                    "release-at-deadline",
+                    "leave-centre",
+                    "return-to-centre",
+                ] {
+                    let mut bench = Bench {
+                        native_top: true,
+                        classic,
+                        screen: Vec2::new(1600.0, 900.0),
+                        ..Default::default()
+                    };
+                    bench.settings.composed = true;
+                    bench.settings.buttons = Some(Vec::new());
+                    bench
+                        .settings
+                        .set_bar(bar, ["inventory", "people", "preferences"].map(tests::button).to_vec());
+                    bench.settings.style_mut(bar).mode = Some(mode);
+                    for _ in 0..4 {
+                        bench.frame(Vec::new());
+                    }
+                    let target = bench
+                        .ctx
+                        .read_response(bars::tool_button_id("preferences"))
+                        .expect("last neighbour")
+                        .rect;
+                    let mut edge = if bar.vertical() {
+                        egui::pos2(target.center().x, target.top() + target.height() * 0.2)
+                    } else {
+                        egui::pos2(target.left() + target.width() * 0.2, target.center().y)
+                    };
+                    if matches!(gesture, "trailing-edge" | "gap") {
+                        let preceding = bench
+                            .ctx
+                            .read_response(bars::tool_button_id("people"))
+                            .expect("first neighbour")
+                            .rect;
+                        edge = if bar.vertical() {
+                            egui::pos2(
+                                preceding.center().x,
+                                if gesture == "gap" {
+                                    (preceding.bottom() + target.top()) / 2.0
+                                } else {
+                                    preceding.top() + preceding.height() * 0.8
+                                },
+                            )
+                        } else {
+                            egui::pos2(
+                                if gesture == "gap" {
+                                    (preceding.right() + target.left()) / 2.0
+                                } else {
+                                    preceding.left() + preceding.width() * 0.8
+                                },
+                                preceding.center().y,
+                            )
+                        };
+                    }
+                    let before = bench.settings.clone();
+                    start_toolbar_drag(&mut bench, "inventory");
+                    let point = if matches!(gesture, "quick-centre" | "release-at-deadline") {
+                        bench.pointer(target.center(), None);
+                        target.center()
+                    } else {
+                        if matches!(gesture, "leave-centre" | "return-to-centre") {
+                            for _ in 0..6 {
+                                bench.pointer(target.center(), None);
+                            }
+                            assert!(drop_preview::current(&bench.ctx).is_none(), "grouping is armed");
+                        }
+                        for _ in 0..6 {
+                            bench.pointer(edge, None);
+                        }
+                        if gesture == "return-to-centre" {
+                            bench.pointer(target.center(), None);
+                            target.center()
+                        } else {
+                            edge
+                        }
+                    };
+                    assert_eq!(bench.settings, before, "hover never persists an edit");
+                    assert!(
+                        drop_preview::current(&bench.ctx).is_some(),
+                        "insertion preview: {gesture}, {bar:?}, {classic}, {mode:?}"
+                    );
+                    if gesture == "release-at-deadline" {
+                        bench.time += 1.0;
+                    }
+                    bench.pointer(point, Some(false));
+                    assert!(
+                        bench.settings.drawers.is_empty(),
+                        "unexpected folder: {gesture}, {bar:?}, {classic}, {mode:?}"
+                    );
+                    let expected = if matches!(gesture, "quick-centre" | "release-at-deadline" | "return-to-centre") {
+                        ["people", "preferences", "inventory"]
+                    } else {
+                        ["people", "inventory", "preferences"]
+                    };
+                    assert_eq!(
+                        bench
+                            .settings
+                            .bar(bar, &Layout::default())
+                            .iter()
+                            .map(|button| button.command.as_str())
+                            .collect::<Vec<_>>(),
+                        expected,
+                        "{gesture}, {bar:?}, {classic}, {mode:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drawer_icons_accept_drops_on_every_edge_open_or_closed_in_both_styles_and_edit_modes() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for editing in [false, true] {
+                for open in [false, true] {
+                    let (mut bench, id) = drawer_target(classic, bar, editing, open);
+                    let point = bench.ctx.read_response(bars::tool_button_id(&id)).expect("toggle").rect.center();
+                    let before = bench.settings.clone();
+                    start_toolbar_drag(&mut bench, "inventory");
+                    move_gradually(&mut bench, point);
+                    for _ in 0..4 {
+                        bench.pointer(point, None);
+                    }
+                    assert_eq!(bench.settings, before, "hover must not save");
+                    assert_eq!(drawers::is_open(&bench.ctx, &id), open, "hover must not toggle the drawer");
+                    assert!(
+                        drop_preview::current(&bench.ctx).is_none(),
+                        "icon drop takes priority over bar reordering"
+                    );
+                    let target = bench.ctx.read_response(bars::tool_button_id(&id)).expect("highlighted toggle").rect;
+                    let accent = crate::theme::Theme::default().palette().violet_light;
+                    assert!(bench.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.rect == target && rect.stroke.width == 2.0 && rect.stroke.color == accent)), "visible drawer acceptance on {bar:?}, classic={classic}, editing={editing}, open={open}");
+                    bench.pointer(point, Some(false));
+                    assert_eq!(
+                        bench.settings.drawer_of("inventory"),
+                        Some(id.as_str()),
+                        "{bar:?}, classic={classic}, editing={editing}, open={open}"
+                    );
+                    assert_eq!(
+                        bench.settings.drawers[&id]
+                            .buttons
+                            .iter()
+                            .map(|button| button.command.as_str())
+                            .collect::<Vec<_>>(),
+                        ["preferences", "inventory"]
+                    );
+                    assert!(!Bar::ALL.into_iter().any(|bar| {
+                        bench
+                            .settings
+                            .bar(bar, &Layout::default())
+                            .iter()
+                            .any(|button| button.command == "inventory")
+                    }));
+                    assert_eq!(drawers::is_open(&bench.ctx, &id), open);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drawer_icon_drops_accept_catalogue_commands_native_controls_and_independent_dividers() {
+    for command in [
+        "inventory",
+        "menu:common-build/import-menu",
+        "bar_fps",
+        "bar_chat",
+        structure::DIVIDER,
+    ] {
+        let (mut bench, id) = drawer_target(false, Bar::Right, true, false);
+        bench.settings.top.clear();
+        bench.state.search = commands::catalogue(&bench.ctx).find(command).map_or_else(
+            || label(&bars::top::button(command, "")).to_owned(),
+            |entry| label(&entry.button).to_owned(),
+        );
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let source = bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", command))))
+            .unwrap_or_else(|| panic!("catalogue source {command}, search={}", bench.state.search))
+            .center();
+        let target = bench
+            .ctx
+            .read_response(bars::tool_button_id(&id))
+            .expect("drawer icon")
+            .rect
+            .center();
+        bench.pointer(source, Some(true));
+        bench.pointer(source + Vec2::new(12.0, 0.0), None);
+        assert!(ToolbarUi::dragging(&bench.ctx), "{command}");
+        let before = bench.settings.clone();
+        for _ in 0..3 {
+            bench.pointer(target, None);
+        }
+        assert_eq!(bench.settings, before);
+        bench.pointer(target, Some(false));
+        let added = bench.settings.drawers[&id].buttons.last().expect("inserted control");
+        assert!(
+            if command == structure::DIVIDER {
+                added.command.starts_with(structure::DIVIDER_PREFIX)
+            } else {
+                added.command == command
+            },
+            "{command}"
+        );
+        assert!(!drawers::is_open(&bench.ctx, &id));
+    }
+}
+
+#[test]
+fn drawer_icon_drops_move_children_and_whole_blocks_without_losing_order_or_overrides() {
+    let (mut bench, target) = drawer_target(false, Bar::Left, true, false);
+    bench.settings.top.clear();
+    let source = drawers::create(&mut bench.settings, Bar::Right, &Layout::default());
+    bench.settings.drawers.get_mut(&source).expect("source drawer").buttons = vec![tests::button("inventory"), tests::button("people")];
+    bench.settings.appearance.insert(
+        "inventory".into(),
+        appearance::Appearance {
+            mode: Some(ButtonMode::TextOnly),
+            icon: Some("star-filled".into()),
+        },
+    );
+    drawers::set_open(&bench.ctx, &source, true);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let point = bench
+        .ctx
+        .read_response(bars::tool_button_id(&target))
+        .expect("target")
+        .rect
+        .center();
+    start_toolbar_drag(&mut bench, "inventory");
+    for _ in 0..3 {
+        bench.pointer(point, None);
+    }
+    bench.pointer(point, Some(false));
+    assert_eq!(bench.settings.drawer_of("inventory"), Some(target.as_str()));
+    assert_eq!(bench.settings.drawers[&source].buttons, vec![tests::button("people")]);
+    assert_eq!(bench.settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
+    assert_eq!(bench.settings.appearance["inventory"].icon.as_deref(), Some("star-filled"));
+
+    let (mut bench, id) = drawer_target(false, Bar::Right, true, true);
+    bench.settings.top.clear();
+    bench.settings.drawers.get_mut(&id).expect("drawer").buttons =
+        vec![tests::button("inventory"), tests::button("people"), tests::button("preferences")];
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    start_toolbar_drag(&mut bench, "inventory");
+    for _ in 0..4 {
+        bench.pointer(egui::pos2(16.0, 680.0), None);
+    }
+    assert!(drop_preview::current(&bench.ctx).is_some());
+    let target = bench.ctx.read_response(bars::tool_button_id(&id)).expect("toggle").rect.center();
+    for _ in 0..4 {
+        bench.pointer(target, None);
+    }
+    bench.pointer(target, Some(false));
+    assert_eq!(
+        bench.settings.drawers[&id]
+            .buttons
+            .iter()
+            .map(|button| button.command.as_str())
+            .collect::<Vec<_>>(),
+        ["people", "preferences", "inventory"],
+        "an existing child appends using the saved rank after a root preview"
+    );
+
+    let (mut bench, id) = drawer_target(true, Bar::Right, true, false);
+    let members = vec![tests::button("inventory"), structure::divider("block"), tests::button("people")];
+    bench.settings.top = members.clone();
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let handle = bench
+        .ctx
+        .read_response(egui::Id::unique(("toolbar_block_grip", Bar::Top, "inventory")))
+        .expect("block grip")
+        .rect
+        .center();
+    let target = bench.ctx.read_response(bars::tool_button_id(&id)).expect("target").rect.center();
+    bench.pointer(handle, Some(true));
+    bench.pointer(handle + Vec2::new(12.0, 0.0), None);
+    assert_eq!(egui::DragAndDrop::payload::<Drag>(&bench.ctx).expect("block drag").members, members);
+    for _ in 0..3 {
+        bench.pointer(target, None);
+    }
+    bench.pointer(target, Some(false));
+    assert_eq!(bench.settings.drawers[&id].buttons[1..], members);
+    assert!(bench.settings.top.is_empty());
+}
+
+#[test]
+fn drawer_icon_drops_reject_locks_self_and_nested_drawers_without_reordering_or_removal() {
+    for case in ["locked", "self", "nested"] {
+        let (mut bench, target) = drawer_target(false, Bar::Right, true, false);
+        let source = if case == "self" {
+            target.clone()
+        } else if case == "nested" {
+            drawers::create(&mut bench.settings, Bar::Top, &Layout::default())
+        } else {
+            "inventory".into()
+        };
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let point = bench
+            .ctx
+            .read_response(bars::tool_button_id(&target))
+            .expect("toggle")
+            .rect
+            .center();
+        start_toolbar_drag(&mut bench, &source);
+        if case == "locked" {
+            bench.settings.locked = true;
+        }
+        let before = bench.settings.clone();
+        for _ in 0..3 {
+            bench.pointer(point, None);
+        }
+        bench.pointer(point, Some(false));
+        assert_eq!(bench.settings, before, "{case}");
+        assert!(!drawers::is_open(&bench.ctx, &target));
+    }
+}
+
+#[test]
+fn drawer_icon_hover_survives_clearing_a_bar_preview_and_cancels_outside_the_viewport() {
+    for cancel in [false, true] {
+        let (mut bench, id) = drawer_target(true, Bar::Right, true, false);
+        let neighbour = drawers::create(&mut bench.settings, Bar::Right, &Layout::default());
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        start_toolbar_drag(&mut bench, "inventory");
+        let anchor = bench.ctx.read_response(bars::tool_button_id(&id)).expect("toggle").rect;
+        for _ in 0..4 {
+            bench.pointer(anchor.center() - Vec2::new(0.0, 60.0), None);
+        }
+        assert!(drop_preview::current(&bench.ctx).is_some(), "start with a root-bar preview");
+        let target = anchor.center();
+        let before = bench.settings.clone();
+        for _ in 0..5 {
+            bench.pointer(target, None);
+        }
+        assert!(drop_preview::current(&bench.ctx).is_none());
+        assert_eq!(bench.settings, before);
+        let accent = crate::theme::Theme::default().palette().violet_light;
+        let neighbour = bench.ctx.read_response(bars::tool_button_id(&neighbour)).expect("neighbour").rect;
+        assert!(!bench.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.rect == neighbour && rect.stroke.width == 2.0 && rect.stroke.color == accent)), "a shifted neighbour must not advertise a second drawer target");
+        let release = if cancel { egui::pos2(-20.0, 400.0) } else { target };
+        bench.pointer(release, Some(false));
+        if cancel {
+            assert_eq!(bench.settings, before);
+        } else {
+            assert_eq!(bench.settings.drawer_of("inventory"), Some(id.as_str()));
+        }
+    }
+}
+
+#[test]
+fn builder_save_back_uses_the_native_action_and_rechecks_selection_on_dispatch() {
+    const COMMAND: &str = "menu:common-build/ui-bars-save-to-object-contents";
+    for classic in [false, true] {
+        for (enabled, dispatch_enabled) in [(false, false), (true, true), (true, false)] {
+            let mut bench = Bench {
+                settings: presets::Preset::Build.layout(&Layout::default()),
+                native_top: true,
+                menu_open: false,
+                classic,
+                screen: Vec2::new(1920.0, 1080.0),
+                save_to_contents: enabled,
+                ..Default::default()
+            };
+            for _ in 0..5 {
+                bench.frame(Vec::new());
+            }
+            assert_eq!(commands::available(&bench.ctx, COMMAND), enabled);
+            let button = bench
+                .ctx
+                .read_response(bars::tool_button_id(COMMAND))
+                .expect("Builder Save back button");
+            // Unavailable toolbar controls retain their drag target. Their
+            // live availability gates execution rather than egui interaction.
+            let point = button.rect.center();
+            bench.pointer(point, Some(true));
+            bench.pointer(point, Some(false));
+            let ctx = bench.ctx.clone();
+            let p = crate::theme::Theme::default().palette();
+            let mut status = bars::islands::tests::status(true, false);
+            status.save_to_contents = dispatch_enabled;
+            let mut action = bars::BarAction::None;
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                action = bars::dispatch_menu(ui, &p, &mut bench.panels, &status);
+            });
+            assert_eq!(matches!(action, bars::BarAction::SaveToObjectContents), enabled && dispatch_enabled);
+            assert!(matches!(action, bars::BarAction::None | bars::BarAction::SaveToObjectContents));
+        }
+    }
+}
 
 struct Bench {
     ctx: egui::Context,
@@ -12,9 +2003,18 @@ struct Bench {
     classic: bool,
     time: f64,
     text: Vec<(String, Rect)>,
+    shapes: Vec<egui::epaint::ClippedShape>,
     screen: Vec2,
     notif: crate::ui::notifications::NotifUi,
     conversation_count: usize,
+    audio: crate::settings::AudioSettings,
+    audio_ui: crate::ui::audio::AudioUi,
+    media: crate::ui::audio::MediaState,
+    audio_action: crate::ui::audio::AudioAction,
+    action: bars::BarAction,
+    location_hidden: bool,
+    net_stats: bool,
+    save_to_contents: bool,
 }
 
 impl Default for Bench {
@@ -36,9 +2036,18 @@ impl Default for Bench {
             classic: false,
             time: 0.0,
             text: Vec::new(),
+            shapes: Vec::new(),
             screen: Vec2::new(1000.0, 700.0),
             notif: Default::default(),
             conversation_count: 0,
+            audio: Default::default(),
+            audio_ui: Default::default(),
+            media: Default::default(),
+            audio_action: crate::ui::audio::AudioAction::None,
+            action: bars::BarAction::None,
+            location_hidden: false,
+            net_stats: false,
+            save_to_contents: false,
         }
     }
 }
@@ -62,12 +2071,27 @@ impl Bench {
         self.pointer(source, Some(true));
         self.pointer(source + Vec2::new(12.0, 0.0), None);
         assert!(ToolbarUi::dragging(&self.ctx), "source {command}");
-        let target = match bar {
-            Bar::Top => egui::pos2(20.0, 26.0),
-            Bar::Left => egui::pos2(16.0, self.screen.y / 2.0),
-            Bar::Right => egui::pos2(self.screen.x - 16.0, self.screen.y / 2.0),
-            Bar::Bottom => egui::pos2(self.screen.x / 2.0, self.screen.y - 20.0),
-        };
+        let anchor = self
+            .settings
+            .bar(bar, &Layout::default())
+            .iter()
+            .filter(|button| !structure::is_separator(&button.command))
+            .find_map(|button| self.ctx.read_response(bars::tool_button_id(&button.command)));
+        let target = anchor.map_or_else(
+            || match bar {
+                Bar::Top => egui::pos2(20.0, 26.0),
+                Bar::Left => egui::pos2(16.0, self.screen.y / 2.0),
+                Bar::Right => egui::pos2(self.screen.x - 16.0, self.screen.y / 2.0),
+                Bar::Bottom => egui::pos2(self.screen.x / 2.0, self.screen.y - 20.0),
+            },
+            |response| {
+                if bar.vertical() {
+                    egui::pos2(response.rect.center().x, response.rect.top() + 1.0)
+                } else {
+                    egui::pos2(response.rect.left() + 1.0, response.rect.center().y)
+                }
+            },
+        );
         for _ in 0..4 {
             self.pointer(target, None);
         }
@@ -83,7 +2107,10 @@ impl Bench {
         let layout = Layout::default();
         let mut status = bars::islands::tests::status(true, false);
         status.classic_bars = self.classic;
+        status.location_hidden = self.location_hidden;
         status.conversation_thumbnails = self.conversation_count;
+        status.net_stats = self.net_stats;
+        status.save_to_contents = self.save_to_contents;
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen)),
@@ -96,7 +2123,7 @@ impl Bench {
                 self.state.prepare(&ctx, &self.settings);
                 self.state.islands = !self.classic;
                 if self.settings.composed {
-                    bars::chrome::prepare(ui, &p, &status, &self.settings, self.state.open && !self.settings.locked);
+                    bars::chrome::prepare(ui, &p, &status, &self.settings, self.state.open);
                 }
                 if self.native_top && !self.settings.composed {
                     bars::top_bars(
@@ -135,7 +2162,7 @@ impl Bench {
                     favorites: &favorites,
                     bar: Bar::Bottom,
                     style: Style::default(),
-                    editing: self.state.open && !self.settings.locked,
+                    editing: self.state.open,
                 };
                 let mut mic = bars::MicButton::default();
                 bars::top::show(
@@ -187,20 +2214,23 @@ impl Bench {
                     [true, true],
                 );
                 if self.settings.composed {
-                    bars::chrome::show(
+                    (self.action, self.audio_action) = bars::chrome::show(
                         ui,
                         &p,
                         &icons,
                         &mut self.panels,
                         &status,
-                        &mut Default::default(),
-                        &mut Default::default(),
-                        Default::default(),
+                        &mut self.audio,
+                        &mut self.audio_ui,
+                        self.media,
                         &mut self.notif,
                         Default::default(),
                         &mut self.state,
                         &self.settings,
                     );
+                }
+                if let Some(action) = bars::location_popup::show(ui, &p, &mut self.panels, &status) {
+                    self.action = action;
                 }
                 if !self.native_top {
                     menu::popup_at(
@@ -214,6 +2244,10 @@ impl Bench {
                         },
                     );
                 }
+                crate::ui::layout::set_work_area(
+                    &ctx,
+                    Rect::from_min_max(egui::pos2(52.0, 52.0), self.screen.to_pos2() - Vec2::new(52.0, 56.0)),
+                );
                 self.state.show(&ctx, &p, &layout, &self.settings);
                 self.state.commit(&layout, &mut self.settings);
             },
@@ -236,6 +2270,7 @@ impl Bench {
             gather(&shape.shape, &mut self.text);
         }
         output.textures_delta.clear();
+        self.shapes = output.shapes;
     }
 
     fn pointer(&mut self, position: Pos2, pressed: Option<bool>) {
@@ -253,16 +2288,1362 @@ impl Bench {
 }
 
 #[test]
+fn toolbar_group_glass_keeps_its_end_padding_around_the_last_native_button() {
+    fn borders(shape: &egui::Shape, clip: Rect, result: &mut Vec<Rect>) {
+        match shape {
+            egui::Shape::Rect(rect) if rect.stroke.width > 0.0 => result.push(rect.rect.intersect(clip)),
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    borders(shape, clip, result);
+                }
+            }
+            _ => {}
+        }
+    }
+    for bar in Bar::ALL {
+        for align in [Align::Start, Align::Center, Align::End] {
+            for placement in [0, 1, 2] {
+                let mut bench = Bench {
+                    native_top: true,
+                    menu_open: false,
+                    ..Default::default()
+                };
+                bench.settings.composed = true;
+                bench.settings.buttons = Some(Vec::new());
+                let gap = |id| structure::separator(id);
+                let button = |command| bars::top::button(command, "");
+                let mut buttons = vec![button("bar_fps"), gap("first")];
+                if placement == 0 {
+                    buttons.extend([button("bar_notifications"), gap("middle")]);
+                }
+                buttons.extend([button("bar_media"), button("bar_music"), button("bar_volume")]);
+                if placement != 0 {
+                    if placement == 1 {
+                        buttons.push(gap("last"));
+                    }
+                    buttons.push(button("bar_notifications"));
+                }
+                bench.settings.set_bar(bar, buttons);
+                bench.settings.style_mut(bar).align = Some(align);
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let bell = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("bar_notifications"))
+                    .expect("native bell slot")
+                    .rect;
+                let mut painted = Vec::new();
+                for shape in &bench.shapes {
+                    borders(&shape.shape, shape.clip_rect, &mut painted);
+                }
+                let face = painted
+                    .into_iter()
+                    .filter(|rect| rect.contains_rect(bell))
+                    .min_by(|a, b| a.area().total_cmp(&b.area()))
+                    .expect("bell group glass");
+                let (before, after) = if bar.vertical() {
+                    (bell.top() - face.top(), face.bottom() - bell.bottom())
+                } else {
+                    (bell.left() - face.left(), face.right() - bell.right())
+                };
+                let case = format!("{bar:?}, {align:?}, placement={placement}");
+                if placement != 2 {
+                    assert!(before >= bars::islands::PAD - 0.5, "leading glass: {before}, {case}");
+                }
+                assert!((after - bars::islands::PAD).abs() < 0.5, "trailing glass: {after}, {case}");
+            }
+        }
+    }
+}
+
+#[test]
+fn native_readouts_keep_their_live_content_during_interface_customization() {
+    for classic in [false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            menu_open: false,
+            classic,
+            screen: Vec2::new(1920.0, 1080.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        let commands = ["bar_clock", "bar_fps", "bar_balance", "bar_ping"];
+        let content: Vec<Vec<String>> = commands
+            .iter()
+            .map(|command| {
+                let rect = bench.ctx.read_response(bars::tool_button_id(command)).expect("native readout").rect;
+                let texts: Vec<_> = bench
+                    .text
+                    .iter()
+                    .filter(|(_, text_rect)| rect.contains(text_rect.center()))
+                    .map(|(text, _)| text.clone())
+                    .collect();
+                assert!(!texts.is_empty(), "live content: {command}");
+                texts
+            })
+            .collect();
+        bench.state.open = true;
+        for _ in 0..4 {
+            bench.frame(Vec::new());
+        }
+        for (command, wanted) in commands.iter().zip(content) {
+            let rect = bench
+                .ctx
+                .read_response(bars::tool_button_id(command))
+                .expect("editable readout")
+                .rect;
+            for text in wanted {
+                assert!(
+                    bench
+                        .text
+                        .iter()
+                        .any(|(actual, text_rect)| *actual == text && rect.contains(text_rect.center())),
+                    "{command} retains {text}, classic={classic}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn drawer_settings_put_own_properties_first_and_flip_the_icon_picker_beside_the_window() {
+    let (mut bench, id) = drawer_target(false, Bar::Left, false, false);
+    bench.screen = Vec2::new(1920.0, 1080.0);
+    bench.state.drawer_editor = Some(id.clone());
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let own = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-button-mode"));
+    let contents = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-default-mode"));
+    let icon = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(Id::unique(("toolbar_icon_button_rect", &id))))
+        .expect("icon button");
+    assert!(
+        own.y < icon.center().y && icon.bottom() < contents.y,
+        "own display and icon precede content defaults"
+    );
+    assert!(
+        bench
+            .ctx
+            .memory(|memory| memory.area_rect(Id::unique(("toolbar_icon_side_picker", &id))))
+            .is_none()
+    );
+    bench.pointer(icon.center(), Some(true));
+    bench.pointer(icon.center(), Some(false));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let window = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings")))
+        .expect("settings");
+    let picker = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique(("toolbar_icon_side_picker", &id))))
+        .expect("picker");
+    assert!(picker.left() >= window.right(), "picker opens on the right: {window:?}, {picker:?}");
+    let title = window.center_top() + Vec2::new(0.0, 18.0);
+    let moved = title + Vec2::new(600.0, 0.0);
+    bench.pointer(title, Some(true));
+    bench.pointer(moved, None);
+    bench.pointer(moved, Some(false));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let window = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings")))
+        .expect("moved settings");
+    let picker = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique(("toolbar_icon_side_picker", &id))))
+        .expect("moved picker");
+    assert!(picker.right() <= window.left(), "picker flips to the left: {window:?}, {picker:?}");
+    assert!(bench.ctx.content_rect().contains_rect(picker));
+}
+
+#[test]
+fn editing_intercepts_native_and_regular_buttons_without_executing_their_actions() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for command in [
+                "bar_clock",
+                "bar_fps",
+                "bar_balance",
+                "bar_volume",
+                "report_bug",
+                "inventory",
+                "speak",
+            ] {
+                let mut bench = Bench {
+                    native_top: true,
+                    classic,
+                    screen: Vec2::new(1920.0, 1080.0),
+                    ..Default::default()
+                };
+                bench.settings.compose_top();
+                bench.state.pending = Some(Edit::Insert(bar, bars::top::button(command, "folder-filled"), 0));
+                bench.state.commit(&Layout::default(), &mut bench.settings);
+                bench.state.open = true;
+                if command == "bar_volume" {
+                    bench.audio_ui.panel_open = true;
+                }
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let before = format!("{:?}", bench.panels);
+                let point = bench
+                    .ctx
+                    .read_response(bars::tool_button_id(command))
+                    .expect("editable item")
+                    .rect
+                    .center();
+                bench.pointer(point, Some(true));
+                bench.pointer(point, Some(false));
+                assert_eq!(
+                    bench.state.selected.as_deref(),
+                    Some(command),
+                    "select {command} on {bar:?}, classic={classic}"
+                );
+                assert!(matches!(bench.action, bars::BarAction::None));
+                assert_eq!(bench.audio_action, crate::ui::audio::AudioAction::None);
+                assert!(!bench.audio.muted[0]);
+                if command == "bar_volume" {
+                    assert!(
+                        bench.ctx.read_response(Id::unique("volume_panel")).is_none(),
+                        "editing never exposes an interactive volume popup"
+                    );
+                }
+                assert_eq!(format!("{:?}", bench.panels), before);
+            }
+        }
+    }
+}
+
+#[test]
+fn proximity_preview_matches_the_drop_and_hover_never_saves_on_any_edge_or_style() {
+    let task_layout = Layout::default();
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for separate in [false, true] {
+                let mut bench = Bench {
+                    native_top: true,
+                    classic,
+                    screen: Vec2::new(1920.0, 1080.0),
+                    ..Default::default()
+                };
+                bench.settings.composed = true;
+                bench.settings.top.clear();
+                bench.settings.buttons = Some(Vec::new());
+                bench
+                    .settings
+                    .set_bar(bar, vec![bars::top::button("inventory", "briefcase-filled")]);
+                bench.settings.style_mut(bar).sizing = Some(Sizing::Auto);
+                bench.state.open = true;
+                bench.state.search = catalogue::find("radar").expect("radar").label().into();
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let source = bench
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", "radar"))))
+                    .expect("radar tile")
+                    .center();
+                let anchor = bench.ctx.read_response(bars::tool_button_id("inventory")).expect("anchor").rect;
+                let axis = if bar.vertical() { Vec2::Y } else { Vec2::X };
+                let point = anchor.center()
+                    + axis
+                        * if separate {
+                            60.0
+                        } else if bar.vertical() {
+                            anchor.height() / 2.0 - 1.0
+                        } else {
+                            anchor.width() / 2.0 - 1.0
+                        };
+                let before = serde_json::to_string(&bench.settings).expect("layout before hover");
+                bench.pointer(source, Some(true));
+                bench.pointer(source + Vec2::new(12.0, 0.0), None);
+                for _ in 0..4 {
+                    bench.pointer(point, None);
+                }
+                let preview = drop_preview::current(&bench.ctx).expect("drop preview");
+                assert_eq!(preview.bar, bar, "target on {bar:?}, classic={classic}, separate={separate}");
+                assert_eq!(
+                    preview.kind,
+                    if separate {
+                        drop_preview::Kind::Group
+                    } else {
+                        drop_preview::Kind::Join
+                    }
+                );
+                assert_eq!(serde_json::to_string(&bench.settings).expect("hover"), before);
+                let snapped = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("radar"))
+                    .expect("real provisional button")
+                    .rect;
+                assert!(
+                    (preview.rect.min - snapped.min).length() < 0.5,
+                    "preview={:?}, widget={snapped:?}, edge={bar:?}, classic={classic}, separate={separate}",
+                    preview.rect
+                );
+                assert!(
+                    bench
+                        .ctx
+                        .memory(|memory| memory.area_rect(egui::Id::unique("toolbar_drop_preview").with("caption")))
+                        .is_none()
+                );
+                bench.pointer(point, Some(false));
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let final_rect = bench.ctx.read_response(bars::tool_button_id("radar")).expect("dropped button").rect;
+                assert!(
+                    (snapped.min - final_rect.min).length() < 0.5 && (snapped.max - final_rect.max).length() < 0.5,
+                    "snapped={snapped:?}, final={final_rect:?}, edge={bar:?}, classic={classic}"
+                );
+                let list = bench.settings.bar(bar, &task_layout);
+                assert_eq!(
+                    list.iter().filter(|b| structure::is_separator(&b.command)).count(),
+                    usize::from(separate)
+                );
+                assert_eq!(list.iter().filter(|b| b.command == "radar").count(), 1);
+                assert_eq!(bench.settings.location("radar", &Layout::default()), Some(bar));
+            }
+        }
+    }
+}
+
+#[test]
+fn nearby_perpendicular_drops_isolate_the_whole_group_and_floaters_or_locks_block_the_preview() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    bench.settings.left = vec![
+        bars::top::button("inventory", "briefcase-filled"),
+        bars::top::button("people", "users-filled"),
+    ];
+    bench.settings.buttons = Some(Vec::new());
+    bench.state.open = true;
+    bench.state.search = catalogue::find("radar").expect("radar").label().into();
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let source = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", "radar"))))
+        .expect("tile")
+        .center();
+    let anchor = bench
+        .ctx
+        .read_response(bars::tool_button_id("people"))
+        .expect("second control")
+        .rect;
+    bench.pointer(source, Some(true));
+    bench.pointer(source + Vec2::new(12.0, 0.0), None);
+    let editor = bench
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::unique(editor::WINDOW)))
+        .expect("editor");
+    let covered = editor.min + Vec2::new(200.0, 6.0);
+    for _ in 0..4 {
+        bench.pointer(covered, None);
+    }
+    assert!(drop_preview::current(&bench.ctx).is_none(), "an overlapping floater keeps the drop");
+    let point = anchor.center() + Vec2::new(50.0, 0.0);
+    for _ in 0..4 {
+        bench.pointer(point, None);
+    }
+    let preview = drop_preview::current(&bench.ctx).expect("detached side preview");
+    assert_eq!(preview.kind, drop_preview::Kind::Group);
+    assert_eq!(preview.rank, 2, "do not split the middle of the existing group");
+    bench.settings.locked = true;
+    bench.pointer(point, None);
+    assert!(drop_preview::current(&bench.ctx).is_none());
+    let before = serde_json::to_string(&bench.settings).expect("locked");
+    bench.pointer(point, Some(false));
+    assert_eq!(serde_json::to_string(&bench.settings).expect("locked drop"), before);
+}
+
+#[test]
+fn snapping_with_the_editor_closed_keeps_hidden_blocks_and_outer_gaps_out_of_the_final_geometry() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.top.clear();
+    bench.settings.address_visible = Some(false);
+    bench.settings.buttons = Some(vec![
+        structure::separator("outer"),
+        bars::top::button("inventory", "briefcase-filled"),
+        structure::separator("hidden"),
+        bars::top::button("bar_navigation", "map-pin-filled"),
+    ]);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let source = bench
+        .ctx
+        .read_response(bars::tool_button_id("inventory"))
+        .expect("inventory")
+        .rect
+        .center();
+    bench.pointer(source, Some(true));
+    bench.pointer(source + Vec2::new(12.0, 0.0), None);
+    let point = source + Vec2::new(50.0, 0.0);
+    for _ in 0..6 {
+        bench.pointer(point, None);
+    }
+    let preview = drop_preview::current(&bench.ctx).expect("snapped destination").rect;
+    bench.pointer(point, Some(false));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let final_rect = bench
+        .ctx
+        .read_response(bars::tool_button_id("inventory"))
+        .expect("dropped inventory")
+        .rect;
+    assert!(
+        (preview.min - final_rect.min).length() < 0.5 && (preview.max - final_rect.max).length() < 0.5,
+        "preview={preview:?}, final={final_rect:?}"
+    );
+    assert_eq!(bench.settings.address_visible, Some(false));
+}
+
+#[test]
+fn opening_and_finishing_interface_editing_exposes_empty_targets_without_saving_a_layout() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.top.clear();
+    bench.settings.buttons = Some(Vec::new());
+    let before = serde_json::to_string(&bench.settings).expect("initial layout");
+    bench.state.open = true;
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    for name in ["toolbar_left", "toolbar_right"] {
+        assert!(
+            bench
+                .ctx
+                .read_response(egui::Id::unique(("toolbar_background", name)))
+                .expect("visible empty edge")
+                .rect
+                .height()
+                > 300.0
+        );
+    }
+    let done = bench
+        .text
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-done"))
+        .expect("finish editing")
+        .1
+        .center();
+    bench.pointer(done, Some(true));
+    bench.pointer(done, Some(false));
+    assert!(!bench.state.open);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    assert!(!ToolbarUi::editing(&bench.ctx));
+    assert!(
+        bench
+            .ctx
+            .read_response(egui::Id::unique(("toolbar_background", "toolbar_left")))
+            .is_none()
+    );
+    assert_eq!(serde_json::to_string(&bench.settings).expect("unchanged layout"), before);
+}
+
+#[test]
+fn drawers_open_toggle_and_run_the_original_commands_on_each_edge_in_both_styles() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = Bench {
+                native_top: true,
+                classic,
+                screen: Vec2::new(1920.0, 1080.0),
+                ..Default::default()
+            };
+            bench.settings.compose_top();
+            let id = drawers::create(&mut bench.settings, bar, &Layout::default());
+            bench.state.pending = Some(Edit::DrawerInsert(id.clone(), bars::top::button("inventory", "folder-filled"), 0));
+            assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let point = bench
+                .ctx
+                .read_response(bars::tool_button_id(&id))
+                .expect("drawer button")
+                .rect
+                .center();
+            bench.pointer(point, Some(true));
+            bench.pointer(point, Some(false));
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let target = bench
+                .ctx
+                .read_response(egui::Id::unique(("drawer_drop", &id)))
+                .expect("expanded drawer")
+                .rect;
+            assert!(
+                Rect::from_min_size(Pos2::ZERO, bench.screen).contains_rect(target),
+                "drawer on {bar:?}: {target:?}"
+            );
+            let child = bench
+                .ctx
+                .read_response(bars::tool_button_id("inventory"))
+                .expect("drawer contents")
+                .rect
+                .center();
+            let before = bench.panels.inventory;
+            bench.pointer(child, Some(true));
+            bench.pointer(child, Some(false));
+            assert_ne!(bench.panels.inventory, before, "native action on {bar:?}, classic={classic}");
+            bench.pointer(point, Some(true));
+            bench.pointer(point, Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert!(bench.ctx.read_response(egui::Id::unique(("drawer_drop", &id))).is_none());
+        }
+    }
+}
+
+#[test]
+fn four_drawer_options_fit_without_scrolling_and_overflow_recovers_after_shrinking() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for screen in [Vec2::new(1000.0, 700.0), Vec2::new(640.0, 360.0)] {
+                for editing in [false, true] {
+                    let mut bench = Bench {
+                        native_top: true,
+                        menu_open: false,
+                        classic,
+                        screen,
+                        ..Default::default()
+                    };
+                    bench.settings.composed = true;
+                    bench.settings.buttons = Some(Vec::new());
+                    bench.settings.style_mut(bar).align = Some(Align::End);
+                    bench.state.open = editing;
+                    let id = drawers::create(&mut bench.settings, bar, &Layout::default());
+                    let small: Vec<_> = ["inventory", "worldmap", "preferences", "search"]
+                        .map(|command| bars::top::button(command, "folder-filled"))
+                        .into();
+                    drawers::set_open(&bench.ctx, &id, true);
+                    for count in [0, 4, 32, 4] {
+                        bench.settings.drawers.get_mut(&id).expect("drawer").mode = if count == 0 {
+                            ButtonMode::IconsOnly
+                        } else {
+                            ButtonMode::IconsWithText
+                        };
+                        bench.settings.drawers.get_mut(&id).expect("drawer").buttons = if count == 0 {
+                            Vec::new()
+                        } else if count == 4 {
+                            small.clone()
+                        } else {
+                            catalogue::COMMANDS
+                                .iter()
+                                .filter(|command| !structure::is_block(command.id) && !structure::is_separator(command.id))
+                                .take(count)
+                                .map(|command| bars::top::button(command.id, command.icon))
+                                .collect()
+                        };
+                        for _ in 0..4 {
+                            bench.frame(Vec::new());
+                        }
+                        let (content, viewport) = bench
+                            .ctx
+                            .data(|data| data.get_temp::<(Vec2, Rect)>(egui::Id::unique(("drawer_scroll_geometry", &id))))
+                            .expect("drawer viewport");
+                        let target = bench
+                            .ctx
+                            .read_response(egui::Id::unique(("drawer_drop", &id)))
+                            .expect("drawer surface")
+                            .rect;
+                        let case = format!("{bar:?}, classic={classic}, {screen:?}, editing={editing}, count={count}");
+                        assert!(
+                            Rect::from_min_size(Pos2::ZERO, screen).contains_rect(target),
+                            "in viewport: {target:?}, {case}"
+                        );
+                        assert!(
+                            content.x <= viewport.width() + 0.5,
+                            "horizontal fit: {content:?}, {viewport:?}, {case}"
+                        );
+                        if count <= 4 {
+                            assert!(
+                                content.y <= viewport.height() + 0.5,
+                                "four buttons need no scroll: {content:?}, {viewport:?}, {case}"
+                            );
+                            for button in small.iter().take(count) {
+                                let response = bench
+                                    .ctx
+                                    .read_response(bars::tool_button_id(&button.command))
+                                    .expect("drawer option");
+                                assert!(
+                                    viewport.expand(0.5).contains_rect(response.rect),
+                                    "visible option: {}, {case}",
+                                    button.command
+                                );
+                            }
+                        } else {
+                            assert!(content.y > viewport.height() + 1.0, "overflow scrolls: {case}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drawer_geometry_follows_effective_modes_and_recovers_after_label_changes() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for editing in [false, true] {
+                let (mut bench, id) = drawer_target(classic, bar, editing, true);
+                bench.settings.top.retain(|button| button.command != "inventory");
+                let commands = ["inventory", "worldmap", "preferences"];
+                bench.settings.drawers.get_mut(&id).expect("drawer").buttons = commands.map(tests::button).into();
+                for phase in 0..4 {
+                    let drawer = bench.settings.drawers.get_mut(&id).expect("drawer");
+                    drawer.mode = if phase == 1 {
+                        ButtonMode::IconsWithText
+                    } else {
+                        ButtonMode::IconsOnly
+                    };
+                    bench.settings.appearance.clear();
+                    if phase == 1 {
+                        for command in commands {
+                            bench.settings.appearance.insert(
+                                command.into(),
+                                appearance::Appearance {
+                                    mode: Some(ButtonMode::IconsOnly),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    } else if phase == 2 {
+                        bench.settings.appearance.insert(
+                            "worldmap".into(),
+                            appearance::Appearance {
+                                mode: Some(ButtonMode::TextOnly),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    for _ in 0..4 {
+                        bench.frame(Vec::new());
+                    }
+                    let rects = commands.map(|command| bench.ctx.read_response(bars::tool_button_id(command)).expect("drawer child").rect);
+                    let vertical = !bar.vertical() || phase == 2;
+                    for pair in rects.windows(2) {
+                        assert!(
+                            if vertical {
+                                pair[1].top() >= pair[0].bottom()
+                            } else {
+                                pair[1].left() >= pair[0].right()
+                            },
+                            "{bar:?}, classic={classic}, editing={editing}, phase={phase}: {rects:?}"
+                        );
+                    }
+                    let (content, viewport) = bench
+                        .ctx
+                        .data(|data| data.get_temp::<(Vec2, Rect)>(Id::unique(("drawer_scroll_geometry", &id))))
+                        .expect("scroll geometry");
+                    assert!(
+                        content.x <= viewport.width() + 0.5 && content.y <= viewport.height() + 0.5,
+                        "unnecessary scrolling: {content:?}, {viewport:?}"
+                    );
+                    if phase != 2 {
+                        assert!(
+                            (if vertical { viewport.width() } else { viewport.height() }) < 40.0,
+                            "icon-only cross-axis must be compact: {viewport:?}"
+                        );
+                    }
+                    assert!(bench.ctx.content_rect().contains_rect(viewport));
+                    let toggle = bench.ctx.read_response(bars::tool_button_id(&id)).expect("toggle").rect;
+                    assert!(!toggle.intersects(viewport));
+                    if bar.vertical() && phase != 2 {
+                        let outer = bench
+                            .ctx
+                            .memory(|memory| memory.area_rect(Id::unique(("toolbar_drawer", &id))))
+                            .expect("drawer frame");
+                        assert!(
+                            (rects[0].center().y - toggle.center().y).abs() < 0.5,
+                            "aligned icon row: {rects:?}, {toggle:?}"
+                        );
+                        assert!(
+                            (outer.height() - toggle.height() - bars::islands::PAD * 2.0).abs() < 0.5,
+                            "same block height: {outer:?}, {toggle:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn horizontal_drawers_insert_along_x_and_only_scroll_when_content_overflows() {
+    for classic in [false, true] {
+        for bar in [Bar::Left, Bar::Right] {
+            let (mut bench, id) = drawer_target(classic, bar, false, true);
+            bench.settings.drawers.get_mut(&id).expect("drawer").mode = ButtonMode::IconsOnly;
+            bench.settings.drawers.get_mut(&id).expect("drawer").buttons = ["preferences", "worldmap", "search"].map(tests::button).into();
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let first = bench.ctx.read_response(bars::tool_button_id("preferences")).expect("first").rect;
+            let second = bench.ctx.read_response(bars::tool_button_id("worldmap")).expect("second").rect;
+            let target = egui::pos2((first.right() + second.left()) / 2.0, first.center().y);
+            start_toolbar_drag(&mut bench, "inventory");
+            for _ in 0..3 {
+                bench.pointer(target, None);
+            }
+            bench.pointer(target, Some(false));
+            assert_eq!(
+                bench.settings.drawers[&id]
+                    .buttons
+                    .iter()
+                    .map(|button| button.command.as_str())
+                    .collect::<Vec<_>>(),
+                ["preferences", "inventory", "worldmap", "search"]
+            );
+            assert!(!bench.panels.inventory, "dropping does not activate Inventory");
+            bench.screen = Vec2::new(640.0, 360.0);
+            let small = bench.settings.drawers[&id].buttons.clone();
+            for overflow in [true, false] {
+                bench.settings.drawers.get_mut(&id).expect("drawer").buttons = if overflow {
+                    catalogue::COMMANDS
+                        .iter()
+                        .filter(|command| !structure::is_block(command.id) && !structure::is_separator(command.id))
+                        .take(32)
+                        .map(|command| bars::top::button(command.id, command.icon))
+                        .collect()
+                } else {
+                    small.clone()
+                };
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let (content, viewport) = bench
+                    .ctx
+                    .data(|data| data.get_temp::<(Vec2, Rect)>(Id::unique(("drawer_scroll_geometry", &id))))
+                    .expect("scroll geometry");
+                assert_eq!(
+                    content.x > viewport.width() + 0.5,
+                    overflow,
+                    "{bar:?}, classic={classic}: {content:?}, {viewport:?}"
+                );
+                assert!(
+                    content.y <= viewport.height() + 0.5,
+                    "clipped row on {bar:?}, classic={classic}, overflow={overflow}: {content:?}, {viewport:?}"
+                );
+                assert!(bench.ctx.content_rect().contains_rect(viewport));
+            }
+        }
+    }
+}
+
+#[test]
+fn native_icon_blocks_follow_drawer_rows_and_labels_restore_columns() {
+    for classic in [false, true] {
+        for bar in [Bar::Left, Bar::Right] {
+            let (mut bench, id) = drawer_target(classic, bar, false, true);
+            bench.conversation_count = 4;
+            bench.settings.drawers.get_mut(&id).expect("drawer").buttons =
+                ["bar_conversations", "bar_volume", "preferences"].map(tests::button).into();
+            bench.settings.drawers.get_mut(&id).expect("drawer").mode = ButtonMode::IconsOnly;
+            for label in [false, true, false] {
+                if label {
+                    bench.settings.appearance.insert(
+                        "preferences".into(),
+                        appearance::Appearance {
+                            mode: Some(ButtonMode::IconsWithText),
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    bench.settings.appearance.remove("preferences");
+                }
+                for _ in 0..4 {
+                    bench.frame(Vec::new());
+                }
+                let conversations = bench
+                    .ctx
+                    .read_response(bars::tool_button_id("bar_conversations"))
+                    .expect("conversation icons")
+                    .rect;
+                let volume = bench.ctx.read_response(bars::tool_button_id("bar_volume")).expect("volume").rect;
+                assert_eq!(
+                    conversations.height() > conversations.width(),
+                    label,
+                    "{bar:?}, classic={classic}: {conversations:?}"
+                );
+                assert!(if label {
+                    volume.top() >= conversations.bottom()
+                } else {
+                    volume.left() >= conversations.right()
+                });
+            }
+        }
+    }
+}
+
+#[test]
+fn overflowing_horizontal_drawers_leave_their_toggle_accessible() {
+    for classic in [false, true] {
+        for bar in [Bar::Top, Bar::Bottom] {
+            let mut bench = Bench {
+                native_top: true,
+                menu_open: false,
+                classic,
+                screen: Vec2::new(640.0, 360.0),
+                ..Default::default()
+            };
+            bench.settings.composed = true;
+            bench.settings.buttons = Some(Vec::new());
+            let id = drawers::create(&mut bench.settings, bar, &Layout::default());
+            bench.settings.drawers.get_mut(&id).expect("drawer").buttons = catalogue::COMMANDS
+                .iter()
+                .filter(|command| !structure::is_block(command.id) && !structure::is_separator(command.id))
+                .take(32)
+                .map(|command| bars::top::button(command.id, command.icon))
+                .collect();
+            drawers::set_open(&bench.ctx, &id, true);
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let anchor = bench.ctx.read_response(bars::tool_button_id(&id)).expect("drawer toggle").rect;
+            let panel = bench
+                .ctx
+                .read_response(egui::Id::unique(("drawer_drop", &id)))
+                .expect("open drawer")
+                .rect;
+            assert!(
+                !anchor.intersects(panel),
+                "toggle covered on {bar:?}, classic={classic}: {anchor:?}, {panel:?}"
+            );
+            bench.pointer(anchor.center(), Some(true));
+            bench.pointer(anchor.center(), Some(false));
+            for _ in 0..3 {
+                bench.frame(Vec::new());
+            }
+            assert!(!drawers::is_open(&bench.ctx, &id));
+        }
+    }
+}
+
+#[test]
+fn compact_drawer_settings_stay_above_the_panel_and_edit_name_and_inherited_display() {
+    let mut bench = Bench {
+        native_top: true,
+        menu_open: false,
+        screen: Vec2::new(640.0, 360.0),
+        ..Default::default()
+    };
+    bench.settings.composed = true;
+    bench.settings.buttons = Some(Vec::new());
+    let id = drawers::create(&mut bench.settings, Bar::Left, &Layout::default());
+    bench.settings.drawers.get_mut(&id).expect("drawer").buttons = ["inventory", "worldmap", "preferences", "search"]
+        .map(|command| bars::top::button(command, "folder-filled"))
+        .into();
+    drawers::set_open(&bench.ctx, &id, true);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    assert!(!bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-drawer")));
+    assert!(
+        bench
+            .ctx
+            .data(|data| data.get_temp::<Rect>(egui::Id::unique(("drawer_settings_button", &id))))
+            .is_none()
+    );
+    let toggle = bench.ctx.read_response(bars::tool_button_id(&id)).expect("toggle").rect.center();
+    for pressed in [true, false] {
+        bench.frame(vec![
+            egui::Event::PointerMoved(toggle),
+            egui::Event::PointerButton {
+                pos: toggle,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    for key in ["toolbar-drawer-settings", "toolbar-interface-edit"] {
+        assert!(
+            bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+            "context entry {key}"
+        );
+    }
+    let edit = bench
+        .text
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-drawer-settings"))
+        .expect("edit drawer")
+        .1
+        .center();
+    bench.pointer(edit, Some(true));
+    bench.pointer(edit, Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert_eq!(bench.state.drawer_editor.as_deref(), Some(id.as_str()));
+    let name = bench
+        .ctx
+        .read_response(egui::Id::unique(("drawer_name", &id)))
+        .expect("name field")
+        .rect
+        .center();
+    bench.pointer(name, Some(true));
+    bench.pointer(name, Some(false));
+    bench.frame(vec![egui::Event::Text("Tools".into())]);
+    assert_eq!(bench.settings.left[0].tooltip, "Tools");
+    let window = bench
+        .ctx
+        .memory(|memory| memory.area_rect(Id::unique("toolbar_drawer_settings")))
+        .expect("settings");
+    bench.frame(vec![
+        egui::Event::PointerMoved(window.center()),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: Vec2::new(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: Default::default(),
+        },
+    ]);
+    for _ in 0..20 {
+        bench.frame(Vec::new());
+    }
+    let mode_label = super::mode_rows()[1].2;
+    let contents = menu_point(&bench, aurora_i18n::tr!("toolbar-drawer-default-mode"));
+    let choice = bench
+        .text
+        .iter()
+        .find(|(text, rect)| text == mode_label && rect.center().y > contents.y)
+        .expect("icon-only radio")
+        .1
+        .center();
+    bench.pointer(choice, Some(true));
+    bench.pointer(choice, Some(false));
+    assert_eq!(bench.settings.drawers[&id].mode, ButtonMode::IconsOnly);
+    bench.state.drawer_editor = None;
+    bench.settings.appearance.insert(
+        "inventory".into(),
+        appearance::Appearance {
+            mode: Some(ButtonMode::IconsWithText),
+            ..Default::default()
+        },
+    );
+    for mode in [ButtonMode::IconsOnly, ButtonMode::TextOnly, ButtonMode::IconsWithText] {
+        bench.state.pending = Some(Edit::DrawerOptions(
+            id.clone(),
+            "Tools".into(),
+            mode,
+            appearance::get(&bench.ctx, &id),
+        ));
+        bench.state.commit(&Layout::default(), &mut bench.settings);
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+        assert!(
+            bench
+                .text
+                .iter()
+                .any(|(text, _)| text == label(&bars::top::button("inventory", ""))),
+            "explicit override survives {mode:?}"
+        );
+        assert_eq!(
+            bench.text.iter().any(|(text, _)| text == label(&bars::top::button("worldmap", ""))),
+            mode != ButtonMode::IconsOnly,
+            "drawer inheritance {mode:?}"
+        );
+    }
+}
+
+#[test]
+fn editing_can_drag_a_catalogue_button_into_a_drawer_and_back_to_a_toolbar() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1920.0, 1080.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    let id = drawers::create(&mut bench.settings, Bar::Right, &Layout::default());
+    bench.state.open = true;
+    bench.state.search = aurora_i18n::tr!("common-inventory").into();
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let drawer = bench
+        .ctx
+        .read_response(bars::tool_button_id(&id))
+        .expect("drawer button")
+        .rect
+        .center();
+    bench.pointer(drawer, Some(true));
+    bench.pointer(drawer, Some(false));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let source = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", "inventory"))))
+        .expect("inventory tile")
+        .center();
+    let target = bench
+        .ctx
+        .read_response(egui::Id::unique(("drawer_drop", &id)))
+        .expect("drawer drop target")
+        .rect
+        .center();
+    bench.pointer(source, Some(true));
+    bench.pointer(source + Vec2::new(12.0, 0.0), None);
+    assert!(ToolbarUi::dragging(&bench.ctx));
+    for _ in 0..4 {
+        bench.pointer(target, None);
+    }
+    bench.pointer(target, Some(false));
+    assert_eq!(bench.settings.drawer_of("inventory"), Some(id.as_str()));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let source = bench
+        .ctx
+        .read_response(bars::tool_button_id("inventory"))
+        .expect("drawer item")
+        .rect
+        .center();
+    let target = bench
+        .ctx
+        .read_response(bars::tool_button_id("people"))
+        .expect("bottom destination")
+        .rect;
+    let target = egui::pos2(target.right() - 1.0, target.center().y);
+    bench.pointer(source, Some(true));
+    bench.pointer(source + Vec2::new(12.0, 0.0), None);
+    assert!(ToolbarUi::dragging(&bench.ctx));
+    for _ in 0..4 {
+        bench.pointer(target, None);
+    }
+    bench.pointer(target, Some(false));
+    assert_eq!(bench.settings.location("inventory", &Layout::default()), Some(Bar::Bottom));
+    assert_eq!(bench.settings.drawer_of("inventory"), None);
+    assert!(!bench.settings.drawers.contains_key(&id), "the emptied source drawer disappears");
+}
+
+#[test]
+fn separator_sizes_and_springs_follow_every_edge_and_window_resize_in_both_styles() {
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            let mut bench = Bench {
+                native_top: true,
+                classic,
+                screen: Vec2::new(1600.0, 900.0),
+                ..Default::default()
+            };
+            bench.settings.composed = true;
+            bench.settings.top.clear();
+            bench.settings.buttons = Some(Vec::new());
+            let buttons = vec![
+                tests::button("inventory"),
+                structure::separator("fixed"),
+                tests::button("people"),
+                structure::separator("spring"),
+                tests::button("preferences"),
+            ];
+            match bar {
+                Bar::Top => bench.settings.top = buttons,
+                Bar::Bottom => bench.settings.buttons = Some(buttons),
+                Bar::Left => bench.settings.left = buttons,
+                Bar::Right => bench.settings.right = buttons,
+            }
+            for (id, size, stretch) in [("separator:fixed", 64.0, false), ("separator:spring", 12.0, true)] {
+                bench.state.pending = Some(Edit::Separator(id.into(), structure::SeparatorStyle { size, stretch }));
+                assert!(bench.state.commit(&Layout::default(), &mut bench.settings));
+            }
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let extent = |bench: &Bench, command: &str| {
+                let rect = bench.ctx.read_response(bars::tool_button_id(command)).expect("separator slot").rect;
+                assert!(
+                    Rect::from_min_size(Pos2::ZERO, bench.screen).contains_rect(rect),
+                    "{command} on {bar:?}, classic={classic}: {rect:?}"
+                );
+                if bar.vertical() { rect.height() } else { rect.width() }
+            };
+            assert!(
+                (extent(&bench, "separator:fixed") - 64.0).abs() < 0.5,
+                "fixed on {bar:?}, classic={classic}"
+            );
+            let spring = extent(&bench, "separator:spring");
+            assert!(spring > 100.0, "spring on {bar:?}, classic={classic}: {spring}");
+            bench.screen += Vec2::new(240.0, 180.0);
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            assert!((extent(&bench, "separator:fixed") - 64.0).abs() < 0.5);
+            assert!(extent(&bench, "separator:spring") > spring + 100.0);
+        }
+    }
+}
+
+#[test]
+fn a_separators_context_opens_its_settings_and_the_switch_commits_only_that_instance() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.settings.compose_top();
+    bench.settings.top.insert(1, structure::separator("configured"));
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let point = bench
+        .ctx
+        .read_response(bars::tool_button_id("separator:configured"))
+        .expect("separator")
+        .rect
+        .center();
+    for pressed in [true, false] {
+        bench.frame(vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            },
+        ]);
+    }
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    let entry = bench
+        .text
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-separator-settings"))
+        .expect("separator settings entry")
+        .1
+        .center();
+    bench.pointer(entry, Some(true));
+    bench.pointer(entry, Some(false));
+    for _ in 0..3 {
+        bench.frame(Vec::new());
+    }
+    assert!(
+        bench
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::unique("toolbar_separator_settings")))
+            .is_some()
+    );
+    let toggle = bench
+        .text
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-separator-stretch"))
+        .expect("stretch switch")
+        .1
+        .center();
+    bench.pointer(toggle, Some(true));
+    bench.pointer(toggle, Some(false));
+    assert!(bench.settings.separators["separator:configured"].stretch);
+    assert_eq!(bench.settings.separators.len(), 1);
+}
+
+#[test]
+fn separate_chrome_controls_keep_their_native_actions_on_every_edge() {
+    use crate::ui::audio::AudioAction;
+    for classic in [false, true] {
+        for bar in Bar::ALL {
+            for in_drawer in [false, true] {
+                for command in [
+                    "bar_status",
+                    "bar_balance",
+                    "bar_clock",
+                    "bar_fps",
+                    "bar_media",
+                    "bar_music",
+                    "bar_volume",
+                ] {
+                    let mut bench = Bench {
+                        native_top: true,
+                        classic,
+                        screen: Vec2::new(1920.0, 1080.0),
+                        ..Default::default()
+                    };
+                    bench.media.media_available = true;
+                    bench.media.music_available = true;
+                    bench.settings.compose_top();
+                    let button = bars::top::button(command, "");
+                    if in_drawer {
+                        let id = drawers::create(&mut bench.settings, bar, &Layout::default());
+                        drawers::set_open(&bench.ctx, &id, true);
+                        bench.state.pending = Some(Edit::DrawerInsert(id, button, 0));
+                    } else {
+                        bench.state.pending = Some(Edit::Insert(bar, button, 0));
+                    }
+                    bench.state.commit(&Layout::default(), &mut bench.settings);
+                    for _ in 0..4 {
+                        bench.frame(Vec::new());
+                    }
+                    let point = bench
+                        .ctx
+                        .read_response(bars::tool_button_id(command))
+                        .expect("native control")
+                        .rect
+                        .center();
+                    bench.pointer(point, Some(true));
+                    bench.pointer(point, Some(false));
+                    match command {
+                        "bar_status" => assert!(
+                            egui::Popup::is_id_open(&bench.ctx, egui::Id::unique("bars_island_status").with("popup")),
+                            "status on {bar:?}, classic={classic}, drawer={in_drawer}, target={point:?}"
+                        ),
+                        "bar_balance" => assert!(matches!(bench.action, bars::BarAction::BuyCurrency)),
+                        "bar_clock" => assert!(matches!(bench.action, bars::BarAction::SystemIsland(_))),
+                        "bar_fps" => assert!(bench.panels.perf),
+                        "bar_media" => assert_eq!(bench.audio_action, AudioAction::ToggleMedia),
+                        "bar_music" => assert_eq!(bench.audio_action, AudioAction::ToggleMusic),
+                        "bar_volume" => {
+                            assert!(bench.audio.muted[0]);
+                            assert_eq!(bench.audio_action, AudioAction::Changed);
+                            for _ in 0..3 {
+                                bench.frame(Vec::new());
+                            }
+                            let panel = bench
+                                .ctx
+                                .memory(|memory| memory.area_rect(egui::Id::unique("volume_panel")))
+                                .expect("volume panel");
+                            assert!(
+                                Rect::from_min_size(Pos2::ZERO, bench.screen).contains_rect(panel),
+                                "volume on {bar:?}, classic={classic}: {panel:?}"
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn conversation_blocks_switch_between_column_and_row_on_every_edge() {
+    for classic in [false, true] {
+        let mut bench = Bench {
+            native_top: true,
+            classic,
+            conversation_count: 6,
+            screen: Vec2::new(1600.0, 900.0),
+            ..Default::default()
+        };
+        bench.settings.compose_top();
+        for bar in [Bar::Left, Bar::Right, Bar::Bottom, Bar::Top] {
+            bench.state.pending = Some(Edit::Insert(bar, bars::top::button("bar_conversations", "messages-filled"), 0));
+            bench.state.commit(&Layout::default(), &mut bench.settings);
+            for _ in 0..4 {
+                bench.frame(Vec::new());
+            }
+            let slot = bench
+                .ctx
+                .read_response(bars::tool_button_id("bar_conversations"))
+                .expect("conversation block")
+                .rect;
+            if bar.vertical() {
+                assert!(slot.height() > slot.width() * 2.0, "column on {bar:?}, classic={classic}: {slot:?}");
+                assert!(slot.width() < 50.0);
+            } else {
+                assert!(slot.width() > slot.height() * 2.0, "row on {bar:?}, classic={classic}: {slot:?}");
+            }
+            assert!(
+                Rect::from_min_size(Pos2::ZERO, bench.screen).contains_rect(slot),
+                "visible conversation block on {bar:?}, classic={classic}: {slot:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn catalogue_level_changes_do_not_edit_bars_and_search_finds_advanced_commands_from_main() {
+    let mut bench = Bench {
+        native_top: true,
+        screen: Vec2::new(1600.0, 900.0),
+        ..Default::default()
+    };
+    bench.state.open = true;
+    let before = serde_json::to_string(&bench.settings).expect("settings");
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    assert!(!bench.state.advanced_catalogue);
+    let advanced = bench
+        .text
+        .iter()
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-section-advanced"))
+        .expect("advanced section")
+        .1
+        .center();
+    bench.pointer(advanced, Some(true));
+    bench.pointer(advanced, Some(false));
+    assert!(bench.state.advanced_catalogue);
+    bench.state.advanced_catalogue = false;
+    bench.state.search = "settings_debug".into();
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    let found = bench
+        .ctx
+        .read_response(egui::Id::unique(("toolbar_tile", "settings_debug")))
+        .expect("advanced search result");
+    assert!(found.interact_rect.is_positive());
+    assert_eq!(serde_json::to_string(&bench.settings).expect("settings"), before);
+}
+
+#[test]
 fn native_blocks_and_repeatable_separators_drag_to_every_edge_in_both_layouts() {
     for classic in [false, true] {
         for bar in Bar::ALL {
             for command in [
                 structure::SEPARATOR,
                 "bar_navigation",
-                "bar_account",
-                "bar_system",
+                "bar_status",
+                "bar_balance",
+                "bar_clock",
+                "bar_ping",
+                "bar_fps",
+                "bar_network",
+                "bar_media",
+                "bar_music",
+                "bar_volume",
                 "bar_notifications",
                 "bar_conversations",
+                "bar_chat",
             ] {
                 let mut bench = Bench {
                     native_top: true,
@@ -271,6 +3652,12 @@ fn native_blocks_and_repeatable_separators_drag_to_every_edge_in_both_layouts() 
                     ..Default::default()
                 };
                 bench.settings.compose_top();
+                let separators_before = bench
+                    .settings
+                    .bar(bar, &Layout::default())
+                    .iter()
+                    .filter(|button| structure::is_separator(&button.command))
+                    .count();
                 bench.palette_drag(command, bar);
                 if command == structure::SEPARATOR {
                     let count = bench
@@ -279,7 +3666,7 @@ fn native_blocks_and_repeatable_separators_drag_to_every_edge_in_both_layouts() 
                         .iter()
                         .filter(|b| structure::is_separator(&b.command))
                         .count();
-                    assert!(count > usize::from(bar == Bar::Top) * 4, "separator on {bar:?}, classic={classic}");
+                    assert_eq!(count, separators_before + 1, "separator on {bar:?}, classic={classic}");
                     bench.palette_drag(command, bar);
                     let next = bench
                         .settings
@@ -535,7 +3922,7 @@ fn native_aurora_menu_drags_append_beyond_existing_top_buttons() {
                 classic,
                 ..Default::default()
             };
-            bench.settings.top = ToolbarSettings::default().top;
+            bench.settings.top = vec![bars::top::button("location_bar", "map-pin-filled")];
             if !parent.is_empty() {
                 bench.settings.menu_layout.clear();
             }
@@ -638,7 +4025,7 @@ fn locked_menu_rows_do_not_start_a_layout_drag() {
 }
 
 #[test]
-fn a_menu_entry_right_click_opens_its_appearance_editor_and_saves_its_own_mode() {
+fn a_menu_entry_right_click_offers_direct_display_choices_and_saves_its_own_mode() {
     const IMPORT: &str = "menu:common-build/import-menu";
     let mut bench = Bench::default();
     for _ in 0..3 {
@@ -663,27 +4050,17 @@ fn a_menu_entry_right_click_opens_its_appearance_editor_and_saves_its_own_mode()
     for _ in 0..3 {
         bench.frame(Vec::new());
     }
-    let edit = bench
-        .text
-        .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-button-appearance"))
-        .expect("appearance context action")
-        .1
-        .center();
-    bench.pointer(edit, Some(true));
-    bench.pointer(edit, Some(false));
-    for _ in 0..3 {
-        bench.frame(Vec::new());
-    }
-    let editor = bench
-        .ctx
-        .memory(|memory| memory.area_rect(egui::Id::unique("toolbar_button_appearance")))
-        .expect("appearance editor");
-    assert!(editor.height() <= 520.0, "the search field must not stretch the editor: {editor:?}");
+    assert!(
+        bench
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::unique("toolbar_button_appearance")))
+            .is_none(),
+        "normal context choices do not open an appearance floater"
+    );
     let text_mode = bench
         .text
         .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-mode-text"))
+        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-button-text"))
         .expect("text-only radio")
         .1
         .center();
@@ -732,10 +4109,10 @@ fn a_real_menu_drag_can_return_an_entry_to_another_submenu() {
             .iter()
             .any(|entry| entry.button.command == IMPORT)
     );
-    assert_eq!(
-        catalogue.children("menu:common-build", &bench.settings.menu_layout)[0]
-            .button
-            .command,
-        IMPORT
-    );
+    let children = catalogue.children("menu:common-build", &bench.settings.menu_layout);
+    let inserted = children
+        .iter()
+        .position(|entry| entry.button.command == IMPORT)
+        .expect("moved Import");
+    assert_eq!(children[inserted + 1].button.command, "menu:common-build/poser-title");
 }

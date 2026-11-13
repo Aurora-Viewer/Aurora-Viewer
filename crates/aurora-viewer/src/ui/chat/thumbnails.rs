@@ -63,6 +63,24 @@ struct Slot {
     island: bool,
     layer: Option<egui::LayerId>,
     clip: Option<Rect>,
+    vertical: bool,
+}
+
+impl Slot {
+    fn padding(self) -> f32 {
+        let height = if self.vertical { islands::HEIGHT } else { self.rect.height() };
+        (height - self.size) / 2.0
+    }
+
+    fn square(self, index: usize) -> Rect {
+        let along = self.padding() + index as f32 * (self.size + GAP);
+        let min = if self.vertical {
+            Pos2::new(self.rect.center().x - self.size / 2.0, self.rect.top() + along)
+        } else {
+            Pos2::new(self.rect.left() + along, self.rect.top() + self.padding())
+        };
+        Rect::from_min_size(min, Vec2::splat(self.size))
+    }
 }
 
 impl Thumbnails {
@@ -88,6 +106,7 @@ impl Thumbnails {
                 island,
                 layer: None,
                 clip: None,
+                vertical: false,
             });
         }
     }
@@ -131,13 +150,14 @@ pub fn reserve_top(ctx: &egui::Context, rect: Rect, size: f32, island: bool) {
                     island,
                     layer: None,
                     clip: None,
+                    vertical: false,
                 },
             ),
         )
     });
 }
 
-pub fn reserve_toolbar(ctx: &egui::Context, rect: Rect, size: f32, layer: egui::LayerId, clip: Rect) {
+pub fn reserve_toolbar(ctx: &egui::Context, rect: Rect, size: f32, layer: egui::LayerId, clip: Rect, vertical: bool) {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|data| {
         data.insert_temp(
@@ -150,6 +170,7 @@ pub fn reserve_toolbar(ctx: &egui::Context, rect: Rect, size: f32, layer: egui::
                     island: false,
                     layer: Some(layer),
                     clip: Some(clip),
+                    vertical,
                 },
             ),
         )
@@ -264,6 +285,18 @@ pub fn show(
 ) {
     let ctx = ui.ctx().clone();
     let t = &st.thumbnails;
+    let editing = crate::ui::toolbar::ToolbarUi::intercepting(&ctx);
+    if editing && top_slot(&ctx).is_none() {
+        return;
+    }
+    if t.place == ChatThumbnails::TopRight
+        && crate::ui::toolbar::appearance::settings(&ctx)
+            .drawer_of("bar_conversations")
+            .is_some()
+        && top_slot(&ctx).is_none()
+    {
+        return;
+    }
     if t.items.is_empty() {
         return;
     }
@@ -290,14 +323,19 @@ pub fn show(
                 island: true,
                 layer: None,
                 clip: None,
+                vertical: false,
             }
         }
     };
+    let _context = crate::ui::toolbar::native_context::Scope::new(&ctx, "bar_conversations");
     let now = ctx.input(|i| i.time);
     st.thumbnails.flashes.begin(now);
     let mut moving = false;
     if slot.island {
         islands::area(&ctx, p, "conversation_thumbnails", slot.rect, |ui| {
+            if editing {
+                crate::ui::toolbar::edit_mode::preview(ui);
+            }
             moving = row(ui, p, world, st, panels, pics, images, slot, now);
         });
     } else {
@@ -305,10 +343,17 @@ pub fn show(
             egui::UiBuilder::new()
                 .max_rect(slot.rect)
                 .layer_id(slot.layer.unwrap_or(ui.layer_id()))
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                .layout(if slot.vertical {
+                    egui::Layout::top_down(egui::Align::Center)
+                } else {
+                    egui::Layout::left_to_right(egui::Align::Center)
+                }),
         );
         // the counters overhang the bar's thumbnails
         child.set_clip_rect(slot.rect.expand(8.0).intersect(slot.clip.unwrap_or(Rect::EVERYTHING)));
+        if editing {
+            crate::ui::toolbar::edit_mode::preview(&mut child);
+        }
         moving = row(&mut child, p, world, st, panels, pics, images, slot, now);
     }
     if moving {
@@ -330,8 +375,8 @@ fn row(
     now: f64,
 ) -> bool {
     let ctx = ui.ctx().clone();
-    let pad = (slot.rect.height() - slot.size) / 2.0;
-    let fits = fit(slot.rect.width(), slot.size, pad);
+    let pad = slot.padding();
+    let fits = fit(if slot.vertical { slot.rect.height() } else { slot.rect.width() }, slot.size, pad);
     // what is unread in a conversation on screen is being read
     let items: Vec<(Uuid, usize)> = st
         .thumbnails
@@ -340,12 +385,7 @@ fn row(
         .map(|&(id, n)| (id, if shown(&ctx, st, panels.chat, id) { 0 } else { n }))
         .collect();
     let (in_sight, rest) = arrange(&items, fits);
-    let square = |i: usize| {
-        Rect::from_min_size(
-            Pos2::new(slot.rect.left() + pad + i as f32 * (slot.size + GAP), slot.rect.top() + pad),
-            Vec2::splat(slot.size),
-        )
-    };
+    let square = |i| slot.square(i);
     let mut moving = false;
     for (at, &i) in in_sight.iter().enumerate() {
         let (id, unread) = items[i];
@@ -498,6 +538,37 @@ fn more(ui: &mut egui::Ui, p: &Palette, world: &World, items: &[(Uuid, usize)], 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vertical_slots_keep_square_icons_in_order_and_reserve_the_overflow_space() {
+        let slot = Slot {
+            rect: Rect::from_min_size(Pos2::new(10.0, 40.0), Vec2::new(120.0, row_width(4, 28.0, 4.0))),
+            size: 28.0,
+            island: false,
+            layer: None,
+            clip: None,
+            vertical: true,
+        };
+        let (shown, rest) = arrange(&items(&[0, 0, 0, 0, 3, 1]), fit(slot.rect.height(), slot.size, slot.padding()));
+        assert_eq!(shown, [0, 4, 5]);
+        assert_eq!(rest, [1, 2, 3]);
+        for index in 0..4 {
+            let rect = slot.square(index);
+            assert_eq!(rect.size(), Vec2::splat(28.0));
+            assert_eq!(rect.center().x, slot.rect.center().x);
+            assert!(slot.rect.contains_rect(rect));
+            if index > 0 {
+                assert!(rect.top() > slot.square(index - 1).bottom());
+            }
+        }
+        let row = Slot {
+            rect: Rect::from_min_size(slot.rect.min, Vec2::new(slot.rect.height(), 36.0)),
+            vertical: false,
+            ..slot
+        };
+        assert_eq!(row.square(0).center().y, row.square(1).center().y);
+        assert!(row.square(1).left() > row.square(0).right());
+    }
 
     fn items(unread: &[usize]) -> Vec<(Uuid, usize)> {
         unread

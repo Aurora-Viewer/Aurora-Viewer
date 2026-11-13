@@ -248,6 +248,7 @@ mod tests {
             }
             let options = super::super::ScriptOptions {
                 mono: true,
+                luau: super::super::Luau::Off,
                 running: true,
                 experience: associated_id,
             };

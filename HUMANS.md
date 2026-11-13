@@ -290,7 +290,9 @@ and the menus adapt when the console is resized. Creating a release splits
 the number, the minimum version, the cache and the settings into four
 screens, with the chosen version and a summary before confirmation. The
 minimum version makes the update required for the versions below it: they
-cannot log in before updating.
+can still log in for a grace period, then not before updating. A new
+minimum asks for that period: 12 hours usually, 24, 72 or 6 hours, or none
+for a release that cannot wait.
 
 When it opens, the tool checks the environment: tools, repository behind
 GitHub, outdated Legacy Viewer sources, Rust not up to date, font, GitHub

@@ -11,11 +11,20 @@
 //! unlike the Legacy Viewer's per-account toolbar persistence.
 
 pub(crate) mod appearance;
+pub(crate) mod blocks;
 mod catalogue;
 pub(crate) mod catalogue_view;
 pub(crate) mod commands;
+pub(crate) mod drawers;
+mod drop_preview;
+pub(crate) mod edit_mode;
 mod editor;
+pub(crate) mod native_context;
+pub(crate) mod notecards;
+pub(crate) mod presets;
+pub(crate) mod profile;
 pub(crate) mod structure;
+mod surface_drop;
 
 pub use catalogue::COMMANDS;
 
@@ -130,7 +139,7 @@ impl BarStyle {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolbarSettings {
     /// The bottom toolbar. None follows the skin; Some([]) deliberately
@@ -148,41 +157,47 @@ pub struct ToolbarSettings {
     pub right_style: BarStyle,
     pub top: Vec<ToolButton>,
     pub top_style: BarStyle,
+    /// Shared defaults of each root block, repeated for its members so that
+    /// removing its first command preserves the block's presentation.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub block_styles: std::collections::BTreeMap<String, BarStyle>,
     pub appearance: std::collections::BTreeMap<String, appearance::Appearance>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub separators: std::collections::BTreeMap<String, structure::SeparatorStyle>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub drawers: std::collections::BTreeMap<String, drawers::Drawer>,
     /// Explicit menu placements; commands absent here follow their native menu.
     pub menu_layout: std::collections::BTreeMap<String, Vec<String>>,
     /// None preserves the existing visible address bar.
     pub address_visible: Option<bool>,
     /// Older layouts acquire the native top controls once, keeping their buttons.
     pub composed: bool,
-}
-
-impl Default for ToolbarSettings {
-    fn default() -> Self {
-        Self {
-            buttons: None,
-            locked: false,
-            vr_button_migrated: false,
-            left: Vec::new(),
-            right: Vec::new(),
-            bottom_style: Default::default(),
-            left_style: Default::default(),
-            right_style: Default::default(),
-            top: vec![ToolButton {
-                command: "location_bar".into(),
-                icon: "map-pin-filled".into(),
-                tooltip: String::new(),
-            }],
-            top_style: Default::default(),
-            appearance: Default::default(),
-            menu_layout: Default::default(),
-            address_visible: None,
-            composed: false,
-        }
-    }
+    /// Migrate the formerly implicit nearby-chat island once. Removal stays saved.
+    pub chat_composed: bool,
 }
 
 impl ToolbarSettings {
+    pub fn compose_chat(&mut self, layout: &Layout) -> bool {
+        if self.chat_composed {
+            return false;
+        }
+        if self.location("bar_chat", layout).is_none() {
+            let mut buttons = self.buttons(layout).to_vec();
+            if !buttons.is_empty() {
+                buttons.insert(0, structure::separator("chat-tools"));
+            }
+            buttons.insert(0, crate::ui::bars::top::button("bar_chat", "message-filled"));
+            self.buttons = Some(buttons);
+            self.block_styles
+                .entry("bar_chat".into())
+                .or_default()
+                .align
+                .get_or_insert(Align::Start);
+        }
+        self.chat_composed = true;
+        true
+    }
+
     pub fn show_address_bar(&mut self, visible: bool) {
         self.address_visible = Some(visible);
         if visible
@@ -195,6 +210,7 @@ impl ToolbarSettings {
                 .chain(&self.left)
                 .chain(&self.right)
                 .any(|button| button.command == "bar_navigation")
+            && self.drawer_of("bar_navigation").is_none()
         {
             if !self.top.is_empty() {
                 self.top.push(structure::separator(&uuid::Uuid::new_v4().to_string()));
@@ -204,12 +220,90 @@ impl ToolbarSettings {
     }
     pub fn compose_top(&mut self) -> bool {
         if self.composed {
-            return false;
+            return self.split_chrome_blocks();
         }
         self.top = structure::top_buttons(&self.top);
         self.composed = true;
+        self.split_chrome_blocks();
         self.sanitize();
         true
+    }
+
+    /// Replace aggregates in place, on every edge, without restoring removed
+    /// controls or moving user separators. No version flag is needed: new IDs
+    /// never expand again. Custom appearances follow each derived control.
+    fn split_chrome_blocks(&mut self) -> bool {
+        if !self
+            .top
+            .iter()
+            .chain(&self.left)
+            .chain(&self.right)
+            .chain(self.buttons.iter().flatten())
+            .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
+        {
+            return false;
+        }
+        let present: std::collections::HashSet<_> = self
+            .top
+            .iter()
+            .chain(&self.left)
+            .chain(&self.right)
+            .chain(self.buttons.iter().flatten())
+            .map(|button| button.command.clone())
+            .collect();
+        let mut changed = false;
+        for list in [&mut self.top, &mut self.left, &mut self.right]
+            .into_iter()
+            .chain(self.buttons.iter_mut())
+        {
+            let mut next = Vec::new();
+            for button in list.iter() {
+                let parts: &[&str] = match button.command.as_str() {
+                    "bar_account" => &["bar_status", structure::SEPARATOR, "bar_balance"],
+                    "bar_system" => &[
+                        "bar_clock",
+                        "bar_ping",
+                        "bar_network",
+                        structure::SEPARATOR,
+                        "bar_fps",
+                        structure::SEPARATOR,
+                        "bar_media",
+                        "bar_music",
+                        "bar_volume",
+                    ],
+                    _ => {
+                        next.push(button.clone());
+                        continue;
+                    }
+                };
+                changed = true;
+                for &id in parts {
+                    if id == structure::SEPARATOR {
+                        next.push(structure::separator(&uuid::Uuid::new_v4().to_string()));
+                        continue;
+                    }
+                    if present.contains(id) {
+                        continue;
+                    }
+                    let command = catalogue::find(id).expect("internal chrome command");
+                    next.push(ToolButton {
+                        command: id.into(),
+                        icon: command.icon.into(),
+                        tooltip: String::new(),
+                    });
+                    if let Some(appearance) = self.appearance.get(&button.command).cloned() {
+                        self.appearance.entry(id.into()).or_insert(appearance);
+                    }
+                }
+            }
+            if changed && *list != next {
+                *list = next;
+            }
+        }
+        if changed {
+            self.sanitize();
+        }
+        changed
     }
 
     pub fn set_bug_visible(&mut self, layout: &Layout, shown: bool) -> bool {
@@ -248,6 +342,9 @@ impl ToolbarSettings {
             }
             for buttons in [&mut self.top, &mut self.left, &mut self.right] {
                 buttons.retain(|button| button.command != "report_bug");
+            }
+            for drawer in self.drawers.values_mut() {
+                drawer.buttons.retain(|button| button.command != "report_bug");
             }
         }
         true
@@ -308,31 +405,105 @@ impl ToolbarSettings {
 
     /// The toolbar `command` stands in (LLToolBarView::hasCommand).
     pub fn location(&self, command: &str, layout: &Layout) -> Option<Bar> {
-        Bar::ALL
-            .into_iter()
-            .find(|&bar| self.bar(bar, layout).iter().any(|b| b.command == command))
+        Bar::ALL.into_iter().find(|&bar| {
+            self.bar(bar, layout).iter().any(|b| {
+                b.command == command
+                    || self
+                        .drawers
+                        .get(&b.command)
+                        .is_some_and(|drawer| drawer.buttons.iter().any(|b| b.command == command))
+            })
+        })
     }
 
-    /// No empty command, and each command once over the four toolbars
+    /// Owned identity so callers can compare a live control before and after a
+    /// commit, including moves into, within and out of a placed drawer.
+    pub fn command_placement(&self, command: &str, layout: &Layout) -> Option<(Bar, Option<String>, usize)> {
+        for bar in Bar::ALL {
+            for (index, button) in self.bar(bar, layout).iter().enumerate() {
+                if button.command == command {
+                    return Some((bar, None, index));
+                }
+                if let Some(index) = self
+                    .drawers
+                    .get(&button.command)
+                    .and_then(|drawer| drawer.buttons.iter().position(|b| b.command == command))
+                {
+                    return Some((bar, Some(button.command.clone()), index));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn drawer_of(&self, command: &str) -> Option<&str> {
+        self.drawers
+            .iter()
+            .find(|(id, drawer)| {
+                drawer.buttons.iter().any(|b| b.command == command)
+                    && self
+                        .top
+                        .iter()
+                        .chain(&self.left)
+                        .chain(&self.right)
+                        .chain(self.buttons.iter().flatten())
+                        .any(|b| &b.command == *id)
+            })
+            .map(|(id, _)| id.as_str())
+    }
+
+    pub(super) fn set_bar(&mut self, bar: Bar, buttons: Vec<ToolButton>) {
+        match bar {
+            Bar::Top => self.top = buttons,
+            Bar::Left => self.left = buttons,
+            Bar::Right => self.right = buttons,
+            Bar::Bottom => self.buttons = Some(buttons),
+        }
+    }
+
+    /// No empty or retired command (`howto`), and each command once over the four toolbars
     /// (the bottom one first).
     pub fn sanitize(&mut self) {
+        self.separators.retain(|command, style| {
+            *style = style.sanitized();
+            command.starts_with(structure::PREFIX) && *style != Default::default()
+        });
         let mut seen = std::collections::HashSet::new();
         if let Some(buttons) = &mut self.buttons {
             for button in buttons.iter_mut() {
-                if button.command == structure::SEPARATOR {
+                if matches!(button.command.as_str(), structure::SEPARATOR | structure::DIVIDER) {
                     *button = structure::instantiate(button.clone());
                 }
             }
-            buttons.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
+            buttons.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
         for side in [&mut self.left, &mut self.right, &mut self.top] {
             for button in side.iter_mut() {
-                if button.command == structure::SEPARATOR {
+                if matches!(button.command.as_str(), structure::SEPARATOR | structure::DIVIDER) {
                     *button = structure::instantiate(button.clone());
                 }
             }
-            side.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
+            side.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
+        self.drawers.retain(|id, drawer| {
+            if !drawers::is_drawer(id) || !seen.contains(id) {
+                return false;
+            }
+            for button in &mut drawer.buttons {
+                if matches!(button.command.as_str(), structure::SEPARATOR | structure::DIVIDER) {
+                    *button = structure::instantiate(button.clone());
+                }
+            }
+            drawer.buttons.retain(|b| {
+                !b.command.is_empty()
+                    && !catalogue::retired(&b.command)
+                    && !drawers::is_drawer(&b.command)
+                    && seen.insert(b.command.clone())
+            });
+            true
+        });
+        // Block membership is reconciled on edits with the actual skin layout;
+        // the default skin cannot validate an inherited custom bottom toolbar.
     }
 }
 
@@ -341,17 +512,32 @@ struct Drag {
     button: ToolButton,
     /// The toolbar it was taken from; None from the window's catalogue.
     from: Option<Bar>,
+    /// A whole root block; empty for an individual control.
+    members: Vec<ToolButton>,
 }
 
 enum Edit {
     Insert(Bar, ToolButton, usize),
-    SeparatorAfter(Bar, Option<String>),
+    InsertGroup(Bar, ToolButton, usize),
+    MoveBlock(Bar, Vec<ToolButton>, usize, bool),
+    DrawerBlock(String, Vec<ToolButton>, usize),
+    RemoveBlock(Vec<String>),
+    DividerAfter(Bar, Option<String>),
     Remove(String),
     Restore,
     Clear,
     Lock,
     Style(Bar, BarStyle),
+    BlockStyle(Bar, String, BarStyle),
     Appearance(String, appearance::Appearance),
+    Separator(String, structure::SeparatorStyle),
+    Split(Bar, String, bool),
+    Merge(Bar, String, bool),
+    Fold(Bar, String),
+    Unfold(Bar, String),
+    DrawerInsert(String, ToolButton, usize),
+    DrawerFromDrop(Bar, String, Vec<ToolButton>, ButtonMode),
+    DrawerOptions(String, String, ButtonMode, appearance::Appearance),
     MenuInsert(String, String, usize),
 }
 
@@ -391,6 +577,8 @@ impl Shown {
 #[derive(Default)]
 pub struct ToolbarUi {
     pub open: bool,
+    pub preset_request: Option<presets::Preset>,
+    pub(crate) notecards: notecards::State,
     pub ao_quick: super::ao::quick::Quick,
     pub voice_options: bool,
     pub movelock_options: bool,
@@ -402,6 +590,9 @@ pub struct ToolbarUi {
     /// The photo reel holds no photo (given by the app): its button is
     /// dimmed. And its quick view is open: the button is lit.
     pub photo_roll_empty: bool,
+    /// The grid has a Destination Guide (given by the app): without one,
+    /// its button is dimmed (GridFeatureCheck destination_guide).
+    pub destinations: bool,
     pub photo_roll_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,
@@ -409,6 +600,13 @@ pub struct ToolbarUi {
     pub shown: Shown,
     /// "Show Friends Only" is on (FSRenderFriendsOnly).
     pub friends_only_active: bool,
+    pub show_name_tags: bool,
+    /// World › HUDs › Show HUDs is on (given by the app): the HUDs button
+    /// lights while they are hidden.
+    pub show_huds: bool,
+    /// The interface is hidden (given by the app): its button, reached
+    /// through a screen edge, lights and shows it again.
+    pub interface_hidden: bool,
     pub movelock_status: String,
     /// The violet of the Grid status button's flash (0: none), given by
     /// the app on a new entry of the grid's status feed.
@@ -431,13 +629,42 @@ pub struct ToolbarUi {
     /// The window's filter.
     search: String,
     category: Option<catalogue_view::Category>,
+    advanced_catalogue: bool,
     appearance_editor: appearance::Editor,
+    drawer_appearance_editor: appearance::Editor,
+    context_icon_picker: appearance::ContextPicker,
+    pub(crate) selected: Option<String>,
+    drawer_editor: Option<String>,
+    pub(crate) drawer_action: Option<crate::ui::bars::BarAction>,
+}
+
+impl ToolbarUi {
+    pub(crate) fn profile_applied(&mut self, ctx: &egui::Context) {
+        self.open = true;
+        self.pending = None;
+        self.confirm = None;
+        self.preset_request = None;
+        self.selected = None;
+        self.drawer_editor = None;
+        self.drawer_action = None;
+        self.appearance_editor = Default::default();
+        self.drawer_appearance_editor = Default::default();
+        self.context_icon_picker = Default::default();
+        egui::DragAndDrop::clear_payload(ctx);
+        egui::Popup::close_all(ctx);
+    }
 }
 
 /// Built-in labels stay live when the language changes, including saved
 /// buttons; a skin may rename a command, and keeps its name.
 pub fn label(button: &ToolButton) -> &str {
+    if drawers::is_drawer(&button.command) && button.tooltip.is_empty() {
+        return aurora_i18n::tr!("toolbar-drawer");
+    }
     if structure::is_separator(&button.command) {
+        return aurora_i18n::text("toolbar-spacer");
+    }
+    if structure::is_divider(&button.command) {
         return aurora_i18n::text("toolbar-separator");
     }
     if button.command.starts_with(commands::PREFIX)
@@ -474,7 +701,7 @@ fn catalogue(layout: &Layout) -> Vec<ToolButton> {
         tooltip: String::new(),
     }));
     let mut seen = std::collections::HashSet::new();
-    buttons.retain(|b| seen.insert(b.command.clone()));
+    buttons.retain(|b| !matches!(b.command.as_str(), "bar_account" | "bar_system") && seen.insert(b.command.clone()));
     buttons.sort_by_cached_key(|b| sort_key(label(b)));
     buttons
 }
@@ -511,6 +738,17 @@ fn insertion(rects: &[Rect], pos: egui::Pos2, vertical: bool) -> usize {
 }
 
 impl ToolbarUi {
+    /// Shared final row of interface-customization context menus.
+    pub(crate) fn interface_edit_menu(&mut self, ui: &mut egui::Ui, p: &Palette, command: Option<&str>) {
+        if native_context::item(ui, p) {
+            self.open = true;
+            let settings = appearance::settings(ui.ctx());
+            self.selected = command
+                .filter(|command| settings.location(command, &Layout::default()).is_some())
+                .map(str::to_owned);
+        }
+    }
+
     /// Closed menus with no menu-command buttons need no per-frame traversal.
     pub fn needs_commands(&self, ctx: &egui::Context, settings: Option<&ToolbarSettings>) -> bool {
         self.open
@@ -524,23 +762,148 @@ impl ToolbarUi {
                     .chain(&settings.top)
                     .chain(&settings.left)
                     .chain(&settings.right)
+                    .chain(settings.drawers.values().flat_map(|drawer| &drawer.buttons))
                     .any(|button| button.command.starts_with(commands::PREFIX))
             })
     }
 
-    /// The right-click menu of a toolbar or of one of its buttons:
-    /// Firestorm's (menu_toolbars_horizontal.xml, _vertical.xml), with
-    /// Aurora's microphone options and favourites access.
+    /// Individual properties stay available without exposing layout operations.
+    pub(crate) fn button_appearance_option(&mut self, ui: &mut egui::Ui, p: &Palette, button: Option<&ToolButton>, locked: bool) {
+        if let Some(button) = button
+            && structure::is_separator(&button.command)
+            && menu::item_if(ui, p, "arrows-horizontal", aurora_i18n::tr!("toolbar-separator-settings"), !locked)
+        {
+            self.appearance_editor.select(button);
+        }
+        if let Some(button) = button
+            && !structure::is_separator(&button.command)
+            && !structure::is_divider(&button.command)
+            && !structure::is_block(&button.command)
+        {
+            if self.open {
+                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
+                    self.appearance_editor.select(button);
+                }
+            } else {
+                let settings = appearance::settings(ui.ctx());
+                if let Some(value) = self.context_icon_picker.options(ui, p, button, &button.command, &settings, locked) {
+                    self.pending = Some(Edit::Appearance(button.command.clone(), value));
+                }
+            }
+        }
+    }
+
+    fn action_options(&mut self, ui: &mut egui::Ui, p: &Palette, button: Option<&ToolButton>) {
+        if button.is_some_and(|b| b.command == "speak")
+            && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
+        {
+            self.voice_options = true;
+        }
+        if button.is_some_and(|b| matches!(b.command.as_str(), "movelock" | "move_lock"))
+            && menu::item(ui, p, "lock-filled", aurora_i18n::tr!("movelock-options"))
+        {
+            self.movelock_options = true;
+        }
+        // the Conversations button: open the window, leave nearby chat
+        // out of its flash
+        if button.is_some_and(|b| b.command == "conversations") {
+            menu::separator(ui, p);
+            if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby) {
+                self.conversations_menu = Some(choice);
+            }
+        }
+        // the Favorites button: where the favourites live
+        if button.is_some_and(|b| b.command == "favorites")
+            && let Some(a) = crate::ui::bars::favorites::access_choice(ui, p, self.favorites_access)
+        {
+            self.access_choice = Some(a);
+        }
+    }
+
     pub fn context(&mut self, response: &Response, p: &Palette, bar: Bar, style: Style, button: Option<&ToolButton>, locked: bool) {
+        let settings = appearance::settings(&response.ctx);
+        let bar = button
+            .and_then(|b| settings.location(&b.command, &Layout::default()))
+            .unwrap_or(bar);
         // Buttons such as Favorites also own a left-click dropdown.
         menu::context_menu_of_button(response, p, |ui| {
-            if let Some(button) = button
-                && !structure::is_separator(&button.command)
-                && !structure::is_block(&button.command)
-                && !locked
-                && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"))
+            if let Some(button) = button.filter(|button| drawers::is_drawer(&button.command)) {
+                if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-drawer-unfold"), !locked) {
+                    self.pending = Some(Edit::Unfold(bar, button.command.clone()));
+                }
+                native_context::start_group(ui, p);
+                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-drawer-settings"), !locked) {
+                    self.drawer_editor = Some(button.command.clone());
+                }
+                self.interface_edit_menu(ui, p, Some(&button.command));
+                return;
+            }
+            if !self.open {
+                self.action_options(ui, p, button);
+                native_context::start_group(ui, p);
+                self.button_appearance_option(ui, p, button, locked);
+                self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
+                return;
+            }
+            if self.open
+                && let Some(button) = button
             {
-                self.appearance_editor.select(button);
+                let (_, buttons) = drawers::contents(&settings, bar, &button.command, &Layout::default());
+                for before in [true, false] {
+                    if structure::is_separator(&button.command) && !before {
+                        continue;
+                    }
+                    if !structure::is_separator(&button.command)
+                        && menu::item_if(
+                            ui,
+                            p,
+                            "separator-vertical",
+                            aurora_i18n::text(if before {
+                                "toolbar-edit-split-before"
+                            } else {
+                                "toolbar-edit-split-after"
+                            }),
+                            !locked && edit_mode::split_allowed(&buttons, &button.command, before),
+                        )
+                    {
+                        self.pending = Some(Edit::Split(bar, button.command.clone(), before));
+                    }
+                    if menu::item_if(
+                        ui,
+                        p,
+                        "arrows-join",
+                        aurora_i18n::text(if structure::is_separator(&button.command) {
+                            "toolbar-edit-merge-groups"
+                        } else if before {
+                            "toolbar-edit-merge-before"
+                        } else {
+                            "toolbar-edit-merge-after"
+                        }),
+                        !locked && edit_mode::merge_range(&buttons, &button.command, before).is_some(),
+                    ) {
+                        self.pending = Some(Edit::Merge(bar, button.command.clone(), before));
+                    }
+                }
+                if drawers::is_drawer(&button.command) {
+                    if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-drawer-settings")) {
+                        self.drawer_editor = Some(button.command.clone());
+                    }
+                    if menu::item_if(ui, p, "folder-open-filled", aurora_i18n::tr!("toolbar-drawer-unfold"), !locked) {
+                        self.pending = Some(Edit::Unfold(bar, button.command.clone()));
+                    }
+                } else if !structure::is_separator(&button.command)
+                    && settings.drawer_of(&button.command).is_none()
+                    && menu::item_if(
+                        ui,
+                        p,
+                        "folder-filled",
+                        aurora_i18n::tr!("toolbar-drawer-fold"),
+                        !locked && edit_mode::fold_allowed(&buttons, &button.command),
+                    )
+                {
+                    self.pending = Some(Edit::Fold(bar, button.command.clone()));
+                }
+                menu::separator(ui, p);
             }
             if !locked && let Some(button) = button {
                 if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("toolbar-remove")) {
@@ -548,80 +911,55 @@ impl ToolbarUi {
                 }
                 menu::separator(ui, p);
             }
-            if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-edit")) {
-                self.open = true;
-            }
             if !locked && menu::item(ui, p, "separator-vertical", aurora_i18n::tr!("toolbar-add-separator")) {
                 self.open = true;
-                self.pending = Some(Edit::SeparatorAfter(bar, button.map(|button| button.command.clone())));
+                self.pending = Some(Edit::DividerAfter(bar, button.map(|button| button.command.clone())));
             }
-            if button.is_some_and(|b| b.command == "speak")
-                && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
-            {
-                self.voice_options = true;
-            }
-            if button.is_some_and(|b| matches!(b.command.as_str(), "movelock" | "move_lock"))
-                && menu::item(ui, p, "lock-filled", aurora_i18n::tr!("movelock-options"))
-            {
-                self.movelock_options = true;
-            }
-            // the Conversations button: open the window, leave nearby chat
-            // out of its flash
-            if button.is_some_and(|b| b.command == "conversations") {
+            self.action_options(ui, p, button);
+            if button.is_none_or(|b| settings.drawer_of(&b.command).is_none()) {
                 menu::separator(ui, p);
-                if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby) {
-                    self.conversations_menu = Some(choice);
-                }
-            }
-            // the Favorites button: where the favourites live
-            if button.is_some_and(|b| b.command == "favorites")
-                && let Some(a) = crate::ui::bars::favorites::access_choice(ui, p, self.favorites_access)
-            {
-                self.access_choice = Some(a);
-            }
-            menu::separator(ui, p);
-            let mut next = None;
-            for (align, icon, label) in align_rows(bar) {
-                if menu::check(ui, p, icon, label, style.align == align, true) {
-                    next = Some(BarStyle {
-                        align: Some(align),
-                        ..Default::default()
-                    });
-                }
-            }
-            menu::separator(ui, p);
-            for (mode, icon, label) in mode_rows() {
-                if menu::check(ui, p, icon, label, style.mode == mode, true) {
-                    next = Some(BarStyle {
-                        mode: Some(mode),
-                        ..Default::default()
-                    });
-                }
-            }
-            if !bar.vertical() {
-                menu::separator(ui, p);
-                for (sizing, icon, label) in sizing_rows() {
-                    if menu::check(ui, p, icon, label, style.sizing == sizing, true) {
-                        next = Some(BarStyle {
-                            sizing: Some(sizing),
-                            ..Default::default()
-                        });
+                if let Some(button) = button.filter(|button| !structure::is_separator(&button.command)) {
+                    blocks::style_menu(ui, p, self, &settings, bar, &button.command, style);
+                } else {
+                    let mut next = None;
+                    for (align, icon, label) in align_rows(bar) {
+                        if menu::check(ui, p, icon, label, style.align == align, true) {
+                            next = Some(BarStyle {
+                                align: Some(align),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    // The background controls the whole edge; button/block defaults
+                    // belong to the selected block in customization mode.
+                    if let Some(next) = next {
+                        self.pending = Some(Edit::Style(bar, next));
                     }
                 }
-            }
-            if let Some(next) = next {
-                self.pending = Some(Edit::Style(bar, next));
             }
             menu::separator(ui, p);
             if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("toolbar-locked"), locked, true) {
                 self.pending = Some(Edit::Lock);
             }
+            native_context::start_group(ui, p);
+            self.button_appearance_option(ui, p, button, locked);
+            self.interface_edit_menu(ui, p, button.map(|button| button.command.as_str()));
         });
     }
 
     pub fn button(&mut self, response: &Response, bar: Bar, style: Style, button: &ToolButton, p: &Palette, locked: bool) {
+        let style = blocks::style(&response.ctx, &button.command, style);
         self.context(response, p, bar, style, Some(button), locked);
+        self.button_source(response, bar, style, button, locked);
+        if self.open && structure::is_separator(&button.command) && response.clicked() {
+            self.selected = Some(button.command.clone());
+            self.appearance_editor.select(button);
+        }
+    }
+
+    pub(crate) fn button_source(&self, response: &Response, bar: Bar, style: Style, button: &ToolButton, locked: bool) {
         self.bar_source(response, button, bar, locked);
+        surface_drop::collect(response, bar, style, button);
     }
 
     pub fn bar_source(&self, response: &Response, button: &ToolButton, bar: Bar, locked: bool) {
@@ -629,6 +967,7 @@ impl ToolbarUi {
             response.dnd_set_drag_payload(Drag {
                 button: button.clone(),
                 from: Some(bar),
+                members: Vec::new(),
             });
         }
     }
@@ -642,47 +981,207 @@ impl ToolbarUi {
     /// `response` covers the toolbar `bar` whose buttons stand at `rects`:
     /// while a button is dragged over it, the marker of where it would go;
     /// released there, it goes there.
-    pub fn drop_bar(&mut self, response: &Response, bar: Bar, rects: &[Rect], p: &Palette, locked: bool) {
-        if locked || response.dnd_hover_payload::<Drag>().is_none() {
-            return;
-        }
-        let Some(pos) = response.ctx.pointer_interact_pos() else { return };
-        let vertical = bar.vertical();
-        let rank = insertion(rects, pos, vertical);
-        let r = response.rect;
-        let stroke = egui::Stroke::new(2.0, p.violet_light);
-        let painter = response.ctx.layer_painter(response.layer_id);
-        if vertical {
-            let y = rects
-                .get(rank)
-                .map_or_else(|| rects.last().map_or(r.top() + 3.0, |b| b.bottom() + 1.0), |b| b.top() - 1.0)
-                .clamp(r.top() + 1.0, r.bottom() - 1.0);
-            painter.line_segment([egui::pos2(r.left() + 2.0, y), egui::pos2(r.right() - 2.0, y)], stroke);
-        } else {
-            let x = rects
-                .get(rank)
-                .map_or_else(|| rects.last().map_or(r.left() + 3.0, |b| b.right() + 2.0), |b| b.left() - 2.0)
-                .clamp(r.left() + 1.0, r.right() - 1.0);
-            painter.line_segment([egui::pos2(x, r.top() + 2.0), egui::pos2(x, r.bottom() - 2.0)], stroke);
-        }
-        if let Some(drag) = response.dnd_release_payload::<Drag>() {
-            self.pending = Some(Edit::Insert(bar, drag.button.clone(), rank));
-        }
+    pub fn drop_bar(&mut self, response: &Response, bar: Bar, buttons: &[ToolButton], rects: &[Rect], locked: bool) {
+        drop_preview::collect(response, bar, buttons, rects, locked);
     }
 
     /// Save once for a real edit, never on hover, during dragging or on a no-op.
     pub fn commit(&mut self, layout: &Layout, settings: &mut ToolbarSettings) -> bool {
+        self.commit_impl(layout, settings, false)
+    }
+
+    pub(crate) fn layout_configuration(ctx: &egui::Context) -> Option<std::sync::Arc<ToolbarSettings>> {
+        drop_preview::configuration(ctx)
+    }
+
+    pub(crate) fn is_preview_item(ctx: &egui::Context, command: &str) -> bool {
+        drop_preview::is_item(ctx, command)
+    }
+
+    fn proposed_drop(settings: &ToolbarSettings, layout: &Layout, bar: Bar, drag: &Drag, rank: usize, separate: bool) -> ToolbarSettings {
+        let mut proposed = settings.clone();
+        let mut transaction = Self {
+            pending: Some(if !drag.members.is_empty() {
+                Edit::MoveBlock(bar, drag.members.clone(), rank, separate)
+            } else if separate {
+                Edit::InsertGroup(bar, drag.button.clone(), rank)
+            } else {
+                Edit::Insert(bar, drag.button.clone(), rank)
+            }),
+            ..Default::default()
+        };
+        transaction.commit_impl(layout, &mut proposed, true);
+        proposed
+    }
+
+    fn commit_impl(&mut self, layout: &Layout, settings: &mut ToolbarSettings, provisional: bool) -> bool {
+        let moving: Vec<String> = match &self.pending {
+            Some(Edit::Insert(_, button, _) | Edit::InsertGroup(_, button, _)) => vec![button.command.clone()],
+            Some(Edit::MoveBlock(_, members, ..) | Edit::DrawerBlock(_, members, _)) => {
+                members.iter().map(|button| button.command.clone()).collect()
+            }
+            _ => Vec::new(),
+        };
+        let counts = settings
+            .drawers
+            .iter()
+            .map(|(id, drawer)| (id.clone(), drawer.buttons.len()))
+            .collect();
+        let changed = self.apply_edit(layout, settings, provisional);
+        if changed {
+            drawers::remove_emptied(settings, layout, &counts);
+            blocks::normalize_styles(settings, layout, &moving);
+        }
+        changed
+    }
+
+    fn apply_edit(&mut self, layout: &Layout, settings: &mut ToolbarSettings, provisional: bool) -> bool {
         let Some(edit) = self.pending.take() else { return false };
-        if let Edit::SeparatorAfter(bar, anchor) = edit {
-            let list = settings.bar(bar, layout);
-            let rank = anchor
-                .as_ref()
-                .and_then(|anchor| list.iter().position(|button| button.command == *anchor))
-                .map_or(list.len(), |index| index + 1);
-            self.pending = Some(Edit::Insert(bar, structure::separator(&uuid::Uuid::new_v4().to_string()), rank));
-            return self.commit(layout, settings);
+        match &edit {
+            Edit::DrawerFromDrop(bar, target, sources, mode) => {
+                return drawers::group_drop(settings, layout, *bar, target, sources, *mode);
+            }
+            Edit::DrawerOptions(id, name, mode, value) => {
+                return drawers::update_options(settings, layout, id, name, *mode, value);
+            }
+            Edit::MoveBlock(bar, members, rank, separate) => {
+                return blocks::move_to(
+                    settings,
+                    layout,
+                    members,
+                    blocks::Destination::Bar(*bar, *rank, *separate),
+                    provisional,
+                );
+            }
+            Edit::DrawerBlock(id, members, rank) => {
+                return blocks::move_to(settings, layout, members, blocks::Destination::Drawer(id, *rank), provisional);
+            }
+            Edit::RemoveBlock(commands) => {
+                if settings.locked {
+                    return false;
+                }
+                let mut changed = false;
+                for command in commands {
+                    self.pending = Some(Edit::Remove(command.clone()));
+                    changed |= self.commit_impl(layout, settings, provisional);
+                }
+                return changed;
+            }
+            Edit::DividerAfter(bar, anchor) => {
+                if settings.locked {
+                    return false;
+                }
+                let (drawer, list) = drawers::contents(settings, *bar, anchor.as_deref().unwrap_or(""), layout);
+                let rank = anchor
+                    .as_ref()
+                    .and_then(|anchor| list.iter().position(|button| button.command == *anchor))
+                    .map_or(list.len(), |index| index + 1);
+                let button = structure::divider(&uuid::Uuid::new_v4().to_string());
+                self.pending = Some(if let Some(id) = drawer {
+                    Edit::DrawerInsert(id, button, rank)
+                } else {
+                    Edit::Insert(*bar, button, rank)
+                });
+                return self.commit_impl(layout, settings, provisional);
+            }
+            _ => {}
         }
         match edit {
+            Edit::Split(bar, command, before) => {
+                if settings.locked {
+                    return false;
+                }
+                let (drawer, mut buttons) = drawers::contents(settings, bar, &command, layout);
+                if !edit_mode::split_allowed(&buttons, &command, before) {
+                    return false;
+                }
+                let index = buttons.iter().position(|b| b.command == command).unwrap_or(0) + usize::from(!before);
+                buttons.insert(index, structure::separator(&uuid::Uuid::new_v4().to_string()));
+                drawers::replace(settings, bar, drawer, buttons);
+                return true;
+            }
+            Edit::Merge(bar, command, before) => {
+                if settings.locked {
+                    return false;
+                }
+                let (drawer, mut buttons) = drawers::contents(settings, bar, &command, layout);
+                let Some(range) = edit_mode::merge_range(&buttons, &command, before) else {
+                    return false;
+                };
+                for button in buttons.drain(range) {
+                    settings.separators.remove(&button.command);
+                }
+                drawers::replace(settings, bar, drawer, buttons);
+                return true;
+            }
+            Edit::Fold(bar, command) => {
+                if settings.locked || settings.drawer_of(&command).is_some() {
+                    return false;
+                }
+                let mut buttons = settings.bar(bar, layout).to_vec();
+                let Some(range) = edit_mode::group(&buttons, &command) else {
+                    return false;
+                };
+                if buttons[range.clone()].iter().any(|b| drawers::is_drawer(&b.command)) {
+                    return false;
+                }
+                let id = format!("{}{}", drawers::PREFIX, uuid::Uuid::new_v4());
+                let block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
+                let mode = block_style.mode.or(settings.style(bar).mode).unwrap_or_default();
+                let contents = buttons
+                    .splice(range, [crate::ui::bars::top::button(&id, "folder-filled")])
+                    .collect();
+                settings.drawers.insert(id.clone(), drawers::Drawer { buttons: contents, mode });
+                settings.block_styles.insert(id.clone(), block_style);
+                settings.set_bar(bar, buttons);
+                self.selected = Some(id);
+                return true;
+            }
+            Edit::Unfold(bar, command) => {
+                if settings.locked {
+                    return false;
+                }
+                let mut buttons = settings.bar(bar, layout).to_vec();
+                let Some(at) = buttons.iter().position(|b| b.command == command) else {
+                    return false;
+                };
+                let Some(drawer) = settings.drawers.remove(&command) else {
+                    return false;
+                };
+                let mut block_style = settings.block_styles.get(&command).copied().unwrap_or_default();
+                block_style.mode = Some(drawer.mode);
+                for child in &drawer.buttons {
+                    settings.block_styles.insert(child.command.clone(), block_style);
+                }
+                let mut contents = drawer.buttons;
+                if !contents.is_empty() {
+                    if at > 0 && !structure::is_separator(&buttons[at - 1].command) {
+                        contents.insert(0, structure::separator(&uuid::Uuid::new_v4().to_string()));
+                    }
+                    if buttons.get(at + 1).is_some_and(|button| !structure::is_separator(&button.command)) {
+                        contents.push(structure::separator(&uuid::Uuid::new_v4().to_string()));
+                    }
+                }
+                buttons.splice(at..at + 1, contents);
+                settings.set_bar(bar, buttons);
+                self.selected = None;
+                return true;
+            }
+            Edit::Separator(command, style) => {
+                if settings.locked || !command.starts_with(structure::PREFIX) || settings.location(&command, layout).is_none() {
+                    return false;
+                }
+                let style = style.sanitized();
+                if settings.separators.get(&command).copied().unwrap_or_default() == style {
+                    return false;
+                }
+                if style == Default::default() {
+                    settings.separators.remove(&command);
+                } else {
+                    settings.separators.insert(command, style);
+                }
+                return true;
+            }
             Edit::Lock => {
                 settings.locked = !settings.locked;
                 return true;
@@ -734,6 +1233,29 @@ impl ToolbarUi {
                 style.sizing = next.sizing.or(style.sizing);
                 return *style != old;
             }
+            Edit::BlockStyle(bar, command, next) => {
+                if settings.locked || settings.drawer_of(&command).is_some() {
+                    return false;
+                }
+                let buttons = settings.bar(bar, layout);
+                let Some(range) = edit_mode::group(buttons, &command) else {
+                    return false;
+                };
+                let members: Vec<_> = buttons[range].iter().map(|button| button.command.clone()).collect();
+                let old = settings.block_styles.get(&command).copied().unwrap_or_default();
+                let style = BarStyle {
+                    mode: next.mode.or(old.mode),
+                    sizing: next.sizing.or(old.sizing),
+                    align: next.align.or(old.align),
+                };
+                if style == old {
+                    return false;
+                }
+                for member in members {
+                    settings.block_styles.insert(member, style);
+                }
+                return true;
+            }
             _ if settings.locked => return false,
             Edit::Restore => {
                 // LLToolBarView::loadDefaultToolbars: the buttons and the settings
@@ -742,6 +1264,9 @@ impl ToolbarUi {
                     || !settings.right.is_empty()
                     || settings.top != ToolbarSettings::default().top
                     || !settings.appearance.is_empty()
+                    || !settings.block_styles.is_empty()
+                    || !settings.separators.is_empty()
+                    || !settings.drawers.is_empty()
                     || !settings.menu_layout.is_empty()
                     || settings.address_visible.is_some()
                     || Bar::ALL.iter().any(|&b| settings.style(b) != BarStyle::default());
@@ -755,35 +1280,203 @@ impl ToolbarUi {
         }
         let old: [Vec<ToolButton>; 4] = Bar::ALL.map(|bar| settings.bar(bar, layout).to_vec());
         let mut next = old.clone();
+        let old_drawers = settings.drawers.clone();
+        let mut next_drawers = old_drawers.clone();
+        let separate = matches!(&edit, Edit::InsertGroup(..));
         match edit {
-            Edit::Insert(bar, button, rank) => {
+            Edit::DrawerInsert(id, button, rank) => {
+                if !next_drawers.contains_key(&id) || settings.location(&id, layout).is_none() || drawers::is_drawer(&button.command) {
+                    return false;
+                }
                 let button = structure::instantiate(button);
-                let list = &next[bar.index()];
-                let before = list.iter().take(rank).filter(|b| b.command == button.command).count();
+                let before = next_drawers[&id]
+                    .buttons
+                    .iter()
+                    .take(rank)
+                    .filter(|b| b.command == button.command)
+                    .count();
                 for list in &mut next {
                     list.retain(|b| b.command != button.command);
                 }
+                for drawer in next_drawers.values_mut() {
+                    drawer.buttons.retain(|b| b.command != button.command);
+                }
+                if let Some(drawer) = next_drawers.get_mut(&id) {
+                    let at = rank.saturating_sub(before).min(drawer.buttons.len());
+                    drawer.buttons.insert(at, button);
+                }
+            }
+            Edit::Insert(bar, button, rank) | Edit::InsertGroup(bar, button, rank) => {
+                let button = if provisional && button.command == structure::DIVIDER {
+                    structure::divider("drop-preview-entry")
+                } else if provisional && button.command == structure::SEPARATOR {
+                    structure::separator("drop-preview-entry")
+                } else {
+                    structure::instantiate(button)
+                };
+                let source = Bar::ALL.into_iter().find_map(|edge| {
+                    let list = &next[edge.index()];
+                    edit_mode::group(list, &button.command)
+                        .filter(|range| {
+                            !structure::is_divider(&button.command)
+                                && list[range.clone()]
+                                    .iter()
+                                    .filter(|button| !structure::is_divider(&button.command))
+                                    .count()
+                                    == 1
+                        })
+                        .map(|range| (edge, range))
+                });
+                // Moving an existing singleton beside itself does not create a
+                // group. Compare content order before touching its gap instances.
+                if let Some((edge, _)) = &source
+                    && *edge == bar
+                {
+                    let list = &next[bar.index()];
+                    let mut reordered = list.clone();
+                    let before = list.iter().take(rank).filter(|b| b.command == button.command).count();
+                    reordered.retain(|b| b.command != button.command);
+                    reordered.insert(rank.saturating_sub(before).min(reordered.len()), button.clone());
+                    let commands = |items: &[ToolButton]| {
+                        items
+                            .iter()
+                            .filter(|b| !structure::is_separator(&b.command) && !structure::is_divider(&b.command))
+                            .map(|b| b.command.clone())
+                            .collect::<Vec<_>>()
+                    };
+                    let previous = commands(list);
+                    if (separate || previous.len() == 1) && commands(&reordered) == previous {
+                        return false;
+                    }
+                }
+                // A whole singleton group carries one boundary run with it.
+                // Reuse its IDs/styles at the destination instead of leaving an
+                // empty group behind and allocating another separator every drag.
+                let mut carried = source
+                    .filter(|_| separate)
+                    .and_then(|(edge, group)| {
+                        let list = &next[edge.index()];
+                        let mut end = group.end;
+                        while end < list.len() && structure::is_separator(&list[end].command) {
+                            end += 1;
+                        }
+                        let range = if end < list.len() && end > group.end {
+                            group.end..end
+                        } else {
+                            let mut start = group.start;
+                            while start > 0 && structure::is_separator(&list[start - 1].command) {
+                                start -= 1;
+                            }
+                            if start > 0 { start..group.start } else { group.start..group.start }
+                        };
+                        (!range.is_empty()).then(|| list[range].to_vec())
+                    })
+                    .unwrap_or_default();
+                let removed: std::collections::HashSet<_> = carried.iter().map(|b| b.command.clone()).collect();
+                let list = &next[bar.index()];
+                let before = list
+                    .iter()
+                    .take(rank)
+                    .filter(|b| b.command == button.command || removed.contains(&b.command))
+                    .count();
+                for list in &mut next {
+                    list.retain(|b| b.command != button.command && !removed.contains(&b.command));
+                }
+                for drawer in next_drawers.values_mut() {
+                    drawer.buttons.retain(|b| b.command != button.command);
+                }
                 let list = &mut next[bar.index()];
-                let rank = rank.saturating_sub(before).min(list.len());
-                list.insert(rank, button);
+                let mut rank = rank.saturating_sub(before).min(list.len());
+                if separate && !structure::is_separator(&button.command) {
+                    // An exposed leading/trailing gap is already a boundary for
+                    // the new group; do not leave it empty and create another.
+                    if carried.is_empty() {
+                        let before = list[..rank].iter().any(|b| !structure::is_separator(&b.command));
+                        let after = list[rank..].iter().any(|b| !structure::is_separator(&b.command));
+                        if before && !after {
+                            while rank < list.len() && structure::is_separator(&list[rank].command) {
+                                rank += 1;
+                            }
+                        } else if after && !before {
+                            while rank > 0 && structure::is_separator(&list[rank - 1].command) {
+                                rank -= 1;
+                            }
+                        }
+                    }
+                    let before = rank > 0 && !structure::is_separator(&list[rank - 1].command);
+                    let after = list.get(rank).is_some_and(|b| !structure::is_separator(&b.command));
+                    let mut entries = Vec::new();
+                    for side in [true, false] {
+                        if !side {
+                            entries.push(button.clone());
+                        }
+                        if if side { before } else { after } {
+                            if carried.is_empty() {
+                                entries.push(structure::separator(&if provisional {
+                                    format!("drop-preview-{}", if side { "before" } else { "after" })
+                                } else {
+                                    uuid::Uuid::new_v4().to_string()
+                                }));
+                            } else {
+                                entries.append(&mut carried);
+                            }
+                        }
+                    }
+                    list.splice(rank..rank, entries);
+                } else {
+                    list.insert(rank, button);
+                }
+                for gap in carried {
+                    settings.separators.remove(&gap.command);
+                }
             }
             Edit::Remove(command) => {
                 for list in &mut next {
                     list.retain(|b| b.command != command);
                 }
+                for drawer in next_drawers.values_mut() {
+                    drawer.buttons.retain(|b| b.command != command);
+                }
+                next_drawers.remove(&command);
             }
-            Edit::Clear => next.iter_mut().for_each(Vec::clear),
-            Edit::Restore | Edit::Lock | Edit::Style(..) | Edit::Appearance(..) | Edit::MenuInsert(..) | Edit::SeparatorAfter(..) => {
+            Edit::Clear => {
+                next.iter_mut().for_each(Vec::clear);
+                next_drawers.clear();
+            }
+            Edit::Restore
+            | Edit::Lock
+            | Edit::Style(..)
+            | Edit::BlockStyle(..)
+            | Edit::Appearance(..)
+            | Edit::Separator(..)
+            | Edit::MenuInsert(..) => {
                 unreachable!()
             }
+            Edit::Split(..) | Edit::Merge(..) | Edit::Fold(..) | Edit::Unfold(..) => {
+                unreachable!()
+            }
+            Edit::MoveBlock(..)
+            | Edit::DrawerBlock(..)
+            | Edit::RemoveBlock(..)
+            | Edit::DividerAfter(..)
+            | Edit::DrawerFromDrop(..)
+            | Edit::DrawerOptions(..) => unreachable!(),
         }
-        if next == old {
+        if next == old && next_drawers == old_drawers {
             return false;
         }
-        let navigation = |bars: &[Vec<ToolButton>; 4]| bars.iter().flatten().any(|button| button.command == "bar_navigation");
-        if navigation(&next) != navigation(&old) {
-            settings.address_visible = Some(navigation(&next));
+        let navigation = |bars: &[Vec<ToolButton>; 4], drawers: &std::collections::BTreeMap<String, drawers::Drawer>| {
+            bars.iter().flatten().any(|button| {
+                button.command == "bar_navigation"
+                    || drawers
+                        .get(&button.command)
+                        .is_some_and(|drawer| drawer.buttons.iter().any(|b| b.command == "bar_navigation"))
+            })
+        };
+        if navigation(&next, &next_drawers) != navigation(&old, &old_drawers) {
+            settings.address_visible = Some(navigation(&next, &next_drawers));
         }
+        settings.drawers = next_drawers;
         let [bottom, left, right, top] = next;
         // an untouched bottom toolbar keeps following the skin
         if bottom != old[0] {

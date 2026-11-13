@@ -441,7 +441,12 @@ impl Motion {
         }
         let elapsed = stop.saturating_duration_since(self.continuous_activation).as_secs_f64();
         let span = f64::from(a.loop_out - a.loop_in);
-        let fraction = if span > 0.0 { (elapsed - f64::from(a.loop_in)) % span } else { 0.0 };
+        // fmod, as setStopTime: reversed loop points give a negative span
+        let fraction = if span == 0.0 {
+            0.0
+        } else {
+            (elapsed - f64::from(a.loop_in)) % span
+        };
         let delay = (f64::from(a.duration - a.loop_in - a.ease_out) - fraction).max(0.0);
         stop.checked_add(Duration::from_secs_f64(delay)).unwrap_or(stop)
     }
@@ -1738,6 +1743,7 @@ struct Entry {
     state: u8, // 0 new, 1 cache, 2 fetching, 3 ready, 4 failed
     retry_at: Option<Instant>,
     failures: u32,
+    gesture: bool,
 }
 
 pub struct AnimStreamer {
@@ -1769,8 +1775,24 @@ impl AnimStreamer {
             state: 0,
             retry_at: None,
             failures: 0,
+            gesture: false,
         });
         e.anim.clone()
+    }
+
+    /// LLGestureMgr::playGesture's priority preload, including an animation
+    /// already waiting for a download slot on behalf of another avatar.
+    pub fn preload_gesture(&mut self, id: &Uuid, fetcher: &Fetcher) {
+        self.get(id);
+        let entry = self.entries.get_mut(id).expect("get registered the animation");
+        if !entry.gesture {
+            entry.gesture = true;
+            for (&key, asset) in &self.by_key {
+                if asset == id {
+                    fetcher.reprioritise(key, urgent::GESTURE);
+                }
+            }
+        }
     }
 
     /// An animation already loaded, without asking for it (the Animation
@@ -1779,9 +1801,12 @@ impl AnimStreamer {
         self.entries.get(id).and_then(|e| e.anim.clone())
     }
 
-    /// Gestures wait for preloads to succeed or fail before running steps.
+    /// Gestures wait for a decoded asset or a real load failure. A cache
+    /// miss (state 4, no failures) still needs its first HTTP request.
     pub fn asset_settled(&self, id: &Uuid) -> bool {
-        self.entries.get(id).is_some_and(|entry| entry.state >= 3)
+        self.entries
+            .get(id)
+            .is_some_and(|entry| entry.state == 3 || (entry.state == 4 && entry.failures > 0))
     }
 
     /// Register an already-built animation (demo / built-in motions).
@@ -1793,6 +1818,7 @@ impl AnimStreamer {
                 state: 3,
                 retry_at: None,
                 failures: 0,
+                gesture: false,
             },
         );
     }
@@ -1830,10 +1856,14 @@ impl AnimStreamer {
                 let rig = rig.clone();
                 let id = *id;
                 jobs.spawn(move || {
-                    let a = crate::cache::read_touch(&path)
-                        .ok()
-                        .and_then(|d| aurora_assets::anim::parse_animation_with_constraints(&d).ok())
-                        .map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)));
+                    // (a failed parse is a cache miss: the animation is downloaded)
+                    let a = super::jobs::caught(|| {
+                        crate::cache::read_touch(&path)
+                            .ok()
+                            .and_then(|d| aurora_assets::anim::parse_animation_with_constraints(&d).ok())
+                            .map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)))
+                    })
+                    .flatten();
                     let _ = tx.send((id, a, true));
                     super::jobs::JobResult::Done
                 });
@@ -1850,7 +1880,7 @@ impl AnimStreamer {
                     url: super::textures::asset_url(base, "animatn_id", id),
                     range: None,
                     // (an avatar stands still until it arrives)
-                    priority: urgent::ANIMATION,
+                    priority: if e.gesture { urgent::GESTURE } else { urgent::ANIMATION },
                     lane: Lane::Urgent,
                     accept: "*/*",
                 });
@@ -1868,13 +1898,17 @@ impl AnimStreamer {
                 let tx = self.tx.clone();
                 let rig = rig.clone();
                 jobs.spawn(move || {
-                    let a = aurora_assets::anim::parse_animation_with_constraints(&d).ok();
-                    if a.is_some() {
-                        let _ = crate::cache::write(path, &d);
-                    } else {
-                        log::debug!("animation {id} failed to parse");
-                    }
-                    let a = a.map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)));
+                    // (a failed parse counts as a failure: retried later)
+                    let a = super::jobs::caught(|| {
+                        let a = aurora_assets::anim::parse_animation_with_constraints(&d).ok();
+                        if a.is_some() {
+                            let _ = crate::cache::write(path, &d);
+                        } else {
+                            log::debug!("animation {id} failed to parse");
+                        }
+                        a.map(|(a, constraints)| Arc::new(BoundAnim::bind(a, &rig).with_constraints(&constraints, &rig)))
+                    })
+                    .flatten();
                     let _ = tx.send((id, a, false));
                     super::jobs::JobResult::Done
                 });
@@ -1893,6 +1927,79 @@ impl AnimStreamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_animation_preload_waits_past_a_cache_miss() {
+        let mut streamer = AnimStreamer::new(std::env::temp_dir().join("aurora-gesture-preload-tests"));
+        let id = Uuid::from_u128(2931);
+        streamer.get(&id);
+        assert!(!streamer.asset_settled(&id));
+        let entry = streamer.entries.get_mut(&id).expect("requested");
+        entry.state = 4;
+        assert!(!streamer.asset_settled(&id), "a cache miss still needs its HTTP request");
+        streamer.entries.get_mut(&id).expect("requested").failures = 1;
+        assert!(streamer.asset_settled(&id), "an actual failure must let the gesture continue");
+    }
+
+    /// No Stop Animation step is needed for an authored one-shot. The
+    /// controller notifies the simulator once, its echo completes the gesture,
+    /// and a repeated press plays it again, in both playback modes (#2931).
+    #[test]
+    fn gesture_one_shot_completes_without_an_explicit_stop_step() {
+        use crate::gestures::{Effect, Manager};
+        use aurora_assets::gesture::{Gesture, Step, WAIT_ANIMATIONS};
+        use std::collections::BTreeSet;
+
+        let rig = rig();
+        let id = Uuid::from_u128(2931);
+        let item = Uuid::from_u128(2932);
+        let mut animation = bend(&rig, 0.7, 0.2).anim.clone();
+        animation.looping = false;
+        let animation = Arc::new(BoundAnim::bind(animation, &rig));
+        let definition = Gesture {
+            steps: vec![
+                Step::Animation {
+                    name: String::new(),
+                    asset: id,
+                    flags: 0,
+                },
+                Step::Wait {
+                    seconds: 0.0,
+                    flags: WAIT_ANIMATIONS,
+                },
+                Step::Chat {
+                    text: "done".into(),
+                    flags: 0,
+                },
+            ],
+            ..Default::default()
+        };
+        for synchronized in [false, true] {
+            let mut controller = Controller::default();
+            controller.set_synchronized(synchronized);
+            let mut manager = Manager::default();
+            let epoch = Instant::now();
+            for repeat in 0..2 {
+                let now = epoch + Duration::from_secs(repeat * 5);
+                manager.play(item, definition.clone(), None);
+                assert_eq!(manager.tick(now, &BTreeSet::new()), [Effect::Animation(id, true)]);
+                let signals = [signal(id, repeat as i32 + 1, now)];
+                assert!(controller.sync(&signals, now, |_| Some(animation.clone())).is_empty());
+                assert!(manager.tick(now, &BTreeSet::from([id])).is_empty());
+                let end = now + Duration::from_secs(2);
+                assert_eq!(controller.sync(&signals, end, |_| Some(animation.clone())), [id]);
+                assert!(
+                    controller
+                        .sync(&signals, end + Duration::from_secs(1), |_| Some(animation.clone()))
+                        .is_empty()
+                );
+                assert!(controller.motions.is_empty(), "a still-signaled one-shot must not restart");
+                controller.sync(&[], end + Duration::from_secs(1), |_| Some(animation.clone()));
+                assert_eq!(manager.tick(end, &BTreeSet::new()), [Effect::Chat("done".into())]);
+                assert!(!manager.is_playing(item));
+            }
+        }
+    }
 
     #[test]
     fn attachment_parity_animation_translations_replace_mesh_joint_positions_including_pelvis() {

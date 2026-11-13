@@ -235,6 +235,7 @@ impl App {
                     request,
                     item: it.id,
                     asset_type: 56,
+                    lua: false,
                     data: doc.to_asset(),
                 });
             }

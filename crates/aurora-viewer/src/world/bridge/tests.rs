@@ -746,6 +746,7 @@ fn compilation_does_not_detach_the_script_before_its_first_valid_hello() {
         item_id: sim.bridge.script,
         running: false,
         mono: Some(true),
+        luau: aurora_net::scripts::Luau::Off,
     };
     sim.event(reply.clone());
     sim.event(reply);
@@ -1022,6 +1023,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         item_id: sim.bridge.query_script,
         running: false,
         mono: Some(true),
+        luau: aurora_net::scripts::Luau::Off,
     };
     sim.event(stopped.clone());
     assert_eq!(sim.bridge.reinstalls.len(), 1);
@@ -1037,6 +1039,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         item_id: sim.bridge.query_script,
         running: false,
         mono: Some(true),
+        luau: aurora_net::scripts::Luau::Off,
     };
     sim.event(stopped);
     assert_eq!(sim.bridge.phase, Phase::Ready);

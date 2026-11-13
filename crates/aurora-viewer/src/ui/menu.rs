@@ -175,25 +175,39 @@ pub fn distinct_surface(ui: &Ui) {
 /// Right-click menu of a widget (replaces `Response::context_menu`).
 /// Returns whether the menu is open.
 pub fn context_menu(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
-    context_menu_popup(Popup::context_menu(resp), p, body)
+    if !resp.enabled() {
+        return false;
+    }
+    context_menu_popup(Popup::context_menu(resp), p, resp.secondary_clicked(), body)
 }
 
 /// [`context_menu`] of a widget that also opens a [`dropdown`] on a left
 /// click: the right-click menu needs an id of its own (egui keys both on
 /// the widget's).
 pub fn context_menu_of_button(resp: &egui::Response, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
-    context_menu_popup(Popup::context_menu(resp).id(resp.id.with("context_menu")), p, body)
+    if !resp.enabled() {
+        return false;
+    }
+    context_menu_popup(
+        Popup::context_menu(resp).id(resp.id.with("context_menu")),
+        p,
+        resp.secondary_clicked(),
+        body,
+    )
 }
 
 /// [`context_menu_of_button`] that `also` opens at the pointer: a right
 /// click on the buttons laid over `resp`, which take it (the system island's
 /// audio controls).
 pub fn context_menu_also(resp: &egui::Response, p: &Palette, also: bool, body: impl FnOnce(&mut Ui)) -> bool {
+    if !resp.enabled() {
+        return false;
+    }
     let mut popup = Popup::context_menu(resp).id(resp.id.with("context_menu"));
     if also {
         popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
     }
-    context_menu_popup(popup, p, body)
+    context_menu_popup(popup, p, also || resp.secondary_clicked(), body)
 }
 
 /// A context menu owned by a containing view instead of a transient row.
@@ -205,6 +219,7 @@ pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
             .open_memory(None),
         p,
+        false,
         body,
     )
 }
@@ -233,19 +248,37 @@ pub(crate) fn window_geometry_changed(ctx: &egui::Context) {
     Popup::close_all(ctx);
 }
 
-fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+fn context_menu_popup(popup: Popup<'_>, p: &Palette, requested: bool, body: impl FnOnce(&mut Ui)) -> bool {
     if dismiss_on_window_change(popup.ctx()) {
         return false;
     }
+    let ctx = popup.ctx().clone();
+    if super::toolbar::native_context::dismiss_repeated_click(&ctx) {
+        return false;
+    }
+    let id = popup.get_id();
+    let was_open = Popup::is_id_open(&ctx, id);
+    let close = if super::toolbar::appearance::context_picker_contains_pointer(&ctx) {
+        PopupCloseBehavior::IgnoreClicks
+    } else {
+        PopupCloseBehavior::CloseOnClickOutside
+    };
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it
-    popup
+    let shown = popup
         .align(egui::RectAlign::BOTTOM_START)
         .align_alternatives(&[])
-        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+        .close_behavior(close)
         .style(style(p))
-        .show(body)
-        .is_some()
+        .show(|ui| {
+            body(ui);
+            super::toolbar::native_context::append(ui, p);
+        })
+        .is_some();
+    if shown {
+        super::toolbar::native_context::context_shown(&ctx, id, was_open, requested);
+    }
+    shown
 }
 
 /// Menu opened by a click on the widget `resp` (a "more actions" button, a
@@ -267,6 +300,9 @@ pub fn dropdown_placed(
     place: Option<(egui::RectAlign, f32)>,
     body: impl FnOnce(&mut Ui),
 ) -> bool {
+    if !resp.enabled() {
+        return false;
+    }
     if dismiss_on_window_change(&resp.ctx) {
         return false;
     }
@@ -305,6 +341,12 @@ fn placed(
     body: impl FnOnce(&mut Ui),
 ) -> bool {
     use egui::containers::menu::MenuConfig;
+    // The icon flyout belongs to its menu tree, including a main-menu ancestor.
+    let close = if super::toolbar::appearance::context_picker_contains_pointer(popup.ctx()) {
+        PopupCloseBehavior::IgnoreClicks
+    } else {
+        close
+    };
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
     let mut popup = popup;
@@ -953,7 +995,17 @@ pub fn check_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, checked: bo
 /// Check entry that leaves the menu open (several options in a row, like
 /// the blocked properties of a block list entry).
 pub fn toggle(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool) -> bool {
-    let clicked = row(ui, p, icon, label, true, End::Check(*on), false).clicked();
+    toggle_keys(ui, p, icon, label, on, "")
+}
+
+/// `toggle` with the keys of its shortcut (an empty `keys` shows none).
+pub fn toggle_keys(ui: &mut Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, keys: &str) -> bool {
+    let end = if keys.is_empty() {
+        End::Check(*on)
+    } else {
+        End::CheckKeys(*on, keys)
+    };
+    let clicked = row(ui, p, icon, label, true, end, false).clicked();
     if clicked {
         *on = !*on;
     }

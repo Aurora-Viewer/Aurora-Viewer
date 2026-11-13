@@ -502,6 +502,11 @@ impl World {
                 && self.rlva_normalize_teleport(&mut command)
                 && self.rlva_allows_command(&command, source)
             {
+                // LLAgent::teleportViaLocation: a teleport forced by @tpto
+                // cannot be cancelled (RlvHandler::setCanCancelTp(false))
+                if c.behaviour == "tpto" {
+                    self.tp_cancel.lock_for_rlva();
+                }
                 if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") {
                     self.rlva.stand_origin = self.main_region.map(|h| (h, self.agent.position));
                 }

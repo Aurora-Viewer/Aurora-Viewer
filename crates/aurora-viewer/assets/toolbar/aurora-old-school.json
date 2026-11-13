@@ -1,0 +1,342 @@
+{
+  "format": "aurora-toolbar-interface",
+  "version": 2,
+  "base": "aurora",
+  "toolbar": {
+    "buttons": [
+      {
+        "icon": "message-filled",
+        "command": "bar_chat",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:preset-chat-tools",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Chat_Icon",
+        "command": "conversations",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Speak_Icon",
+        "command": "speak",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Voice_Icon",
+        "command": "voice",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Move_Icon",
+        "command": "move",
+        "tooltip": ""
+      },
+      {
+        "icon": "video-filled",
+        "command": "view",
+        "tooltip": ""
+      },
+      {
+        "icon": "device-vision-pro-filled",
+        "command": "vr_view",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_People_Icon",
+        "command": "people",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Appearance_Icon",
+        "command": "appearance",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Search_Icon",
+        "command": "search",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Map_Icon",
+        "command": "worldmap",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_MiniMap_Icon",
+        "command": "minimap",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Snapshot_Icon",
+        "command": "snapshot",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Inventory_Icon",
+        "command": "inventory",
+        "tooltip": ""
+      },
+      {
+        "icon": "AO",
+        "command": "ao",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Preferences_Icon",
+        "command": "preferences",
+        "tooltip": ""
+      }
+    ],
+    "locked": false,
+    "vr_button_migrated": true,
+    "left": [
+      {
+        "icon": "Command_Places_Icon",
+        "command": "places",
+        "tooltip": ""
+      }
+    ],
+    "bottom_style": {
+      "mode": "icons_only",
+      "align": "start",
+      "sizing": "fill"
+    },
+    "left_style": {
+      "mode": "icons_only",
+      "align": "center",
+      "sizing": "fixed"
+    },
+    "right_style": {
+      "mode": "icons_only",
+      "align": "center",
+      "sizing": "fixed"
+    },
+    "top": [
+      {
+        "icon": "wolf",
+        "command": "aurora_menu",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:preset-aurora-menu",
+        "tooltip": ""
+      },
+      {
+        "icon": "bug-filled",
+        "command": "report_bug",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:old-school-gap-1",
+        "tooltip": ""
+      },
+      {
+        "icon": "layout-grid-filled",
+        "command": "edit_interface",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:preset-bug-report",
+        "tooltip": ""
+      },
+      {
+        "icon": "user-filled",
+        "command": "menu:common-me",
+        "tooltip": "@common-me"
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:preset-menu-ui-bars-communicate",
+        "tooltip": ""
+      },
+      {
+        "icon": "messages-filled",
+        "command": "menu:ui-bars-communicate",
+        "tooltip": "@ui-bars-communicate"
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:preset-menu-common-world",
+        "tooltip": ""
+      },
+      {
+        "icon": "world-filled",
+        "command": "menu:common-world",
+        "tooltip": "@common-world"
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:preset-menu-common-build",
+        "tooltip": ""
+      },
+      {
+        "icon": "box",
+        "command": "menu:common-build",
+        "tooltip": "@common-build"
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:preset-menu-common-contents",
+        "tooltip": ""
+      },
+      {
+        "icon": "briefcase-filled",
+        "command": "menu:common-contents",
+        "tooltip": "@common-contents"
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:preset-menu-common-help",
+        "tooltip": ""
+      },
+      {
+        "icon": "help-circle-filled",
+        "command": "menu:common-help",
+        "tooltip": "@common-help"
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:preset-menus",
+        "tooltip": ""
+      },
+      {
+        "icon": "map-pin-filled",
+        "command": "bar_navigation",
+        "tooltip": ""
+      },
+      {
+        "icon": "messages-filled",
+        "command": "bar_conversations",
+        "tooltip": ""
+      },
+      {
+        "icon": "user-filled",
+        "command": "bar_status",
+        "tooltip": ""
+      },
+      {
+        "icon": "coin-filled",
+        "command": "bar_balance",
+        "tooltip": ""
+      },
+      {
+        "icon": "clock-filled",
+        "command": "bar_clock",
+        "tooltip": ""
+      },
+      {
+        "icon": "antenna-bars-5",
+        "command": "bar_ping",
+        "tooltip": ""
+      },
+      {
+        "icon": "gauge-filled",
+        "command": "bar_fps",
+        "tooltip": ""
+      },
+      {
+        "icon": "arrows-down-up",
+        "command": "bar_network",
+        "tooltip": ""
+      },
+      {
+        "icon": "brand-youtube-filled",
+        "command": "bar_media",
+        "tooltip": ""
+      },
+      {
+        "icon": "radio",
+        "command": "bar_music",
+        "tooltip": ""
+      },
+      {
+        "icon": "volume",
+        "command": "bar_volume",
+        "tooltip": ""
+      },
+      {
+        "icon": "bell-filled",
+        "command": "bar_notifications",
+        "tooltip": ""
+      }
+    ],
+    "top_style": {
+      "mode": "icons_only",
+      "align": "start",
+      "sizing": "fixed"
+    },
+    "block_styles": {
+      "bar_chat": {
+        "mode": null,
+        "align": "start",
+        "sizing": null
+      },
+      "divider:preset-menu-common-build": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "divider:preset-menu-common-contents": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "divider:preset-menu-common-help": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "divider:preset-menu-common-world": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "divider:preset-menu-ui-bars-communicate": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "menu:common-build": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "menu:common-contents": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "menu:common-help": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "menu:common-me": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "menu:common-world": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      },
+      "menu:ui-bars-communicate": {
+        "mode": "text_only",
+        "align": null,
+        "sizing": "auto"
+      }
+    },
+    "appearance": {},
+    "menu_layout": {},
+    "address_visible": null,
+    "composed": true,
+    "chat_composed": true
+  }
+}

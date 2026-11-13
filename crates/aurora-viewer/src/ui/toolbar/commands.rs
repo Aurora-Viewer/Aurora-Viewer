@@ -272,7 +272,7 @@ fn show_children(
         let label = super::label(button);
         let mode = appearance.mode.unwrap_or(super::ButtonMode::IconsWithText);
         let checked = if button.command == "location_bar" {
-            Some(settings.address_visible.unwrap_or(true))
+            Some(crate::ui::bars::location_popup::is_open(ui.ctx()))
         } else {
             entry.checked
         };
@@ -295,10 +295,11 @@ fn show_children(
             response.dnd_set_drag_payload(Drag {
                 button: button.clone(),
                 from: None,
+                members: Vec::new(),
             });
         }
         toolbar.menu_appearance_context(&response, p, button, settings.locked);
-        if !entry.group && response.clicked() && entry.enabled {
+        if !entry.group && response.clicked() && entry.enabled && !ToolbarUi::intercepting(ui.ctx()) {
             request(ui.ctx(), &button.command);
             ui.close();
         }
@@ -307,6 +308,7 @@ fn show_children(
         let end = ui.add(egui::Label::new(aurora_i18n::tr!("toolbar-drop-here")).sense(egui::Sense::hover()));
         let rect = rects.iter().copied().fold(end.rect, egui::Rect::union);
         let zone = ui.interact(rect, Id::unique(("main_menu_drop", parent)), egui::Sense::hover());
+        super::drop_preview::protect(ui.ctx(), rect, ui.layer_id());
         if zone.dnd_hover_payload::<Drag>().is_some()
             && let Some(pos) = ui.ctx().pointer_interact_pos()
         {
@@ -316,7 +318,9 @@ fn show_children(
                 .map_or_else(|| rects.last().map_or(end.rect.top(), |rect| rect.bottom()), |rect| rect.top());
             ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, p.violet_light));
         }
-        if let Some(drag) = zone.dnd_release_payload::<Drag>()
+        if zone.dnd_hover_payload::<Drag>().is_some()
+            && let Some(drag) = zone.dnd_release_payload::<Drag>()
+            && drag.members.is_empty()
             && catalogue.can_place(&drag.button.command, parent, &settings.menu_layout)
             && let Some(pos) = ui.ctx().pointer_interact_pos()
         {
@@ -325,6 +329,7 @@ fn show_children(
                 drag.button.command.clone(),
                 ranks.get(super::insertion(&rects, pos, true)).copied().unwrap_or(children.len()),
             ));
+            ui.ctx().data_mut(|data| data.insert_temp(Id::unique("toolbar_drop_handled"), true));
         }
     }
     visited.remove(parent);

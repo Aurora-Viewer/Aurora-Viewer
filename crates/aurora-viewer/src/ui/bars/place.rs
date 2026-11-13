@@ -317,6 +317,7 @@ fn options_body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut Op
             rights_text: !look.rights_text,
         });
     }
+    crate::ui::toolbar::native_context::fallback(ui, p);
 }
 
 /// The landmark star of the island (LLLocationInputCtrl's add landmark

@@ -1,5 +1,5 @@
-//! People › Contact sets in Aurora's look (the People mock-up v2): the
-//! contact sets of Conversations › Contacts (FSPanelContactSets,
+//! People â€º Contact sets in Aurora's look (the People mock-up v2): the
+//! contact sets of Conversations â€º Contacts (FSPanelContactSets,
 //! fspanelcontactsets.cpp, panel_fs_contacts_sets.xml, LGGContactSets) with
 //! the sets as colored pills, "New", and a gear for the set's color, name
 //! and deletion (FSFloaterContactSetConfiguration), the pseudo-sets (all,
@@ -64,7 +64,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
             c.contacts.pick_for_set(&set);
         }
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("ui-contacts-filter-people"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("ui-contacts-filter-people"), w);
     });
     ui.add_space(7.0);
     let names = &world.social.avatar_names;
@@ -74,7 +74,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
             .get(id)
             .map(|n| n.complete(&o))
             .or_else(|| world.social.names.get(id).cloned())
-            .unwrap_or_else(|| "…".into())
+            .unwrap_or_else(|| "â€¦".into())
     };
     let online = |id: &Uuid| world.social.friends.iter().any(|f| f.id == *id && f.online);
     let filter = st.filter.trim().to_lowercase();
@@ -229,6 +229,15 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let p = c.p;
     let world = c.world;
     let (rect, resp) = rows::allocate(ui, id, Vec2::new(ui.available_width(), RICH_H));
+    widgets::reveal_search_selection(
+        ui,
+        &resp,
+        st.anchor
+            .filter(|id| st.sel.contains(id))
+            .or_else(|| st.sel.last().copied())
+            .or(st.sheet)
+            == Some(id),
+    );
     if !ui.is_rect_visible(rect) {
         rows::person_menu(&resp, p, world, &st.sel, id);
         return;
@@ -389,6 +398,7 @@ mod tests {
             settings: &mut radar_settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };

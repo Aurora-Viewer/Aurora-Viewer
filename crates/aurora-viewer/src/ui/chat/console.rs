@@ -161,14 +161,16 @@ pub(super) fn cards(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
+    let mut shift = egui::Vec2::ZERO;
+    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(
-            egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
-        )
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
+            // a card that leaves or arrives moves the others in this frame
+            // only (#2544)
+            let held = super::Held::new(ui, lift);
             ui.set_max_width(WIDTH);
             ui.spacing_mut().item_spacing.y = 0.0;
             for group in groups(&recent) {
@@ -219,12 +221,14 @@ pub(super) fn cards(
                 }
                 ui.add_space(4.0);
             }
+            shift = held.settle(ui);
         });
+    super::Held::publish(ctx, shift);
     for (k, (rect, link, col)) in links.iter().enumerate() {
-        bubble_link(ctx, p, world, k, *rect, link, *col);
+        bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
-        bubble_sender_link(ctx, p, world, k, rect, line);
+        bubble_sender_link(ctx, p, world, k, rect.translate(shift), line);
     }
 }
 

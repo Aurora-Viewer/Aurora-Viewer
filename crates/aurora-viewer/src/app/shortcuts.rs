@@ -14,6 +14,9 @@ impl App {
     /// shortcut. Opening refreshes the SLURL and obeys location privacy.
     pub(super) fn set_address_bar_visible(&mut self, visible: bool) {
         self.settings.toolbar.get_or_insert_default().show_address_bar(visible);
+        if visible && let Some(toolbar) = self.settings.toolbar.as_ref() {
+            crate::ui::toolbar::drawers::reveal_navigation(&self.egui_ctx, toolbar);
+        }
         self.panels.nav_edit = if visible && !self.world.rlva.has("showloc") {
             Some(crate::slurl::make(&self.world.region_name(), self.world.agent.position))
         } else {

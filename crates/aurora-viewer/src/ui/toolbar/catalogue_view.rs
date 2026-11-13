@@ -57,6 +57,9 @@ impl Category {
 
 pub(super) fn category(command: &str) -> Category {
     use Category::*;
+    if super::presets::import_choice(command).is_some() {
+        return Creation;
+    }
     if let Some(path) = command.strip_prefix(commands::PREFIX) {
         return match path.split('/').next().unwrap_or_default() {
             "common-me" => Avatar,
@@ -83,6 +86,7 @@ pub(super) fn category(command: &str) -> Category {
         | "appearance"
         | "profile"
         | "avatar"
+        | "avatar_studio"
         | "picks"
         | "poser"
         | "pose_stand"
@@ -91,7 +95,7 @@ pub(super) fn category(command: &str) -> Category {
         | "face_nearest_avatar"
         | "gestures" => Avatar,
         "conversations" | "speak" | "people" | "friends" | "contact_sets" | "block_list" | "radar" | "group_titles" | "voice"
-        | "defaultchatbar" | "conversation_log" | "discord" => Communication,
+        | "defaultchatbar" | "bar_chat" | "conversation_log" | "discord" => Communication,
         "home" | "location_bar" | "places" | "favorites" | "worldmap" | "minimap" | "aboutland" | "regioninfo" | "teleport_history"
         | "landmark_here" | "search" | "destinations" | "regiontracker" | "areasearch" | "webbrowser" => World,
         "inventory"
@@ -107,8 +111,33 @@ pub(super) fn category(command: &str) -> Category {
         | "phototools"
         | "phototools_view"
         | "360capture" => Creation,
-        "aurora_menu" | "preferences" | "quickprefs" | "immersive" | "view" | "vr_view" | "toolbar_separator" | "bar_navigation"
-        | "bar_account" | "bar_system" | "bar_notifications" | "bar_conversations" => Interface,
+        "edit_interface"
+        | "aurora_menu"
+        | "preferences"
+        | "graphics_preferences"
+        | "quickprefs"
+        | "immersive"
+        | "view"
+        | "vr_view"
+        | "name_tags"
+        | "hide_interface"
+        | "huds"
+        | "toolbar_separator"
+        | "toolbar_divider"
+        | "bar_navigation"
+        | "bar_account"
+        | "bar_system"
+        | "bar_notifications"
+        | "bar_conversations"
+        | "bar_status"
+        | "bar_balance"
+        | "bar_clock"
+        | "bar_ping"
+        | "bar_fps"
+        | "bar_network"
+        | "bar_media"
+        | "bar_music"
+        | "bar_volume" => Interface,
         "performance" | "beacons" | "settings_debug" | "statistics" | "soundexplorer" | "assetblacklist" | "omnifilter" | "RFO" => Advanced,
         "report_bug" | "reporter" | "gridstatus" | "howto" => Help,
         _ => Custom,
@@ -126,6 +155,9 @@ pub(super) fn alias(command: &str) -> Option<&'static str> {
         "menu:common-world/common-world-map" => "worldmap",
         "menu:common-world/search-title" => "search",
         "menu:common-world/toolbar-command-area-search" => "areasearch",
+        "menu:common-world/toolbar-command-region-tracker" => "regiontracker",
+        "menu:common-world/toolbar-command-destinations" => "destinations",
+        "menu:common-build/avatar-studio-title" => "avatar_studio",
         "menu:common-world/toolbar-command-resync-animations" => "resync_animations",
         "menu:common-contents/common-inventory" => "inventory",
         "menu:common-contents/gesture-title" | "menu:ui-bars-communicate/gesture-title" => "gestures",
@@ -143,6 +175,8 @@ pub(super) fn alias(command: &str) -> Option<&'static str> {
         "menu:common-help/report-abuse-title" => "reporter",
         "menu:common-help/grid_status" => "gridstatus",
         "menu:common-advanced/debug-settings" => "settings_debug",
+        "menu:common-advanced/graphics" => "graphics_preferences",
+        "menu:toolbar-interface-edit" => "edit_interface",
         _ => return None,
     })
 }
@@ -153,7 +187,70 @@ pub(crate) struct Tile {
     pub group: bool,
 }
 
+/// Keep the first visit focused on everyday controls. Remaining native menu
+/// entries and specialist tools are still available in Advanced and global search.
+fn primary(command: &str) -> bool {
+    matches!(
+        alias(command).unwrap_or(command),
+        "conversations"
+            | "edit_interface"
+            | "speak"
+            | "move"
+            | "view"
+            | "people"
+            | "friends"
+            | "inventory"
+            | "gestures"
+            | "appearance"
+            | "search"
+            | "places"
+            | "snapshot"
+            | "worldmap"
+            | "minimap"
+            | "sit"
+            | "ao"
+            | "preferences"
+            | "fly"
+            | "home"
+            | "favorites"
+            | "aboutland"
+            | "build"
+            | "profile"
+            | "teleport_history"
+            | "myenvironments"
+            | "radar"
+            | "contact_sets"
+            | "defaultchatbar"
+            | "bar_chat"
+            | "immersive"
+            | "location_bar"
+            | "aurora_menu"
+            | "report_bug"
+            | "performance"
+            | "voice"
+            | "group_titles"
+            | "landmark_here"
+            | "toolbar_divider"
+            | "bar_navigation"
+            | "bar_status"
+            | "bar_balance"
+            | "bar_clock"
+            | "bar_ping"
+            | "bar_fps"
+            | "bar_network"
+            | "bar_media"
+            | "bar_music"
+            | "bar_volume"
+            | "bar_notifications"
+            | "bar_conversations"
+    )
+}
+
 impl Tile {
+    pub fn in_view(&self, advanced: bool, filter: &str) -> bool {
+        self.matches(filter) && (!filter.is_empty() || advanced == (self.group || !primary(&self.button.command)))
+    }
+
     pub fn label(&self) -> String {
         if self.group {
             aurora_i18n::tr!("toolbar-menu-group", name = label(&self.button))
@@ -170,6 +267,7 @@ impl Tile {
 pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &commands::Catalogue) -> Vec<Tile> {
     let mut tiles: Vec<_> = catalogue(layout)
         .into_iter()
+        .filter(|button| button.command != super::structure::DIVIDER)
         .map(|button| Tile {
             category: category(&button.command),
             button,
@@ -206,6 +304,32 @@ pub(crate) fn entries(layout: &Layout, settings: &ToolbarSettings, menu: &comman
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_and_advanced_partition_the_catalogue_but_search_reaches_both() {
+        let tiles = entries(&Layout::default(), &ToolbarSettings::default(), &Default::default());
+        let main: Vec<_> = tiles.iter().filter(|tile| tile.in_view(false, "")).collect();
+        assert!(
+            (20..=50).contains(&main.len()),
+            "the first view should stay manageable: {}",
+            main.len()
+        );
+        for tile in &tiles {
+            assert_ne!(tile.in_view(false, ""), tile.in_view(true, ""));
+        }
+        assert!(main.iter().any(|tile| tile.button.command == "inventory"));
+        let debug = tiles
+            .iter()
+            .find(|tile| tile.button.command == "settings_debug")
+            .expect("advanced command");
+        assert!(!debug.in_view(false, ""));
+        assert!(debug.in_view(true, ""));
+        assert!(debug.in_view(false, "settings_debug"));
+        assert!(
+            primary("menu:common-world/common-about-land"),
+            "saved menu aliases keep the same level as their toolbar counterpart"
+        );
+    }
 
     #[test]
     fn every_builtin_has_an_explicit_category_and_aliases_use_stable_ids() {

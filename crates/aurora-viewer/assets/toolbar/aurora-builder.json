@@ -1,0 +1,350 @@
+{
+  "format": "aurora-toolbar-interface",
+  "version": 2,
+  "base": "aurora",
+  "toolbar": {
+    "buttons": [
+      {
+        "icon": "message-filled",
+        "command": "bar_chat",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:aurora-chat-conversations",
+        "tooltip": ""
+      },
+      {
+        "icon": "messages-filled",
+        "command": "bar_conversations",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:chat-tools",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Speak_Icon",
+        "command": "speak",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:aurora-voice-social",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_People_Icon",
+        "command": "people",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Gestures_Icon",
+        "command": "gestures",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Appearance_Icon",
+        "command": "appearance",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Snapshot_Icon",
+        "command": "snapshot",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:aurora-avatar-camera",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Move_Icon",
+        "command": "move",
+        "tooltip": ""
+      },
+      {
+        "icon": "video-filled",
+        "command": "view",
+        "tooltip": ""
+      },
+      {
+        "icon": "device-vision-pro-filled",
+        "command": "vr_view",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_View_Icon",
+        "command": "mouselook",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:aurora-camera-inventory",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Inventory_Icon",
+        "command": "inventory",
+        "tooltip": ""
+      },
+      {
+        "icon": "stack-2-filled",
+        "command": "texture_library",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Search_Icon",
+        "command": "search",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:aurora-inventory-places",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Places_Icon",
+        "command": "places",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Map_Icon",
+        "command": "worldmap",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_MiniMap_Icon",
+        "command": "minimap",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:aurora-places-movement",
+        "tooltip": ""
+      },
+      {
+        "icon": "groundsit",
+        "command": "sit",
+        "tooltip": ""
+      },
+      {
+        "icon": "AO",
+        "command": "ao",
+        "tooltip": ""
+      },
+      {
+        "icon": "lock-filled",
+        "command": "movelock",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "divider:aurora-movement-settings",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Performance_Icon",
+        "command": "performance",
+        "tooltip": ""
+      },
+      {
+        "icon": "Command_Preferences_Icon",
+        "command": "preferences",
+        "tooltip": ""
+      }
+    ],
+    "locked": false,
+    "vr_button_migrated": true,
+    "bottom_style": {
+      "mode": "icons_only",
+      "align": "center",
+      "sizing": "fixed"
+    },
+    "left_style": {
+      "mode": "icons_only",
+      "align": "center",
+      "sizing": "fixed"
+    },
+    "right_style": {
+      "mode": "icons_only",
+      "align": "center",
+      "sizing": "fixed"
+    },
+    "top": [
+      {
+        "icon": "wolf",
+        "command": "aurora_menu",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:top-1",
+        "tooltip": ""
+      },
+      {
+        "icon": "bug-filled",
+        "command": "report_bug",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:top-3",
+        "tooltip": ""
+      },
+      {
+        "icon": "layout-grid-filled",
+        "command": "edit_interface",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:builder-gap-1",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:builder-gap-2",
+        "tooltip": ""
+      },
+      {
+        "icon": "photo-filled",
+        "command": "import_texture",
+        "tooltip": ""
+      },
+      {
+        "icon": "file-music-filled",
+        "command": "import_sound",
+        "tooltip": ""
+      },
+      {
+        "icon": "run",
+        "command": "import_animation",
+        "tooltip": ""
+      },
+      {
+        "icon": "droplet-filled",
+        "command": "import_material",
+        "tooltip": ""
+      },
+      {
+        "icon": "cube-3d-sphere",
+        "command": "import_mesh",
+        "tooltip": ""
+      },
+      {
+        "icon": "eye-filled",
+        "command": "import_local",
+        "tooltip": ""
+      },
+      {
+        "command": "divider:builder-imports-save",
+        "icon": "separator-vertical",
+        "tooltip": ""
+      },
+      {
+        "command": "menu:common-build/ui-bars-save-to-object-contents",
+        "icon": "package-import",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:aurora-customize",
+        "tooltip": ""
+      },
+      {
+        "icon": "map-pin-filled",
+        "command": "bar_navigation",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:top-4",
+        "tooltip": ""
+      },
+      {
+        "icon": "user-filled",
+        "command": "bar_status",
+        "tooltip": ""
+      },
+      {
+        "icon": "coin-filled",
+        "command": "bar_balance",
+        "tooltip": ""
+      },
+      {
+        "icon": "clock-filled",
+        "command": "bar_clock",
+        "tooltip": ""
+      },
+      {
+        "icon": "antenna-bars-5",
+        "command": "bar_ping",
+        "tooltip": ""
+      },
+      {
+        "icon": "gauge-filled",
+        "command": "bar_fps",
+        "tooltip": ""
+      },
+      {
+        "icon": "arrows-down-up",
+        "command": "bar_network",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:top-5",
+        "tooltip": ""
+      },
+      {
+        "icon": "brand-youtube-filled",
+        "command": "bar_media",
+        "tooltip": ""
+      },
+      {
+        "icon": "radio",
+        "command": "bar_music",
+        "tooltip": ""
+      },
+      {
+        "icon": "volume",
+        "command": "bar_volume",
+        "tooltip": ""
+      },
+      {
+        "icon": "separator-vertical",
+        "command": "separator:top-6",
+        "tooltip": ""
+      },
+      {
+        "icon": "bell-filled",
+        "command": "bar_notifications",
+        "tooltip": ""
+      }
+    ],
+    "top_style": {
+      "mode": "icons_only",
+      "align": "start",
+      "sizing": "fixed"
+    },
+    "block_styles": {
+      "bar_chat": {
+        "mode": null,
+        "align": "start",
+        "sizing": null
+      },
+      "bar_conversations": {
+        "mode": null,
+        "align": "start",
+        "sizing": null
+      }
+    },
+    "appearance": {},
+    "menu_layout": {},
+    "address_visible": null,
+    "composed": true,
+    "chat_composed": true
+  }
+}

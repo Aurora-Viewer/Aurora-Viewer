@@ -1,5 +1,5 @@
 //! The commands of the "Toolbar buttons" window: Firestorm's toybox
-//! (indra/newview/app_settings/commands.xml, the 67 commands with
+//! (indra/newview/app_settings/commands.xml, the commands with
 //! `available_in_toybox`, originally LGPL 2.1) and Aurora's own (friends,
 //! home, favourites, immersive mode). Aurora keeps its command names where it had one
 //! (`conversations` for Firestorm's `chat`, `worldmap` for `map`…), so that
@@ -27,13 +27,31 @@ macro_rules! commands {
 /// Every command, in no particular order (the window sorts them by their
 /// label in the interface's language, like LLFloaterToybox::postBuild).
 pub const COMMANDS: &[Command] = commands![
-    "toolbar_separator", "separator-vertical", "toolbar-separator", true;
+    "toolbar_separator", "arrows-horizontal", "toolbar-spacer", true;
+    "toolbar_divider", "separator-vertical", "toolbar-separator", true;
+    "edit_interface", "layout-grid-filled", "toolbar-interface-edit", true;
     "bar_navigation", "map-pin-filled", "toolbar-block-navigation", true;
     "bar_account", "user-filled", "toolbar-block-account", true;
     "bar_system", "gauge-filled", "toolbar-block-system", true;
+    "bar_status", "user-filled", "toolbar-block-status", true;
+    "bar_balance", "coin-filled", "toolbar-block-balance", true;
+    "bar_clock", "clock-filled", "toolbar-block-clock", true;
+    "bar_ping", "antenna-bars-5", "toolbar-block-ping", true;
+    "bar_fps", "gauge-filled", "toolbar-block-fps", true;
+    "bar_network", "arrows-down-up", "toolbar-block-network", true;
+    "bar_media", "brand-youtube-filled", "toolbar-block-media", true;
+    "bar_music", "radio", "toolbar-block-music", true;
+    "bar_volume", "volume", "toolbar-block-volume", true;
     "bar_notifications", "bell-filled", "toolbar-block-notifications", true;
     "bar_conversations", "messages-filled", "toolbar-block-conversations", true;
+    "bar_chat", "message-filled", "toolbar-block-chat", true;
     "report_bug", "bug-filled", "bug-title", true;
+    "import_texture", "photo-filled", "toolbar-import-textures", true;
+    "import_sound", "file-music-filled", "toolbar-import-sounds", true;
+    "import_animation", "run", "toolbar-import-animations", true;
+    "import_material", "droplet-filled", "toolbar-import-materials", true;
+    "import_mesh", "cube-3d-sphere", "toolbar-import-meshes", true;
+    "import_local", "eye-filled", "toolbar-import-local", true;
     "location_bar", "map-pin-filled", "toolbar-location-bar", true;
     "aurora_menu", "wolf", "ui-bars-aurora-menu", true;
     // Aurora's toolbar before PR 6
@@ -49,6 +67,7 @@ pub const COMMANDS: &[Command] = commands![
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
+    "avatar_studio", "man-filled", "avatar-studio-title", true;
     "search", "Command_Search_Icon", "search-title", true;
     "places", "Command_Places_Icon", "common-places", true;
     "snapshot", "Command_Snapshot_Icon", "photo-title", true;
@@ -80,12 +99,16 @@ pub const COMMANDS: &[Command] = commands![
     "beacons", "bulb-filled", "toolbar-command-beacons", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
+    "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
+    // Aurora's own: Show User Interface and Show HUDs as buttons (the Legacy
+    // Viewer has them in its menus only)
+    "hide_interface", "eye-off", "ui-bars-hide-interface", true;
+    "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
-    "destinations", "map-2", "toolbar-command-destinations", false;
-    "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
+    "destinations", "map-2", "toolbar-command-destinations", true;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
@@ -94,6 +117,7 @@ pub const COMMANDS: &[Command] = commands![
     "gridstatus", "building-broadcast-tower-filled", "toolbar-command-grid-status", true;
     "voice", "Command_Voice_Icon", "toolbar-command-voice", true;
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", true;
+    "graphics_preferences", "settings-filled", "ui-bars-graphics-preferences", true;
     "webbrowser", "world-filled", "toolbar-command-web-browser", true;
     "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
@@ -108,7 +132,7 @@ pub const COMMANDS: &[Command] = commands![
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
-    "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
+    "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
@@ -126,6 +150,16 @@ impl Command {
     pub fn label_in(&self, language: &str) -> &'static str {
         aurora_i18n::text_in(language, self.key)
     }
+}
+
+/// Commands the Legacy Viewer dropped: only stale entries of its skins'
+/// toolbars.xml name them, and it skips them. A saved layout (older Aurora,
+/// imported) that still has one drops it, with no empty button.
+const RETIRED: &[&str] = &["howto"];
+
+/// Whether `id` names a command that no longer exists.
+pub fn retired(id: &str) -> bool {
+    RETIRED.contains(&id)
 }
 
 /// The catalogue's entry of a command.

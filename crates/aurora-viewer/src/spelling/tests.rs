@@ -168,6 +168,19 @@ fn a_bad_word_line_is_left_out_as_hunspell_does() {
     assert!(dict.check("houses") && dict.check("car"));
 }
 
+thread_local! {
+    /// The status `status()` gives on this test's thread, whatever the
+    /// shared checker is doing.
+    pub(super) static PINNED_STATUS: std::cell::RefCell<Option<Status>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Pins the status the preferences show on this thread: other tests
+/// (`ready()`) load the shared checker meanwhile, and its "Loading…" line
+/// would come and go between two layouts of the Spelling tab.
+pub(crate) fn pin_status(status: Status) {
+    PINNED_STATUS.with(|pinned| *pinned.borrow_mut() = Some(status));
+}
+
 /// The shared checker with the default dictionaries, ready.
 pub(crate) fn ready() {
     configure(&egui::Context::default(), &SpellSettings::default());

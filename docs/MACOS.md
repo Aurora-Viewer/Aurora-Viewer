@@ -14,6 +14,18 @@ nothing else to install. macOS support is new: tell us what does not work
   viewer cannot start, even on Apple Silicon. Every Apple Silicon Mac can
   be updated to a newer macOS, free of charge.
 
+## Graphics defaults
+
+On a Retina Mac the world is drawn at the display's logical resolution
+(50% on a 2× display, 67% on 1.5×) and upscaled, while the interface and
+HUDs stay sharp and saved photos keep their full resolution. This follows
+the Legacy Viewer's `RenderHiDPI 0` default and is the setting that gains
+the most frame rate on a Mac. Preferences › Graphics › Smoothness has the
+**Match the display** switch; turn it off to choose the percentage. A new
+Mac profile also starts from the Legacy Viewer's Mac Mid-High values (no
+shadows or ambient occlusion, FXAA, manual reflection probes), shown as
+"Mid-High (recommended for this Mac)" under the quality levels.
+
 ## 1. Download and install
 
 1. On the [latest release](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest),
@@ -150,7 +162,8 @@ checks: `pwsh -File ./scripts/check.ps1` (formatting, clippy, tests).
 The macOS job of the release workflow signs the application with the
 project's Developer ID, then has Apple notarize it, when the repository has
 these Actions secrets; without them it is signed ad hoc and opens as in
-step 2:
+step 2. The dry run of a pull request that changes the release files is
+always signed ad hoc.
 
 | Secret | Value |
 |---|---|

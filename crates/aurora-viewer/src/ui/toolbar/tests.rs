@@ -11,7 +11,703 @@ pub(super) fn button(command: &str) -> ToolButton {
 }
 
 #[test]
-fn the_address_button_restores_removed_navigation_and_keeps_existing_placements() {
+fn restore_defaults_reunites_information_and_separates_audio_without_an_slurl_toggle() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        top: vec![button("location_bar"), button("inventory")],
+        ..Default::default()
+    };
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Restore),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    settings.compose_top();
+    let groups: Vec<Vec<_>> = settings
+        .top
+        .split(|button| structure::is_separator(&button.command))
+        .map(|group| group.iter().map(|button| button.command.as_str()).collect())
+        .collect();
+    assert_eq!(
+        groups,
+        [
+            vec!["aurora_menu"],
+            vec!["report_bug"],
+            vec!["bar_navigation"],
+            vec![
+                "bar_conversations",
+                "bar_status",
+                "bar_balance",
+                "bar_clock",
+                "bar_ping",
+                "bar_fps",
+                "bar_network",
+            ],
+            vec!["bar_media", "bar_music", "bar_volume"],
+            vec!["bar_notifications"],
+        ]
+    );
+    assert!(!settings.top.iter().any(|button| button.command == "location_bar"));
+    let customized = settings.top.clone();
+    assert!(!settings.compose_top());
+    assert_eq!(settings.top, customized, "composition never regroups a saved layout");
+}
+
+#[test]
+fn nearby_chat_migrates_the_actual_skin_once_and_moves_between_edges_and_drawers() {
+    let mut skin = layout();
+    skin.toolbar = vec![button("inventory"), button("skin_custom")];
+    let mut settings = ToolbarSettings::default();
+    assert!(settings.compose_chat(&skin));
+    assert_eq!(&settings.buttons(&skin)[2..], skin.toolbar);
+    assert_eq!(settings.block_styles["bar_chat"].align, Some(Align::Start));
+    assert!(!settings.compose_chat(&skin));
+    let mut state = ToolbarUi::default();
+    for bar in Bar::ALL {
+        state.pending = Some(Edit::Insert(bar, button("bar_chat"), usize::MAX));
+        state.commit(&skin, &mut settings);
+        assert_eq!(settings.location("bar_chat", &skin), Some(bar));
+        let count = Bar::ALL
+            .into_iter()
+            .flat_map(|bar| settings.bar(bar, &skin))
+            .filter(|b| b.command == "bar_chat")
+            .count();
+        assert_eq!(count, 1);
+    }
+    let drawer = drawers::create(&mut settings, Bar::Left, &skin);
+    state.pending = Some(Edit::DrawerInsert(drawer.clone(), button("bar_chat"), 0));
+    assert!(state.commit(&skin, &mut settings));
+    assert_eq!(settings.drawer_of("bar_chat"), Some(drawer.as_str()));
+    let json = serde_json::to_string(&settings).expect("chat layout");
+    settings = serde_json::from_str(&json).expect("restored chat layout");
+    assert!(!settings.compose_chat(&skin));
+    state.pending = Some(Edit::Insert(Bar::Right, button("bar_chat"), 0));
+    assert!(state.commit(&skin, &mut settings));
+    assert!(!settings.drawers.contains_key(&drawer), "moving the last child removes its drawer");
+    settings.locked = true;
+    state.pending = Some(Edit::Remove("bar_chat".into()));
+    assert!(!state.commit(&skin, &mut settings));
+    settings.locked = false;
+    state.pending = Some(Edit::Remove("bar_chat".into()));
+    assert!(state.commit(&skin, &mut settings));
+    assert!(!settings.compose_chat(&skin));
+    assert!(
+        settings.location("bar_chat", &skin).is_none(),
+        "intentional removal survives migration"
+    );
+    state.pending = Some(Edit::Restore);
+    assert!(state.commit(&skin, &mut settings));
+    assert!(settings.compose_chat(&skin));
+    assert_eq!(&settings.buttons(&skin)[2..], skin.toolbar);
+    assert_eq!(settings.block_styles["bar_chat"].align, Some(Align::Start));
+    settings.block_styles.get_mut("bar_chat").expect("chat block").align = Some(Align::Center);
+    assert!(!settings.compose_chat(&skin));
+    assert_eq!(
+        settings.block_styles["bar_chat"].align,
+        Some(Align::Center),
+        "an explicit alignment is retained"
+    );
+}
+
+#[test]
+fn editing_groups_split_and_merge_without_losing_order_or_separator_preferences() {
+    let mut settings = ToolbarSettings {
+        top: vec![
+            button("inventory"),
+            button("people"),
+            structure::separator("a"),
+            structure::separator("b"),
+            button("preferences"),
+            button("worldmap"),
+        ],
+        ..Default::default()
+    };
+    settings
+        .separators
+        .insert("separator:a".into(), structure::SeparatorStyle { size: 70.0, stretch: true });
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Split(Bar::Top, "people".into(), true)),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(structure::is_separator(&settings.top[1].command));
+    state.pending = Some(Edit::Split(Bar::Top, "people".into(), true));
+    assert!(!state.commit(&layout(), &mut settings), "an existing boundary is not duplicated");
+    state.pending = Some(Edit::Merge(Bar::Top, "people".into(), false));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.separators.contains_key("separator:a"));
+    assert!(!settings.top.iter().any(|b| b.command == "separator:b"));
+    state.pending = Some(Edit::Merge(Bar::Top, "people".into(), true));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(
+        settings.top.iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
+        ["inventory", "people", "preferences", "worldmap"]
+    );
+    settings.locked = true;
+    let before = serde_json::to_string(&settings).expect("locked groups");
+    state.pending = Some(Edit::Split(Bar::Top, "people".into(), true));
+    assert!(!state.commit(&layout(), &mut settings));
+    assert_eq!(serde_json::to_string(&settings).expect("unchanged"), before);
+}
+
+#[test]
+fn proximity_drop_moves_once_and_brackets_a_new_group_atomically_on_every_edge() {
+    let task_layout = layout();
+    for bar in Bar::ALL {
+        let drawer_bar = if bar == Bar::Right { Bar::Left } else { Bar::Right };
+        let mut settings = ToolbarSettings {
+            composed: true,
+            buttons: Some(Vec::new()),
+            top: Vec::new(),
+            ..Default::default()
+        };
+        settings.set_bar(bar, vec![button("inventory"), button("people")]);
+        settings.set_bar(drawer_bar, vec![button("drawer:tools")]);
+        settings.drawers.insert(
+            "drawer:tools".into(),
+            drawers::Drawer {
+                buttons: vec![button("radar")],
+                ..Default::default()
+            },
+        );
+        let mut state = ToolbarUi {
+            pending: Some(Edit::InsertGroup(bar, button("radar"), 1)),
+            ..Default::default()
+        };
+        assert!(state.commit(&layout(), &mut settings));
+        let list = settings.bar(bar, &task_layout);
+        assert_eq!(
+            list.iter()
+                .filter(|b| !structure::is_separator(&b.command))
+                .map(|b| b.command.as_str())
+                .collect::<Vec<_>>(),
+            ["inventory", "radar", "people"]
+        );
+        assert_eq!(list.len(), 5);
+        assert!(structure::is_separator(&list[1].command));
+        assert!(structure::is_separator(&list[3].command));
+        assert_ne!(list[1].command, list[3].command);
+        assert!(!settings.drawers.contains_key("drawer:tools"));
+        assert!(settings.location("drawer:tools", &layout()).is_none());
+        assert_eq!(settings.location("radar", &layout()), Some(bar));
+        settings.locked = true;
+        let json = serde_json::to_string(&settings).expect("group save");
+        state.pending = Some(Edit::InsertGroup(bar, button("preferences"), 1));
+        assert!(!state.commit(&layout(), &mut settings));
+        assert_eq!(serde_json::to_string(&settings).expect("locked layout"), json);
+        let mut restored: ToolbarSettings = serde_json::from_str(&json).expect("reload");
+        restored.sanitize();
+        assert_eq!(commands(restored.bar(bar, &layout())), commands(settings.bar(bar, &layout())));
+    }
+}
+
+#[test]
+fn proximity_drop_reuses_an_existing_separator_and_keeps_its_size() {
+    let mut settings = ToolbarSettings {
+        top: vec![button("inventory"), structure::separator("kept"), button("people")],
+        ..Default::default()
+    };
+    let style = structure::SeparatorStyle { size: 80.0, stretch: true };
+    settings.separators.insert("separator:kept".into(), style);
+    let mut state = ToolbarUi {
+        pending: Some(Edit::InsertGroup(Bar::Top, button("radar"), 2)),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.top.len(), 5);
+    assert_eq!(settings.top[1].command, "separator:kept");
+    assert_eq!(settings.top[2].command, "radar");
+    assert!(structure::is_separator(&settings.top[3].command));
+    assert_eq!(settings.separators["separator:kept"], style);
+}
+
+#[test]
+fn repeated_nearby_drops_of_an_isolated_group_do_not_grow_or_rewrite_its_separators() {
+    let task_layout = layout();
+    for bar in Bar::ALL {
+        for alone in [false, true] {
+            let mut settings = ToolbarSettings {
+                composed: true,
+                top: Vec::new(),
+                buttons: Some(Vec::new()),
+                ..Default::default()
+            };
+            let mut list = vec![structure::separator("outer"), button("radar")];
+            if !alone {
+                list.splice(0..0, [button("inventory"), structure::separator("boundary")]);
+            }
+            settings.set_bar(bar, list);
+            settings
+                .separators
+                .insert("separator:outer".into(), structure::SeparatorStyle { size: 80.0, stretch: true });
+            let original = settings.clone();
+            let mut state = ToolbarUi::default();
+            let first_rank = usize::from(!alone);
+            for _ in 0..20 {
+                for rank in first_rank..=settings.bar(bar, &task_layout).len() {
+                    state.pending = Some(Edit::InsertGroup(bar, button("radar"), rank));
+                    assert!(!state.commit(&task_layout, &mut settings), "same group on {bar:?}, rank={rank}");
+                    assert_eq!(settings, original);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn moving_singleton_groups_reuses_the_existing_boundary_ids_and_size_across_edges() {
+    let task_layout = layout();
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![button("inventory"), structure::separator("carried"), button("radar")],
+        left: vec![button("people")],
+        ..Default::default()
+    };
+    let style = structure::SeparatorStyle { size: 64.0, stretch: true };
+    settings.separators.insert("separator:carried".into(), style);
+    let mut state = ToolbarUi::default();
+    for _ in 0..12 {
+        for bar in [Bar::Left, Bar::Top] {
+            state.pending = Some(Edit::InsertGroup(bar, button("radar"), settings.bar(bar, &task_layout).len()));
+            assert!(state.commit(&task_layout, &mut settings));
+            let separators: Vec<_> = Bar::ALL
+                .into_iter()
+                .flat_map(|bar| settings.bar(bar, &task_layout))
+                .filter(|b| structure::is_separator(&b.command))
+                .collect();
+            assert_eq!(separators.len(), 1);
+            assert_eq!(separators[0].command, "separator:carried");
+            assert_eq!(settings.separators["separator:carried"], style);
+        }
+    }
+}
+
+#[test]
+fn repeated_round_trips_through_an_empty_bar_reuse_the_exposed_boundary() {
+    let task_layout = layout();
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![button("inventory"), structure::separator("kept"), button("radar")],
+        ..Default::default()
+    };
+    let mut state = ToolbarUi::default();
+    for _ in 0..20 {
+        state.pending = Some(Edit::Insert(Bar::Left, button("radar"), 0));
+        assert!(state.commit(&task_layout, &mut settings));
+        state.pending = Some(Edit::InsertGroup(Bar::Top, button("radar"), 1));
+        assert!(state.commit(&task_layout, &mut settings));
+        assert_eq!(commands(&settings.top), ["inventory", "separator:kept", "radar"]);
+        assert!(settings.left.is_empty());
+    }
+}
+
+#[test]
+fn live_conversation_placement_stays_present_across_drawer_and_group_moves_until_removal() {
+    let task_layout = layout();
+    let mut settings = ToolbarSettings {
+        composed: true,
+        top: vec![button("bar_conversations")],
+        ..Default::default()
+    };
+    let mut state = ToolbarUi::default();
+    assert_eq!(
+        settings.command_placement("bar_conversations", &task_layout),
+        Some((Bar::Top, None, 0))
+    );
+    let drawer = drawers::create(&mut settings, Bar::Left, &task_layout);
+    state.pending = Some(Edit::DrawerInsert(drawer.clone(), button("bar_conversations"), 0));
+    assert!(state.commit(&task_layout, &mut settings));
+    assert_eq!(
+        settings.command_placement("bar_conversations", &task_layout),
+        Some((Bar::Left, Some(drawer.clone()), 0))
+    );
+    state.pending = Some(Edit::Insert(Bar::Right, settings.left[0].clone(), 0));
+    assert!(state.commit(&task_layout, &mut settings));
+    assert_eq!(
+        settings.command_placement("bar_conversations", &task_layout),
+        Some((Bar::Right, Some(drawer), 0))
+    );
+    state.pending = Some(Edit::InsertGroup(Bar::Top, button("bar_conversations"), 0));
+    assert!(state.commit(&task_layout, &mut settings));
+    assert_eq!(
+        settings.command_placement("bar_conversations", &task_layout),
+        Some((Bar::Top, None, 0))
+    );
+    state.pending = Some(Edit::Remove("bar_conversations".into()));
+    assert!(state.commit(&task_layout, &mut settings));
+    assert!(settings.command_placement("bar_conversations", &task_layout).is_none());
+}
+
+#[test]
+fn drawers_preserve_children_locations_and_support_move_insert_reorder_rename_and_unfold() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        buttons: Some(Vec::new()),
+        top: vec![
+            button("inventory"),
+            button("people"),
+            structure::separator("kept"),
+            button("preferences"),
+        ],
+        ..Default::default()
+    };
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Fold(Bar::Top, "inventory".into())),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout(), &mut settings));
+    let id = settings.top[0].command.clone();
+    assert!(drawers::is_drawer(&id));
+    assert_eq!(settings.location("people", &layout()), Some(Bar::Top));
+    assert_eq!(settings.drawer_of("people"), Some(id.as_str()));
+    state.pending = Some(Edit::DrawerOptions(
+        id.clone(),
+        "Tools".into(),
+        settings.drawers[&id].mode,
+        Default::default(),
+    ));
+    assert!(state.commit(&layout(), &mut settings));
+    state.pending = Some(Edit::DrawerOptions(
+        id.clone(),
+        "Tools".into(),
+        ButtonMode::TextOnly,
+        Default::default(),
+    ));
+    assert!(state.commit(&layout(), &mut settings));
+    state.pending = Some(Edit::Insert(Bar::Right, settings.top[0].clone(), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.location("inventory", &layout()), Some(Bar::Right));
+    state.pending = Some(Edit::DrawerInsert(id.clone(), button("preferences"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    state.pending = Some(Edit::DrawerInsert(id.clone(), button("people"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(
+        settings.drawers[&id].buttons.iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
+        ["people", "preferences", "inventory"]
+    );
+    state.pending = Some(Edit::Insert(Bar::Bottom, button("people"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.drawer_of("people"), None);
+    let json = serde_json::to_string(&settings).expect("drawer save");
+    let mut loaded: ToolbarSettings = serde_json::from_str(&json).expect("drawer load");
+    loaded.sanitize();
+    assert_eq!(loaded.location("preferences", &layout()), Some(Bar::Right));
+    assert_eq!(loaded.right[0].tooltip, "Tools");
+    assert_eq!(loaded.drawers[&id].mode, ButtonMode::TextOnly);
+    state.pending = Some(Edit::DrawerInsert(id.clone(), loaded.right[0].clone(), 0));
+    assert!(!state.commit(&layout(), &mut loaded), "drawers cannot contain drawers");
+    state.pending = Some(Edit::Unfold(Bar::Right, id.clone()));
+    assert!(state.commit(&layout(), &mut loaded));
+    assert!(!loaded.drawers.contains_key(&id));
+    assert_eq!(
+        loaded.right.iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
+        ["preferences", "inventory"]
+    );
+    assert!(loaded.top.iter().any(|b| b.command == "separator:kept"));
+}
+
+#[test]
+fn drawer_defaults_load_older_settings_and_mode_edits_respect_lock_and_identity() {
+    let old: drawers::Drawer = serde_json::from_str(r#"{"buttons":[]}"#).expect("old drawer");
+    assert_eq!(old.mode, ButtonMode::IconsWithText);
+    let mut settings = ToolbarSettings {
+        top: Vec::new(),
+        buttons: Some(Vec::new()),
+        ..Default::default()
+    };
+    let mut state = ToolbarUi::default();
+    let first = drawers::create(&mut settings, Bar::Left, &layout());
+    let second = drawers::create(&mut settings, Bar::Right, &layout());
+    for mode in [ButtonMode::IconsOnly, ButtonMode::TextOnly, ButtonMode::IconsWithText] {
+        state.pending = Some(Edit::DrawerOptions(first.clone(), String::new(), mode, Default::default()));
+        assert!(state.commit(&layout(), &mut settings));
+        assert_eq!(settings.drawers[&first].mode, mode);
+        assert_eq!(settings.drawers[&second].mode, ButtonMode::IconsWithText);
+        state.pending = Some(Edit::DrawerOptions(first.clone(), String::new(), mode, Default::default()));
+        assert!(!state.commit(&layout(), &mut settings));
+    }
+    settings.locked = true;
+    let before = settings.clone();
+    state.pending = Some(Edit::DrawerOptions(
+        first.clone(),
+        String::new(),
+        ButtonMode::IconsOnly,
+        Default::default(),
+    ));
+    assert!(!state.commit(&layout(), &mut settings));
+    state.pending = Some(Edit::DrawerOptions(
+        first,
+        "Blocked".into(),
+        ButtonMode::IconsOnly,
+        Default::default(),
+    ));
+    assert!(!state.commit(&layout(), &mut settings));
+    assert_eq!(settings, before);
+}
+
+#[test]
+fn drawer_options_are_atomic_persisted_and_empty_drawers_are_pruned_on_removal() {
+    for remove in [true, false] {
+        let mut settings = ToolbarSettings {
+            composed: true,
+            buttons: Some(Vec::new()),
+            top: Vec::new(),
+            ..Default::default()
+        };
+        let id = drawers::create(&mut settings, Bar::Left, &layout());
+        let empty = drawers::create(&mut settings, Bar::Right, &layout());
+        let mut state = ToolbarUi {
+            pending: Some(Edit::DrawerInsert(id.clone(), button("inventory"), 0)),
+            ..Default::default()
+        };
+        assert!(state.commit(&layout(), &mut settings));
+        let own = appearance::Appearance {
+            mode: Some(ButtonMode::TextOnly),
+            icon: Some("star-filled".into()),
+        };
+        state.pending = Some(Edit::DrawerOptions(id.clone(), "Tools".into(), ButtonMode::IconsOnly, own.clone()));
+        assert!(state.commit(&layout(), &mut settings));
+        assert_eq!(settings.left[0].tooltip, "Tools");
+        assert_eq!(settings.drawers[&id].mode, ButtonMode::IconsOnly);
+        assert_eq!(settings.appearance[&id], own);
+        assert_eq!(
+            serde_json::from_str::<ToolbarSettings>(&serde_json::to_string(&settings).expect("encode")).expect("decode"),
+            settings
+        );
+        settings.locked = true;
+        let before = settings.clone();
+        state.pending = Some(Edit::DrawerOptions(
+            id.clone(),
+            "Blocked".into(),
+            ButtonMode::IconsWithText,
+            Default::default(),
+        ));
+        assert!(!state.commit(&layout(), &mut settings));
+        assert_eq!(settings, before);
+        settings.locked = false;
+        state.pending = Some(Edit::DrawerInsert(id.clone(), structure::divider("decoration"), 0));
+        assert!(state.commit(&layout(), &mut settings));
+        state.pending = Some(if remove {
+            Edit::Remove("inventory".into())
+        } else {
+            Edit::Insert(Bar::Top, button("inventory"), 0)
+        });
+        assert!(state.commit(&layout(), &mut settings));
+        assert!(
+            !settings.drawers.contains_key(&id),
+            "decorations cannot keep an emptied drawer alive"
+        );
+        assert!(settings.location(&id, &layout()).is_none());
+        assert!(
+            settings.drawers.contains_key(&empty),
+            "new empty placeholders remain available to fill"
+        );
+    }
+}
+
+#[test]
+fn drawer_sanitization_rejects_cycles_duplicates_and_unplaced_containers() {
+    let mut settings = ToolbarSettings {
+        buttons: Some(Vec::new()),
+        top: vec![button("drawer:a"), button("inventory")],
+        ..Default::default()
+    };
+    settings.drawers.insert(
+        "drawer:a".into(),
+        drawers::Drawer {
+            buttons: vec![button("drawer:a"), button("drawer:b"), button("inventory"), button("people")],
+            ..Default::default()
+        },
+    );
+    settings.drawers.insert(
+        "drawer:b".into(),
+        drawers::Drawer {
+            buttons: vec![button("drawer:a")],
+            ..Default::default()
+        },
+    );
+    settings.sanitize();
+    assert_eq!(settings.drawers.len(), 1);
+    assert_eq!(settings.drawers["drawer:a"].buttons, [button("people")]);
+    assert_eq!(settings.location("people", &layout()), Some(Bar::Top));
+    settings.locked = true;
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Fold(Bar::Top, "people".into())),
+        ..Default::default()
+    };
+    assert!(!state.commit(&layout(), &mut settings));
+}
+
+#[test]
+fn moving_navigation_into_a_drawer_keeps_the_address_visible_and_does_not_duplicate_it() {
+    let mut settings = ToolbarSettings::default();
+    settings.compose_top();
+    let mut state = ToolbarUi::default();
+    let id = drawers::create(&mut settings, Bar::Left, &layout());
+    state.pending = Some(Edit::DrawerInsert(id, button("bar_navigation"), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_ne!(settings.address_visible, Some(false));
+    settings.show_address_bar(true);
+    assert_eq!(settings.location("bar_navigation", &layout()), Some(Bar::Left));
+    assert!(!settings.top.iter().any(|b| b.command == "bar_navigation"));
+}
+
+#[test]
+fn drawer_contents_participate_in_live_menu_refresh_and_bug_visibility() {
+    let mut settings = ToolbarSettings {
+        composed: true,
+        top: vec![button("drawer:tools"), button("inventory")],
+        ..Default::default()
+    };
+    settings.drawers.insert(
+        "drawer:tools".into(),
+        drawers::Drawer {
+            buttons: vec![button("report_bug"), button("menu:common-build/import-menu")],
+            ..Default::default()
+        },
+    );
+    assert!(
+        !edit_mode::fold_allowed(&settings.top, "inventory"),
+        "a group cannot contain another drawer"
+    );
+    let ctx = egui::Context::default();
+    commands::publish(
+        &ctx,
+        commands::Catalogue {
+            entries: vec![commands::Entry {
+                button: button("menu:common-build/import-menu"),
+                parent: String::new(),
+                group: false,
+                info: false,
+                separator: false,
+                enabled: true,
+                checked: None,
+            }],
+        },
+    );
+    assert!(!ToolbarUi::default().needs_commands(&ctx, Some(&ToolbarSettings::default())));
+    assert!(ToolbarUi::default().needs_commands(&ctx, Some(&settings)));
+    assert!(settings.set_bug_visible(&layout(), false));
+    assert!(settings.location("report_bug", &layout()).is_none());
+    assert!(!settings.set_bug_visible(&layout(), false));
+    assert_eq!(settings.drawers["drawer:tools"].buttons.len(), 1);
+}
+
+#[test]
+fn separator_styles_are_independent_persisted_and_protected_by_the_bar_lock() {
+    let first = structure::separator("first");
+    let second = structure::separator("second");
+    let mut settings = ToolbarSettings {
+        top: vec![first.clone(), second.clone()],
+        ..Default::default()
+    };
+    let mut state = ToolbarUi::default();
+    let style = structure::SeparatorStyle { size: 80.0, stretch: true };
+    state.pending = Some(Edit::Separator(first.command.clone(), style));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(!settings.separators.contains_key(&second.command));
+    state.pending = Some(Edit::Insert(Bar::Left, first.clone(), 0));
+    assert!(state.commit(&layout(), &mut settings));
+    assert_eq!(settings.location(&first.command, &layout()), Some(Bar::Left));
+    assert_eq!(settings.separators[&first.command], style);
+    let json = serde_json::to_string(&settings).expect("separator settings");
+    let restored: ToolbarSettings = serde_json::from_str(&json).expect("separator settings reload");
+    assert_eq!(restored.separators[&first.command], style);
+    state.pending = Some(Edit::Separator(first.command.clone(), style));
+    assert!(!state.commit(&layout(), &mut settings));
+    settings.locked = true;
+    state.pending = Some(Edit::Separator(first.command.clone(), Default::default()));
+    assert!(!state.commit(&layout(), &mut settings));
+    settings.locked = false;
+    state.pending = Some(Edit::Separator(first.command.clone(), Default::default()));
+    assert!(state.commit(&layout(), &mut settings));
+    assert!(settings.separators.is_empty());
+}
+
+#[test]
+fn aggregate_chrome_layouts_expand_in_place_once_and_preserve_existing_placements() {
+    for bar in Bar::ALL {
+        let mut settings = ToolbarSettings {
+            composed: true,
+            top: Vec::new(),
+            buttons: Some(Vec::new()),
+            locked: true,
+            ..Default::default()
+        };
+        let original = vec![
+            button("bar_account"),
+            structure::separator("kept"),
+            button("bar_system"),
+            button("inventory"),
+        ];
+        match bar {
+            Bar::Top => settings.top = original,
+            Bar::Left => settings.left = original,
+            Bar::Right => settings.right = original,
+            Bar::Bottom => settings.buttons = Some(original),
+        }
+        settings.appearance.insert(
+            "bar_system".into(),
+            appearance::Appearance {
+                icon: Some("star-filled".into()),
+                ..Default::default()
+            },
+        );
+        assert!(settings.compose_top());
+        assert_eq!(
+            settings
+                .bar(bar, &layout())
+                .iter()
+                .map(|b| {
+                    if structure::is_separator(&b.command) && b.command != "separator:kept" {
+                        structure::SEPARATOR
+                    } else {
+                        b.command.as_str()
+                    }
+                })
+                .collect::<Vec<_>>(),
+            [
+                "bar_status",
+                "toolbar_separator",
+                "bar_balance",
+                "separator:kept",
+                "bar_clock",
+                "bar_ping",
+                "bar_network",
+                "toolbar_separator",
+                "bar_fps",
+                "toolbar_separator",
+                "bar_media",
+                "bar_music",
+                "bar_volume",
+                "inventory"
+            ]
+        );
+        assert!(settings.locked);
+        assert_eq!(settings.appearance["bar_volume"].icon.as_deref(), Some("star-filled"));
+        assert!(!settings.compose_top());
+        let json = serde_json::to_string(&settings).expect("split layout");
+        let mut restored: ToolbarSettings = serde_json::from_str(&json).expect("restored layout");
+        assert!(!restored.compose_top());
+        assert_eq!(serde_json::to_string(&restored).expect("unchanged layout"), json);
+    }
+    let mut settings = ToolbarSettings {
+        composed: true,
+        top: vec![button("bar_system")],
+        right: vec![button("bar_fps")],
+        ..Default::default()
+    };
+    assert!(settings.compose_top());
+    assert_eq!(settings.location("bar_fps", &layout()), Some(Bar::Right));
+    assert!(!settings.top.iter().any(|b| b.command == "bar_fps"));
+    settings.top.retain(|b| b.command != "bar_clock");
+    assert!(!settings.compose_top(), "a removed component stays removed");
+}
+
+#[test]
+fn the_address_shortcut_restores_removed_navigation_and_keeps_existing_placements() {
     let layout = layout();
     let mut settings = ToolbarSettings::default();
     settings.compose_top();
@@ -94,8 +790,15 @@ fn top_composition_migrates_once_and_keeps_custom_buttons_and_appearance() {
         "aurora_menu",
         "report_bug",
         "bar_navigation",
-        "bar_account",
-        "bar_system",
+        "bar_status",
+        "bar_balance",
+        "bar_clock",
+        "bar_ping",
+        "bar_network",
+        "bar_fps",
+        "bar_media",
+        "bar_music",
+        "bar_volume",
         "bar_notifications",
         "bar_conversations",
     ] {
@@ -363,23 +1066,27 @@ fn toolbar_custom_skin_labels_are_kept_and_built_in_labels_follow_the_language()
 fn toolbar_catalogue_wraps_without_widening_the_floater() {
     let mut bench = Bench::default();
     bench.state.open = true;
-    for _ in 0..4 {
-        bench.frame(vec![]);
-    }
-    let window = bench
-        .ctx
-        .memory(|m| m.area_rect(egui::Id::unique("toolbar_editor")))
-        .expect("editor");
-    assert!(window.width() <= 900.0 - 16.0, "catalogue width: {window:?}");
-    for button in catalogue(&layout()) {
-        let rect = bench
+    let tiles = catalogue_view::entries(&layout(), &bench.settings, &commands::Catalogue::default());
+    for advanced in [false, true] {
+        bench.state.advanced_catalogue = advanced;
+        for _ in 0..4 {
+            bench.frame(vec![]);
+        }
+        let window = bench
             .ctx
-            .data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", button.command))))
-            .expect("catalogue button");
-        assert!(
-            rect.left() >= window.left() && rect.right() <= window.right(),
-            "button outside editor: {rect:?} / {window:?}"
-        );
+            .memory(|m| m.area_rect(egui::Id::unique("toolbar_editor")))
+            .expect("editor");
+        assert!(window.width() <= 900.0 - 16.0, "catalogue width: {window:?}");
+        for tile in tiles.iter().filter(|tile| tile.in_view(advanced, "")) {
+            let rect = bench
+                .ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", &tile.button.command))))
+                .expect("catalogue button");
+            assert!(
+                rect.left() >= window.left() && rect.right() <= window.right(),
+                "button outside editor: {rect:?} / {window:?}"
+            );
+        }
     }
 }
 
@@ -549,7 +1256,7 @@ impl Bench {
                     favorites: &favorites,
                     bar: Bar::Bottom,
                     style: Style::default(),
-                    editing: false,
+                    editing: self.state.open,
                 };
                 bars::top::show(
                     ui,
@@ -640,18 +1347,41 @@ impl Bench {
             .find_map(|s| find(&s.shape, wanted))
             .expect("visible text")
     }
+
+    fn context_text(&mut self, command: &str, wanted: &str) -> egui::Pos2 {
+        let layer = egui::LayerId::new(egui::Order::Foreground, bars::tool_button_id(command).with("context_menu"));
+        // The inspector repeats labels behind the popup. Reverse paint order
+        // avoids mistaking that obscured text for a row of the menu above it.
+        fn find(shape: &egui::Shape, wanted: &str, ctx: &egui::Context, layer: egui::LayerId) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == wanted => {
+                    let pos = text.pos + Vec2::new(4.0, 7.0);
+                    (ctx.layer_id_at(pos) == Some(layer)).then_some(pos)
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().rev().find_map(|shape| find(shape, wanted, ctx, layer)),
+                _ => None,
+            }
+        }
+        self.frame(vec![]);
+        self.frame(vec![])
+            .shapes
+            .iter()
+            .rev()
+            .find_map(|shape| find(&shape.shape, wanted, &self.ctx, layer))
+            .expect("visible context-menu row")
+    }
 }
 
 /// Firestorm's bar and the dock of the islands.
 #[test]
-fn toolbar_real_right_click_removes_one_button_without_opening_its_window() {
+fn toolbar_real_right_click_removes_one_button_in_customization_without_opening_its_window() {
     for islands in [false, true] {
         toolbar_real_right_click_removes_one_button_without_opening_its_window_in(islands);
     }
 }
 
 #[test]
-fn favorites_left_grid_and_right_toolbar_menu_stay_separate_on_every_bar() {
+fn favorites_left_grid_and_normal_customization_menu_stay_separate_on_every_bar() {
     for islands in [false, true] {
         for bar in Bar::ALL {
             let mut bench = Bench {
@@ -667,6 +1397,8 @@ fn favorites_left_grid_and_right_toolbar_menu_stay_separate_on_every_bar() {
             }
             bench.frame(vec![]);
             bench.frame(vec![]);
+            let before = bench.settings.clone();
+            let saves = bench.saves;
             let pos = bench.pos("favorites");
             bench.pointer(pos, true, false);
             bench.pointer(pos, false, false);
@@ -678,18 +1410,27 @@ fn favorites_left_grid_and_right_toolbar_menu_stay_separate_on_every_bar() {
             bench.pointer(pos, true, true);
             bench.pointer(pos, false, true);
             bars::favorites::take_shown(&bench.ctx);
-            let remove = bench.text(aurora_i18n::tr!("toolbar-remove"));
+            bench.frame(vec![]);
             assert!(
                 !bars::favorites::take_shown(&bench.ctx),
                 "right click only opens the toolbar menu: {bar:?}, islands={islands}"
             );
-            bench.pointer(remove, true, false);
-            bench.pointer(remove, false, false);
+            let appearance = bench.text(aurora_i18n::tr!("toolbar-button-inherit"));
+            let customize = bench.text(aurora_i18n::tr!("toolbar-interface-edit"));
             assert!(
-                bench.settings.bar(bar, &layout()).is_empty(),
-                "Remove stays usable: {bar:?}, islands={islands}"
+                appearance.y < customize.y,
+                "appearance precedes customization: {bar:?}, islands={islands}"
             );
-            assert_eq!(bench.saves, 1);
+            assert!(
+                customize.y - appearance.y < 65.0,
+                "shared customization group has no internal separator"
+            );
+            bench.pointer(customize, true, false);
+            bench.pointer(customize, false, false);
+            assert!(bench.state.open);
+            assert_eq!(bench.state.selected.as_deref(), Some("favorites"));
+            assert_eq!(bench.settings, before, "entering customization preserves the layout");
+            assert_eq!(bench.saves, saves);
         }
     }
 }
@@ -699,11 +1440,12 @@ fn toolbar_real_right_click_removes_one_button_without_opening_its_window_in(isl
         islands,
         ..Bench::default()
     };
+    bench.state.open = true;
     bench.frame(vec![]);
     let pos = bench.pos("people");
     bench.pointer(pos, true, true);
     bench.pointer(pos, false, true);
-    let remove = bench.text(aurora_i18n::tr!("toolbar-remove"));
+    let remove = bench.context_text("people", aurora_i18n::tr!("toolbar-remove"));
     bench.pointer(remove, true, false);
     bench.pointer(remove, false, false);
     assert_eq!(bench.settings.buttons(&layout()).len(), 2);
@@ -726,7 +1468,8 @@ fn toolbar_real_drag_commits_once_on_release_and_escape_cancels_in(islands: bool
     };
     bench.frame(vec![]);
     let from = bench.pos("inventory");
-    let to = bench.pos("preferences") + Vec2::new(30.0, 0.0);
+    let target = bench.ctx.read_response(bars::tool_button_id("preferences")).expect("target").rect;
+    let to = egui::pos2(target.right() + 1.0, target.center().y);
     bench.pointer(from, true, false);
     bench.frame(vec![egui::Event::PointerMoved(to)]);
     bench.frame(vec![egui::Event::PointerMoved(to)]);
@@ -845,10 +1588,16 @@ fn toolbar_empty_dock_hides_after_last_button_moves_to_either_side_and_accepts_i
         bench.frame(vec![]);
         bench.frame(vec![]);
         assert!(
-            bench.ctx.read_response(background).is_none(),
-            "opening the editor does not show an empty dock"
+            bench.ctx.read_response(background).is_some(),
+            "the visual editor exposes an empty dock destination"
         );
         bench.state.open = false;
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(
+            bench.ctx.read_response(background).is_none(),
+            "closing the editor hides an unused dock"
+        );
         let from = bench.pos("inventory");
         bench.pointer(from, true, false);
         bench.frame(vec![egui::Event::PointerMoved(from + Vec2::new(0.0, 40.0))]);
@@ -887,7 +1636,7 @@ fn toolbar_background_opens_editor_and_locked_buttons_stay_in_place_in(islands: 
         .center();
     bench.pointer(background, true, true);
     bench.pointer(background, false, true);
-    let edit = bench.text(aurora_i18n::tr!("toolbar-edit"));
+    let edit = bench.text(aurora_i18n::tr!("toolbar-interface-edit"));
     bench.pointer(edit, true, false);
     bench.pointer(edit, false, false);
     assert!(bench.state.open);
@@ -907,7 +1656,7 @@ fn toolbar_background_opens_editor_and_locked_buttons_stay_in_place_in(islands: 
 
 /// Firestorm's bar and the dock of the islands.
 #[test]
-fn toolbar_drop_outside_cancels_and_drop_back_in_catalogue_removes() {
+fn toolbar_drop_outside_the_viewport_cancels_and_drop_back_in_catalogue_removes() {
     for islands in [false, true] {
         toolbar_drop_outside_cancels_and_drop_back_in_catalogue_removes_in(islands);
     }
@@ -920,7 +1669,7 @@ fn toolbar_drop_outside_cancels_and_drop_back_in_catalogue_removes_in(islands: b
     };
     bench.frame(vec![]);
     let from = bench.pos("inventory");
-    let outside = egui::pos2(20.0, 100.0);
+    let outside = egui::pos2(-20.0, 100.0);
     bench.pointer(from, true, false);
     bench.frame(vec![egui::Event::PointerMoved(outside)]);
     bench.pointer(outside, false, false);
@@ -1064,6 +1813,24 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
     assert_eq!(commands(&settings.right), ["search"]);
 }
 
+/// A saved or imported layout naming `howto` (dropped by the Legacy Viewer)
+/// loads without it and keeps the rest.
+#[test]
+fn toolbar_sanitize_skips_the_retired_howto_command() {
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![button("people"), button("howto"), button("inventory")]),
+        left: vec![button("howto"), button("radar")],
+        right: vec![button("search"), button("howto")],
+        ..Default::default()
+    };
+    settings.sanitize();
+    let layout = layout();
+    assert_eq!(commands(settings.buttons(&layout)), ["people", "inventory"]);
+    assert_eq!(commands(&settings.left), ["radar"]);
+    assert_eq!(commands(&settings.right), ["search"]);
+    assert!(catalogue::find("howto").is_none());
+}
+
 /// The window lists the Legacy Viewer commands and Aurora additions, each
 /// once, with an embedded icon and localized labels;
 /// what Aurora runs does something, what it cannot run yet does nothing.
@@ -1071,12 +1838,16 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 84);
-    assert_eq!(COMMANDS.len(), 84);
+    assert_eq!(all.len(), 104);
+    assert!(
+        !all.iter()
+            .any(|button| matches!(button.command.as_str(), "bar_account" | "bar_system"))
+    );
+    assert_eq!(COMMANDS.len(), 106);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 84, "each command once");
+    assert_eq!(ids.len(), COMMANDS.len(), "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -1094,8 +1865,9 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
             assert_ne!(command.label_in(language), command.key, "{}: no label in {language}", command.id);
         }
         // Speak, Favorites and the AO's toggle have buttons of their own
-        if matches!(command.id, "speak" | "favorites" | "aurora_menu")
+        if matches!(command.id, "speak" | "favorites" | "aurora_menu" | "vr_view")
             || structure::is_separator(command.id)
+            || structure::is_divider(command.id)
             || structure::is_block(command.id)
         {
             continue;

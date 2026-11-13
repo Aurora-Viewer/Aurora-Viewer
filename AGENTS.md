@@ -862,7 +862,7 @@ stands:
 | `In progress` | actively worked on | the agent that takes the issue |
 | `On hold` | paused on purpose, until something named in a comment unblocks it | an agent or the project manager |
 | `Waiting for user response` | waiting for an answer from the reporter or another user: information, a file, a reproduction, a test | the agent that asked for it |
-| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md) | the agent, at the end of the work |
+| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md); closed once the fix is released ("Reply and close") | the agent, at the end of the work |
 | `Done` | resolved and closed | the agent, or GitHub after `Closes #<n>` |
 
 - **`Waiting for user response`**: as soon as a comment asks the reporter (or
@@ -1001,7 +1001,8 @@ both are done:
   once and for all. Run it alone, with no `cd` or `;`.
 
 - **Resolved**: close only when the solution covers the whole issue, has
-  been verified (human validation if needed) and, if it requires a change to
+  been verified (human validation if needed, or its fix released: next
+  point) and, if it requires a change to
   the repository, its PR is merged. A question can be resolved by a verified
   answer with a link to the relevant documentation. `Closes #<n>` in the
   body of a PR to `main` closes the issue automatically on merge; use
@@ -1011,6 +1012,16 @@ both are done:
   Post a summary with the link of every PR that fixed it, the tests and the
   available version, or state that the fix is still waiting for a release.
   Check the final state, including after an automatic close.
+- **Fix released, validation pending** (🟡 in TASKS.md, `Waiting Review`):
+  once every PR that fixes the issue is in a published release, close it
+  with `--reason completed`, even before the QA's or the reporter's
+  validation. The comment names the PRs and the first version that has
+  them, says that the testers will still check it, and asks the reporter
+  to reply on the issue if the problem is still there, so that it is
+  reopened (a reporter cannot reopen an issue a maintainer closed). The 🟡
+  line stays in TASKS.md for the QA. Keep the issue open while a part is
+  left (a ⬜ line, an open PR that names it, a reporter who says it still
+  happens), and do not close an epic this way.
 - **Established duplicate**: explain the link with the reference issue (its
   number in the comment), then close with
   `gh issue close <n> --repo Aurora-Viewer/Aurora-Viewer --duplicate-of <reference-number>`.
@@ -1020,7 +1031,22 @@ both are done:
 - **Missing information, unreadable attachment, problem not reproduced or
   partial fix**: keep the issue open, say in a comment what is missing and
   set its Status to `Waiting for user response` when the reporter has to
-  answer, `On hold` when something else blocks it (above). A lack
-  of reply and a mere hypothesis are not enough to close it. If new evidence
+  answer, `On hold` when something else blocks it (above). A mere
+  hypothesis is not enough to close it. If new evidence
   invalidates the resolution, reopen it (`gh issue reopen`), explain why and
   resume the triage.
+- **No reply for a week**: when the last comment is the team's question or
+  request to the reporter and nobody answered for more than 7 days, close
+  the issue with `--reason "not planned"`. The comment says that we asked
+  and did not hear back, and that a reply on the issue reopens it. Not when
+  the last comment is from another user the team has not answered, nor
+  when an open PR names the issue.
+- **Old crash reports** (sent from the crash window, the
+  `<!-- aurora-crash v1 -->` marker): a report from a version older than
+  0.9.4 lacks the details that tell its cause apart (the settings that were
+  on, the first GPU loss, what the card was doing). Close it with
+  `--reason "not planned"` and ask for a new report from the crash window
+  if the crash happens again on a current version. Reports of 0.9.4 and
+  later are grouped by the Crash triage workflow (docs/BUG_REPORTING.md,
+  "Crash triage"), never by their title alone: "GPU device lost" is a
+  symptom, not a cause.

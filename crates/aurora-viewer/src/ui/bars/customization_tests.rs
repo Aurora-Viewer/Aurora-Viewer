@@ -229,7 +229,7 @@ fn mixed_button_modes_inherit_only_when_requested_and_round_trip_with_icons() {
     let saved: ToolbarSettings = serde_json::from_str(&serde_json::to_string(&settings).expect("settings")).expect("round trip");
     assert_eq!(saved.appearance["inventory"].icon.as_deref(), Some("star-filled"));
     assert_eq!(saved.appearance["inventory"].mode, None);
-    assert!(saved.top.iter().any(|button| button.command == "location_bar"));
+    assert_eq!(saved.top, settings.top);
     assert!(!Bar::Top.vertical());
 }
 
