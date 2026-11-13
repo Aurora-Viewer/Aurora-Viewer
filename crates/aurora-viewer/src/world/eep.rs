@@ -419,13 +419,13 @@ impl DayCycle {
                 insert_key(&mut out.water, key_position(key), fr);
             }
         }
-        for t in 0..4 {
+        for (t, track) in out.sky_tracks.iter_mut().enumerate() {
             for key in tracks.at(t + 1).as_array() {
                 if let Some(fr) = sky_frame(&frames[key["key_name"].as_str()]) {
-                    insert_key(&mut out.sky_tracks[t], key_position(key), fr);
+                    insert_key(track, key_position(key), fr);
                 }
             }
-            out.sky_tracks[t].sort_by(|a, b| a.0.total_cmp(&b.0));
+            track.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
         out.water.sort_by(|a, b| a.0.total_cmp(&b.0));
         out

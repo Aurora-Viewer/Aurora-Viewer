@@ -1111,7 +1111,7 @@ impl Editor {
                         || ctx
                             .input(|i| i.pointer.interact_pos())
                             .is_some_and(|p| self.point_owns_pointer(ctx, &world.avatar_lib.rig, p));
-                    let (o, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit);
+                    let (o, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit, self.gizmo_sensitivity());
                     gizmo_owns |= o;
                     owns |= o;
                     if let Some((pose, _)) = change {
@@ -1176,7 +1176,13 @@ impl Editor {
                 if self.drag.is_none() || self.drag.is_some_and(|d| matches!(d, Drag::Rotate { .. }) != rotate) {
                     self.position = transform.p();
                     self.set_rotation(transform.q());
-                    self.start_drag(proj, frame, ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer), rotate);
+                    self.start_drag(
+                        proj,
+                        frame,
+                        ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer),
+                        rotate,
+                        self.fine_drag(ctx.input(|i| i.modifiers)),
+                    );
                 }
                 owns = true;
                 // Delay mutable editor access until the node iteration ends.
@@ -1191,12 +1197,14 @@ impl Editor {
                     rotation,
                     right,
                     up,
+                    fine,
                 }) = self.drag
                 {
                     let delta = pointer - origin;
+                    let rate = if fine { 0.001 } else { 0.01 };
                     edit = Some(Transform::new(
                         transform.p(),
-                        Quat::from_axis_angle(right, delta.y * 0.01) * Quat::from_axis_angle(up, delta.x * 0.01) * rotation,
+                        Quat::from_axis_angle(right, delta.y * rate) * Quat::from_axis_angle(up, delta.x * rate) * rotation,
                     ));
                 }
             }
