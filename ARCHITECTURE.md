@@ -4176,7 +4176,11 @@ scene, into a target of 2 × 2 texels (draw record, depth, surface
 coordinates): opaque and masked faces, then the transparent faces in front
 of them. The camera (Alt-click, Object view and Focus) uses the same posed
 geometry with a visible-texture alpha test; touch/build keeps invisible
-Blend surfaces. Red/blue transparency overlays contribute their actual draw
+Blend surfaces. Alt-click and Object view skip a prim set to Ignore
+Object unless the build tools are open, then trace past that surface,
+the ground included (`Scene::alt_focus_target`, as
+`LLVOVolume::lineSegmentIntersect` when the Build floater is hidden).
+The Focus tool is already the build tools, so it keeps the face it shows. Red/blue transparency overlays contribute their actual draw
 lists to the second pass with full, two-sided triangles and no alpha test,
 including hidden faces and only the rigged faces enabled for display.
 Camera focus therefore stops on the highlighted surface while opaque depth

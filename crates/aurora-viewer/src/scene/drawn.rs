@@ -43,10 +43,14 @@
 //! linkset, where dropTextureAllFaces stops at the prim hit.
 //!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
-//! that pass directly: no CPU rest-pose or invisible touch-surface search.
+//! that pass. Alt+click skips a face set to Ignore Object unless the build
+//! tools are open, then traces past it on the CPU, as the Legacy Viewer
+//! (`LLToolCamera::handleMouseDown`, `LLVOVolume::lineSegmentIntersect`).
+//! The Focus tool is already the build tools, so it keeps the face it shows.
 //!
-//! [`reaches`] is that rule, alone and tested. Worn Blend faces intercept a
-//! press regardless of texel opacity; world Blend left picks skip alpha <= 32/255.
+//! [`reaches`] is the designation rule above, alone and tested. Worn Blend
+//! faces intercept a press regardless of texel opacity; world Blend left
+//! picks skip alpha <= 32/255.
 
 use super::*;
 use aurora_net::TouchSurface;
@@ -166,6 +170,44 @@ impl Scene {
             return (own_body || status.own_rigged || own_passive).then_some(hit.point);
         }
         None
+    }
+
+    /// Where Alt+click and Object view lock the camera.
+    ///
+    /// The Legacy Viewer's camera tool picks with `pickAsync`
+    /// (`LLToolCamera::handleMouseDown`, lltoolfocus.cpp). That pick skips
+    /// `CLICK_ACTION_IGNORE` unless the Build floater is visible
+    /// (`LLVOVolume::lineSegmentIntersect`, llvovolume.cpp; the same test in
+    /// llspatialpartition.cpp). The nearest drawn face that is not ignored
+    /// wins. When the faces in front are ignored, the CPU trace starts at
+    /// that surface and may land on the ground (`interaction_point`).
+    /// Terrain has no object.
+    pub fn alt_focus_target(
+        &self,
+        world: &World,
+        drawn: &Drawn,
+        ray: Option<(Vec3, Vec3)>,
+        visible: Option<Vec3>,
+        build_open: bool,
+        far: f32,
+        now: Instant,
+    ) -> (Option<Vec3>, Option<usize>) {
+        let mut skipped_ignored = false;
+        for face in [drawn.blend, drawn.opaque].into_iter().flatten() {
+            match self.record_object(face.record) {
+                Some((idx, _)) if !build_open && self.drawn_status(world, idx).ignored => {
+                    skipped_ignored = true;
+                }
+                Some((idx, _)) => return (Some(face.point), Some(idx)),
+                None => return (Some(face.point), None),
+            }
+        }
+        if !skipped_ignored {
+            return (None, None);
+        }
+        let point = self.interaction_point(world, ray, visible, false, far);
+        let idx = point.and_then(|p| self.interaction_at(world, p, now, false));
+        (point, idx)
     }
 
     /// The object and the face a draw record belongs to. A scan of the
@@ -450,6 +492,51 @@ mod tests {
         assert_eq!(
             scene.own_avatar_surface(&world, &through, ray, Some(point + Vec3::X)),
             Some(point + Vec3::X)
+        );
+    }
+
+    /// Alt+click focuses what a left click would: the prim behind an
+    /// ignored one, the ignored one itself while the build tools are open,
+    /// and nothing when the ignored prim is the only surface on the ray.
+    #[test]
+    fn alt_focus_skips_an_ignored_prim_unless_build_is_open() {
+        let (mut world, mut scene, front, back) = super::super::picking::tests::indexed_scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+        }
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let back_point = Vec3::new(6.5, 0.0, 50.0);
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point: front_point,
+                st: glam::Vec2::ZERO,
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            blend: None,
+        };
+        world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
+        let now = Instant::now();
+        let at = |scene: &Scene, build| scene.alt_focus_target(&world, &drawn, Some(ray), Some(front_point), build, 100.0, now);
+        assert_eq!(
+            at(&scene, false),
+            (Some(back_point), Some(back)),
+            "an ignored front prim must focus the prim behind it"
+        );
+        assert_eq!(
+            at(&scene, true),
+            (Some(front_point), Some(front)),
+            "the build tools keep the ignored prim"
+        );
+        world.objects.get_mut(back).unwrap().position.y = 40.0;
+        scene.gpu[back].center = world.objects.get(back).unwrap().position;
+        assert_eq!(
+            scene.alt_focus_target(&world, &drawn, Some(ray), Some(front_point), false, 100.0, now),
+            (None, None),
+            "an ignored prim with nothing behind it focuses nothing"
         );
     }
 
