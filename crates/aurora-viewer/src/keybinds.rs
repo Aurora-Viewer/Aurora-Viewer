@@ -1242,11 +1242,24 @@ impl EditHistory {
     }
 }
 
-/// The same logical letters/punctuation and non-Latin physical fallback as
-/// egui-winit, restricted to keys used by the fixed editing accelerators.
+/// Logical letters and punctuation used by the fixed editing accelerators,
+/// with the same non-Latin physical fallback as egui-winit. The number row
+/// and numpad 1–5 follow the key position instead. The Legacy Viewer's
+/// LLKeyboardWin32 constructor (indra/llwindow/llkeyboardwin32.cpp) maps
+/// `'0'..'9'` and numpad `0x60..0x69` by virtual key, and menu_viewer.xml
+/// binds the build tools to `control|1` through `control|5`. A French
+/// AZERTY layout types `'` on the 4 key; that character must not hide Create.
 pub fn native_shortcut_key(key: &winit::keyboard::Key, code: KeyCode) -> Option<egui::Key> {
     use egui::Key as E;
     use winit::keyboard::{Key, KeyCode as K, NamedKey};
+    match code {
+        K::Digit1 | K::Numpad1 => return Some(E::Num1),
+        K::Digit2 | K::Numpad2 => return Some(E::Num2),
+        K::Digit3 | K::Numpad3 => return Some(E::Num3),
+        K::Digit4 | K::Numpad4 => return Some(E::Num4),
+        K::Digit5 | K::Numpad5 => return Some(E::Num5),
+        _ => {}
+    }
     let logical = match key {
         Key::Character(letter) => E::from_name(letter),
         Key::Named(NamedKey::Escape) => Some(E::Escape),
@@ -1264,11 +1277,6 @@ pub fn native_shortcut_key(key: &winit::keyboard::Key, code: KeyCode) -> Option<
         K::KeyX => Some(E::X),
         K::KeyZ => Some(E::Z),
         K::KeyY => Some(E::Y),
-        K::Digit1 | K::Numpad1 => Some(E::Num1),
-        K::Digit2 | K::Numpad2 => Some(E::Num2),
-        K::Digit3 | K::Numpad3 => Some(E::Num3),
-        K::Digit4 | K::Numpad4 => Some(E::Num4),
-        K::Digit5 | K::Numpad5 => Some(E::Num5),
         K::Period | K::NumpadDecimal => Some(E::Period),
         K::Comma => Some(E::Comma),
         K::Escape => Some(E::Escape),

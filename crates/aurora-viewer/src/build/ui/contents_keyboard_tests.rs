@@ -413,3 +413,25 @@ fn contents_f2_requires_one_modifiable_item_and_world_click_releases_the_list_fo
         "World focus must retain object Delete"
     );
 }
+
+/// AZERTY Ctrl+4 is logical Quote with physical Num4. Contents must still
+/// give that key to the build tools (menu_viewer.xml control|4).
+#[test]
+fn azerty_ctrl_4_leaves_contents_focus_and_opens_create() {
+    let (mut inspector, _, _) = fixture();
+    click(&mut inspector, 0, egui::Modifiers::NONE);
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let modifiers = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    inspector.show(vec![egui::Event::Key {
+        key: egui::Key::Quote,
+        physical_key: Some(egui::Key::Num4),
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }]);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert!(inspector.tool.open);
+}
