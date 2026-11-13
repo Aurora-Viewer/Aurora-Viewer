@@ -893,6 +893,15 @@ follows the complete animated eye midpoint in every posture, including rendered
 hover; it moves only the camera position, preserving mouse-controlled world-space
 aim.
 
+Third-person body-part tracking (`CameraSettings::third_person_follow_joint`)
+moves the camera and focus together by the selected joint's animated translation,
+preserving the user's camera framing and pan. The translation is measured from
+the avatar's own shaped rest pose (`Scene::joint_offset`), so shape and mesh
+joint offsets never move the shot; a focus picked on land, water or another
+object stops the tracking. The Preferences intensity control
+scales that translation from 0% to 500%; 100% is the default and the unscaled
+behavior.
+
 `world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
 parcel identities and exact bitmap membership. Independent same-owner and
 same-group options walk adjoining cells, including connected region borders.
