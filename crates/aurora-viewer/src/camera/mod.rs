@@ -505,6 +505,11 @@ fn follow_joint_intensity_scale(percent: u16) -> f32 {
 }
 
 impl Camera {
+    /// The camera follows the avatar (LLAgentCamera::getFocusOnAvatar).
+    pub fn focus_on_avatar(&self) -> bool {
+        self.focus_on_avatar
+    }
+
     pub fn mouselook(&self) -> bool {
         self.mode == CameraMode::Mouselook
     }
@@ -995,6 +1000,35 @@ impl Camera {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let dir = (self.position - point).normalize_or(-self.forward());
         self.set_camera_pos_and_focus(point + dir * 3.0, point, object, s);
+    }
+
+    /// Zoom on a media face (LLViewerMediaFocus::setCameraZoom with the
+    /// medium zoom of LLPanelPrimMediaControls, zoom_in_only): the camera
+    /// goes along the face's normal to the distance that frames the prim,
+    /// and never moves back when it is already closer. Returns whether it
+    /// moved.
+    #[allow(clippy::too_many_arguments)]
+    pub fn zoom_media(
+        &mut self,
+        center: Vec3,
+        rotation: Quat,
+        size: Vec3,
+        normal: Vec3,
+        object: Option<(Uuid, FocusObject)>,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) -> bool {
+        let normal = normal.try_normalize().unwrap_or(-self.forward());
+        // the view's own angle, as LLViewerCamera::getView (the settings' one
+        // before a zoom of the view)
+        let eye = media_zoom_eye(center, rotation, size, normal, self.fov_y, aspect, self.position);
+        if self.position.distance_squared(center) < eye.distance_squared(center) {
+            return false;
+        }
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        self.set_camera_pos_and_focus(eye, center, object, s);
+        true
     }
 
     /// Avatar.ZoomIn from a list (handle_zoom_to_object, llviewermenu.cpp):
@@ -3043,6 +3077,51 @@ pub fn selection_distance(extent: f32, fov: f32, aspect: f32) -> f32 {
     extent * PADDING_FACTOR / angle.atan()
 }
 
+/// LLPanelPrimMediaControls' zoom_medium_padding.
+const MEDIA_ZOOM_PADDING: f32 = 1.1;
+
+/// The camera position of a media zoom (LLViewerMediaFocus::setCameraZoom
+/// and getBBoxAspectRatio, indra/newview/llviewermediafocus.cpp, originally
+/// LGPL 2.1). The prim's box is seen along `normal` (unit, world): its
+/// largest local component is the depth, the other two sides are the face's
+/// rectangle, the one nearest the vertical its height; the distance frames
+/// the side that matches the screen's short side, plus half the depth.
+pub fn media_zoom_eye(center: Vec3, rotation: Quat, size: Vec3, normal: Vec3, fov: f32, aspect: f32, camera: Vec3) -> Vec3 {
+    let inv = rotation.inverse();
+    let local = (inv * normal).abs();
+    let up = inv * Vec3::Z;
+    let (a, b, depth) = if local.x > local.y && local.x > local.z {
+        (Vec3::new(0.0, size.y, 0.0), Vec3::new(0.0, 0.0, size.z), size.x)
+    } else if local.x <= local.y && local.y > local.z {
+        (Vec3::new(size.x, 0.0, 0.0), Vec3::new(0.0, 0.0, size.z), size.y)
+    } else {
+        (Vec3::new(size.x, 0.0, 0.0), Vec3::new(0.0, size.y, 0.0), size.z)
+    };
+    let (height, width) = if a.dot(up).abs() > b.dot(up).abs() {
+        (a.length(), b.length())
+    } else {
+        (b.length(), a.length())
+    };
+    let ratio = width / height.max(1e-4);
+    let invert = (aspect > 1.0 && ratio > aspect) || (aspect < 1.0 && ratio < aspect);
+    let mut distance = if aspect < 1.0 || invert {
+        let angle = (fov * aspect).max(0.1);
+        width * 0.5 * MEDIA_ZOOM_PADDING / (angle * 0.5).tan()
+    } else {
+        let angle = fov.max(0.1);
+        height * 0.5 * MEDIA_ZOOM_PADDING / (angle * 0.5).tan()
+    };
+    distance += depth * 0.5;
+    let mut eye = center + normal * distance;
+    if normal.z.abs() > 0.9999 {
+        // looking straight down or up: a smidge towards the current camera
+        // so that it does not flip around
+        let delta = camera - eye;
+        eye += delta * 0.01;
+    }
+    eye
+}
+
 /// The alt-camera focus object of a clicked object: an attachment focuses
 /// its avatar (LLAgentCamera::setFocusGlobal); HUDs are not focusable.
 pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uuid, FocusObject)> {
@@ -3069,6 +3148,26 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_zoom_frames_the_face_height_along_its_normal() {
+        // a 0.1 × 3.6 × 2.25 m screen facing -X, a 16:9 view, 60° vertically
+        let fov = 60f32.to_radians();
+        let (center, size) = (Vec3::new(10.0, 20.0, 2.0), Vec3::new(0.1, 3.6, 2.25));
+        let eye = media_zoom_eye(center, Quat::IDENTITY, size, -Vec3::X, fov, 16.0 / 9.0, Vec3::ZERO);
+        let expected = 2.25 * 0.5 * MEDIA_ZOOM_PADDING / (fov * 0.5).tan() + 0.05;
+        assert!((eye - (center - Vec3::X * expected)).length() < 1e-4, "{eye}");
+        // a tall narrow screen: its width decides, with the screen's width angle
+        let size = Vec3::new(0.1, 1.0, 4.0);
+        let eye = media_zoom_eye(center, Quat::IDENTITY, size, -Vec3::X, fov, 0.5, Vec3::ZERO);
+        let expected = 0.5 * MEDIA_ZOOM_PADDING / (fov * 0.5 * 0.5).tan() + 0.05;
+        assert!((center.distance(eye) - expected).abs() < 1e-4);
+        // the prim turned 90° about Z: its local Y faces the normal now
+        let rot = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let eye = media_zoom_eye(center, rot, Vec3::new(3.6, 0.1, 2.25), -Vec3::X, fov, 16.0 / 9.0, Vec3::ZERO);
+        let expected = 2.25 * 0.5 * MEDIA_ZOOM_PADDING / (fov * 0.5).tan() + 0.05;
+        assert!((center.distance(eye) - expected).abs() < 1e-3);
+    }
 
     #[test]
     fn third_person_joint_intensity_scales_and_caps_translation() {

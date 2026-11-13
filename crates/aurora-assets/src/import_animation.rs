@@ -189,15 +189,21 @@ impl<'a> Tokens<'a> {
 }
 
 pub fn parse_bvh(bytes: &[u8], skeleton: &Skeleton) -> Result<Bvh, AssetError> {
-    parse_bvh_channels(bytes, skeleton, false)
+    parse_bvh_channels(bytes, skeleton, false, false)
+}
+
+/// Animation editing must not discard channels for bones the current rig
+/// cannot represent. The general BVH importer keeps its legacy skip behavior.
+pub fn parse_bvh_for_edit(bytes: &[u8], skeleton: &Skeleton) -> Result<Bvh, AssetError> {
+    parse_bvh_channels(bytes, skeleton, false, true)
 }
 
 /// A pose needs every static channel, including an entirely neutral T-pose.
 /// Ordinary motion imports retain their existing reference-frame reduction.
 pub fn parse_bvh_pose(bytes: &[u8], skeleton: &Skeleton) -> Result<Bvh, AssetError> {
-    parse_bvh_channels(bytes, skeleton, true)
+    parse_bvh_channels(bytes, skeleton, true, false)
 }
-fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> Result<Bvh, AssetError> {
+fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool, reject_unknown_joints: bool) -> Result<Bvh, AssetError> {
     if bytes.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("BVH file"));
     }
@@ -243,8 +249,10 @@ fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> R
     let basis = Quat::from_mat3(&Mat3::from_cols(Vec3::Y, Vec3::Z, Vec3::X));
     let mut tracks = Vec::new();
     for joint in joints {
-        let Some(index) = skeleton.find(&joint.name) else {
-            continue;
+        let index = match skeleton.find(&joint.name) {
+            Some(index) => index,
+            None if reject_unknown_joints => return Err(AssetError::invalid("BVH contains joints unknown to the avatar rig")),
+            None => continue,
         };
         let name = &skeleton.joints[index].name;
         let pose = |frame: usize| {
@@ -529,6 +537,14 @@ mod tests {
             let animation = parse_bvh(&bytes, &skeleton()).unwrap_or_else(|e| panic!("{name}: {e}")).animation;
             assert_eq!(animation, expected, "{name}");
         }
+    }
+
+    #[test]
+    fn editor_bvh_import_rejects_unmapped_joints_without_changing_legacy_import() {
+        let bytes = foreign_joint();
+        let expected = parse_bvh(LINES.as_bytes(), &skeleton()).expect("mapped animation").animation;
+        assert_eq!(parse_bvh(&bytes, &skeleton()).expect("legacy skip behavior").animation, expected);
+        assert!(parse_bvh_for_edit(&bytes, &skeleton()).is_err());
     }
 
     #[test]
