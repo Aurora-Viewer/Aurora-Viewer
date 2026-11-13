@@ -5921,7 +5921,6 @@ impl Backend {
     pub fn can_capture(&self) -> bool {
         self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
     }
-
     /// Follow the window: size and vsync wanted for the frame being drawn.
     fn apply_surface(&mut self, s: SurfaceState) {
         self.set_vsync(s.vsync);
@@ -7094,6 +7093,7 @@ impl Backend {
             self.seed = None;
         }
         stats.settings = Some(self.settings);
+        stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
         // the tiled photo is done: its context goes with the targets that
         // bind it
         if params.photo_context == crate::types::PhotoContext::None && self.gtao.drop_context() {

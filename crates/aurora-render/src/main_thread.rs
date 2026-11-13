@@ -1133,6 +1133,13 @@ impl Renderer {
         self.last_stats.present_mode
     }
 
+    /// Aurora Weather: snow lay on the ground in the last frame the backend
+    /// finished. The app's footprints and snow work wait for it, or for snow
+    /// falling.
+    pub fn snow_lying(&self) -> bool {
+        self.last_stats.snow_lying
+    }
+
     /// The last frame the backend finished was drawn with the settings last
     /// applied: false while the pipelines for new MSAA samples or SSR compile
     /// on their worker (#1746), and until the backend has seen them.

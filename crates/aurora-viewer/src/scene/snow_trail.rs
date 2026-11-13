@@ -11,7 +11,7 @@
 use super::{Scene, anchors, anim};
 use crate::world::World;
 use glam::{Mat3, Mat4, Vec3};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -169,8 +169,8 @@ impl SnowTrails {
         }
         let mut pressed: Vec<[f32; 8]> = Vec::new();
         let now = Instant::now();
-        let mut seen = Vec::new();
-        let mut seen_parts = Vec::new();
+        let mut seen = HashSet::new();
+        let mut seen_parts = HashSet::new();
         for (idx, o) in world.objects.avatars() {
             let Some((p, r, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
@@ -200,7 +200,7 @@ impl SnowTrails {
                 let half_height = (axes.transpose() * Vec3::Z).length();
                 let at = m.w_axis.truncate() - Vec3::Z * half_height;
                 let key = (o.full_id, k as u8);
-                seen.push(key);
+                seen.insert(key);
                 let foot = scene.snow_trails.feet.entry(key).or_insert(Foot {
                     time,
                     low: at.z,
@@ -242,7 +242,7 @@ impl SnowTrails {
                 let Some(print) = body_print(m, ground, fallen) else {
                     continue;
                 };
-                seen_parts.push(key);
+                seen_parts.insert(key);
                 let at = glam::Vec2::new(print[0], print[1]);
                 if scene.snow_trails.parts.get(&key).is_none_or(|l| l.distance(at) > BODY_EVERY) {
                     scene.snow_trails.parts.insert(key, at);
@@ -258,7 +258,7 @@ impl SnowTrails {
             .filter(|(_, g)| g.physical && !g.is_avatar && !g.hud && !g.rigged && g.owner_avatar.is_none())
             .map(|(idx, _)| idx)
             .collect();
-        let mut seen_objects = Vec::new();
+        let mut seen_objects = HashSet::new();
         for idx in moving {
             let Some(o) = world.objects.get(idx) else {
                 continue;
@@ -269,7 +269,7 @@ impl SnowTrails {
             if (p - centre).truncate().length() > reach {
                 continue;
             }
-            seen_objects.push(o.full_id);
+            seen_objects.insert(o.full_id);
             let at = p.truncate();
             if scene
                 .snow_trails

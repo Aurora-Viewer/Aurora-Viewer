@@ -11583,18 +11583,27 @@ impl App {
         }
         // Aurora Weather: the snow gathering on the avatars near the camera
         // ("Snow on avatars"; off, what lay on them goes at once)
+        // (nothing to do in clear weather with none left on them)
         if self.weather_now.snow_on_avatars {
             let snow = if self.weather_now.snowing() { self.weather_now.fall() } else { 0.0 };
-            let rain = self.weather_now.rain();
-            let mut on_avatars = std::mem::take(&mut self.scene.avatar_snow);
-            on_avatars.update(&self.scene, &self.world, Instant::now(), snow, rain, self.camera.position);
-            self.scene.avatar_snow = on_avatars;
+            if snow > 0.0 || !self.scene.avatar_snow.is_clear() {
+                let rain = self.weather_now.rain();
+                let mut on_avatars = std::mem::take(&mut self.scene.avatar_snow);
+                on_avatars.update(&self.scene, &self.world, Instant::now(), snow, rain, self.camera.position);
+                self.scene.avatar_snow = on_avatars;
+            }
         } else {
             self.scene.avatar_snow = Default::default();
         }
         // Aurora Weather: the feet set down in the lying snow this frame, kept
-        // with the region's other footprints
-        if self.weather_now.snow_footprints && self.weather_now.snow_settles && self.in_world() {
+        // with the region's other footprints; only while snow falls or lies
+        // (as the renderer's footprint map: in clear weather no avatar
+        // skeleton, prim scan or ground ray)
+        if self.weather_now.snow_footprints
+            && self.weather_now.snow_settles
+            && self.in_world()
+            && (self.weather_now.snowing() || gfx.renderer.snow_lying())
+        {
             let reach = self.weather_now.snow_footprints_reach.clamp(32.0, 64.0) * 0.5 - 1.0;
             let centre = self.trail_centre();
             let snowing = if self.weather_now.snowing() { self.weather_now.fall() } else { 0.0 };

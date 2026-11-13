@@ -1756,6 +1756,9 @@ pub struct RenderStats {
     /// the previous ones while the pipelines for new ones compile (#1746).
     /// None until the backend has answered a frame.
     pub settings: Option<RenderSettings>,
+    /// Aurora Weather: snow lies on the ground (local or the region's), as
+    /// the footprints' map and the snow cover read it.
+    pub snow_lying: bool,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,

@@ -12,7 +12,7 @@
 use super::Scene;
 use crate::world::World;
 use glam::Vec3;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -59,7 +59,7 @@ impl AvatarSnow {
     pub fn update(&mut self, scene: &Scene, world: &World, now: Instant, snow: f32, rain: f32, eye: Vec3) {
         let dt = self.last.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32().min(1.0));
         self.last = Some(now);
-        let mut seen = Vec::new();
+        let mut seen = HashSet::new();
         for (idx, o) in world.objects.avatars() {
             let id = o.full_id;
             let Some((p, _, _)) = Scene::object_transform(world, idx, now, 0) else {
@@ -68,7 +68,7 @@ impl AvatarSnow {
             if (p - eye).length() > REACH {
                 continue;
             }
-            seen.push(id);
+            seen.insert(id);
             let s = self.avatars.entry(id).or_insert(Snowed {
                 amount: 0.0,
                 covered: false,
@@ -86,6 +86,11 @@ impl AvatarSnow {
             s.amount = step(s.amount, dt, snow, rain, s.covered);
         }
         self.avatars.retain(|id, s| seen.contains(id) || s.amount > 0.0);
+    }
+
+    /// No avatar has snow left on it: with none falling, nothing to update.
+    pub fn is_clear(&self) -> bool {
+        self.avatars.values().all(|s| s.amount <= 0.0)
     }
 
     /// How much snow is on an avatar (0..1).
