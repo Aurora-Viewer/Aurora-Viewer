@@ -17,7 +17,7 @@ pub const HISTORY: usize = 120;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FrameParts {
     pub cpu: [f32; 7],
-    pub gpu: Option<[f32; 7]>,
+    pub gpu: Option<[f32; aurora_render::GpuElement::ALL.len()]>,
     /// The render thread's time per frame (ms); None without one.
     pub render_thread: Option<f32>,
 }

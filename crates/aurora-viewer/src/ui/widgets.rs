@@ -1892,7 +1892,7 @@ pub fn switch_labeled_wrapped(ui: &mut egui::Ui, p: &Palette, on: &mut bool, lab
 }
 
 /// Custom-painted controls follow an explicit font override in their UI scope.
-fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
+pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
     ui.style()
         .override_font_id
         .clone()
