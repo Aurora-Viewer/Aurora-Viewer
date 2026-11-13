@@ -206,6 +206,9 @@ pub(crate) fn hint_for_path(path: &str) -> Option<&'static str> {
 #[derive(Clone)]
 pub struct SoundClip {
     pub(crate) samples: Arc<[f32]>,
+    /// Where a voice of it starts (an even sample index: a frame), set by
+    /// [`SoundClip::rotated`]; the samples stay shared.
+    pub(crate) start: usize,
 }
 
 impl std::fmt::Debug for SoundClip {
@@ -310,7 +313,10 @@ impl SoundClip {
             return Err(AudioError::Decode("no audio decoded".into()));
         }
         fade_clip_edges(&mut out);
-        Ok(SoundClip { samples: out.into() })
+        Ok(SoundClip {
+            samples: out.into(),
+            start: 0,
+        })
     }
 
     /// Builds a clip from raw interleaved f32 PCM (`channels` >= 1), made
@@ -327,22 +333,25 @@ impl SoundClip {
             Resampler::new(rate, ENGINE_SAMPLE_RATE, 2).process(&stereo, &mut out);
             out.into()
         };
-        SoundClip { samples }
+        SoundClip { samples, start: 0 }
     }
 
-    /// The same sound, starting `fraction` (0..1) of the way through and
-    /// wrapping round: a loop played from another point (two copies of a
-    /// long noisy loop, offset, sound like two different sources).
+    /// The same sound, starting `fraction` (0..1) of the way through: a
+    /// looping voice wraps round, so it is the loop played from another
+    /// point (two voices of a long noisy loop, offset, sound like two
+    /// different sources); a voice that does not loop plays from there to
+    /// the end. The samples are shared, not copied (a minute of stereo is
+    /// 23 MB).
     pub fn rotated(&self, fraction: f32) -> SoundClip {
         let frames = self.samples.len() / 2;
         if frames == 0 {
             return self.clone();
         }
-        let start = ((fraction.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1) * 2;
-        let mut samples = Vec::with_capacity(self.samples.len());
-        samples.extend_from_slice(&self.samples[start..]);
-        samples.extend_from_slice(&self.samples[..start]);
-        SoundClip { samples: samples.into() }
+        let offset = ((fraction.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1) * 2;
+        SoundClip {
+            samples: self.samples.clone(),
+            start: (self.start + offset) % (frames * 2),
+        }
     }
 
     /// Length of the clip.
