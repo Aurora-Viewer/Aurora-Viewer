@@ -592,8 +592,17 @@ resolver in the Aurora and Legacy layouts.
 `app/inventory_hover.rs` owns a separate 32-image LRU cache (at most 8 MiB
 of 256-pixel RGBA images), expiring after 30 seconds without use. Streamer
 interest ends when an image is complete or its hover is abandoned; cache
-eviction drops the egui handle. Permanent profile/editor interests survive
-those releases, and obsolete worker replies cannot recreate released copies.
+eviction drops the egui handle. Profile/editor interests survive those
+releases, and obsolete worker replies cannot recreate released copies.
+
+`app/ui_image_cache.rs` bounds the other interface images: the profile pictures
+and `ui_images` that came from the streamer. A window keeps its texture only
+while it asks for it (5 seconds later `want_ui_image`'s interest lapses, the
+copy staying in egui). Copies neither asked for nor drawn for 30 seconds go,
+oldest first, past 96 MiB (24 MiB under memory pressure), and are made again
+when a window asks. What is drawn is read from the frame's shapes, since many
+windows only ask for what they lack. Images that cannot be read again (local
+imports, the demo's own) are never noted there.
 
 `aurora-net/src/session.rs` keeps the last confirmed agent parcel. Selected,
 hovered and build-tool property replies refresh its live metadata only when
@@ -3058,6 +3067,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `app/gpu_recovery.rs` | The window, the renderer and egui's input state made the same way at start (`resumed`) and after a GPU device loss; the recovery itself (Preferences › Graphics `gpu_recovery`, on by default; `AURORA_GPU_RECOVERY=1`/`0` forces it; not in VR): a new window and device, the old window kept until the new one has presented, the session and the world kept, the scene released on the lost renderer (`Scene::forget_gpu`) and reloaded on the new one (`Scene::adopt_gpu`, `TextureStreamer::gpu_reset`), particles, media and terrain paint brought back, the lost renderer's tickets dropped; the rule for repeated losses (`loss_step`: of the last five minutes, recover, recover with the safe graphics level, close). |
 | `app/egui_shadow.rs` | A CPU copy of egui's textures from the deltas it hands to the renderer (egui keeps no pixels), given whole to the renderer of a GPU recovery. |
 | `splash/` | The startup splash: another process of the executable (`--splash`, `mod.rs` starts it and feeds it the start's step on its standard input), a borderless window drawn on the CPU with the crash window's painter (`window.rs`: egui into a `softbuffer` surface, the login card's look painted once), the step, its share of the bar and its text (`progress.rs`, from the viewer's phase and `aurora_render::start_progress`); it closes when the viewer's window shows. An update's switch shows the same window from the updater's helper (`UpdateWindow`, fed `aurora_updater::install::HelperStage`), until the new viewer's splash is on screen. Not on macOS |
+| `app/ui_image_cache.rs` | Which interface images (pictures, `ui_images`) go when too many sit idle: used means asked for or drawn in the frame's shapes. |
 | `app/safe_graphics.rs` | The safe graphics after GPU trouble in the last session: the login card's choices, the Potato level applied only on the user's click, the level's values kept in `graphics-before-safe.json` and put back on request. |
 | `scene/lights.rs` | Local lights of the frame: the prim lights closest to the camera (range × 1.5, falloff, colour) and, for those that have a texture, their projector — cone computed from the position, the rotation and the size of the prim (`aurora-render` `Projector`), texture reserved as long as the light stays in the list; choice of up to 16 projectors that cast shadows (saved budget, default 2), with a 20% apparent-area retention margin and camera-driven shadow-map fades capped at 4 m/s (`SpotShadowSlots`, #1494) |
 | `scene/animesh.rs` | Standalone skeletons of the animated objects, animations of the linkset, bounds of the poses for culling and shadows, demo scenario |

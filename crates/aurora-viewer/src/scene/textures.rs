@@ -94,6 +94,9 @@ fn level_held(info: &J2kInfo, len: usize, want: u8) -> u8 {
     discard
 }
 const UNUSED_EVICT: Duration = Duration::from_secs(45);
+/// A UI user that has not asked for its texture for this long is done with
+/// it (a window closed, a picture delivered that nothing refines).
+const UI_ASK_LAPSE: Duration = Duration::from_secs(5);
 /// Unused textures evicted per frame at most, and queue entries looked at
 /// (those used again since are only skipped): the textures of a region
 /// left by teleport go in about a second instead of in one frame.
@@ -1151,8 +1154,11 @@ pub struct TextureStreamer {
     /// Textures whose upload a full video memory refused, waiting to be
     /// sent again (one warning while any wait, one line when all went).
     memory_waits: MemoryWaits,
-    /// Session-long UI users, independent from the bounded hover cache.
+    /// UI users other than the bounded hover cache: they keep the texture
+    /// for as long as they ask for it (`UI_ASK_LAPSE`).
     ui_permanent: std::collections::HashSet<Uuid>,
+    /// When each of those was last asked for.
+    ui_asked: HashMap<Uuid, Instant>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
     ui_previews: super::texture_ui::Images,
     pub stats: TextureStats,
@@ -1548,6 +1554,7 @@ impl TextureStreamer {
             ui_wanted: Default::default(),
             memory_waits: Default::default(),
             ui_permanent: Default::default(),
+            ui_asked: HashMap::new(),
             ui_ready: HashMap::new(),
             ui_previews: Default::default(),
             stats: TextureStats::default(),
@@ -2218,12 +2225,62 @@ impl TextureStreamer {
         )
     }
 
-    /// Keep a texture resident and deliver a small RGBA copy for the UI.
+    /// Keep a texture resident and deliver a small RGBA copy for the UI,
+    /// until nothing asks for it any more (`keep_ui_image` once the copy is
+    /// taken): the copy lives on in egui, and a texture window that streams
+    /// the same texture finer goes on asking.
     pub fn want_ui_image(&mut self, renderer: &mut Renderer, id: Uuid, jobs: &Jobs) {
         if !id.is_nil() {
             self.ui_permanent.insert(id);
+            self.ui_asked.insert(id, Instant::now());
         }
         self.want_transient_ui_image(renderer, id, jobs);
+    }
+
+    /// A UI user still shows `id`, whose copy it has. A window opened again
+    /// on a copy that outlived its interest takes the texture back: a
+    /// preview only streams finer what something references.
+    pub fn keep_ui_image(&mut self, renderer: &mut Renderer, id: Uuid) {
+        if id.is_nil() || self.hold_ui_image(&id) {
+            return;
+        }
+        self.ui_permanent.insert(id);
+        self.ui_asked.insert(id, Instant::now());
+        self.take_ui_interest(renderer, id);
+        self.note_usage_fixed(&id, 256.0);
+    }
+
+    /// Renews the interest in `id`, if it has one.
+    fn hold_ui_image(&mut self, id: &Uuid) -> bool {
+        let asked = self.ui_asked.get_mut(id);
+        let held = asked.is_some();
+        if let Some(asked) = asked {
+            *asked = Instant::now();
+        }
+        held
+    }
+
+    /// The UI users that stopped asking let go of their textures, which
+    /// then live as any other: lowered under memory pressure, evicted once
+    /// unused, read again from the disk cache at the next `want_ui_image`.
+    fn lapse_ui_images(&mut self, now: Instant) {
+        let lapsed: Vec<Uuid> = self
+            .ui_asked
+            .iter()
+            .filter(|(_, asked)| now.duration_since(**asked) >= UI_ASK_LAPSE)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in lapsed {
+            self.release_ui_image(&id);
+        }
+    }
+
+    /// The UI's copy of `id` is gone: the next `want_ui_image` delivers one
+    /// again, which a texture still wanted would not.
+    pub fn release_ui_image(&mut self, id: &Uuid) {
+        self.ui_asked.remove(id);
+        self.ui_permanent.remove(id);
+        self.release_transient_ui_image(id);
     }
 
     /// The inventory hover cache owns one bounded, releasable UI interest.
@@ -2233,29 +2290,39 @@ impl TextureStreamer {
         if id.is_nil() {
             return;
         }
-        if self.ui_wanted.insert(id) {
-            // Reserved textures bypass asset streaming and therefore never
-            // reach the upload callback that normally prepares UI images.
-            if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
-                self.ui_ready
-                    .insert(id, (1, 1, if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }));
-                return;
-            }
-            // procedural textures of the offline demo are never streamed
-            if let Some((px, w, h)) = crate::demo::local_texture(&id) {
-                self.ui_ready.insert(id, (w, h, px));
-                return;
-            }
-            let _ = self.acquire(renderer, id, TexSource::Asset);
-            if let Some(e) = self.entries.get_mut(&id) {
-                e.urgent = true;
-            }
+        if self.take_ui_interest(renderer, id) {
+            return;
         }
         if !self.ui_ready.contains_key(&id) {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
         }
         self.note_usage_fixed(&id, 256.0);
+    }
+
+    /// The one streamer reference of the UI. True for an image that is not
+    /// streamed, whose pixels are ready at once.
+    fn take_ui_interest(&mut self, renderer: &mut Renderer, id: Uuid) -> bool {
+        if !self.ui_wanted.insert(id) {
+            return false;
+        }
+        // Reserved textures bypass asset streaming and therefore never
+        // reach the upload callback that normally prepares UI images.
+        if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
+            self.ui_ready
+                .insert(id, (1, 1, if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }));
+            return true;
+        }
+        // procedural textures of the offline demo are never streamed
+        if let Some((px, w, h)) = crate::demo::local_texture(&id) {
+            self.ui_ready.insert(id, (w, h, px));
+            return true;
+        }
+        let _ = self.acquire(renderer, id, TexSource::Asset);
+        if let Some(e) = self.entries.get_mut(&id) {
+            e.urgent = true;
+        }
+        false
     }
 
     pub fn release_transient_ui_image(&mut self, id: &Uuid) {
@@ -2299,6 +2366,7 @@ impl TextureStreamer {
     }
 
     pub fn refine_ui_image_size(&mut self, id: Uuid, have: (u32, u32), jobs: &Jobs) {
+        self.hold_ui_image(&id);
         self.note_usage_fixed(&id, 256.0);
         if self.ui_ready.contains_key(&id) {
             return;
@@ -3528,6 +3596,7 @@ impl TextureStreamer {
             return;
         }
         self.last_maintenance = now;
+        self.lapse_ui_images(now);
         self.report_slotless(renderer.textures.capacity());
         // (a texture refused by a full video memory that is no longer
         // wanted at that level, or gone, waits no more)
@@ -4522,6 +4591,44 @@ mod tests {
             streamer.release_transient_ui_image(&image);
             assert_eq!(streamer.entries[&image].refs, refs, "release is idempotent");
         }
+    }
+
+    #[test]
+    fn a_ui_image_nothing_asks_for_any_more_lets_go_of_its_texture() {
+        let now = Instant::now();
+        let (kept, left, in_world) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let e = |refs| {
+            let mut e = entry(Some(2), 256.0);
+            e.refs = refs;
+            e.urgent = true;
+            e
+        };
+        let mut streamer = pressed(0, vec![(kept.as_u128(), e(1)), (left.as_u128(), e(1)), (in_world.as_u128(), e(2))]);
+        let asked = now - UI_ASK_LAPSE;
+        for id in [kept, left, in_world] {
+            streamer.ui_wanted.insert(id);
+            streamer.ui_permanent.insert(id);
+            streamer.ui_asked.insert(id, asked);
+            streamer.ui_ready.insert(id, (1, 1, vec![255; 4]));
+        }
+        streamer.ui_asked.insert(kept, now);
+        streamer.lapse_ui_images(now);
+        assert!(streamer.ui_wanted.contains(&kept) && streamer.ui_permanent.contains(&kept));
+        assert_eq!(streamer.entries[&kept].refs, 1);
+        assert!(streamer.ui_ready.contains_key(&kept));
+        for id in [left, in_world] {
+            assert!(!streamer.ui_wanted.contains(&id) && !streamer.ui_permanent.contains(&id));
+            assert!(!streamer.ui_asked.contains_key(&id) && !streamer.ui_ready.contains_key(&id));
+        }
+        let (gone, seen) = (&streamer.entries[&left], &streamer.entries[&in_world]);
+        assert!(gone.refs == 0 && gone.unused_since.is_some() && !gone.urgent);
+        assert!(seen.refs == 1 && seen.unused_since.is_none(), "a world user keeps it");
+        assert!(streamer.hold_ui_image(&kept));
+        assert!(!streamer.hold_ui_image(&left), "lapsed: keep_ui_image takes the texture back");
+        assert!(!streamer.ui_asked.contains_key(&left));
+        streamer.release_ui_image(&kept);
+        assert!(!streamer.ui_wanted.contains(&kept), "the next want_ui_image delivers a copy again");
+        assert_eq!(streamer.entries[&kept].refs, 0);
     }
 
     #[test]
