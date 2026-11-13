@@ -10,6 +10,7 @@ pub mod adapter_choice;
 mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
+mod blend_exact;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
@@ -199,6 +200,11 @@ mod shader_tests {
     #[test]
     fn motion_history_shader_is_valid() {
         validate(include_str!("shaders/motion_history.wgsl"));
+    }
+
+    #[test]
+    fn blend_order_clear_shader_is_valid() {
+        validate(crate::blend_exact::CLEAR_SHADER);
     }
 
     #[test]

@@ -831,6 +831,9 @@ struct Targets {
     /// faces draw into, writing their depth as they go
     /// (`RiggedBlendDepth::Layered` and `Layers`, made on its first use).
     blend_layers: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// The lists of the blended fragments of each pixel
+    /// (`RiggedBlendDepth::Exact`, made on its first use).
+    blend_exact: Option<crate::blend_exact::Lists>,
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
@@ -928,6 +931,15 @@ struct Pipelines {
     blend_depth_fringe: SidedPipelines,
     /// `Layers`: after each object's fringes, their depth from 1/255.
     blend_depth_fringe_depth: SidedPipelines,
+    /// `Exact`: every blended face twice, filing its fragments in their
+    /// pixels' lists and dimming what is drawn (`fs_blend_vis`), then
+    /// adding its colour by its share of the light (`fs_blend_exact`).
+    blend_vis: SidedPipelines,
+    blend_exact: SidedPipelines,
+    /// `Exact`: the glow of a blended face, dimmed by the layers in front.
+    glow_exact: wgpu::RenderPipeline,
+    /// Empties the fronts of `Targets::blend_exact` before a view.
+    blend_clear: crate::blend_exact::Clear,
     /// The blended faces under the water (`DrawLists::blend_under_water`),
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
@@ -3718,6 +3730,7 @@ impl Backend {
             crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
+        let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
             source: wgpu::ShaderSource::Wgsl(src.into()),
@@ -3983,6 +3996,70 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
+        // `RiggedBlendDepth::Exact` (blend_exact.rs): the fronts of the
+        // blended fragments in group 3, written by the first pass and read
+        // by the second. Both pass equal depths and write none, as `blend`.
+        let order_layouts = crate::blend_exact::layouts(device);
+        let [vis_layout, exact_layout] = order_layouts.each_ref().map(|lists| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scene with the blend order fronts"),
+                bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(lists)],
+                immediate_size: 0,
+            })
+        });
+        let order_sided = |layout: &wgpu::PipelineLayout, desc: PipeDesc| -> SidedPipelines {
+            std::array::from_fn(|side| {
+                make_pipeline(
+                    device,
+                    &module,
+                    layout,
+                    PipeDesc {
+                        cull: blend_cull(side != 0),
+                        ..desc
+                    },
+                )
+            })
+        };
+        // what is drawn so far, colour and glow, scaled by (1 - alpha): a
+        // product, the same in any order
+        let cover = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let blend_vis = order_sided(
+            &vis_layout,
+            PipeDesc {
+                blend: Some(wgpu::BlendState {
+                    color: cover,
+                    alpha: cover,
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_write: false,
+                depth_compare: static_compare,
+                constants: &[("BLEND_SAMPLES", f64::from(samples)), ("WATER_CLIP", 1.0)],
+                ..base("blend visibility", "vs_main", "fs_blend_vis")
+            },
+        );
+        // each fragment's colour by its share of the light: a sum
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let blend_exact = order_sided(
+            &exact_layout,
+            PipeDesc {
+                blend: Some(wgpu::BlendState {
+                    color: add,
+                    alpha: wgpu::BlendComponent::REPLACE,
+                }),
+                depth_write: false,
+                depth_compare: static_compare,
+                constants: &[("WATER_CLIP", 1.0)],
+                ..base("blend exact colour", "vs_main", "fs_blend_exact")
+            },
+        );
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -4039,6 +4116,16 @@ impl Backend {
         // the blended faces drawn after the water: their glow clipped to the
         // camera's side like their colour (`blend_pipe`, WATER_CLIP 1)
         let glow_water = pipe(glow_desc("glow above water", &[("WATER_CLIP", 1.0)]));
+        let glow_exact = make_pipeline(
+            device,
+            &module,
+            &exact_layout,
+            PipeDesc {
+                fs: Some("fs_glow_exact"),
+                constants: &[("WATER_CLIP", 1.0)],
+                ..glow_desc("glow of blended faces in their order", &[])
+            },
+        );
         // opaque glowing faces: mesh bodies stack coplanar layers that all pass
         // the depth test; keep the strongest glow instead of their sum
         let glow_max = pipe(PipeDesc {
@@ -4521,6 +4608,10 @@ impl Backend {
             blend_depth_solid,
             blend_depth_fringe,
             blend_depth_fringe_depth,
+            blend_vis,
+            blend_exact,
+            glow_exact,
+            blend_clear: crate::blend_exact::Clear::new(device),
             blend_under,
             blend_under_depth_ss,
             particles,
@@ -4782,6 +4873,7 @@ impl Backend {
             depth_msaa,
             depth_msaa_tex,
             blend_layers: None,
+            blend_exact: None,
             depth_ss,
             water_interface,
             water_mask,
@@ -5306,6 +5398,7 @@ impl Backend {
     /// when next needed.
     fn drop_first_use_targets(&mut self) {
         self.targets.blend_layers = None;
+        self.targets.blend_exact = None;
         self.rlva_spheres = None;
         self.rlva_scaled = None;
         self.selection = None;
@@ -8883,8 +8976,10 @@ impl Backend {
         // the copy of the depth `RiggedBlendDepth::Layered` and `Layers`
         // draw into, made on its first use (the size and samples of the
         // scene depth)
-        if matches!(lists.blend_depth_mode, RiggedBlendDepth::Layered | RiggedBlendDepth::Layers)
-            && lists.blend_depth > 0
+        if matches!(
+            lists.blend_depth_mode,
+            RiggedBlendDepth::Layered | RiggedBlendDepth::Layers | RiggedBlendDepth::ExactHiding
+        ) && lists.blend_depth > 0
             && self.targets.blend_layers.is_none()
         {
             let size = self.targets.depth_ss_tex.size();
@@ -8905,6 +9000,17 @@ impl Backend {
             // again
             first_use(&mut self.oom, "rigged blend layers depth", true, refused && !self.lost.get());
         }
+        // the fronts of `RiggedBlendDepth::Exact`, made on their first use
+        // (the size of the scene depth)
+        let exact_mode = matches!(lists.blend_depth_mode, RiggedBlendDepth::Exact | RiggedBlendDepth::ExactHiding);
+        if exact_mode && rg.blend.1 > 0 && self.targets.blend_exact.is_none() {
+            let size = self.targets.depth_ss_tex.size();
+            let (order, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                crate::blend_exact::Lists::new(&self.device, &self.pipelines.blend_clear, (size.width, size.height))
+            });
+            self.targets.blend_exact = Some(order);
+            first_use(&mut self.oom, "blend order fronts", true, refused && !self.lost.get());
+        }
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
         // (`DrawLists::blend_depth`, LLDrawPoolAlpha::forwardRender(true)):
@@ -8912,7 +9018,12 @@ impl Backend {
         let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
         let (b0, bn) = rg.blend;
         let n_depth = (lists.blend_depth as u32).min(bn);
-        let split = n_depth > 0;
+        // every blended face in the true order of its fragments
+        // (blend_exact.rs), in passes of their own like the rigged ones
+        let exact = self.targets.blend_exact.as_ref().filter(|_| exact_mode && bn > 0);
+        let split = n_depth > 0 || exact.is_some();
+        // the first blended face the last part still draws over the others
+        let rest_from = if exact.is_some() { bn } else { n_depth };
         let blend_pipe = self
             .pipelines
             .blend_late
@@ -8937,8 +9048,10 @@ impl Backend {
         let rest = |pass: &mut wgpu::RenderPass| {
             // The local hologram leaves world depth and the SSR G-buffer
             // untouched; transparent world faces still cover it normally.
-            draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
-            blended(pass, blend_pipe, n_depth, bn);
+            if exact.is_none() {
+                draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
+            }
+            blended(pass, blend_pipe, rest_from, bn);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -8985,6 +9098,44 @@ impl Backend {
                 pass.draw(0..6, 0..n_particles);
             }
         };
+        // `ExactHiding`: a rigged object hides what is drawn after it and
+        // behind it wherever it has a texel, as in the Legacy Viewer (#1300),
+        // eyelashes and brows only where nearly opaque (#2121). Both passes
+        // of the blended faces then draw the rigged objects in their order
+        // on a copy of the depth, each followed by its depth: one that is
+        // hidden so is neither filed nor drawn. Among the fragments left,
+        // and inside one object, the order is the fragments' own.
+        let hiding = self
+            .targets
+            .blend_layers
+            .as_ref()
+            .filter(|_| exact.is_some() && lists.blend_depth_mode == RiggedBlendDepth::ExactHiding && n_depth > 0);
+        // `Exact`: the two passes of the blended faces ride in the passes of
+        // the scene, the visibility at the end of the first, the colour at
+        // the start of the next; only the fronts change hands in between
+        let riding = exact.filter(|_| hiding.is_none());
+        // blended faces `from..to` with one of the two pipelines of the
+        // exact order, and with the colour the glow of those that have one
+        let exact_part = |pass: &mut wgpu::RenderPass, pipes: &SidedPipelines, glow: bool, from: u32, to: u32| {
+            draw_sided(pass, pipes, (b0 + u64::from(from) * stride, to - from), from);
+            let glows = |k: u32| lists.blend_glow.get(k as usize).copied().unwrap_or(false);
+            let mut i = from;
+            while glow && i < to {
+                if !glows(i) {
+                    i += 1;
+                    continue;
+                }
+                let first = i;
+                while i < to && glows(i) {
+                    i += 1;
+                }
+                draw(pass, &self.pipelines.glow_exact, (b0 + u64::from(first) * stride, i - first));
+            }
+        };
+        let exact_glow = glow_on && glow_skip & 8 == 0;
+        if let Some(order) = exact {
+            order.clear(&mut encoder, &self.pipelines.blend_clear);
+        }
         {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -9014,15 +9165,88 @@ impl Backend {
                 }
             }
             pass_mark(&mut pass, MARK_GLOW_END);
+            if exact.is_some() {
+                // before the blended faces, which dim it as they dim the
+                // rest of what is drawn
+                draw(&mut pass, &self.pipelines.creation_preview, rg.creation_preview);
+            }
+            if let Some(order) = riding {
+                // their fragments filed pixel by pixel, what is drawn dimmed
+                // by all of them
+                pass.set_bind_group(3, &order.write, &[]);
+                exact_part(&mut pass, &self.pipelines.blend_vis, false, 0, bn);
+            }
             if !split {
                 rest(&mut pass);
             }
         }
-        if split {
+        if let Some(order) = exact {
+            let t = &self.targets;
+            if let Some((layers_tex, layers)) = hiding {
+                let ordered = |encoder: &mut wgpu::CommandEncoder,
+                               label: &'static str,
+                               fronts: &wgpu::BindGroup,
+                               pipes: &SidedPipelines,
+                               glow: bool| {
+                    let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
+                    encoder.copy_texture_to_texture(scene_depth.as_image_copy(), layers_tex.as_image_copy(), scene_depth.size());
+                    let mut pass = begin_scene_b_on(encoder, t, label, false, true, layers);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    pass.set_bind_group(3, fronts, &[]);
+                    // the others first, against the opaque scene alone: a
+                    // rigged texel dims them, none hides them
+                    exact_part(&mut pass, pipes, glow, n_depth, bn);
+                    let mut from = 0;
+                    for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
+                        if end <= from {
+                            continue;
+                        }
+                        exact_part(&mut pass, pipes, glow, from, end);
+                        let depth = if lists.blend_depth_quiet.binary_search(&end).is_ok() {
+                            &self.pipelines.blend_depth_opaque
+                        } else {
+                            &self.pipelines.blend_depth_fringe_depth
+                        };
+                        draw_sided(&mut pass, depth, (b0 + u64::from(from) * stride, end - from), from);
+                        from = end;
+                    }
+                };
+                ordered(
+                    &mut encoder,
+                    "scene b blend visibility",
+                    &order.write,
+                    &self.pipelines.blend_vis,
+                    false,
+                );
+                ordered(
+                    &mut encoder,
+                    "scene b blend colour",
+                    &order.read,
+                    &self.pipelines.blend_exact,
+                    exact_glow,
+                );
+            } else if n_depth > 0 {
+                // the colour of each by its share of the light, before the
+                // rigged faces enter the scene depth: those behind them
+                // still show through them
+                let mut pass = begin_scene_b(&mut encoder, t, "scene b blend colour", false, false);
+                bind_mesh(&mut pass, &self.groups.b);
+                pass.set_bind_group(3, &order.read, &[]);
+                exact_part(&mut pass, &self.pipelines.blend_exact, exact_glow, 0, bn);
+            }
+            // the rigged faces in the scene depth where at least half
+            // covered, for the particles drawn after them (#556)
+            if n_depth > 0 {
+                let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
+                bind_mesh(&mut pass, &self.groups.a);
+                draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
+            }
+        } else if split {
             // (the frame group without the scene copy and the depth: the
             // depth is written here, and fs_blend reads neither)
             match lists.blend_depth_mode {
-                RiggedBlendDepth::Write => {
+                // the lists could not be made: as the Legacy Viewer
+                RiggedBlendDepth::Write | RiggedBlendDepth::Exact | RiggedBlendDepth::ExactHiding => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
                     blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
@@ -9136,8 +9360,15 @@ impl Backend {
                     }
                 }
             }
+        }
+        if split {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
+            if let Some(order) = riding.filter(|_| n_depth == 0) {
+                // the colour of each by its share of the light
+                pass.set_bind_group(3, &order.read, &[]);
+                exact_part(&mut pass, &self.pipelines.blend_exact, exact_glow, 0, bn);
+            }
             rest(&mut pass);
         }
 

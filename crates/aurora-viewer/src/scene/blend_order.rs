@@ -265,11 +265,22 @@ pub enum Mode {
     Write,
     Sorted,
     Alternate,
+    /// `exact`: every blended face, rigged or not, composed in the true
+    /// order of its fragments at each pixel (`RiggedBlendDepth::Exact`).
+    Exact,
+    /// `exact-hiding`: as `exact`, with the Legacy Viewer's hiding between
+    /// rigged objects (`RiggedBlendDepth::ExactHiding`).
+    ExactHiding,
+    /// `exact-alt`: `layers` one second in three, `exact` the others.
+    ExactAlternate,
 }
 
 pub fn mode() -> Mode {
     static MODE: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_RIGGED_BLEND").as_deref().map(str::trim) {
+        Ok("exact") => Mode::Exact,
+        Ok("exact-hiding") => Mode::ExactHiding,
+        Ok("exact-alt") => Mode::ExactAlternate,
         Ok("split") => Mode::Split,
         Ok("runs") => Mode::Runs,
         Ok("copy") => Mode::Copy,
@@ -308,6 +319,9 @@ fn depth_mode_in(mode: Mode, old_now: bool) -> RiggedBlendDepth {
         Mode::Write | Mode::Sorted => RiggedBlendDepth::Write,
         Mode::Alternate if old_now => RiggedBlendDepth::Split,
         Mode::Alternate => RiggedBlendDepth::Layers,
+        Mode::ExactAlternate if old_now => RiggedBlendDepth::Layers,
+        Mode::Exact | Mode::ExactAlternate => RiggedBlendDepth::Exact,
+        Mode::ExactHiding => RiggedBlendDepth::ExactHiding,
     }
 }
 

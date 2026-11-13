@@ -1771,6 +1771,263 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     return vec4<f32>(c.rgb * c.a, c.a);
 }
 
+// ------------------------------------------------------ exact blend order
+//
+// `RiggedBlendDepth::Exact` (blend_exact.rs): the blended faces composed in
+// their true order at every pixel, whatever order they are drawn in. The
+// colour of a pixel behind n blended fragments is
+//   background x T(all) + sum of colour_i x alpha_i x T(i),
+// T(i) being the share of light the fragments in front of i let through,
+// the product of their (1 - alpha). Each term stands alone, so the sum needs
+// no order, only T(i). Two passes over the blended faces:
+// - visibility (`fs_blend_vis`): each fragment files where it lies and its
+//   alpha in the front of its pixel, and scales what is already drawn by
+//   (1 - alpha), a product the blending does in any order;
+// - colour (`fs_blend_exact`): each fragment reads from the front what lies
+//   before it, leaves before its material and its lighting when that lets
+//   nothing through, and adds its colour x alpha x T.
+// Faces that cross, the triangles of one face, the layers of a hair, rigged
+// faces against the others: every case is the same one.
+//
+// The front of a pixel is its `slots` nearest blended fragments, nearest
+// first, one word each: where it lies in the high 24 bits (`blend_place`),
+// its alpha in the low 8. A greater word is a nearer fragment, so a fragment
+// files itself with `atomicMax` alone, slot after slot, carrying on the
+// smaller of the two each time: whatever the order the fragments come in,
+// the slots end sorted, with neither lock nor list. The fragments past the
+// last slot, under everything the front holds, are the tail: two more words
+// sum their alphas and what they stop, and they are composed as one layer
+// of their mean colour, which no order changes either.
+//
+// The first slot of every pixel comes first in the buffer, one word per
+// pixel: a pixel with a single blended layer touches nothing else, and it
+// tells the pass that empties the fronts (blend_clear.wgsl) which pixels
+// were used. The other slots and the tail follow, `rest` words per pixel.
+
+struct BlendOrderInfo {
+    // the view, in pixels
+    width: u32,
+    height: u32,
+    // slots of a pixel's front
+    slots: u32,
+    // words of a pixel after its first slot: its other slots, then the two
+    // of its tail
+    rest: u32,
+};
+
+// Samples of the scene targets (1 without MSAA).
+override BLEND_SAMPLES: u32 = 1u;
+
+@group(3) @binding(8) var<uniform> blend_order: BlendOrderInfo;
+@group(3) @binding(9) var<storage, read_write> blend_front: array<atomic<u32>>;
+// the same as the colour pass reads it, once the visibility pass ended
+@group(3) @binding(10) var<storage, read> blend_front_r: array<u32>;
+
+// Under this share of light a fragment is left out: 1/512, half a step of
+// an 8-bit colour for a surface as bright as white.
+const BLEND_CULL: f32 = 0.002;
+// What a tail fragment stops is summed as -log2(1 - alpha), in 1/256; an
+// opaque one counts for 16 (it lets 1/65536 through).
+const BLEND_TAIL_UNIT: f32 = 256.0;
+const BLEND_TAIL_OPAQUE: f32 = 16.0;
+
+// The pixel of `clip`: the word of its first slot.
+fn blend_pixel(clip: vec4<f32>) -> u32 {
+    let x = min(u32(clip.x), blend_order.width - 1u);
+    let y = min(u32(clip.y), blend_order.height - 1u);
+    return y * blend_order.width + x;
+}
+
+// The word before the second slot of `pixel`: slot s (1 and up) is at
+// + s, the tail at + slots and + slots + 1.
+fn blend_rest(pixel: u32) -> u32 {
+    return blend_order.width * blend_order.height + pixel * blend_order.rest - 1u;
+}
+
+// Where a fragment lies, in 24 bits, greater when nearer: its depth as 5
+// bits of exponent and 16 of mantissa (1/65536 of its distance: 0.03 mm at
+// 2 m, 0.3 mm at 20 m), then the layer rank of its face. The rank also
+// moved the depth (`eye_clip`), by less than one such step: worn layers
+// lying on one another keep their order, and two fragments of one rank
+// within a step lie on one another, neither in front (the same surface met
+// twice, a face its creator doubled): they share the light as one layer.
+fn blend_place(rec: DrawRecord, z: f32) -> u32 {
+    let bits = bitcast<u32>(clamp(z, 0.0, 1.0));
+    // exponent of z in [2^-31, 1]: 127 down to 96
+    let e = clamp(bits >> 23u, 96u, 127u) - 96u;
+    var m = (bits >> 7u) & 0xffffu;
+    if ((bits >> 23u) < 96u) {
+        m = 0u;
+    }
+    let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
+    return (e << 19u) | (m << 3u) | rank;
+}
+
+// What a blended fragment covers of what lies behind it: the alpha of
+// fs_blend without the glare of a legacy material, which only its lighting
+// knows and which is added light, not cover. Leaves as fs_blend does: a
+// single-sided back, the water's other side, a portal's clip, a masked
+// texel. Derivatives are taken first, while every fragment is still here.
+fn blend_cover(in: VsOut, front: bool) -> f32 {
+    let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    let rec = records[in.record];
+    let base_a = sample_tex(rec.tex.x, in.uv).a;
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+        return portal_surface(rec, in.uv, portal_aa).alpha;
+    }
+    water_clip(in.world_pos);
+    portal_clip(rec, in.world_pos);
+    var a = base_a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_EMISSIVE_MASK) != 0u) {
+        a = rec.base_color.a;
+    }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && a < rec.params.w) {
+        discard;
+    }
+    return a * rez_alpha(rec, in);
+}
+
+// Visibility pass: the depth test comes first (`force`), so that only what
+// the opaque scene leaves visible is filed, and `mask` holds the samples
+// that passed it. A device without that test (the renderer then removes the
+// attribute) also files what the opaque scene hides: it lies behind all
+// that shows and dims nothing of it, it only takes the slots left, or adds
+// to the tail of a pixel whose front is full.
+@fragment
+@early_depth_test(force)
+fn fs_blend_vis(in: VsOut, @builtin(front_facing) front: bool, @builtin(sample_mask) mask: u32) -> @location(0) vec4<f32> {
+    let a = blend_cover(in, front);
+    if (a < 0.004) {
+        discard;
+    }
+    // to the fragments behind it, one that covers a part of the pixel's
+    // samples is that much lighter a layer over the whole pixel
+    var cover = a;
+    if (BLEND_SAMPLES > 1u) {
+        cover = a * f32(countOneBits(mask & ((1u << BLEND_SAMPLES) - 1u))) / f32(BLEND_SAMPLES);
+    }
+    let a8 = u32(clamp(cover, 0.0, 1.0) * 255.0 + 0.5);
+    if (a8 != 0u) {
+        let pixel = blend_pixel(in.clip);
+        let slots = blend_order.slots;
+        var v = (blend_place(records[in.record], in.clip.z) << 8u) | a8;
+        v = min(v, atomicMax(&blend_front[pixel], v));
+        if (v != 0u) {
+            // a second layer on this pixel, or more
+            let rest = blend_rest(pixel);
+            // slots only ever rise: under the last one now, under it for
+            // good
+            if (slots > 1u && v > atomicLoad(&blend_front[rest + slots - 1u])) {
+                for (var s = 1u; s < slots; s++) {
+                    v = min(v, atomicMax(&blend_front[rest + s], v));
+                    if (v == 0u) {
+                        break;
+                    }
+                }
+            }
+            // what fell off the front, this fragment or one it pushed out
+            if (v != 0u) {
+                let fell = f32(v & 0xffu) / 255.0;
+                let stops = min(-log2(max(1.0 - fell, 1.0e-6)), BLEND_TAIL_OPAQUE);
+                atomicAdd(&blend_front[rest + slots], v & 0xffu);
+                atomicAdd(&blend_front[rest + slots + 1u], u32(stops * BLEND_TAIL_UNIT + 0.5));
+            }
+        }
+    }
+    // dst x (1 - alpha), colour and glow alike (the pipeline's blend), on
+    // the samples the fragment covers
+    return vec4<f32>(0.0, 0.0, 0.0, a);
+}
+
+struct BlendShare {
+    // light the fragment's own colour x alpha is scaled by: what is in
+    // front of it lets it through, and it shares it with what lies on it
+    weight: f32,
+    // light that reaches it through what is strictly in front of it
+    front: f32,
+};
+
+// What the front of its pixel says of a fragment of `rec` at `clip`.
+fn blend_share(rec: DrawRecord, clip: vec4<f32>) -> BlendShare {
+    let place = blend_place(rec, clip.z);
+    let pixel = blend_pixel(clip);
+    let rest = blend_rest(pixel);
+    let slots = blend_order.slots;
+    var t = 1.0;
+    // the fragments lying on this one, itself among them: together they
+    // let `tie_t` through, their alphas sum to `tie_a`
+    var tie_t = 1.0;
+    var tie_a = 0.0;
+    var s = 0u;
+    for (; s < slots; s++) {
+        var v = blend_front_r[pixel];
+        if (s > 0u) {
+            v = blend_front_r[rest + s];
+        }
+        let p = v >> 8u;
+        // (an empty slot is 0: under every fragment, and the last)
+        if (p < place) {
+            break;
+        }
+        let a = f32(v & 0xffu) / 255.0;
+        if (p > place) {
+            t *= 1.0 - a;
+            // nothing behind this much can show; the caller leaves
+            if (t < BLEND_CULL) {
+                return BlendShare(0.0, 0.0);
+            }
+        } else {
+            tie_t *= 1.0 - a;
+            tie_a += a;
+        }
+    }
+    // alone on its place: (1 - (1 - a)) / a = 1. Several: the light they
+    // stop together, shared by alpha (the caller multiplies by its own).
+    var share = 1.0;
+    if (tie_a > 0.0) {
+        share = (1.0 - tie_t) / tie_a;
+    } else if (s == slots) {
+        // under the whole front: one of the tail, which shares what the
+        // tail stops as the fragments of one place do
+        let tail_a = f32(blend_front_r[rest + slots]) / 255.0;
+        let tail_t = exp2(-f32(blend_front_r[rest + slots + 1u]) / BLEND_TAIL_UNIT);
+        if (tail_a > 0.0) {
+            share = min((1.0 - tail_t) / tail_a, 1.0);
+        }
+    }
+    return BlendShare(t * share, t);
+}
+
+// Colour pass: fs_blend, each fragment weighted by its share of the light
+// instead of drawn over the others.
+@fragment
+fn fs_blend_exact(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+    let cover = blend_cover(in, front);
+    if (cover < 0.004) {
+        discard;
+    }
+    let share = blend_share(records[in.record], in.clip);
+    // hidden behind the layers in front of it: neither its material nor
+    // its lighting is evaluated
+    if (share.weight < BLEND_CULL) {
+        discard;
+    }
+    if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+        let surface = portal_surface(records[in.record], in.uv, portal_aa);
+        let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);
+        return vec4<f32>(color * surface.alpha * share.weight, 0.0);
+    }
+    let m = eval_material(in, front);
+    let rec = records[in.record];
+    var c = shade_material(in, m).color;
+    // (its alpha with the glare its lighting found: the glare's part is
+    // light added over what lies behind, which the cover alone has dimmed)
+    c.a = c.a * rez_alpha(rec, in);
+    return vec4<f32>(c.rgb * c.a * share.weight, 0.0);
+}
+
 // Glow amount into the scene alpha (additive, alpha channel only), drawn
 // for faces with glow after the scene: emissiveF.glsl (texture alpha x TE
 // glow, the face alpha is ignored: invisible faces still glow) and
@@ -1780,11 +2037,24 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 // without being dimmed by it.
 @fragment
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, glow_amount(in, front));
+}
+
+// The glow of a blended face with `RiggedBlendDepth::Exact`: dimmed by the
+// blended layers in front of it, as LLDrawPoolAlpha's emissives are by the
+// faces drawn after them, and not by its own alpha.
+@fragment
+fn fs_glow_exact(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let a = glow_amount(in, front);
+    return vec4<f32>(0.0, 0.0, 0.0, a * blend_share(records[in.record], in.clip).front);
+}
+
+fn glow_amount(in: VsOut, front: bool) -> f32 {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.glow <= 0.0) { discard; }
-        return vec4<f32>(0.0, 0.0, 0.0, surface.glow);
+        return surface.glow;
     }
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -1808,7 +2078,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     if (a <= 0.0) {
         discard;
     }
-    return vec4<f32>(0.0, 0.0, 0.0, a);
+    return a;
 }
 
 // Debug overlays ("Show transparency", wireframe): one flat

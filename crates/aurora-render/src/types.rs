@@ -542,6 +542,25 @@ pub enum RiggedBlendDepth {
     /// half covered only, for the glass, water and particles drawn after
     /// them (no halo, #556).
     Layers,
+    /// Every blended face of the view, rigged or not, composed in the true
+    /// order of its fragments at each pixel, whatever order the faces are
+    /// drawn in (blend_exact.rs): a pass files where each fragment lies and
+    /// its alpha in the front of its pixel, a second one adds each
+    /// fragment's colour scaled by what the fragments in front of it let
+    /// through. What is in front is in front, whatever the kind of object:
+    /// no shards (#935), no layer over another (#935), no halo (#556), and
+    /// faces that cross or fold over themselves are right too. Every layer
+    /// shows through the ones in front of it as far as their alpha lets it,
+    /// a body add-on under a sheer dress included (#1300). The scene depth
+    /// still takes the rigged faces where half covered, for the particles
+    /// drawn after them.
+    Exact,
+    /// As `Exact` with one rule of the Legacy Viewer kept, to compare: a
+    /// rigged object hides the rigged objects drawn after it and behind it
+    /// wherever it has a texel (#1300; eyelashes and brows only where
+    /// nearly opaque, #2121). The other blended faces, glass or water,
+    /// still show through it.
+    ExactHiding,
 }
 
 /// Visible draws for a frame, built by the world.

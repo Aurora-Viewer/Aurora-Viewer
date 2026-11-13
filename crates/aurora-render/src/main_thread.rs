@@ -1924,6 +1924,9 @@ fn open_device(
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
+    // The depth test before the fragment shader that files blended
+    // fragments (blend_exact.rs): only what shows is filed
+    features |= afeat & crate::blend_exact::EARLY_TEST;
     // Aurora's own pipeline cache on disk (pipeline_cache.rs)
     features |= crate::pipeline_cache::feature(afeat);
     let in_all_pools = descriptors_in_all_pools(adapter);
