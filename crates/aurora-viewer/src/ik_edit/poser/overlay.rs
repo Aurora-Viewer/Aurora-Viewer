@@ -65,6 +65,8 @@ impl Editor {
         self.poser.pointer_owned = false;
         self.poser.gizmo_hover = false;
         self.poser.marker_hover = false;
+        self.poser.part_overlay = None;
+        self.poser.pick_wanted = false;
         if !ctx.input(|i| i.pointer.primary_down()) {
             self.drag = None;
             if !ctx.input(|i| i.pointer.primary_released()) {
@@ -293,7 +295,7 @@ impl Editor {
                 let rotate = self.active_tool(ctx.input(|i| i.modifiers)) == Tool::Rotate;
                 if self.drag.is_none() || self.drag.is_some_and(|d| matches!(d, Drag::Rotate { .. }) != rotate) {
                     let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(pointer);
-                    self.start_drag(proj, frame, origin, rotate);
+                    self.start_drag(proj, frame, origin, rotate, self.fine_drag(ctx.input(|i| i.modifiers)));
                 }
                 self.drag_to(proj, frame, rig, pointer);
             }

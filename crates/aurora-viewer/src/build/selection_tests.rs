@@ -683,7 +683,7 @@ fn new_prim_is_selected_once_without_update_owner_id_and_deleted_without_false_w
     tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.out.len(), sends);
     tool.delete(&mut world);
-    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
+    assert!(tool.status.is_empty());
     assert!(tool.selection.is_empty());
 }
 
@@ -995,7 +995,7 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
     assert!(world.objects.get(world.objects.index_of(&key).unwrap()).unwrap().owner_id.is_nil());
     tool.out.clear();
     tool.delete(&mut world);
-    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
+    assert!(tool.status.is_empty());
     for cmd in std::mem::take(&mut tool.out) {
         if let NetCommand::Build(cmd) = cmd {
             for event in sim.reply(&world, &cmd) {
@@ -1177,7 +1177,7 @@ fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
 }
 
 #[test]
-fn selection_filters_persist_and_sit_under_the_reflection_probes() {
+fn selection_filters_persist_and_use_the_current_settings_defaults() {
     use layout::{Item, Layout, Panel};
     let mut settings = BuildSettings::default();
     assert!(!settings.select_owned_only && !settings.select_movable_only);
@@ -1187,19 +1187,36 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     assert!(restored.select_owned_only && restored.select_movable_only);
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
     assert!(!old.select_owned_only && !old.select_movable_only);
-    // a layout saved before the filters existed gets them right under the probes
+    // Missing filters return to Settings without losing the other entries' order.
     let mut saved = Layout::default();
+    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
+    let existing: Vec<_> = saved
+        .in_panel(Panel::Settings)
+        .into_iter()
+        .filter(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly))
+        .collect();
     saved.order.retain(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly));
     saved.locations.remove(&Item::OwnedOnly);
     saved.locations.remove(&Item::MovableOnly);
-    saved.place(Item::Probes, Panel::Settings, Some(Item::FollowEdit), true);
     saved.normalize();
     let panel = saved.in_panel(Panel::Settings);
-    let probes = panel.iter().position(|item| *item == Item::Probes).unwrap();
-    assert_eq!(panel[probes + 1..probes + 3], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(panel[..2], [Item::OwnedOnly, Item::MovableOnly]);
+    assert_eq!(
+        panel
+            .into_iter()
+            .filter(|item| !matches!(item, Item::OwnedOnly | Item::MovableOnly))
+            .collect::<Vec<_>>(),
+        existing
+    );
     assert_eq!(
         Layout::default().in_panel(Panel::Settings)[..5],
-        [Item::Snap, Item::Highlight, Item::Probes, Item::OwnedOnly, Item::MovableOnly]
+        [
+            Item::OwnedOnly,
+            Item::MovableOnly,
+            Item::Surrounding,
+            Item::LandGroup,
+            Item::FollowEdit
+        ]
     );
     // notecards exported before them still load, with the filters off
     let (_, tool, _) = fixture();
@@ -1625,4 +1642,57 @@ fn face_edits_on_a_hollow_sphere_keep_the_inner_face_separate() {
     assert_eq!(tool.sel_te(&world), (0..n as u8).map(|f| (idx, f)).collect::<Vec<_>>());
     tool.edit_faces(&mut world, |f, _, _| f.color = [0.0, 0.0, 1.0, 0.5]);
     assert_eq!(colors(&world), vec![[0.0, 0.0, 1.0, 0.5]; n]);
+}
+
+/// Two linked mesh prims (root 970000, child 970001) and a lone mesh 970002.
+fn mesh_linkset_fixture(update_flags: u32) -> (World, BuildTool, BuildSettings, [usize; 3]) {
+    let (mut world, tool, settings) = fixture();
+    let handle = world.main_region.expect("demo region");
+    let updates = [(970_000, 0), (970_001, 970_000), (970_002, 0)]
+        .map(|(local_id, parent_id)| {
+            let mut update = crate::demo::action_avatar(false);
+            update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+            update.local_id = local_id;
+            update.full_id = Uuid::from_u128(u128::from(local_id));
+            update.parent_id = parent_id;
+            update.update_flags = update_flags;
+            update.extra = Default::default();
+            update.volume.sculpt = Some(aurora_prim::params::SculptParams {
+                texture: Uuid::from_u128(1),
+                sculpt_type: 5,
+            });
+            update
+        })
+        .to_vec();
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    let idx = [970_000u32, 970_001, 970_002].map(|id| world.objects.index_of_uuid(&Uuid::from_u128(u128::from(id))).unwrap());
+    (world, tool, settings, idx)
+}
+
+#[test]
+fn animated_mesh_checkbox_takes_a_whole_linkset_like_the_legacy_panel() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let (mut world, mut tool, mut settings, [root, child, lone]) = mesh_linkset_fixture(OBJECT_MODIFY | OBJECT_MOVE);
+    assert_eq!(root_of(&world, child), root);
+    // A whole two-prim linkset: one root, its two prims.
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert_eq!(tool.sel_prims(&world).len(), 2);
+    assert!(tool.animated_mesh_editable(&world));
+    // A lone mesh prim.
+    tool.click_select(&mut world, &settings, Some(lone), false);
+    assert!(tool.animated_mesh_editable(&world));
+    // Two linksets.
+    tool.click_select(&mut world, &settings, Some(root), true);
+    assert!(!tool.animated_mesh_editable(&world));
+    // Edit linked: the root prim alone, then the child prim alone.
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(root), false);
+    assert!(tool.animated_mesh_editable(&world));
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert!(!tool.animated_mesh_editable(&world));
+
+    // No modify right on the linkset.
+    let (mut world, mut tool, settings, [_, child, _]) = mesh_linkset_fixture(OBJECT_MOVE);
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert!(!tool.animated_mesh_editable(&world));
 }

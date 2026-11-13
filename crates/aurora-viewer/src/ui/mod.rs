@@ -87,6 +87,7 @@ pub mod monitor;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
+pub mod nearby_media;
 pub mod news;
 pub mod notification_center;
 pub mod notifications;
@@ -129,6 +130,7 @@ pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
 pub mod stream_title;
+pub mod surface_opacity;
 pub(crate) mod text_menu;
 pub mod texture_library;
 pub mod texture_picker;
@@ -182,6 +184,7 @@ pub struct Panels {
     pub texture_library_presentation: texture_library::Presentation,
     pub gestures: bool,
     pub appearance: bool,
+    pub avatar_studio: bool,
     pub ao: bool,
     pub people_tab: u8,
     /// The torn-off Contacts window (ContactsTornOff).
@@ -265,6 +268,7 @@ impl Panels {
             texture_library_presentation: settings.texture_library.presentation,
             gestures: false,
             appearance: settings.show_appearance,
+            avatar_studio: false,
             ao: settings.show_ao,
             people_tab: settings.people_tab.min(1),
             contacts: false,

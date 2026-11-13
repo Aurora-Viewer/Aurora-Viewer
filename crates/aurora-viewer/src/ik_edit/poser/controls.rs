@@ -182,6 +182,7 @@ impl Editor {
                 let response = ui.add(
                     egui::Slider::new(&mut value[axis], range)
                         .clamping(egui::SliderClamping::Edits)
+                        .step_by(if self.poser.transform == 0 { 0.01 } else { 0.001 })
                         .suffix(unit)
                         .max_decimals(if self.poser.transform == 0 { 2 } else { 4 })
                         // a tiny negative reads 0, never -0
@@ -395,16 +396,18 @@ impl Editor {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let changed = widgets::segmented(
-                ui,
-                p,
-                &mut self.poser.transform,
-                &[
-                    (aurora_i18n::text("poser-mode-rotation"), false),
-                    (aurora_i18n::text("poser-mode-position"), false),
-                    (aurora_i18n::text("poser-mode-scale"), false),
-                ],
-            );
+            let modes = [
+                (aurora_i18n::text("poser-mode-rotation"), false),
+                (aurora_i18n::text("poser-mode-position"), false),
+                (aurora_i18n::text("poser-mode-scale"), false),
+            ];
+            let animation_active = self.clip.active;
+            if animation_active && self.clip.restrict_pose_transform(&mut self.poser.transform) {
+                self.tool = Tool::Rotate;
+                self.poser.cancel_scale_gizmo();
+            }
+            let available_modes = if animation_active { &modes[..2] } else { &modes[..] };
+            let changed = widgets::segmented(ui, p, &mut self.poser.transform, available_modes);
             if changed {
                 self.tool = if self.poser.transform == 0 { Tool::Rotate } else { Tool::Move };
                 self.gizmo.cancel();
@@ -433,6 +436,9 @@ impl Editor {
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.vertical(|ui| {
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(TRACKBALL, TRACKBALL), Sense::drag());
+                if self.poser.transform == 0 {
+                    response.clone().on_hover_text(aurora_i18n::tr!("poser-fine-adjustment"));
+                }
                 let painter = ui.painter();
                 let center = rect.center();
                 let radius = TRACKBALL / 2.0 - 14.0;
@@ -472,7 +478,8 @@ impl Editor {
                     }
                     painter.circle_filled(center, 4.0, p.ink);
                     if self.poser.transform == 0 && response.dragged() {
-                        let d = ui.input(|i| i.pointer.delta()) * self.poser.sensitivity * 0.025;
+                        let (pointer_delta, fine) = ui.input(|i| (i.pointer.delta(), i.modifiers.shift));
+                        let d = trackball::drag_delta(pointer_delta, self.poser.sensitivity, fine);
                         let local = trackball::rotate(&cam, parent, pose.rotations[bone], d);
                         let q = if self.poser.delta {
                             base.rotations[bone].inverse() * local

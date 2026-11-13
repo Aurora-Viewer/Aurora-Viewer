@@ -2,6 +2,9 @@
 //! previous run is kept as `aurora.previous.log`), so a session can be
 //! shared after a test even when the viewer was started without a console.
 //! Capability URLs are secrets for the session: their id is masked.
+//! Each start deletes, on a thread of its own, the viewer's log files past
+//! the newest [`KEEP_NEWEST`] that nothing wrote to for [`KEEP_FOR`], never
+//! this run's nor one another viewer still has open ([`prune_old_logs`]).
 //!
 //! A thread that logs never waits for the disk (#2655): the line goes into
 //! a bounded queue, and the "aurora-log-write" thread writes it to the
@@ -23,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Time between two flushes of the log files to the disk.
 const FLUSH_PERIOD: Duration = Duration::from_secs(1);
@@ -458,16 +461,104 @@ impl Write for Tee {
     }
 }
 
+/// Log files kept whatever their age: the latest sessions.
+const KEEP_NEWEST: usize = 20;
+/// Log files written to this recently are kept whatever their number: about
+/// two releases' worth of sessions, and the log of a viewer that is still
+/// running (each viewer writes a file of its own, [`log_stem`]).
+const KEEP_FOR: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+
+/// A log file of the viewer in the logs folder: `aurora-<pid>.log`,
+/// `aurora-<title>.log`, `aurora-demo-….log`, their `.previous.log`, and
+/// the older `aurora.log`. A name picked with AURORA_LOG_NAME, the crash
+/// sessions' folder and the other files of the folder are not.
+fn is_viewer_log(name: &str) -> bool {
+    name.starts_with("aurora") && name.ends_with(".log")
+}
+
+/// The log files to delete among `files` (path, last write): past the
+/// [`KEEP_NEWEST`] newest, those nothing wrote to for [`KEEP_FOR`]. The
+/// files of this run (`keep`) are never chosen.
+fn prune_choice(mut files: Vec<(PathBuf, SystemTime)>, now: SystemTime, keep: &[PathBuf]) -> Vec<PathBuf> {
+    files.retain(|(path, _)| !keep.contains(path));
+    files.sort_by_key(|(_, written)| std::cmp::Reverse(*written));
+    files
+        .into_iter()
+        .skip(KEEP_NEWEST)
+        .filter(|(_, written)| now.duration_since(*written).is_ok_and(|age| age > KEEP_FOR))
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// Whether another process still holds the file open. Windows refuses to
+/// open a file with no sharing while any handle on it is open; on Unix a
+/// running viewer keeps a shared advisory lock on its log (`init`). A file
+/// that cannot be opened at all counts as in use.
+#[cfg(windows)]
+fn in_use(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().read(true).share_mode(0).open(path).is_err()
+}
+
+#[cfg(unix)]
+fn in_use(path: &Path) -> bool {
+    match std::fs::File::open(path) {
+        Ok(file) => file.try_lock().is_err(),
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn in_use(_: &Path) -> bool {
+    true
+}
+
+/// Delete the old log files of `dir` ([`prune_choice`]) on a thread of its
+/// own, so a folder of many files on a slow disk never delays the start. A
+/// file still in use ([`in_use`]) or that cannot be deleted is left, for a
+/// later start.
+fn prune_old_logs(dir: PathBuf, keep: Vec<PathBuf>) {
+    let spawned = std::thread::Builder::new().name("aurora-log-prune".into()).spawn(move || {
+        let Ok(entries) = std::fs::read_dir(&dir) else { return };
+        let files = entries
+            .flatten()
+            .filter(|entry| entry.file_name().to_str().is_some_and(is_viewer_log))
+            .filter_map(|entry| {
+                let meta = entry.metadata().ok().filter(std::fs::Metadata::is_file)?;
+                Some((entry.path(), meta.modified().ok()?))
+            })
+            .collect();
+        let removed = prune_choice(files, SystemTime::now(), &keep)
+            .into_iter()
+            .filter(|path| !in_use(path) && std::fs::remove_file(path).is_ok())
+            .count();
+        if removed > 0 {
+            log::info!("{removed} old log files removed from {}", dir.display());
+        }
+    });
+    if let Err(e) = spawned {
+        log::debug!("old log files left: {e}");
+    }
+}
+
 pub fn init() {
     let dir = logs_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = log_path();
-    let _ = std::fs::rename(&path, dir.join(format!("{}.previous.log", log_stem())));
+    let previous = dir.join(format!("{}.previous.log", log_stem()));
+    let _ = std::fs::rename(&path, &previous);
     let mut sinks: Vec<Box<dyn LogSink>> = vec![Box::new(Console)];
-    for file in [std::fs::File::create(&path).ok(), crate::crash::session_log()]
-        .into_iter()
-        .flatten()
+    let own = std::fs::File::create(&path).ok();
+    // Marks this log as in use for another viewer's `prune_old_logs` (Unix
+    // locks are advisory: the writes are not held back). Windows tells an
+    // open file apart without it.
+    #[cfg(unix)]
     {
+        if let Some(file) = &own {
+            let _ = file.try_lock_shared();
+        }
+    }
+    for file in [own, crate::crash::session_log()].into_iter().flatten() {
         sinks.push(Box::new(LogFile(file)));
     }
     let tee = match Queue::start(sinks, QUEUE_LINES) {
@@ -508,11 +599,12 @@ pub fn init() {
         crate::allocator::name(),
         path.display()
     );
+    prune_old_logs(dir, vec![path, previous]);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LogSink, Queue, dropped_line, parse_record, redact, strip_headers};
+    use super::{KEEP_FOR, KEEP_NEWEST, LogSink, Queue, dropped_line, is_viewer_log, parse_record, prune_choice, redact, strip_headers};
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -695,5 +787,54 @@ mod tests {
             "error sending request for url (https://sim1.agni.lindenlab.com:12043/cap/…): timeout"
         );
         assert_eq!(redact("plain line"), "plain line");
+    }
+
+    #[test]
+    fn only_the_viewer_logs_are_pruned() {
+        for name in [
+            "aurora-1234.log",
+            "aurora-1234.previous.log",
+            "aurora-demo-test-x.log",
+            "aurora.log",
+        ] {
+            assert!(is_viewer_log(name), "{name}");
+        }
+        for name in ["resource-monitor_2026.csv", "crashes", "mine.log", "aurora-1234.log.txt"] {
+            assert!(!is_viewer_log(name), "{name}");
+        }
+    }
+
+    /// The newest files stay whatever their age, the recent ones whatever
+    /// their number, and this run's files always.
+    #[test]
+    fn old_logs_past_the_newest_are_chosen() {
+        use std::path::PathBuf;
+        use std::time::SystemTime;
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1 << 32);
+        let day = Duration::from_secs(24 * 60 * 60);
+        let file = |n: usize, age: Duration| (PathBuf::from(format!("aurora-{n}.log")), now - age);
+        // fewer than KEEP_NEWEST, all old: nothing goes
+        let few: Vec<_> = (0..KEEP_NEWEST).map(|n| file(n, KEEP_FOR * 4)).collect();
+        assert!(prune_choice(few, now, &[]).is_empty());
+        // many recent ones: nothing goes either
+        let recent: Vec<_> = (0..KEEP_NEWEST * 3).map(|n| file(n, day)).collect();
+        assert!(prune_choice(recent, now, &[]).is_empty());
+        // the newest KEEP_NEWEST stay, then only the old ones go
+        let hour = Duration::from_secs(60 * 60);
+        let mut files: Vec<_> = (0..KEEP_NEWEST).map(|n| file(n, hour * n as u32)).collect();
+        files.push(file(100, KEEP_FOR * 3));
+        files.push(file(101, KEEP_FOR - day));
+        files.push(file(102, KEEP_FOR * 5));
+        let mut chosen = prune_choice(files.clone(), now, &[]);
+        chosen.sort();
+        assert_eq!(chosen, vec![PathBuf::from("aurora-100.log"), PathBuf::from("aurora-102.log")]);
+        // this run's files never, even the oldest
+        let keep = [PathBuf::from("aurora-102.log")];
+        assert_eq!(prune_choice(files, now, &keep), vec![PathBuf::from("aurora-100.log")]);
+        // a clock set back (a write "in the future") keeps the file
+        let ahead: Vec<_> = (0..KEEP_NEWEST + 1)
+            .map(|n| (PathBuf::from(format!("aurora-{n}.log")), now + day))
+            .collect();
+        assert!(prune_choice(ahead, now, &[]).is_empty());
     }
 }

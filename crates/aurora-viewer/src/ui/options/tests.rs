@@ -210,6 +210,16 @@ const BEFORE: &[&str] = &[
     "chat_bubbles_hide_console",
     "typing_bubbles",
     "chat_bubble_opacity",
+    "window_opacity_active",
+    "window_opacity_inactive",
+    "conversations_opacity",
+    "conversations_active_opacity_override",
+    "bar_opacity",
+    "menu_opacity",
+    "console_opacity",
+    "minimap_opacity",
+    "pie_opacity_override",
+    "pie_opacity",
     "toast_friends_online",
     "friends_online_in_chat",
     "presence_position",
@@ -412,6 +422,29 @@ fn a_setting_has_one_page() {
 }
 
 #[test]
+fn camera_and_vr_page_resets_are_independent() {
+    let mut s = Settings::default();
+    s.camera.vr.mouse_look = true;
+    s.camera.vr.resolution = Some([2560, 2560]);
+    s.camera.vr.gamma = 1.5;
+    s.camera.vr.vibrancy = 0.7;
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Camera, &mut s);
+    assert!(s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, Some([2560, 2560]));
+    assert_eq!(s.camera.vr.gamma, 1.5);
+    assert_eq!(s.camera.vr.vibrancy, 0.7);
+    assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Vr, &mut s);
+    assert!(!s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, None);
+    assert_eq!(s.camera.vr.gamma, 1.0);
+    assert_eq!(s.camera.vr.vibrancy, 1.0);
+    assert_eq!(s.camera.smoothing, 8.0);
+}
+
+#[test]
 fn a_page_reset_leaves_the_other_pages_alone() {
     let mut s = Settings {
         draw_distance: 300.0,
@@ -480,11 +513,30 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn gamepad_and_joystick_preferences_reset_independently() {
+    let mut settings = Settings::default();
+    settings.joystick.enabled = true;
+    settings.joystick.device = "raw-device".into();
+    settings.joystick.avatar.gain[5] = 0.35;
+    settings.gamepad.enabled = true;
+    settings.gamepad.device = "pad-device".into();
+    settings.gamepad.avatar.gain[5] = 7.0;
+    let raw = settings.joystick.clone();
+    let pad = settings.gamepad.clone();
+    reset_page_settings(Page::Controls, &mut settings);
+    assert_eq!(settings.gamepad, pad);
+    settings.joystick = raw.clone();
+    reset_page_settings(Page::Gamepad, &mut settings);
+    assert_eq!(settings.joystick, raw);
+    assert_eq!(settings.gamepad, Settings::default().gamepad);
+}
+
+#[test]
 fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     let mut s = Settings::default();
     s.joystick.enabled = true;
     s.joystick.device = "test-device".into();
-    s.joystick.gamepad();
+    s.joystick.raw_gamepad_preset();
     s.joystick.flycam.gain[3] = 0.7;
     s.joystick.avatar.dead_zone[0] = 0.4;
     s.joystick.auto_level = false;
@@ -1755,6 +1807,18 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
+}
+
+#[test]
+fn the_weather_lives_in_graphics_only() {
+    // (and in the Aurora Weather window; Preferences › Aurora, the choices
+    // between Aurora's look and the Legacy Viewer's, has none of it)
+    let paths = collected();
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
+    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
 }
 
 #[test]
