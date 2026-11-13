@@ -5099,6 +5099,7 @@ impl App {
                     .data_mut(|d| d.insert_temp(ui::environment::demo_open_id(&salt), String::new()));
             }
             Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
+            Step::ListsByName => self.settings.env_lists_by_name = true,
         }
     }
 
@@ -17993,6 +17994,12 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        // a list's A–Z switch last frame, saved before it is published again
+        if let Some(by_name) = ui::environment::take_lists_by_name_change(&ctx) {
+            self.settings.env_lists_by_name = by_name;
+            self.settings.save();
+        }
+        ui::environment::set_lists_by_name(&ctx, self.settings.env_lists_by_name);
         ui::widgets::local_texture::sync(
             &ctx,
             self.world.local_assets.keys().copied().chain(
