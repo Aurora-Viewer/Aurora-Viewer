@@ -14,6 +14,7 @@ use super::{GroupAction, GroupProfileUi};
 use crate::theme::Palette;
 use crate::ui::inventory::InvDrag;
 use crate::ui::place_details::Ctx;
+use crate::ui::places::drag::PlaceDrag;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::World;
 use crate::world::inventory::actions::{COPY, TRANSFER};
@@ -67,6 +68,38 @@ pub fn attachable(world: &World, id: Uuid) -> Option<Uuid> {
         return None;
     }
     Some(item.id)
+}
+
+fn attachment_hover(response: &egui::Response) -> Option<Uuid> {
+    response
+        .dnd_hover_payload::<InvDrag>()
+        .map(|drag| drag.0)
+        .or_else(|| response.dnd_hover_payload::<PlaceDrag>().and_then(|drag| drag.target.item()))
+}
+
+/// Take whichever supported payload is being dropped. Check its type before
+/// calling `dnd_release_payload`: egui takes and downcasts the payload, so an
+/// attempt with the wrong type would consume a favorite before its owner sees it.
+fn attachment_release(response: &egui::Response) -> Option<Uuid> {
+    if response.dnd_hover_payload::<InvDrag>().is_some() {
+        response.dnd_release_payload::<InvDrag>().map(|drag| drag.0)
+    } else if response.dnd_hover_payload::<PlaceDrag>().is_some() {
+        response.dnd_release_payload::<PlaceDrag>().and_then(|drag| drag.target.item())
+    } else {
+        None
+    }
+}
+
+fn apply_attachment_release(draft: &mut Compose, world: &World, response: &egui::Response) {
+    if let Some(id) = attachment_release(response) {
+        match attachable(world, id) {
+            Some(item) => {
+                draft.item = Some(item);
+                draft.refused = false;
+            }
+            None => draft.refused = true,
+        }
+    }
 }
 
 /// The time of a notice: "10:42" today, "yesterday", or the day and month.
@@ -452,7 +485,7 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
             crate::ui::spelling::field(ui, p, &mut message, &mut draft.message, false);
             // the attachment: dropped from the inventory
             let (zone, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
-            let hovered = resp.dnd_hover_payload::<InvDrag>().map(|d| d.0);
+            let hovered = attachment_hover(&resp);
             let ok = hovered.map(|id| attachable(c.world, id).is_some());
             let stroke = match ok {
                 Some(true) => p.violet_light,
@@ -465,15 +498,7 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 egui::Stroke::new(1.5, stroke),
                 egui::StrokeKind::Inside,
             );
-            if let Some(d) = resp.dnd_release_payload::<InvDrag>() {
-                match attachable(c.world, d.0) {
-                    Some(item) => {
-                        draft.item = Some(item);
-                        draft.refused = false;
-                    }
-                    None => draft.refused = true,
-                }
-            }
+            apply_attachment_release(draft, c.world, &resp);
             let mut inner = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(zone.shrink2(Vec2::new(9.0, 4.0)))
@@ -531,5 +556,121 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
         });
     } else if cancel {
         st.notices.compose = None;
+    }
+}
+
+#[cfg(test)]
+mod attachment_drag_tests {
+    use super::*;
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    use crate::world::inventory::actions::{COPY, TRANSFER};
+    use aurora_net::inventory::InvItem;
+    use egui::{Event, PointerButton, Pos2, RawInput, Rect, Sense, Vec2};
+    use std::sync::Arc;
+
+    fn drop_place_drag(world: &World, payload: PlaceDrag) -> Compose {
+        let ctx = egui::Context::default();
+        let mut center = Pos2::ZERO;
+        let mut draft = Compose::default();
+        let make_input = |events| RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(240.0, 160.0))),
+            events,
+            ..Default::default()
+        };
+        let draw = |ui: &mut egui::Ui, draft: &mut Compose, center: &mut Pos2| {
+            let (zone, response) = ui.allocate_exact_size(Vec2::new(120.0, 36.0), Sense::hover());
+            *center = zone.center();
+            apply_attachment_release(draft, world, &response);
+        };
+
+        let _ = ctx.run_ui(make_input(vec![]), |ui| draw(ui, &mut draft, &mut center));
+        let pos = center;
+        let _ = ctx.run_ui(
+            make_input(vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]),
+            |ui| draw(ui, &mut draft, &mut center),
+        );
+        egui::DragAndDrop::set_payload(&ctx, payload);
+        let _ = ctx.run_ui(
+            make_input(vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ]),
+            |ui| draw(ui, &mut draft, &mut center),
+        );
+        assert!(
+            egui::DragAndDrop::payload::<PlaceDrag>(&ctx).is_none(),
+            "the favorite drag is consumed by the notice drop"
+        );
+        draft
+    }
+
+    fn landmark_world(transfer: bool) -> (World, Uuid, Uuid) {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let landmark = Uuid::from_u128(0x2556);
+        let link = Uuid::from_u128(0x2557);
+        world.inventory.add_items(vec![
+            InvItem {
+                id: landmark,
+                name: "Landmark attachment".into(),
+                asset_type: 3,
+                inv_type: 3,
+                owner_mask: COPY | if transfer { TRANSFER } else { 0 },
+                ..Default::default()
+            },
+            InvItem {
+                id: link,
+                name: "Favorite link".into(),
+                asset_id: landmark,
+                asset_type: 24,
+                inv_type: 3,
+                ..Default::default()
+            },
+        ]);
+        (world, landmark, link)
+    }
+
+    #[test]
+    fn dropping_a_favorites_landmark_link_adds_the_original_attachment() {
+        let (world, landmark, link) = landmark_world(true);
+        let draft = drop_place_drag(
+            &world,
+            PlaceDrag {
+                target: Target::Landmark(link),
+                favorite: Some(link),
+                name: "Favorite landmark".into(),
+                thumbnail: None,
+            },
+        );
+        assert_eq!(draft.item, Some(landmark));
+        assert!(!draft.refused);
+    }
+
+    #[test]
+    fn dropping_a_non_transferable_favorites_landmark_is_refused() {
+        let (world, _, link) = landmark_world(false);
+        let draft = drop_place_drag(
+            &world,
+            PlaceDrag {
+                target: Target::Landmark(link),
+                favorite: Some(link),
+                name: "Favorite landmark".into(),
+                thumbnail: None,
+            },
+        );
+        assert_eq!(draft.item, None);
+        assert!(draft.refused);
     }
 }
