@@ -145,6 +145,8 @@ pub struct CameraKeys {
     pub pan_right: f32,
     pub pan_up: f32,
     pub pan_down: f32,
+    pub roll_left: f32,
+    pub roll_right: f32,
 }
 
 impl CameraKeys {
@@ -160,6 +162,8 @@ impl CameraKeys {
             self.pan_right,
             self.pan_up,
             self.pan_down,
+            self.roll_left,
+            self.roll_right,
         ]
         .iter()
         .any(|r| *r > 0.0)
@@ -1766,6 +1770,9 @@ impl Camera {
         if pan_y != 0.0 {
             self.pan_up(pan_y * PAN_RATE * dt);
         }
+        // camera_roll_left/right (llviewerinput.cpp), LLAgentCamera::updateCamera
+        // (llagentcamera.cpp, indra/newview): roll at 45 degrees per second.
+        self.roll += (keys.roll_right - keys.roll_left) * 45.0_f32.to_radians() * dt;
     }
 
     /// The joystick's continuous pitch, as LLAgent::pitch updates the
@@ -5067,6 +5074,53 @@ mod tests {
         cam.reset_view(&mut agent, &s, true, false, true, true);
         assert_eq!(cam.orbit_yaw, 0.0);
         assert!((agent.yaw - heading).abs() < 1e-5);
+    }
+
+    #[test]
+    fn camera_roll_keys_work_standing_and_seated_with_pan_but_not_in_mouselook() {
+        let settings = CameraSettings::default();
+        for seated in [false, true] {
+            for direction in [-1.0, 1.0] {
+                let mut world = hover_world(seated);
+                assert_eq!(world.agent.is_sitting(), seated);
+                let mut camera = Camera::default();
+                settle(&mut camera, &mut world, &settings);
+                let mut keys = CameraKeys {
+                    roll_left: if direction < 0.0 { 1.0 } else { 0.0 },
+                    roll_right: if direction > 0.0 { 1.0 } else { 0.0 },
+                    ..Default::default()
+                };
+                camera.apply_keys(keys, &mut world.agent, &settings, 0.1);
+                assert!(!camera.focus_on_avatar, "roll unlocks the view like pan");
+                assert!((camera.roll - direction * 4.5_f32.to_radians()).abs() < 1e-6);
+                let focus = camera.focus_target;
+                keys.pan_up = 1.0;
+                camera.apply_keys(keys, &mut world.agent, &settings, 0.1);
+                assert!(camera.focus_target.distance(focus) > 0.01, "pan still moves the focus");
+                assert!((camera.roll - direction * 9.0_f32.to_radians()).abs() < 1e-6);
+                camera.update(&mut world, &settings, &frame(0.1));
+                assert!((camera.roll - direction * 9.0_f32.to_radians()).abs() < 1e-6);
+                let roll = camera.roll;
+                camera.apply_keys(CameraKeys::default(), &mut world.agent, &settings, 0.1);
+                assert_eq!(camera.roll, roll, "release stops rolling");
+                camera.apply_keys(
+                    CameraKeys {
+                        roll_left: 1.0,
+                        roll_right: 1.0,
+                        ..Default::default()
+                    },
+                    &mut world.agent,
+                    &settings,
+                    0.1,
+                );
+                assert_eq!(camera.roll, roll, "equal opposite inputs cancel");
+                camera.change_to_mouselook(&mut world.agent, &settings, false);
+                let roll = camera.roll;
+                camera.apply_keys(keys, &mut world.agent, &settings, 0.1);
+                assert!(camera.mouselook());
+                assert_eq!(camera.roll, roll, "mouselook rejects roll keys");
+            }
+        }
     }
 
     #[test]

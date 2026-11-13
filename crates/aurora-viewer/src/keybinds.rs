@@ -372,6 +372,8 @@ pub enum Action {
     CamPanRight,
     CamPanUp,
     CamPanDown,
+    CamRollLeft,
+    CamRollRight,
     Chat,
     PushToTalk,
     ToggleMic,
@@ -522,6 +524,8 @@ pub fn is_held(a: Action) -> bool {
             | Action::CamPanRight
             | Action::CamPanUp
             | Action::CamPanDown
+            | Action::CamRollLeft
+            | Action::CamRollRight
             | Action::HudDrag
     )
 }
@@ -575,6 +579,8 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::CamPanRight, aurora_i18n::tr!("keybinds-pan-view-right")),
                     (Action::CamPanUp, aurora_i18n::tr!("keybinds-pan-view-up")),
                     (Action::CamPanDown, aurora_i18n::tr!("keybinds-pan-view-down")),
+                    (Action::CamRollLeft, aurora_i18n::tr!("controls-roll-left")),
+                    (Action::CamRollRight, aurora_i18n::tr!("controls-roll-right")),
                 ],
             ),
             (
@@ -816,6 +822,8 @@ impl KeyBindings {
             (Action::CamPanRight, [kalt(K::ArrowRight, true, true), None]),
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
+            (Action::CamRollLeft, [k(K::KeyR), None]),
+            (Action::CamRollRight, [k(K::KeyT), None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
             (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
@@ -1720,6 +1728,61 @@ mod tests {
             assert!(!kb.held(Action::Forward, &down, mods));
             let _ = kb.update_held_input(&mut down, &input, false, mods);
             assert!(!kb.held(action, &down, mods));
+        }
+    }
+
+    #[test]
+    fn camera_roll_defaults_hold_release_and_yield_to_modified_commands() {
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        for (action, code, command) in [
+            (Action::CamRollLeft, KeyCode::KeyR, Action::Rebake),
+            (Action::CamRollRight, KeyCode::KeyT, Action::ShowTransparency),
+        ] {
+            let input = Input::key(code);
+            assert_eq!(kb.get(action), [Some(Binding::plain(input.clone())), None]);
+            assert_eq!(kb.users(&Binding::plain(input.clone())), vec![action], "no other plain-key default");
+            let mut down = HashSet::new();
+            assert_eq!(kb.update_held_input(&mut down, &input, true, Mods::default()), None);
+            assert!(kb.held(action, &down, Mods::default()));
+            kb.update_held_input(&mut down, &input, false, Mods::default());
+            assert!(!kb.held(action, &down, Mods::default()));
+            let modified = Mods {
+                ctrl: true,
+                alt: true,
+                ..Default::default()
+            };
+            assert_eq!(kb.update_held_input(&mut down, &input, true, modified), Some(command));
+            assert!(!kb.held(action, &down, modified));
+            assert!(!kb.held(action, &down, Mods::default()));
+        }
+    }
+
+    #[test]
+    fn camera_roll_bindings_upgrade_without_replacing_custom_or_cleared_keys() {
+        for action in [Action::CamRollLeft, Action::CamRollRight] {
+            let mut kb = KeyBindings::default();
+            let defaults = kb.get(action);
+            kb.map.retain(|(a, _)| *a != action);
+            assert_eq!(kb.clone().sanitized().get(action), defaults);
+            kb.set(Action::CamPanUp, 0, defaults[0].clone());
+            let mut kb = kb.sanitized();
+            assert_eq!(kb.get(action), [None, None]);
+            assert_eq!(kb.get(Action::CamPanUp)[0], defaults[0]);
+            let binding = kalt(KeyCode::KeyB, false, false);
+            kb.set(action, 1, binding.clone());
+            let saved = serde_json::to_string(&kb).expect("save bindings");
+            let mut kb = serde_json::from_str::<KeyBindings>(&saved).expect("restore bindings").sanitized();
+            assert_eq!(kb.get(action), [None, binding]);
+            assert!(kb.held(
+                action,
+                &HashSet::from([Input::key(KeyCode::KeyB)]),
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                }
+            ));
+            kb.set(action, 1, None);
+            assert_eq!(kb.sanitized().get(action), [None, None]);
         }
     }
 
