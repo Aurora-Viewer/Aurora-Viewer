@@ -632,6 +632,18 @@ pub enum NetEvent {
         target: Uuid,
         animations: bool,
     },
+    /// A selection or give beam (ViewerEffect, LLHUDEffectSpiral of type
+    /// LL_HUD_EFFECT_BEAM): from `source` to the `target` object, or to the
+    /// global `position` when the target is nil; the sender's RGBA colour,
+    /// shown for `duration` seconds unless sent again.
+    Beam {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -664,6 +676,8 @@ pub enum NetEvent {
         /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
         /// when the region names none.
         lsl_syntax_id: Uuid,
+        /// "LuaScriptsEnabled": the region runs SLua scripts.
+        lua_scripts: bool,
         /// "OpenSimExtras" "GridStatusRSS" and "GridStatus": an OpenSim
         /// grid's status feed and page (Help › Grid status); empty when
         /// not given, always on Second Life.
@@ -681,6 +695,9 @@ pub enum NetEvent {
         /// "OpenSimExtras" "ExportSupported": the region honours the export
         /// permission (LFSimFeatureHandler::simSupportsExport).
         export_supported: bool,
+        /// "GroupChatPostLinksEnabled": the region applies the group ability
+        /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
+        group_chat_post_links: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -786,6 +803,9 @@ pub enum NetEvent {
     LslSyntax {
         id: Uuid,
         keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+        /// The region's SLua keywords (ScriptDefinitions); None keeps the
+        /// bundled ones.
+        lua: Option<Vec<crate::lsl_syntax::Keyword>>,
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
@@ -1425,14 +1445,12 @@ pub enum NetEvent {
         serial: Option<i16>,
         result: Result<Vec<crate::build::TaskItem>, String>,
     },
-    /// ScriptRunningReply (and the event queue's Mono flag when given).
+    /// ScriptRunningReply (and the event queue's VM flags when given).
     ScriptRunning {
         object_id: Uuid,
         item_id: Uuid,
         running: bool,
-        mono: Option<bool>,
-        /// The event queue's Luau and LuauLanguage flags; `Off` when absent.
-        luau: crate::scripts::Luau,
+        compile: Option<crate::scripts::CompileTarget>,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
@@ -1763,6 +1781,16 @@ pub enum NetCommand {
         effect: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// Our selection or give beam (LLHUDEffectSpiral::packData, type
+    /// LL_HUD_EFFECT_BEAM): to the `target` object, or to the global
+    /// `position` when it is nil.
+    Beam {
+        effect: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -2315,7 +2343,7 @@ pub enum NetCommand {
         request: Uuid,
         item: Uuid,
         asset_type: i32,
-        /// A script (asset type 10) written in Lua ([`crate::scripts::lua_source`]):
+        /// A script (asset type 10) written in Lua ([`crate::scripts::is_slua_item`]):
         /// compiled for "luau", never "mono".
         lua: bool,
         data: Vec<u8>,

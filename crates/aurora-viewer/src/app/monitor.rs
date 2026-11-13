@@ -8,7 +8,7 @@ use super::*;
 use crate::disk_io::Origin;
 use crate::ui::monitor::snapshot::{
     AvatarMode, AvatarRow, DiskInfo, Feature, FrameParts, GeometryInfo, NetInfo, ObjectRow, RegionHealth, RegionLink, SceneInfo, Snapshot,
-    TextureInfo,
+    TextureInfo, WornRow,
 };
 use crate::ui::monitor::{self, Action, MediaProcess, Page, Vram, model};
 use std::collections::{HashMap, HashSet};
@@ -576,13 +576,85 @@ impl App {
                 })
             })
             .collect();
+        let (worn, huds) = self.monitor_worn();
         SceneInfo {
             avatars: avatar_rows,
             objects: object_rows,
+            worn,
+            huds,
             rigged_triangles: rigged_total,
             attachments: attachments_total,
             ..SceneInfo::default()
         }
+    }
+
+    /// What the agent wears, each worn object by its root: its share of
+    /// the complexity (none on a HUD), its triangles and the video memory
+    /// of its textures, as the Legacy Viewer's Performance window lists
+    /// them (FSFloaterPerformance::populateObjectList / populateHUDList),
+    /// the dearest first. The scripting bridge is left out of the HUDs, as
+    /// there.
+    fn monitor_worn(&self) -> (Vec<WornRow>, Vec<WornRow>) {
+        let (world, scene) = (&self.world, &self.scene);
+        let Some(me) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
+            return (Vec::new(), Vec::new());
+        };
+        let bridge = self.bridge_runtime.item();
+        let (mut worn, mut huds) = (Vec::new(), Vec::new());
+        for &att in world.objects.children_of(&me.key) {
+            let Some(root) = world.objects.get(att) else {
+                continue;
+            };
+            let item = root.attachment_item_id();
+            if !bridge.is_nil() && item == Some(bridge) {
+                continue;
+            }
+            let point = root.attachment_point();
+            let hud = crate::scene::complexity::is_hud_point(point);
+            let (mut prims, mut triangles) = (0usize, 0u64);
+            let mut textures = HashSet::new();
+            for i in std::iter::once(att).chain(world.objects.children_of(&root.key).iter().copied()) {
+                prims += 1;
+                let Some(g) = scene.gpu.get(i) else {
+                    continue;
+                };
+                for f in &g.faces {
+                    triangles += u64::from(f.cmd.index_count / 3);
+                    textures.insert(f.tex_id);
+                    textures.extend(f.aux_tex.iter().filter(|t| !t.is_nil()));
+                }
+            }
+            textures.remove(&Uuid::nil());
+            let name = item
+                .and_then(|id| world.inventory.items.get(&id))
+                .map(|it| it.name.clone())
+                .or_else(|| {
+                    self.build
+                        .props
+                        .get(&root.full_id)
+                        .or_else(|| self.interactions.props.get(&root.full_id))
+                        .map(|p| p.name.clone())
+                })
+                .filter(|n| !n.is_empty());
+            let row = WornRow {
+                key: root.key,
+                id: root.full_id,
+                name,
+                point: world
+                    .avatar_lib
+                    .attach_names
+                    .get(&point)
+                    .map(|n| crate::ui::appearance::items::point_name(n).to_owned())
+                    .unwrap_or_default(),
+                complexity: (!hud).then(|| scene.attachment_complexity(world, att).0),
+                prims,
+                triangles,
+                vram: self.shown_bytes(&textures),
+                detachable: item.is_some_and(|id| world.rlva_can_remove(id, Uuid::nil())),
+            };
+            if hud { huds.push(row) } else { worn.push(row) }
+        }
+        (worn, huds)
     }
 
     /// The names of the listed objects not known yet, a few at a time
@@ -636,6 +708,8 @@ impl App {
                 }
                 Action::Inspect(id) => self.inspect_object(id),
                 Action::InspectAvatar(id) => self.inspect_avatar(id),
+                // the object menu's Detach: its RLVa locks, the bridge's own path
+                Action::Detach(key) => ui::context::request(&self.egui_ctx, ui::context::CtxAction::Detach(key)),
                 Action::RegionWindow => ui::region::request_open(&self.egui_ctx),
                 Action::TopScripts => {
                     ui::region::request_open(&self.egui_ctx);
