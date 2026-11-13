@@ -162,7 +162,8 @@ checks: `pwsh -File ./scripts/check.ps1` (formatting, clippy, tests).
 The macOS job of the release workflow signs the application with the
 project's Developer ID, then has Apple notarize it, when the repository has
 these Actions secrets; without them it is signed ad hoc and opens as in
-step 2:
+step 2. The dry run of a pull request that changes the release files is
+always signed ad hoc.
 
 | Secret | Value |
 |---|---|

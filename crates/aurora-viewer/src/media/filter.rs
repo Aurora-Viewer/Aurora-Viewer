@@ -14,9 +14,9 @@
 //! * media on a prim is filtered too (the Legacy Viewer filters the parcel
 //!   media and music only), and the check comes before anything reaches the
 //!   site, the request that discovers the media type included; media on
-//!   worn items (attachments, HUDs) we made ourselves is not asked about by
-//!   default (the list's refusals still apply), closer to the Legacy Viewer,
-//!   which asks about no prim media at all;
+//!   our worn items (attachments, HUDs), whoever made them, is not asked
+//!   about by default (the list's refusals still apply), closer to the
+//!   Legacy Viewer, which asks about no prim media at all;
 //! * a domain rule matches that domain and its subdomains at a dot
 //!   (`example.com` no longer matches `badexample.com`), and the most
 //!   precise rule wins (the URL, then the longest domain) instead of the

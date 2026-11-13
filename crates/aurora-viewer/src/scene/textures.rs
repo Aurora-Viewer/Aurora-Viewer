@@ -2739,16 +2739,19 @@ impl TextureStreamer {
                         e.decoding = true;
                         *decodes += 1;
                         let (want, pool) = (e.want, staging.clone());
-                        jobs.spawn(move || {
-                            texture_result(
-                                id,
-                                want,
-                                (source.texels)(&id, want),
-                                (AlphaKind::Opaque, false),
-                                None,
-                                pool.as_deref(),
-                            )
-                        });
+                        jobs.spawn_or(
+                            move || {
+                                texture_result(
+                                    id,
+                                    want,
+                                    (source.texels)(&id, want),
+                                    (AlphaKind::Opaque, false),
+                                    None,
+                                    pool.as_deref(),
+                                )
+                            },
+                            move || JobResult::TextureFailed { id },
+                        );
                     }
                     return;
                 }
@@ -2876,13 +2879,24 @@ impl TextureStreamer {
             };
             let pool = staging.clone();
             let meter = meter.clone();
-            jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+            // (a failed decode gives its slot back and retries later, as a
+            // decode error does)
+            jobs.spawn_or(
+                move || decode_job(job, &data, pool.as_deref(), &meter),
+                move || JobResult::TextureFailed { id },
+            );
             Self::settle(todo, counts, id, e);
         }
         let dir = cache_dir.clone();
         let pool = staging.clone();
         jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
-            read_job(&dir, id, want, blocks, pool.as_deref())
+            // (a failed read is a cache miss: the texture is downloaded)
+            super::jobs::caught(|| read_job(&dir, id, want, blocks, pool.as_deref())).unwrap_or(JobResult::TextureCache {
+                id,
+                data: None,
+                complete: false,
+                keep_rgba: false,
+            })
         });
         if !forgotten.is_empty() {
             log::info!("refreshing {} textures: downloaded again", forgotten.len());

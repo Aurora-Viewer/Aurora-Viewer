@@ -589,6 +589,7 @@ impl Session<'_> {
             };
             let options = crate::scripts::ScriptOptions {
                 mono: true,
+                luau: crate::scripts::Luau::Off,
                 running: false,
                 experience: Uuid::nil(),
             };
