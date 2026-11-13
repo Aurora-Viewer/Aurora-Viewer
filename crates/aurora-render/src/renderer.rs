@@ -7045,6 +7045,15 @@ impl Backend {
         if *GLARE_OFF.get_or_init(|| std::env::var("AURORA_LEGACY_GLARE").is_ok_and(|v| v.trim() == "0")) {
             main.light_sets.mode[2] |= 0x100000;
         }
+        // AURORA_LEGACY_NAN=off|check: the legacy highlights and
+        // environment unguarded against a NaN as in 0.9.8, or magenta where
+        // the guard caught one (object.wgsl LEGACY_NAN_OFF, LEGACY_NAN_CHECK)
+        static LEGACY_NAN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        main.light_sets.mode[2] |= *LEGACY_NAN.get_or_init(|| match std::env::var("AURORA_LEGACY_NAN").as_deref().map(str::trim) {
+            Ok("off") => 0x200000,
+            Ok("check") => 0x400000,
+            _ => 0,
+        });
         main.light_sets.mode[2] |= match blend_ao {
             BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
@@ -7742,8 +7751,8 @@ impl Backend {
             let c = self.cull.last;
             stats.draws += c.main_draws() + c.bins[BIN_WATER_EXCLUSION];
             stats.shadow_draws += c.shadow_draws();
-            for k in 0..CASCADES {
-                stats.shadow.draws[k] += c.cascade_draws(k);
+            for (k, draws) in stats.shadow.draws.iter_mut().enumerate() {
+                *draws += c.cascade_draws(k);
             }
             stats.shadow.triangles = c.shadow_triangles;
             stats.shadow.rigged_draws = c.shadow_rigged;

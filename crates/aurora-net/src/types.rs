@@ -513,6 +513,13 @@ pub enum NetEvent {
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
     },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
+    },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
     /// Answer of a voice call request: the body, or the HTTP status of the
@@ -968,6 +975,11 @@ pub enum NetEvent {
         message: String,
         url: String,
     },
+    /// The simulator asks for a web window on this URL (llOpenFloater, the
+    /// "URLFloater" GenericMessage; `url_floater.rs`).
+    UrlFloater {
+        url: String,
+    },
     /// llMapDestination (ScriptTeleportRequest): a place to show on the
     /// world map. Despite its name it never teleports by itself.
     ScriptTeleportRequest {
@@ -1063,6 +1075,14 @@ pub enum NetEvent {
     GroupBanList {
         group: Uuid,
         bans: Vec<(Uuid, f64)>,
+    },
+    /// One group of a `BanInGroups`: whether the server took the ban (or
+    /// its lifting).
+    GroupBanInGroup {
+        group: Uuid,
+        agent: Uuid,
+        ban: bool,
+        ok: bool,
     },
     /// The group's parcels and land totals (PlacesReply), one packet.
     GroupLand(Box<crate::group_money::GroupLandReply>),
@@ -1602,6 +1622,13 @@ pub enum NetCommand {
         method: crate::social::SessionMethod,
         session: Uuid,
     },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.
     Call {
@@ -1960,6 +1987,14 @@ pub enum NetCommand {
         ids: Vec<Uuid>,
         /// BAN_UPDATE: the list asked again after the action.
         refresh: bool,
+    },
+    /// The GroupAPIv1 capability, one group after the other, half a second
+    /// apart: `agent` banned (or unbanned) in each of `groups`; each answer
+    /// is a `GroupBanInGroup` (LLGroupActions::banFromAllGroupsCoro).
+    BanInGroups {
+        agent: Uuid,
+        groups: Vec<Uuid>,
+        ban: bool,
     },
     /// GroupRoleUpdate (LLGroupMgrGroupData::sendRoleChanges).
     GroupRoleUpdate {
