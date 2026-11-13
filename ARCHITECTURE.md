@@ -1940,6 +1940,14 @@ offline scenarios supply local cards with three aspect ratios.
 
 `World::can_locate_avatar` and `locate_avatar` share nearby positions and
 received map rights across contact, conversation and profile actions.
+Map/contact teleport commands keep their 256-metre tile representation while
+resolving targets and matching friend-arrival intents. Before preflight and
+local/remote progress selection, `World::normalize_map_teleport` converts a
+destination inside the current region to its actual handle and full local XY,
+using each axis's known region size. The native position-based look field moves
+to the same frame. Remote destinations retain tile addressing, following
+`LLAgent::teleportViaLocation` (`indra/newview/llagent.cpp`); map discovery and
+friend-arrival behavior are unchanged.
 Remote friends use the existing `world/worldmap.rs` TrackAgent/FindAgent
 tracking; an explicit remote teleport consumes one matching reply within a
 lookup interval, then uses the ordinary map teleport/RLVa path. Before

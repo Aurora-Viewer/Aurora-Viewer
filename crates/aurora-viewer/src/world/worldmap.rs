@@ -137,10 +137,13 @@ impl super::World {
     /// Loaded or coarse avatar position in render space. Remote friends
     /// require FindAgent instead; map rights alone cannot enable a camera zoom.
     pub fn avatar_map_position(&self, id: Uuid) -> Option<glam::Vec3> {
+        // a seated avatar's position is relative to its seat: resolve the
+        // chain, as LLVOAvatar::getPositionGlobal does, or a radar Teleport
+        // To lands near the region's corner, or in the tile next to it
         if let Some(o) = self.objects.index_of_uuid(&id).and_then(|i| self.objects.get(i))
-            && let Some(off) = self.region_offset(o.key.region)
+            && let Some(position) = super::radar::native_position(self, o)
         {
-            return Some(off + o.position);
+            return Some(position);
         }
         self.coarse
             .iter()
@@ -174,6 +177,41 @@ impl super::World {
             return false;
         }
         true
+    }
+
+    /// LLAgent::teleportViaLocation (indra/newview/llagent.cpp): a point
+    /// inside our current region uses its real handle and full local XY.
+    /// Only remote destinations keep the map's 256-metre tile addressing.
+    pub(crate) fn normalize_map_teleport(&self, command: &mut NetCommand) {
+        let NetCommand::TeleportTo { handle, position, look_at } = command else {
+            return;
+        };
+        let Some(main) = self.main_region else {
+            return;
+        };
+        let Some(region) = self.regions.get(&main) else {
+            return;
+        };
+        let (x, y) = aurora_net::handle_to_origin(*handle);
+        let (ox, oy) = aurora_net::handle_to_origin(main);
+        let local_x = f64::from(x) + f64::from(position.x) - f64::from(ox);
+        let local_y = f64::from(y) + f64::from(position.y) - f64::from(oy);
+        if !position.is_finite()
+            || !look_at.is_finite()
+            || local_x < 0.0
+            || local_y < 0.0
+            || local_x >= f64::from(region.heightmap.size_x)
+            || local_y >= f64::from(region.heightmap.size_y)
+        {
+            return;
+        }
+        let offset = glam::Vec3::new((f64::from(x) - f64::from(ox)) as f32, (f64::from(y) - f64::from(oy)) as f32, 0.0);
+        *handle = main;
+        position.x = local_x as f32;
+        position.y = local_y as f32;
+        // Map teleports use position + X as the native look field: move it
+        // into the same region frame without changing height or direction.
+        *look_at += offset;
     }
 
     /// Recheck rights/presence before sending a delayed lookup or teleport:
@@ -1023,8 +1061,10 @@ pub fn location_label(region: &str, x: f64, y: f64, z: f32) -> String {
     format!("{region} ({}, {}, {})", x.round() as i64, y.round() as i64, z.round() as i64)
 }
 
-/// LLAgent::teleportViaLocation: handle of the 256 m slot, position inside it
-/// (the simulator of a variable region accepts its own slots).
+/// Remote form of LLAgent::teleportViaLocation: handle of the 256 m slot,
+/// position inside it. Map commands use this frame until friend intents are
+/// resolved; normalize_map_teleport restores current-region coordinates
+/// before the app's teleport preflight and send.
 pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
     let (gx, gy) = ((x / 256.0).floor().max(0.0) as u32, (y / 256.0).floor().max(0.0) as u32);
     let lx = (x - gx as f64 * 256.0) as f32;
@@ -1060,6 +1100,135 @@ mod tests {
         });
         w.social.names.insert(id, "Remote friend".into());
         (w, id)
+    }
+
+    #[test]
+    fn radar_map_teleport_preserves_full_current_region_coordinates() {
+        for (width, height) in [(256, 256), (512, 256), (256, 1024), (1024, 512)] {
+            for loaded in [false, true] {
+                for delayed_map in [false, true] {
+                    let (mut w, id) = remote_friend();
+                    let mut block = yiff();
+                    block.name = "Test region".into();
+                    block.size_x = width;
+                    block.size_y = height;
+                    let main = aurora_net::origin_to_handle(u32::from(block.x) * 256, u32::from(block.y) * 256);
+                    w.main_region = Some(main);
+                    w.ensure_region(main, (u32::from(width), u32::from(height)));
+                    let position = glam::Vec3::new(f32::from(width) - 5.5, f32::from(height) - 7.25, 40.0);
+                    if loaded {
+                        let mut avatar = crate::demo::action_avatar(false);
+                        avatar.full_id = id;
+                        avatar.position = position;
+                        w.objects.upsert_at(main, avatar, Some(Instant::now()));
+                    } else {
+                        w.coarse.insert(main, vec![(id, position)]);
+                    }
+                    if !delayed_map {
+                        w.map.apply_blocks(vec![block.clone()]);
+                    }
+                    assert_eq!(w.avatar_map_position(id), Some(position));
+                    assert!(w.locate_avatar(id, true));
+                    if delayed_map {
+                        assert!(w.map.track.as_ref().unwrap().pending);
+                        w.map.apply_blocks(vec![block]);
+                    }
+                    let mut commands = w.take_map_commands();
+                    let command = commands.iter_mut().find(|c| matches!(c, NetCommand::TeleportTo { .. })).unwrap();
+                    // The app identifies the friend before changing frames,
+                    // preserving arrival-flight and unknown-height handling.
+                    assert_eq!(w.friend_teleport_avatar(command), Some(id));
+                    assert!(w.prepare_friend_join(command).is_none());
+                    w.normalize_map_teleport(command);
+                    assert!(matches!(command, NetCommand::TeleportTo { handle, position: at, look_at }
+                        if *handle == main && *at == position && *look_at == position + glam::Vec3::X));
+                    w.normalize_map_teleport(command);
+                    assert!(
+                        matches!(command, NetCommand::TeleportTo { handle, position: at, look_at }
+                        if *handle == main && *at == position && *look_at == position + glam::Vec3::X),
+                        "idempotent"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A friend sitting 30 m away: the avatar's position is relative to its
+    /// seat. Resolved through the seat (LLVOAvatar::getPositionGlobal), the
+    /// radar teleport stays in our region; read as a region position it went
+    /// to the tile west of the region's corner, in another region.
+    #[test]
+    fn radar_teleport_to_a_seated_friend_goes_to_the_seat_not_the_corner() {
+        let (mut w, id) = remote_friend();
+        let mut block = yiff();
+        block.size_x = 1024;
+        block.size_y = 1024;
+        let main = aurora_net::origin_to_handle(u32::from(block.x) * 256, u32::from(block.y) * 256);
+        w.main_region = Some(main);
+        w.ensure_region(main, (1024, 1024));
+        w.map.apply_blocks(vec![block]);
+        let mut seat = crate::demo::action_avatar(false);
+        seat.local_id = 970;
+        seat.full_id = Uuid::from_u128(970);
+        seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        seat.position = glam::Vec3::new(650.0, 400.0, 30.0);
+        seat.rotation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        w.objects.upsert_at(main, seat.clone(), Some(Instant::now()));
+        let mut avatar = crate::demo::action_avatar(true);
+        avatar.full_id = id;
+        avatar.position = glam::Vec3::new(-0.4, 0.2, 1.2);
+        w.objects.upsert_at(main, avatar.clone(), Some(Instant::now()));
+        let expected = seat.position + seat.rotation * avatar.position;
+        let found = w.avatar_map_position(id).expect("seated friend");
+        assert!(found.distance(expected) < 1e-3, "{found:?} != {expected:?}");
+        assert!(w.locate_avatar(id, true));
+        let mut commands = w.take_map_commands();
+        let command = commands
+            .iter_mut()
+            .find(|c| matches!(c, NetCommand::TeleportTo { .. }))
+            .expect("teleport");
+        w.normalize_map_teleport(command);
+        let NetCommand::TeleportTo { handle, position, .. } = command else {
+            unreachable!();
+        };
+        assert_eq!(*handle, main, "our own region, not the one west of its corner");
+        assert!(position.distance(expected) < 1e-2, "{position:?} != {expected:?}");
+    }
+
+    #[test]
+    fn radar_map_teleport_keeps_remote_tiles_and_region_edges() {
+        let (mut w, _) = remote_friend();
+        let (ox, oy) = (256_000, 256_256);
+        let main = aurora_net::origin_to_handle(ox, oy);
+        w.main_region = Some(main);
+        w.ensure_region(main, (1024, 512));
+        for (x, y) in [(-0.5, 100.0), (100.0, -0.5), (1024.0, 100.0), (100.0, 512.0), (2048.0, 1536.0)] {
+            let mut command = teleport_command(f64::from(ox) + x, f64::from(oy) + y, 25.0);
+            let NetCommand::TeleportTo { handle, position, look_at } = command else {
+                unreachable!();
+            };
+            w.normalize_map_teleport(&mut command);
+            assert!(
+                matches!(command, NetCommand::TeleportTo { handle: h, position: p, look_at: l }
+                if h == handle && p == position && l == look_at),
+                "outside ({x}, {y}) stays remote"
+            );
+        }
+    }
+
+    #[test]
+    fn radar_map_teleport_does_not_guess_an_unknown_current_region_size() {
+        let (mut w, _) = remote_friend();
+        let mut command = teleport_command(256_800.0, 256_600.0, 40.0);
+        let NetCommand::TeleportTo { handle, position, look_at } = command else {
+            unreachable!();
+        };
+        for main in [None, Some(aurora_net::origin_to_handle(256_000, 256_256))] {
+            w.main_region = main;
+            w.normalize_map_teleport(&mut command);
+            assert!(matches!(command, NetCommand::TeleportTo { handle: h, position: p, look_at: l }
+                if h == handle && p == position && l == look_at));
+        }
     }
 
     #[test]
