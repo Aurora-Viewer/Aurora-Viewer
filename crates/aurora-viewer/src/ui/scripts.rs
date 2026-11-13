@@ -101,6 +101,17 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// SLua source: Lua colors, words and help.
+    fn lua(&self) -> bool {
+        self.compile == CompileTarget::Luau
+    }
+
+    /// The number of the first line: Lua counts from 1, LSL from 0
+    /// (LLScriptEditor::drawLineNumbers, LLScriptEdCore::updateDynamicHelp).
+    fn first_line(&self) -> usize {
+        usize::from(self.lua())
+    }
+
     fn dirty(&self) -> bool {
         self.loaded && (self.source != self.baseline || self.compile != self.baseline_compile || self.experience.dirty())
     }

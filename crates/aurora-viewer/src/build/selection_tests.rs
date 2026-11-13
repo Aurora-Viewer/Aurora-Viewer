@@ -1345,7 +1345,7 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
             "the parcel group must differ from the message group"
         );
         tool.out.clear();
-        tool.new_script(&world, roots[0]);
+        tool.new_script(&world, roots[0], false);
         let scripts: Vec<_> = tool
             .out
             .iter()
@@ -1368,6 +1368,14 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
             (item.owner_id, item.group_id, item.asset_type),
             (world.agent_id, Uuid::nil(), contents::AT_LSL_TEXT)
         );
+        assert_eq!(item.flags, 0, "LSL");
+        // an SLua script carries SST_LUA in its flags
+        tool.out.clear();
+        tool.new_script(&world, roots[0], true);
+        assert!(tool.out.iter().any(|command| matches!(
+            command,
+            NetCommand::Build(BuildCmd::RezScript { item, .. }) if aurora_net::scripts::is_slua_item(item.flags)
+        )));
         for action in 0..5 {
             tool.selection = keys.clone();
             tool.out.clear();
