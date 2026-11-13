@@ -754,6 +754,32 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
     animation
 }
 
+/// A looping joint translation for third-person bone-camera captures.
+pub fn third_person_joint_animation(joint_name: &str, joint_rest: Vec3, axis: Vec3) -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey};
+    let mut animation = idle_animation();
+    animation.base_priority = 6;
+    animation.duration = 2.0;
+    animation.loop_in = 0.0;
+    animation.loop_out = 2.0;
+    animation.ease_in = 0.0;
+    animation.ease_out = 0.0;
+    animation.joints.clear();
+    animation.joints.push(JointMotion {
+        joint_name: joint_name.into(),
+        priority: 5,
+        rot_keys: Vec::new(),
+        pos_keys: [(0.0, 0.0), (0.5, 0.22), (1.0, 0.0), (1.5, -0.12), (2.0, 0.0)]
+            .into_iter()
+            .map(|(time, z)| PosKey {
+                time,
+                position: joint_rest + axis * z,
+            })
+            .collect(),
+    });
+    animation
+}
+
 /// Ground-sit fixture: the demo asset fallback is an idle, so supply a
 /// folded-leg pose with a lowered pelvis without requesting a grid asset.
 pub fn first_person_ground_animation() -> aurora_assets::Animation {
@@ -3146,6 +3172,14 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 // lists show it, the others the group glyph
                 aurora_net::GroupMembership {
                     insignia: TEX_SNAPSHOT,
+                    // AURORA_DEMO_CONV_MODERATE: a second group where we
+                    // manage bans, for "Ban from all my groups"
+                    powers: g(DEMO_GROUP2, "", false).powers
+                        | if crate::ui::chat::moderation::demo_mode().is_some() {
+                            aurora_net::groups::powers::GROUP_BAN_ACCESS
+                        } else {
+                            0
+                        },
                     ..g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false)
                 },
                 aurora_net::GroupMembership {
@@ -6504,7 +6538,7 @@ pub fn ui_sound(id: Uuid) -> aurora_audio::SoundClip {
                 .join("sound")
                 .join(format!("{}.ogg", crate::cache::keyed_name(&id))),
         )
-        && let Ok(clip) = aurora_audio::SoundClip::decode(&data)
+        && let Ok(clip) = aurora_audio::SoundClip::decode_asset(&data)
     {
         return clip;
     }
@@ -6531,6 +6565,17 @@ pub fn demo_media_page() -> &'static str {
 /// west face (towards the avatar) carries media. Returns the update, the
 /// object id and the face index.
 pub fn media_screen() -> (NetEvent, Uuid, u8) {
+    media_screen_at(900, 135.5, 129.5)
+}
+
+/// AURORA_DEMO_NEARBY_MEDIA: the other screens, the same as
+/// [`media_screen`]: one further north in the plaza's parcel, one outside
+/// it (east of x = 192 m).
+pub fn nearby_media_screens() -> [(NetEvent, Uuid, u8); 2] {
+    [media_screen_at(901, 141.5, 137.5), media_screen_at(902, 196.0, 129.5)]
+}
+
+fn media_screen_at(n: u32, x: f32, y: f32) -> (NetEvent, Uuid, u8) {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     // the box face looking down -X
     let mesh = aurora_prim::generate_volume(&boxp, 1.0);
@@ -6556,9 +6601,8 @@ pub fn media_screen() -> (NetEvent, Uuid, u8) {
     f.media_flags |= 1;
     f.scale_t = 576.0 / 1024.0;
     f.offset_t = -(1.0 - f.scale_t) * 0.5;
-    let (x, y) = (135.5, 129.5);
     let o = prim(
-        900,
+        n,
         Vec3::new(x, y, floor_at(x, y) + 1.9),
         Quat::IDENTITY,
         Vec3::new(0.1, 4.0, 2.25),

@@ -1076,6 +1076,14 @@ pub enum NetEvent {
         group: Uuid,
         bans: Vec<(Uuid, f64)>,
     },
+    /// One group of a `BanInGroups`: whether the server took the ban (or
+    /// its lifting).
+    GroupBanInGroup {
+        group: Uuid,
+        agent: Uuid,
+        ban: bool,
+        ok: bool,
+    },
     /// The group's parcels and land totals (PlacesReply), one packet.
     GroupLand(Box<crate::group_money::GroupLandReply>),
     /// A page of the group's accounts (GroupAccount…Reply), one packet.
@@ -1979,6 +1987,14 @@ pub enum NetCommand {
         ids: Vec<Uuid>,
         /// BAN_UPDATE: the list asked again after the action.
         refresh: bool,
+    },
+    /// The GroupAPIv1 capability, one group after the other, half a second
+    /// apart: `agent` banned (or unbanned) in each of `groups`; each answer
+    /// is a `GroupBanInGroup` (LLGroupActions::banFromAllGroupsCoro).
+    BanInGroups {
+        agent: Uuid,
+        groups: Vec<Uuid>,
+        ban: bool,
     },
     /// GroupRoleUpdate (LLGroupMgrGroupData::sendRoleChanges).
     GroupRoleUpdate {

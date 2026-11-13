@@ -115,52 +115,41 @@ fn be32(d: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-/// Parse SIZ and COD from a raw codestream main header.
+/// Parse SIZ and COD from a raw codestream main header. The header is
+/// walked by [`walk_header`], the same walk as [`parse_layout`] and as
+/// OpenJPEG's `opj_j2k_read_header_procedure` (unknown markers passed two
+/// bytes at a time, up to the first SOT), so every reader of the header
+/// sees the same segments. The first SIZ counts (OpenJPEG refuses a SIZ
+/// anywhere else), and the last COD (each one replaces the default coding
+/// style, `opj_j2k_read_cod`).
 fn parse_main_header(cs: &[u8]) -> Option<J2kInfo> {
     if be16(cs, 0)? != 0xFF4F {
         return None;
     }
-    let mut pos = 2usize;
-    let mut size: Option<(u32, u32, u16)> = None;
+    let mut steps = cs.len() + 4096;
+    let mut size: Option<Option<(u32, u32, u16)>> = None;
     let mut levels: Option<u8> = None;
-    while size.is_none() || levels.is_none() {
-        let marker = be16(cs, pos)?;
-        if marker >> 8 != 0xFF {
-            return None;
-        }
-        // SOT / SOD / EOC: end of the main header.
-        if matches!(marker, 0xFF90 | 0xFF93 | 0xFFD9) {
-            break;
-        }
-        let seg_len = be16(cs, pos + 2)? as usize;
-        if seg_len < 2 {
-            return None;
-        }
-        let seg = cs.get(pos + 4..pos + 2 + seg_len)?;
-        match marker {
-            0xFF51 => {
+    walk_header(
+        cs,
+        2,
+        |m| m == 0xFF90,
+        &mut steps,
+        |marker, seg| match marker {
+            0xFF51 if size.is_none() => {
                 // SIZ: Rsiz(2) Xsiz Ysiz XOsiz YOsiz XTsiz YTsiz XTOsiz YTOsiz (4 each) Csiz(2)
-                let xsiz = be32(seg, 2)?;
-                let ysiz = be32(seg, 6)?;
-                let xosiz = be32(seg, 10)?;
-                let yosiz = be32(seg, 14)?;
-                let csiz = be16(seg, 34)?;
-                let w = xsiz.checked_sub(xosiz)?;
-                let h = ysiz.checked_sub(yosiz)?;
-                if w == 0 || h == 0 || csiz == 0 {
-                    return None;
-                }
-                size = Some((w, h, csiz));
+                size = Some((|| {
+                    let w = be32(seg, 2)?.checked_sub(be32(seg, 10)?)?;
+                    let h = be32(seg, 6)?.checked_sub(be32(seg, 14)?)?;
+                    let csiz = be16(seg, 34)?;
+                    (w != 0 && h != 0 && csiz != 0).then_some((w, h, csiz))
+                })());
             }
-            0xFF52 => {
-                // COD: Scod(1) prog(1) layers(2) mct(1) NL(1) ...
-                levels = Some(*seg.get(5)?);
-            }
+            // COD: Scod(1) prog(1) layers(2) mct(1) NL(1) ...
+            0xFF52 => levels = seg.get(5).copied().or(levels),
             _ => {}
-        }
-        pos = pos.checked_add(2 + seg_len)?;
-    }
-    let (width, height, comps) = size?;
+        },
+    )?;
+    let (width, height, comps) = size??;
     Some(J2kInfo {
         width,
         height,
@@ -393,9 +382,14 @@ fn walk_header(
 fn parse_layout(cs: &[u8]) -> Option<(Siz, Coding)> {
     let mut steps = cs.len() + 4096;
     let mut siz: Option<Siz> = None;
+    let mut siz_seen = false;
     let mut coding = Coding::NONE;
+    // Only the first SIZ counts, as in `parse_main_header`.
     let mut visit = |marker: u16, body: &[u8]| match marker {
-        0xFF51 if siz.is_none() => siz = parse_siz(body),
+        0xFF51 if !siz_seen => {
+            siz_seen = true;
+            siz = parse_siz(body);
+        }
         0xFF52 => coding.add_cod(body),
         0xFF53 => {
             if let Some(s) = &siz {
@@ -507,8 +501,9 @@ fn decode_memory(siz: &Siz, coding: &Coding, reduce: u8, tiles: (u64, u64)) -> u
 }
 
 /// Refuse a codestream whose decode at `reduce` would need more than
-/// [`DECODE_BUDGET`] or has more than [`MAX_TILES`] tiles.
-fn check_decode_memory(cs: &[u8], reduce: u8) -> Result<(), AssetError> {
+/// [`DECODE_BUDGET`] or has more than [`MAX_TILES`] tiles. Returns the SIZ,
+/// which [`convert_image`] checks the decoded components against.
+fn check_decode_memory(cs: &[u8], reduce: u8) -> Result<Siz, AssetError> {
     let (siz, coding) = parse_layout(cs).ok_or(AssetError::J2k("JPEG2000 header layout"))?;
     let tiles = tile_grid(&siz).ok_or(AssetError::J2k("JPEG2000 tile grid"))?;
     if tiles.0.saturating_mul(tiles.1) > MAX_TILES {
@@ -517,7 +512,7 @@ fn check_decode_memory(cs: &[u8], reduce: u8) -> Result<(), AssetError> {
     if decode_memory(&siz, &coding, reduce, tiles) > DECODE_BUDGET {
         return Err(AssetError::TooLarge("JPEG2000 decoder memory"));
     }
-    Ok(())
+    Ok(siz)
 }
 
 /// Read image dimensions, component count and decomposition levels from the
@@ -735,7 +730,7 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
         return Err(AssetError::Unsupported(format!("JPEG2000 with {} components", info.components)));
     }
     let reduce = discard.min(info.levels);
-    check_decode_memory(cs, reduce)?;
+    let siz = check_decode_memory(cs, reduce)?;
     // (a tile-part can never need more than about twice the raw pixels)
     let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
@@ -812,15 +807,36 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     // `opj_read_header`/`opj_decode`; it is not mutated while borrowed.
     let img = unsafe { &*image.0 };
     let codec = start.elapsed();
-    let out = convert_image(img)?;
+    let out = convert_image(img, &siz, reduce)?;
     let convert = start.elapsed().saturating_sub(codec);
     Ok((out, DecodeTimings { codec, convert }))
 }
 
-/// Convert OpenJPEG component planes to interleaved 8-bit pixels.
-fn convert_image(img: &opj::opj_image_t) -> Result<DecodedImage, AssetError> {
+/// Width and height of a component of subsampling `sub` decoded at
+/// resolution reduction `reduce`, from the SIZ alone, as
+/// `opj_j2k_update_image_dimensions` computes them: the image area in the
+/// component's grid (`ceil(x / dx)`), then halved `reduce` times, rounding
+/// each edge up.
+fn component_size(siz: &Siz, sub: (u8, u8), reduce: u8) -> (u64, u64) {
+    let span = |a0: u32, a1: u32, d: u8| {
+        let d = u64::from(d.max(1));
+        let scale = 1u64 << u32::from(reduce).min(63);
+        let (c0, c1) = (u64::from(a0).div_ceil(d), u64::from(a1).div_ceil(d));
+        c1.div_ceil(scale).saturating_sub(c0.div_ceil(scale))
+    };
+    (span(siz.x0, siz.x1, sub.0), span(siz.y0, siz.y1, sub.1))
+}
+
+/// Convert OpenJPEG component planes to interleaved 8-bit pixels. The
+/// components are checked against the codestream's own SIZ (`siz`, decoded
+/// at `reduce`) before their planes are read: the same component count, and
+/// planes no larger than the SIZ gives them.
+fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<DecodedImage, AssetError> {
     if img.numcomps == 0 || img.comps.is_null() {
         return Err(AssetError::J2k("decoded image has no components"));
+    }
+    if img.numcomps as usize != siz.sub.len() {
+        return Err(AssetError::J2k("decoded component count differs from the header"));
     }
     // SAFETY: OpenJPEG allocates `numcomps` contiguous `opj_image_comp_t` at `comps`.
     let comps = unsafe { std::slice::from_raw_parts(img.comps, img.numcomps as usize) };
@@ -828,9 +844,13 @@ fn convert_image(img: &opj::opj_image_t) -> Result<DecodedImage, AssetError> {
 
     let mut width = 0u32;
     let mut height = 0u32;
-    for c in used {
+    for (c, &sub) in used.iter().zip(&siz.sub) {
         if c.data.is_null() || c.w == 0 || c.h == 0 {
             return Err(AssetError::J2k("decoded component has no data"));
+        }
+        let (max_w, max_h) = component_size(siz, sub, reduce);
+        if u64::from(c.w) > max_w || u64::from(c.h) > max_h {
+            return Err(AssetError::J2k("decoded component larger than its header"));
         }
         width = width.max(c.w);
         height = height.max(c.h);
@@ -845,8 +865,10 @@ fn convert_image(img: &opj::opj_image_t) -> Result<DecodedImage, AssetError> {
     for (ci, c) in used.iter().enumerate() {
         let cw = c.w as usize;
         let ch = c.h as usize;
-        // SAFETY: OpenJPEG allocates `w * h` samples for each decoded component
-        // (dimensions already reduced by the resolution factor).
+        // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
+        // each decoded component (dimensions already reduced by the resolution
+        // factor); `w` and `h` were checked above against the SIZ, so the
+        // slice never spans more than the header's own component size.
         let plane = unsafe { std::slice::from_raw_parts(c.data as *const i32, cw * ch) };
         let prec = c.prec.clamp(1, 31);
         let offset: i64 = if c.sgnd != 0 { 1i64 << (prec - 1) } else { 0 };
@@ -1439,5 +1461,63 @@ mod tests {
             levels: 5,
         };
         assert!(bytes_for_discard(&huge, 0) > bytes_for_discard(&huge, 5));
+    }
+
+    /// The component sizes `convert_image` allows follow
+    /// `opj_j2k_update_image_dimensions`: the area in the component's grid,
+    /// then each reduction rounding both edges up.
+    #[test]
+    fn component_sizes_follow_the_siz() {
+        let mut l = Layout::texture(64, 48, 3);
+        let siz = parse_layout(&codestream(&l, &[])).expect("layout").0;
+        assert_eq!(component_size(&siz, (1, 1), 0), (64, 48));
+        assert_eq!(component_size(&siz, (1, 1), 1), (32, 24));
+        assert_eq!(component_size(&siz, (1, 1), 5), (2, 2));
+        l.area = (1, 1, 9, 9);
+        l.tile_origin = (1, 1);
+        l.tile = (8, 8);
+        let siz = parse_layout(&codestream(&l, &[])).expect("layout").0;
+        // x: ceil(1/2) = 1 to ceil(9/2) = 5 → 4; halved: ceil(5/2) - ceil(1/2) = 2.
+        assert_eq!(component_size(&siz, (2, 2), 0), (4, 4));
+        assert_eq!(component_size(&siz, (2, 2), 1), (2, 2));
+        assert_eq!(component_size(&siz, (1, 1), 0), (8, 8));
+        // A zero subsampling (which OpenJPEG refuses) does not divide by zero.
+        assert_eq!(component_size(&siz, (0, 0), 0), (8, 8));
+        // Every real decode stays within those sizes.
+        let enc = encode(64, 48, 3, pattern);
+        for discard in 0..=5 {
+            let img = decode_j2k(&enc, discard).expect("decode");
+            let siz = parse_layout(locate_codestream(&enc).expect("codestream")).expect("layout").0;
+            let (w, h) = component_size(&siz, (1, 1), discard);
+            assert_eq!((u64::from(img.width), u64::from(img.height)), (w, h));
+        }
+    }
+
+    /// The main header is walked as OpenJPEG reads it: an unknown marker is
+    /// passed two bytes at a time, never by the length it declares, so the
+    /// image info and the decoder's budget read the same segments as OpenJPEG.
+    #[test]
+    fn the_main_header_is_read_like_openjpeg() {
+        let l = Layout::texture(64, 64, 3);
+        let cs = codestream(&l, &[]);
+        let cod = cs.windows(2).position(|w| w == [0xFF, 0x52]).expect("COD");
+        // An unknown marker (0xFF6F) whose length covers the whole COD.
+        let cod_len = usize::from(be16(&cs, cod + 2).expect("Lcod")) + 2;
+        let mut hidden = cs[..cod].to_vec();
+        hidden.extend_from_slice(&[0xFF, 0x6F]);
+        hidden.extend_from_slice(&(cod_len as u16 + 2).to_be_bytes());
+        hidden.extend_from_slice(&cs[cod..]);
+        let info = parse_main_header(&hidden).expect("COD found behind the unknown marker");
+        assert_eq!(info.levels, 5);
+        assert_eq!(parse_layout(&hidden).expect("layout").1.levels, 5);
+        // Only the first SIZ counts.
+        let siz = cs.windows(2).position(|w| w == [0xFF, 0x51]).expect("SIZ");
+        let siz_len = usize::from(be16(&cs, siz + 2).expect("Lsiz")) + 2;
+        let other = codestream(&Layout::texture(32, 32, 3), &[]);
+        let mut twice = cs[..cod].to_vec();
+        twice.extend_from_slice(&other[siz..siz + siz_len]);
+        twice.extend_from_slice(&cs[cod..]);
+        assert_eq!((parse_main_header(&twice).expect("info").width), 64);
+        assert_eq!(parse_layout(&twice).expect("layout").0.x1, 64);
     }
 }
