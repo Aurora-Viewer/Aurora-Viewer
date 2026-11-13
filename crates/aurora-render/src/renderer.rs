@@ -1157,6 +1157,10 @@ struct GpuTimer {
     st_n: u32,
     /// The last frame's stochastic pass times (`AURORA_PROFILE_FRAMES`).
     last_st: Option<[f32; 4]>,
+    /// Whether each readback slot's frame drew the stochastic transparency:
+    /// its marks are written every frame (empty spans when it did not run),
+    /// so their timestamps alone cannot tell.
+    slot_st: [std::cell::Cell<bool>; 3],
     compare: PrepassCompare,
 }
 
@@ -1418,6 +1422,7 @@ impl GpuTimer {
             st_sum: [0.0; 4],
             st_n: 0,
             last_st: None,
+            slot_st: Default::default(),
             last_effects: None,
             last_weather: None,
             slot_prepass: Default::default(),
@@ -1449,7 +1454,7 @@ impl GpuTimer {
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             self.last_st = None;
-                            if crate::oit_stochastic::wanted() && ts[MARK_ST_COMPOSITE_END as usize] > ts[MARK_ST_BEGIN as usize] {
+                            if self.slot_st[slot].get() {
                                 let parts = [
                                     ms(MARK_ST_BEGIN, MARK_ST_ALPHA_END),
                                     ms(MARK_ST_ALPHA_END, MARK_ST_DEPTH_END),
@@ -10468,10 +10473,14 @@ impl Backend {
         }
 
         prof.mark("scene_b");
-        if !(st_on && self.st.is_some() && self.st_pipes.is_some()) {
+        let st_ran = st_on && self.st.is_some() && self.st_pipes.is_some();
+        if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
+            t.slot_st[slot].set(st_ran);
+        }
+        if !st_ran {
             // every mark is written each frame (empty spans, after the rain
-            // when the stochastic transparency is off), so the timestamp
-            // order stays fixed
+            // when the stochastic transparency is off), so every timestamp
+            // is fresh each frame
             for m in [
                 MARK_ST_BEGIN,
                 MARK_ST_ALPHA_END,
@@ -11542,7 +11551,9 @@ mod tests {
     use super::*;
 
     /// The frame's timestamps in the order the GPU writes them (every mark
-    /// is written each frame, empty spans included).
+    /// is written each frame, empty spans included), with the stochastic
+    /// transparency off; on, its marks come between `MARK_GLOW_END` and
+    /// `MARK_BLEND_END`, inside the same element.
     const MARK_ORDER: [u32; GPU_TIMESTAMPS as usize] = [
         0,
         MARK_SHADOW_BEGIN,
