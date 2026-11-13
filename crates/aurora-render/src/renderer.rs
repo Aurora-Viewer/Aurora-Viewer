@@ -10472,7 +10472,13 @@ impl Backend {
             // every mark is written each frame (empty spans, after the rain
             // when the stochastic transparency is off), so the timestamp
             // order stays fixed
-            for m in [MARK_ST_BEGIN, MARK_ST_ALPHA_END, MARK_ST_DEPTH_END, MARK_ST_ACCUM_END, MARK_ST_COMPOSITE_END] {
+            for m in [
+                MARK_ST_BEGIN,
+                MARK_ST_ALPHA_END,
+                MARK_ST_DEPTH_END,
+                MARK_ST_ACCUM_END,
+                MARK_ST_COMPOSITE_END,
+            ] {
                 mark(&mut encoder, m);
             }
         }
