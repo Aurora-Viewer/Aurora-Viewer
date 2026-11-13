@@ -896,6 +896,15 @@ impl App {
                         } else {
                             props.map(|p| p.owner_id).unwrap_or(Uuid::nil())
                         };
+                        let attach_pt = o.attachment_point();
+                        let attach_name = (attach_pt != 0).then(|| {
+                            self.world
+                                .avatar_lib
+                                .attach_names
+                                .get(&attach_pt)
+                                .cloned()
+                                .unwrap_or_else(|| format!("Point {attach_pt}"))
+                        });
                         Some((
                             dist,
                             json!({
@@ -909,7 +918,8 @@ impl App {
                                 "rotation_quat": [o.rotation.x, o.rotation.y, o.rotation.z, o.rotation.w],
                                 "scale": [o.scale.x, o.scale.y, o.scale.z],
                                 "distance_m": (dist * 100.0).round() / 100.0,
-                                "attachment_point": o.attachment_point(),
+                                "attachment_point": attach_pt,
+                                "attachment_point_name": attach_name,
                                 "is_mesh": o.volume.is_mesh(),
                                 "owner_id": owner_id.to_string(),
                             }),
@@ -2641,6 +2651,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         "link_id": link.id.to_string(),
                         "target_item_id": target.id.to_string(),
                         "name": target.name,
+                        "type": Self::inventory_item_type_str(target.asset_type, target.inv_type),
                         "asset_type": target.asset_type,
                     }));
                 }
@@ -3424,6 +3435,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         "op": "write",
                         "key": key,
                         "status_code": code,
+                        "status_name": aurora_mcp::lsd::lsd_status_name(code),
                     }));
                 }
                 LsdOperation::Delete { key, passphrase } => {
@@ -3432,6 +3444,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         "op": "delete",
                         "key": key,
                         "status_code": code,
+                        "status_name": aurora_mcp::lsd::lsd_status_name(code),
                     }));
                 }
                 LsdOperation::Reset => {
@@ -3439,6 +3452,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     results.push(json!({
                         "op": "reset",
                         "status_code": aurora_mcp::lsd::LINKSETDATA_OK,
+                        "status_name": aurora_mcp::lsd::lsd_status_name(aurora_mcp::lsd::LINKSETDATA_OK),
                     }));
                 }
                 LsdOperation::ImportJson {
@@ -3464,6 +3478,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         "op": "import_json",
                         "written_keys": written,
                         "status_code": last_code,
+                        "status_name": aurora_mcp::lsd::lsd_status_name(last_code),
                     }));
                 }
             }
@@ -5180,9 +5195,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             "claim_price": p.claim_price,
             "sale_price": p.sale_price,
             "flags": p.flags,
+            "flag_names": decode_parcel_flags(p.flags),
             "music_url": p.music_url,
             "media_url": p.media_url,
             "landing_type": p.landing_type,
+            "landing_type_name": landing_type_name(p.landing_type),
             "see_avatars": p.see_avatars,
             "user_location": [p.user_location.x, p.user_location.y, p.user_location.z],
             "aabb_min": [p.aabb_min.x, p.aabb_min.y, p.aabb_min.z],
@@ -5514,6 +5531,9 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 "name": name,
                 "online": friend.online,
                 "rights_given": friend.rights_given,
+                "given_see_online": (friend.rights_given & rights::ONLINE_STATUS) != 0,
+                "given_see_on_map": (friend.rights_given & rights::MAP_LOCATION) != 0,
+                "given_modify_objects": (friend.rights_given & rights::MODIFY_OBJECTS) != 0,
                 "rights_has": friend.rights_has,
                 "can_see_online": (friend.rights_has & rights::ONLINE_STATUS) != 0,
                 "can_see_on_map": (friend.rights_has & rights::MAP_LOCATION) != 0,
@@ -5861,6 +5881,52 @@ fn environment_state_json(
             "normal_scale": [water.normal_scale.x, water.normal_scale.y, water.normal_scale.z],
         }
     })
+}
+
+fn decode_parcel_flags(flags: u32) -> Vec<&'static str> {
+    use aurora_net::parcel_flags as pf;
+    const TABLE: &[(u32, &str)] = &[
+        (pf::ALLOW_FLY, "allow_fly"),
+        (pf::ALLOW_OTHER_SCRIPTS, "allow_other_scripts"),
+        (pf::FOR_SALE, "for_sale"),
+        (pf::ALLOW_LANDMARK, "allow_landmark"),
+        (pf::ALLOW_TERRAFORM, "allow_terraform"),
+        (pf::ALLOW_DAMAGE, "allow_damage"),
+        (pf::CREATE_OBJECTS, "create_objects"),
+        (pf::USE_ACCESS_GROUP, "use_access_group"),
+        (pf::USE_ACCESS_LIST, "use_access_list"),
+        (pf::USE_BAN_LIST, "use_ban_list"),
+        (pf::USE_PASS_LIST, "use_pass_list"),
+        (pf::SHOW_DIRECTORY, "show_directory"),
+        (pf::ALLOW_DEED_TO_GROUP, "allow_deed_to_group"),
+        (pf::CONTRIBUTE_WITH_DEED, "contribute_with_deed"),
+        (pf::SOUND_LOCAL, "sound_local"),
+        (pf::SELL_PARCEL_OBJECTS, "sell_parcel_objects"),
+        (pf::ALLOW_PUBLISH, "allow_publish"),
+        (pf::MATURE_PUBLISH, "mature_publish"),
+        (pf::RESTRICT_PUSHOBJECT, "restrict_pushobject"),
+        (pf::DENY_ANONYMOUS, "deny_anonymous"),
+        (pf::ALLOW_GROUP_SCRIPTS, "allow_group_scripts"),
+        (pf::CREATE_GROUP_OBJECTS, "create_group_objects"),
+        (pf::ALLOW_ALL_OBJECT_ENTRY, "allow_all_object_entry"),
+        (pf::ALLOW_GROUP_OBJECT_ENTRY, "allow_group_object_entry"),
+        (pf::ALLOW_VOICE_CHAT, "allow_voice_chat"),
+        (pf::USE_ESTATE_VOICE_CHAN, "use_estate_voice_chan"),
+        (pf::DENY_AGEUNVERIFIED, "deny_age_unverified"),
+    ];
+    TABLE
+        .iter()
+        .filter_map(|&(bit, name)| (flags & bit != 0).then_some(name))
+        .collect()
+}
+
+fn landing_type_name(landing_type: i32) -> &'static str {
+    match landing_type {
+        0 => "blocked",
+        1 => "landing_point",
+        2 => "anywhere",
+        _ => "unknown",
+    }
 }
 
 #[cfg(test)]

@@ -3557,10 +3557,10 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "asset_inspect_local".into(),
-            description: "Inspect a local .gltf, .glb, .dae, or image file before upload.".into(),
+            description: "Inspect a local .gltf, .glb, .dae, or image file before upload. Paths must reside inside the working directory, temp capture/live-mesh folders, or AURORA_MCP_ASSET_ROOTS.".into(),
             input_schema: json!({
                 "type": "object",
-                "properties": { "file_path": { "type": "string" } },
+                "properties": { "file_path": { "type": "string", "description": "Path to a .gltf, .glb, .dae, .png, .jpg, .jpeg, .tga, .bmp, .webp, or .gif file within allowed asset roots" } },
                 "required": ["file_path"]
             }),
             in_compact_profile: false,
@@ -3929,25 +3929,26 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "viewer_login".into(),
-            description: "Initiate login into the grid when the viewer is on the login screen. If username and password are omitted, logs in automatically using saved account credentials from the viewer's secure credential store.".into(),
+            description: "Initiate login into the grid when the viewer is on the login screen (requires an active control lease). Omit password and mfa_token to log in using saved account credentials from the viewer's credential store; passing raw password/mfa_token over MCP is disabled unless AURORA_MCP_ALLOW_CREDENTIALS=1.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "username": { "type": "string", "description": "Optional account name (e.g. 'First Last' or 'first.last'). If omitted, uses active saved account." },
-                    "password": { "type": "string", "description": "Optional account password. If omitted, uses remembered credentials from the credential store." },
+                    "password": { "type": "string", "description": "Optional account password (disabled unless AURORA_MCP_ALLOW_CREDENTIALS=1). Omit to use stored credentials." },
                     "location": { "type": "string", "description": "Optional start location: 'home', 'last', or region name." },
-                    "mfa_token": { "type": "string", "description": "Optional 6-digit multi-factor authentication code from authenticator app if MFA is required." }
+                    "mfa_token": { "type": "string", "description": "Optional 6-digit MFA code (disabled unless AURORA_MCP_ALLOW_CREDENTIALS=1)." },
+                    "lease_id": { "type": "string", "description": "Active control lease ID from control_acquire" }
                 }
             }),
             in_compact_profile: true,
         },
         ToolDefinition {
             name: "viewer_shutdown".into(),
-            description: "Gracefully shut down and exit the viewer process. Flushes settings, inventories, layout caches, disconnects cleanly from the simulator, and signals the watchdog for a clean exit without triggering crash reports.".into(),
+            description: "Gracefully shut down and exit the viewer process (requires an active control lease). Flushes settings, inventories, layout caches, disconnects cleanly from the simulator, and signals the watchdog for a clean exit without triggering crash reports.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "lease_id": { "type": "string", "description": "Optional active lease ID" }
+                    "lease_id": { "type": "string", "description": "Active control lease ID from control_acquire" }
                 }
             }),
             in_compact_profile: true,
@@ -4058,7 +4059,7 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "name": { "type": "string", "description": "New parcel name" },
                     "description": { "type": "string", "description": "New parcel description" },
-                    "flags": { "type": "integer", "description": "Raw parcel flag bitmask" }
+                    "flags": { "type": "integer", "description": "Raw parcel flag bitmask (call parcel_info first to inspect current 'flags' and 'flag_names'; e.g. 1=allow_fly, 2=allow_other_scripts, 16=allow_terraform, 64=create_objects, 536870912=allow_voice_chat)" }
                 }
             }),
             in_compact_profile: false,
@@ -4092,13 +4093,14 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "economy_pay_avatar".into(),
-            description: "Transfer Linden Dollars (L$) from the agent's account balance directly to another resident with an optional transaction message.".into(),
+            description: "Transfer Linden Dollars (L$) from the agent's account balance directly to another resident with an optional transaction message. Capped by AURORA_MCP_MAX_PAY_LINDENS (default L$100/tx) and AURORA_MCP_SESSION_PAY_LIMIT (default L$500/session).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "target_uuid": { "type": "string", "description": "Target resident avatar UUID" },
-                    "amount": { "type": "integer", "description": "Amount in Linden Dollars (L$) to transfer (must be > 0)" },
-                    "message": { "type": "string", "description": "Optional payment note or message" }
+                    "amount": { "type": "integer", "description": "Amount in Linden Dollars (L$) to transfer (must be > 0 and within MCP spend caps)" },
+                    "message": { "type": "string", "description": "Optional payment note or message" },
+                    "lease_id": { "type": "string", "description": "Active control lease ID from control_acquire" }
                 },
                 "required": ["target_uuid", "amount"]
             }),
@@ -4106,13 +4108,14 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "economy_pay_object".into(),
-            description: "Pay Linden Dollars (L$) to an in-world object (such as a tip jar, vendor, or event terminal).".into(),
+            description: "Pay Linden Dollars (L$) to an in-world object (such as a tip jar, vendor, or event terminal). Capped by AURORA_MCP_MAX_PAY_LINDENS (default L$100/tx) and AURORA_MCP_SESSION_PAY_LIMIT (default L$500/session).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "target_local_id": { "type": "integer", "description": "Local ID of target object in simulator" },
-                    "amount": { "type": "integer", "description": "Amount in Linden Dollars (L$) to pay (must be > 0)" },
-                    "description": { "type": "string", "description": "Optional description for payment receipt" }
+                    "amount": { "type": "integer", "description": "Amount in Linden Dollars (L$) to pay (must be > 0 and within MCP spend caps)" },
+                    "description": { "type": "string", "description": "Optional description for payment receipt" },
+                    "lease_id": { "type": "string", "description": "Active control lease ID from control_acquire" }
                 },
                 "required": ["target_local_id", "amount"]
             }),

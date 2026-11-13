@@ -27,6 +27,20 @@ pub const LINKSETDATA_MULTIDELETE: i32 = 4;
 pub const LINKSETDATA_NOTFOUND: i32 = 5;
 pub const LINKSETDATA_NOUPDATE: i32 = 6;
 
+/// Human-readable LSL constant name for a `LINKSETDATA_*` status code.
+pub fn lsd_status_name(code: i32) -> &'static str {
+    match code {
+        LINKSETDATA_OK => "LINKSETDATA_OK",
+        LINKSETDATA_EMEMORY => "LINKSETDATA_EMEMORY",
+        LINKSETDATA_ENOKEY => "LINKSETDATA_ENOKEY",
+        LINKSETDATA_EPROTECTED => "LINKSETDATA_EPROTECTED",
+        LINKSETDATA_MULTIDELETE => "LINKSETDATA_MULTIDELETE",
+        LINKSETDATA_NOTFOUND => "LINKSETDATA_NOTFOUND",
+        LINKSETDATA_NOUPDATE => "LINKSETDATA_NOUPDATE",
+        _ => "unknown",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LsdEntry {
     pub value: String,

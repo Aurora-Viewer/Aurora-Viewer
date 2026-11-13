@@ -65,7 +65,7 @@ pub async fn handle_jsonrpc_message(router: &McpRouter, msg: Value) -> Option<Va
                     "name": "aurora-mcp",
                     "version": env!("CARGO_PKG_VERSION")
                 },
-                "instructions": "Control Aurora Viewer through its native Rust runtime MCP bridge. Start with connection_status and control_acquire (or viewer_control_acquire). Release your lease when finished so temporary camera and setting overrides roll back cleanly."
+                "instructions": "Control Aurora Viewer through its native Rust runtime MCP bridge. Start with connection_status and control_acquire (or viewer_control_acquire), then pass the returned lease_id to all mutating tools (including viewer_login, viewer_shutdown, prim_*, economy_*, and nav_*). Release your lease with control_release when finished so temporary camera and setting overrides roll back cleanly."
             }))
         }
         "ping" => Ok(json!({})),
