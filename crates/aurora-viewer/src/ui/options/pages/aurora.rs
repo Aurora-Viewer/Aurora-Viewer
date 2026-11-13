@@ -6,7 +6,7 @@
 
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
-use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::lookat::{Aim, Style};
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
@@ -53,6 +53,11 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_outfit_gallery = !aurora;
     s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
+    s.destinations_style = if aurora {
+        DestinationsStyle::Aurora
+    } else {
+        DestinationsStyle::Legacy
+    };
     s.classic_pay_window = !aurora;
     s.legacy_money_tracker = !aurora;
     s.classic_controls = !aurora;
@@ -68,7 +73,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
 /// green, turquoise, indigo, violet and rose, taken from the palette.
-fn aurora_color(p: &Palette, t: f32) -> Color32 {
+pub(crate) fn aurora_color(p: &Palette, t: f32) -> Color32 {
     let stops = [p.success, p.teal, p.indigo_light, p.violet_light, p.rose];
     let x = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
     let i = (x.floor() as usize).min(stops.len() - 2);
@@ -98,6 +103,36 @@ fn aurora_strip(p: &Palette, r: Rect) -> Shape {
     Shape::mesh(m)
 }
 
+/// `text` in the aurora gradient, one letter after the other: the mark of
+/// what is Aurora's own (this page's entry, the Aurora Weather titles).
+pub(crate) fn aurora_text(p: &Palette, text: &str, font: FontId) -> egui::text::LayoutJob {
+    let count = text.chars().count().max(2) as f32 - 1.0;
+    let mut job = egui::text::LayoutJob::default();
+    for (i, ch) in text.chars().enumerate() {
+        let color = aurora_color(p, i as f32 / count);
+        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+    }
+    job
+}
+
+/// `text` with only the word "Aurora" in the aurora gradient, the rest in
+/// `ink`: an Aurora feature's title outside Preferences (Aurora Weather),
+/// whatever the word order of the language.
+pub(crate) fn aurora_word(p: &Palette, text: &str, font: FontId, ink: Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut rest = text;
+    while let Some(at) = rest.find("Aurora") {
+        job.append(&rest[..at], 0.0, egui::TextFormat::simple(font.clone(), ink));
+        for (i, ch) in "Aurora".chars().enumerate() {
+            let color = aurora_color(p, i as f32 / 5.0);
+            job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+        }
+        rest = &rest[at + "Aurora".len()..];
+    }
+    job.append(rest, 0.0, egui::TextFormat::simple(font, ink));
+    job
+}
+
 /// The entry of the page in the sidebar: the neighbours' entry, with the
 /// aurora gradient in its edge mark and its name.
 pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, selected: bool) -> egui::Response {
@@ -125,13 +160,7 @@ pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, select
     }
     // the name in the gradient, one letter after the other
     let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
-    let count = label.chars().count().max(2) as f32 - 1.0;
-    let mut job = egui::text::LayoutJob::default();
-    for (i, ch) in label.chars().enumerate() {
-        let color = aurora_color(p, i as f32 / count);
-        job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
-    }
-    let galley = ui.painter().layout_job(job);
+    let galley = ui.painter().layout_job(aurora_text(p, label, font));
     ui.painter()
         .galley(rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0), galley, p.ink);
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
@@ -190,6 +219,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-places-aurora"),
                 tr!("ui-options-aurora-places-classic"),
                 &field!(classic_places),
+            );
+            cx.wide().choice(
+                tr!("ui-options-aurora-destinations"),
+                tr!("ui-options-aurora-destinations-help"),
+                &field!(destinations_style),
+                &[
+                    (DestinationsStyle::Aurora, tr!("ui-options-aurora-destinations-aurora"), true),
+                    (DestinationsStyle::Legacy, tr!("ui-options-aurora-destinations-classic"), false),
+                ],
             );
             look(
                 cx,
@@ -524,6 +562,7 @@ mod tests {
         assert!(s.classic_outfit_gallery, "the Legacy Viewer's small outfit tiles");
         assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
+        assert_eq!(s.destinations_style, DestinationsStyle::Legacy, "the guide's web page");
         assert!(s.classic_pay_window);
         assert!(s.legacy_money_tracker, "the Legacy Viewer's Time / Name / Amount list");
         assert!(s.classic_controls, "the Legacy Viewer's two control windows");
@@ -561,6 +600,12 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert_eq!(s.destinations_style, DestinationsStyle::Aurora);
+        assert_eq!(
+            fresh.destinations_style,
+            DestinationsStyle::Aurora,
+            "Aurora's Destinations is the default"
+        );
         assert!(
             !s.classic_outfit_gallery && !fresh.classic_outfit_gallery,
             "the showcase is the default"

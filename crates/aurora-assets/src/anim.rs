@@ -477,29 +477,42 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, Layout), AssetError> {
 /// there (LLKeyframeMotion::deserialize), so a loop-out past the duration,
 /// or a loop-in past it, makes a "loop" play once (#2869). Returns the
 /// elapsed time after which that happens, or `None` for a real loop.
+///
+/// The Legacy Viewer only sees the looped time of its frames, so the loop
+/// ends when a frame falls in the part of the loop that lies past the
+/// duration. A part of a frame or more is met on the first pass; one of
+/// rounding width is practically never met and the animation loops for
+/// good, as walks and runs saved with a loop-out a hair past their duration
+/// do (#3311). `LOOP_END_TOLERANCE` separates the two, whatever our frame
+/// rate.
 fn legacy_loop_end(duration: f32, loop_in: f32, loop_out: f32) -> Option<f32> {
     if duration <= 0.0 {
         return None;
     }
-    if loop_out > duration {
-        // before loop_out the looped time is the elapsed time itself
-        return Some(duration);
-    }
     if loop_out >= loop_in {
-        // wraps inside [loop_in, loop_out) or holds loop_out: never past
-        return None;
+        // looped time in [0, loop_out], the elapsed time itself on the
+        // first pass: past the duration over (duration, loop_out]
+        return (loop_out - duration > LOOP_END_TOLERANCE).then_some(duration);
     }
     // loop_in > loop_out: fmod by a negative span, looped time in
     // [loop_in, 2 loop_in - loop_out)
     let past = duration - loop_in;
     if past < 0.0 {
-        Some(loop_out.max(0.0))
-    } else if past < loop_in - loop_out {
+        // every looped frame is past the duration
+        Some(loop_out.clamp(0.0, duration))
+    } else if (loop_in - loop_out) - past > LOOP_END_TOLERANCE {
         Some((loop_out + past).max(0.0))
     } else {
         None
     }
 }
+
+/// Widest part of a loop past the duration that still loops, in seconds
+/// (`legacy_loop_end`). Exporter rounding stays under it: half a millisecond
+/// for times written to three decimals, far less for float rounding. The
+/// nearest authored case, a loop point one key frame late, is 8 ms at
+/// 120 frames per second.
+const LOOP_END_TOLERANCE: f32 = 0.001;
 
 impl Animation {
     /// Local animation time for an animation started `elapsed` seconds ago.
@@ -965,6 +978,33 @@ mod tests {
         let a = parse_animation(&data).expect("loop past its duration");
         assert!(a.looping);
         assert_eq!((a.loop_out, a.ends_after), (a.duration, Some(a.duration)));
+    }
+
+    /// A walk or a run saved with its loop-out a hair past its duration
+    /// loops for good: the Legacy Viewer would need a frame inside that
+    /// hair to end it (#3311).
+    #[test]
+    fn a_loop_out_a_hair_past_the_duration_still_loops() {
+        // one float step, then a time an exporter rounded to three decimals
+        for (duration, loop_out) in [(3.75f32, 3.75f32.next_up()), (3.7333, 3.734), (1.56, 1.5605)] {
+            assert_eq!(legacy_loop_end(duration, 0.0, loop_out), None, "{duration}: loop-out {loop_out}");
+            assert_eq!(legacy_loop_end(duration, 0.5, loop_out), None, "{duration}: loop-out {loop_out}");
+        }
+        // a few milliseconds are met within a few passes: plays once
+        assert_eq!(legacy_loop_end(3.75, 0.0, 3.752), Some(3.75));
+        assert_eq!(legacy_loop_end(3.75, 0.0, 3.75 + 1.0 / 120.0), Some(3.75));
+        // reversed points: the same hair past the duration at the far end
+        assert_eq!(legacy_loop_end(4.1667, 2.0835, 0.0), None);
+        assert_eq!(legacy_loop_end(4.1667, 2.09, 0.0), Some(4.1667 - 2.09));
+        // a loop-in past the duration ends on the first wrap, however close
+        assert_eq!(legacy_loop_end(1.0, 1.0f32.next_up(), 0.5), Some(0.5));
+        // the parsed animation wraps at its duration and never ends itself
+        let mut data = build();
+        data[17..21].copy_from_slice(&2.0f32.next_up().to_le_bytes());
+        let a = parse_animation(&data).expect("loop-out a float step past the duration");
+        assert!(a.looping);
+        assert_eq!((a.loop_out, a.ends_after), (a.duration, None));
+        assert!((a.local_time(5.0) - 1.0).abs() < 1e-9);
     }
 
     #[test]

@@ -231,6 +231,17 @@ pub enum WorldMapStyle {
     Legacy,
 }
 
+/// The Destinations window: Aurora's own list of the guide's places
+/// (`ui/destinations/aurora.rs`, the default), or the guide's web page as
+/// the Legacy Viewer shows it (Preferences › Aurora). A grid whose guide is
+/// a web page only shows that page in both.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DestinationsStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// The photo mode: Aurora's viewfinder (the world full screen under a
 /// camera's overlay, `ui::viewfinder`), Aurora's panel anchored on the
 /// right, or the Legacy Viewer's floater (floater_snapshot.xml: a floating
@@ -504,6 +515,10 @@ pub struct Settings {
     pub crosshair: crate::ui::crosshair::Settings,
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
+    pub gamepad: crate::joystick::Settings,
+    /// Pre-split profile awaiting device classification after an upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
@@ -601,6 +616,8 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// The weather of this viewer (the Environment window's "Weather").
+    pub weather: crate::weather::WeatherSettings,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -907,6 +924,33 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// Opacity of the background of the window with the focus
+    /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
+    pub window_opacity_active: f32,
+    /// Opacity of the background of the other windows
+    /// (InactiveFloaterTransparency; 1 here where the Legacy Viewer has 0.95:
+    /// Aurora's windows are glass already).
+    pub window_opacity_inactive: f32,
+    /// Opacity of the Conversations window and the detached conversations
+    /// while not focused (FSIMOpacity, 1; there the lower of it and the
+    /// inactive windows').
+    pub conversations_opacity: f32,
+    /// Conversations takes the active window's opacity while it has the
+    /// focus (FSImActiveOpacityOverride, off).
+    pub conversations_active_opacity_override: bool,
+    /// Opacity of the background of the bars (Aurora's own, 1).
+    pub bar_opacity: f32,
+    /// Opacity of the menus' background (FSMenuBackgroundAlpha, 1).
+    pub menu_opacity: f32,
+    /// Opacity of the chat cards over the world (ConsoleBackgroundOpacity;
+    /// 0.75 here where the Legacy Viewer has 0.5: Aurora's cards always had it).
+    pub console_opacity: f32,
+    /// Opacity of the mini-map's background (FSMiniMapOpacity, 0.66).
+    pub minimap_opacity: f32,
+    /// The pie menu takes `pie_opacity` (OverridePieColors, off).
+    pub pie_opacity_override: bool,
+    /// Opacity of the pie menu when overridden (PieMenuOpacity, 0.85).
+    pub pie_opacity: f32,
     /// The entry of a conversation that receives a message while another
     /// is shown flashes in violet, then stays tinted until read
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
@@ -942,6 +986,9 @@ pub struct Settings {
     pub flash_on_object_im: bool,
     /// Flash for a script dialog (FSFlashOnScriptDialog, off).
     pub flash_on_script_dialog: bool,
+    /// How many script dialogs an object keeps open (ScriptDialogLimitations,
+    /// one per channel; `world/script_dialog_limit.rs`).
+    pub script_dialog_limit: crate::world::script_dialog_limit::Limit,
     /// Windows notifications for messages, mentions, offers and alerts
     /// while the window is not in front (FSEnableGrowl, off).
     pub system_notifications: bool,
@@ -1004,6 +1051,12 @@ pub struct Settings {
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
     /// notices are turned off.
     pub mute_groups_without_notices: bool,
+    /// FSGroupNoticesToIMLog: a group notice also writes a line in its
+    /// group's chat, or only its transcript when no chat is open (on).
+    pub group_notices_in_chat: bool,
+    /// FSBetterGroupNoticesToIMLog: that line starts with "Group Notice Sent
+    /// by" and the subject, else it is only the notice's text (on).
+    pub group_notice_subjects_in_chat: bool,
     /// GroupSnoozeTime: how long the snooze of a group chat lasts, in
     /// minutes (15; 0 only closes it until its next message). The Legacy
     /// Viewer counts seconds: a snooze is minutes to hours long (#945).
@@ -1277,6 +1330,11 @@ pub struct Settings {
     pub classic_places: bool,
     /// The order of Aurora's "Places" lists.
     pub places_sort: PlacesSort,
+    /// The Destinations window's look.
+    pub destinations_style: DestinationsStyle,
+    /// Aurora's Destinations window in its wide view (rail, cards and
+    /// preview): the first time, then the last view chosen.
+    pub destinations_wide: bool,
     pub invert_mouse: bool,
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
@@ -1297,6 +1355,10 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Selecting an object, or right-clicking it, while the camera is off the
+    /// avatar turns the avatar to face it (the Legacy Viewer's
+    /// FSTurnAvatarToSelectedObject, on; app/selection_turn.rs).
+    pub turn_to_selected: bool,
     /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
     /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
     /// only).
@@ -1316,6 +1378,9 @@ pub struct Settings {
     /// off). RLVa can still take it away; the simulator ignores the cancel of
     /// a teleport it will not cancel.
     pub always_show_tp_cancel: bool,
+    /// After a teleport to another region, "Teleport completed from <SLURL>"
+    /// in nearby chat (the Legacy Viewer's FSShowBackSLURL, on).
+    pub show_back_slurl: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
     /// Quickjump: jump and land without waiting for the pre-jump and landing
@@ -1492,6 +1557,13 @@ pub struct Settings {
     /// which an avatar also shows as a silhouette (0 = no limit; ignored
     /// without a complexity limit, as in LL).
     pub max_attachment_area: f32,
+    /// ShowMyComplexityChanges: seconds the notices about our avatar
+    /// complexity, and about the people around who may not see us fully,
+    /// stay (0 = no notices). Off by default (the Legacy Viewer's
+    /// settings.xml says 10): our complexity moving with the texture memory
+    /// made them a notice every few seconds in 0.9.7 (#3381), and most
+    /// people never asked for them.
+    pub complexity_notice_seconds: u32,
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
@@ -1653,7 +1725,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 36;
+const SETTINGS_VERSION: u32 = 37;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -1841,6 +1913,12 @@ pub struct AudioSettings {
     /// Play the parcel music automatically when entering a parcel
     /// (FSParcelMusicAutoPlay, off by default: the radio toggle starts it).
     pub music_autoplay: bool,
+    /// Fade the parcel music when its station changes (the Legacy Viewer's
+    /// FSFadeAudioStream, on), over these seconds in and out
+    /// (FSAudioMusicFadeIn 3, FSAudioMusicFadeOut 2; 0 to 10).
+    pub music_fade: bool,
+    pub music_fade_in: f32,
+    pub music_fade_out: f32,
     /// Play parcel media automatically.
     pub media_autoplay: bool,
     /// Where the parcel music's title is told when it changes (the Legacy
@@ -1919,6 +1997,9 @@ impl Default for AudioSettings {
             muted: [false; 7],
             enabled: [true; 7],
             music_autoplay: false,
+            music_fade: true,
+            music_fade_in: 3.0,
+            music_fade_out: 2.0,
             media_autoplay: false,
             stream_title: StreamTitleShow::Chat,
             stream_title_announce: false,
@@ -1994,6 +2075,8 @@ impl Default for Settings {
             camera: Default::default(),
             crosshair: Default::default(),
             joystick: Default::default(),
+            gamepad: crate::joystick::Settings::gamepad_defaults(),
+            pending_legacy_gamepad: None,
             auto_hover_height: false,
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
@@ -2034,6 +2117,7 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            weather: Default::default(),
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -2160,6 +2244,16 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            window_opacity_active: 1.0,
+            window_opacity_inactive: 1.0,
+            conversations_opacity: 1.0,
+            conversations_active_opacity_override: false,
+            bar_opacity: 1.0,
+            menu_opacity: 1.0,
+            console_opacity: crate::ui::surface_opacity::CONSOLE,
+            minimap_opacity: crate::ui::surface_opacity::MINIMAP,
+            pie_opacity_override: false,
+            pie_opacity: crate::ui::surface_opacity::PIE,
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
@@ -2170,6 +2264,7 @@ impl Default for Settings {
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,
+            script_dialog_limit: crate::world::script_dialog_limit::Limit::PerChannel,
             system_notifications: false,
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
@@ -2193,6 +2288,8 @@ impl Default for Settings {
             trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
+            group_notices_in_chat: true,
+            group_notice_subjects_in_chat: true,
             group_snooze_minutes: 15,
             former_group_snooze_seconds: None,
             group_snooze_ask: false,
@@ -2292,17 +2389,21 @@ impl Default for Settings {
             outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
+            destinations_style: DestinationsStyle::Aurora,
+            destinations_wide: true,
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            turn_to_selected: true,
             avatar_turn_speed: 0.0,
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
             always_show_tp_cancel: false,
+            show_back_slurl: true,
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
@@ -2360,6 +2461,7 @@ impl Default for Settings {
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
+            complexity_notice_seconds: 0,
             loading_avatars: 0,
             complexity_mode: 0,
             avatar_physics: true,
@@ -2436,6 +2538,13 @@ fn allow_overlays_in(file: Option<&[u8]>) -> bool {
     file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
         .and_then(|value| value.get("allow_overlays").and_then(serde_json::Value::as_bool))
         .unwrap_or(false)
+}
+
+/// `language` of a settings file's bytes; "default" for anything else.
+fn language_in(file: Option<&[u8]>) -> String {
+    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .and_then(|value| value.get("language").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| "default".into())
 }
 
 fn for_mode(dir: PathBuf) -> PathBuf {
@@ -2608,6 +2717,13 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// The saved language, read the same way for the startup splash
+    /// (`splash/`), which loads nothing else; "default" (the system's) when
+    /// the file or the field is missing.
+    pub fn language_at_start() -> String {
+        language_in(std::fs::read(Self::path()).ok().as_deref())
+    }
+
     fn load_from(path: &Path) -> Settings {
         // what the file says of the window: nothing on a first launch
         let mut saved_window = (None, false);
@@ -2644,10 +2760,18 @@ impl Settings {
     /// understand; for a newer build's file, also what to keep of it on save.
     fn read_document(value: serde_json::Value, path: &Path) -> Option<(Settings, Option<(serde_json::Value, Vec<String>)>)> {
         let version = value["settings_version"].as_u64().unwrap_or(0);
-        let Some(read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
+        let Some(mut read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
             crate::tolerant::backup(path);
             return None;
         };
+        if version <= SETTINGS_VERSION as u64 && value.get("gamepad").is_none() && read.value.joystick.enabled {
+            read.value.pending_legacy_gamepad = Some(read.value.joystick.clone());
+            let mut preset = crate::joystick::Settings::default();
+            preset.raw_gamepad_preset();
+            if read.value.joystick.mapping == preset.mapping {
+                read.value.finish_legacy_gamepad_migration(None);
+            }
+        }
         let mut newer = None;
         if version > SETTINGS_VERSION as u64 {
             // No migration runs backwards: `sanitized` only migrates older
@@ -2698,7 +2822,53 @@ impl Settings {
         self.night_sky_milky_way = within(self.night_sky_milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY);
     }
 
+    /// Complete only after the old selector identifies a real device. Persist
+    /// the source while disconnected so saving defaults cannot lose the upgrade.
+    pub(crate) fn migrate_legacy_gamepad(&mut self, snapshot: &crate::joystick::Snapshot) -> bool {
+        let Some(source) = &self.pending_legacy_gamepad else { return false };
+        if self.gamepad != crate::joystick::Settings::gamepad_defaults() || self.joystick != *source {
+            self.pending_legacy_gamepad = None;
+            return true;
+        }
+        let Some(device) = snapshot.devices.iter().find(|d| source.device.is_empty() || d.id == source.device) else {
+            return false;
+        };
+        if device.is_gamepad {
+            let id = device.id.clone();
+            self.finish_legacy_gamepad_migration(Some(id));
+        } else {
+            self.pending_legacy_gamepad = None;
+        }
+        true
+    }
+
+    fn finish_legacy_gamepad_migration(&mut self, device: Option<String>) {
+        let Some(mut profile) = self.pending_legacy_gamepad.take() else {
+            return;
+        };
+        if let Some(device) = device {
+            profile.device = device;
+        }
+        // Preserve native axes, gains and button indices. New actions start
+        // unbound so they cannot shadow a button assigned by the old profile.
+        profile.gamepad_layout_version = 1;
+        profile.crouch_button = -1;
+        profile.reset_view_button = -1;
+        profile.first_person.tuning = profile.avatar.clone();
+        profile.first_person.jump_button = profile.jump_button;
+        profile.first_person.rise_button = profile.rise_button;
+        profile.first_person.fall_button = profile.fall_button;
+        profile.first_person.crouch_button = -1;
+        profile.first_person.zoom_in_button = -1;
+        profile.first_person.zoom_out_button = -1;
+        self.gamepad = profile;
+        self.joystick.enabled = false;
+    }
+
     pub(crate) fn sanitized(mut self) -> Settings {
+        if self.settings_version <= SETTINGS_VERSION {
+            self.gamepad.migrate_gamepad_layout();
+        }
         if self
             .graphics_saved_active
             .as_ref()
@@ -2793,6 +2963,10 @@ impl Settings {
         }
         self.fps_limit = self.fps_limit.clamp(10, 500);
         self.background_fps_limit = self.background_fps_limit.clamp(1, 120);
+        // the Legacy Viewer's sliders: 0 to 10 s
+        for (secs, default) in [(&mut self.audio.music_fade_in, 3.0), (&mut self.audio.music_fade_out, 2.0)] {
+            *secs = if secs.is_finite() { secs.clamp(0.0, 10.0) } else { default };
+        }
         if self.settings_version < 6 {
             // new defaults: texture memory from the detected VRAM, 20 GB disk cache
             self.texture_budget_auto = true;
@@ -2970,6 +3144,11 @@ impl Settings {
         if self.settings_version < 36 {
             self.upgrade_display_scale(cfg!(target_os = "macos"));
         }
+        if self.settings_version < 37 && self.complexity_notice_seconds == 10 {
+            // new default: no complexity notices (#3381). A file still on
+            // the former default, 10 s, takes it; another length was chosen
+            self.complexity_notice_seconds = 0;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2990,6 +3169,7 @@ impl Settings {
             1.0
         };
         self.loading_avatars = self.loading_avatars.min(2);
+        self.complexity_notice_seconds = self.complexity_notice_seconds.min(60);
         self.max_attachment_area = if self.max_attachment_area.is_finite() {
             self.max_attachment_area.clamp(0.0, 100_000.0)
         } else {
@@ -3127,6 +3307,22 @@ impl Settings {
         } else {
             0.5
         };
+        for opacity in [
+            &mut self.window_opacity_active,
+            &mut self.window_opacity_inactive,
+            &mut self.conversations_opacity,
+            &mut self.bar_opacity,
+            &mut self.menu_opacity,
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        for (opacity, default) in [
+            (&mut self.console_opacity, crate::ui::surface_opacity::CONSOLE),
+            (&mut self.minimap_opacity, crate::ui::surface_opacity::MINIMAP),
+            (&mut self.pie_opacity, crate::ui::surface_opacity::PIE),
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
+        }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
@@ -3329,6 +3525,9 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            vr_gamma: self.camera.vr.gamma,
+            vr_vibrancy: self.camera.vr.vibrancy,
+            vr_resolution: self.camera.vr.resolution,
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {
@@ -3373,6 +3572,8 @@ impl Settings {
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            // set each frame by the app while it rains
+            rain_surfaces: false,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
         }
@@ -3612,6 +3813,28 @@ mod tests {
     }
 
     #[test]
+    fn saved_gamepad_defaults_upgrade_to_pan_shoulders_and_face_button_height() {
+        use crate::joystick::{AUTO_DPAD_DOWN, AUTO_DPAD_LEFT, AUTO_DPAD_RIGHT, AUTO_DPAD_UP, AUTO_LEFT_BUMPER, AUTO_RIGHT_BUMPER};
+        let mut document = serde_json::to_value(Settings::default()).expect("settings");
+        let pad = document["gamepad"].as_object_mut().unwrap();
+        pad.remove("gamepad_layout_version");
+        pad.remove("gamepad_avatar_pan_left_button");
+        pad.remove("gamepad_avatar_pan_right_button");
+        for (name, binding) in [
+            ("gamepad_avatar_next_button", AUTO_DPAD_RIGHT),
+            ("gamepad_avatar_previous_button", AUTO_DPAD_LEFT),
+            ("rise_button", AUTO_RIGHT_BUMPER),
+            ("fall_button", AUTO_LEFT_BUMPER),
+            ("flycam_rise_button", AUTO_DPAD_UP),
+            ("flycam_fall_button", AUTO_DPAD_DOWN),
+        ] {
+            pad.insert(name.into(), serde_json::json!(binding));
+        }
+        let loaded = serde_json::from_value::<Settings>(document).expect("old settings").sanitized();
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
+    }
+
+    #[test]
     fn projector_shadow_budget_survives_restart_and_clamps_untrusted_values() {
         use super::Settings;
         let old: Settings = serde_json::from_str("{}").expect("old preferences");
@@ -3644,6 +3867,97 @@ mod tests {
         assert!(old.log_import_at_login);
         let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
         assert!(!off.log_import_at_login);
+    }
+
+    #[test]
+    fn legacy_gamepad_preset_migrates_without_hardware_and_respects_existing_profile() {
+        let path = scratch_settings_file();
+        let mut old = crate::joystick::Settings {
+            enabled: true,
+            ..Default::default()
+        };
+        old.raw_gamepad_preset();
+        let document = serde_json::json!({"settings_version":30,"joystick":old});
+        let (loaded, newer) = super::Settings::read_document(document.clone(), &path).expect("legacy preset");
+        let loaded = loaded.finished(newer);
+        assert!(loaded.gamepad.enabled);
+        assert!(!loaded.joystick.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+        assert_eq!(loaded.gamepad.mapping, old.mapping);
+        assert_eq!(loaded.gamepad.flycam, old.flycam);
+        let mut explicit = document;
+        explicit["gamepad"] = serde_json::to_value(crate::joystick::Settings::gamepad_defaults()).unwrap();
+        let (loaded, _) = super::Settings::read_document(explicit, &path).expect("existing profile");
+        assert!(!loaded.gamepad.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+    }
+
+    #[test]
+    fn legacy_raw_joystick_classification_preserves_the_original_input() {
+        let path = scratch_settings_file();
+        let document = serde_json::json!({"settings_version":30,"joystick":{"enabled":true,"device":"flight"}});
+        let (loaded, newer) = super::Settings::read_document(document, &path).expect("legacy flight stick");
+        let mut loaded = loaded.finished(newer);
+        let snapshot = crate::joystick::Snapshot {
+            devices: vec![crate::joystick::Device::new("flight".into(), "Flight stick".into(), 6)],
+            ..Default::default()
+        };
+        assert!(loaded.migrate_legacy_gamepad(&snapshot));
+        assert!(loaded.joystick.enabled);
+        assert!(!loaded.gamepad.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+    }
+
+    #[test]
+    fn joystick_legacy_file_preserves_custom_axes_and_buttons() {
+        let path = scratch_settings_file();
+        std::fs::write(
+            &path,
+            r#"{"settings_version":30,"joystick":{"enabled":true,"mapping":[2,1,0,3,5,4,6],"jump_button":1,"flycam_button":0}}"#,
+        )
+        .expect("write legacy settings");
+        let (loaded, newer) = super::Settings::read_document(read_back(&path), &path).expect("read legacy settings");
+        let mut loaded = loaded.finished(newer);
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
+        assert!(loaded.pending_legacy_gamepad.is_some(), "classification waits for the saved device");
+        loaded.save_to(&path);
+        let s = loaded.joystick.clone();
+        let saved = read_back(&path);
+        assert_eq!(saved["joystick"]["mapping"], serde_json::json!([2, 1, 0, 3, 5, 4, 6]));
+        let device = crate::joystick::Device::gamepad(
+            "pad".into(),
+            "Pad".into(),
+            8,
+            [[Some(0), Some(1)], [Some(3), Some(4)]],
+            [Some(6), Some(7)],
+            crate::joystick::GamepadStyle::Generic,
+            vec![],
+        );
+        let source = saved["pending_legacy_gamepad"].clone();
+        assert!(source.is_object(), "saving while disconnected keeps the migration");
+        let snapshot = crate::joystick::Snapshot {
+            devices: vec![device.clone()],
+            ..Default::default()
+        };
+        assert!(loaded.migrate_legacy_gamepad(&snapshot));
+        assert!(loaded.gamepad.enabled);
+        assert!(!loaded.joystick.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+        assert_eq!(loaded.gamepad.mapping, s.mapping);
+        assert_eq!(loaded.gamepad.avatar, s.avatar);
+        assert_eq!(loaded.gamepad.flycam, s.flycam);
+        assert_eq!(loaded.gamepad.first_person.tuning, s.avatar);
+        assert!(!loaded.migrate_legacy_gamepad(&snapshot), "conversion happens only once");
+        assert!(s.enabled);
+        assert_eq!((s.jump_button, s.flycam_button), (1, 0));
+        assert_eq!(s.avatar.gain, [1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.0]);
+        assert_eq!(s.flycam.gain, [2.1, 2.0, 2.0, 0.0, 0.1, 0.15, 0.0]);
+        assert_eq!(s.first_person.move_stick, crate::joystick::GamepadStick::Custom);
+        assert_eq!(s.first_person.camera_stick, crate::joystick::GamepadStick::Custom);
+        for (channel, axis) in [2, 1, 0, 3, 5, 4, 6].into_iter().enumerate() {
+            assert_eq!(s.resolved_axis(&device, false, channel), Some(axis));
+            assert_eq!(s.resolved_axis(&device, true, channel), Some(axis));
+        }
     }
 
     #[test]
@@ -3731,6 +4045,21 @@ mod tests {
         })
         .expect("settings json");
         assert!(super::allow_overlays_in(Some(&saved)));
+    }
+
+    /// The splash's early read of the language agrees with the settings.
+    #[test]
+    fn the_splash_reads_the_saved_language() {
+        assert_eq!(super::language_in(Some(br#"{"draw_distance":96,"language":"fr"}"#)), "fr");
+        for file in [Some(&br#"{"language":7}"#[..]), Some(b"not json"), None] {
+            assert_eq!(super::language_in(file), "default", "{file:?}");
+        }
+        let saved = serde_json::to_vec(&super::Settings {
+            language: "ja".into(),
+            ..Default::default()
+        })
+        .expect("settings json");
+        assert_eq!(super::language_in(Some(&saved)), "ja");
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name
@@ -4865,6 +5194,31 @@ mod tests {
             ..Settings::default()
         };
         assert!(on.sanitized().sim_version_alert);
+    }
+
+    #[test]
+    fn the_complexity_notices_are_off_by_default_and_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().complexity_notice_seconds, 0);
+        // a 0.9.7 file on the former default, 10 s
+        let old = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(old.sanitized().complexity_notice_seconds, 0);
+        // another length chosen: kept
+        let chosen = Settings {
+            settings_version: 36,
+            complexity_notice_seconds: 20,
+            ..Settings::default()
+        };
+        assert_eq!(chosen.sanitized().complexity_notice_seconds, 20);
+        // 10 s chosen after the migration: kept
+        let on = Settings {
+            complexity_notice_seconds: 10,
+            ..Settings::default()
+        };
+        assert_eq!(on.sanitized().complexity_notice_seconds, 10);
     }
 
     #[test]

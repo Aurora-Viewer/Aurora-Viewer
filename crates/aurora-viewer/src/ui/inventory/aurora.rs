@@ -18,6 +18,7 @@ mod sidebar;
 mod smart_bar;
 mod toolbar;
 
+pub(super) use rights::button as rights_button;
 pub(super) use sidebar::Sidebar;
 
 use super::permissions::Rights;
