@@ -161,19 +161,28 @@ pub(super) fn cards(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
+    let mut shift = egui::Vec2::ZERO;
+    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(
-            egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
-        )
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
+            // a card that leaves or arrives moves the others in this frame
+            // only (#2544)
+            let held = super::Held::new(ui, lift);
             ui.set_max_width(WIDTH);
             ui.spacing_mut().item_spacing.y = 0.0;
             for group in groups(&recent) {
                 let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
-                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * card_alpha) as u8);
+                let (console_tint, console_blur) =
+                    crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
+                let tint = Color32::from_rgba_unmultiplied(
+                    p.bar.r(),
+                    p.bar.g(),
+                    p.bar.b(),
+                    (190.0 * console_tint * card_alpha).min(255.0) as u8,
+                );
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
@@ -214,17 +223,19 @@ pub(super) fn cards(
                 if glass && let Some(slot) = slot {
                     ui.painter().set(
                         slot,
-                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha),
+                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha * console_blur),
                     );
                 }
                 ui.add_space(4.0);
             }
+            shift = held.settle(ui);
         });
+    super::Held::publish(ctx, shift);
     for (k, (rect, link, col)) in links.iter().enumerate() {
-        bubble_link(ctx, p, world, k, *rect, link, *col);
+        bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
-        bubble_sender_link(ctx, p, world, k, rect, line);
+        bubble_sender_link(ctx, p, world, k, rect.translate(shift), line);
     }
 }
 

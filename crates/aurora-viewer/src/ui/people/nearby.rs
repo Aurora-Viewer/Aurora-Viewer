@@ -4,8 +4,8 @@
 //! one line each for a crowd; sort pills; and the sheet of the person
 //! held, at the right (`sheet.rs`). The data, rules, options and menus
 //! are those of Firestorm's radar table (`radar.rs`: FSRadar,
-//! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences › Aurora
-//! › People brings back.
+//! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences â€º Aurora
+//! â€º People brings back.
 
 use super::radar::{self, Column, Payment, RadarData, Row};
 use super::{PeopleAction, PeopleUi};
@@ -75,7 +75,7 @@ impl Band {
         }
     }
 
-    /// "Whisper · 10 m".
+    /// "Whisper Â· 10 m".
     pub(super) fn title(self) -> String {
         let m = |r: f32| aurora_i18n::number(f64::from(r), 0);
         let r = chat_ranges();
@@ -377,6 +377,15 @@ fn list_part(
                 let count = 4 + usize::from(!row.friend && row.id != world.agent_id);
                 let badge_count = badges(p, row).len();
                 let (rect, resp) = super::rows::allocate(ui, row.id, bounds.size());
+                widgets::reveal_search_selection(
+                    ui,
+                    &resp,
+                    st.radar_anchor
+                        .filter(|id| st.radar_selected.contains(id))
+                        .or_else(|| st.radar_selected.last().copied())
+                        .or(st.sheet)
+                        == Some(row.id),
+                );
                 if !ui.is_rect_visible(rect) {
                     super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
                     continue;
@@ -406,7 +415,7 @@ fn list_part(
                 // double click: the camera goes to the avatar and follows it
                 // (LLAvatarActions::zoomIn, FSPanelRadar)
                 if action.activate {
-                    radar::zoom_from_list(ui, st, row, data.draw_distance, actions);
+                    radar::zoom_from_list(ui, st, row, data, actions);
                 }
                 // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
                 super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
@@ -429,7 +438,7 @@ fn toolbar(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData, st: &mut People
         });
         density(ui, p, &mut data.settings.compact);
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-by-name"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-by-name"), w);
     });
 }
 
@@ -530,7 +539,7 @@ fn choose_sort(data: &mut RadarData, column: Column) {
     }
 }
 
-/// "16 near you · 7 within earshot · 2 friends": the figures in the ink,
+/// "16 near you Â· 7 within earshot Â· 2 friends": the figures in the ink,
 /// their words in the muted color.
 fn summary(ui: &mut egui::Ui, p: &Palette, total: usize, chat: usize, friends: usize) {
     // a line of text, not of buttons
@@ -556,7 +565,7 @@ fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
     section_header(ui, p, &band.title());
 }
 
-/// The header of a part of a list ("Whisper · 10 m", "Online · 2").
+/// The header of a part of a list ("Whisper Â· 10 m", "Online Â· 2").
 pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
     let galley = ui.painter().layout_no_wrap(
@@ -1018,6 +1027,7 @@ mod tests {
             settings: &mut settings,
             voice: &voice,
             draw_distance: 96.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };

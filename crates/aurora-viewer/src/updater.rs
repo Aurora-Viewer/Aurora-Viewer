@@ -529,8 +529,13 @@ impl Updater {
                         Failure::Filesystem
                     })?;
                     let parent = path.parent().ok_or(Failure::Filesystem)?;
-                    if !Workspace::supported_install(parent) {
-                        return Err(Failure::Unsupported);
+                    if let Err(e) = Workspace::check_install(parent) {
+                        log::warn!("update: this folder cannot be updated in place: {e:#}");
+                        return Err(if aurora_updater::install::at_drive_root(parent) {
+                            Failure::DriveRoot
+                        } else {
+                            Failure::Unsupported
+                        });
                     }
                     Workspace::new(parent).map_err(|e| {
                         log::warn!("update prepare: {e:#}");
@@ -562,6 +567,15 @@ impl Updater {
         let tx = self.tx.clone();
         self.state = State::Handoff;
         std::thread::spawn(move || {
+            // the user's click gave this viewer the foreground: its helper's
+            // update window (`splash/`) may take it once this one closes
+            #[cfg(windows)]
+            // SAFETY: no pointer; a refusal only leaves that window behind.
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+                    windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+                );
+            }
             let result = work.handoff(&version, maintenance).map_err(|e| {
                 log::warn!("update handoff: {e:#}");
                 Failure::Startup

@@ -39,8 +39,8 @@ pub struct TaskInventory {
 #[derive(Debug, Default)]
 pub struct Contents {
     pub objects: HashMap<Uuid, TaskInventory>,
-    /// ScriptRunningReply: (object, item) -> (running, mono).
-    pub running: HashMap<(Uuid, Uuid), (bool, Option<bool>)>,
+    /// ScriptRunningReply: (object, item) -> (running, compile target).
+    pub running: HashMap<(Uuid, Uuid), (bool, Option<aurora_net::scripts::CompileTarget>)>,
 }
 
 /// "YYYY-MM-DD HH:MM:SS lsl2 script" (LLViewerAssetType: new script
@@ -142,7 +142,11 @@ impl BuildTool {
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?
+    /// A god may, whatever the object (isGodlike() first).
     pub fn contents_editable(&self, world: &World, idx: usize) -> bool {
+        if world.god_level > 0 {
+            return world.objects.get(idx).is_some();
+        }
         if !self.can_modify(world, idx) {
             return false;
         }
@@ -157,8 +161,11 @@ impl BuildTool {
     /// "New script": RezScript of a default script
     /// (LLPanelContents::onClickNewScript + LLViewerObject::saveScript).
     /// RezScript uses the active group, independent of the parcel's rez group
-    /// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp).
-    pub fn new_script(&mut self, world: &World, idx: usize) {
+    /// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp). An SLua
+    /// script carries SST_LUA in its flags, the fallback of
+    /// LLPanelContents::createTaskInventoryItemHelper without
+    /// CreateTaskInventoryItem: the server then writes its default SLua script.
+    pub fn new_script(&mut self, world: &World, idx: usize, lua: bool) {
         let Some(o) = world.objects.get(idx) else { return };
         let now = now_unix();
         let item = TaskItem {
@@ -174,6 +181,7 @@ impl BuildTool {
             next_owner_mask: perm::MOVE | perm::TRANSFER,
             asset_type: AT_LSL_TEXT,
             inv_type: IT_LSL,
+            flags: u32::from(lua),
             sale_price: DEFAULT_PRICE,
             name: aurora_i18n::tr!("extra-new-script").into(),
             description: new_script_description(now),

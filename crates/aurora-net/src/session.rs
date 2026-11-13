@@ -13,6 +13,7 @@ mod currency;
 mod estate;
 mod experience_events;
 mod gestures;
+mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -21,6 +22,7 @@ mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod object_cache;
+mod render_info_net;
 mod scripts;
 mod sim_requests;
 mod slm_net;
@@ -221,6 +223,8 @@ impl Drop for Sim {
 
 pub(crate) struct Shared {
     pub http: reqwest::Client,
+    /// `http` with the login's own HTTP redirects (`login::redirect_policy`).
+    pub login_http: reqwest::Client,
     pub caps_http: reqwest::Client,
     pub events: crate::EventSender,
     pub controls: Arc<Mutex<AgentControls>>,
@@ -234,6 +238,8 @@ pub(crate) struct Shared {
     pub viewer_stats: Arc<Mutex<crate::viewer_stats::ViewerSide>>,
     /// Reports being posted (`NetClient::wait_viewer_stats`).
     pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
+    /// The avatars the viewer sees (`NetClient::set_seen_avatars`).
+    pub seen_avatars: Arc<Mutex<Vec<crate::render_info::SeenAvatar>>>,
 }
 
 /// How long one appearance request may hold the queue.
@@ -288,6 +294,7 @@ struct Session<'a> {
     login: Arc<LoginResponse>,
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
+    last_run_sent: Option<(SocketAddr, bool)>,
     eq_tx: mpsc::UnboundedSender<EqMessage>,
     caps_tx: CapsSender,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
@@ -301,6 +308,8 @@ struct Session<'a> {
     /// without `AgentProfile` needs whole to save a change.
     own_profile: Option<crate::profile::OwnProfile>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
+    /// The circuit each inventory offer came in on (LLOfferInfo::mHost).
+    offer_hosts: crate::offer_hosts::OfferHosts,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
     /// Control flags of the last `NetCommand::AgentControls`.
@@ -322,6 +331,9 @@ struct Session<'a> {
     /// When Linden Lab's viewer statistics leave (viewer_stats.rs), and the
     /// regions the agent arrived in (LLAgent::mRegionsVisited).
     viewer_stats: crate::viewer_stats::Schedule,
+    /// When each region is told about the avatars we see and asked about
+    /// ours (render_info.rs).
+    render_info: crate::render_info::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
     /// The first arrival of this session is still awaited (STATE_AGENT_WAIT).
@@ -430,7 +442,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             fraction: 0.1,
         },
     );
-    let login = match login::login(&sh.http, &req).await {
+    let login = match login::login(&sh.login_http, &req).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
@@ -456,6 +468,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: critical,
                     bad_credentials,
                     previous_session,
+                    next_server: match e {
+                        LoginError::NextServer(server) => Some(server),
+                        _ => None,
+                    },
                 },
             );
             return;
@@ -485,6 +501,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: false,
                     bad_credentials: false,
                     previous_session: false,
+                    next_server: None,
                 },
             );
             return;
@@ -506,6 +523,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         login: login.clone(),
         sims: HashMap::new(),
         main: None,
+        last_run_sent: None,
         eq_tx,
         caps_tx,
         agent_update: AgentUpdateRule::new(Instant::now()),
@@ -519,6 +537,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         finished: false,
         agent_moved: false,
         viewer_stats: Default::default(),
+        render_info: crate::render_info::Schedule::new(Instant::now()),
         regions_visited: Default::default(),
         cam_requested_at: None,
         login_arrival: true,
@@ -547,6 +566,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         appearance_queue: Default::default(),
         own_profile: None,
         notecard_copies: HashMap::new(),
+        offer_hosts: Default::default(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
     };
@@ -787,6 +807,7 @@ impl Session<'_> {
     }
 
     fn send_complete_agent_movement(&mut self, addr: SocketAddr) {
+        self.last_run_sent = None;
         transition::step(|| format!("CompleteAgentMovement sent to region {}", transition::grid(self.handle_of(addr))));
         let mut m = CompleteAgentMovement::default();
         m.agent_data.agent_id = self.agent_id();
@@ -986,6 +1007,8 @@ impl Session<'_> {
         let caps = Arc::new(caps);
         sim.caps = caps.clone();
         emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+        // LLAvatarRenderInfoAccountant::scanNewRegion (setCapabilitiesReceived)
+        self.render_info.new_region(sim.handle, Instant::now());
         let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
         let terrain_handle = sim.handshake_seen.then_some(sim.handle);
         if let Some(handle) = terrain_handle {
@@ -1024,6 +1047,8 @@ impl Session<'_> {
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
+                    let lua_scripts = v["LuaScriptsEnabled"].as_bool();
+                    let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1042,12 +1067,14 @@ impl Session<'_> {
                         materials_rate,
                         materials_max,
                         lsl_syntax_id,
+                        lua_scripts,
                         grid_status_feed,
                         grid_status_page,
                         currency_base_uri,
                         opensim,
                         currency_symbol,
                         export_supported,
+                        group_chat_post_links,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1345,6 +1372,9 @@ impl Session<'_> {
     fn tick(&mut self) {
         if self.logout_started.is_none() && self.viewer_stats.due(Instant::now(), self.agent_moved) {
             self.send_viewer_stats();
+        }
+        if self.logout_started.is_none() {
+            self.scan_render_info(Instant::now());
         }
         self.expire_task_inventory();
         self.expire_script_transfers();
@@ -1711,6 +1741,15 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
+            NetCommand::TeleportCancel => {
+                // LLAgent::teleportCancel: reliable, to the region we leave
+                log::info!("Sending TeleportCancel");
+                let mut m = TeleportCancel::default();
+                m.info.agent_id = self.agent_id();
+                m.info.session_id = self.session_id();
+                self.send_main(&m, true);
+                transition::end(Some(transition::Kind::Teleport), "cancelled (TeleportCancel sent)", &self.sh.stats);
+            }
             NetCommand::CancelRegionRestart => {
                 // LLPanelRegionInfo::sendEstateOwnerMessage("restart", {"-1"}),
                 // to the agent's region, with the invoice of the Region /
@@ -1778,7 +1817,12 @@ impl Session<'_> {
                 b.from_agent_name = str_field(&format!("{} {}", self.login.first_name, self.login.last_name));
                 b.message = str_field(&message);
                 b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
-                self.send_main(&m, true);
+                // an offer's answer goes to the simulator that holds it, a
+                // neighbour's included; anything else through the agent's region
+                match self.offer_hosts.answer_to(dialog, id, |host| self.sims.contains_key(&host)) {
+                    Some(host) => self.send(host, &m, true),
+                    None => self.send_main(&m, true),
+                }
             }
             NetCommand::AcceptLure { lure_id, godlike } => {
                 let mut m = TeleportLureRequest::default();
@@ -2132,6 +2176,8 @@ impl Session<'_> {
             }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::Estate(e) => self.on_estate_command(e),
+            NetCommand::RequestGodlikePowers { godlike } => self.request_godlike(godlike),
+            NetCommand::God(c) => self.on_god_command(c),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -2199,7 +2245,26 @@ impl Session<'_> {
                 m.effect.push(reset_skeleton_effect(self.agent_id(), effect, target, animations));
                 self.send_main(&m, false);
             }
+            NetCommand::Beam {
+                effect,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.effect
+                    .push(beam_effect(self.agent_id(), effect, target, position, color, duration));
+                self.send_main(&m, false);
+            }
             NetCommand::SetAlwaysRun(run) => {
+                let Some(region) = self.main else { return };
+                if !self.sims.contains_key(&region) || self.last_run_sent == Some((region, run)) {
+                    return;
+                }
+                self.last_run_sent = Some((region, run));
                 let mut m = SetAlwaysRun::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
@@ -2707,6 +2772,7 @@ impl Session<'_> {
                 request,
                 item,
                 asset_type,
+                lua,
                 data,
             } => {
                 let name = match asset_type {
@@ -2732,7 +2798,8 @@ impl Session<'_> {
                 let events = self.sh.events.clone();
                 let owner = self.agent_id();
                 tokio::spawn(async move {
-                    let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item, asset_type, data).await;
+                    let result =
+                        crate::inventory::operations::save_content_for(&http, &cap, &fetch, owner, item, asset_type, lua, data).await;
                     let _ = events.send(NetEvent::InventoryContentSaved { request, item, result });
                 });
             }
@@ -2792,6 +2859,13 @@ impl Session<'_> {
             } => {
                 self.create_notecard_item(request, parent, name, data, permissions);
             }
+            NetCommand::CreateScriptItem {
+                request,
+                parent,
+                name,
+                description,
+                source,
+            } => self.create_script_item(request, parent, name, description, source),
             NetCommand::CreateInventoryItem {
                 parent,
                 kind,
@@ -3031,11 +3105,13 @@ impl Session<'_> {
             | NetCommand::AgentAnimationChanges { .. }
             | NetCommand::AnimationStateReset
             | NetCommand::RevokePermissions { .. }
+            | NetCommand::ForceScriptControlRelease
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
             | NetCommand::RequestTaskInventory { .. }
             | NetCommand::ChatSession { .. }
+            | NetCommand::ModerateText { .. }
             | NetCommand::Call { .. } => {}
             // handled by on_offline_command
             NetCommand::RequestOfflineMessages
@@ -3053,6 +3129,7 @@ impl Session<'_> {
             | NetCommand::EjectGroupMembers { .. }
             | NetCommand::GroupRoleChanges { .. }
             | NetCommand::GroupBans { .. }
+            | NetCommand::BanInGroups { .. }
             | NetCommand::GroupRoleUpdate { .. }
             | NetCommand::UpdateGroupInfo { .. }
             | NetCommand::CreateGroup { .. }
@@ -4092,6 +4169,7 @@ impl Session<'_> {
             || self.dispatch_search(from, pkt)?
             || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
+            || self.dispatch_god(pkt)?
         {
             return Ok(());
         }
@@ -4732,6 +4810,13 @@ impl Session<'_> {
         } else if id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = pkt.decode()?;
             let b = &m.message_block;
+            if self.offer_hosts.received(b.dialog, b.id, from) && self.main != Some(from) {
+                log::info!(
+                    "inventory offer (IM dialog {}) came in through the circuit of region {}, not the agent's: its answer goes back there",
+                    b.dialog,
+                    self.handle_of(from)
+                );
+            }
             // every dialog, IM_TYPING_START / STOP included: the world turns
             // those into "is typing", never into a line
             emit(
@@ -5029,7 +5114,9 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
+            self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == LargeGenericMessage::ID {
             let m: LargeGenericMessage = pkt.decode()?;
             self.on_experience_generic(
@@ -5044,7 +5131,9 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
+            self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
@@ -5223,6 +5312,7 @@ impl Session<'_> {
                 },
             );
         } else if id == TeleportStart::ID {
+            let m: TeleportStart = pkt.decode()?;
             if transition::current() == Some(transition::Kind::Teleport) {
                 transition::step(|| "TeleportStart".to_string());
             } else {
@@ -5232,7 +5322,12 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
-            emit(self.sh, NetEvent::TeleportStarted);
+            emit(
+                self.sh,
+                NetEvent::TeleportStarted {
+                    flags: m.info.teleport_flags,
+                },
+            );
         } else if id == TeleportProgress::ID {
             let m: TeleportProgress = pkt.decode()?;
             transition::step(|| format!("TeleportProgress '{}'", field_str(&m.info.message)));
@@ -5240,6 +5335,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::TeleportProgress {
                     message: field_str(&m.info.message),
+                    flags: m.info.teleport_flags,
                 },
             );
         } else if id == TeleportFailed::ID {
@@ -5316,6 +5412,18 @@ impl Session<'_> {
                             source: e.agent_id,
                             target,
                             animations,
+                        },
+                    );
+                } else if let Some((source, target, position, color)) = parse_beam(e) {
+                    emit(
+                        self.sh,
+                        NetEvent::Beam {
+                            effect: e.id,
+                            source,
+                            target,
+                            position,
+                            color,
+                            duration: e.duration,
                         },
                     );
                 }
@@ -5791,6 +5899,105 @@ fn parse_reset_skeleton(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, 
     Some((target, e.type_data[16] & 1 != 0))
 }
 
+/// LLHUDObject::LL_HUD_EFFECT_BEAM: the selection and give beams.
+const HUD_EFFECT_BEAM: u8 = 7;
+/// LLHUDEffectSpiral type data: source object (16), target object (16),
+/// target global position (3 x F64; zero when the target is an object).
+const BEAM_PKT_SIZE: usize = 56;
+
+/// What a beam effect carries: its source, target object (nil for none),
+/// global position and RGBA colour.
+type BeamData = (uuid::Uuid, uuid::Uuid, [f64; 3], [u8; 4]);
+
+/// LLHUDEffectSpiral::packData, with LLHUDEffect::packData's header: our
+/// avatar as the source, the target object or else the global position.
+fn beam_effect(
+    agent: uuid::Uuid,
+    effect: uuid::Uuid,
+    target: uuid::Uuid,
+    position: [f64; 3],
+    color: [u8; 4],
+    duration: f32,
+) -> msgs::viewer_effect::Effect {
+    let mut d = Vec::with_capacity(BEAM_PKT_SIZE);
+    d.extend_from_slice(agent.as_bytes());
+    d.extend_from_slice(target.as_bytes());
+    for v in position {
+        d.extend_from_slice(&v.to_le_bytes());
+    }
+    msgs::viewer_effect::Effect {
+        id: effect,
+        agent_id: agent,
+        type_: HUD_EFFECT_BEAM,
+        duration,
+        color: color.to_vec(),
+        type_data: d,
+    }
+}
+
+/// LLHUDEffectSpiral::unpackData: a packet of another size, or a position
+/// that is not finite, is dropped ("Spiral effect with bad size").
+fn parse_beam(e: &msgs::viewer_effect::Effect) -> Option<BeamData> {
+    if e.type_ != HUD_EFFECT_BEAM || e.type_data.len() != BEAM_PKT_SIZE {
+        return None;
+    }
+    let d = &e.type_data;
+    let source = uuid::Uuid::from_slice(&d[0..16]).ok()?;
+    let target = uuid::Uuid::from_slice(&d[16..32]).ok()?;
+    let mut position = [0.0f64; 3];
+    for (i, v) in position.iter_mut().enumerate() {
+        let b: [u8; 8] = d[32 + i * 8..40 + i * 8].try_into().ok()?;
+        *v = f64::from_le_bytes(b);
+        if !v.is_finite() {
+            return None;
+        }
+    }
+    // LLHUDEffect::unpackData reads four bytes; a short field keeps the
+    // effect's white default
+    let mut color = [255u8; 4];
+    for (c, b) in color.iter_mut().zip(&e.color) {
+        *c = *b;
+    }
+    Some((source, target, position, color))
+}
+
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+
+    #[test]
+    fn a_beam_roundtrips_the_legacy_packet_and_bad_data_is_dropped() {
+        let agent = uuid::Uuid::new_v4();
+        let target = uuid::Uuid::new_v4();
+        let effect = uuid::Uuid::new_v4();
+        let mut packet = ViewerEffect::default();
+        packet
+            .effect
+            .push(beam_effect(agent, effect, target, [256.5, -3.25, 4096.0], [10, 20, 30, 200], 0.7));
+        let mut data = aurora_msg::Writer::new();
+        packet.encode_body(&mut data);
+        let decoded = ViewerEffect::decode(&data.buf).expect("decode effect");
+        let e = &decoded.effect[0];
+        assert_eq!(e.type_, 7);
+        assert_eq!(e.type_data.len(), 56);
+        assert_eq!((e.id, e.agent_id, e.duration), (effect, agent, 0.7));
+        assert_eq!(parse_beam(e), Some((agent, target, [256.5, -3.25, 4096.0], [10, 20, 30, 200])));
+        // the look-at's parser does not take it, nor this one a look-at
+        assert!(parse_lookat(e).is_none());
+        let look = lookat_effect(agent, effect, target, [0.0; 3], 1, 1.0);
+        assert!(parse_beam(&look).is_none());
+        let mut short = e.clone();
+        short.type_data.pop();
+        assert!(parse_beam(&short).is_none());
+        let mut nan = e.clone();
+        nan.type_data[40..48].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(parse_beam(&nan).is_none());
+        let mut no_color = e.clone();
+        no_color.color.clear();
+        assert_eq!(parse_beam(&no_color).map(|b| b.3), Some([255; 4]));
+    }
+}
+
 /// AgentFOV as LLViewerCamera::setView fills it: the generation counter
 /// stays 0.
 fn agent_fov(agent_id: Uuid, session_id: Uuid, circuit_code: u32, vertical_angle: f32) -> AgentFOV {
@@ -6207,6 +6414,91 @@ mod event_queue_tests {
     }
 
     #[tokio::test]
+    async fn run_updates_only_send_on_changes_and_resync_after_region_arrival() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        sock.writable().await.expect("writable UDP socket");
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("neighbour simulator");
+        let main_addr = main.local_addr().unwrap();
+        let neighbour_addr = neighbour.local_addr().unwrap();
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let packets = || sh.stats.packets_out.load(std::sync::atomic::Ordering::Relaxed);
+        let initial = packets();
+        session.on_command(NetCommand::SetAlwaysRun(false));
+        session.on_command(NetCommand::SetAlwaysRun(false));
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        assert_eq!(packets() - initial, 2);
+        session.main = Some(neighbour_addr);
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        assert_eq!(packets() - initial, 3);
+        session.send_complete_agent_movement(neighbour_addr);
+        let before = packets();
+        session.on_command(NetCommand::SetAlwaysRun(true));
+        assert_eq!(packets() - before, 1, "arrival resynchronizes unchanged run preference");
+    }
+
+    /// #3347: an object in a neighbouring region (camera shopping) offers
+    /// through that region's circuit; its answer goes back there, as
+    /// LLOfferInfo::mHost, not to the agent's region, which would not know
+    /// the transaction. A resident's offer from the agent's region stays there.
+    #[tokio::test]
+    async fn an_offers_answer_goes_back_to_the_region_that_sent_it() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        sock.writable().await.expect("writable UDP socket");
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("neighbour simulator");
+        let main_addr = main.local_addr().unwrap();
+        let neighbour_addr = neighbour.local_addr().unwrap();
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        let offer = |session: &mut Session<'_>, from: SocketAddr, dialog: u8, transaction: Uuid| {
+            let mut m = ImprovedInstantMessage::default();
+            m.message_block.dialog = dialog;
+            m.message_block.id = transaction;
+            let mut bytes = Vec::new();
+            aurora_msg::build_packet(&m, 1, true, false, &[], &mut bytes);
+            session
+                .dispatch(from, &parse_packet(&bytes).expect("offer packet"))
+                .expect("dispatch");
+        };
+        let answer = |session: &mut Session<'_>, dialog: u8, transaction: Uuid| {
+            session.on_command(NetCommand::SendImDialog {
+                to: Uuid::from_u128(7),
+                dialog,
+                id: transaction,
+                message: String::new(),
+                bucket: Vec::new(),
+            });
+        };
+        async fn answered(sim: &UdpSocket) -> Option<(u8, Uuid)> {
+            let mut bytes = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_millis(500), sim.recv_from(&mut bytes))
+                .await
+                .ok()?
+                .ok()?;
+            let packet = parse_packet(&bytes[..size]).ok()?;
+            let m: ImprovedInstantMessage = packet.decode().ok()?;
+            Some((m.message_block.dialog, m.message_block.id))
+        }
+        let task = Uuid::from_u128(31);
+        offer(&mut session, neighbour_addr, 9, task); // IM_TASK_INVENTORY_OFFERED
+        answer(&mut session, 10, task); // IM_TASK_INVENTORY_ACCEPTED
+        assert_eq!(answered(&neighbour).await, Some((10, task)));
+        let resident = Uuid::from_u128(32);
+        offer(&mut session, main_addr, 4, resident); // IM_INVENTORY_OFFERED
+        answer(&mut session, 6, resident); // IM_INVENTORY_DECLINED
+        assert_eq!(answered(&main).await, Some((6, resident)));
+        // the neighbour's circuit closed before the answer: the agent's region
+        session.sims.remove(&neighbour_addr);
+        answer(&mut session, 11, task); // IM_TASK_INVENTORY_DECLINED
+        assert_eq!(answered(&main).await, Some((11, task)));
+    }
+
+    #[tokio::test]
     async fn remote_teleport_flags_reach_the_viewer_and_old_circuits_cannot_replace_own_animations() {
         let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
         let main: SocketAddr = "127.0.0.1:13001".parse().unwrap();
@@ -6279,6 +6571,7 @@ mod event_queue_tests {
     pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -6288,6 +6581,7 @@ mod event_queue_tests {
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
             viewer_stats_posts: Default::default(),
+            seen_avatars: Default::default(),
         }
     }
 
@@ -6325,6 +6619,7 @@ mod event_queue_tests {
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -6334,6 +6629,7 @@ mod event_queue_tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
@@ -6345,6 +6641,7 @@ mod event_queue_tests {
             finished: false,
             agent_moved: false,
             viewer_stats: Default::default(),
+            render_info: crate::render_info::Schedule::new(Instant::now()),
             regions_visited: Default::default(),
             cam_requested_at: None,
             login_arrival: false,
@@ -6618,9 +6915,10 @@ mod event_queue_tests {
 mod script_dialog_tests {
     use super::*;
 
-    fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
+    pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -6630,10 +6928,11 @@ mod script_dialog_tests {
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
             viewer_stats_posts: Default::default(),
+            seen_avatars: Default::default(),
         }
     }
 
-    fn test_login(main_port: u16) -> Arc<LoginResponse> {
+    pub(in crate::session) fn test_login(main_port: u16) -> Arc<LoginResponse> {
         Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
@@ -6657,7 +6956,12 @@ mod script_dialog_tests {
         })
     }
 
-    fn test_session<'a>(sh: &'a Shared, sock: Arc<UdpSocket>, sims: HashMap<SocketAddr, Sim>, main: SocketAddr) -> Session<'a> {
+    pub(in crate::session) fn test_session<'a>(
+        sh: &'a Shared,
+        sock: Arc<UdpSocket>,
+        sims: HashMap<SocketAddr, Sim>,
+        main: SocketAddr,
+    ) -> Session<'a> {
         let (eq_tx, _) = mpsc::unbounded_channel();
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
@@ -6669,6 +6973,7 @@ mod script_dialog_tests {
             login: test_login(main.port()),
             sims,
             main: Some(main),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -6678,6 +6983,7 @@ mod script_dialog_tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
@@ -6689,6 +6995,7 @@ mod script_dialog_tests {
             finished: false,
             agent_moved: false,
             viewer_stats: Default::default(),
+            render_info: crate::render_info::Schedule::new(Instant::now()),
             regions_visited: Default::default(),
             cam_requested_at: None,
             login_arrival: false,
@@ -7210,5 +7517,24 @@ mod script_dialog_tests {
             assert_eq!(parts.join(" "), words);
             assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
+    }
+
+    /// The next packets the region receives, decoded as `M`, past the
+    /// others (pings, agent updates) until `n` of them arrived.
+    pub(in crate::session) async fn received<M: Msg>(sim: &UdpSocket, n: usize) -> Vec<M> {
+        let mut datagram = [0; 1500];
+        let mut out = Vec::new();
+        while out.len() < n {
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("the packet reaches the region")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            if packet.id == M::ID {
+                assert!(packet.reliable());
+                out.push(packet.decode().expect("message"));
+            }
+        }
+        out
     }
 }

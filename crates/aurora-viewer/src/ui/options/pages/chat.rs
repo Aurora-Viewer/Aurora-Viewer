@@ -129,7 +129,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
-                // depends on it; ChatBubbleOpacity is in its Colors), #673
+                // depends on it; ChatBubbleOpacity is in Appearance › Skin,
+                // as it is in its Colors), #673
                 cx.toggle(
                     tr!("ui-options-chat-bubbles"),
                     tr!("ui-options-chat-bubbles-hint"),
@@ -146,13 +147,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         tr!("ui-options-typing-bubbles"),
                         tr!("ui-options-typing-bubbles-hint"),
                         &field!(typing_bubbles),
-                    );
-                    cx.slider(
-                        tr!("ui-options-chat-bubble-opacity"),
-                        "",
-                        &field!(chat_bubble_opacity),
-                        0.0..=1.0,
-                        "",
                     );
                 });
             });
@@ -278,6 +272,21 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                 &field!(mute_groups_without_notices),
             );
+            // Legacy Viewer › Chat › Notifications (FSGroupNoticesToIMLog,
+            // FSBetterGroupNoticesToIMLog under it), both on
+            cx.toggle(
+                tr!("ui-options-group-notices-in-chat"),
+                tr!("ui-options-group-notices-in-chat-hint"),
+                &field!(group_notices_in_chat),
+            );
+            let off = !cx.s.group_notices_in_chat;
+            cx.subs(off, |cx| {
+                cx.toggle(
+                    tr!("ui-options-group-notice-subjects-in-chat"),
+                    tr!("ui-options-group-notice-subjects-in-chat-hint"),
+                    &field!(group_notice_subjects_in_chat),
+                );
+            });
             // GroupSnoozeTime and FSEnablePerGroupSnoozeDuration: the
             // snooze button of a group chat, in minutes (#945)
             cx.row(
@@ -699,7 +708,8 @@ fn threshold(ui: &mut egui::Ui, on: bool, amount: &mut i32) -> bool {
 /// The Legacy Viewer's Chat › Notifications (EnableIMChatPopups,
 /// EnableGroupChatPopups, ChatOnlineNotification), Notifications › People
 /// / Objects & Scripts (FSFlashOnMessage, FSFlashOnObjectIM,
-/// FSFlashOnScriptDialog) and World (FSEnableGrowl, FSGrowlWhenActive).
+/// FSFlashOnScriptDialog) and World (FSEnableGrowl, FSGrowlWhenActive),
+/// and User Interface › 2D Overlay (ScriptDialogLimitations).
 fn notifications(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-toasts"), |cx| {
@@ -809,6 +819,18 @@ fn notifications(cx: &mut Cx) {
             |ui, s| ui.add_enabled_ui(any, |ui| toggle(ui, &p, &mut s.ims_in_notification_center)).inner,
         );
         cx.slider(tr!("ui-options-toast-duration"), "", &field!(im_toast_seconds), 3.0..=60.0, " s");
+    });
+    // ScriptDialogLimitations, the Legacy Viewer's User Interface › 2D
+    // Overlay › "Script Dialogs per Object" (panel_preferences_UI.xml)
+    cx.group(tr!("ui-options-script-dialogs"), |cx| {
+        use crate::world::script_dialog_limit::Limit;
+        let choices = Limit::ALL.map(|limit| (limit, limit.label()));
+        cx.combo(
+            tr!("ui-options-script-dialog-limit"),
+            tr!("ui-options-script-dialog-limit-hint"),
+            &field!(script_dialog_limit),
+            &choices,
+        );
     });
     cx.group(tr!("ui-options-attention"), |cx| {
         cx.toggle(
@@ -1014,6 +1036,7 @@ fn history(cx: &mut Cx) {
                         {
                             r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                         }
+                        // the Legacy Viewer's files too, in its layout
                         if action_button_if(
                             ui,
                             &p,
@@ -1021,7 +1044,7 @@ fn history(cx: &mut Cx) {
                             tr!("ui-options-chat-logs-erase"),
                             ActionKind::FlatDanger,
                             size,
-                            idle,
+                            idle && !st.chat_log_shared,
                         )
                         .clicked()
                         {
@@ -1035,7 +1058,7 @@ fn history(cx: &mut Cx) {
                         tr!("ui-options-chat-logs-import"),
                         crate::ui::widgets::ActionKind::Flat,
                         Vec2::new(0.0, 24.0),
-                        st.chat_log_importing.is_none(),
+                        st.chat_log_importing.is_none() && !st.chat_log_shared,
                     )
                     .clicked()
                     {
@@ -1059,6 +1082,13 @@ fn history(cx: &mut Cx) {
                 });
                 false
             },
+        );
+        // an Aurora addition: the folder of the Legacy Viewer's own layout,
+        // shared with it (`world::chat_log`, `shared`)
+        cx.toggle(
+            tr!("ui-options-chat-logs-legacy-layout"),
+            tr!("ui-options-chat-logs-legacy-layout-help"),
+            &field!(log_legacy_layout),
         );
     });
 }

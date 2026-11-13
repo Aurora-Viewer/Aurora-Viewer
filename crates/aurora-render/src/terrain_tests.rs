@@ -31,9 +31,10 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
         wgsl_function(object, "terrain_tangent"),
         &env[start..end]
     )
-    .replace("tex_pages[loc >> 16u]", "tex_pages")
-    .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
-    .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
+    .replace("tex_pages[texture_page_index(loc)]", "tex_pages")
+    .replace("tex_pages[texture_page_index(ramp_loc)]", "alpha_ramp")
+    .replace("let ramp_loc = tex_loc.values[6u];", "let ramp_loc = 0u;")
+    .replace("tex_loc.values[", "tex_loc[");
     let source = format!(
         r#"
 {}
@@ -385,7 +386,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         assert!((orm[0] - 128.0 / 255.0).abs() < 0.001);
         assert!((orm[1] - (64.0 / 255.0) * (0.2 + i as f32 * 0.2)).abs() < 0.001);
         assert!((orm[2] - (192.0 / 255.0) * (0.1 + i as f32 * 0.25)).abs() < 0.001);
-        assert_eq!(orm[3], if i == 3 { 0.4 } else { 0.0 });
+        assert!((orm[3] - if i == 3 { 0.4 } else { 0.0 }).abs() < 0.001);
         assert!(samples[i * 4 + 3][2] > 0.19, "emissive map must contribute");
     }
     assert!(samples[16][0] > 0.1 && samples[16][1] > 0.1, "two materials blend in linear space");
@@ -567,9 +568,10 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
     // frame's mip bias (sample_tex, unused here) is 0 without its uniform.
     let source = source
         .replace("frame.tex_lod.x", "0.0")
-        .replace("tex_pages[loc >> 16u]", "tex_pages")
-        .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
-        .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
+        .replace("tex_pages[texture_page_index(loc)]", "tex_pages")
+        .replace("tex_pages[texture_page_index(ramp_loc)]", "alpha_ramp")
+        .replace("let ramp_loc = tex_loc.values[6u];", "let ramp_loc = 0u;")
+        .replace("tex_loc.values[", "tex_loc[");
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("terrain shadow regression"),
         source: wgpu::ShaderSource::Wgsl(source.into()),

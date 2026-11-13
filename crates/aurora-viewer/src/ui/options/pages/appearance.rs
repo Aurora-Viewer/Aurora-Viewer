@@ -6,7 +6,7 @@
 use super::super::cx::{Cx, F, Nothing, field, fields};
 use super::super::{COMBO_W, swatch, toggle};
 
-use crate::ui::fonts;
+use crate::ui::{fonts, widgets};
 use egui::RichText;
 
 /// Size of the system font list's rows, under its search field (about
@@ -22,6 +22,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             use aurora_i18n::tr;
             let p = cx.p;
             interface_colors(cx);
+            opacity(cx);
             cx.group(tr!("extra-skin"), |cx| {
                 cx.link(
                     tr!("ui-options-high-contrast"),
@@ -46,6 +47,86 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
         }
     }
+}
+
+/// How much of the world shows through (`ui::surface_opacity`); the Legacy
+/// Viewer's Colors › Floater Opacity, and the bars. Greyed in high contrast,
+/// which keeps every surface opaque.
+fn opacity(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-opacity"), |cx| {
+        cx.note(tr!("ui-options-opacity-help"));
+        cx.greyed(crate::high_contrast::current());
+        cx.slider(
+            tr!("ui-options-opacity-active"),
+            tr!("ui-options-opacity-active-hint"),
+            &field!(window_opacity_active),
+            0.0..=1.0,
+            "",
+        );
+        cx.slider(
+            tr!("ui-options-opacity-inactive"),
+            tr!("ui-options-opacity-inactive-hint"),
+            &field!(window_opacity_inactive),
+            0.0..=1.0,
+            "",
+        );
+        cx.slider(
+            tr!("ui-options-opacity-conversations"),
+            tr!("ui-options-opacity-conversations-hint"),
+            &field!(conversations_opacity),
+            0.0..=1.0,
+            "",
+        );
+        cx.toggle(
+            tr!("ui-options-opacity-conversations-override"),
+            "",
+            &field!(conversations_active_opacity_override),
+        );
+        cx.slider(
+            tr!("ui-options-opacity-bars"),
+            tr!("ui-options-opacity-bars-hint"),
+            &field!(bar_opacity),
+            0.0..=1.0,
+            "",
+        );
+        cx.slider(
+            tr!("ui-options-opacity-console"),
+            tr!("ui-options-opacity-console-hint"),
+            &field!(console_opacity),
+            0.0..=1.0,
+            "",
+        );
+        cx.slider(
+            tr!("ui-options-opacity-minimap"),
+            tr!("ui-options-opacity-minimap-hint"),
+            &field!(minimap_opacity),
+            0.0..=1.0,
+            "",
+        );
+        // the menus and the pie menu side by side: both are right-click menus
+        cx.slider(
+            tr!("ui-options-opacity-menus"),
+            tr!("ui-options-opacity-menus-hint"),
+            &field!(menu_opacity),
+            0.0..=1.0,
+            "",
+        );
+        cx.toggle(tr!("ui-options-opacity-pie-override"), "", &field!(pie_opacity_override));
+        let off = !cx.s.pie_opacity_override;
+        cx.subs(off, |cx| {
+            cx.slider(tr!("ui-options-opacity-pie"), "", &field!(pie_opacity), 0.0..=1.0, "");
+        });
+        // ChatBubbleOpacity: one setting for the bubbles and the tags
+        cx.slider(
+            tr!("ui-options-chat-bubble-opacity"),
+            "",
+            &field!(chat_bubble_opacity),
+            0.0..=1.0,
+            "",
+        );
+        cx.greyed(false);
+    });
 }
 
 /// The accent, background and text of the interface, the rest following
@@ -205,7 +286,7 @@ fn font(cx: &mut Cx) {
                         // each opening starts on the whole list
                         st.font_filter.clear();
                     }
-                    system_font_search(ui, &mut st.font_filter, opening);
+                    system_font_search(ui, &p, &mut st.font_filter, opening);
                     let filter = st.font_filter.to_lowercase();
                     let shown: Vec<&fonts::SystemFont> = list
                         .iter()
@@ -223,7 +304,8 @@ fn font(cx: &mut Cx) {
                     // the size a row's button gives its text
                     let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                     let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
-                    let list_area = egui::ScrollArea::vertical()
+                    let selected_row = shown.iter().position(|f| s.font == format!("system:{}", f.path.display()));
+                    let list_area = widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, row_h)
                         .auto_shrink([false, true])
                         .max_height(FONT_LIST_H)
                         .show_rows(ui, row_h, shown.len(), |ui, rows| {
@@ -434,9 +516,9 @@ fn system_font_combo(salt: egui::Id, shown: String) -> egui::ComboBox<'static> {
 
 /// The list's search field, focused as the list opens so typing filters
 /// at once.
-fn system_font_search(ui: &mut egui::Ui, filter: &mut String, opening: bool) -> egui::Response {
+fn system_font_search(ui: &mut egui::Ui, p: &crate::theme::Palette, filter: &mut String, opening: bool) -> egui::Response {
     // the list's own width, never what the popup offers (#2510)
-    let search = crate::ui::widgets::search_field(ui, filter, aurora_i18n::tr!("ui-options-search-fonts"), FONT_LIST_W);
+    let search = crate::ui::widgets::search_field(ui, p, filter, aurora_i18n::tr!("ui-options-search-fonts"), FONT_LIST_W);
     if opening {
         search.request_focus();
     }
@@ -450,6 +532,7 @@ mod tests {
     /// One frame of the System fonts list, open, with a search field and a
     /// font row; returns their rectangles and whether the list is open.
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, filter: &mut String) -> (egui::Rect, egui::Rect, bool) {
+        let palette = crate::theme::Theme::default().palette();
         let mut rects = (egui::Rect::NOTHING, egui::Rect::NOTHING);
         let mut popup = egui::Id::NULL;
         let input = egui::RawInput {
@@ -461,7 +544,7 @@ mod tests {
             let salt = ui.scope_id().with("system-font");
             popup = system_font_popup(ui, salt);
             system_font_combo(salt, "Font".into()).show_ui(ui, |ui| {
-                rects.0 = system_font_search(ui, filter, false).rect;
+                rects.0 = system_font_search(ui, &palette, filter, false).rect;
                 let row = ui.button("Some font");
                 rects.1 = row.rect;
                 if row.clicked() {

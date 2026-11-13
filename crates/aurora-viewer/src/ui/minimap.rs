@@ -406,8 +406,17 @@ impl MiniMap {
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
         let default = default_rect(super::layout::work_area(ctx));
-        let frame = super::widgets::overlay_frame(ctx, p)
-            .fill(Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), 168))
+        // its shadow lies under the whole map: it fades with the background
+        let opacity = super::surface_opacity::minimap();
+        let mut frame = super::widgets::overlay_frame(ctx, p);
+        frame.shadow.color = frame.shadow.color.gamma_multiply(opacity / super::surface_opacity::MINIMAP);
+        let frame = frame
+            .fill(Color32::from_rgba_unmultiplied(
+                p.panel.r(),
+                p.panel.g(),
+                p.panel.b(),
+                (opacity * 255.0).round() as u8,
+            ))
             .inner_margin(egui::Margin::same(2));
         // like the floaters, it keeps its corner when the viewer window
         // changes size and snaps to the other windows
