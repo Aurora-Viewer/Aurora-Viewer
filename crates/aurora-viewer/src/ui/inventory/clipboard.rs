@@ -465,7 +465,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
             ];
         }
         // Type-ahead: "Demo s" then "il" adds up to Demo silhouette; Up
-        // ends the word, so "n" selects Non-transferable object.
+        // ends the word, so "n" selects No-copy object, the first "n" below.
         if mode.ends_with("keyboard-type") {
             if matches!(frame, 666 | 690 | 720) {
                 log::info!(
@@ -1111,7 +1111,35 @@ mod tests {
             assert_eq!(h.st.selected, Some(id(20_075)), "letters within 1.5 s add up");
             assert_eq!(h.st.selection, HashSet::from([id(20_075)]));
             assert!(h.st.search.is_empty(), "the search field gets nothing");
-            h.row(id(20_075)); // Scrolled into view.
+            let shown = |h: &Harness, item| {
+                let rect = h.st.list_shown.as_ref().map(|shown| shown.rect).expect("the list is drawn");
+                let row = h.row(item);
+                rect.contains(row) && rect.contains(row + egui::vec2(0.0, 10.0))
+            };
+            assert!(shown(&h, id(20_075)), "scrolled into view");
+            // A match a row or two below the last one shown is scrolled to.
+            let top = h.st.list_shown.as_ref().map_or(0.0, |shown| shown.offset);
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 08")]);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.st.selected, Some(id(20_080)));
+            assert!(
+                shown(&h, id(20_080)),
+                "the next match below the view is scrolled to (top was {top})"
+            );
+            // Row by row past the bottom edge: each match just below it.
+            for n in 81..90 {
+                h.time += 2.0;
+                h.frame(vec![typed(&format!("Keyboard {n:03}"))]);
+                h.frame(Vec::new());
+                assert_eq!(h.st.selected, Some(id(20_000 + n)));
+                assert!(shown(&h, id(20_000 + n)), "Keyboard {n:03} is scrolled to (classic {classic})");
+            }
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 000")]);
+            h.time += 2.0;
 
             h.frame(vec![typed("Keyboard 01")]);
             h.time += 2.0;

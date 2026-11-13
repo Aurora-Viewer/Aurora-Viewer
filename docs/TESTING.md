@@ -10319,7 +10319,8 @@ separate searches enabled and disabled; that preference controls only the text.
 - `keyboard-type`, `aurora-keyboard-type`: click the demo object at frame
   650, type "Demo s" at 665 and "il" at 667 (the letters add up: Demo
   silhouette is selected), press Up at 700 (the typed word ends) and type
-  "n" at 705 (Non-transferable object is selected). Capture at 690 and 720.
+  "n" at 705 (No-copy object, the first "n" below, is selected). Capture
+  at 690 and 720.
   The log reports the selection at 666, 690 and 720. Manually check the
   1.5 s pause that starts a new word, a click ending it, and that typing in
   the search or rename field still goes to the field.
