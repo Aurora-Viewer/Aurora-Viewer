@@ -9721,6 +9721,10 @@ ui-options-aurora-look-at = Points de mire
 ui-options-aurora-look-at-help = Point lumineux avec pilule de nom, ou croix filaire. S'affichent si « Afficher qui regarde qui » est activé (Confidentialité).
 ui-options-aurora-halo = Halo
 ui-options-aurora-crosshair = Croix (Legacy)
+ui-options-aurora-beams = Rayons de sélection
+ui-options-aurora-beams-help = Le rayon qui part de la main d'un avatar vers ce qu'il édite ou donne : un fil lumineux avec un halo et son nom, ou un flot de particules comme le Legacy Viewer.
+ui-options-aurora-beams-thread = Fil
+ui-options-aurora-beams-particles = Particules (Legacy)
 ui-options-aurora-notifications = Notifications
 ui-options-aurora-notifications-help = Les nouvelles notifications se déroulent depuis la cloche et s'y replient, ou des toasts empilés à part comme le Legacy Viewer.
 ui-options-aurora-animated-bell = Cloche animée
@@ -14428,6 +14432,10 @@ ui-options-build-new-faces = Aspect des nouveaux objets
 ui-options-build-editing = Modification
 ui-options-build-auto-material-tab = Ouvrir l’onglet matériau adapté à la sélection
 ui-options-build-auto-material-tab-hint = Sélectionner un objet ouvre l’onglet PBR si l’une de ses faces affiche un matériau PBR, sinon Blinn-Phong. Désactivé : le dernier onglet choisi reste.
+ui-options-build-show-beams = Afficher les rayons de sélection
+ui-options-build-show-beams-hint = Les vôtres et ceux des autres avatars, quand ils éditent, saisissent ou donnent quelque chose. Ils sont envoyés dans tous les cas.
+ui-options-build-beam-color = Couleur du rayon
+ui-options-build-beam-color-hint = La couleur de vos rayons, telle que les autres la voient aussi.
 
 
 

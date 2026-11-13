@@ -1417,6 +1417,9 @@ pub struct Settings {
     /// avatars look, how our head follows the cursor (Preferences ›
     /// Privacy and Controls).
     pub lookat: crate::world::lookat::Settings,
+    /// Selection and give beams: shown or not, their look, our colour
+    /// (Preferences › Build, Aurora and Colors).
+    pub beams: crate::world::beams::Settings,
     /// The former "Look-at tracking" switch and its range, read once to
     /// carry the user's choice into `lookat`.
     #[serde(rename = "look_at", skip_serializing)]
@@ -2398,6 +2401,7 @@ impl Default for Settings {
             double_click_scripted: true,
             follow: Default::default(),
             lookat: Default::default(),
+            beams: Default::default(),
             former_look_at: None,
             former_look_at_range: None,
             shadow_quality: 3,
