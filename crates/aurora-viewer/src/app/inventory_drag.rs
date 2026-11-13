@@ -1,13 +1,16 @@
 //! Behaviour reference: LLToolDragAndDrop::{pick,dad3dRezObjectOnLand,
-//! dad3dRezObjectOnObject,dropObject,willObjectAcceptInventory} and
-//! FSCommon::getGroupForRezzing (Firestorm indra/newview, LGPL 2.1).
+//! dad3dRezObjectOnObject,dad3dRezFromObjectOnLand,dad3dRezFromObjectOnObject,
+//! dropObject,willObjectAcceptInventory} and FSCommon::getGroupForRezzing
+//! (Firestorm indra/newview, LGPL 2.1).
 //! Aurora owns the input, geometry queries and command preparation; what
 //! goes into an object's contents is decided by `build::contents_drop`.
 
 use super::*;
 pub(super) use crate::build::contents_drop::target_allowed;
 use crate::build::contents_drop::{self, Target, copyable};
+use crate::build::task_inventory::TransferRequest;
 use crate::ui::inventory::InvDrag;
+use crate::ui::inventory::task_drop::TaskDrag;
 use crate::world::inventory::{Inventory, actions as rules};
 use aurora_net::build::BuildCmd;
 use aurora_net::inventory::{InvItem, rez::RezInventory};
@@ -22,6 +25,8 @@ pub(super) struct InventoryDrag {
     /// whether the object under the pointer takes the cargo into its contents
     contents: contents_drop::PlanCheck,
     pub cursor: Option<egui::CursorIcon>,
+    /// another resident is this pass's target (`avatar_give_input`)
+    pub giving: bool,
 }
 
 impl InventoryDrag {
@@ -61,6 +66,8 @@ fn reason_text(reason: &str) -> &'static str {
         "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
         "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
         "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
+        "rez-task-single" => aurora_i18n::tr!("rez-task-single"),
+        "rez-task-denied" => aurora_i18n::tr!("rez-task-denied"),
         _ => contents_drop::reason_text(reason),
     }
 }
@@ -178,16 +185,7 @@ fn prepare(
             });
         }
     }
-    let (handle, offset) = world
-        .regions
-        .values()
-        .find_map(|r| {
-            let offset = world.region_offset(r.handle)?;
-            let local = point - offset;
-            (local.x >= 0.0 && local.y >= 0.0 && local.x < r.heightmap.size_x as f32 && local.y < r.heightmap.size_y as f32)
-                .then_some((r.handle, offset))
-        })
-        .ok_or("rez-no-surface")?;
+    let (handle, offset) = region_at(world, point)?;
     let remove = remove_on_rez(&world.inventory, item, world.agent_id, target.is_some());
     let source_folder = if rules::library(&world.inventory, item.id) || world.inventory.in_folder_type(item.id, 14) {
         Uuid::nil()
@@ -205,8 +203,91 @@ fn prepare(
             selected,
             remove,
             source_folder,
+            from_task: Uuid::nil(),
         })),
         consume: remove.then_some(item.id),
+        selected,
+    })
+}
+
+/// The region under the world point `point`, and its offset.
+fn region_at(world: &World, point: Vec3) -> Result<(aurora_net::types::RegionHandle, Vec3), &'static str> {
+    world
+        .regions
+        .values()
+        .find_map(|r| {
+            let offset = world.region_offset(r.handle)?;
+            let local = point - offset;
+            (local.x >= 0.0 && local.y >= 0.0 && local.x < r.heightmap.size_x as f32 && local.y < r.heightmap.size_y as f32)
+                .then_some((r.handle, offset))
+        })
+        .ok_or("rez-no-surface")
+}
+
+/// Whether the rows dragged out of an object's contents rez where they are
+/// held: a single object the rule lets out (`rules::task_rez_allowed`),
+/// over the land or over an object without Ctrl. dragOrDrop3D rezzes a
+/// single entry; with Ctrl over an object the drop would go into its
+/// contents, which the Legacy Viewer refuses from another object
+/// (dad3dRezFromObjectOnObject, SL-22177).
+fn task_cargo<'a>(world: &World, cargo: &'a TaskDrag, target: Option<usize>, ctrl: bool) -> Result<&'a TransferRequest, &'static str> {
+    let [request] = &cargo.requests[..] else {
+        return Err("rez-task-single");
+    };
+    let item = &request.item;
+    if item.is_folder || item.asset_type != 6 {
+        return Err("rez-object-only");
+    }
+    if item.parent_id != request.object || world.objects.index_of_uuid(&request.object).is_none() {
+        return Err("rez-incomplete");
+    }
+    if !rules::task_rez_allowed(item, world.agent_id, world.groups.active) {
+        return Err("rez-task-denied");
+    }
+    if let Some(idx) = target {
+        contents_drop::surface_allowed(world, idx)?;
+        if ctrl {
+            return Err("rez-contents-denied");
+        }
+    }
+    Ok(request)
+}
+
+/// RezObject for an object of an object's contents (dropObject with
+/// `from_task_inventory`): FromTaskID names the object, the item keeps its
+/// contents folder, and it stays in the contents. dropObject still sets
+/// RemoveItem when the agent may copy it only through its group
+/// (allowCopyBy without a group); the simulator decides then.
+fn prepare_task(
+    world: &World,
+    cargo: &TaskDrag,
+    eye: Vec3,
+    surface: (Vec3, Option<usize>),
+    ctrl: bool,
+    selected: bool,
+    under_land: bool,
+) -> Result<InventoryDrop, &'static str> {
+    let (point, target) = surface;
+    let request = task_cargo(world, cargo, target, ctrl)?;
+    if !point.is_finite() || !eye.is_finite() {
+        return Err("rez-no-surface");
+    }
+    let (handle, offset) = region_at(world, point)?;
+    let item = request.item.to_inv_item().ok_or("rez-incomplete")?;
+    Ok(InventoryDrop {
+        command: BuildCmd::RezInventory(Box::new(RezInventory {
+            handle,
+            group: world.group_for_rez(under_land),
+            ray_start: eye - offset,
+            ray_end: point - offset,
+            target: target.and_then(|idx| world.objects.get(idx)).map_or(Uuid::nil(), |o| o.full_id),
+            selected,
+            remove: rules::task_agent_mask(&request.item, world.agent_id) & rules::COPY == 0,
+            source_folder: item.parent,
+            from_task: request.object,
+            item,
+        })),
+        consume: None,
         selected,
     })
 }
@@ -220,10 +301,12 @@ impl App {
         ui::inventory::drag::badge(ctx, &self.palette);
         ui::places::drag::ghost(ctx, &self.palette);
         let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::PlaceDrag>(ctx);
-        if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag {
+        let task_drag = egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx);
+        if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag && !task_drag {
             self.inventory_drag.checked = None;
         }
         let give = self.avatar_give_input(ctx, renderer);
+        self.inventory_drag.giving = give.is_some();
         self.scene.mark_give_target(&self.world, give);
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return Vec::new();
@@ -232,7 +315,9 @@ impl App {
             self.location_portal_input(ctx, renderer);
             return Vec::new();
         }
-        if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
+        if task_drag {
+            self.task_drag_input(ctx, renderer).into_iter().collect()
+        } else if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
             self.item_drag_input(ctx, renderer).into_iter().collect()
         } else {
             self.selection_drag_input(ctx, renderer)
@@ -317,6 +402,66 @@ impl App {
                 self.world
                     .system_notice(reason_text(reason), crate::world::notice_topics::Topic::Items);
                 Vec::new()
+            }
+        }
+    }
+
+    /// Rows of an object's contents dragged over the world: a single object
+    /// rezzes on the land or on an object (`prepare_task`). Over the windows,
+    /// the inventory folders keep the cargo (`task_drop::target`).
+    fn task_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
+        let cargo = egui::DragAndDrop::payload::<TaskDrag>(ctx)?;
+        if ctx.is_pointer_over_egui() {
+            return None;
+        }
+        let (pos, released, ctrl) = ctx.input(|i| {
+            Some((
+                i.pointer.interact_pos()?,
+                i.pointer.button_released(egui::PointerButton::Primary),
+                i.modifiers.ctrl,
+            ))
+        })?;
+        let ppp = ctx.pixels_per_point();
+        let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
+        self.inventory_drag.refresh_surface(
+            &self.scene,
+            &self.world,
+            self.settings.draw_distance,
+            ray,
+            (pos.x * ppp, pos.y * ppp),
+            released,
+        );
+        let surface = self.inventory_drag.surface;
+        let check = surface
+            .ok_or("rez-no-surface")
+            .and_then(|(_, target)| task_cargo(&self.world, &cargo, target, ctrl).map(|_| ()));
+        self.inventory_drag.cursor = Some(if check.is_ok() {
+            egui::CursorIcon::Copy
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        if !released {
+            return None;
+        }
+        egui::DragAndDrop::clear_payload(ctx);
+        let result = check.and_then(|()| {
+            prepare_task(
+                &self.world,
+                &cargo,
+                self.camera.position,
+                surface.ok_or("rez-no-surface")?,
+                ctrl,
+                self.build.open,
+                self.settings.build.rez_under_land_group,
+            )
+        });
+        log::debug!("contents drop on the world: ctrl={ctrl}, {:?}", result.as_ref().err());
+        match result {
+            Ok(drop) => Some(drop),
+            Err(reason) => {
+                self.world
+                    .system_notice(reason_text(reason), crate::world::notice_topics::Topic::Items);
+                None
             }
         }
     }
@@ -503,16 +648,13 @@ impl App {
     /// conversations and profiles, for every entry carried; the Legacy
     /// Viewer gives a single entry, at once (#991). While they are the
     /// target, their avatar's object index, outlined by the scene. Our own
-    /// avatar is left to the rez rules.
+    /// avatar is left to the rez rules. Textures and materials too, a
+    /// texture library card included (DAD_TEXTURE / DAD_MATERIAL on
+    /// DT_AVATAR → dad3dGiveInventory): `texture_library_drag_input` yields
+    /// while they are the target.
     fn avatar_give_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<usize> {
         let ids = ui::inventory::drag::carried_ids(ctx)?;
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open || ctx.is_pointer_over_egui() {
-            return None;
-        }
-        // the texture library's cards are not inventory to give
-        if egui::DragAndDrop::payload::<InvDrag>(ctx)
-            .is_some_and(|drag| crate::ui::texture_library::catalogue::resource(&self.world.inventory, drag.0).is_some())
-        {
             return None;
         }
         let (pos, released) = ctx.input(|i| Some((i.pointer.interact_pos()?, i.pointer.button_released(egui::PointerButton::Primary))))?;
@@ -574,7 +716,24 @@ impl App {
             if rez { "rez" } else { "contents" },
             drop.consume.is_some()
         );
+        // LLToolDragAndDrop::dropObject (at the point hit) and dropInventory /
+        // dropScript (at the object): a beam from our hand
+        let beam = match &drop.command {
+            BuildCmd::RezInventory(r) => {
+                let (x, y) = aurora_net::handle_to_origin(r.handle);
+                let at = r.ray_end;
+                Some((
+                    Uuid::nil(),
+                    glam::DVec3::new(f64::from(x) + f64::from(at.x), f64::from(y) + f64::from(at.y), f64::from(at.z)),
+                ))
+            }
+            BuildCmd::UpdateTaskInventory { item, .. } | BuildCmd::RezScript { item, .. } => Some((item.parent_id, glam::DVec3::ZERO)),
+            _ => None,
+        };
         self.send(NetCommand::Build(drop.command));
+        if let Some((target, position)) = beam {
+            self.fire_beam(target, position);
+        }
         if let Some(id) = drop.consume {
             self.world.inventory.consume_item(id);
         }
@@ -667,6 +826,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_single_object_of_a_contents_rezzes_from_its_object_on_land_or_object() {
+        use crate::build::task_inventory::TransferKind;
+        use aurora_net::build::TaskItem;
+        let mut w = world();
+        let source = w.objects.get(object(&w)).unwrap().full_id;
+        let point = Vec3::new(140.0, 130.0, 32.0);
+        let eye = point + Vec3::Z * 4.0;
+        let chair = TaskItem {
+            item_id: item(9500),
+            parent_id: source,
+            owner_id: w.agent_id,
+            owner_mask: rules::FULL,
+            asset_type: 6,
+            inv_type: 6,
+            name: "Chair".into(),
+            ..Default::default()
+        };
+        let cargo = |items: &[TaskItem]| TaskDrag {
+            requests: items
+                .iter()
+                .map(|item| TransferRequest {
+                    object: source,
+                    item: item.clone(),
+                    folder: Uuid::nil(),
+                    approved: None,
+                    ignore_warning: false,
+                })
+                .collect(),
+            kind: TransferKind::Copy,
+        };
+        let one = cargo(std::slice::from_ref(&chair));
+        // land, with the Build window open: the new object is selected
+        let drop = prepare_task(&w, &one, eye, (point, None), false, true, false).unwrap();
+        assert!(drop.consume.is_none() && drop.selected);
+        let land = rez(drop);
+        assert_eq!(land.from_task, source);
+        assert_eq!(land.item.id, chair.item_id);
+        assert_eq!(land.source_folder, source);
+        assert!(!land.remove && land.target.is_nil());
+        // Ctrl changes nothing on the land (dad3dRezFromObjectOnLand)
+        assert!(prepare_task(&w, &one, eye, (point, None), true, false, false).is_ok());
+        // an object without Ctrl, never into its contents with it
+        let on_object = rez(prepare_task(&w, &one, eye, (point, Some(object(&w))), false, false, false).unwrap());
+        assert_eq!(on_object.target, source);
+        let into = prepare_task(&w, &one, eye, (point, Some(object(&w))), true, false, false);
+        assert_eq!(into.err(), Some("rez-contents-denied"));
+        // a single entry, an object, copy and transfer, from an object still here
+        let two = cargo(&[
+            chair.clone(),
+            TaskItem {
+                item_id: item(9501),
+                ..chair.clone()
+            },
+        ]);
+        assert_eq!(task_cargo(&w, &two, None, false).err(), Some("rez-task-single"));
+        let script = cargo(&[TaskItem {
+            asset_type: 10,
+            inv_type: 10,
+            ..chair.clone()
+        }]);
+        assert_eq!(task_cargo(&w, &script, None, false).err(), Some("rez-object-only"));
+        let no_transfer = cargo(&[TaskItem {
+            owner_mask: rules::COPY | rules::MODIFY,
+            ..chair.clone()
+        }]);
+        assert_eq!(task_cargo(&w, &no_transfer, None, false).err(), Some("rez-task-denied"));
+        let gone = cargo(&[TaskItem {
+            parent_id: item(9599),
+            ..chair.clone()
+        }]);
+        assert_eq!(task_cargo(&w, &gone, None, false).err(), Some("rez-incomplete"));
+        // copy through the active group only: dropObject asks to remove it
+        let group = item(9502);
+        w.groups.active = group;
+        let shared = TaskItem {
+            owner_id: group,
+            group_owned: true,
+            group_id: group,
+            owner_mask: rules::FULL,
+            group_mask: rules::COPY,
+            ..chair.clone()
+        };
+        let shared = rez(prepare_task(&w, &cargo(&[shared]), eye, (point, None), false, false, false).unwrap());
+        assert!(shared.remove);
     }
 
     #[test]
@@ -862,6 +1108,7 @@ mod tests {
                 voice_server: String::new(),
                 avatar_hover_height: false,
                 lsl_syntax_id: None,
+                lua_scripts: false,
                 materials_limits: Default::default(),
                 max_tasks: 0,
                 grid_status: Default::default(),
@@ -869,6 +1116,7 @@ mod tests {
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
                 max_link_children: None,
                 animated_object_max_tris: 0,
             },

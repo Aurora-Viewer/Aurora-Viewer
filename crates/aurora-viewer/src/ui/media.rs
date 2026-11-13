@@ -1,10 +1,11 @@
 //! Media controls of the focused media on a prim (LLPanelPrimMediaControls):
 //! back, forward, home, reload / stop, address bar, play / pause for
 //! videos, volume, mute and close. Shown under the top bar while a media
-//! face has the focus; navigation needs the face's control permission.
+//! face has the focus; the face's control permission, its Mini controls and
+//! the kind of media decide what shows ([`chrome`]).
 
 use super::icons::Icons;
-use crate::media::{MediaKey, MediaManager};
+use crate::media::{MediaKey, MediaManager, entry::MediaEntry};
 use crate::theme::Palette;
 use aurora_media::MediaStatus;
 use egui::{RichText, Vec2};
@@ -52,6 +53,47 @@ fn fmt_time(t: f64) -> String {
     }
 }
 
+/// What the controls of the focused media show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Chrome {
+    /// The bar itself.
+    pub bar: bool,
+    /// The address field.
+    pub address: bool,
+    /// Elapsed and total time of a video or sound.
+    pub time: bool,
+}
+
+/// LLPanelPrimMediaControls::updateShape (indra/newview/llpanelprimmediacontrols.cpp):
+/// - a prim face without MEDIA_PERM_CONTROL shows no bar at all;
+/// - Mini controls (`PRIM_MEDIA_CONTROLS_MINI`) keep the buttons but hide
+///   the address and the time slider (`!mini_controls`);
+/// - media with a time position (a video or sound file, the
+///   `pluginSupportsMediaTime` branch) never shows its address.
+///
+/// Parcel media has no permission nor Mini setting: only the last rule
+/// applies to it.
+pub(crate) fn chrome(prim: bool, may_control: bool, mini: bool, time_media: bool) -> Chrome {
+    let bar = !prim || may_control;
+    let full = bar && !(prim && mini);
+    Chrome {
+        bar,
+        address: full && !time_media,
+        time: full && time_media,
+    }
+}
+
+fn controls_id() -> egui::Id {
+    egui::Id::unique("media_controls")
+}
+
+/// Where the controls are while they show (the media filter's banner goes
+/// under them).
+pub fn controls_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+    let layer = egui::LayerId::new(egui::Order::Foreground, controls_id());
+    ctx.memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(controls_id())).flatten())
+}
+
 /// Draw the controls of the focused media (if any) at `top` (logical px).
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaManager, st: &mut MediaUi, top: f32) {
     let Some(key) = media.focus else {
@@ -68,10 +110,20 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
     let Some(m) = media.find_mut(&key) else {
         return;
     };
-    // LLPanelPrimMediaControls: navigation needs perms_control
-    let can_control = m.entry.as_ref().is_none_or(|e| e.perms_control != 0);
+    // LLPanelPrimMediaControls: without MEDIA_PERM_CONTROL the Legacy Viewer
+    // hides the whole chrome; clicks still reach the page.
+    let prim = matches!(key, MediaKey::Prim { .. });
+    let mini = prim && m.entry.as_ref().is_some_and(MediaEntry::mini_controls);
+    let shows = chrome(prim, m.may_control, mini, m.is_time_media());
+    if !shows.address {
+        st.url_edit = None;
+    }
+    if !shows.bar {
+        return;
+    }
+    let can_control = m.may_control;
     let mut close = false;
-    egui::Area::new(egui::Id::unique("media_controls"))
+    egui::Area::new(controls_id())
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, top + 6.0))
         .show(ctx, |ui| {
@@ -125,24 +177,25 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                     } else if button(ui, p, icons, "player-pause-filled", aurora_i18n::tr!("ui-media-pause"), true) {
                         m.pause();
                     }
-                    // address bar
-                    let shown = if m.location.is_empty() { m.url.clone() } else { m.location.clone() };
-                    let mut text = st.url_edit.clone().unwrap_or(shown);
-                    let edit = egui::TextEdit::singleline(&mut text)
-                        .desired_width(360.0)
-                        .font(egui::FontId::proportional(12.5))
-                        .interactive(can_control);
-                    let resp = ui.add(edit);
-                    if resp.changed() {
-                        st.url_edit = Some(text.clone());
-                    }
-                    if resp.lost_focus() {
-                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
-                            m.navigate_user(&text);
+                    if shows.address {
+                        let shown = if m.location.is_empty() { m.url.clone() } else { m.location.clone() };
+                        let mut text = st.url_edit.clone().unwrap_or(shown);
+                        let edit = egui::TextEdit::singleline(&mut text)
+                            .desired_width(360.0)
+                            .font(egui::FontId::proportional(12.5))
+                            .interactive(can_control);
+                        let resp = ui.add(edit);
+                        if resp.changed() {
+                            st.url_edit = Some(text.clone());
                         }
-                        st.url_edit = None;
+                        if resp.lost_focus() {
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
+                                m.navigate_user(&text);
+                            }
+                            st.url_edit = None;
+                        }
                     }
-                    if time_media && m.duration > 0.0 {
+                    if shows.time && m.duration > 0.0 {
                         ui.label(
                             RichText::new(format!("{} / {}", fmt_time(m.current_time), fmt_time(m.duration)))
                                 .size(11.5)
@@ -198,5 +251,36 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
         });
     if close {
         media.unfocus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chrome;
+
+    /// LLPanelPrimMediaControls::updateShape.
+    #[test]
+    fn chrome_hides_the_address_for_mini_controls_and_time_media() {
+        let none = chrome(true, false, false, false);
+        assert!(!none.bar && !none.address && !none.time, "a prim without control shows nothing");
+
+        let page = chrome(true, true, false, false);
+        assert!(page.bar && page.address && !page.time, "a prim web page shows its address");
+
+        let mini = chrome(true, true, true, false);
+        assert!(mini.bar && !mini.address && !mini.time, "Mini keeps the buttons only");
+        let mini_time = chrome(true, true, true, true);
+        assert!(mini_time.bar && !mini_time.address && !mini_time.time, "Mini also hides the time");
+
+        let video = chrome(true, true, false, true);
+        assert!(video.bar && !video.address && video.time, "a video shows the time and no address");
+
+        let parcel = chrome(false, false, false, false);
+        assert!(parcel.bar && parcel.address && !parcel.time, "a parcel web page shows its address");
+        let parcel_time = chrome(false, false, true, true);
+        assert!(
+            parcel_time.bar && !parcel_time.address && parcel_time.time,
+            "parcel time media hides the address; Mini does not apply"
+        );
     }
 }

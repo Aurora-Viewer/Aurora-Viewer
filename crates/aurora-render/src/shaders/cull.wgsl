@@ -44,6 +44,7 @@ const COUNT_TRIANGLES: u32 = 32u;
 const COUNT_HIDDEN: u32 = 33u;
 const COUNT_PRE1: u32 = 34u;
 const COUNT_PRE2: u32 = 38u;
+const COUNT_CLAMPED: u32 = 51u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
 const COUNT_SHADOW: u32 = 42u;
@@ -73,7 +74,9 @@ const OBJ_HUD: u32 = 8u;
 const OBJ_NO_PROBE: u32 = 16u;
 const OBJ_POSED: u32 = 32u;
 const OBJ_FIRST_PERSON_HIDDEN: u32 = 64u;
-const OBJ_PHOTO_HIDDEN: u32 = 128u;
+const OBJ_HIDDEN: u32 = 128u;
+// physical (moves on its own): not in the rain's shelter map
+const OBJ_PHYSICAL: u32 = 256u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
@@ -106,6 +109,9 @@ const F_WATER_AIR: u32 = 1024u;
 const F_BLEND_CASTS: u32 = 2048u;
 const F_FIRST_PERSON: u32 = 4096u;
 const F_SHOW_SELF: u32 = 8192u;
+// projector map groups.w is the rain's shelter map: what moves is left out
+// of it
+const F_SPOT_SHELTER: u32 = 16384u;
 
 struct CullFace {
     index_count: u32,
@@ -176,7 +182,8 @@ struct CullFrame {
     dist: vec4<f32>,
     // x faces, y objects, z slots per bin, w flags
     sizes: vec4<u32>,
-    // x classify workgroups
+    // x classify workgroups, y first-person avatar + 1, z index buffer length,
+    // w the projector map of the rain's shelter (F_SPOT_SHELTER)
     groups: vec4<u32>,
 }
 
@@ -337,6 +344,14 @@ var<workgroup> wg_bins: array<atomic<u32>, BINS>;
 var<workgroup> wg_stats: array<atomic<u32>, 2>;
 var<workgroup> wg_shadow: array<atomic<u32>, SHADOW_STATS>;
 
+// The face's index range fits in the index buffer (frame.groups.z). A face
+// past it is drawn with no index (write_args), counted once per frame in
+// COUNT_CLAMPED (cs_classify) and left out of the triangle statistics.
+fn index_range_fits(f: CullFace) -> bool {
+    let index_limit = frame.groups.z;
+    return f.first_index <= index_limit && f.index_count <= index_limit - f.first_index;
+}
+
 // Bins of face `i` this frame (0: not drawn anywhere).
 fn face_mask(i: u32) -> u32 {
     let f = faces[i];
@@ -345,7 +360,7 @@ fn face_mask(i: u32) -> u32 {
         return 0u;
     }
     let o = objects[f.object];
-    if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & (OBJ_HUD | OBJ_PHOTO_HIDDEN)) != 0u) {
+    if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & (OBJ_HUD | OBJ_HIDDEN)) != 0u) {
         return 0u;
     }
     let is_avatar = (o.flags & OBJ_AVATAR) != 0u;
@@ -376,7 +391,12 @@ fn face_mask(i: u32) -> u32 {
     // a capture measures from its probe, not from the camera
     let captured = (fl & F_REFLECTIONS) != 0u && (fl & F_PROBE) != 0u && (o.flags & OBJ_NO_PROBE) == 0u
         && length(c - frame.probe_eye.xyz) - r < frame.probe_eye.w && sphere_in(frame.probe, c, r);
-    if (!viewed && !shadow_reach && !reflect_reach && !captured) {
+    // the rain's shelter map takes all of its square, however far the
+    // shadows reach (a roof beyond them would leave the floor under it
+    // open to the rain, cut at the seams between a building's meshes)
+    let shelter_map = min(frame.groups.w, 15u);
+    let shelters = (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << shelter_map)) != 0u && spot_in(shelter_map, c, r);
+    if (!viewed && !shadow_reach && !reflect_reach && !captured && !shelters) {
         return 0u;
     }
     // tiny objects far away (small object culling)
@@ -399,6 +419,7 @@ fn face_mask(i: u32) -> u32 {
         return select(0u, 1u << BIN_WATER_EXCLUSION, allowed);
     }
     var m = 0u;
+    let tris = select(0u, f.index_count / 3u, index_range_fits(f));
     // LLPipeline::renderShadow: blended faces cast too, rigged or not
     // (renderAlphaObjects), with fs_shadow's alpha rules
     let rigged = (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u;
@@ -412,10 +433,10 @@ fn face_mask(i: u32) -> u32 {
             if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r) && !(depth_only && merged_from_finer(k, c, r))) {
                 m |= 1u << (bin + k);
                 if ((fl & F_SHADOW_STATS) != 0u) {
-                    atomicAdd(&wg_shadow[k], f.index_count / 3u);
+                    atomicAdd(&wg_shadow[k], tris);
                     if (rigged) {
                         atomicAdd(&wg_shadow[3u + k], 1u);
-                        atomicAdd(&wg_shadow[6u + k], f.index_count / 3u);
+                        atomicAdd(&wg_shadow[6u + k], tris);
                     }
                 }
             }
@@ -429,9 +450,19 @@ fn face_mask(i: u32) -> u32 {
         m |= 1u << BIN_PROBE_SHADOW;
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
-    if (caster) {
+    // (the shelter map takes blended faces too: a glass roof keeps the rain
+    // off as well as a tiled one)
+    if (caster || shelters) {
+        // the rain's shelter map (projector map groups.w): what stands still
+        // overhead only (an avatar, a rigged mesh, a rolling ball leave no
+        // dry patch)
+        // (an attachment too, rigged or not: horns, hair, a hat; the snow
+        // would settle on it at once, as deep as on the ground)
+        let moves = (o.flags & (OBJ_AVATAR | OBJ_RIGGED | OBJ_PHYSICAL)) != 0u || o.avatar < n;
         for (var k = 0u; k < 16u; k++) {
-            if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r)) {
+            let shelter = k == shelter_map && (fl & F_SPOT_SHELTER) != 0u;
+            let takes = caster || shelter;
+            if (takes && (fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
                 m |= 1u << (BIN_SPOT + k);
             }
         }
@@ -451,7 +482,7 @@ fn face_mask(i: u32) -> u32 {
     }
     if (in_view && solid) {
         m |= 1u << (fp - PASS_OPAQUE);
-        atomicAdd(&wg_stats[1], f.index_count / 3u);
+        atomicAdd(&wg_stats[1], tris);
     }
     return m;
 }
@@ -477,6 +508,9 @@ fn cs_classify(
     if (i < frame.sizes.x) {
         m = face_mask(i);
         masks[i] = m;
+        if (m != 0u && !index_range_fits(faces[i])) {
+            atomicAdd(&counts[COUNT_CLAMPED], 1u);
+        }
     }
     for (var b = 0u; b < BINS; b++) {
         if (((m >> b) & 1u) != 0u) {
@@ -557,9 +591,15 @@ fn pack_bins(m: u32) -> BinPack {
 
 fn write_args(slot: u32, f: CullFace, rec: u32, instances: u32) {
     let a = slot * 5u;
-    args[a] = f.index_count;
+    var first_index = f.first_index;
+    var index_count = f.index_count;
+    if (!index_range_fits(f)) {
+        first_index = min(first_index, frame.groups.z);
+        index_count = 0u;
+    }
+    args[a] = index_count;
     args[a + 1u] = instances;
-    args[a + 2u] = f.first_index;
+    args[a + 2u] = first_index;
     args[a + 3u] = bitcast<u32>(f.base_vertex);
     args[a + 4u] = rec;
 }

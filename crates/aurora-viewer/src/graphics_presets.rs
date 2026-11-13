@@ -36,6 +36,12 @@
 //! (`saved.rs`) does restore the Glow it was saved with, as the Legacy
 //! Viewer's graphics presets do (RenderGlow is in
 //! app_settings/graphic_preset_controls.xml).
+//!
+//! A Mac has a sixth set of values (`mac_mid_high`), the Legacy Viewer's Mac
+//! "MidHigh" table: not a level of the row (it does not rise from Medium in
+//! every setting), but a new Mac profile's default where other systems start
+//! on Medium, and the one-time move of a Mac profile still exactly on that
+//! former default.
 
 use crate::settings::{MAX_TEXTURE_RESOLUTION, Settings};
 
@@ -108,6 +114,8 @@ impl Preset {
                 avatar_physics_detail: 0.0,
                 hdr_emissive: false,
                 max_texture_resolution: 512,
+                // RenderLocalLightCount 8
+                local_light_count: 8,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
@@ -137,6 +145,7 @@ impl Preset {
                 avatar_physics_detail: 0.75,
                 hdr_emissive: false,
                 max_texture_resolution: 1024,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -167,6 +176,7 @@ impl Preset {
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -199,6 +209,7 @@ impl Preset {
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::HIGH,
             },
             // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
@@ -237,6 +248,7 @@ impl Preset {
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::DELUXE,
             },
         }
@@ -287,12 +299,104 @@ impl Preset {
         }
         .write(s);
         s.graphics_saved_active = None;
+        // the weather's quality follows the level, but is not one of its
+        // values: choosing it in the Weather section keeps the level shown
+        s.weather.quality = self.weather_quality();
+    }
+
+    /// The Weather quality a level sets.
+    pub fn weather_quality(self) -> crate::weather::WeatherQuality {
+        use crate::weather::WeatherQuality;
+        match self {
+            Preset::Potato | Preset::Low => WeatherQuality::Low,
+            Preset::Medium => WeatherQuality::Medium,
+            Preset::High | Preset::Deluxe => WeatherQuality::High,
+        }
     }
 
     /// The level whose settings are exactly those of `s`, if any.
     pub fn matching(s: &Settings) -> Option<Preset> {
         let current = Values::read(s).as_shown();
         Preset::ALL.into_iter().find(|p| p.values().as_shown() == current)
+    }
+}
+
+/// The Legacy Viewer's Mac "MidHigh" default: indra/newview/featuretable_mac.txt,
+/// the list of GPU class 3, at which `LLFeatureManager::loadGPUClass`
+/// (indra/newview/llfeaturemanager.cpp) caps Apple GPUs ("high throughput,
+/// low capability"). Applied on macOS only, but built and tested on every
+/// system.
+pub(crate) mod mac_mid_high {
+    use super::{Preset, Settings, Values};
+
+    /// The values of a new Mac profile: the Mac "MidHigh" list mapped onto
+    /// Aurora's Medium level. It keeps the moderate distance, LOD and
+    /// particle budget, turns the ambient occlusion off (RenderDeferredSSAO
+    /// 0), uses FXAA, manual probes and no screen-space effects; the avatar
+    /// budget (RenderAvatarMaxNonImpostors 9), complexity (250 000), probe
+    /// count (64) and anisotropy (2) follow the Mac table. Specular AA, an
+    /// Aurora improvement with no measurable cost, stays as the user has it.
+    pub(crate) fn values() -> Values {
+        Values {
+            max_avatars: 9,
+            max_complexity: 250_000,
+            ssao: 0,
+            ao_method: 0,
+            gtao_quality: 2,
+            probe_count: 64,
+            anisotropy: 2,
+            ..Preset::Medium.values()
+        }
+    }
+
+    /// Writes the Mac default (a new Mac profile's level, and the one-time
+    /// move of a Mac profile still exactly on the former Medium default).
+    pub(crate) fn apply(s: &mut Settings) {
+        values().write(s);
+        s.graphics_saved_active = None;
+    }
+
+    /// Whether the profile is exactly the Mac default.
+    pub(crate) fn matches(s: &Settings) -> bool {
+        Values::read(s).as_shown() == values().as_shown()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::graphics_presets::Effects;
+
+        #[test]
+        fn the_mac_default_is_the_legacy_mac_mid_high_table() {
+            let v = values();
+            assert_eq!(v.draw_distance, 128.0);
+            assert_eq!(v.lod_factor, 2.0);
+            assert_eq!(v.max_avatars, 9);
+            assert_eq!(v.max_complexity, 250_000);
+            assert_eq!(v.max_particles, 4096);
+            assert_eq!((v.shadow_quality, v.ssao), (0, 0));
+            assert!(!v.projector_shadows);
+            assert_eq!((v.water_reflections, v.mirrors, v.ssr), (0, 0, false));
+            assert_eq!((v.reflection_probes, v.probe_count), (1, 64));
+            assert_eq!((v.antialiasing, v.anisotropy), (1, 2));
+            assert_eq!(v.sharpen, 0.0);
+            assert!(v.glow && v.hdr_emissive);
+            assert_eq!(v.effects, Effects::OFF);
+        }
+
+        #[test]
+        fn the_mac_default_is_recognized_and_is_not_a_level() {
+            let mut s = Settings::default();
+            apply(&mut s);
+            assert!(matches(&s));
+            assert_eq!(Preset::matching(&s), None, "it is the Mac default, not a row level");
+            Preset::Medium.apply(&mut s);
+            assert!(!matches(&s));
+            // a single setting moved by hand is Custom again
+            apply(&mut s);
+            s.draw_distance = 200.0;
+            assert!(!matches(&s));
+        }
     }
 }
 
@@ -440,6 +544,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -461,6 +566,7 @@ pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -480,6 +586,7 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
         let current = Values {
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -498,12 +605,28 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
         let level = preset.values();
         let current = Values {
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
             s.tree_lod_factor = level.tree_lod_factor;
             return;
         }
+    }
+}
+
+/// Settings files written before the levels set the nearby lights (version
+/// 38), all with every light: a profile exactly on Potato apart from it
+/// takes its 8 (the Legacy Viewer's Low); any other keeps them all. (The
+/// earlier upgrades leave the lights aside too: files of then hold none.)
+pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
+    let level = Preset::Potato.values();
+    let current = Values {
+        local_light_count: level.local_light_count,
+        ..Values::read(s)
+    };
+    if current.as_shown() == level.as_shown() {
+        s.local_light_count = level.local_light_count;
     }
 }
 
@@ -585,7 +708,19 @@ pub struct Values {
     /// default then).
     #[serde(default = "max_texture_resolution")]
     pub max_texture_resolution: u32,
+    /// RenderLocalLightCount: 8 in Low, all the lights the renderer holds
+    /// above (the Legacy Viewer's 256 to 8192 are more than its 64; a backup
+    /// or a saved preset written before it holds none: all, the default).
+    #[serde(default = "all_lights")]
+    pub local_light_count: u32,
     pub effects: Effects,
+}
+
+/// Every local light the renderer holds: the levels above Potato.
+const ALL_LIGHTS: u32 = crate::scene::lights::MAX_LIGHTS as u32;
+
+fn all_lights() -> u32 {
+    ALL_LIGHTS
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -682,6 +817,7 @@ impl Values {
             avatar_physics_detail: s.avatar_physics_detail,
             hdr_emissive: s.hdr_emissive,
             max_texture_resolution: s.max_texture_resolution,
+            local_light_count: s.local_light_count,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
@@ -721,6 +857,8 @@ impl Values {
         s.hdr_emissive = self.hdr_emissive;
         // (a saved profile edited by hand: the nearest choice of the combo)
         s.max_texture_resolution = crate::settings::max_texture_resolution_choice(self.max_texture_resolution);
+        // (a saved profile edited by hand: no more than the renderer holds)
+        s.local_light_count = self.local_light_count.min(ALL_LIGHTS);
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -749,6 +887,20 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn levels_set_the_weather_quality_and_choosing_it_keeps_the_level() {
+        use crate::weather::WeatherQuality;
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Low);
+        s.weather.quality = WeatherQuality::High;
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        Preset::Medium.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::Medium);
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!(s.weather.quality, WeatherQuality::High);
+    }
 
     #[test]
     fn each_level_matches_itself_after_applying() {
@@ -971,7 +1123,72 @@ mod tests {
             assert!(a.anisotropy <= b.anisotropy);
             assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
             assert!(a.max_texture_resolution <= b.max_texture_resolution);
+            assert!(a.local_light_count <= b.local_light_count);
         }
+    }
+
+    /// RenderLocalLightCount 8 in the Legacy Viewer's Low (featuretable.txt);
+    /// 256 to 8192 above, more than the 64 the renderer holds: all of them.
+    #[test]
+    fn potato_draws_eight_nearby_lights_like_the_legacy_viewer_low() {
+        let lights = |p: Preset| p.values().local_light_count;
+        assert_eq!(lights(Preset::Potato), 8);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(lights(p), ALL_LIGHTS, "{p:?}");
+        }
+        assert_eq!(Settings::default().local_light_count, ALL_LIGHTS);
+        // changed by hand: custom
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.local_light_count = 20;
+        assert_eq!(Preset::matching(&s), None);
+        // a file of version 37 exactly on Potato (all the lights then)
+        // takes its 8; one from before version 24 too, through the earlier
+        // upgrades, which leave the lights aside
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, 8);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.max_texture_resolution = 2048;
+        s.hdr_emissive = true;
+        s.avatar_physics_detail = 1.0;
+        s.tree_lod_factor = 0.5;
+        upgrade_physics_detail(&mut s);
+        upgrade_hdr_emissive(&mut s);
+        upgrade_max_texture_resolution(&mut s);
+        upgrade_tree_detail(&mut s);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        // a custom profile and the other levels keep every light
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.draw_distance = 300.0;
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            p.apply(&mut s);
+            upgrade_local_light_count(&mut s);
+            assert_eq!(s.local_light_count, ALL_LIGHTS, "{p:?}");
+            assert_eq!(Preset::matching(&s), Some(p));
+        }
+        // a safe graphics backup or a saved preset written before it holds
+        // none: every light
+        let mut json = serde_json::to_value(Preset::Potato.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("local_light_count");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert_eq!(read.local_light_count, ALL_LIGHTS);
+        // a saved profile edited by hand: no more than the renderer holds
+        let mut odd = Preset::Medium.values();
+        odd.local_light_count = 256;
+        odd.write(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
     }
 
     #[test]

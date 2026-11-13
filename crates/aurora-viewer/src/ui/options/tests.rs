@@ -147,6 +147,8 @@ const BEFORE: &[&str] = &[
     "confirm_payments",
     "payment_confirm_threshold",
     "name_tag_distance",
+    "contact_markers",
+    "contact_marker_anchor",
     "show_own_name_tag",
     "show_friend_name_tags",
     "show_other_name_tags",
@@ -163,6 +165,7 @@ const BEFORE: &[&str] = &[
     "tag_complexity_own",
     "hover_tips.enabled",
     "hover_tips.form",
+    "hover_tips.avatars",
     "hover_tips.all_objects",
     "hover_tips.land",
     "hover_tips.group_titles",
@@ -175,6 +178,7 @@ const BEFORE: &[&str] = &[
     "inventory.recent_hours",
     "inventory.show_worn",
     "inventory.show_favorites",
+    "inventory.favorites_show_parent_folders",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
@@ -183,6 +187,7 @@ const BEFORE: &[&str] = &[
     "inventory.double_click_add_clothes",
     "inventory.warn_task_move",
     "inventory.warn_scripted_task_move",
+    "inventory.confirm_delete",
     // Fonts
     "font",
     "font_scale",
@@ -190,6 +195,7 @@ const BEFORE: &[&str] = &[
     "chat_timestamps_nearby",
     "chat_timestamps_im",
     "show_chat_channel",
+    "show_recent_emojis",
     "compact_automated_chat",
     "compact_im_system_lines",
     "chat_keep_focus",
@@ -204,6 +210,16 @@ const BEFORE: &[&str] = &[
     "chat_bubbles_hide_console",
     "typing_bubbles",
     "chat_bubble_opacity",
+    "window_opacity_active",
+    "window_opacity_inactive",
+    "conversations_opacity",
+    "conversations_active_opacity_override",
+    "bar_opacity",
+    "menu_opacity",
+    "console_opacity",
+    "minimap_opacity",
+    "pie_opacity_override",
+    "pie_opacity",
     "toast_friends_online",
     "friends_online_in_chat",
     "presence_position",
@@ -232,6 +248,7 @@ const BEFORE: &[&str] = &[
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
+    "log_legacy_layout",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",
@@ -264,6 +281,8 @@ const BEFORE: &[&str] = &[
     "no_neighbour_regions",
     "cache_size_mb",
     "cache_location",
+    "browser_behavior",
+    "browser_home_page",
     "audio",
     "media",
     "keybinds",
@@ -299,6 +318,7 @@ const BEFORE: &[&str] = &[
     "classic_search",
     "classic_region_estate",
     "classic_places",
+    "destinations_style",
     "classic_inventory",
     "classic_pay_window",
     "legacy_money_tracker",
@@ -389,8 +409,9 @@ fn a_setting_has_one_page() {
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
         // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer
-        if path == "keybinds" || path == "colored_sky_ambient" {
+        // differences from the Legacy Viewer;
+        // inventory delete confirm: Confirmations and Inventory (#2344)
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
         let elsewhere: Vec<_> = paths
@@ -399,6 +420,29 @@ fn a_setting_has_one_page() {
             .collect();
         assert!(elsewhere.is_empty(), "`{path}` of {page:?} is also on {elsewhere:?}");
     }
+}
+
+#[test]
+fn camera_and_vr_page_resets_are_independent() {
+    let mut s = Settings::default();
+    s.camera.vr.mouse_look = true;
+    s.camera.vr.resolution = Some([2560, 2560]);
+    s.camera.vr.gamma = 1.5;
+    s.camera.vr.vibrancy = 0.7;
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Camera, &mut s);
+    assert!(s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, Some([2560, 2560]));
+    assert_eq!(s.camera.vr.gamma, 1.5);
+    assert_eq!(s.camera.vr.vibrancy, 0.7);
+    assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
+    s.camera.smoothing = 8.0;
+    reset_page_settings(Page::Vr, &mut s);
+    assert!(!s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, None);
+    assert_eq!(s.camera.vr.gamma, 1.0);
+    assert_eq!(s.camera.vr.vibrancy, 1.0);
+    assert_eq!(s.camera.smoothing, 8.0);
 }
 
 #[test]
@@ -470,11 +514,30 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn gamepad_and_joystick_preferences_reset_independently() {
+    let mut settings = Settings::default();
+    settings.joystick.enabled = true;
+    settings.joystick.device = "raw-device".into();
+    settings.joystick.avatar.gain[5] = 0.35;
+    settings.gamepad.enabled = true;
+    settings.gamepad.device = "pad-device".into();
+    settings.gamepad.avatar.gain[5] = 7.0;
+    let raw = settings.joystick.clone();
+    let pad = settings.gamepad.clone();
+    reset_page_settings(Page::Controls, &mut settings);
+    assert_eq!(settings.gamepad, pad);
+    settings.joystick = raw.clone();
+    reset_page_settings(Page::Gamepad, &mut settings);
+    assert_eq!(settings.joystick, raw);
+    assert_eq!(settings.gamepad, Settings::default().gamepad);
+}
+
+#[test]
 fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
     let mut s = Settings::default();
     s.joystick.enabled = true;
     s.joystick.device = "test-device".into();
-    s.joystick.gamepad();
+    s.joystick.raw_gamepad_preset();
     s.joystick.flycam.gain[3] = 0.7;
     s.joystick.avatar.dead_zone[0] = 0.4;
     s.joystick.auto_level = false;
@@ -752,6 +815,35 @@ fn group_titles_are_chosen_in_one_dropdown_and_reset_together() {
 }
 
 #[test]
+fn browser_behavior_radio_writes_the_selected_setting() {
+    use crate::settings::BrowserBehavior;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    assert_eq!(s.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+    let choices = [
+        (BrowserBehavior::SystemForAll, aurora_i18n::tr!("ui-options-browser-system-all")),
+        (
+            BrowserBehavior::BuiltInForSecondLife,
+            aurora_i18n::tr!("ui-options-browser-second-life"),
+        ),
+        (BrowserBehavior::BuiltInForAll, aurora_i18n::tr!("ui-options-browser-internal-all")),
+    ];
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, Vec::new());
+    }
+    for (behavior, label) in choices {
+        let at = texts.iter().find(|t| t.source == label).expect("browser choice").rect.center();
+        for events in click(at) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, events);
+        }
+        assert_eq!(s.browser_behavior, behavior);
+        assert!(r.changed);
+    }
+}
+
+#[test]
 fn keyboard_scale_survives_an_unrelated_preference_change_and_reload() {
     for key in [egui::Key::Plus, egui::Key::Minus] {
         let mut frames = Frames::new();
@@ -809,6 +901,9 @@ fn preference_shapes(
 ) -> Vec<egui::Shape> {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
+    // the Spelling tab's status line must not follow the checker that
+    // other tests load at the same time
+    crate::spelling::tests::pin_status(crate::spelling::Status::Ready);
     frames.shapes(events, |ui| {
         ui.set_width(view.2);
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -1417,6 +1512,55 @@ fn preferences_keep_their_height_when_text_size_changes() {
 }
 
 #[test]
+fn system_font_popup_width_stays_fixed_across_ui_scales() {
+    let theme = crate::theme::Theme::default();
+    let mut widths = Vec::new();
+    for font_scale in [1.0, 1.25, 1.5] {
+        for pixels_per_point in [1.0, 1.25, 1.5] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let p = theme.palette();
+            theme.apply(&ctx, font_scale);
+            ctx.set_pixels_per_point(pixels_per_point);
+            let mut settings = Settings::default();
+            let mut state = OptionsUi {
+                page: Page::Appearance,
+                demo_font_list: Some(false),
+                system_fonts: Some(
+                    (0..40)
+                        .map(|n| crate::ui::fonts::SystemFont {
+                            name: format!("System font {n:02} with a very long sample name"),
+                            path: std::path::PathBuf::from(format!("/font/{n}")),
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            };
+            let mut open = true;
+            for _ in 0..120 {
+                frames.run(Vec::new(), |ui| {
+                    show(ui.ctx(), &p, &Icons::default(), &mut settings, &mut state, &mut open);
+                });
+                let id = ctx.data(|data| data.get_temp::<egui::Id>(egui::Id::unique("font-list-popup-test-id")));
+                let popup = ctx.memory(|m| id.and_then(|id| m.area_rect(id))).expect("font popup area");
+                widths.push((font_scale, pixels_per_point, popup.width()));
+            }
+        }
+    }
+    for group in widths.as_chunks::<120>().0 {
+        let first = group[2].2;
+        assert!(
+            group[3..].iter().all(|(_, _, width)| (width - first).abs() < 0.5),
+            "popup grew at font scale {:?}, pixels per point {:?}: {:?} -> {:?}",
+            group[0].0,
+            group[0].1,
+            group[2].2,
+            group[119].2
+        );
+    }
+}
+
+#[test]
 fn the_content_ratings_follow_the_account() {
     use aurora_net::search::{AgentAccess, SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
     let ratings = |max| {
@@ -1664,6 +1808,159 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
+}
+
+/// Confirmations lists every "don't ask / don't show again" answer, as the
+/// Legacy Viewer's Alerts tab: the questions of other pages (their own
+/// rows, counted on their page) and the warnings with no page of their
+/// own, which come back from there.
+#[test]
+fn the_confirmations_page_lists_every_question_and_warning() {
+    use aurora_i18n::tr;
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    s.gpu_driver_dismissed = "32.0.15.6094".into();
+    s.debug_settings_warning_ignored = true;
+    s.fly_override_warned = true;
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, Vec::new());
+    }
+    let shows = |key: &str| texts.iter().any(|t| t.source == key);
+    for key in [
+        tr!("task-transfer-warn-move"),
+        tr!("task-transfer-warn-scripted"),
+        tr!("ui-options-confirm-no-transfer-settings"),
+        tr!("ui-options-warn-before-external-links"),
+        tr!("ui-options-group-snooze-ask"),
+        tr!("ui-options-confirm-hide-interface"),
+        tr!("poser-confirm-close"),
+        tr!("ui-options-debug-settings-warning"),
+        tr!("ui-options-fly-override-caution"),
+        tr!("ui-options-driver-warning"),
+        tr!("ui-options-skipped-update"),
+        "32.0.15.6094",
+    ] {
+        assert!(shows(key), "{key} on Confirmations");
+    }
+
+    // the dismissals count as changes of this page, the borrowed rows on theirs
+    s.warn_external_links = false;
+    let c = counts(&mut s, "");
+    assert_eq!(c.modified(Page::Confirmations), 3);
+    assert_eq!(c.modified(Page::Protections), 1);
+    let found = counts(&mut s, &cx::fold(tr!("ui-options-warn-before-external-links")));
+    assert_eq!(found.hits(Page::Confirmations), 0);
+
+    // "Show again" (the nearest to its row's label) brings the driver
+    // warning back
+    let label = |texts: &[crate::ui::widgets::elide_tests::Text], key: &str| {
+        texts
+            .iter()
+            .find(|t| t.source == key)
+            .unwrap_or_else(|| panic!("the row {key}"))
+            .rect
+    };
+    let driver = label(&texts, tr!("ui-options-driver-warning"));
+    let again = texts
+        .iter()
+        .filter(|t| t.source == tr!("ui-options-show-again"))
+        .min_by(|a, b| {
+            a.rect
+                .center()
+                .distance(driver.center())
+                .total_cmp(&b.rect.center().distance(driver.center()))
+        })
+        .expect("a Show again button")
+        .rect;
+    assert!(again.bottom() < 900.0, "the button is on the test screen");
+    for events in click(again.center()) {
+        page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, events);
+    }
+    assert!(s.gpu_driver_dismissed.is_empty());
+    assert!(r.changed);
+    texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Confirmations, 0, Vec::new());
+    assert!(!texts.iter().any(|t| t.source == "32.0.15.6094"));
+
+    // the page's reset brings back its own warnings, not the borrowed rows
+    reset_page_settings(Page::Confirmations, &mut s);
+    assert!(!s.debug_settings_warning_ignored && !s.fly_override_warned);
+    assert!(!s.warn_external_links, "the link warning is reset with Protections");
+}
+
+#[test]
+fn the_weather_lives_in_graphics_only() {
+    // (and in the Aurora Weather window; Preferences › Aurora, the choices
+    // between Aurora's look and the Legacy Viewer's, has none of it)
+    let paths = collected();
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
+    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
+}
+
+#[test]
+fn show_friends_only_switches_from_controls_once_logged_in() {
+    // the rows of a search for the row's own label on Controls, in the
+    // interface's language (the tests may run in French): the shapes painted
+    fn frame(frames: &mut Frames, st: &mut OptionsUi, r: &mut OptionsResult, events: Vec<egui::Event>) -> Vec<egui::Shape> {
+        let p = crate::theme::Theme::default().palette();
+        let (mut s, d) = (Settings::default(), Settings::default());
+        let query = aurora_i18n::tr!("toolbar-command-friends-only");
+        frames.shapes(events, |ui| {
+            ui.set_width(700.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut cx = Cx::new(ui, p, &mut s, &d, st, r, Mode::Search, query);
+            run_page(&mut cx, Page::Controls, Some(0));
+        })
+    }
+    // the switch at the right of the row's label
+    fn switch(shapes: &[egui::Shape]) -> egui::Pos2 {
+        let label = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("toolbar-command-friends-only") => {
+                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                }
+                _ => None,
+            })
+            .expect("the row of Show Friends Only");
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Rect(r)
+                    if r.rect.size() == crate::ui::widgets::SWITCH_SIZE
+                        && r.rect.left() > label.right()
+                        && (r.rect.center().y - label.center().y).abs() < 2.0 =>
+                {
+                    Some(r.rect)
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .expect("its switch")
+            .center()
+    }
+    // logged in it flips the world's state; logged out it is greyed
+    for (state, asked) in [(Some(false), Some(true)), (Some(true), Some(false)), (None, None)] {
+        let mut frames = Frames::new();
+        let mut st = OptionsUi {
+            friends_only: state,
+            friends_only_keep: state.map(|_| false),
+            ..Default::default()
+        };
+        let mut r = OptionsResult::default();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(&mut frames, &mut st, &mut r, Vec::new());
+        }
+        for events in click(switch(&shapes)) {
+            frame(&mut frames, &mut st, &mut r, events);
+        }
+        assert_eq!(r.friends_only, asked, "logged in: {}", state.is_some());
+        assert_eq!(r.friends_only_keep, None, "the keep row is left alone");
+    }
 }
 
 /// #2136: the System fonts search filters the list, the list grows back when
