@@ -8,6 +8,7 @@ use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
 use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
+use crate::world::beams::Style as BeamStyle;
 use crate::world::lookat::{Aim, Style};
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Vec2};
@@ -29,6 +30,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
+    s.beams.style = if aurora { BeamStyle::Aurora } else { BeamStyle::Legacy };
     if !aurora {
         s.lookat.aim = Aim::Direction;
     }
@@ -369,6 +371,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &[
                         (Style::Aurora, tr!("ui-options-aurora-halo"), true),
                         (Style::Legacy, tr!("ui-options-aurora-crosshair"), false),
+                    ],
+                );
+                cx.wide().choice(
+                    tr!("ui-options-aurora-beams"),
+                    tr!("ui-options-aurora-beams-help"),
+                    &field!(beams.style),
+                    &[
+                        (BeamStyle::Aurora, tr!("ui-options-aurora-beams-thread"), true),
+                        (BeamStyle::Legacy, tr!("ui-options-aurora-beams-particles"), false),
                     ],
                 );
                 look(

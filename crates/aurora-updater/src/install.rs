@@ -81,10 +81,18 @@ pub(crate) fn plain_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The installation sits directly at the root of a drive (`E:\Aurora
+/// Viewer`, `/aurora`): its parent has no parent, which `validate_install`
+/// refuses, so the update's folder, backup and lock are never written at a
+/// drive's root.
+pub fn at_drive_root(install: &Path) -> bool {
+    install.parent().is_some_and(|p| p.parent().is_none())
+}
+
 fn validate_install(install: &Path) -> Result<()> {
     ensure!(
         install.is_absolute() && install.parent().is_some_and(|p| p.parent().is_some()),
-        "unsafe installation root"
+        "unsafe installation root: a drive root or a folder directly at a drive root"
     );
     plain_dir(install)?;
     // Never rename a repository, build tree, or a directory with user files.
@@ -124,8 +132,9 @@ pub(crate) fn validate_tree(path: &Path) -> Result<()> {
 }
 
 impl Workspace {
-    pub fn supported_install(install: &Path) -> bool {
-        validate_install(install).is_ok()
+    /// Whether the viewer may update itself in place, and why not.
+    pub fn check_install(install: &Path) -> Result<()> {
+        validate_install(install)
     }
     pub fn new(install: &Path) -> Result<Self> {
         validate_install(install)?;
@@ -496,5 +505,28 @@ impl Parent {
     }
     fn wait(&self) -> Result<()> {
         anyhow::bail!("automatic installation is Windows-only")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_directly_at_a_drive_root_is_told_apart() {
+        assert!(at_drive_root(Path::new("/Aurora Viewer")));
+        assert!(!at_drive_root(Path::new("/games/Aurora Viewer")));
+        assert!(!at_drive_root(Path::new("/")));
+        #[cfg(windows)]
+        {
+            assert!(at_drive_root(Path::new(r"E:\Aurora Viewer")));
+            assert!(!at_drive_root(Path::new(r"E:\Games\Aurora Viewer")));
+        }
+    }
+
+    #[test]
+    fn a_folder_at_a_drive_root_is_refused_with_that_reason() {
+        let error = validate_install(Path::new("/Aurora Viewer")).expect_err("refused");
+        assert!(error.to_string().contains("drive root"), "{error:#}");
     }
 }
