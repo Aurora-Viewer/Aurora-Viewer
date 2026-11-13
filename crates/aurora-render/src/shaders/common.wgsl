@@ -110,7 +110,7 @@ struct Frame {
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
-    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: FEATURE_FACE_SELECT_SLOT
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
     // the last frame's for the same positions, and this frame's clip space
@@ -127,6 +127,10 @@ struct Frame {
 // faces it draws deferred (opaque, alpha-masked, terrain) lose their
 // emissive; blended and HUD faces keep it (pbralphaF, pbropaqueF IS_HUD)
 const FEATURE_NO_EMISSIVE: u32 = 1u;
+
+// frame.features.y: the slot of the face-select pattern's texture (0: the
+// procedural stand-in), see FEATURE_FACE_SELECT_SLOT in renderer.rs
+const FEATURE_FACE_SELECT_SLOT: u32 = 1u;
 
 fn deferred_emissive_off() -> bool {
     return (frame.features.x & FEATURE_NO_EMISSIVE) != 0u;

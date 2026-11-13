@@ -4221,6 +4221,49 @@ pub fn complex_face_selection_events() -> Vec<NetEvent> {
     events
 }
 
+/// `AURORA_DEMO_BUILD=faces-mapping`: the three surfaces of
+/// `face_selection_events`, each textured with its own mapping, for the
+/// face-select pattern (#2505): A with the tiles repeated 3 x 2, offset
+/// (0.25, 0.1) and turned 30 degrees; A2 stretched, in planar mapping,
+/// repeated 2 x 2 and turned 15 degrees; B a PBR material whose base color
+/// is repeated 2 x 3, offset (0.2, 0.1) and turned 0.6 radian.
+pub fn face_mapping_events() -> Vec<NetEvent> {
+    let mut events = face_selection_events(false);
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects {
+                let Some(te) = object.texture_entry.as_mut() else {
+                    continue;
+                };
+                for f in Arc::make_mut(te).faces.iter_mut() {
+                    f.color = [1.0, 1.0, 1.0, 1.0];
+                    f.texture = TEX_TILES;
+                    match object.local_id {
+                        99620 => {
+                            (f.scale_s, f.scale_t) = (3.0, 2.0);
+                            (f.offset_s, f.offset_t) = (0.25, 0.1);
+                            f.rotation = 30f32.to_radians();
+                        }
+                        99621 => {
+                            // TEM_TEX_GEN_PLANAR (LLTextureEntry)
+                            f.media_flags = 0x02;
+                            (f.scale_s, f.scale_t) = (2.0, 2.0);
+                            f.rotation = 15f32.to_radians();
+                        }
+                        _ => f.texture = BLANK_TEXTURE,
+                    }
+                }
+                match object.local_id {
+                    99621 => object.scale = Vec3::new(2.0, 3.0, 1.5),
+                    99622 => object.extra.render_materials = (0..6).map(|f| (f, MAT_PBR_FACE_MAPPED)).collect(),
+                    _ => {}
+                }
+            }
+        }
+    }
+    events
+}
+
 /// AURORA_DEMO_BAN: the south-east lot (x >= 192 m, y < 64 m) is banned.
 pub fn ban_collision() -> NetEvent {
     let mut bitmap = vec![0u8; 64 * 64 / 8];
@@ -9109,6 +9152,10 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
 /// bumps as normal map.
 const MAT_PBR_TILES: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0010);
 
+/// The PBR surface of `face_mapping_events`: the tiles with a base color
+/// transform.
+const MAT_PBR_FACE_MAPPED: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0050);
+
 /// White metals of AURORA_DEMO_PBR_METAL, polished to rough.
 const MAT_PBR_METAL: [Uuid; 3] = [
     Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0011),
@@ -9145,6 +9192,25 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    list.push((
+        MAT_PBR_FACE_MAPPED,
+        aurora_assets::PbrMaterial {
+            base_color_texture: Some(TEX_TILES),
+            metallic_factor: 0.0,
+            roughness_factor: 0.7,
+            transforms: [
+                aurora_assets::TextureTransform {
+                    offset: [0.2, 0.1],
+                    scale: [2.0, 3.0],
+                    rotation: 0.6,
+                },
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        },
+    ));
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
     }

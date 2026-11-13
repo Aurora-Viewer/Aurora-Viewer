@@ -2586,13 +2586,25 @@ impl BuildTool {
         Some((s.move_hologram, self.manip.move_ghost()?))
     }
 
-    fn face_mode(&self) -> bool {
+    /// The Edit tool in Select face mode (LLSelectMgr::getTEMode).
+    pub fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
 
     /// LLSelectMgr's TE mode: the selected surfaces, not whole-object outlines.
     pub fn face_selection(&self, world: &World, s: &BuildSettings) -> HashMap<usize, u64> {
-        if !self.face_mode() || !s.show_highlight {
+        if !s.show_highlight {
+            return HashMap::new();
+        }
+        self.face_picks(world)
+    }
+
+    /// The faces picked in Select face mode, whatever "Show highlight" says:
+    /// the face-select pattern is drawn for them anyway
+    /// (LLPipeline::renderHighlights draws renderSelectedFaces in TE mode;
+    /// RenderHighlightSelections gates only the silhouettes, llselectmgr.cpp).
+    pub fn face_picks(&self, world: &World) -> HashMap<usize, u64> {
+        if !self.face_mode() {
             return HashMap::new();
         }
         self.sel_prims(world)
