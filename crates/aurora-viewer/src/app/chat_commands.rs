@@ -87,7 +87,6 @@ impl App {
                     self.report_command(l);
                 }
             }
-            Command::Unavailable(text) => self.report_command(text),
             Command::TeleportLocal { x, y, z } => {
                 let z = z.unwrap_or(self.world.agent.position.z);
                 self.teleport_in_region(Vec3::new(x, y, z));
