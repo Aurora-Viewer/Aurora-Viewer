@@ -257,7 +257,7 @@ pub(super) fn person_card(
             }
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    let time = super::chat::hhmm(n.time);
+                    let time = super::chat::hhmm_minutes(n.time);
                     let w = (ui.available_width() - 34.0 - time_width(ui, &time)).max(40.0);
                     let title = if count > 1 {
                         format!("{} ({count})", n.title)
@@ -414,7 +414,7 @@ pub(super) fn card(
                     super::widgets::maturity_badge_of(ui, p, n.maturity, 14.0);
                 }
                 // keep room for the time and the close button
-                let time = super::chat::hhmm(n.time);
+                let time = super::chat::hhmm_minutes(n.time);
                 let w = (ui.available_width() - 34.0 - time_width(ui, &time)).max(40.0);
                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
                     if update && aurora {

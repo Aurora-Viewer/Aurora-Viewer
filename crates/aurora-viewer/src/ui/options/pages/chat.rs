@@ -128,6 +128,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0..=50,
                     "",
                 );
+                // FSSecondsinChatTimestamps (off): the seconds of the nearby
+                // chat's and the conversations' times, apart from the clock's
+                // (#502)
+                cx.toggle(
+                    tr!("ui-options-chat-time-seconds"),
+                    tr!("ui-options-chat-time-seconds-hint"),
+                    &field!(chat_time_seconds),
+                );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
                 // depends on it; ChatBubbleOpacity is in Appearance › Skin,
                 // as it is in its Colors), #673

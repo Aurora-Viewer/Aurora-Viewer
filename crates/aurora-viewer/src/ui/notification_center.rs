@@ -1052,7 +1052,7 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
 }
 
 fn hhmm(secs: u64) -> String {
-    super::chat::hhmm(at(secs))
+    super::chat::hhmm_minutes(at(secs))
 }
 
 pub mod aurora;
