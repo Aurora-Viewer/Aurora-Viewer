@@ -66,19 +66,42 @@ const fn candidate(script: &'static str, probe: char, files: &'static str) -> Ca
 /// out like typewriter text.
 #[rustfmt::skip]
 pub const CANDIDATES: &[Candidate] = &[
-    candidate("Georgian, Armenian", 'ღ', "segoeui.ttf|sylfaen.ttf|ARIALUNI.TTF|Arial Unicode.ttf|DejaVuSans.ttf|FreeSans.ttf"),
+    // Noto Sans Georgian before DejaVu: on Linux the Noto file is the usual
+    // one, and DejaVu (ttf-dejavu, `DejaVuSans.ttf`) still covers a machine
+    // that has it and not Noto. Windows keeps Segoe UI / Sylfaen first.
+    candidate("Georgian, Armenian", 'ღ', "segoeui.ttf|sylfaen.ttf|ARIALUNI.TTF|Arial Unicode.ttf|NotoSansGeorgian-Regular.ttf|DejaVuSans.ttf|FreeSans.ttf"),
+    candidate("Armenian", 'Ա', "sylfaen.ttf|segoeui.ttf|ARIALUNI.TTF|Arial Unicode.ttf|NotoSansArmenian-Regular.ttf|DejaVuSans.ttf|FreeSans.ttf"),
     candidate("Arabic", 'ب', "segoeui.ttf|tahoma.ttf|micross.ttf|arial.ttf|GeezaPro.ttc|NotoSansArabic-Regular.ttf|DejaVuSans.ttf"),
     candidate("Hebrew", 'א', "segoeui.ttf|tahoma.ttf|arial.ttf|ArialHB.ttc|NotoSansHebrew-Regular.ttf|DejaVuSans.ttf"),
     candidate("symbols, mathematical letters", '𝓐', "seguisym.ttf|cambria.ttc|STIXGeneral.otf|STIXTwoMath.otf|NotoSansMath-Regular.ttf|DejaVuSans.ttf"),
+    // `░` is absent from Noto Sans Symbols, so that file was never opened
+    // and `♱ ♰ ✞` stayed squares. Symbols 2 also lacks `░`. The crosses are
+    // their own probe. Box drawing stays on the faces that have `░`
+    // (DejaVu, and a CJK face already loaded for Japanese).
     candidate("box drawing, dingbats", '░', "seguisym.ttf|Apple Symbols.ttf|DejaVuSans.ttf|NotoSansSymbols2-Regular.ttf"),
+    candidate("crosses, dingbats", '♱', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols-Regular.ttf|DejaVuSans.ttf"),
     candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKjp-Regular.otf"),
     candidate("Korean", '한', "malgun.ttf|gulim.ttc|AppleSDGothicNeo.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKkr-Regular.otf"),
     candidate("Chinese (simplified)", '们', "msyh.ttc|simsun.ttc|simhei.ttf|PingFang.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKsc-Regular.otf"),
-    candidate("Chinese (traditional)", '們', "msjh.ttc|mingliub.ttc|PingFang.ttc|NotoSansCJKtc-Regular.otf"),
+    candidate("Chinese (traditional)", '們', "msjh.ttc|mingliub.ttc|PingFang.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKtc-Regular.otf"),
     candidate("Devanagari and other Indic scripts", 'ॐ', "Nirmala.ttc|Nirmala.ttf|mangal.ttf|Kohinoor.ttc|NotoSansDevanagari-Regular.ttf"),
+    // One file per script. Nirmala is a collection: the face that draws the
+    // probe is the one kept, and a face already taken (Devanagari) is not
+    // loaded twice. The Noto names are the Linux packages.
+    candidate("Kannada", 'ಠ', "Nirmala.ttc|Nirmala.ttf|NotoSansKannada-Regular.ttf"),
+    candidate("Oriya", '୨', "Nirmala.ttc|Nirmala.ttf|NotoSansOriya-Regular.ttf"),
+    candidate("Bengali", 'অ', "Nirmala.ttc|Nirmala.ttf|NotoSansBengali-Regular.ttf"),
+    candidate("Gujarati", 'અ', "Nirmala.ttc|Nirmala.ttf|NotoSansGujarati-Regular.ttf"),
+    candidate("Gurmukhi", 'ਅ', "Nirmala.ttc|Nirmala.ttf|NotoSansGurmukhi-Regular.ttf"),
+    candidate("Malayalam", 'അ', "Nirmala.ttc|Nirmala.ttf|NotoSansMalayalam-Regular.ttf"),
+    candidate("Telugu", 'అ', "Nirmala.ttc|Nirmala.ttf|NotoSansTelugu-Regular.ttf"),
+    candidate("Sinhala", 'අ', "Nirmala.ttc|Nirmala.ttf|NotoSansSinhala-Regular.ttf"),
     candidate("Tamil", 'ஐ', "Nirmala.ttc|Nirmala.ttf|latha.ttf|NotoSansTamil-Regular.ttf"),
     candidate("Thai, Lao, Khmer", 'ก', "LeelawUI.ttf|leelawad.ttf|tahoma.ttf|Thonburi.ttc|NotoSansThai-Regular.ttf"),
     candidate("Ethiopic, N'Ko, Tifinagh, Vai", 'ጀ', "ebrima.ttf|nyala.ttf|NotoSansEthiopic-Regular.ttf"),
+    // Ebrima draws Vai on Windows. The Ethiopic file above does not, so the
+    // Linux Noto face is a separate candidate.
+    candidate("Vai", 'ꕤ', "ebrima.ttf|NotoSansVai-Regular.ttf"),
     candidate("Cherokee, Canadian syllabics", 'ᗩ', "gadugi.ttf|euphemia.ttf|NotoSansCanadianAboriginal-Regular.ttf|DejaVuSans.ttf"),
     candidate("Tibetan", '༺', "himalaya.ttf|NotoSerifTibetan-Regular.ttf"),
     candidate("Javanese", '꧁', "javatext.ttf|NotoSansJavanese-Regular.ttf"),
@@ -88,8 +111,19 @@ pub const CANDIDATES: &[Candidate] = &[
     candidate("Thaana", 'ހ', "mvboli.ttf|NotoSansThaana-Regular.ttf"),
     candidate("runes, ogham, old scripts", 'ᚱ', "seguihis.ttf|NotoSansRunic-Regular.ttf|DejaVuSans.ttf"),
     candidate("rare Han characters", '𠀀', "simsunb.ttf|mingliub.ttc"),
-    // Balinese, Batak, Cham, Lepcha, Tai Tham… (Windows 11)
+    // Balinese, Batak, Lepcha, Tai Tham… (Windows 11 Sans Serif Collection).
+    // The scripts below are not in that probe, so each has its own file.
+    // `LLWindowSDL::getDynamicFallbackFontList` (llwindowsdl2.cpp) would
+    // take them from fontconfig, at most 40 faces, dropping a font whose
+    // coverage an earlier one already has. This list stays one face per
+    // script instead: a sort would change which face draws a shared
+    // character on every distro, and the squares were files never named.
     candidate("other scripts", 'ᬅ', "SansSerifCollection.ttf|NotoSansBalinese-Regular.ttf"),
+    candidate("Egyptian hieroglyphs", '𓆩', "NotoSansEgyptianHieroglyphs-Regular.ttf"),
+    candidate("Tai Le", 'ᥫ', "taile.ttf|NotoSansTaiLe-Regular.ttf"),
+    candidate("Linear A", '𐙚', "NotoSansLinearA-Regular.ttf"),
+    candidate("Bamum", '𖤐', "NotoSansBamum-Regular.ttf"),
+    candidate("Cham", 'ꨄ', "NotoSansCham-Regular.ttf"),
     // recent emoji missing from egui's Noto Emoji, as monochrome outlines
     candidate("recent emoji", '🫠', "seguiemj.ttf|NotoEmoji-Regular.ttf|NotoEmoji[wght].ttf"),
 ];
@@ -256,6 +290,10 @@ fn select(candidates: &[Candidate], mut probe: impl FnMut(&'static str, char) ->
     let mut out: Vec<(&'static str, u32, &'static str)> = Vec::new();
     for c in candidates {
         let Some((file, index)) = c.files().find_map(|f| probe(f, c.probe).map(|i| (face_spec(f).0, i))) else {
+            // Once per scan, not per drawn glyph: egui does not report the
+            // character it replaced with a square. A face already chosen for
+            // an earlier script is not a miss (it is skipped below).
+            log::debug!("system fallback font: no installed face for {} ({})", c.script, c.probe);
             continue;
         };
         if !out.iter().any(|(f, i, _)| f.eq_ignore_ascii_case(file) && *i == index) {
@@ -394,6 +432,35 @@ mod tests {
         let chosen = select(&list, |file, _| (file == "georgian.ttf").then_some(0));
         assert_eq!(chosen.len(), 1);
         assert_eq!(chosen[0].0, "georgian.ttf");
+    }
+
+    #[test]
+    fn linux_noto_files_cover_the_scripts_the_old_list_missed() {
+        let has = |script: &str, file: &str| {
+            CANDIDATES
+                .iter()
+                .any(|c| c.script == script && c.files().any(|name| face_spec(name).0.eq_ignore_ascii_case(file)))
+        };
+        assert!(has("Kannada", "NotoSansKannada-Regular.ttf"));
+        assert!(has("Oriya", "NotoSansOriya-Regular.ttf"));
+        assert!(has("Bengali", "NotoSansBengali-Regular.ttf"));
+        assert!(has("Gujarati", "NotoSansGujarati-Regular.ttf"));
+        assert!(has("Gurmukhi", "NotoSansGurmukhi-Regular.ttf"));
+        assert!(has("Malayalam", "NotoSansMalayalam-Regular.ttf"));
+        assert!(has("Telugu", "NotoSansTelugu-Regular.ttf"));
+        assert!(has("Sinhala", "NotoSansSinhala-Regular.ttf"));
+        assert!(has("Armenian", "NotoSansArmenian-Regular.ttf"));
+        assert!(has("Georgian, Armenian", "NotoSansGeorgian-Regular.ttf"));
+        assert!(has("crosses, dingbats", "NotoSansSymbols-Regular.ttf"));
+        assert!(has("Chinese (traditional)", "NotoSansCJK-Regular.ttc"));
+        assert!(has("Vai", "NotoSansVai-Regular.ttf"));
+        assert!(has("Egyptian hieroglyphs", "NotoSansEgyptianHieroglyphs-Regular.ttf"));
+        assert!(has("Tai Le", "NotoSansTaiLe-Regular.ttf"));
+        assert!(has("Linear A", "NotoSansLinearA-Regular.ttf"));
+        assert!(has("Bamum", "NotoSansBamum-Regular.ttf"));
+        assert!(has("Cham", "NotoSansCham-Regular.ttf"));
+        // ttf-dejavu ships this file name; it was already the Latin fallback.
+        assert!(has("Georgian, Armenian", "DejaVuSans.ttf"));
     }
 
     #[test]

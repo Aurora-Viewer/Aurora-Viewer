@@ -3,7 +3,8 @@
 //! embedded with their semi-bold face (SIL OFL, see
 //! assets/fonts/LICENSE-*.txt); installed
 //! system fonts are listed too. Characters none of them has come from the
-//! system's fonts (`fallback`).
+//! system's fonts (`fallback`). Small capitals that Inter lacks come from
+//! the embedded Noto Sans, which is installed behind every chosen face.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -472,10 +473,21 @@ fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontD
     if let Some(semibold) = semibold {
         let mut face = egui::FontData::from_static(semibold);
         face.tweak.y_offset_factor = optical_center_offset(face.bytes());
+        let semibold_is_noto = same_static(&face, NOTO_SEMIBOLD_TTF);
         defs.font_data.insert(SEMIBOLD.into(), Arc::new(face));
         if let Some(f) = defs.families.get_mut(&semibold_family()) {
             f.insert(0, SEMIBOLD.into());
+            if semibold_is_noto {
+                // The chosen semi-bold face is already this file.
+                f.retain(|entry| entry != NOTO_SEMIBOLD_FALLBACK);
+            } else {
+                prefer_semibold_fallback(f);
+            }
         }
+    } else if let Some(f) = defs.families.get_mut(&semibold_family()) {
+        // A system font has no embedded semi-bold of its own. The Noto
+        // semi-bold face still follows it, for the glyphs it lacks.
+        prefer_semibold_fallback(f);
     }
     defs
 }
@@ -484,6 +496,13 @@ fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontD
 const SEMIBOLD: &str = "aurora-semibold";
 /// Name of the interface font's regular face.
 const MAIN: &str = "aurora-main";
+/// Embedded Noto Sans, used when the chosen face has no glyph.
+/// Legacy Viewer: the bundled face after the UI font in
+/// `LLFontRegistry::createFont` (`indra/llrender/llfontregistry.cpp`). Noto Sans
+/// is already in the binary and draws the small capitals Inter lacks.
+const NOTO_FALLBACK: &str = "aurora-noto";
+/// Semi-bold face of that fallback, for the semi-bold family.
+const NOTO_SEMIBOLD_FALLBACK: &str = "aurora-noto-semibold";
 const ICON_FALLBACK: &str = "emoji-icon-font";
 
 fn semibold_family() -> egui::FontFamily {
@@ -565,15 +584,23 @@ fn has_weight_axis(font: &[u8]) -> bool {
 }
 
 /// `primary` first for proportional text and after egui's text fonts for
-/// monospace, then the system faces before egui's icon font. That icon
-/// font has fullwidth Latin glyphs with uneven feet; prefer text faces,
-/// as LLFontRegistry::createFont does (indra/newview/fonts/fonts.xml).
+/// monospace, then the embedded Noto Sans faces, then the system faces
+/// before egui's icon font. That icon font has fullwidth Latin glyphs with
+/// uneven feet; prefer text faces, as LLFontRegistry::createFont does
+/// (indra/newview/fonts/fonts.xml).
+///
+/// The Noto faces are the bundled fallback the Legacy Viewer keeps after
+/// the chosen font (`LLFontRegistry::createFont`). Inter has no small
+/// capitals (`ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ`, `ᴥ`); the embedded Noto Sans does, and it is
+/// the same file Preferences can already select. It is not inserted again
+/// when that file is itself the chosen face.
 fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> egui::FontDefinitions {
     primary.tweak.y_offset_factor = optical_center_offset(primary.bytes());
     let shift = primary.tweak.y_offset_factor;
     let row = ttf_parser::Face::parse(primary.bytes(), 0)
         .ok()
         .and_then(|face| fallback::RowMetrics::of(&face));
+    let primary_is_noto = same_static(&primary, NOTO_TTF);
     let mut defs = egui::FontDefinitions::default();
     defs.font_data.insert(MAIN.into(), Arc::new(primary));
     if let Some(f) = defs.families.get_mut(&egui::FontFamily::Proportional) {
@@ -582,6 +609,14 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
     if let Some(f) = defs.families.get_mut(&egui::FontFamily::Monospace) {
         let before_icons = f.iter().position(|name| name == ICON_FALLBACK).unwrap_or(f.len());
         f.insert(before_icons, MAIN.into());
+    }
+    if !primary_is_noto {
+        install_fallback(&mut defs, NOTO_FALLBACK, NOTO_TTF, MAIN, row, shift);
+        install_fallback(&mut defs, NOTO_SEMIBOLD_FALLBACK, NOTO_SEMIBOLD_TTF, NOTO_FALLBACK, row, shift);
+    } else {
+        // The regular face was not inserted (it is the chosen font). The
+        // semi-bold fallback then follows the chosen face directly.
+        install_fallback(&mut defs, NOTO_SEMIBOLD_FALLBACK, NOTO_SEMIBOLD_TTF, MAIN, row, shift);
     }
     // the semi-bold family starts as the proportional one: `apply` puts
     // its own face first when it has one
@@ -595,6 +630,68 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
         }
     }
     defs
+}
+
+/// True when `data` is the static slice `bytes` (the chosen face is already
+/// that embedded file).
+fn same_static(data: &egui::FontData, bytes: &'static [u8]) -> bool {
+    let got = data.bytes();
+    got.len() == bytes.len() && std::ptr::eq(got.as_ptr(), bytes.as_ptr())
+}
+
+/// A Noto Sans face aligned to the primary's baseline, placed immediately
+/// after `after` in every family that already has `after`.
+fn install_fallback(
+    defs: &mut egui::FontDefinitions,
+    name: &str,
+    bytes: &'static [u8],
+    after: &str,
+    primary: Option<fallback::RowMetrics>,
+    shift: f32,
+) {
+    if defs.font_data.contains_key(name) {
+        return;
+    }
+    let mut placed = false;
+    for family in defs.families.values_mut() {
+        let Some(at) = family.iter().position(|entry| entry == after) else {
+            continue;
+        };
+        family.insert(at + 1, name.to_owned());
+        placed = true;
+    }
+    if !placed {
+        return;
+    }
+    defs.font_data
+        .insert(name.to_owned(), Arc::new(aligned_fallback(bytes, primary, shift)));
+}
+
+/// Embedded fallback face, glyphs moved onto the primary font's baseline
+/// the same way as a system face (`SystemFace::font_data`).
+fn aligned_fallback(bytes: &'static [u8], primary: Option<fallback::RowMetrics>, shift: f32) -> egui::FontData {
+    let mut data = egui::FontData::from_static(bytes);
+    if let (Some(primary), Some(own)) = (
+        primary,
+        ttf_parser::Face::parse(bytes, 0)
+            .ok()
+            .and_then(|face| fallback::RowMetrics::of(&face)),
+    ) {
+        data.tweak.y_offset_factor = shift + fallback::baseline_shift(primary, own);
+    }
+    data
+}
+
+/// Put the semi-bold Noto face immediately after the family's own first
+/// face. `definitions` inserts it after the regular fallback, which is
+/// right for proportional and monospace text; the semi-bold family then
+/// leads with its own face.
+fn prefer_semibold_fallback(family: &mut Vec<String>) {
+    if let Some(at) = family.iter().position(|entry| entry == NOTO_SEMIBOLD_FALLBACK) {
+        let name = family.remove(at);
+        let insert_at = 1.min(family.len());
+        family.insert(insert_at, name);
+    }
 }
 
 /// Is `c` drawn by the fonts shipped with the viewer, whatever the system?
@@ -988,6 +1085,11 @@ mod tests {
         let text = demo_text().join(" ");
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             let missing = squares(definitions_for(DEFAULT, system), family.clone(), &text);
+            let unexplained = covered_but_square(&missing, system);
+            assert!(
+                unexplained.is_empty(),
+                "{family}: a loaded face draws these, and they are squares: {unexplained}"
+            );
             if complete {
                 assert!(missing.is_empty(), "{family}: no font for {missing:?}");
             } else if !missing.is_empty() {
@@ -1003,10 +1105,7 @@ mod tests {
     #[test]
     fn every_script_is_drawn_whatever_the_builtin_font_and_weight() {
         let system = fallback::wait();
-        if !fallback::CANDIDATES.iter().all(|c| system.iter().any(|f| f.has(c.probe))) {
-            eprintln!("system fonts incomplete: not checked");
-            return;
-        }
+        let complete = fallback::CANDIDATES.iter().all(|c| system.iter().any(|f| f.has(c.probe)));
         let text = demo_text()
             .into_iter()
             .chain(SCRIPTS.iter().map(|(_, t)| *t))
@@ -1015,9 +1114,56 @@ mod tests {
         for b in &BUILTINS {
             for family in [egui::FontFamily::Proportional, semibold_family()] {
                 let missing = squares(definitions_for(b.name, system), family.clone(), &text);
-                assert!(missing.is_empty(), "{} ({family}): no font for {missing:?}", b.name);
+                let unexplained = covered_but_square(&missing, system);
+                assert!(
+                    unexplained.is_empty(),
+                    "{} ({family}): a loaded face draws these, and they are squares: {unexplained}",
+                    b.name
+                );
+                if complete {
+                    assert!(missing.is_empty(), "{} ({family}): no font for {missing:?}", b.name);
+                } else if !missing.is_empty() {
+                    eprintln!("{} ({family}): no installed face for {missing}", b.name);
+                }
             }
         }
+    }
+
+    /// Characters of `missing` that some loaded face, or an embedded font,
+    /// can draw. A square for one of those is a fallback that was not used.
+    fn covered_but_square(missing: &str, system: &[fallback::SystemFace]) -> String {
+        missing
+            .chars()
+            .filter(|c| system.iter().any(|face| face.has(*c)) || embedded_has(*c))
+            .collect()
+    }
+
+    /// Small capitals are not in Inter and were not in any Linux fallback.
+    /// The embedded Noto Sans draws them, with no system font installed.
+    #[test]
+    fn inter_small_caps_come_from_embedded_noto() {
+        const TEXT: &str = "ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢᴥ";
+        let defs = definitions_for(INTER, &[]);
+        let proportional = &defs.families[&egui::FontFamily::Proportional];
+        assert_eq!(proportional[0], MAIN);
+        assert_eq!(proportional[1], NOTO_FALLBACK);
+        assert_eq!(proportional[2], NOTO_SEMIBOLD_FALLBACK);
+        let semi = &defs.families[&semibold_family()];
+        assert_eq!(semi[0], SEMIBOLD);
+        assert_eq!(semi[1], NOTO_SEMIBOLD_FALLBACK);
+        let mono = &defs.families[&egui::FontFamily::Monospace];
+        let main_at = mono.iter().position(|name| name == MAIN).expect("monospace face");
+        assert_eq!(mono[main_at + 1], NOTO_FALLBACK);
+        for (c, face) in faces_drawing(defs.clone(), egui::FontFamily::Proportional, TEXT) {
+            assert_eq!(face.as_deref(), Some(NOTO_FALLBACK), "{c}");
+        }
+        for (c, face) in faces_drawing(defs.clone(), semibold_family(), TEXT) {
+            assert_eq!(face.as_deref(), Some(NOTO_SEMIBOLD_FALLBACK), "{c}");
+        }
+        let mut fonts = egui::epaint::Fonts::new(Default::default(), defs);
+        let line = glyph_bottom(&mut fonts, "H");
+        let cap = glyph_bottom(&mut fonts, "ᴜ");
+        assert!((cap - line).abs() <= 0.08, "small cap foot {cap:.3} em, Latin {line:.3} em");
     }
 
     /// The scripts the embedded fonts are chosen for (Latin with its
@@ -1041,11 +1187,10 @@ mod tests {
     }
 
     /// What Inter lacks is drawn by the faces that drew it when Noto Sans
-    /// was the default: the system face of its script, or egui's emoji.
-    /// Inter draws more of it itself (arrows, ≤ ≥, ★ ♪ ①); the few
-    /// characters only Noto Sans had (small capitals ᴏ ᴜ, ℙ) come from a
-    /// system face, never a square. Without the complete system fonts, only
-    /// the order of the faces is compared.
+    /// was the default: the embedded Noto fallback, the system face of its
+    /// script, or egui's emoji. Inter draws more of it itself (arrows,
+    /// ≤ ≥, ★ ♪ ①). The small capitals and ℙ, which only Noto Sans has,
+    /// come from the embedded Noto face, never a square.
     #[test]
     fn what_inter_lacks_comes_from_the_same_faces_as_with_noto() {
         let system = fallback::wait();
@@ -1110,7 +1255,9 @@ mod tests {
     }
 
     /// A system font keeps its own design for the semi-bold texts: its
-    /// regular face first in their family, no embedded semi-bold face.
+    /// regular face first in their family, and no face under the embedded
+    /// semi-bold name. The Noto semi-bold fallback may follow it, for
+    /// glyphs that face lacks.
     #[test]
     fn a_system_font_has_no_embedded_semibold_face() {
         let Some(font) = system_fonts().into_iter().next() else {
