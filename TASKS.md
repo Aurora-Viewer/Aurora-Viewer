@@ -3153,7 +3153,7 @@ Open-source technologies that could set Aurora apart (human request of 2026-10-1
 
 ## Miscellaneous, to fix later
 
-- 🟡 Shared rules for texture decoding, script questions, log files and voice switches (2026-11-13; task `decode-voice-log-tidy`; no issue; PR pending):
+- 🟡 Shared rules for texture decoding, script questions, log files and voice switches (2026-11-13; task `decode-voice-log-tidy`; no issue; PR [#3505](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/3505)):
   - 🟡 JPEG2000 (`aurora-assets/src/j2k.rs`): the image info, the decoder's memory estimate and OpenJPEG read the main header the same way (`walk_header`: unknown markers passed two bytes at a time as `opj_j2k_read_unk` does, the first SIZ, the last COD); the decoded components are checked against the header's SIZ (component count, size at the resolution asked for, as `opj_j2k_update_image_dimensions` computes it) before their samples are read.
   - 🟡 A permission question (llRequestPermissions) follows the same block rule as script dialogs and URLs (`object_blocked`): the object blocked by id or by name, or its owner blocked when the object is in the scene. Stricter than the Legacy Viewer's process_script_question, which checks the object id alone.
   - 🟡 Log files (`logging.rs`): each start removes, on a thread of its own, the viewer's `aurora*.log` files past the 20 newest that nothing wrote to for 14 days; this run's files, a file another viewer still has open, a name picked with AURORA_LOG_NAME and the crash sessions' folder are left.
