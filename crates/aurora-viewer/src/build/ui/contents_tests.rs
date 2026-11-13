@@ -198,7 +198,7 @@ fn script_properties_save_each_click_without_closing_and_survive_inventory_readb
         let labels = frame(vec![], &mut tool, &mut world);
         assert!(!labels.iter().any(|(text, _)| text == aurora_i18n::tr!("common-save")));
         let label = if mask == perm::MODIFY {
-            aurora_i18n::tr!("common-edit")
+            aurora_i18n::tr!("common-modify")
         } else {
             aurora_i18n::tr!("common-copy-2")
         };

@@ -4660,6 +4660,7 @@ inventory-operations-change-sent-but-could-not-read-it-back-reload = Change sent
 build-ui-tools-linked-edit = Linked edit
 ui-appearance-unsaved-changes = Unsaved changes
 common-edit = Edit
+common-modify = Modify
 build-ui-tools-edit-ctrl-3 = Edit (Ctrl+3)
 ui-place-details-edit-this-landmark = Edit this landmark
 ui-appearance-edit-this-outfit = Edit this outfit

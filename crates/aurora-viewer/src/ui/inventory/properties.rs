@@ -393,7 +393,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
 }
 fn rights() -> [(u32, &'static str); 3] {
     [
-        (rules::MODIFY, aurora_i18n::tr!("common-edit")),
+        (rules::MODIFY, aurora_i18n::tr!("common-modify")),
         (rules::COPY, aurora_i18n::tr!("common-copy-2")),
         (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ]
@@ -526,7 +526,7 @@ mod tests {
         st.property_edit.as_mut().unwrap().1.name = "|".into();
         st.property_edit.as_mut().unwrap().1.desc = "Uncommitted description".into();
         for (label, next_owner) in [
-            (aurora_i18n::tr!("common-edit"), true),
+            (aurora_i18n::tr!("common-modify"), true),
             (aurora_i18n::tr!("common-share"), false),
             (aurora_i18n::tr!("common-copy-2"), true),
             (aurora_i18n::tr!("ui-inventory-properties-for-sale"), false),
@@ -569,7 +569,7 @@ mod tests {
         let point = labels
             .iter()
             .rev()
-            .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+            .find(|(text, _)| text == aurora_i18n::tr!("common-modify"))
             .unwrap()
             .1
             .center();
@@ -627,7 +627,7 @@ mod tests {
         let point = labels
             .iter()
             .rev()
-            .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+            .find(|(text, _)| text == aurora_i18n::tr!("common-modify"))
             .unwrap()
             .1
             .center();
@@ -685,7 +685,7 @@ mod tests {
                 let point = labels
                     .iter()
                     .rev()
-                    .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+                    .find(|(text, _)| text == aurora_i18n::tr!("common-modify"))
                     .unwrap()
                     .1
                     .center();

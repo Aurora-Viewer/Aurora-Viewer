@@ -4642,6 +4642,7 @@ inventory-operations-change-sent-but-could-not-read-it-back-reload = 変更を�
 build-ui-tools-linked-edit = リンク編集
 ui-appearance-unsaved-changes = 未保存の変更
 common-edit = 編集
+common-modify = 変更
 build-ui-tools-edit-ctrl-3 = 編集（Ctrl＋3）
 ui-place-details-edit-this-landmark = このランドマークを編集
 ui-appearance-edit-this-outfit = このアウトフィットを編集

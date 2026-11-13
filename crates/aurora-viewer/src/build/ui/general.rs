@@ -729,7 +729,7 @@ fn ownership_permissions(
             let (v, t) = bit(next, mask);
             // Transfer remains enabled by the next owner's Copy bit (LLPanelPermissions).
             let (caption, tentative, enabled) = match mask {
-                perm::MODIFY => (aurora_i18n::tr!("common-edit"), t, next_ok && base.0 & perm::MODIFY != 0),
+                perm::MODIFY => (aurora_i18n::tr!("common-modify"), t, next_ok && base.0 & perm::MODIFY != 0),
                 perm::COPY => (
                     aurora_i18n::tr!("common-copy-2"),
                     t || !can_copy,

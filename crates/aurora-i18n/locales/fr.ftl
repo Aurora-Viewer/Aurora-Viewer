@@ -4666,6 +4666,7 @@ inventory-operations-change-sent-but-could-not-read-it-back-reload = Modificatio
 build-ui-tools-linked-edit = Modification liée
 ui-appearance-unsaved-changes = Modifications non enregistrées
 common-edit = Modifier
+common-modify = Modification
 build-ui-tools-edit-ctrl-3 = Modifier (Ctrl+3)
 ui-place-details-edit-this-landmark = Modifier ce repère
 ui-appearance-edit-this-outfit = Modifier cette tenue
