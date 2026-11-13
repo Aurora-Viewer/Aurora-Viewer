@@ -245,7 +245,14 @@ impl VoiceSession {
 }
 
 impl Drop for VoiceSession {
+    /// The microphone leaves the session at once: the logout that follows
+    /// can take up to its timeout, and the audio task sends until the peer
+    /// connection closes after it. From the next poll (10 ms) the channel
+    /// gets the muted track's silence, and the capture is free for the
+    /// session that replaces this one (it must have a single reader).
     fn drop(&mut self) {
+        self.shared.tx.set_transmit(false);
+        *self.shared.tx.mic.lock() = None;
         let _ = self.cmd_tx.send(Cmd::Shutdown);
     }
 }
@@ -332,5 +339,18 @@ mod tests {
         assert_eq!(p.agent_id, me);
         assert_eq!(p.level, 0.5);
         assert!(p.speaking);
+    }
+
+    /// Leaving a channel (a drop) stops the microphone before the logout.
+    #[test]
+    fn a_dropped_session_lets_go_of_the_microphone() {
+        let s = VoiceSession::connect(reqwest::Client::new(), params("vivox"), VoiceSink::null());
+        let (_feed, mic) = aurora_audio::MicCapture::virtual_input();
+        s.set_mic(Some(mic));
+        s.set_transmit(true);
+        let shared = s.shared.clone();
+        drop(s);
+        assert!(!shared.tx.transmit());
+        assert!(shared.tx.mic.lock().is_none());
     }
 }
