@@ -17837,7 +17837,12 @@ impl App {
                     }
                 }
                 if self.skin.layout.chat_toasts
-                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                    && (crate::demo::chat_volume_comparison()
+                        || !ui::chat::nearby_chat_in_sight(
+                            self.panels.chat && !ui::widgets::floater_minimized(&ctx, "conversations"),
+                            !self.chat_ui.contacts && self.chat_ui.selected.is_none(),
+                            ui::chat::nearby_chat_popout_in_sight(&ctx, &self.chat_ui),
+                        ))
                 {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles

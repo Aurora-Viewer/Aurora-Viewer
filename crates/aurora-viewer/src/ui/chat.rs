@@ -3871,6 +3871,18 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
 }
 
+/// Whether the Nearby chat window itself is visible, as in the Legacy Viewer's
+/// `LLFloaterIMNearbyChatHandler::processChat`. Keep the decision pure so the
+/// Conversations and detached-window cases share the same rule.
+pub fn nearby_chat_in_sight(main_open: bool, main_shows_nearby: bool, popped_nearby_in_sight: bool) -> bool {
+    (main_open && main_shows_nearby) || popped_nearby_in_sight
+}
+
+/// Whether a detached Nearby chat window is currently visible.
+pub fn nearby_chat_popout_in_sight(ctx: &egui::Context, st: &ChatUi) -> bool {
+    popout::in_sight(ctx, &st.popped).any(|conversation| conversation.is_none())
+}
+
 /// A demo's window of its own for `conversation`, at `pos` (whatever the
 /// cascade or a previous run would give it).
 pub fn demo_place_window(ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
@@ -4723,6 +4735,24 @@ mod tests {
             nearby_chat_shortcut(nearby(true, true, false, true, true, false)),
             NearbyChatShortcut::HideDetached
         ));
+    }
+
+    #[test]
+    fn nearby_chat_visibility_controls_toast_suppression() {
+        for (main_open, main_shows_nearby, popped_nearby_in_sight, expected) in [
+            (true, true, false, true),    // Nearby tab selected in Conversations
+            (false, false, true, true),   // detached Nearby window, Conversations closed
+            (false, false, false, false), // detached window minimized or otherwise out of sight
+            (false, false, false, false), // neither window is visible
+            (true, false, false, false),  // Conversations shows a different tab
+            (false, true, false, false),  // closed Conversations cannot suppress toasts
+        ] {
+            assert_eq!(
+                nearby_chat_in_sight(main_open, main_shows_nearby, popped_nearby_in_sight),
+                expected,
+                "main_open={main_open}, main_shows_nearby={main_shows_nearby}, popped_nearby_in_sight={popped_nearby_in_sight}"
+            );
+        }
     }
 
     #[test]
