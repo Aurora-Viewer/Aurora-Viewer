@@ -1362,6 +1362,27 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
     settings.interface_colors.clone()
 }
 
+/// The see-through windows and bars: the preferences', or in demo mode
+/// `AURORA_DEMO_OPACITY` over them (a capture's, never saved).
+fn wanted_opacity(settings: &Settings) -> ui::surface_opacity::Opacity {
+    let opacity = ui::surface_opacity::Opacity {
+        active: settings.window_opacity_active,
+        inactive: settings.window_opacity_inactive,
+        conversations: settings.conversations_opacity,
+        conversations_active_override: settings.conversations_active_opacity_override,
+        bars: settings.bar_opacity,
+        menus: settings.menu_opacity,
+        console: settings.console_opacity,
+        name_tags: settings.chat_bubble_opacity,
+        minimap: settings.minimap_opacity,
+        pie: settings.pie_opacity_override.then_some(settings.pie_opacity),
+    };
+    if std::env::var_os("AURORA_DEMO").is_some() {
+        return ui::surface_opacity::demo_override(opacity);
+    }
+    opacity
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -1557,6 +1578,7 @@ impl App {
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
+        ui::surface_opacity::set(wanted_opacity(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
         apply_chat_text_scale(&egui_ctx, &settings);
         crate::crash::update(&skin.theme, &settings);
@@ -12514,6 +12536,7 @@ impl App {
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
+            ui::surface_opacity::set(wanted_opacity(&self.settings));
             self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
             apply_chat_text_scale(&self.egui_ctx, &self.settings);
             ui::colors::set(&self.settings.colors);
