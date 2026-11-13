@@ -85,12 +85,18 @@ impl BanAll {
     /// The answer of one group; the report once the run's last group
     /// answered. An answer no run waits for is dropped.
     pub fn answer(&mut self, group: Uuid, agent: Uuid, ban: bool, ok: bool, now: Instant) -> Option<Report> {
-        let i = self.runs.iter().position(|r| {
-            r.agent == agent && r.ban == ban && !r.answered.contains(&group) && r.groups.iter().any(|(g, _)| *g == group)
-        })?;
+        let i = self
+            .runs
+            .iter()
+            .position(|r| r.agent == agent && r.ban == ban && !r.answered.contains(&group) && r.groups.iter().any(|(g, _)| *g == group))?;
         let run = &mut self.runs[i];
         run.answered.push(group);
-        let name = run.groups.iter().find(|(g, _)| *g == group).map(|(_, n)| n.clone()).unwrap_or_default();
+        let name = run
+            .groups
+            .iter()
+            .find(|(g, _)| *g == group)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_default();
         if ok {
             run.succeeded.push(name);
         } else {

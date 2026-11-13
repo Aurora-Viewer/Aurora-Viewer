@@ -198,7 +198,12 @@ impl Session<'_> {
         let Some(cap) = self.main_cap("GroupAPIv1") else {
             log::warn!("group bans: no GroupAPIv1 capability, cannot change group bans");
             for group in groups {
-                let _ = events.send(NetEvent::GroupBanInGroup { group, agent, ban, ok: false });
+                let _ = events.send(NetEvent::GroupBanInGroup {
+                    group,
+                    agent,
+                    ban,
+                    ok: false,
+                });
             }
             return;
         };
