@@ -212,6 +212,24 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-avatar-hover-height-also-moves-the-camera"),
                     &field!(camera.hover_affects_camera),
                 );
+                cx.combo(
+                    tr!("ui-options-camera-follow-joint"),
+                    tr!("ui-options-camera-follow-joint-tip"),
+                    &field!(camera.third_person_follow_joint),
+                    &crate::camera::CameraFollowJoint::choices(),
+                );
+                // The intensity sits behind the body part's cog, greyed while
+                // following is Disabled, like the other fine-tuning rows.
+                let off = cx.s.camera.third_person_follow_joint.is_none();
+                cx.subs(off, |cx| {
+                    cx.slider(
+                        tr!("ui-options-camera-follow-intensity"),
+                        tr!("ui-options-camera-follow-intensity-tip"),
+                        &field!(camera.third_person_follow_intensity),
+                        0..=500,
+                        "%",
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-camera-no-mouse-wheel-zoom"),
                     tr!("ui-options-camera-the-mouse-wheel-does-not-move-the-camera-closer"),
