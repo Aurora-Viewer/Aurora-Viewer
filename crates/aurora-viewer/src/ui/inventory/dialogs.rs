@@ -75,7 +75,7 @@ pub(super) fn show(
                         .add_enabled(
                             !st.save_pending
                                 && st.preview_can_edit
-                                && crate::world::inventory::preview::can_edit(inv, *id)
+                                && crate::world::inventory::preview::can_edit(inv, *id, facts.god_level)
                                 && st.preview_text.as_ref().is_some_and(|r| {
                                     r.as_ref().is_ok_and(|t| {
                                         inv.items.get(id).is_none_or(|it| it.asset_type != 7)
@@ -143,7 +143,9 @@ pub(super) fn show(
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
-                            !st.save_pending && st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, *notecard),
+                            !st.save_pending
+                                && st.preview_can_edit
+                                && crate::world::inventory::preview::can_edit(inv, *notecard, facts.god_level),
                             egui::Button::new(aurora_i18n::tr!("common-save")),
                         )
                         .clicked()
@@ -203,6 +205,7 @@ pub(super) fn show(
                         aurora_i18n::tr!("common-delete")
                     },
                     &mut done,
+                    st.ui_id,
                 ) {
                     let silence = !*purge && st.delete_dont_ask;
                     match super::delete::plan(inv, ids, *purge, prefs, facts) {
@@ -210,7 +213,7 @@ pub(super) fn show(
                             if silence {
                                 actions.push(InvAction::StopConfirmingDelete);
                             }
-                            actions.push(InvAction::Edit(change));
+                            actions.push(InvAction::Delete(Box::new(super::DeleteRequest::new(inv, st, ids, change))));
                             done = true;
                         }
                         Err(reason) => st.message = reason,
@@ -221,8 +224,14 @@ pub(super) fn show(
                 ui.label(aurora_i18n::tr!(
                     "ui-inventory-dialogs-all-items-in-trash-will-be-permanently-deleted"
                 ));
-                if confirmation_buttons(ui, p, st.pending.is_none(), aurora_i18n::tr!("common-empty-trash"), &mut done)
-                    && let Some(f) = inv.folders.get(id)
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    aurora_i18n::tr!("common-empty-trash"),
+                    &mut done,
+                    st.ui_id,
+                ) && let Some(f) = inv.folders.get(id)
                     && f.info.type_default == 14
                     && f.state == FetchState::Fetched
                 {
@@ -527,7 +536,7 @@ fn share_note(ui: &mut egui::Ui, icon: &str, color: egui::Color32, fill: Option<
     });
 }
 
-fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool) -> bool {
+fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool, window: Uuid) -> bool {
     ui.add_space(16.0);
     crate::ui::widgets::divider(ui, p);
     ui.add_space(6.0);
@@ -536,7 +545,12 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 // the Legacy Viewer's default="true" OK: Enter clicks it
-                confirm = widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked();
+                let response = widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0));
+                if cfg!(test) || super::delete::demo_enabled() {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_confirm", window)), response.rect.center()));
+                }
+                confirm = response.clicked();
             });
             if super::super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked() {
                 *done = true;
@@ -556,6 +570,7 @@ pub(super) fn preview(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     prefs: &mut InventoryPreferences,
     script_settings: &crate::ui::scripts::settings::ScriptSettings,
+    god_level: u8,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
@@ -577,7 +592,7 @@ pub(super) fn preview(
     } else {
         Default::default()
     };
-    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id);
+    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id, god_level);
     if it.asset_type == 7
         && view != super::markdown::View::Markdown
         && !st.save_pending
@@ -1103,6 +1118,7 @@ mod tests {
                     &Default::default(),
                     prefs,
                     &Default::default(),
+                    0,
                     &mut actions,
                 );
             },
@@ -1149,6 +1165,7 @@ mod tests {
                     &Default::default(),
                     &mut InventoryPreferences::default(),
                     &Default::default(),
+                    0,
                     &mut actions,
                 );
             },
@@ -2278,13 +2295,11 @@ mod tests {
             );
             assert!(!accented(&output, cancel, fill));
             assert!(
-                ctx.memory(|m| m.focused()).is_none(),
-                "the hint must not steal focus or change Tab order"
+                ctx.memory(|m| m.focused()).is_some(),
+                "the visible Enter action must own keyboard focus"
             );
-            for _ in 0..if empty { 2 } else { 3 } {
-                confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
-                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
-            }
+            confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
             let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
             assert!(!accented(&output, label, fill), "Cancel owns Enter after Tab");
             assert!(accented(&output, cancel, fill));
@@ -2320,12 +2335,36 @@ mod tests {
                 dialog: Some(dialog()),
                 ..Default::default()
             };
+            let mut opening = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
             for _ in 0..3 {
-                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+                opening.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
             }
+            assert!(opening.is_empty() && st.dialog.is_some(), "{name}: opening Enter must not confirm");
+            let mut held = key(egui::Key::Enter);
+            if let egui::Event::Key { repeat, .. } = &mut held {
+                *repeat = true;
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![held]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(
+                actions.is_empty() && st.dialog.is_some(),
+                "{name}: holding opening Enter must not confirm"
+            );
+            let mut release = key(egui::Key::Enter);
+            if let egui::Event::Key { pressed, .. } = &mut release {
+                *pressed = false;
+            }
+            assert!(confirmation_pass(&ctx, &inv, &mut st, vec![release]).is_empty());
             let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
             actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
-            assert!(matches!(&actions[..], [InvAction::Edit(_)]), "{name}: Enter confirms once");
+            assert!(
+                if empty {
+                    matches!(&actions[..], [InvAction::Edit(_)])
+                } else {
+                    matches!(&actions[..], [InvAction::Delete(_)])
+                },
+                "{name}: Enter confirms once"
+            );
             assert!(st.dialog.is_none(), "{name}: the dialog closes");
             // Escape
             let ctx = egui::Context::default();
@@ -2351,11 +2390,20 @@ mod tests {
     }
 
     /// Tab reaches the buttons (`LLPanel::handleKeyHere`: a focused button
-    /// clicks itself on Return): the ignore choice when offered, then Delete
-    /// and Cancel. Purge has no ignore choice.
+    /// clicks itself on Return). Focus starts on Delete, then Cancel, then
+    /// the ignore choice when offered. Purge has no ignore choice.
     #[test]
     fn tab_moves_between_the_confirmation_buttons_and_enter_answers_the_focused_one() {
-        for (purge, tabs, deletes) in [(false, 2, true), (false, 3, false), (true, 1, true), (true, 2, false)] {
+        for (purge, tabs, deletes) in [
+            (false, 0, true),
+            (false, 1, false),
+            (false, 3, true),
+            (false, 4, false),
+            (true, 0, true),
+            (true, 1, false),
+            (true, 2, true),
+            (true, 3, false),
+        ] {
             let mut inv = Inventory::default();
             crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
             if purge {
@@ -2384,6 +2432,44 @@ mod tests {
             );
             assert!(st.dialog.is_none());
         }
+    }
+
+    #[test]
+    fn delete_confirmation_tabs_cycle_from_the_visible_default_in_both_directions() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+        }
+        let default = ctx.memory(|m| m.focused()).expect("initial Delete focus");
+        let tab = |st: &mut InventoryUi, shift| {
+            let mut event = key(egui::Key::Tab);
+            if let egui::Event::Key { modifiers, .. } = &mut event {
+                *modifiers = if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE };
+            }
+            assert!(confirmation_pass(&ctx, &inv, st, vec![event]).is_empty());
+            assert!(confirmation_pass(&ctx, &inv, st, Vec::new()).is_empty());
+            ctx.memory(|m| m.focused()).expect("focused confirmation control")
+        };
+        let cancel = tab(&mut st, false);
+        let ignore = tab(&mut st, false);
+        assert_ne!(cancel, default);
+        assert_ne!(ignore, cancel);
+        assert_ne!(ignore, default);
+        assert!(confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Space)]).is_empty());
+        assert!(
+            st.delete_dont_ask && st.dialog.is_some(),
+            "the third stop toggles the ignore choice only"
+        );
+        assert_eq!(tab(&mut st, false), default);
+        assert_eq!(tab(&mut st, true), ignore);
+        assert_eq!(tab(&mut st, true), cancel);
+        assert_eq!(tab(&mut st, true), default);
     }
 
     /// The give confirmation (#627): the resident by name, the entries with

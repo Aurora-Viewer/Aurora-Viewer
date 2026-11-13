@@ -581,7 +581,7 @@ pub(super) fn encode(source: &Source, options: import_texture::Options, sound_op
             if bvh.is_some() {
                 import_animation::encode(animation)
             } else {
-                Ok(bytes.as_ref().clone())
+                aurora_assets::rewrite_animation_upload(bytes, animation)
             }
         }
         Source::Material { value, .. } => value.encode_asset(),
@@ -1227,6 +1227,30 @@ mod tests {
             encode(native.source.as_ref().expect("animation"), native.options, native.sound.options).expect("encode"),
             read(&native.path).expect("bytes")
         );
+        let Some(Source::Animation { bytes, animation, bvh }) = native.source.as_ref() else {
+            panic!("native animation")
+        };
+        let mut edited = animation.as_ref().clone();
+        edited.base_priority = 6;
+        edited.looping = false;
+        let edited_source = Source::Animation {
+            bytes: bytes.clone(),
+            animation: Arc::new(edited),
+            bvh: *bvh,
+        };
+        let uploaded = encode(&edited_source, native.options, native.sound.options).expect("encode edited animation");
+        let uploaded_animation = aurora_assets::parse_animation_upload(&uploaded).expect("parse edited upload");
+        assert_eq!(uploaded_animation.base_priority, 6);
+        assert!(!uploaded_animation.looping);
+        let mut motion = animation.joints.clone();
+        for (joint, priority) in motion
+            .iter_mut()
+            .zip(aurora_assets::native_joint_priorities(bytes, 6).expect("joint priorities"))
+        {
+            joint.priority = priority;
+        }
+        assert!(motion.iter().all(|joint| joint.priority == 6), "the joints follow the priority");
+        assert_eq!(uploaded_animation.joints, motion, "editing upload options preserves the motion");
         assert!(
             load(
                 &files.0.join("animation-demo.bvh"),

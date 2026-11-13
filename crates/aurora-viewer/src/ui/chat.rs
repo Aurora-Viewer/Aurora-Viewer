@@ -5,6 +5,7 @@ mod app_links;
 pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
+mod channel;
 mod completion;
 mod compose;
 mod console;
@@ -24,6 +25,7 @@ mod keys;
 mod latest;
 mod line_menu;
 mod members;
+pub mod moderation;
 mod object_row;
 mod offer_card;
 mod payment_card;
@@ -151,6 +153,9 @@ pub struct ChatUi {
     pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
+    /// The chat bar's channel menu is open: it keeps an autohidden bar shown
+    /// while the pointer goes into the menu, as `bar_emoji_open` does.
+    pub bar_channel_open: bool,
     /// The lines' style of the settings, given every frame by the app
     /// (`set_style`).
     pub style: crate::settings::ChatStyle,
@@ -216,6 +221,10 @@ pub struct ChatUi {
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
+    /// The selector's channel (the Legacy Viewer's `ChatChannel` spinner):
+    /// one for every nearby chat field, kept from one message to the next
+    /// for the session, used when the text has no `/n` (`channel::resolve`).
+    pub chat_channel: i32,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
@@ -456,6 +465,14 @@ impl ChatUi {
         }
     }
 
+    /// The channel selector's channel while Preferences show it: what a
+    /// nearby line without `/n` is sent on (`channel::resolve`). Off channel
+    /// 0 it is not said aloud, so no typing animation, as
+    /// FSNearbyChat::handleChatBarKeystroke given the spinner's channel.
+    pub fn selector_channel(&self) -> Option<i32> {
+        self.show_channel.then_some(self.chat_channel)
+    }
+
     /// The chat bar is drawn this frame: always, or with `autohide` while it
     /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
     /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
@@ -467,7 +484,13 @@ impl ChatUi {
         if self.bar_hidden {
             return self.focus_request;
         }
-        !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
+        !self.autohide
+            || self.has_focus
+            || self.focus_request
+            || !self.input.trim().is_empty()
+            || self.bar_emoji_open
+            || self.bar_channel_open
+            || self.bar_hovered
     }
 
     /// The toolbar's Chat bar (FSNearbyChat::onDefaultChatBarButtonClicked →
@@ -671,6 +694,32 @@ pub struct OutgoingChat {
 /// with nothing is not sent. The chat inputs never send an empty field.
 pub fn sends_local_line(channel: i32, message: &str) -> bool {
     channel != 0 || !message.is_empty()
+}
+
+/// ANIM_AGENT_TALK, ANIM_AGENT_SHOUT and ANIM_AGENT_WHISPER
+/// (indra/llcharacter/llanimationstates.cpp).
+pub const ANIM_AGENT_TALK: uuid::Uuid = uuid::Uuid::from_u128(0x5c682a95_6da4_a463_0bf6_0f5b7be129d1);
+pub const ANIM_AGENT_SHOUT: uuid::Uuid = uuid::Uuid::from_u128(0x6bd01860_4ebd_127a_bb3d_d1427e8e0c42);
+pub const ANIM_AGENT_WHISPER: uuid::Uuid = uuid::Uuid::from_u128(0x7693f268_06c7_ea71_fa21_2b30d6533f8f);
+
+/// The animation our avatar plays as it says a local line (PlayChatAnim),
+/// as FSNearbyChat::sendChatFromViewer (indra/newview/fsnearbychathub.cpp)
+/// picks it: talk, shout or whisper by the line's volume, after RLVa's
+/// (`Rlva::chat_animation_volume`); nothing on another channel ("Don't
+/// animate for chats people can't hear"). Emotes and OOC lines animate as
+/// any other line; a chat bar command, a gesture's own chat step and a
+/// line a gesture trigger emptied never come this far. Only a start is
+/// sent: the animations do not loop and end by themselves.
+pub fn chat_animation(channel: i32, chat_type: ChatType) -> Option<uuid::Uuid> {
+    if channel != 0 {
+        return None;
+    }
+    match chat_type {
+        ChatType::Whisper => Some(ANIM_AGENT_WHISPER),
+        ChatType::Normal => Some(ANIM_AGENT_TALK),
+        ChatType::Shout => Some(ANIM_AGENT_SHOUT),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1506,50 +1555,251 @@ pub(crate) fn resolved_text(world: &World, text: &str) -> String {
     world.rlva_filter_text(&text).into_owned()
 }
 
+/// The schemes of the links of a text, with or without their own text.
+const LINK_SCHEMES: [&str; 5] = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"];
+
+/// Texts at least this long keep where their links are in `SEGMENT_CACHE`:
+/// a profile's About, a pick or a group's charter is drawn every frame. A
+/// chat line (at most 1023 bytes) is cut again each time, which costs little.
+const CACHED_TEXT: usize = 1024;
+/// The bytes `SEGMENT_CACHE` keeps at most (texts and their links), the
+/// texts drawn least recently dropped first.
+const CACHED_BYTES: usize = 1 << 20;
+
+/// A long text cut lately, and where its links are (start, length).
+type CachedLinks = (Box<str>, Box<[(usize, usize)]>);
+
+thread_local! {
+    /// The long texts cut lately, the most recently drawn last: their
+    /// segments are rebuilt from where their links are, without reading the
+    /// whole text for links again.
+    static SEGMENT_CACHE: std::cell::RefCell<std::collections::VecDeque<CachedLinks>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+/// A text cut into plain text and links.
 fn segments(text: &str) -> Vec<Seg<'_>> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while !rest.is_empty() {
-        let Some((i, len, seg)) = next_link(rest) else {
-            out.push(Seg::Text(rest));
-            break;
-        };
-        if i > 0 {
-            out.push(Seg::Text(&rest[..i]));
+    let links = if text.len() < CACHED_TEXT {
+        link_spans(text)
+    } else {
+        cached_link_spans(text)
+    };
+    let mut out = Vec::with_capacity(2 * links.len() + 1);
+    let mut at = 0;
+    for (i, len, seg) in links {
+        if i > at {
+            out.push(Seg::Text(&text[at..i]));
         }
         out.push(seg);
-        rest = &rest[i + len..];
+        at = i + len;
+    }
+    if at < text.len() {
+        out.push(Seg::Text(&text[at..]));
     }
     out
 }
 
-/// The first link of a text: where it starts, how long it is, and what it
-/// is. Links are found in the order of LLUrlRegistry::findUrl
-/// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[` of
-/// a link with its own text wins over the address inside it.
-fn next_link(text: &str) -> Option<(usize, usize, Seg<'_>)> {
-    let schemes = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"]
-        .iter()
-        .filter_map(|p| text.find(p));
-    let bare = schemes.chain(web_start(text)).min();
-    let labelled = text
-        .match_indices('[')
-        .map(|(i, _)| i)
-        .take_while(|&i| bare.is_none_or(|b| i < b))
-        .find_map(|i| labelled(&text[i..]).map(|(len, seg)| (i, len, seg)));
-    if labelled.is_some() {
-        return labelled;
+/// `link_spans` of a long text, from `SEGMENT_CACHE` when it was cut lately.
+fn cached_link_spans(text: &str) -> Vec<(usize, usize, Seg<'_>)> {
+    let hit = SEGMENT_CACHE.with_borrow_mut(|cache| {
+        let entry = cache.remove(cache.iter().position(|(t, _)| **t == *text)?)?;
+        let spans = entry.1.clone();
+        cache.push_back(entry);
+        Some(spans)
+    });
+    if let Some(spans) = hit {
+        return spans.iter().map(|&(i, len)| (i, len, link_at(text, i, len))).collect();
     }
-    let i = bare?;
-    let tail = &text[i..];
-    let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
-    // trailing punctuation belongs to the sentence
-    while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ']', ';', ':', '"', '\'']) {
-        end -= 1;
+    let links = link_spans(text);
+    let spans: Box<[(usize, usize)]> = links.iter().map(|&(i, len, _)| (i, len)).collect();
+    let size = |(t, s): &CachedLinks| t.len() + std::mem::size_of_val(&**s);
+    SEGMENT_CACHE.with_borrow_mut(|cache| {
+        cache.push_back((text.into(), spans));
+        let mut bytes: usize = cache.iter().map(size).sum();
+        while bytes > CACHED_BYTES
+            && let Some(old) = cache.pop_front()
+        {
+            bytes -= size(&old);
+        }
+    });
+    links
+}
+
+/// The segment of a link that `link_spans` found at `i`, `len` bytes long.
+fn link_at(text: &str, i: usize, len: usize) -> Seg<'_> {
+    if text[i..].starts_with('[')
+        && let Some((found, seg)) = Linker::new(text).labelled(i)
+        && found == len
+    {
+        return seg;
     }
-    let link = &tail[..end.max(1)];
-    let link = &link[..verb_end(link)];
-    Some((i, link.len(), link_seg(link)))
+    link_seg(&text[i..i + len])
+}
+
+/// The links of a text in order: where each starts, its length and what it
+/// is.
+fn link_spans(text: &str) -> Vec<(usize, usize, Seg<'_>)> {
+    let mut linker = Linker::new(text);
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(link) = linker.next_link(at) {
+        at = link.0 + link.1;
+        out.push(link);
+    }
+    out
+}
+
+/// The first place of a pattern at or after a position, kept while a text is
+/// read from its start to its end: as the position only moves forward, each
+/// pattern is searched once over the whole text, so finding the links of a
+/// long text (a profile full of `[`) stays linear in its length.
+#[derive(Clone, Copy, Default)]
+struct Ahead {
+    /// Searched from there…
+    from: Option<usize>,
+    /// …and found there (`None`: nowhere after `from`).
+    at: Option<usize>,
+}
+
+impl Ahead {
+    fn next(&mut self, pos: usize, find: impl FnOnce(usize) -> Option<usize>) -> Option<usize> {
+        let known = self.from.is_some_and(|from| from <= pos) && self.at.is_none_or(|at| at >= pos);
+        if !known {
+            self.from = Some(pos);
+            self.at = find(pos);
+        }
+        self.at
+    }
+}
+
+/// Finds the links of one text, from its start to its end (`next_link`).
+struct Linker<'a> {
+    text: &'a str,
+    schemes: [Ahead; LINK_SCHEMES.len()],
+    web: Ahead,
+    /// The next whitespace: where an address ends.
+    space: Ahead,
+    /// The next `]`: where the text of a `[` link ends.
+    close: Ahead,
+    /// What follows the address of the last `[` link tried: where the address
+    /// ends, then the spaces before its text and where its `]` is, if it has
+    /// a text. The `[` that follow share it until the next whitespace.
+    after_url: Option<(usize, Option<(usize, usize)>)>,
+}
+
+/// The next whitespace of `text` at or after `from`.
+fn space_from(text: &str, from: usize) -> Option<usize> {
+    text[from..].find(char::is_whitespace).map(|i| i + from)
+}
+
+impl<'a> Linker<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            schemes: Default::default(),
+            web: Ahead::default(),
+            space: Ahead::default(),
+            close: Ahead::default(),
+            after_url: None,
+        }
+    }
+
+    /// The first link at or after `at`: where it starts, how long it is, and
+    /// what it is. Links are found in the order of LLUrlRegistry::findUrl
+    /// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[`
+    /// of a link with its own text wins over the address inside it.
+    fn next_link(&mut self, at: usize) -> Option<(usize, usize, Seg<'a>)> {
+        let text = self.text;
+        let mut bare = self.web.next(at, |from| web_start(text, from));
+        for (ahead, scheme) in self.schemes.iter_mut().zip(LINK_SCHEMES) {
+            if let Some(i) = ahead.next(at, |from| text[from..].find(scheme).map(|i| i + from)) {
+                bare = Some(bare.map_or(i, |b| b.min(i)));
+            }
+        }
+        let before = &text[at..bare.unwrap_or(text.len())];
+        if let Some(link) = before
+            .match_indices('[')
+            .find_map(|(i, _)| self.labelled(at + i).map(|(len, seg)| (at + i, len, seg)))
+        {
+            return Some(link);
+        }
+        let i = bare?;
+        let tail = &text[i..];
+        let mut end = self.space.next(i, |from| space_from(text, from)).map_or(tail.len(), |w| w - i);
+        // trailing punctuation belongs to the sentence
+        while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ']', ';', ':', '"', '\'']) {
+            end -= 1;
+        }
+        let link = &tail[..end.max(1)];
+        let link = &link[..verb_end(link)];
+        Some((i, link.len(), link_seg(link)))
+    }
+
+    /// `[https://example.org Text]` at `i`: its length and its segment. The
+    /// pattern of LLUrlEntryHTTPLabel and LLUrlEntrySLLabel,
+    /// `\[(https?|secondlife)://\S+[ \t]+[^\]]+\]`; the text is unescaped
+    /// like getLabelFromWikiLink, and a text that is itself a link shows the
+    /// address instead (LLUrlEntryHTTPLabel::getLabel), so it cannot pass for
+    /// another destination.
+    fn labelled(&mut self, i: usize) -> Option<(usize, Seg<'a>)> {
+        let text = self.text;
+        let body = text[i..].strip_prefix('[')?;
+        // the scheme first: a `[` that starts no address is passed at once
+        if !LINK_SCHEMES
+            .iter()
+            .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)))
+        {
+            return None;
+        }
+        let url_end = self.space.next(i + 1, |from| space_from(text, from))? - (i + 1);
+        let url = &body[..url_end];
+        if url.ends_with("://") {
+            return None;
+        }
+        let (gap, close) = self.after_url(i + 1 + url_end)?;
+        let label = body[url_end + gap..][..close].trim_end();
+        let len = 1 + url_end + gap + close + 1;
+        let inner = link_seg(url);
+        let label = unescape(label);
+        if !link_spans(&label).is_empty() {
+            return Some((len, inner));
+        }
+        Some((
+            len,
+            match inner {
+                Seg::Place(u, mut place) => {
+                    place.label = label.into_owned();
+                    Seg::Place(u, place)
+                }
+                inner => Seg::Labelled(label, Box::new(inner)),
+            },
+        ))
+    }
+
+    /// After an address of a `[` link ending at `end`: the spaces or tabs
+    /// before its text and where its `]` is, from the text's start, when the
+    /// text is there. Kept for the next `[` of the same address.
+    fn after_url(&mut self, end: usize) -> Option<(usize, usize)> {
+        if let Some((at, found)) = self.after_url
+            && at == end
+        {
+            return found;
+        }
+        let text = self.text;
+        let after = &text[end..];
+        let gap = after.len() - after.trim_start_matches([' ', '\t']).len();
+        let found = if gap == 0 {
+            None
+        } else {
+            let start = end + gap;
+            self.close
+                .next(start, |from| text[from..].find(']').map(|c| c + from))
+                .map(|close| (gap, close - start))
+                .filter(|&(_, close)| !text[start..start + close].trim().is_empty())
+        };
+        self.after_url = Some((end, found));
+        found
+    }
 }
 
 /// Where an agent, group, parcel or experience link ends: after the word of
@@ -1579,19 +1829,16 @@ fn verb_end(link: &str) -> usize {
     link.len() - (verb.len() - word)
 }
 
-/// Where an address without its scheme starts, "www.example.org"
-/// (LLUrlEntryHTTPNoProtocol: `\bwww\.\S+\.([^\s<]*)?\b`).
-fn web_start(text: &str) -> Option<usize> {
-    let mut from = 0;
+/// Where an address without its scheme starts at or after `from`,
+/// "www.example.org" (LLUrlEntryHTTPNoProtocol: `\bwww\.\S+\.([^\s<]*)?\b`).
+/// A link ends before a whitespace, a punctuation mark or a `]`, so the
+/// character before `from` tells a word's start as it would in the rest of
+/// the text alone.
+fn web_start(text: &str, from: usize) -> Option<usize> {
+    let mut from = from;
     while let Some(i) = text[from..].find("www.").map(|i| i + from) {
         let word_start = !text[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
-        let host = text[i + 4..].split(|c: char| c.is_whitespace() || c == '<').next().unwrap_or("");
-        // a dot with something on both sides after "www."
-        let dotted = host
-            .trim_end_matches(|c: char| !c.is_alphanumeric())
-            .find('.')
-            .is_some_and(|d| d > 0);
-        if word_start && dotted {
+        if word_start && dotted_host(&text[i + 4..]) {
             return Some(i);
         }
         from = i + 4;
@@ -1599,49 +1846,16 @@ fn web_start(text: &str) -> Option<usize> {
     None
 }
 
-/// `[https://example.org Text]` at the start of `text`: its length and its
-/// segment. The pattern of LLUrlEntryHTTPLabel and LLUrlEntrySLLabel,
-/// `\[(https?|secondlife)://\S+[ \t]+[^\]]+\]`; the text is unescaped like
-/// getLabelFromWikiLink, and a text that is itself a link shows the address
-/// instead (LLUrlEntryHTTPLabel::getLabel), so it cannot pass for another
-/// destination.
-fn labelled(text: &str) -> Option<(usize, Seg<'_>)> {
-    let body = text.strip_prefix('[')?;
-    let known = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"]
-        .iter()
-        .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)));
-    let url_end = body.find(char::is_whitespace)?;
-    let url = &body[..url_end];
-    if !known || url.ends_with("://") {
-        return None;
+/// The text after "www." holds a dot with something on both sides: in its
+/// host (up to a whitespace or `<`), the first dot comes after a character
+/// and has a letter or a digit after it. Read only as far as needed, so the
+/// "www." of a long word are not each read to its end.
+fn dotted_host(after: &str) -> bool {
+    let host_end = |c: char| c.is_whitespace() || c == '<';
+    match after.char_indices().find(|&(_, c)| c == '.' || host_end(c)) {
+        Some((d, '.')) if d > 0 => after[d + 1..].chars().take_while(|&c| !host_end(c)).any(char::is_alphanumeric),
+        _ => false,
     }
-    let after = &body[url_end..];
-    let label_start = after.trim_start_matches([' ', '\t']);
-    let gap = after.len() - label_start.len();
-    if gap == 0 {
-        return None;
-    }
-    let close = label_start.find(']')?;
-    let label = label_start[..close].trim_end();
-    if label.trim().is_empty() {
-        return None;
-    }
-    let len = 1 + url_end + gap + close + 1;
-    let inner = link_seg(url);
-    let label = unescape(label);
-    if segments(&label).iter().any(|s| !matches!(s, Seg::Text(_))) {
-        return Some((len, inner));
-    }
-    Some((
-        len,
-        match inner {
-            Seg::Place(u, mut place) => {
-                place.label = label.into_owned();
-                Seg::Place(u, place)
-            }
-            inner => Seg::Labelled(label, Box::new(inner)),
-        },
-    ))
 }
 
 /// What a link is, from its address.
@@ -1717,6 +1931,17 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
+    });
+    line_menu::inline(r);
+}
+
+/// Right click on a member of a conversation's members' panel: the name
+/// menu, then a group chat's moderator options (`moderation`).
+fn member_menu(r: &egui::Response, p: &Palette, world: &World, conversation: uuid::Uuid, id: uuid::Uuid) {
+    super::contacts::drag::person_source(r, id);
+    super::menu::context_menu(r, p, |ui| {
+        super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name);
+        moderation::menu(ui, p, world, conversation, id);
     });
     line_menu::inline(r);
 }
@@ -3446,7 +3671,11 @@ fn classic_pane(
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
-            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            let show_channel = st.selected.is_none() && st.show_channel;
+            let channel_w = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
+                .floor()
+                .max(40.0);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3466,6 +3695,9 @@ fn classic_pane(
                 Some(id) => suggest::Scope::Session(id, &people),
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+            if show_channel {
+                channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
+            }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output
@@ -3544,7 +3776,7 @@ fn classic_pane(
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
             match st.selected {
                 None => {
-                    let (channel, message) = parse_channel(&text);
+                    let (channel, message) = channel::resolve(&text, st.selector_channel());
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
@@ -3564,7 +3796,7 @@ fn classic_pane(
         sent,
     });
     if st.selected.is_none() {
-        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
+        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
         st.local_field(&resp, said, sent);
     }
     if !draft.is_empty() {
@@ -4040,6 +4272,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     if !line_menu.is_empty() {
         return line_menu;
     }
+    let moderate = moderation::demo_events(ctx, frame);
+    if !moderate.is_empty() {
+        return moderate;
+    }
     let preview = previews::demo_events(ctx, frame);
     if !preview.is_empty() {
         return preview;
@@ -4244,6 +4480,11 @@ pub(crate) fn bar_input_id() -> egui::Id {
     egui::Id::unique("nearby_chat_input")
 }
 
+/// The nearby chat bar's selector, separate from the workspace field.
+pub(crate) fn bar_channel_id() -> egui::Id {
+    bar_input_id().with("channel")
+}
+
 /// The text cursor of a field after the last character: the keyboard given
 /// to a field that holds a draft, or the letter that started the chat.
 pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
@@ -4253,7 +4494,7 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
-/// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
+/// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
@@ -4268,30 +4509,40 @@ pub(crate) fn bar_input(
     build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
 ) -> Option<OutgoingChat> {
     let mut out = None;
+    let show_channel = st.show_channel;
+    let channel_width = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+    let field_width = (width - channel_width).max(40.0);
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
-    let build = identified(build);
-    input::prepare(ui, bar_input_id(), true);
-    let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
-    let nav = super::emoji::codes::keys(ui, bar_input_id());
-    let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+    let build = identified(|edit| build(edit).desired_width(field_width));
     let mut emoji = emoji;
-    let minimum = ui.spacing().interact_size.y;
-    let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, width, minimum, build);
-    if recalled {
-        output.response.mark_changed();
-    }
-    super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
-    super::spelling::field(ui, p, &mut output, &mut st.input, true);
-    suggest::after(
-        ui,
-        p,
-        &mut output,
-        &mut st.input,
-        suggest_nav,
-        &mut st.suggest,
-        suggest::Scope::Nearby(gestures),
-    );
+    let output = ui
+        .horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            input::prepare(ui, bar_input_id(), true);
+            let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
+            let nav = super::emoji::codes::keys(ui, bar_input_id());
+            let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+            let minimum = ui.spacing().interact_size.y;
+            let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, field_width, minimum, build);
+            if recalled {
+                output.response.mark_changed();
+            }
+            super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
+            super::spelling::field(ui, p, &mut output, &mut st.input, true);
+            suggest::after(
+                ui,
+                p,
+                &mut output,
+                &mut st.input,
+                suggest_nav,
+                &mut st.suggest,
+                suggest::Scope::Nearby(gestures),
+            );
+            st.bar_channel_open = show_channel && channel::show(ui, p, &mut st.chat_channel, bar_channel_id());
+            output
+        })
+        .inner;
     let resp = output
         .response
         .response
@@ -4319,7 +4570,7 @@ pub(crate) fn bar_input(
     };
     let enter = send.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
-    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
+    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
@@ -4332,7 +4583,7 @@ pub(crate) fn bar_input(
         if send == SendKey::Ooc {
             text = ooc(&text);
         }
-        let (channel, message) = parse_channel(&text);
+        let (channel, message) = channel::resolve(&text, st.selector_channel());
         out = Some(OutgoingChat {
             message,
             channel,
@@ -4345,7 +4596,7 @@ pub(crate) fn bar_input(
             st.focus_request = true;
         }
     }
-    // Enter on an empty bar returns to movement (like Firestorm).
+    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
@@ -4978,6 +5229,62 @@ mod tests {
         assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
     }
 
+    /// Long texts with many brackets or many link starts and few spaces are
+    /// split into links in linear time: a profile's About is cut every
+    /// frame it is shown.
+    #[test]
+    fn long_texts_with_many_brackets_are_split_quickly() {
+        let id = uuid::Uuid::from_u128(5);
+        let n = 65_000;
+        let start = std::time::Instant::now();
+        let whole = |t: &str| assert_eq!(segments(t), vec![Seg::Text(t)]);
+        whole(&"[".repeat(n));
+        whole(&format!("[{}", "a".repeat(n)));
+        whole(&"awww.".repeat(n / 5));
+        whole(&"www..".repeat(n / 5));
+        // one address up to the first whitespace, its first `[` left out
+        let t = "[https://".repeat(n / 9);
+        assert_eq!(segments(&t), vec![Seg::Text("["), Seg::Url(&t[1..])]);
+        for end in [" x", " \n\n]"] {
+            let t = format!("{}{end}", "[https://a".repeat(n / 10));
+            assert_eq!(
+                segments(&t),
+                vec![Seg::Text("["), Seg::Url(&t[1..t.len() - end.len()]), Seg::Text(end)]
+            );
+        }
+        // links glued to each other: each ends at its verb
+        let t = format!("secondlife:///app/agent/{id}/about'").repeat(n / 66);
+        assert_eq!(segments(&t).iter().filter(|s| **s == Seg::Agent(id)).count(), n / 66);
+        // a labelled link after many brackets is still found
+        let t = format!("{}[https://example.org the site]", "[".repeat(n));
+        assert_eq!(
+            segments(&t)[1],
+            Seg::Labelled("the site".into(), Box::new(Seg::Url("https://example.org")))
+        );
+        let took = start.elapsed();
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
+    }
+
+    /// A long text cut again comes from `SEGMENT_CACHE`, with the same
+    /// segments.
+    #[test]
+    fn a_long_text_cut_again_keeps_its_segments() {
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!(
+            "see https://example.org/x, [https://a.org the site] secondlife:///app/agent/{id}/about's \
+             [secondlife:///app/teleport/Ahern/1/2/3 the beach] www.example.org [note] "
+        )
+        .repeat(20);
+        assert!(t.len() >= CACHED_TEXT);
+        let fresh: Vec<_> = link_spans(&t).into_iter().map(|(_, _, s)| s).collect();
+        let first = segments(&t);
+        let again = segments(&t);
+        assert_eq!(first, again);
+        let links: Vec<_> = again.into_iter().filter(|s| !matches!(s, Seg::Text(_))).collect();
+        assert_eq!(links, fresh);
+        assert_eq!(links.len(), 5 * 20);
+    }
+
     #[test]
     fn addresses_without_scheme_are_links() {
         let segs = segments("see www.youtube.com/watch, or [www.youtube.com YouTube]");
@@ -5250,6 +5557,28 @@ mod tests {
         let (channel, message, gesture) = prepare_local_line(&mut manager, "/wave", false);
         assert_eq!((channel, message.as_str(), gesture), (0, "", Some(id)));
         assert!(!sends_local_line(channel, &message));
+    }
+
+    /// FSNearbyChat::sendChatFromViewer: talk, shout or whisper by the
+    /// volume, on channel 0 only; the typing notices never animate.
+    #[test]
+    fn a_local_line_plays_the_animation_of_its_volume_on_channel_zero_only() {
+        assert_eq!(chat_animation(0, ChatType::Normal), Some(ANIM_AGENT_TALK));
+        assert_eq!(chat_animation(0, ChatType::Shout), Some(ANIM_AGENT_SHOUT));
+        assert_eq!(chat_animation(0, ChatType::Whisper), Some(ANIM_AGENT_WHISPER));
+        for channel in [5, -1, i32::MAX] {
+            for kind in [ChatType::Normal, ChatType::Shout, ChatType::Whisper] {
+                assert_eq!(chat_animation(channel, kind), None, "{channel} {kind:?}");
+            }
+        }
+        for kind in [ChatType::StartTyping, ChatType::StopTyping, ChatType::OwnerSay] {
+            assert_eq!(chat_animation(0, kind), None, "{kind:?}");
+        }
+        // the ids of llanimationstates.cpp, as the built-in gestures name them
+        assert_eq!(ANIM_AGENT_TALK.to_string(), "5c682a95-6da4-a463-0bf6-0f5b7be129d1");
+        assert_eq!(ANIM_AGENT_SHOUT.to_string(), "6bd01860-4ebd-127a-bb3d-d1427e8e0c42");
+        assert_eq!(ANIM_AGENT_WHISPER.to_string(), "7693f268-06c7-ea71-fa21-2b30d6533f8f");
+        assert!(crate::settings::Settings::default().play_chat_anim, "PlayChatAnim is on by default");
     }
 
     /// A gesture's replacement may itself open with a channel: the Legacy

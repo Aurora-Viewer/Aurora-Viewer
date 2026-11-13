@@ -306,7 +306,7 @@ impl Scene {
                 area += self.prim_scaled_area(world, c);
             }
             for t in &textures {
-                total += texture_cost(self.textures.full_size(t)) as f32;
+                total += texture_cost(self.textures.known_size(t)) as f32;
             }
             cost += total.clamp(0.0, MAX_ATTACHMENT_COMPLEXITY) as u32;
         }
