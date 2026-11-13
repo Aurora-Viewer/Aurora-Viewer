@@ -182,29 +182,70 @@ fn level(o: &Opacity, kind: Kind, focused: bool) -> f32 {
     }
 }
 
+/// What happened to the window this frame, for the focus.
+#[derive(Debug, Clone, Copy, Default)]
+struct FocusEvents {
+    /// It was not shown the frame before.
+    opened: bool,
+    /// Its field took the keyboard this frame (Enter on the chat bar, a
+    /// shortcut), without a click.
+    took_keyboard: bool,
+    /// A press this frame, and the layer under it (None: the world), when
+    /// that layer is not a menu or a dialog over a window.
+    pressed: Option<Option<egui::Id>>,
+}
+
+/// The window that has the focus after `window`'s events (LLFloater::setFocus):
+/// only one at a time. A window just opened or whose field takes the
+/// keyboard gets it; a press gives it to the window under the pointer, or to
+/// none on the world or a bar.
+fn next_holder(holder: Option<egui::Id>, window: egui::Id, events: FocusEvents) -> Option<egui::Id> {
+    if events.opened || events.took_keyboard {
+        Some(window)
+    } else if let Some(layer) = events.pressed {
+        layer
+    } else {
+        holder
+    }
+}
+
 /// The opacity of the window `id` this frame. Call once per shown window:
-/// it follows the focus (LLFloater::setFocus): a click on a window or on its
-/// keyboard field makes it active, a click on the world or a bar makes it
-/// inactive, a window just opened starts active.
+/// it follows the focus (`next_holder`).
 pub fn window(ctx: &egui::Context, id: &str, chat: bool) -> f32 {
     let window = egui::Id::unique(id);
-    let holder = egui::Id::unique("active_window");
+    let holder_id = egui::Id::unique("active_window");
     let frame = ctx.cumulative_frame_nr();
     let seen = window.with("opacity_seen");
-    let opened = ctx.data_mut(|d| d.get_temp::<u64>(seen)).is_none_or(|last| last + 1 < frame);
-    ctx.data_mut(|d| d.insert_temp(seen, frame));
-    if opened {
-        ctx.data_mut(|d| d.insert_temp(holder, Some(window)));
-    } else if let Some(pos) = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None }) {
-        let layer = ctx.layer_id_at(pos);
+    let had_keyboard = window.with("opacity_had_keyboard");
+    let keyboard = super::widgets::floater_holds_keyboard(ctx, id);
+    let (opened, took_keyboard) = ctx.data_mut(|d| {
+        let opened = d.get_temp::<u64>(seen).is_none_or(|last| last + 1 < frame);
+        let took_keyboard = keyboard && !d.get_temp::<bool>(had_keyboard).unwrap_or(false);
+        d.insert_temp(seen, frame);
+        d.insert_temp(had_keyboard, keyboard);
+        (opened, took_keyboard)
+    });
+    let pressed = ctx
+        .input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None })
+        .map(|pos| ctx.layer_id_at(pos))
         // a menu or a dialog over a window leaves it active
-        if layer.is_none_or(|l| l.order <= egui::Order::Middle) {
-            ctx.data_mut(|d| d.insert_temp(holder, layer.map(|l| l.id)));
-        }
-    }
-    let focused = ctx.data_mut(|d| d.get_temp::<Option<egui::Id>>(holder)).flatten() == Some(window)
-        || super::widgets::floater_holds_keyboard(ctx, id);
-    ctx.animate_value_with_time(window.with("opacity"), level(&current(), kind(id, chat), focused), FOCUS_FADE)
+        .filter(|layer| layer.is_none_or(|l| l.order <= egui::Order::Middle))
+        .map(|layer| layer.map(|l| l.id));
+    let events = FocusEvents {
+        opened,
+        took_keyboard,
+        pressed,
+    };
+    let holder = ctx.data_mut(|d| {
+        let holder = next_holder(d.get_temp::<Option<egui::Id>>(holder_id).flatten(), window, events);
+        d.insert_temp(holder_id, holder);
+        holder
+    });
+    ctx.animate_value_with_time(
+        window.with("opacity"),
+        level(&current(), kind(id, chat), holder == Some(window)),
+        FOCUS_FADE,
+    )
 }
 
 /// The fill of a window or bar frame: under glass the tint is drawn over the
@@ -321,6 +362,33 @@ mod tests {
         assert_eq!(level(&over, Kind::Conversations, false), 0.8);
         assert_eq!(level(&o, Kind::Detached, true), 0.9);
         assert_eq!(level(&o, Kind::Detached, false), 0.8);
+    }
+
+    /// LLFloater::setFocus: one window has the focus at a time.
+    #[test]
+    fn one_window_has_the_focus_at_a_time() {
+        let a = egui::Id::unique("a");
+        let b = egui::Id::unique("b");
+        let none = FocusEvents::default();
+        assert_eq!(next_holder(Some(a), b, none), Some(a), "nothing happened");
+        let opened = FocusEvents { opened: true, ..none };
+        assert_eq!(next_holder(Some(a), b, opened), Some(b), "a window just opened");
+        // a click on a then Enter on b's field: b alone, not both
+        let typed = FocusEvents {
+            took_keyboard: true,
+            ..none
+        };
+        assert_eq!(next_holder(Some(a), b, typed), Some(b));
+        let on_a = FocusEvents {
+            pressed: Some(Some(a)),
+            ..none
+        };
+        assert_eq!(next_holder(Some(b), b, on_a), Some(a), "a click on another window");
+        let on_world = FocusEvents {
+            pressed: Some(None),
+            ..none
+        };
+        assert_eq!(next_holder(Some(b), b, on_world), None, "a click on the world");
     }
 
     #[test]

@@ -1475,6 +1475,7 @@ pub fn search_demo_events(frame: u64) -> Vec<egui::Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::widgets::{Floater, elide_tests::Frames};
 
     /// A menu fading in had its frame at a part of its colours: not found,
     /// it was drawn without its glass and at the skin's full opacity.
@@ -1500,7 +1501,6 @@ mod tests {
         let other = egui::Shape::rect_filled(rect, 4.0, p.violet);
         assert!(stock_frame(&other, tint, frame_border(&p)).is_none());
     }
-    use crate::ui::widgets::{Floater, elide_tests::Frames};
 
     fn words(q: &str) -> Vec<String> {
         query_words(q)
