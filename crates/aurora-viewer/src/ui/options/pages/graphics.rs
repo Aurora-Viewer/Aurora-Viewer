@@ -437,6 +437,7 @@ fn parcels(cx: &mut Cx) {
             true,
         );
     });
+    cx.group(tr!("parcel-environment-title"), parcel_environments);
 }
 
 fn quality(cx: &mut Cx) {
@@ -1201,6 +1202,63 @@ fn depth_of_field(cx: &mut Cx) {
 }
 
 /// Scope and rendering exceptions use the same saved identities and list controls.
+/// The environments saved for parcels (`world/parcel_env.rs`), set from the
+/// Environment window and the inventory: this list only removes them.
+fn parcel_environments(cx: &mut Cx) {
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let p = cx.p;
+    let field = field!(parcel_environments);
+    cx.section_body().row_with(
+        tr!("parcel-environment-title"),
+        tr!("parcel-environment-help"),
+        &field,
+        |ui, s, _, _| {
+            let entries = &mut s.parcel_environments;
+            let mut changed = false;
+            ui.vertical(|ui| {
+                if entries.is_empty() {
+                    ui.label(RichText::new(tr!("parcel-environment-empty")).color(p.muted));
+                    return;
+                }
+                let mut remove = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("parcel_environments")
+                    .max_height(180.0)
+                    .min_scrolled_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (i, entry) in entries.iter().enumerate() {
+                            ui.push_id((&entry.grid, entry.parcel), |ui| {
+                                ui.horizontal_top(|ui| {
+                                    let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
+                                    ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                        ui.set_min_width(width);
+                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                        ui.add(egui::Label::new(RichText::new(&entry.name).strong()).wrap());
+                                        ui.add(egui::Label::new(RichText::new(&entry.region_name).size(12.0).color(p.muted)).wrap());
+                                    });
+                                    if widgets::icon_button(ui, &p, "trash-filled", tr!("common-remove"), true) {
+                                        remove = Some(i);
+                                    }
+                                });
+                            });
+                        }
+                    });
+                if let Some(i) = remove {
+                    entries.remove(i);
+                    changed = true;
+                }
+                if ui.button(tr!("parcel-environment-remove-all")).clicked() {
+                    entries.clear();
+                    changed = true;
+                }
+            });
+            changed
+        },
+    );
+}
+
 fn parcel_list(
     cx: &mut Cx,
     label: &str,

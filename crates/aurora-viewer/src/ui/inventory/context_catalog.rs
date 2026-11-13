@@ -604,6 +604,14 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         single && !it.asset_id.is_nil(),
                         InvAction::Environment(it.asset_id, it.flags),
                     );
+                    c.invoke(
+                        "apply-save-parcel",
+                        TEXT,
+                        "map-pin-filled",
+                        aurora_i18n::tr!("parcel-environment-apply-save"),
+                        single && !it.asset_id.is_nil(),
+                        InvAction::EnvironmentSaveParcel(it.asset_id, it.flags),
+                    );
                 }
             }
             let selected: Vec<_> = ids.iter().filter_map(|id| rules::original(inv, *id)).collect();
@@ -1397,6 +1405,7 @@ mod tests {
             "play-local",
             "play-sound",
             "apply-environment",
+            "apply-save-parcel",
             "gesture-active",
             "about-landmark",
             "copy-landmark-slurl",

@@ -525,6 +525,12 @@ impl App {
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
+            InvAction::EnvironmentSaveParcel(asset, flags) => {
+                if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
+                    self.world.eep.request_local(asset, kind);
+                    self.world.save_parcel_environment();
+                }
+            }
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
             InvAction::ShowMain(item) => {
                 self.inventory_ui.show_original(&self.world.inventory, item);

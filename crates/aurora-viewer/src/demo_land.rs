@@ -573,9 +573,14 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             }
             out
         }
-        LandCommand::ParcelIdRequest { local_id, .. } => vec![ev(LandEvent::ParcelId {
+        LandCommand::ParcelIdRequest { handle, local_id, .. } => vec![ev(LandEvent::ParcelId {
+            handle: *handle,
             local_id: *local_id,
-            id: Some(PARCEL_UUID),
+            id: Some(if crate::demo::parcel_env::mode().is_some() {
+                crate::demo::parcel_env::parcel_uuid(*local_id)
+            } else {
+                PARCEL_UUID
+            }),
         })],
         LandCommand::EnvironmentRequest { local_id } => vec![ev(LandEvent::Environment {
             local_id: *local_id,

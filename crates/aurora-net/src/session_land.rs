@@ -557,7 +557,14 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         let Some(url) = self.land_cap(handle, "RemoteParcelRequest") else {
             log::warn!("RemoteParcelRequest not available. Cannot request parcel ID");
-            emit(self.sh, NetEvent::Land(LandEvent::ParcelId { local_id, id: None }));
+            emit(
+                self.sh,
+                NetEvent::Land(LandEvent::ParcelId {
+                    handle,
+                    local_id,
+                    id: None,
+                }),
+            );
             return;
         };
         let body = land::remote_parcel_body(position, region_id, Some(handle));
@@ -568,7 +575,7 @@ impl Session<'_> {
                 Err(land::RemoteParcelError::NoParcel) => Some(Uuid::nil()),
                 Err(_) => None,
             };
-            let _ = events.send(NetEvent::Land(LandEvent::ParcelId { local_id, id }));
+            let _ = events.send(NetEvent::Land(LandEvent::ParcelId { handle, local_id, id }));
         });
     }
 

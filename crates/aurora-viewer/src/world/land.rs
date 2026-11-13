@@ -913,8 +913,10 @@ impl Land {
                     c.text = Some(text.unwrap_or_else(|| aurora_i18n::tr!("world-land-could-not-load-this-estate-s-covenant").into()));
                 }
             }
-            LandEvent::ParcelId { local_id, id } => {
-                if let Some(sel) = self.sel.as_mut().filter(|s| s.local_id() == Some(local_id)) {
+            // the agent's own parcel asks too (`parcel_env.rs`), and a local
+            // id only means something within its region
+            LandEvent::ParcelId { handle, local_id, id } => {
+                if let Some(sel) = self.sel.as_mut().filter(|s| s.handle == handle && s.local_id() == Some(local_id)) {
                     if id.is_none() {
                         // setErrorStatus: asked again on the next refresh
                         sel.uuid_local_id = 0;
@@ -1620,6 +1622,47 @@ mod tests {
         // a quarter into the 4 h cycle: 06:00, 25 %
         assert_eq!(e.apparent_time(0), Some((6, 0, 25)));
         assert_eq!(EnvSummary::default().apparent_time(0), None);
+    }
+
+    #[test]
+    fn a_parcel_id_from_another_region_does_not_name_the_selection() {
+        let mut land = Land::default();
+        land.select_at(5, Vec3::new(100.0, 100.0, 20.0), (256.0, 256.0));
+        let ctx = SelectionContext {
+            agent_region: Some(5),
+            region_id: Uuid::from_u128(3),
+        };
+        let info = Arc::new(ParcelInfo {
+            local_id: 4,
+            ..Default::default()
+        });
+        land.apply(
+            LandEvent::Selected {
+                handle: 5,
+                info,
+                result: 0,
+            },
+            &ctx,
+        );
+        let id = Some(Uuid::from_u128(9));
+        land.apply(
+            LandEvent::ParcelId {
+                handle: 6,
+                local_id: 4,
+                id,
+            },
+            &ctx,
+        );
+        assert_eq!(land.sel.as_ref().and_then(|s| s.parcel_uuid), None);
+        land.apply(
+            LandEvent::ParcelId {
+                handle: 5,
+                local_id: 4,
+                id,
+            },
+            &ctx,
+        );
+        assert_eq!(land.sel.as_ref().and_then(|s| s.parcel_uuid), Some(id));
     }
 
     #[test]
