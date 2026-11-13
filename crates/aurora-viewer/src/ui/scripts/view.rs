@@ -381,6 +381,34 @@ fn header(
     }
 }
 
+/// The compile target picker (panel_script_ed.xml `compile_target`, in its
+/// order). The Lua targets need a region with SLua, as
+/// LLScriptEdCore::postBuild enables them from LuaScriptsEnabled.
+fn compile_target(ui: &mut egui::Ui, e: &mut Editor) {
+    use aurora_net::scripts::CompileTarget;
+    let label = |t: CompileTarget| match t {
+        CompileTarget::Mono => aurora_i18n::tr!("script-target-mono"),
+        CompileTarget::Lsl2 => aurora_i18n::tr!("script-target-lsl2"),
+        CompileTarget::LslLuau => aurora_i18n::tr!("script-target-lsl-luau"),
+        CompileTarget::Luau => aurora_i18n::tr!("script-target-luau"),
+    };
+    egui::ComboBox::from_id_salt(("script_compile_target", e.target.object, e.target.item))
+        .selected_text(label(e.compile))
+        .show_ui(ui, |ui| {
+            for t in [
+                CompileTarget::Mono,
+                CompileTarget::Lsl2,
+                CompileTarget::LslLuau,
+                CompileTarget::Luau,
+            ] {
+                let lua = matches!(t, CompileTarget::LslLuau | CompileTarget::Luau);
+                ui.add_enabled_ui(!lua || e.lua_scripts, |ui| ui.selectable_value(&mut e.compile, t, label(t)));
+            }
+        })
+        .response
+        .on_hover_text(aurora_i18n::tr!("script-target-hint"));
+}
+
 fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut Vec<Action>) {
     let ctx = ui.ctx().clone();
     ui.horizontal(|ui| {
@@ -423,7 +451,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.add_enabled_ui(
             e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
             |ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                compile_target(ui, e);
             },
         );
     });
@@ -678,12 +706,11 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
                     super::focus::claim(ui.ctx(), ui.layer_id(), id);
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
-                            .id(id.with("insert_filter"))
+                    let field = crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| {
+                        edit.id(id.with("insert_filter"))
                             .desired_width(260.0)
-                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
-                    );
+                            .hint_text(aurora_i18n::tr!("script-insert-filter"))
+                    });
                     if !e.tools.insertion_open {
                         field.request_focus();
                     }
@@ -788,7 +815,7 @@ pub(super) fn dialogs(
             Vec2::new(560.0, 480.0),
         )
         .show(ctx, p, &mut e.tools.library, |ui| {
-            ui.text_edit_singleline(&mut e.tools.insert_filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| edit);
             let filter = e.tools.insert_filter.to_lowercase();
             let mut keyword = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -823,7 +850,7 @@ pub(super) fn dialogs(
                 if flat_button(ui, p, aurora_i18n::tr!("script-menu-revert")).clicked() {
                     let end = e.source.chars().count();
                     editing::replace(ctx, original_id, &mut e.source, 0..end, &e.baseline);
-                    e.mono = e.baseline_mono;
+                    e.compile = e.baseline_compile;
                     e.experience.selected = e.experience.baseline;
                     e.tools.revert = false;
                 }
@@ -1005,14 +1032,14 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            editors.open(target, "Script".into(), readable, editable);
+            editors.open(target, "Script".into(), readable, editable, 0);
             let e = &mut editors.documents[0];
             e.can_reset = available;
             if saving {
                 e.saving = Some(super::super::PendingSave {
                     request: Uuid::from_u128(11),
                     source: String::new(),
-                    mono: true,
+                    compile: aurora_net::scripts::CompileTarget::Mono,
                     experience: None,
                     running: false,
                 });
@@ -1088,7 +1115,7 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Wrapping".into(), true, editable).expect("load");
+            let request = editors.open(target, "Wrapping".into(), true, editable, 0).expect("load");
             editors.loaded(request, target, Ok(original.clone()));
             let e = &mut editors.documents[0];
             e.tools.reset_history = false;
@@ -1171,7 +1198,7 @@ mod tests {
                 item: uuid::Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Resize".into(), true, true).unwrap();
+            let request = editors.open(target, "Resize".into(), true, true, 0).unwrap();
             editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
             let e = &mut editors.documents[0];
             let settings = ScriptSettings::default();
@@ -1250,7 +1277,7 @@ mod tests {
             item: uuid::Uuid::from_u128(10),
         };
         let mut editors = super::super::Editors::default();
-        let request = editors.open(target, "Main".into(), true, false).unwrap();
+        let request = editors.open(target, "Main".into(), true, false, 0).unwrap();
         editors.loaded(request, target, Ok("éあ original".into()));
         let e = &mut editors.documents[0];
         let ctx = egui::Context::default();

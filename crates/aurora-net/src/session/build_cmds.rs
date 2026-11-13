@@ -10,11 +10,11 @@ use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
 use std::ops::Range;
 
 /// Most objects per message (LLSelectMgr::sendListToRegions MAX_OBJECTS_PER_PACKET).
-const MAX_PER_PACKET: usize = 254;
+pub(super) const MAX_PER_PACKET: usize = 254;
 
 /// Keep variable-length object-name and description messages within the UDP
 /// packet limit as well as the protocol's block-count limit.
-fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
+pub(super) fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = 0;
     while start < items.len() {
@@ -28,7 +28,7 @@ fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize)
     ranges
 }
 
-fn encoded_packet_len<M: Msg>(message: &M) -> usize {
+pub(super) fn encoded_packet_len<M: Msg>(message: &M) -> usize {
     let mut bytes = Vec::new();
     aurora_msg::build_packet(message, 0, true, false, &[], &mut bytes);
     bytes.len()
@@ -870,7 +870,7 @@ impl Session<'_> {
                     object_id: m.script.object_id,
                     item_id: m.script.item_id,
                     running: m.script.running,
-                    mono: None,
+                    compile: None,
                 },
             );
         } else {
@@ -902,7 +902,8 @@ impl Session<'_> {
                     .collect();
                 emit(self.sh, NetEvent::PhysicsProperties(list));
             }
-            // the event queue form carries the Mono flag (LLLiveLSLEditor)
+            // the event queue form carries the Mono, Luau and LuauLanguage
+            // flags (LLLiveLSLEditor::processScriptRunningReply)
             "ScriptRunningReply" => {
                 let s = &b["Script"][0];
                 emit(
@@ -911,7 +912,13 @@ impl Session<'_> {
                         object_id: s["ObjectID"].as_uuid(),
                         item_id: s["ItemID"].as_uuid(),
                         running: s["Running"].as_bool(),
-                        mono: s.has("Mono").then(|| s["Mono"].as_bool()),
+                        compile: (s.has("Mono") || s.has("Luau")).then(|| {
+                            crate::scripts::CompileTarget::from_running(
+                                s["Mono"].as_bool(),
+                                s["Luau"].as_bool(),
+                                s["LuauLanguage"].as_bool(),
+                            )
+                        }),
                     },
                 );
             }
@@ -978,6 +985,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
             category: b.category,
             inventory_serial: b.inventory_serial,
             folder_id: b.folder_id,
+            from_task_id: b.from_task_id,
             name: field_str(&b.name),
             description: field_str(&b.description),
             touch_name: field_str(&b.touch_name),

@@ -20,6 +20,11 @@ const TINT_GLASS: (f32, f32) = (0.52, 0.42);
 const TINT_PLAIN: (f32, f32) = (0.74, 0.62);
 /// Opacity of the light border, and of the far pill's.
 const BORDER: (f32, f32) = (0.14, 0.10);
+/// The light border of a plate, shared with the contact-set markers.
+pub(crate) fn plain_border(p: &Palette) -> Color32 {
+    p.ink.gamma_multiply(BORDER.0)
+}
+
 /// Under the pointer (#473): how far the surface goes toward the ink, and
 /// the opacity the border gains. Faint: the plate answers, it does not flash.
 const HOVER_LIGHT: f32 = 0.12;
@@ -69,7 +74,7 @@ impl<'a> Env<'a> {
             now,
             pixels_per_point: painter.pixels_per_point(),
             semibold: crate::ui::fonts::semibold(painter.ctx()),
-            tint: p.navy.lerp_to_gamma(p.bar, 0.5),
+            tint: base_tint(p),
             friend: None,
             skin: {
                 use std::hash::{Hash, Hasher};
@@ -153,6 +158,8 @@ struct SurfaceKey {
     hover: f32,
     pixels_per_point: f32,
     skin: u64,
+    /// ChatBubbleOpacity, against the plate's usual look at its default.
+    opacity: f32,
 }
 
 /// What the rings, discs and bars on a plate are built from.
@@ -304,7 +311,7 @@ fn friend_color(env: &Env<'_>, c: &Content) -> Option<Color32> {
 /// background, else for a friend a tint of the friends' color.
 pub(super) fn surface_tint(env: &Env<'_>, c: &Content) -> Option<Color32> {
     match c.appearance.background {
-        Some(bg) => Some(plate_tint(env, crate::ui::colors::set_color(bg), SET_TINT)),
+        Some(bg) => Some(set_background(env.p, bg)),
         None => friend_color(env, c).map(|friend| plate_tint(env, friend, FRIEND_TINT)),
     }
 }
@@ -321,21 +328,40 @@ pub(super) fn surface_border(env: &Env<'_>, c: &Content) -> Option<Color32> {
 /// `color` taken `toward` of the way to the plate's own tint, then darkened
 /// until the text reads on it.
 fn plate_tint(env: &Env<'_>, color: Color32, toward: f32) -> Color32 {
+    tint_on(env.p, color, toward)
+}
+
+fn base_tint(p: &Palette) -> Color32 {
+    p.navy.lerp_to_gamma(p.bar, 0.5)
+}
+
+fn tint_on(p: &Palette, color: Color32, toward: f32) -> Color32 {
     // Derive the hue from the color, while keeping the ordinary surface
     // alpha. Check both the main ink and the secondary line against the tint.
-    let mut tint = color.to_opaque().lerp_to_gamma(env.tint, toward);
-    let target = if contrast(env.p.ink, env.p.navy) >= contrast(env.p.ink, env.p.field) {
-        env.p.navy
+    let mut tint = color.to_opaque().lerp_to_gamma(base_tint(p), toward);
+    let target = if contrast(p.ink, p.navy) >= contrast(p.ink, p.field) {
+        p.navy
     } else {
-        env.p.field
+        p.field
     };
     for _ in 0..12 {
-        if contrast(env.p.ink, tint) >= 4.5 && contrast(env.p.muted, tint) >= 3.0 {
+        if contrast(p.ink, tint) >= 4.5 && contrast(p.muted, tint) >= 3.0 {
             break;
         }
         tint = tint.lerp_to_gamma(target, 0.2);
     }
     tint
+}
+
+/// The surface a contact set's background gives a plate, shared with the
+/// contact-set markers.
+pub(crate) fn set_background(p: &Palette, background: [f32; 4]) -> Color32 {
+    tint_on(p, crate::ui::colors::set_color(background), SET_TINT)
+}
+
+/// `color` moved toward the ink until it reads on `background`.
+pub(crate) fn readable_on(color: Color32, background: Color32, ink: Color32) -> Color32 {
+    readable_name(color, background, ink)
 }
 
 fn readable_name(mut name: Color32, background: Color32, ink: Color32) -> Color32 {
@@ -350,7 +376,7 @@ fn readable_name(mut name: Color32, background: Color32, ink: Color32) -> Color3
 
 /// Draw the plate of `tag` and return its rectangle, and its surface as
 /// drawn (moved by its bounce).
-pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache) -> (Rect, Rect) {
+pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache) -> (Rect, Rect, Option<Rect>) {
     let c = &tag.content;
     let t = aurora::time(env.now, st.still);
     let to = face(env, st.level, c, t);
@@ -397,7 +423,19 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
             contents(env, &painter, rect, &to, tag, alpha * st.progress, &mut cache.marks);
         }
     }
-    (rect, surface)
+    (rect, surface, marker_slot(st.level, c, &to, rect))
+}
+
+/// Where a contact-set marker lands on a plate (`ui/contact_markers.rs`):
+/// the badge of its set's symbol. Without one, it has nowhere to land.
+fn marker_slot(level: Level, c: &Content, face: &Face, rect: Rect) -> Option<Rect> {
+    let marker = c.appearance.marker.filter(|_| level != Level::Far)?;
+    // as `contents`: a plate changing size keeps its face centred
+    let origin = Vec2::new(rect.left(), rect.center().y - face.layout.size.y * 0.5);
+    face.badges.iter().zip(face.layout.badges).find_map(|(badge, r)| match badge {
+        Badge::Contact { icon, .. } if Some(icon) == marker.icon => Some(r.translate(origin)),
+        _ => None,
+    })
 }
 
 /// The blur of the world, then the surface, its border, its shadow and
@@ -406,11 +444,17 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
 fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &Content, cache: &mut Option<Built<SurfaceKey>>) {
     let p = env.p;
     let s = SCALE;
+    let (tag_tint, tag_blur) =
+        crate::ui::surface_opacity::relative(crate::ui::surface_opacity::name_tags(), crate::ui::surface_opacity::NAME_TAGS);
     if st.glass > 0.0 {
         // inside the antialiased edge of the surface, which hides the blur's own
         let radius = rect.height() * 0.5 - 0.5;
-        env.painter
-            .add(aurora_render::glass_region(rect.shrink(0.5), radius, st.glass * alpha, GLASS_SHADE));
+        env.painter.add(aurora_render::glass_region(
+            rect.shrink(0.5),
+            radius,
+            st.glass * alpha * tag_blur,
+            GLASS_SHADE,
+        ));
     }
     let key = SurfaceKey {
         tint: surface_tint(env, c).unwrap_or(env.tint),
@@ -422,6 +466,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
         hover: st.hover,
         pixels_per_point: env.pixels_per_point,
         skin: env.skin,
+        opacity: tag_tint,
     };
     let surface = Built::of(cache, key, |key| {
         let shadow = Glow {
@@ -430,7 +475,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
             spread: 0.0,
             color: p.navy.gamma_multiply(0.35),
         };
-        let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
+        let opacity = (lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass) * key.opacity).min(1.0);
         let plain = key
             .border
             .unwrap_or_else(|| p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover));

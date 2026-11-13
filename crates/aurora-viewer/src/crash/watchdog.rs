@@ -450,3 +450,18 @@ pub fn read_alive(dir: &Path) -> Vec<(String, String)> {
         })
         .unwrap_or_default()
 }
+
+/// When `alive.txt` was last written, in Unix seconds: the last sign of life
+/// when its content is lost. The file is renamed into place without a flush
+/// (every 5 s, a flush would cost the disk): a system that stops at once
+/// (Windows crash, power cut, forced restart) can leave it empty or full of
+/// zeros, while its date, journaled with the rename, survives. The pending
+/// copy counts too: a rename lost with the system leaves only it.
+pub fn alive_written(dir: &Path) -> Option<u64> {
+    ["alive.txt", "alive.pending"]
+        .iter()
+        .filter_map(|name| std::fs::metadata(dir.join(name)).and_then(|m| m.modified()).ok())
+        .filter_map(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map(|at| at.as_secs())
+        .max()
+}

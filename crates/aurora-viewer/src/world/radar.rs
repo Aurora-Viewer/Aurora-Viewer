@@ -467,10 +467,26 @@ fn native_position<'a>(world: &'a World, mut object: &'a super::objects::Object)
     None
 }
 
+/// The coarse locations of `region` in render space, ours and nil ids left
+/// out: (id, position, altitude known). A coarse altitude of 0 or 1020 (the
+/// byte 0 or 255) means the server does not know it. Nothing while the
+/// region's place is unknown.
+pub fn coarse_in(world: &World, region: RegionHandle) -> impl Iterator<Item = (Uuid, Vec3, bool)> + '_ {
+    let offset = world.region_offset(region);
+    let list = world
+        .coarse
+        .get(&region)
+        .filter(|_| offset.is_some())
+        .map_or(&[][..], Vec::as_slice);
+    let offset = offset.unwrap_or_default();
+    list.iter()
+        .filter(|(id, _)| !id.is_nil() && *id != world.agent_id)
+        .map(move |(id, position)| (*id, offset + *position, position.z != 0.0 && position.z != 1020.0))
+}
+
 /// The avatars around us: the loaded ones first (exact position), then the
-/// coarse locations of every region we see, neighbors included. A coarse
-/// altitude of 0 or 1020 (the byte 0 or 255) means the server does not know
-/// it.
+/// coarse locations of every region we see, neighbors included
+/// (`coarse_in`).
 pub fn sightings(world: &World) -> Vec<Sighting> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -494,19 +510,16 @@ pub fn sightings(world: &World) -> Vec<Sighting> {
             typing: world.is_typing_nearby(&o.full_id),
         });
     }
-    for (region, list) in &world.coarse {
-        let Some(offset) = world.region_offset(*region) else {
-            continue;
-        };
-        for (id, position) in list {
-            if id.is_nil() || *id == world.agent_id || !seen.insert(*id) {
+    for region in world.coarse.keys() {
+        for (id, position, altitude_known) in coarse_in(world, *region) {
+            if !seen.insert(id) {
                 continue;
             }
             out.push(Sighting {
-                id: *id,
+                id,
                 region: *region,
-                position: offset + *position,
-                altitude_known: position.z != 0.0 && position.z != 1020.0,
+                position,
+                altitude_known,
                 loaded: false,
                 sitting: false,
                 typing: false,

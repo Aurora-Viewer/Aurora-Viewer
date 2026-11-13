@@ -378,6 +378,12 @@ impl ClipVoice {
         }
     }
 
+    /// Plays from sample `pos` (a rotated clip's start).
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
+    }
+
     fn mix_into(&mut self, bus: &mut [f32]) -> bool {
         let remaining = &self.data[self.pos.min(self.data.len())..];
         let n = remaining.len().min(bus.len());
@@ -576,6 +582,13 @@ impl WorldVoice {
     /// A voice placed by direction from its start (3D sound for
     /// headphones): `gain` the distance gain, `direction` in the listener's
     /// frame (x right, y ahead, z up).
+    /// Plays from sample `pos` (a rotated clip's start); a looping voice
+    /// wraps round to the beginning as usual.
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
+    }
+
     pub(crate) fn new_binaural(id: u64, channel: Channel, data: Arc<[f32]>, looped: bool, gain: f32, direction: [f32; 3]) -> Self {
         let mut v = Self::new(id, channel, data, looped, (0.0, 0.0));
         v.start_binaural = Some((gain, direction));
@@ -1156,6 +1169,32 @@ mod tests {
         buf
     }
 
+    /// A looping voice started part-way through shared samples (a rotated
+    /// clip, the rain's speakers) renders exactly as the rotated copy it
+    /// replaces did, wrapping round included.
+    #[test]
+    fn looping_voice_started_at_an_offset_matches_a_rotated_copy() {
+        let data: Arc<[f32]> = (0..4_800).map(|i| ((i * 37) % 101) as f32 / 101.0 - 0.5).collect();
+        let start = 1_234 * 2;
+        let copy: Arc<[f32]> = data[start..].iter().chain(&data[..start]).copied().collect();
+        let render = |voice: WorldVoice| {
+            let (mut m, _p, tx) = mixer();
+            tx.send(Command::PlayWorld(voice)).unwrap();
+            let mut buf = vec![0.0; 9_600];
+            m.render(&mut buf);
+            buf
+        };
+        let shared = render(WorldVoice::new(1, Channel::Sfx, data.clone(), true, (1.0, 1.0)).starting_at(start));
+        assert_eq!(shared, render(WorldVoice::new(1, Channel::Sfx, copy, true, (1.0, 1.0))));
+        let clip = crate::SoundClip {
+            samples: data.clone(),
+            start: 0,
+        };
+        let rotated = clip.rotated(0.5).rotated(0.75);
+        assert!(Arc::ptr_eq(&rotated.samples, &data), "rotating shares the samples");
+        assert_eq!(rotated.start, (1_200 + 1_800) % 2_400 * 2);
+    }
+
     #[test]
     fn occluded_voice_loses_its_highs_and_some_level() {
         // a tone at the Nyquist frequency and one at 100 Hz
@@ -1285,6 +1324,39 @@ mod tests {
         // Clip ends after 2000 samples.
         m.render(&mut out);
         assert_eq!(m.source_count(), 0);
+    }
+
+    #[test]
+    fn decoded_clip_edges_stay_smooth_in_ui_world_and_looped_playback() {
+        let clip = crate::SoundClip::decode(&crate::decode::tests::wav_bytes(48_000, 1, &[16_384; 512])).unwrap();
+        for mode in 0..3 {
+            let (mut m, _params, tx) = mixer();
+            settle(&mut m);
+            let command = match mode {
+                0 => Command::PlayClip(ClipVoice::new(Channel::Ui, clip.samples.clone(), 1.0)),
+                _ => Command::PlayWorld(WorldVoice::new(1, Channel::Sfx, clip.samples.clone(), mode == 2, (1.0, 1.0))),
+            };
+            tx.send(command).unwrap();
+            let mut out = Vec::new();
+            // Audio callback boundaries deliberately cut through the fades
+            // and through loop wraps; the envelope belongs to the clip.
+            for frames in [37, 191, 3, 1024, 500] {
+                let mut block = vec![0.0; frames * 2];
+                m.render(&mut block);
+                out.extend(block);
+            }
+            assert_eq!(out[0], 0.0, "start in mode {mode}");
+            assert_eq!(out[2 * 511], 0.0, "end in mode {mode}");
+            assert_eq!(out[2 * 512], 0.0, "wrap/silence in mode {mode}");
+            let step = out
+                .as_chunks::<2>()
+                .0
+                .windows(2)
+                .map(|w| (w[1][0] - w[0][0]).abs())
+                .fold(0.0f32, f32::max);
+            assert!(step < 0.01, "step {step} in mode {mode}");
+            assert_eq!(m.source_count(), usize::from(mode == 2));
+        }
     }
 
     #[test]

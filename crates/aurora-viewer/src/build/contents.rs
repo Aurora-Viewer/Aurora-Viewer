@@ -39,8 +39,8 @@ pub struct TaskInventory {
 #[derive(Debug, Default)]
 pub struct Contents {
     pub objects: HashMap<Uuid, TaskInventory>,
-    /// ScriptRunningReply: (object, item) -> (running, mono).
-    pub running: HashMap<(Uuid, Uuid), (bool, Option<bool>)>,
+    /// ScriptRunningReply: (object, item) -> (running, compile target).
+    pub running: HashMap<(Uuid, Uuid), (bool, Option<aurora_net::scripts::CompileTarget>)>,
 }
 
 /// "YYYY-MM-DD HH:MM:SS lsl2 script" (LLViewerAssetType: new script
@@ -142,7 +142,11 @@ impl BuildTool {
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?
+    /// A god may, whatever the object (isGodlike() first).
     pub fn contents_editable(&self, world: &World, idx: usize) -> bool {
+        if world.god_level > 0 {
+            return world.objects.get(idx).is_some();
+        }
         if !self.can_modify(world, idx) {
             return false;
         }

@@ -1564,6 +1564,12 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         if menu::item(ui, p, "ban", block) {
             actions.push(ProfileAction::ToggleBlock(id));
         }
+        // separator_group_bans, then the ban and its lifting in all our
+        // groups (Profile.EnableItem: canBanFromAnyGroup)
+        if crate::world::group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id) {
+            menu::separator(ui, p);
+            crate::ui::chat::moderation::ban_all_entries(ui, p, world, id, true);
+        }
         menu::separator(ui, p);
         if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name")) {
             ui.ctx().copy_text(world.social.name_of(&id));
@@ -1581,6 +1587,8 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
                 super::context::CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)),
             );
         }
+        let ctx = ui.ctx().clone();
+        super::context::admin_submenu(ui, p, world, id, |a| super::context::request(&ctx, a));
     });
 }
 
