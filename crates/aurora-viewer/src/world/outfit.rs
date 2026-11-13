@@ -51,6 +51,15 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 const MIN_RETRY: Duration = Duration::from_secs(5);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
 const BAKE_RETRIES: u32 = 3;
+/// LLFolderType::FT_TRASH. Descendants of trash are not an initial outfit
+/// (LLInventoryModel::findDescendentCategoryIDByName, EXCLUDE_TRASH).
+const FT_TRASH: i32 = 14;
+/// LLFolderType::FT_CLOTHING, the copy destination for a library outfit.
+const FT_CLOTHING: i32 = 5;
+/// LLAgentWearables::createStandardWearables (llagentwearables.cpp):
+/// shape, skin, hair, eyes, shirt, pants, shoes, socks, undershirt,
+/// underpants. Jacket, gloves and skirt are not created.
+const STANDARD_WEARABLES: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 7, 10, 11];
 /// Times the objects the region took off are asked for again.
 const REWEAR_ROUNDS: u32 = 3;
 
@@ -74,6 +83,29 @@ enum Stage {
     Done,
 }
 
+/// First login (LLStartUp::loadInitialOutfit, llstartup.cpp). Kept beside
+/// `Stage` so the returning-resident restore is not entered, and so a later
+/// tick does not start the search again.
+#[derive(Debug, Clone)]
+enum Initial {
+    Decide,
+    /// Folders asked for before the named outfit can be worn or given up.
+    Wait {
+        ids: Vec<Uuid>,
+        cof_creating: bool,
+    },
+    /// A library copy was sent. Wear the non-library folder of this name under `dest`.
+    Copy {
+        name: String,
+        dest: Uuid,
+    },
+    /// The standard wearables were created. Wear them once they are listed.
+    Made {
+        kinds: Vec<(u8, String)>,
+    },
+    Finished,
+}
+
 /// What the restore needs from the world each tick.
 pub struct OutfitInputs<'a> {
     pub inventory: &'a mut Inventory,
@@ -82,6 +114,12 @@ pub struct OutfitInputs<'a> {
     pub ready: bool,
     pub first_login: bool,
     pub second_life: bool,
+    /// `initial-outfit[0].folder_name` from the login reply. Empty when
+    /// the grid did not name one.
+    pub initial_folder: &'a str,
+    /// `initial-outfit[0].gender`. Only `"male"` selects a male shape;
+    /// anything else, including empty, is female.
+    pub initial_gender: &'a str,
     /// Inventory items attached to our avatar now (AttachItemID).
     pub worn: HashSet<Uuid>,
     /// COF version of the last AvatarAppearance received for us.
@@ -119,6 +157,14 @@ pub struct OutfitRestore {
     stepped_cof_version: i32,
     stepping: bool,
     pub commands: Vec<NetCommand>,
+    initial: Initial,
+    initial_since: Option<Instant>,
+    /// `DummyWearablesUpdate` already queued for this first login.
+    initial_dummy: bool,
+    /// Current Outfit creation already sent.
+    cof_create_sent: bool,
+    /// Sync flag of the last `UpdateOutfit` this restore queued (`plan`'s bool).
+    pub pending_sync: bool,
 }
 
 impl Default for OutfitRestore {
@@ -141,6 +187,11 @@ impl Default for OutfitRestore {
             stepped_cof_version: -1,
             stepping: false,
             commands: Vec::new(),
+            initial: Initial::Decide,
+            initial_since: None,
+            initial_dummy: false,
+            cof_create_sent: false,
+            pending_sync: false,
         }
     }
 }
@@ -316,9 +367,10 @@ impl OutfitRestore {
                     return;
                 }
                 if w.first_login {
-                    // the server dresses new residents (initial outfit)
-                    log::info!("outfit: first login, nothing to restore");
-                    self.stage = Stage::Done;
+                    // LLStartUp::loadInitialOutfit (llstartup.cpp). Stays on
+                    // Waiting until that outfit is worn or given up, so a
+                    // later tick does not fall into the returning-resident path.
+                    self.step_initial(&mut w, now);
                     return;
                 }
                 let Some(cof) = find_cof(w.inventory) else {
@@ -625,12 +677,461 @@ impl OutfitRestore {
             cof_version: self.cof_version,
         });
     }
+
+    /// LLStartUp::loadInitialOutfit (llstartup.cpp): wear the named folder
+    /// under My Outfits, else copy it from the library and wear the copy
+    /// (LLAppearanceMgr::wearInventoryCategory), else
+    /// LLAgentWearables::createStandardWearables. The dummy wearables update
+    /// goes out once, on Second Life only, when that choice is made.
+    ///
+    /// An empty folder name takes the standard wearables. The Legacy Viewer
+    /// skips `loadInitialOutfit` instead; the reported bug is a naked
+    /// avatar, and the standard wearables are what dress one when no folder
+    /// was named. A named outfit keeps the gender of its own shape: Legacy
+    /// `setSex` lasts only until that shape loads, and this module has no
+    /// separate avatar sex. Only a generated shape sets param 80.
+    fn step_initial(&mut self, w: &mut OutfitInputs<'_>, now: Instant) {
+        let since = *self.initial_since.get_or_insert(now);
+        let timed_out = now.saturating_duration_since(since) > FETCH_TIMEOUT;
+        match self.initial.clone() {
+            Initial::Finished => self.stage = Stage::Done,
+            Initial::Wait { ids, cof_creating } => {
+                let pending = ids.iter().any(|id| folder_pending(w.inventory, *id));
+                let cof_ready = !cof_creating || find_cof(w.inventory).is_some_and(|id| folder_fetched(w.inventory, id));
+                if (pending || !cof_ready) && !timed_out {
+                    return;
+                }
+                if cof_creating && find_cof(w.inventory).is_none() {
+                    log::warn!("outfit: the Current Outfit folder was not created");
+                    self.finish_initial();
+                    return;
+                }
+                if find_cof(w.inventory).is_some_and(|id| !folder_fetched(w.inventory, id)) && timed_out {
+                    log::warn!("outfit: the Current Outfit folder could not be fetched");
+                    self.finish_initial();
+                    return;
+                }
+                self.decide_initial(w, !timed_out);
+            }
+            Initial::Copy { name, dest } => self.poll_copy(w, &name, dest, timed_out),
+            Initial::Made { kinds } => self.poll_made(w, &kinds, timed_out),
+            Initial::Decide => self.decide_initial(w, !timed_out),
+        }
+    }
+
+    fn decide_initial(&mut self, w: &mut OutfitInputs<'_>, allow_wait: bool) {
+        let Some(cof) = find_cof(w.inventory) else {
+            if allow_wait && !self.cof_create_sent {
+                self.create_cof(w);
+                self.cof_create_sent = true;
+                self.initial = Initial::Wait {
+                    ids: Vec::new(),
+                    cof_creating: true,
+                };
+                return;
+            }
+            log::warn!("outfit: no Current Outfit folder for the initial outfit");
+            self.finish_initial();
+            return;
+        };
+        if !folder_fetched(w.inventory, cof) {
+            if allow_wait {
+                self.wait_for(w, vec![cof]);
+            } else {
+                log::warn!("outfit: the Current Outfit folder could not be fetched");
+                self.finish_initial();
+            }
+            return;
+        }
+        let name = w.initial_folder.trim();
+        if name.is_empty() {
+            log::info!("outfit: first login with no initial folder name; creating the standard wearables");
+            self.create_standard(w);
+            return;
+        }
+        let my = super::appearance::system_folder(w.inventory, super::appearance::FT_MY_OUTFITS);
+        if let Some(id) = find_named(w.inventory, my, name) {
+            self.wear_named(w, id, allow_wait);
+            return;
+        }
+        if allow_wait && listing_pending(w.inventory, my) {
+            self.wait_for(w, vec![my.expect("listing pending")]);
+            return;
+        }
+        let lib = (!w.inventory.lib_root.is_nil()).then_some(w.inventory.lib_root);
+        if let Some(id) = find_named(w.inventory, lib, name) {
+            self.copy_named(w, id, name, allow_wait);
+            return;
+        }
+        if allow_wait && listing_pending(w.inventory, lib) {
+            self.wait_for(w, vec![lib.expect("listing pending")]);
+            return;
+        }
+        log::info!("outfit: initial folder '{name}' was not found; creating the standard wearables");
+        self.create_standard(w);
+    }
+
+    fn wear_named(&mut self, w: &mut OutfitInputs<'_>, folder: Uuid, allow_wait: bool) {
+        let missing = unfetched_tree(w.inventory, folder);
+        if !missing.is_empty() {
+            if allow_wait {
+                self.wait_for(w, missing);
+            } else {
+                log::info!("outfit: the initial outfit folder did not finish loading; creating the standard wearables");
+                self.create_standard(w);
+            }
+            return;
+        }
+        match wearable_nonempty(w.inventory, folder) {
+            Some(true) => {
+                if self.wear_folder(w, folder) {
+                    self.finish_initial();
+                } else if allow_wait {
+                    self.wait_for(w, vec![folder]);
+                } else {
+                    self.create_standard(w);
+                }
+            }
+            Some(false) => {
+                log::info!("outfit: the initial outfit folder has nothing to wear; creating the standard wearables");
+                self.create_standard(w);
+            }
+            None if allow_wait => self.wait_for(w, vec![folder]),
+            None => self.create_standard(w),
+        }
+    }
+
+    fn copy_named(&mut self, w: &mut OutfitInputs<'_>, folder: Uuid, name: &str, allow_wait: bool) {
+        let missing = unfetched_tree(w.inventory, folder);
+        if !missing.is_empty() {
+            if allow_wait {
+                self.wait_for(w, missing);
+            } else {
+                log::info!("outfit: the library outfit did not finish loading; creating the standard wearables");
+                self.create_standard(w);
+            }
+            return;
+        }
+        let dest = super::appearance::system_folder(w.inventory, FT_CLOTHING).unwrap_or(w.inventory.root);
+        match super::inventory::actions::copy_tree(w.inventory, folder, dest) {
+            Ok(change) => {
+                log::info!("outfit: copying the library outfit '{name}'");
+                self.commands.push(NetCommand::EditInventory {
+                    request: Uuid::new_v4(),
+                    change,
+                });
+                self.note_dummy(w.second_life);
+                self.initial = Initial::Copy {
+                    name: name.to_owned(),
+                    dest,
+                };
+            }
+            Err(reason) => {
+                log::warn!("outfit: the library outfit was not copied: {reason}");
+                self.create_standard(w);
+            }
+        }
+    }
+
+    fn poll_copy(&mut self, w: &mut OutfitInputs<'_>, name: &str, dest: Uuid, timed_out: bool) {
+        if let Some(folder) = copied_folder(w.inventory, name, dest) {
+            let missing = unfetched_tree(w.inventory, folder);
+            if missing.is_empty() && wearable_nonempty(w.inventory, folder) == Some(true) {
+                if !self.wear_folder(w, folder) {
+                    log::warn!("outfit: the copied initial outfit was not worn");
+                }
+                self.finish_initial();
+                return;
+            }
+            if !timed_out {
+                let ids = if missing.is_empty() { vec![folder] } else { missing };
+                for id in ids {
+                    w.inventory.request(id);
+                }
+                return;
+            }
+        } else if !timed_out {
+            if !dest.is_nil() {
+                w.inventory.request(dest);
+            }
+            return;
+        }
+        log::warn!("outfit: the library outfit copy did not arrive; creating the standard wearables");
+        self.create_standard(w);
+    }
+
+    fn poll_made(&mut self, w: &mut OutfitInputs<'_>, kinds: &[(u8, String)], timed_out: bool) {
+        let found: Vec<Uuid> = kinds
+            .iter()
+            .filter_map(|(kind, name)| find_created(w.inventory, *kind, name))
+            .collect();
+        if found.len() == kinds.len() {
+            if !self.wear_items(w, found) {
+                log::warn!("outfit: the standard wearables were not worn");
+            }
+            self.finish_initial();
+            return;
+        }
+        if timed_out {
+            log::warn!("outfit: the standard wearables did not all arrive");
+            if !found.is_empty() && !self.wear_items(w, found) {
+                log::warn!("outfit: the standard wearables that arrived were not worn");
+            }
+            self.finish_initial();
+        }
+    }
+
+    fn wait_for(&mut self, w: &mut OutfitInputs<'_>, ids: Vec<Uuid>) {
+        for id in &ids {
+            w.inventory.request(*id);
+        }
+        self.initial = Initial::Wait { ids, cof_creating: false };
+    }
+
+    fn wear_folder(&mut self, w: &OutfitInputs<'_>, folder: Uuid) -> bool {
+        let worn = HashMap::new();
+        match super::appearance::plan(
+            w.inventory,
+            super::appearance::Action::WearContents {
+                folder,
+                mode: super::appearance::WearMode::ReplaceOutfit,
+            },
+            &worn,
+        ) {
+            Ok((change, sync)) => {
+                self.pending_sync = sync;
+                self.commands.push(NetCommand::UpdateOutfit {
+                    request: Uuid::new_v4(),
+                    change,
+                });
+                self.note_dummy(w.second_life);
+                log::info!("outfit: wearing the initial outfit folder {folder}");
+                true
+            }
+            Err(reason) => {
+                log::warn!("outfit: the initial outfit was not worn: {reason}");
+                false
+            }
+        }
+    }
+
+    fn wear_items(&mut self, w: &OutfitInputs<'_>, items: Vec<Uuid>) -> bool {
+        let worn = HashMap::new();
+        match super::appearance::plan(
+            w.inventory,
+            super::appearance::Action::WearItems {
+                items,
+                replace: true,
+                point: 0,
+            },
+            &worn,
+        ) {
+            Ok((change, sync)) => {
+                self.pending_sync = sync;
+                self.commands.push(NetCommand::UpdateOutfit {
+                    request: Uuid::new_v4(),
+                    change,
+                });
+                true
+            }
+            Err(reason) => {
+                log::warn!("outfit: the standard wearables were not worn: {reason}");
+                false
+            }
+        }
+    }
+
+    fn create_cof(&mut self, w: &OutfitInputs<'_>) {
+        let id = Uuid::new_v4();
+        let parent = w.inventory.root;
+        log::info!("outfit: creating the Current Outfit folder");
+        self.commands.push(NetCommand::EditInventory {
+            request: Uuid::new_v4(),
+            change: aurora_net::inventory::operations::Mutation {
+                operations: vec![aurora_net::inventory::operations::Operation::Folder {
+                    id,
+                    parent,
+                    name: aurora_i18n::tr!("common-current-outfit").to_owned(),
+                    type_default: FT_CURRENT_OUTFIT,
+                }],
+                refresh: vec![parent],
+                ..Default::default()
+            },
+        });
+    }
+
+    fn create_standard(&mut self, w: &OutfitInputs<'_>) {
+        let names = super::appearance::wearables();
+        let male = w.initial_gender == "male";
+        let mut pending = Vec::new();
+        for kind in STANDARD_WEARABLES {
+            let name = names.get(usize::from(kind)).copied().unwrap_or("Clothing").to_owned();
+            match super::inventory::wearable::create(kind, &name, w.agent) {
+                Ok(data) => {
+                    let data = if kind == 0 && male { male_shape(data) } else { data };
+                    self.commands.push(NetCommand::CreateInventoryWearable {
+                        parent: Uuid::nil(),
+                        kind,
+                        name: name.clone(),
+                        data,
+                        permissions: None,
+                    });
+                    pending.push((kind, name));
+                }
+                Err(reason) => log::warn!("outfit: standard wearable {kind} was not created: {reason}"),
+            }
+        }
+        self.note_dummy(w.second_life);
+        if pending.is_empty() {
+            self.finish_initial();
+        } else {
+            self.initial = Initial::Made { kinds: pending };
+        }
+    }
+
+    fn note_dummy(&mut self, second_life: bool) {
+        if second_life && !self.initial_dummy {
+            self.commands.push(NetCommand::DummyWearablesUpdate);
+            self.initial_dummy = true;
+        }
+    }
+
+    fn finish_initial(&mut self) {
+        self.initial = Initial::Finished;
+        self.stage = Stage::Done;
+    }
+}
+
+fn folder_fetched(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched)
+}
+
+fn folder_pending(inv: &Inventory, id: Uuid) -> bool {
+    matches!(
+        inv.folders.get(&id).map(|f| f.state),
+        Some(FetchState::Unknown | FetchState::Fetching)
+    )
+}
+
+/// A skeleton can list children before the folder itself is fetched. An
+/// empty folder that is still unread may gain children, so the name is not
+/// treated as missing yet.
+fn listing_pending(inv: &Inventory, id: Option<Uuid>) -> bool {
+    id.is_some_and(|id| {
+        inv.folders
+            .get(&id)
+            .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Fetching) && f.children.is_empty() && f.items.is_empty())
+    })
+}
+
+/// First descendant with this name, left to right, not inside trash.
+/// LLNameCategoryCollector compares without case (llinventoryfunctions.cpp).
+fn find_named(inv: &Inventory, root: Option<Uuid>, name: &str) -> Option<Uuid> {
+    let mut stack = Vec::new();
+    if let Some(f) = root.and_then(|id| inv.folders.get(&id)) {
+        stack.extend(f.children.iter().rev().copied());
+    }
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        if f.info.type_default == FT_TRASH {
+            continue;
+        }
+        if f.info.name.eq_ignore_ascii_case(name) {
+            return Some(id);
+        }
+        stack.extend(f.children.iter().rev().copied());
+    }
+    None
+}
+
+fn unfetched_tree(inv: &Inventory, root: Uuid) -> Vec<Uuid> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        if f.info.type_default == FT_TRASH {
+            continue;
+        }
+        if f.state != FetchState::Fetched {
+            out.push(id);
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    out
+}
+
+fn wearable_nonempty(inv: &Inventory, folder: Uuid) -> Option<bool> {
+    match super::appearance::wearable_contents(inv, folder) {
+        Ok(links) => Some(!links.is_empty()),
+        Err(_) => None,
+    }
+}
+
+fn copied_folder(inv: &Inventory, name: &str, dest: Uuid) -> Option<Uuid> {
+    let mut stack = inv.folders.get(&dest).map(|f| f.children.clone()).unwrap_or_default();
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        if f.library || f.info.type_default == FT_TRASH {
+            continue;
+        }
+        if f.info.name.eq_ignore_ascii_case(name) {
+            return Some(id);
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    None
+}
+
+fn find_created(inv: &Inventory, kind: u8, name: &str) -> Option<Uuid> {
+    let asset = if kind < 4 { 13 } else { 5 };
+    let ids: Vec<Uuid> = inv
+        .items
+        .values()
+        .filter(|it| it.name.eq_ignore_ascii_case(name) && it.asset_type == asset && (it.flags & 0xff) as u8 == kind)
+        .map(|it| it.id)
+        .collect();
+    ids.into_iter().find(|id| !super::inventory::actions::library(inv, *id))
+}
+
+/// Param 80 is "male" on the shape (avatar_lad.xml). `create` writes the
+/// default 0. Legacy `setSex` uses gender == "male"; everything else is female.
+fn male_shape(data: Vec<u8>) -> Vec<u8> {
+    let Ok(text) = String::from_utf8(data) else {
+        return Vec::new();
+    };
+    let mut out = String::new();
+    let mut saw = false;
+    for line in text.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if bare.starts_with("80 ") {
+            out.push_str("80 1\n");
+            saw = true;
+        } else {
+            out.push_str(line);
+        }
+    }
+    if !saw {
+        out.push_str("80 1\n");
+    }
+    out.into_bytes()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aurora_net::inventory::{FolderContents, InvFolder};
+    use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
 
     fn item(id: u128, parent: Uuid, asset_type: i32, inv_type: i32, target: u128) -> InvItem {
         InvItem {
@@ -668,6 +1169,8 @@ mod tests {
             ready: true,
             first_login: false,
             second_life: true,
+            initial_folder: "",
+            initial_gender: "",
             worn: worn.iter().map(|w| Uuid::from_u128(*w)).collect(),
             received_cof_version: 3,
         }
@@ -948,10 +1451,9 @@ mod tests {
         let mut inv = unfetched_cof();
         let mut r = OutfitRestore::default();
         let t0 = Instant::now();
-        // the login restore is over (nothing to restore)
-        let mut first = inputs(&mut inv, &[]);
-        first.first_login = true;
-        r.update(first, t0);
+        // the login restore is over (nothing to restore); a first login now
+        // runs the initial outfit (#3411), so set the end state directly
+        r.stage = Stage::Done;
         assert!(r.is_idle());
         inv.apply(vec![FolderContents {
             folder_id: cof,
@@ -1035,40 +1537,224 @@ mod tests {
         assert!(matches!(&r.commands[..], [NetCommand::RequestServerAppearance { cof_version: 10 }]));
     }
 
-    #[test]
-    fn first_login_does_nothing() {
-        let mut inv = Inventory::default();
+    fn folder_at(id: Uuid, parent: Uuid, name: &str, kind: i32, library: bool) -> super::super::inventory::Folder {
+        super::super::inventory::Folder {
+            info: InvFolder {
+                id,
+                parent,
+                name: name.into(),
+                type_default: kind,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library,
+        }
+    }
+
+    /// Root, My Outfits, Clothing, an empty Current Outfit and a library
+    /// root, all fetched. System folders are children of the root.
+    fn initial_tree() -> Inventory {
+        let root = Uuid::from_u128(1);
+        let my = Uuid::from_u128(2);
+        let cof = Uuid::from_u128(3);
+        let clothing = Uuid::from_u128(4);
+        let lib = Uuid::from_u128(5);
+        let mut inv = Inventory {
+            root,
+            lib_root: lib,
+            owner: Uuid::from_u128(9),
+            ..Default::default()
+        };
+        inv.folders.insert(root, folder_at(root, Uuid::nil(), "Inventory", 8, false));
         inv.folders.insert(
-            Uuid::from_u128(11),
-            super::super::inventory::Folder {
-                info: InvFolder {
-                    id: Uuid::from_u128(11),
-                    parent: Uuid::nil(),
-                    name: "COF".into(),
-                    type_default: FT_CURRENT_OUTFIT,
-                    version: 1,
-                    ..Default::default()
-                },
-                children: Vec::new(),
-                items: Vec::new(),
-                state: FetchState::Unknown,
-                library: false,
+            my,
+            folder_at(my, root, "My Outfits", super::super::appearance::FT_MY_OUTFITS, false),
+        );
+        inv.folders
+            .insert(cof, folder_at(cof, root, "Current Outfit", FT_CURRENT_OUTFIT, false));
+        inv.folders.insert(clothing, folder_at(clothing, root, "Clothing", 5, false));
+        inv.folders.insert(lib, folder_at(lib, Uuid::nil(), "Library", 8, true));
+        inv.folders.get_mut(&root).unwrap().children = vec![my, clothing, cof];
+        inv
+    }
+
+    fn put_clothing(inv: &mut Inventory, id: u128, parent: Uuid, name: &str) {
+        let item_id = Uuid::from_u128(id);
+        inv.items.insert(
+            item_id,
+            InvItem {
+                id: item_id,
+                parent,
+                name: name.into(),
+                asset_type: 5,
+                inv_type: 18,
+                flags: 4,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                ..Default::default()
             },
         );
+        inv.folders.get_mut(&parent).unwrap().items.push(item_id);
+    }
+
+    fn first<'a>(inv: &'a mut Inventory, folder: &'a str, gender: &'a str, second_life: bool) -> OutfitInputs<'a> {
+        OutfitInputs {
+            inventory: inv,
+            agent: Uuid::from_u128(1),
+            ready: true,
+            first_login: true,
+            second_life,
+            initial_folder: folder,
+            initial_gender: gender,
+            worn: HashSet::new(),
+            received_cof_version: 0,
+        }
+    }
+
+    fn worn_targets(commands: &[NetCommand]) -> Vec<Uuid> {
+        commands
+            .iter()
+            .find_map(|c| match c {
+                NetCommand::UpdateOutfit { change, .. } => Some(change.links.iter().map(|l| l.target).collect()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn created_kinds(commands: &[NetCommand]) -> Vec<u8> {
+        let mut kinds: Vec<u8> = commands
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::CreateInventoryWearable { kind, .. } => Some(*kind),
+                _ => None,
+            })
+            .collect();
+        kinds.sort();
+        kinds
+    }
+
+    #[test]
+    fn first_login_wears_the_named_outfit_in_my_outfits() {
+        let mut inv = initial_tree();
+        let my = Uuid::from_u128(2);
+        let trash = Uuid::from_u128(6);
+        let decoy = Uuid::from_u128(7);
+        let starter = Uuid::from_u128(8);
+        let shirt = Uuid::from_u128(100);
+        inv.folders.insert(trash, folder_at(trash, my, "Trash", 14, false));
+        inv.folders.insert(
+            decoy,
+            folder_at(decoy, trash, "starter", super::super::appearance::FT_OUTFIT, false),
+        );
+        inv.folders.insert(
+            starter,
+            folder_at(starter, my, "Starter", super::super::appearance::FT_OUTFIT, false),
+        );
+        inv.folders.get_mut(&my).unwrap().children = vec![trash, starter];
+        inv.folders.get_mut(&trash).unwrap().children = vec![decoy];
+        put_clothing(&mut inv, 101, decoy, "Decoy shirt");
+        put_clothing(&mut inv, 100, starter, "Starter shirt");
         let mut r = OutfitRestore::default();
-        r.update(
-            OutfitInputs {
-                inventory: &mut inv,
-                agent: Uuid::from_u128(1),
-                ready: true,
-                first_login: true,
-                second_life: true,
-                worn: HashSet::new(),
-                received_cof_version: 0,
-            },
-            Instant::now(),
+        let now = Instant::now();
+        r.update(first(&mut inv, "starter", "female", true), now);
+        let links = worn_targets(&r.commands);
+        assert!(links.contains(&shirt), "the shirt in My Outfits is worn: {links:?}");
+        assert!(!links.contains(&Uuid::from_u128(101)), "trash is not worn: {links:?}");
+        assert!(r.commands.iter().any(|c| matches!(c, NetCommand::DummyWearablesUpdate)));
+        // OpenSim does not send the dummy wearables update.
+        let mut inv = initial_tree();
+        let starter = Uuid::from_u128(8);
+        inv.folders.insert(
+            starter,
+            folder_at(starter, my, "Starter", super::super::appearance::FT_OUTFIT, false),
         );
-        assert!(r.is_done());
-        assert!(r.commands.is_empty());
+        inv.folders.get_mut(&my).unwrap().children = vec![starter];
+        put_clothing(&mut inv, 100, starter, "Starter shirt");
+        let mut r = OutfitRestore::default();
+        r.update(first(&mut inv, "starter", "", false), now);
+        assert!(worn_targets(&r.commands).contains(&shirt));
+        assert!(!r.commands.iter().any(|c| matches!(c, NetCommand::DummyWearablesUpdate)));
+    }
+
+    #[test]
+    fn first_login_copies_a_library_outfit_then_wears_it() {
+        let mut inv = initial_tree();
+        let lib = Uuid::from_u128(5);
+        let clothing = Uuid::from_u128(4);
+        let source = Uuid::from_u128(11);
+        inv.folders
+            .insert(source, folder_at(source, lib, "Starter", super::super::appearance::FT_OUTFIT, true));
+        inv.folders.get_mut(&lib).unwrap().children = vec![source];
+        put_clothing(&mut inv, 200, source, "Library shirt");
+        let mut r = OutfitRestore::default();
+        let now = Instant::now();
+        r.update(first(&mut inv, "Starter", "female", true), now);
+        assert!(
+            r.commands.iter().any(|c| matches!(c, NetCommand::EditInventory { .. })),
+            "a library folder is copied before it is worn"
+        );
+        assert!(r.commands.iter().any(|c| matches!(c, NetCommand::DummyWearablesUpdate)));
+        assert!(worn_targets(&r.commands).is_empty(), "the library original is not worn");
+        let copied = Uuid::from_u128(12);
+        let shirt = Uuid::from_u128(201);
+        inv.folders.insert(
+            copied,
+            folder_at(copied, clothing, "Starter", super::super::appearance::FT_OUTFIT, false),
+        );
+        inv.folders.get_mut(&clothing).unwrap().children.push(copied);
+        put_clothing(&mut inv, 201, copied, "Copied shirt");
+        r.commands.clear();
+        r.update(first(&mut inv, "Starter", "female", true), now);
+        let links = worn_targets(&r.commands);
+        assert!(links.contains(&shirt), "the copied shirt is worn: {links:?}");
+        assert!(!r.commands.iter().any(|c| matches!(c, NetCommand::DummyWearablesUpdate)));
+    }
+
+    #[test]
+    fn first_login_without_a_folder_creates_the_standard_wearables() {
+        let mut inv = initial_tree();
+        let mut r = OutfitRestore::default();
+        let now = Instant::now();
+        r.update(first(&mut inv, "", "male", true), now);
+        assert_eq!(created_kinds(&r.commands), vec![0, 1, 2, 3, 4, 5, 6, 7, 10, 11]);
+        let shape = r.commands.iter().find_map(|c| match c {
+            NetCommand::CreateInventoryWearable { kind: 0, data, .. } => Some(String::from_utf8_lossy(data).into_owned()),
+            _ => None,
+        });
+        let shape = shape.expect("a shape wearable");
+        assert!(shape.contains("\n80 1\n"), "a male shape sets param 80: {shape}");
+        assert!(r.commands.iter().any(|c| matches!(c, NetCommand::DummyWearablesUpdate)));
+        let mut inv = initial_tree();
+        let mut r = OutfitRestore::default();
+        r.update(first(&mut inv, "missing", "female", true), now);
+        let shape = r
+            .commands
+            .iter()
+            .find_map(|c| match c {
+                NetCommand::CreateInventoryWearable { kind: 0, data, .. } => Some(String::from_utf8_lossy(data).into_owned()),
+                _ => None,
+            })
+            .expect("a female shape");
+        assert!(shape.contains("\n80 0\n"), "anything but male stays female: {shape}");
+        assert!(!shape.contains("\n80 1\n"));
+    }
+
+    #[test]
+    fn first_login_waits_to_read_my_outfits_before_creating_wearables() {
+        let mut inv = initial_tree();
+        let my = Uuid::from_u128(2);
+        inv.folders.get_mut(&my).unwrap().state = FetchState::Unknown;
+        inv.folders.get_mut(&my).unwrap().children.clear();
+        let mut r = OutfitRestore::default();
+        r.update(first(&mut inv, "Starter", "female", true), Instant::now());
+        assert!(!r.is_done(), "My Outfits is still unread");
+        assert!(
+            created_kinds(&r.commands).is_empty(),
+            "wearables wait until the name can be searched"
+        );
+        assert_eq!(inv.folders[&my].state, FetchState::Fetching);
     }
 }

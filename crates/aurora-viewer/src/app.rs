@@ -2447,6 +2447,21 @@ impl App {
                 self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
                 return;
             }
+            if crate::demo::initial_outfit_request().is_some()
+                && let NetCommand::UpdateOutfit { request, change } = &cmd
+            {
+                let owner = self.world.agent_id;
+                let contents = crate::demo::initial_outfit_applied(
+                    owner,
+                    |folder| self.world.inventory.folders.get(&folder).map(|f| f.info.version).unwrap_or(0),
+                    change,
+                );
+                self.on_app_event(NetEvent::OutfitUpdated {
+                    request: *request,
+                    result: Ok(contents),
+                });
+                return;
+            }
             if crate::world::received_items::demo_accept(&mut self.world, &cmd) {
                 return;
             }
@@ -2897,6 +2912,7 @@ impl App {
                         }
                         if let Some(folder) = self.world.inventory.folders.get(&c.folder_id)
                             && matches!(folder.info.type_default, 46..=48)
+                            && !crate::demo::initial_outfit_folder(c.folder_id)
                         {
                             c.version = folder.info.version;
                             c.folders = folder
@@ -9766,6 +9782,13 @@ impl App {
                 self.send(command);
             }
             for cmd in std::mem::take(&mut self.world.outfit.commands) {
+                if let NetCommand::UpdateOutfit { request, .. } = &cmd
+                    && self.appearance_ui.pending.is_none()
+                {
+                    // Interactive wears set this before send. Without it the
+                    // OutfitUpdated reply is dropped (app.rs OutfitUpdated).
+                    self.appearance_ui.pending = Some((*request, self.world.outfit.pending_sync));
+                }
                 self.send(cmd);
             }
             // block list, groups and group chat sessions

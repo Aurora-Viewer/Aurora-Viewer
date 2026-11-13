@@ -795,6 +795,40 @@ pub fn first_person_ground_animation() -> aurora_assets::Animation {
 
 /// The Photo Album (FT_SNAPSHOT_CATEGORY), empty until a photo is saved.
 const PHOTO_ALBUM_FOLDER: u128 = 31;
+/// Child of My Outfits created for `AURORA_DEMO_INITIAL_OUTFIT`.
+pub const DEMO_INITIAL_OUTFIT_FOLDER: u128 = 32;
+/// Current Outfit folder created for that same switch.
+pub const DEMO_CURRENT_OUTFIT_FOLDER: u128 = 33;
+
+/// `AURORA_DEMO_INITIAL_OUTFIT`, the Legacy Viewer's FakeInitialOutfitName
+/// (llstartup.cpp). `1` wears "Starter Outfit" as female; a name wears that
+/// folder as female; `Name,male` or `Name,female` sets the gender. Empty
+/// gender is female.
+pub fn initial_outfit_request() -> Option<(String, String)> {
+    let raw = std::env::var("AURORA_DEMO_INITIAL_OUTFIT").ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if raw == "1" {
+        return Some((aurora_i18n::tr!("demo-starter-outfit").to_owned(), "female".to_owned()));
+    }
+    let (name, gender) = raw
+        .rsplit_once(',')
+        .map(|(name, gender)| (name.trim(), gender.trim()))
+        .unwrap_or((raw, "female"));
+    if name.is_empty() {
+        return None;
+    }
+    let gender = if gender.eq_ignore_ascii_case("male") { "male" } else { "female" };
+    Some((name.to_owned(), gender.to_owned()))
+}
+
+/// The demo outfit folder whose fetch must keep the shirt `demo_folder` returns.
+/// Outfit folders of type 46..=48 are otherwise rewritten from the skeleton.
+pub fn initial_outfit_folder(id: Uuid) -> bool {
+    initial_outfit_request().is_some() && id.as_u128() == DEMO_INITIAL_OUTFIT_FOLDER
+}
 
 fn demo_raw() -> Llsd {
     use aurora_llsd::llsd_map;
@@ -857,6 +891,20 @@ fn demo_raw() -> Llsd {
     if env::enabled() {
         skel.push(env::settings_folder(u(1)));
     }
+    // AURORA_DEMO_INITIAL_OUTFIT: a first login whose My Outfits holds the
+    // named folder, plus a Current Outfit folder to wear it into.
+    let initial = initial_outfit_request();
+    if let Some((name, _)) = &initial {
+        if let Some(my) = skel
+            .iter()
+            .find_map(|row| (row["type_default"].as_i32() == 48).then(|| row["folder_id"].as_uuid().as_u128()))
+        {
+            skel.push(folder(DEMO_INITIAL_OUTFIT_FOLDER, my, name, 47));
+        }
+        if skel.iter().all(|row| row["type_default"].as_i32() != 46) {
+            skel.push(folder(DEMO_CURRENT_OUTFIT_FOLDER, 1, aurora_i18n::tr!("common-current-outfit"), 46));
+        }
+    }
     // AURORA_DEMO_PEOPLE: its friends and their rights
     let people = people::friends();
     let mut buddies: Vec<Llsd> = (0..4)
@@ -892,6 +940,15 @@ fn demo_raw() -> Llsd {
         && let Llsd::Map(m) = &mut raw
     {
         env::library_login(m);
+    }
+    if let Some((name, gender)) = initial
+        && let Llsd::Map(m) = &mut raw
+    {
+        m.insert("login-flags".to_owned(), Llsd::Array(vec![llsd_map! { "ever_logged_in" => "N" }]));
+        m.insert(
+            "initial-outfit".to_owned(),
+            Llsd::Array(vec![llsd_map! { "folder_name" => name, "gender" => gender }]),
+        );
     }
     // AURORA_DEMO_PEOPLE's groups tab: "3 groups out of 42"
     if let Some(limit) = people::group_limit()
@@ -2836,12 +2893,78 @@ pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem
     }
 }
 
+/// COF contents for a demo `UpdateOutfit`, so a worn initial outfit shows
+/// offline. The grid path is the AIS reply (`NetEvent::OutfitUpdated`).
+pub fn initial_outfit_applied(
+    owner: Uuid,
+    version_of: impl Fn(Uuid) -> i32,
+    change: &aurora_net::outfits::OutfitMutation,
+) -> Vec<aurora_net::inventory::FolderContents> {
+    use aurora_net::inventory::{FolderContents, InvItem};
+    let mut specs = vec![(change.folder, change.links.clone())];
+    if let Some((folder, links)) = &change.cof {
+        specs.push((*folder, links.clone()));
+    }
+    specs
+        .into_iter()
+        .map(|(folder, links)| FolderContents {
+            folder_id: folder,
+            owner_id: owner,
+            version: version_of(folder).saturating_add(1),
+            folders: Vec::new(),
+            items: links
+                .into_iter()
+                .map(|link| InvItem {
+                    id: Uuid::new_v4(),
+                    parent: folder,
+                    name: link.name,
+                    desc: link.desc,
+                    asset_type: if link.folder { 25 } else { 24 },
+                    inv_type: link.inv_type,
+                    asset_id: link.target,
+                    owner,
+                    ..Default::default()
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 /// The demo's listing of one inventory folder: five demo objects, the
 /// skeleton's folders under the root, or a scenario's own contents.
 fn demo_folder(f: Uuid, owner: Uuid) -> aurora_net::inventory::FolderContents {
     use aurora_net::inventory::{FolderContents, InvItem};
     if let Some(c) = env::folder_contents(f, owner).or_else(|| place::folder_contents(f, owner)) {
         return c;
+    }
+    if initial_outfit_request().is_some() && f == u(DEMO_CURRENT_OUTFIT_FOLDER) {
+        return FolderContents {
+            folder_id: f,
+            owner_id: owner,
+            version: 1,
+            folders: Vec::new(),
+            items: Vec::new(),
+        };
+    }
+    if initial_outfit_folder(f) {
+        return FolderContents {
+            folder_id: f,
+            owner_id: owner,
+            version: 2,
+            folders: Vec::new(),
+            items: vec![InvItem {
+                id: Uuid::from_u128(0xA11A_0000_0000_0000_0000_0000_0000_0032),
+                parent: f,
+                name: aurora_i18n::tr!("demo-starter-shirt").into(),
+                asset_type: 5,
+                inv_type: 18,
+                flags: 4,
+                owner,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                ..Default::default()
+            }],
+        };
     }
     let items: Vec<InvItem> = (0..5u128)
         .map(|i| InvItem {
