@@ -161,8 +161,11 @@ impl BuildTool {
     /// "New script": RezScript of a default script
     /// (LLPanelContents::onClickNewScript + LLViewerObject::saveScript).
     /// RezScript uses the active group, independent of the parcel's rez group
-    /// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp).
-    pub fn new_script(&mut self, world: &World, idx: usize) {
+    /// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp). An SLua
+    /// script carries SST_LUA in its flags, the fallback of
+    /// LLPanelContents::createTaskInventoryItemHelper without
+    /// CreateTaskInventoryItem: the server then writes its default SLua script.
+    pub fn new_script(&mut self, world: &World, idx: usize, lua: bool) {
         let Some(o) = world.objects.get(idx) else { return };
         let now = now_unix();
         let item = TaskItem {
@@ -178,6 +181,7 @@ impl BuildTool {
             next_owner_mask: perm::MOVE | perm::TRANSFER,
             asset_type: AT_LSL_TEXT,
             inv_type: IT_LSL,
+            flags: u32::from(lua),
             sale_price: DEFAULT_PRICE,
             name: aurora_i18n::tr!("extra-new-script").into(),
             description: new_script_description(now),

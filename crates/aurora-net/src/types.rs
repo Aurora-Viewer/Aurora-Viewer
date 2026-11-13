@@ -686,6 +686,9 @@ pub enum NetEvent {
         /// "OpenSimExtras" "ExportSupported": the region honours the export
         /// permission (LFSimFeatureHandler::simSupportsExport).
         export_supported: bool,
+        /// "GroupChatPostLinksEnabled": the region applies the group ability
+        /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
+        group_chat_post_links: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -791,6 +794,9 @@ pub enum NetEvent {
     LslSyntax {
         id: Uuid,
         keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+        /// The region's SLua keywords (ScriptDefinitions); None keeps the
+        /// bundled ones.
+        lua: Option<Vec<crate::lsl_syntax::Keyword>>,
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.

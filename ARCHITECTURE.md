@@ -2790,6 +2790,9 @@ read-only. The catalogue of Firestorm's native names is embedded in
 `lsl_keywords.rs` holds the catalogue in use, the embedded one or the one the
 agent's region names (SimulatorFeatures' LSLSyntaxId, followed by
 `world/lsl_syntax.rs`, fetched and cached by `aurora-net/src/lsl_syntax.rs`).
+An SLua script (compile target Lua) is lexed with Lua's rules and the SLua
+catalogue, `assets/slua/keywords_lua_default.xml` from secondlife/lsl-definitions,
+parsed once by `lsl_keywords::lua`.
 The lexical analysis and the formats stay cached per document as long as the
 source, the theme, the font and that catalogue do not change; the
 source sent to the simulator keeps its bytes exactly when the preprocessor is

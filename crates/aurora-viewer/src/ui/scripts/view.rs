@@ -151,7 +151,7 @@ fn run(
             e.tools.file_snapshot.clone_from(&e.source);
             e.tools.file_job = Some(files::open(settings.convert_tabs));
         }
-        Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone())),
+        Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone(), e.lua())),
         Command::Preferences => prefs.preferences.open = true,
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
@@ -160,6 +160,7 @@ fn run(
                 e.source.clone(),
                 settings.external_editor.clone(),
                 settings.convert_tabs,
+                e.lua(),
             ));
         }
         Command::Undo | Command::Redo => {
@@ -182,12 +183,13 @@ fn run(
         }
         Command::Find => prefs.search.begin(ctx, owner, id, text(e)),
         Command::Goto => e.tools.goto = true,
-        Command::Help => ctx.open_url(egui::OpenUrl::new_tab(reference::url(""))),
+        Command::Help => ctx.open_url(egui::OpenUrl::new_tab(reference::url("", e.lua()))),
         Command::Keyword => {
             e.tools.help.open = true;
             e.tools.help.visit(editing::word(
                 if e.tools.processed { &e.tools.processed_source } else { &e.source },
                 editing::cursor(ctx, id).primary.index.0,
+                e.lua(),
             ));
         }
         Command::Library => e.tools.library = true,
@@ -416,8 +418,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.label(
             RichText::new(aurora_i18n::tr!(
                 "script-position",
-                line = e.tools.position.0 as i64,
-                column = e.tools.position.1 as i64
+                line = (e.tools.position.0 + e.first_line()) as i64,
+                column = (e.tools.position.1 + e.first_line()) as i64
             ))
             .small()
             .color(p.muted),
@@ -486,7 +488,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
                 {
                     e.tools.processed = e.tools.diagnostics_processed && !e.tools.processed_source.is_empty();
                     let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
-                    let at = editing::line_cursor(text, line, column);
+                    // LLScriptEdCore::onErrorList: a Lua error's line counts from 1
+                    let at = editing::line_cursor(text, line.saturating_sub(e.first_line()), column);
                     editing::select(&ctx, visible_id(id, e.tools.processed), at..at, true);
                     e.tools.scroll_to_cursor = true;
                 }
@@ -570,8 +573,11 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                         ui.horizontal_top(|ui| {
                             let (gutter, _) = ui.allocate_exact_size(Vec2::new(56.0, 1.0), egui::Sense::hover());
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
+                            let lua = e.lua();
                             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                                let mut job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                let mut job = e
+                                    .highlighter
+                                    .custom(text.as_str(), p, font.clone(), settings, &query, insensitive, lua);
                                 // panel_script_ed.xml enables wrapping; only the visual rows change.
                                 job.wrap.max_width = if settings.word_wrap { wrap } else { f32::INFINITY };
                                 e.folding.sync(text.as_str());
@@ -647,7 +653,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             );
                             let painter = ui.painter().with_clip_rect(clip);
                             painter.rect_filled(clip, 0.0, settings.color(ColorRole::Background, p));
-                            let mut line = 0;
+                            let mut line = e.first_line();
                             let mut line_start = true;
                             for row in &output.galley.rows {
                                 let y = output.galley_pos.y + row.pos.y;
@@ -660,7 +666,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                         egui::Align2::RIGHT_TOP,
                                         line.to_string(),
                                         font.clone(),
-                                        if line == e.tools.position.0 {
+                                        if line == e.tools.position.0 + e.first_line() {
                                             settings.color(ColorRole::Cursor, p)
                                         } else {
                                             p.muted
@@ -682,7 +688,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             e.folding.draw(ui, p, id, &output, left);
                             if let Some(pos) = output.response.hover_pos() {
                                 let at = output.galley.cursor_from_pos(pos - output.galley_pos).index.0;
-                                if let Some(entry) = reference::get(editing::word(text, at)) {
+                                if let Some(entry) = reference::get(editing::word(text, at, lua), lua) {
                                     (*output.response)
                                         .clone()
                                         .on_hover_text(format!("{}\n{}", entry.signature, entry.tooltip));
@@ -695,6 +701,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
 }
 
 fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
+    let lua = e.lua();
     let mut chosen = None;
     ui.add_enabled_ui(
         e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed && !e.colors.active(),
@@ -723,7 +730,7 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                     let filter = e.tools.insert_filter.trim().to_lowercase();
                     results.show(ui, |ui| {
                         let mut found = false;
-                        for entry in reference::all()
+                        for entry in reference::all(lua)
                             .iter()
                             .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
                         {
@@ -769,6 +776,7 @@ pub(super) fn dialogs(
     }
     let original_id = id;
     let id = visible_id(id, e.tools.processed);
+    e.tools.help.lua = e.lua();
     if e.tools.help.show(
         ctx,
         p,
@@ -789,7 +797,11 @@ pub(super) fn dialogs(
         .fixed()
         .show(ctx, p, &mut open, |ui| {
             ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("script-goto-line"));
+                ui.label(if e.lua() {
+                    aurora_i18n::tr!("script-goto-line-lua")
+                } else {
+                    aurora_i18n::tr!("script-goto-line")
+                });
                 let input = ui.add(crate::ui::widgets::restricted_number(
                     egui::DragValue::new(&mut e.tools.goto_line).range(0..=usize::MAX),
                     crate::ui::widgets::TextPolicy::Digits,
@@ -798,7 +810,7 @@ pub(super) fn dialogs(
                     || (input.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)))
                 {
                     let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
-                    let at = editing::line_cursor(text, e.tools.goto_line, 0);
+                    let at = editing::line_cursor(text, e.tools.goto_line.saturating_sub(e.first_line()), 0);
                     editing::select(ctx, id, at..at, true);
                     e.tools.goto = false;
                     e.tools.scroll_to_cursor = true;
@@ -808,6 +820,7 @@ pub(super) fn dialogs(
         e.tools.goto &= open;
     }
     if e.tools.library {
+        let lua = e.lua();
         Floater::new(
             &format!("{id:?}_library"),
             aurora_i18n::tr!("script-help-library"),
@@ -819,7 +832,7 @@ pub(super) fn dialogs(
             let filter = e.tools.insert_filter.to_lowercase();
             let mut keyword = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for entry in reference::all().iter().filter(|e| e.name.to_lowercase().contains(&filter)) {
+                for entry in reference::all(lua).iter().filter(|e| e.name.to_lowercase().contains(&filter)) {
                     if ui
                         .selectable_label(false, RichText::new(&entry.signature).monospace())
                         .on_hover_text(&entry.tooltip)
