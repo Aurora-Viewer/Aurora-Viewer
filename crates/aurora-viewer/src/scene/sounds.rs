@@ -577,10 +577,14 @@ impl SoundManager {
                 let tx = self.tx.clone();
                 let id = *id;
                 jobs.spawn(move || {
-                    let clip = crate::cache::read_touch(&path)
-                        .ok()
-                        .and_then(|d| SoundClip::decode(&d).ok())
-                        .map(Arc::new);
+                    // (a failed decode is a cache miss: the sound is downloaded)
+                    let clip = super::jobs::caught(|| {
+                        crate::cache::read_touch(&path)
+                            .ok()
+                            .and_then(|d| SoundClip::decode_asset(&d).ok())
+                            .map(Arc::new)
+                    })
+                    .flatten();
                     let _ = tx.send((id, clip, true));
                     JobResult::Done
                 });
@@ -657,7 +661,8 @@ impl SoundManager {
                 let path = cache_file(&self.cache_dir, &id);
                 let tx = self.tx.clone();
                 jobs.spawn(move || {
-                    let clip = match SoundClip::decode(&d) {
+                    // (a failed decode counts as a failure: retried later)
+                    let clip = super::jobs::caught(|| match SoundClip::decode_asset(&d) {
                         Ok(c) => {
                             let _ = crate::cache::write(path, &d);
                             Some(Arc::new(c))
@@ -666,7 +671,8 @@ impl SoundManager {
                             log::debug!("sound {id}: {e}");
                             None
                         }
-                    };
+                    })
+                    .flatten();
                     let _ = tx.send((id, clip, false));
                     JobResult::Done
                 });
