@@ -163,6 +163,12 @@ impl Inventory {
                     f.favorite = existing.info.favorite;
                     f.favorite_known = existing.info.favorite_known;
                 }
+                // Neither can a skeleton, a legacy listing or a UDP update
+                // say the thumbnail is gone: they do not carry it (#2716).
+                if !f.thumbnail_known && f.thumbnail.is_nil() {
+                    f.thumbnail = existing.info.thumbnail;
+                    f.thumbnail_known = existing.info.thumbnail_known;
+                }
                 // A parent listing can carry older/unknown child versions.
                 // Keep the version of the contents already confirmed locally.
                 let version = existing.info.version;
@@ -196,14 +202,14 @@ impl Inventory {
         kids.sort_by_cached_key(|id| {
             let f = self.folders.get(id);
             let sys = f.is_some_and(|f| f.info.type_default >= 0 && f.info.type_default != 8);
-            (!sys, f.map(|f| f.info.name.to_lowercase()).unwrap_or_default())
+            (!sys, f.map(|f| crate::natural_order::key(&f.info.name)).unwrap_or_default())
         });
         let mut items = f.items.clone();
         seen.clear();
         // FetchInventoryDescendents2 may include linked originals from other
         // folders. LLInventoryModel::updateItem indexes each by its parent.
         items.retain(|item| self.items.get(item).is_some_and(|it| it.parent == id) && seen.insert(*item));
-        items.sort_by_cached_key(|i| self.items.get(i).map(|it| it.name.to_lowercase()).unwrap_or_default());
+        items.sort_by_cached_key(|i| self.items.get(i).map(|it| crate::natural_order::key(&it.name)).unwrap_or_default());
         if let Some(f) = self.folders.get_mut(&id) {
             f.children = kids;
             f.items = items;
@@ -215,6 +221,11 @@ impl Inventory {
         for id in ids {
             self.sort_children(id);
         }
+    }
+
+    /// Folder requests wait for the cache file to be read.
+    pub fn requests_held(&self) -> bool {
+        self.held.is_some()
     }
 
     /// Queue a folder fetch if not fetched yet.
@@ -546,6 +557,13 @@ impl Inventory {
         self.items.len()
     }
 
+    /// Loaded items and folders, including both roots, the Library and links.
+    /// Follows LLPanelMainInventory::updateItemcountText and
+    /// LLInventoryModel::{getItemCount,getCategoryCount} (indra/newview).
+    pub fn total_count(&self) -> usize {
+        self.item_count() + self.folders.len()
+    }
+
     /// AIS deletions remove descendants too; retain no stale search results.
     pub fn remove(&mut self, ids: &[Uuid]) {
         let mut removed: HashSet<_> = ids.iter().copied().collect();
@@ -772,7 +790,7 @@ pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
         .map(|f| {
             let id = f["id"].as_uuid();
             let mut items = by_parent.remove(&id).unwrap_or_default();
-            items.sort_by_cached_key(|it| it.name.to_lowercase());
+            items.sort_by_cached_key(|it| crate::natural_order::key(&it.name));
             CachedFolder {
                 id,
                 version: f["version"].as_i32(),
@@ -801,6 +819,80 @@ pub fn read_cache_in_background(path: std::path::PathBuf) -> crossbeam_channel::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_total_counts_folders_library_trash_and_links() {
+        let id = Uuid::from_u128;
+        let mut inv = Inventory {
+            root: id(1),
+            lib_root: id(2),
+            ..Default::default()
+        };
+        assert_eq!(inv.total_count(), 0);
+        for (n, parent, kind, library) in [
+            (1, 0, 8, false),
+            (2, 0, 8, true),
+            (3, 1, 14, false),
+            (4, 2, -1, true),
+            (5, 1, -1, false),
+        ] {
+            inv.folders.insert(
+                id(n),
+                Folder {
+                    info: InvFolder {
+                        id: id(n),
+                        parent: id(parent),
+                        type_default: kind,
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: FetchState::Unknown,
+                    library,
+                },
+            );
+        }
+        inv.add_items(
+            [
+                (100, 1, 6, 0),
+                (101, 4, 6, 0),
+                (102, 1, 24, 100),
+                (103, 1, 24, 999),
+                (104, 1, 25, 5),
+                (105, 3, 6, 0),
+            ]
+            .into_iter()
+            .map(|(n, parent, asset_type, target)| InvItem {
+                id: id(n),
+                parent: id(parent),
+                asset_type,
+                asset_id: id(target),
+                ..Default::default()
+            })
+            .collect(),
+        );
+        inv.items_missing(vec![id(999)]);
+        assert_eq!(inv.item_count(), 6, "item-only consumers retain their count");
+        assert_eq!(
+            inv.total_count(),
+            11,
+            "five folders plus six records, including aliases and a broken link"
+        );
+        // Moving a record or receiving it again never counts it twice.
+        let mut moved = inv.items[&id(100)].clone();
+        moved.parent = id(5);
+        inv.add_items(vec![moved.clone(), moved]);
+        assert_eq!(inv.total_count(), 11);
+        inv.remove(&[id(3)]);
+        assert_eq!(inv.total_count(), 9, "removing Trash removes its category and contained item");
+        let folder = InvFolder {
+            id: id(6),
+            parent: inv.root,
+            ..Default::default()
+        };
+        inv.created_folders(vec![folder.clone(), folder]);
+        assert_eq!(inv.total_count(), 10, "a new empty folder counts once");
+    }
 
     fn fixture() -> Inventory {
         let mut inv = Inventory {
@@ -1145,5 +1237,41 @@ mod tests {
         assert!(read_cache(&path).is_none());
         std::fs::remove_file(&path).expect("synthetic cache cleanup");
         assert!(read_cache_in_background(path).recv().expect("one answer").is_none());
+    }
+
+    fn outfit(id: u128, thumbnail: u128, known: bool) -> InvFolder {
+        InvFolder {
+            id: Uuid::from_u128(id),
+            parent: Uuid::from_u128(48),
+            name: "Outfit".into(),
+            type_default: 47,
+            version: 3,
+            thumbnail: Uuid::from_u128(thumbnail),
+            thumbnail_known: known,
+            ..Default::default()
+        }
+    }
+
+    /// A legacy listing of My Outfits, as saving or renaming an outfit reads
+    /// it, says nothing of thumbnails: its children keep theirs (#2716).
+    #[test]
+    fn a_record_without_a_thumbnail_keeps_the_one_known() {
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![outfit(1, 9, true)], false);
+        let picture = Uuid::from_u128(9);
+        inv.add_folders(vec![outfit(1, 0, false)], false);
+        assert_eq!(inv.folders[&Uuid::from_u128(1)].info.thumbnail, picture);
+        // and a new one replaces it, known or not
+        inv.add_folders(vec![outfit(1, 8, false)], false);
+        assert_eq!(inv.folders[&Uuid::from_u128(1)].info.thumbnail, Uuid::from_u128(8));
+    }
+
+    /// A complete AIS record, or the removal of the picture, does clear it.
+    #[test]
+    fn a_complete_record_without_a_thumbnail_clears_it() {
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![outfit(1, 9, true)], false);
+        inv.add_folders(vec![outfit(1, 0, true)], false);
+        assert!(inv.folders[&Uuid::from_u128(1)].info.thumbnail.is_nil());
     }
 }

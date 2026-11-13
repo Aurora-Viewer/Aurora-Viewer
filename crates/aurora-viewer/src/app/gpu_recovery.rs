@@ -32,6 +32,7 @@ impl App {
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
         crate::window_hold::install(&window);
+        crate::slurl_handoff::window_ready(&window);
         Ok(window)
     }
 
@@ -122,12 +123,35 @@ pub(super) fn loss_step(history: &mut std::collections::VecDeque<Instant>, now: 
     }
 }
 
-/// `AURORA_GPU_RECOVERY=1`: recover from a device loss instead of closing
-/// (work in progress, off by default until it is complete).
-pub(super) fn enabled() -> bool {
+/// Whether a device loss recovers instead of closing: Preferences › Graphics
+/// (`gpu_recovery`, on by default), unless `AURORA_GPU_RECOVERY` forces it
+/// for the launch. Most losses of a card shared with another program are a
+/// driver reset of the whole card, which the other programs survive by
+/// making their device again (#2237).
+pub(super) fn enabled(setting: bool) -> bool {
+    forced().unwrap_or(setting)
+}
+
+/// egui's CPU copy (egui_shadow.rs) is kept unless the recovery is forced
+/// off: the setting can be turned on during the session, and a copy begun
+/// then would miss the textures egui sent before.
+pub(super) fn shadow_kept() -> bool {
+    forced() != Some(false)
+}
+
+/// `AURORA_GPU_RECOVERY`: `1` on, `0` off, whatever the setting.
+fn forced() -> Option<bool> {
     // read every frame: once per run
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("AURORA_GPU_RECOVERY").is_ok_and(|v| v == "1"))
+    static FORCED: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| parse_forced(std::env::var("AURORA_GPU_RECOVERY").ok().as_deref()))
+}
+
+fn parse_forced(value: Option<&str>) -> Option<bool> {
+    match value.map(str::trim) {
+        Some("1") => Some(true),
+        Some("0") => Some(false),
+        _ => None,
+    }
 }
 
 impl App {
@@ -270,5 +294,14 @@ mod tests {
         assert_eq!(loss_step(&mut history, t), LossStep::Recover);
         assert_eq!(loss_step(&mut history, t + m(4)), LossStep::RecoverSafe);
         assert_eq!(loss_step(&mut history, t + m(6)), LossStep::RecoverSafe);
+    }
+
+    #[test]
+    fn the_variable_forces_the_recovery_either_way_and_anything_else_leaves_the_setting() {
+        assert_eq!(parse_forced(Some("1")), Some(true));
+        assert_eq!(parse_forced(Some(" 0 ")), Some(false));
+        assert_eq!(parse_forced(Some("")), None);
+        assert_eq!(parse_forced(Some("yes")), None);
+        assert_eq!(parse_forced(None), None);
     }
 }

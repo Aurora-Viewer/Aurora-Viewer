@@ -552,6 +552,7 @@ dependencies = [
  "rtrb",
  "rustls",
  "rustls-platform-verifier",
+ "serde_json",
  "sonora",
  "symphonia",
  "thiserror 2.0.21",
@@ -589,6 +590,7 @@ dependencies = [
  "libc",
  "log",
  "pulseaudio",
+ "rfd",
  "windows-sys 0.61.2",
 ]
 
@@ -651,6 +653,7 @@ dependencies = [
  "bytemuck",
  "egui",
  "egui-wgpu",
+ "flate2",
  "glam 0.34.1",
  "intel_tex_2",
  "libc",
@@ -751,6 +754,7 @@ dependencies = [
  "resvg",
  "rfd",
  "ron",
+ "roxmltree 0.21.1",
  "serde",
  "serde_json",
  "serde_path_to_error",

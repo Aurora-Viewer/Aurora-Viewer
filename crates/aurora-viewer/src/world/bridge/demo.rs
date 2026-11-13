@@ -370,7 +370,7 @@ impl Demo {
                     object_id: *object_id,
                     item_id: *item_id,
                     running: self.installed,
-                    mono: Some(true),
+                    compile: Some(aurora_net::scripts::CompileTarget::Mono),
                 }])
             }
             _ => None,

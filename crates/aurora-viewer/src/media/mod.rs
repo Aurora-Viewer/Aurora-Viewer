@@ -32,6 +32,7 @@ pub mod entry;
 pub mod filter;
 mod interact;
 pub mod keys;
+pub mod nearby;
 pub mod openid;
 pub mod pack;
 pub mod pick;
@@ -46,7 +47,7 @@ use crate::world::World;
 use aurora_llsd::{Llsd, Map};
 use aurora_media::{BrowserSettings, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, PluginPaths, Priority};
 use aurora_render::{MipLevel, Renderer};
-use entry::{MediaDataClient, MediaEntry, ObjectMediaData};
+use entry::{MINI_CONTROLS, MediaDataClient, MediaEntry, ObjectMediaData};
 use glam::{Mat4, Vec2, Vec3};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -183,6 +184,9 @@ pub struct MediaImpl {
     /// Prim media: perms_interact lets us navigate the face to another page
     /// (LLVOVolume::hasMediaPermission); otherwise the page bounces back.
     may_navigate: bool,
+    /// Prim media: perms_control shows the media chrome
+    /// (LLPanelPrimMediaControls); the Legacy Viewer hides it without this.
+    pub may_control: bool,
 }
 
 impl MediaImpl {
@@ -226,6 +230,7 @@ impl MediaImpl {
             mouse_down: false,
             user_nav: false,
             may_navigate: true,
+            may_control: true,
         }
     }
 
@@ -397,6 +402,12 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
+    /// Object media version of the last GET asked (0 without one): asked
+    /// once per version, like LLVOVolume::processUpdateMessage asks once per
+    /// media change, so a failed GET is not asked again until the next one.
+    asked_version: Option<u32>,
+    /// A texture entry temporarily lost media flags while cached media remains.
+    flags_lost_since: Option<Instant>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,
@@ -431,6 +442,8 @@ pub struct MediaManager {
     pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
+    /// Objects recently visible on screen, retained for their next request.
+    recently_shown: HashMap<Uuid, Instant>,
     client: MediaDataClient,
     last_create: Instant,
     pub focus: Option<MediaKey>,
@@ -487,6 +500,7 @@ impl Default for MediaManager {
             pack_dir: None,
             impls: Vec::new(),
             objects: HashMap::new(),
+            recently_shown: HashMap::new(),
             client: MediaDataClient::default(),
             last_create: Instant::now() - CREATE_DELAY,
             focus: None,
@@ -807,6 +821,11 @@ impl MediaManager {
 
     /// Offline demo: media on a face without the capability, autoplaying.
     pub fn demo_entry(&mut self, object: Uuid, face: u8, url: &str) {
+        self.demo_face(object, face, url, false);
+    }
+
+    /// `mini` is `PRIM_MEDIA_CONTROLS_MINI` (`AURORA_DEMO_MEDIA=mini`).
+    pub fn demo_face(&mut self, object: Uuid, face: u8, url: &str, mini: bool) {
         let entry = MediaEntry {
             current_url: url.to_string(),
             home_url: url.to_string(),
@@ -814,6 +833,7 @@ impl MediaManager {
             first_click_interact: true,
             width_pixels: 1024,
             height_pixels: 576,
+            controls: if mini { MINI_CONTROLS } else { 0 },
             ..Default::default()
         };
         let mut faces = vec![None; face as usize + 1];

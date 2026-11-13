@@ -519,9 +519,11 @@ impl Editor {
             }
         });
     }
-    pub(super) fn project_import_ui(&mut self, ui: &mut egui::Ui, world: &World) {
+    pub(super) fn project_import_ui(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
         if self.project.picker {
-            ui.add(egui::TextEdit::singleline(&mut self.project.filter).hint_text(aurora_i18n::tr!("ik-project-notecard-search")));
+            crate::ui::widgets::search_text_edit(ui, p, &mut self.project.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ik-project-notecard-search"))
+            });
             let signature = (world.inventory.generation, self.project.filter.clone());
             if self.project.candidates_at.as_ref() != Some(&signature) {
                 let filter = self.project.filter.to_lowercase();
@@ -533,7 +535,7 @@ impl Editor {
                         it.asset_type == 7 && it.name.to_lowercase().contains(&filter) && !world.inventory.in_folder_type(it.id, 14)
                     })
                     .collect();
-                candidates.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+                candidates.sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then(a.id.cmp(&b.id)));
                 self.project.candidates = candidates.iter().map(|it| it.id).collect();
                 self.project.candidates_at = Some(signature);
             }

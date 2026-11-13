@@ -431,7 +431,7 @@ mod tests {
         assert!(t.distance(inferred) > 0.1, "a terrain tangent cannot be reconstructed from N");
         assert_eq!(vertices[i].uv[0], comp.value(&hm, 16.0, 16.0, hm.height(16, 16)));
         assert_eq!(vertices[i].normal[3], 127);
-        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 12);
     }
 
     #[test]

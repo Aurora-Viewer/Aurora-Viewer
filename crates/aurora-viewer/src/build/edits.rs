@@ -194,6 +194,24 @@ impl BuildTool {
             .is_some_and(|root| root.update_flags & crate::ui::context::flags::OBJECT_MODIFY != 0)
     }
 
+    /// LLPanelVolume::getState (indra/newview/llpanelvolume.cpp): "Animated
+    /// Mesh" needs one selected linkset (getRootObjectCount, however many prims
+    /// it has), its root as the primary object, a mesh, and modify rights
+    /// that are not pathfinding-enforced. The other Features need one prim.
+    /// ⬜ Not yet: the Legacy Viewer's triangle limit (canBeAnimatedObject) and
+    /// worn animesh count (canAttachMoreAnimatedObjects).
+    pub fn animated_mesh_editable(&self, world: &World) -> bool {
+        let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+            return false;
+        };
+        let Some(o) = world.objects.get(idx) else { return false };
+        o.parent_id == 0
+            && o.volume.is_mesh()
+            && self.roots(world).len() == 1
+            && self.can_modify(world, idx)
+            && !super::linking::permanent(world, idx)
+    }
+
     fn by_region(world: &World, idxs: &[usize]) -> HashMap<RegionHandle, Vec<u32>> {
         let mut m: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for &i in idxs {
@@ -536,8 +554,12 @@ impl BuildTool {
     }
 
     /// Name / description of the property targets (ObjectName / ObjectDescription).
+    /// Port of `LLSelectMgr::selectionSetObjectName` and `selectionSetObjectDescription`
+    /// (`indra/newview/llselectmgr.cpp`, originally LGPL 2.1): send selected roots per region.
     pub fn set_name(&mut self, world: &World, name: &str, description: bool) {
         let targets = self.prop_targets(world);
+        let mut name_targets = Vec::new();
+        let mut description_targets = Vec::new();
         for idx in targets {
             if !self.can_modify(world, idx) {
                 continue;
@@ -558,20 +580,31 @@ impl BuildTool {
                     p.name = name.to_owned();
                 }
             }
-            let (handle, local_id) = (o.key.region, o.key.local_id);
-            self.send(if description {
-                BuildCmd::SetDescription {
-                    handle,
-                    local_id,
-                    description: name.to_owned(),
-                }
+            if description {
+                description_targets.push(idx);
             } else {
-                BuildCmd::SetName {
+                name_targets.push(idx);
+            }
+        }
+        if description {
+            let ids_by_region = Self::by_region(world, &description_targets);
+            for (handle, local_ids) in ids_by_region {
+                self.send(BuildCmd::SetDescription {
                     handle,
-                    local_id,
+                    local_ids,
+                    description: name.to_owned(),
+                });
+            }
+        }
+        if !description {
+            let ids_by_region = Self::by_region(world, &name_targets);
+            for (handle, local_ids) in ids_by_region {
+                self.send(BuildCmd::SetName {
+                    handle,
+                    local_ids,
                     name: name.to_owned(),
-                }
-            });
+                });
+            }
         }
     }
 

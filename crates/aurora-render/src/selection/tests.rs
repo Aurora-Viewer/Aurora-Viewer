@@ -90,7 +90,7 @@ fn halo_preserves_material_and_tracks_holes_and_disconnected_islands() {
     let view = output.create_view(&Default::default());
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 64 * 64 * 4,
+        size: crate::readback::readback_size(64 * 64 * 4),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });

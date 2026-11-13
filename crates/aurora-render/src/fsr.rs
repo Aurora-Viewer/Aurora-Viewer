@@ -15,9 +15,11 @@
 //! fragment pass (see `shaders/fsr/common.wgsl` for the differences from
 //! the SDK). The reactive mask is generated from the scene before and after
 //! the blended faces, the particles and the water (FSR's autogen reactive
-//! pass, `AURORA_FSR_REACTIVE=0` turns it off); no transparency and
-//! composition mask yet, and the exposure is 1 (FSR's tone mapping of the history works on the HDR
-//! values as they are).
+//! pass, `AURORA_FSR_REACTIVE=0` turns it off). The transparency and
+//! composition mask marks the faces with a running texture animation, read
+//! from the prepass's normals (`NORMAL_COMPOSITION` in common.wgsl,
+//! `AURORA_FSR_COMPOSITION=0` turns it off). The exposure is 1 (FSR's tone
+//! mapping of the history works on the HDR values as they are).
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2};
@@ -89,6 +91,13 @@ fn reactive_on() -> bool {
     *ON.get_or_init(|| std::env::var("AURORA_FSR_REACTIVE").map_or(true, |v| v.trim() != "0"))
 }
 
+/// `AURORA_FSR_COMPOSITION=0`: no transparency and composition mask (read
+/// once).
+fn composition_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_FSR_COMPOSITION").map_or(true, |v| v.trim() != "0"))
+}
+
 /// `AURORA_FSR_SHARPNESS=<0..1>|off`: RCAS's strength, or no RCAS, over
 /// the setting (read once).
 fn sharpness_override() -> Option<Option<f32>> {
@@ -132,7 +141,8 @@ struct FsrU {
     view_to_meters: f32,
     motion_on: f32,
     reactive_on: f32,
-    pad: [f32; 3],
+    composition_on: f32,
+    pad: [f32; 2],
 }
 
 /// What the frame gives FSR.
@@ -354,7 +364,13 @@ fn view(device: &wgpu::Device, label: &str, (w, h): (u32, u32), format: wgpu::Te
         h,
         format,
         1,
-        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | if format.is_depth_stencil_format() {
+                wgpu::TextureUsages::COPY_SRC
+            } else {
+                wgpu::TextureUsages::empty()
+            },
     )
     .1
 }
@@ -419,6 +435,7 @@ impl Fsr {
                 storage(7, true),
                 storage(8, false),
                 tex(9, true),
+                tex(10, true),
             ],
         );
         let l_accumulate = layout(
@@ -662,6 +679,7 @@ impl Fsr {
                         entry_buf(7, &reconstructed),
                         entry_buf(8, &new_locks),
                         entry_tex(9, &reactive),
+                        entry_tex(10, inputs.motion),
                     ],
                 ),
                 luma_instability: common(
@@ -789,7 +807,8 @@ impl Fsr {
             view_to_meters: 1.0,
             motion_on: if f.motion_on { 1.0 } else { 0.0 },
             reactive_on: if reactive_on() { 1.0 } else { 0.0 },
-            pad: [0.0; 3],
+            composition_on: if composition_on() { 1.0 } else { 0.0 },
+            pad: [0.0; 2],
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
         // nothing pushed yet: 0 is the farthest in reverse-Z

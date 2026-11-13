@@ -402,6 +402,11 @@ impl Scene {
         self.lists.water_events = events;
         self.lists.water_contacts = contacts;
         self.lists.water_ground = ground;
+        // no ripples nor splashes on a hidden water (render_types.rs)
+        if self.hidden_types.water {
+            self.lists.water_events.clear();
+            self.lists.water_contacts.clear();
+        }
     }
 }
 

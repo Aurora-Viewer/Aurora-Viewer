@@ -244,6 +244,54 @@ pub fn parse_provision_response(result: &Llsd) -> Option<ProvisionAnswer> {
     }
 }
 
+/// One-line summary of the ICE parameters of an SDP answer, for the log:
+/// where each `ice-ufrag` / `ice-pwd` sits (`s` session level, `m0`, `m1`…
+/// media level), the ufrag, the password length (never the password),
+/// `ice-lite` and the candidates. Tells a credentials mismatch from a
+/// network problem when a voice host ignores our checks (issue #3364).
+pub fn answer_ice_summary(sdp: &str) -> String {
+    let mut section = "s".to_string();
+    let mut media = 0usize;
+    let mut ufrags = Vec::new();
+    let mut pwds = Vec::new();
+    let mut candidates = Vec::new();
+    let mut lite = false;
+    for line in sdp.lines().map(str::trim_end) {
+        if line.starts_with("m=") {
+            section = format!("m{media}");
+            media += 1;
+        } else if let Some(ufrag) = line.strip_prefix("a=ice-ufrag:") {
+            ufrags.push(format!("{section} {ufrag}"));
+        } else if let Some(pwd) = line.strip_prefix("a=ice-pwd:") {
+            pwds.push(format!("{section} {} chars", pwd.len()));
+        } else if line == "a=ice-lite" {
+            lite = true;
+        } else if let Some(c) = line.strip_prefix("a=candidate:") {
+            // foundation component protocol priority address port typ type …
+            let parts: Vec<&str> = c.split_whitespace().collect();
+            if parts.len() >= 8 {
+                let mut s = format!("{} {}:{} {}", parts[2].to_ascii_lowercase(), parts[4], parts[5], parts[7]);
+                if let Some(i) = parts.iter().position(|p| *p == "tcptype")
+                    && let Some(t) = parts.get(i + 1)
+                {
+                    let _ = write!(s, " {t}");
+                }
+                candidates.push(s);
+            } else {
+                candidates.push(format!("unparsed `{c}`"));
+            }
+        }
+    }
+    format!(
+        "ufrag [{}], pwd [{}], ice-lite {}, {} candidates [{}]",
+        ufrags.join(", "),
+        pwds.join(", "),
+        if lite { "yes" } else { "no" },
+        candidates.len(),
+        candidates.join(", ")
+    )
+}
+
 /// `{"j":{"p":true}}` (primary) or `{"j":{}}` — `sendJoin`.
 pub fn join_message(primary: bool) -> String {
     if primary {
@@ -619,5 +667,30 @@ o=- 1 2 IN IP4 127.0.0.1
             ]
         );
         assert_eq!(stun_servers_for_grid("aditi").len(), 2);
+    }
+
+    #[test]
+    fn answer_ice_summary_shows_where_the_credentials_are() {
+        let sdp = "v=0\r\n\
+o=- 1 2 IN IP4 203.0.113.7\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=ice-lite\r\n\
+a=ice-ufrag:sess\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+a=ice-ufrag:abcd\r\n\
+a=ice-pwd:0123456789abcdefghijklmn\r\n\
+a=candidate:1 1 UDP 2015363327 203.0.113.7 10626 typ host\r\n\
+a=candidate:2 1 TCP 1015021823 203.0.113.7 9 typ host tcptype active\r\n\
+a=candidate:broken\r\n\
+m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+a=ice-ufrag:abcd\r\n";
+        assert_eq!(
+            answer_ice_summary(sdp),
+            "ufrag [s sess, m0 abcd, m1 abcd], pwd [m0 24 chars], ice-lite yes, 3 candidates \
+             [udp 203.0.113.7:10626 host, tcp 203.0.113.7:9 host active, unparsed `broken`]"
+        );
+        // The password itself never reaches the log.
+        assert!(!answer_ice_summary(sdp).contains("0123456789"));
     }
 }
