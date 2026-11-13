@@ -852,6 +852,57 @@ fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
 }
 
 #[test]
+fn an_object_rezzes_from_contents_when_the_agent_may_copy_it_and_its_owner_transfer_it() {
+    let (agent, other, library, group) = (id(9931), id(9932), id(9933), id(9934));
+    let item = |owner_id, group_owned, owner_mask, group_mask, everyone_mask| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        group_id: group,
+        owner_mask,
+        group_mask,
+        everyone_mask,
+        asset_type: 6,
+        inv_type: 6,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own object, full permissions", item(agent, false, FULL, 0, 0), group, true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0, 0), group, false),
+        ("no transfer, even its own", item(agent, false, COPY | MODIFY, 0, 0), group, false),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0, 0), group, true),
+        ("group owned, active group may copy", item(group, true, FULL, COPY, 0), group, true),
+        (
+            "group owned, another active group",
+            item(group, true, FULL, COPY, 0),
+            Uuid::nil(),
+            false,
+        ),
+        (
+            "group owned, owner may not transfer",
+            item(group, true, COPY | MODIFY, COPY, COPY),
+            group,
+            false,
+        ),
+        (
+            "someone else's, everyone may copy",
+            item(other, false, FULL, 0, COPY),
+            Uuid::nil(),
+            true,
+        ),
+        (
+            "someone else's, no copy for everyone",
+            item(other, false, FULL, 0, 0),
+            Uuid::nil(),
+            false,
+        ),
+        ("a Library item", item(library, false, FULL, 0, COPY | TRANSFER), Uuid::nil(), true),
+    ];
+    for (what, item, active, allowed) in cases {
+        assert_eq!(task_rez_allowed(&item, agent, active), allowed, "{what}");
+    }
+}
+
+#[test]
 fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
     let (agent, library, asset) = (id(9911), id(9912), id(9913));
     let mut inv = Inventory {

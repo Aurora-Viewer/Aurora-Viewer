@@ -141,7 +141,7 @@ impl World {
 
     pub(crate) fn rlva_teleport_dnd(&mut self, sender: Uuid) {
         if self.status.dnd {
-            let text = self.status.cfg.dnd_text.clone();
+            let text = self.dnd_response_to(&sender);
             self.auto_im(sender, Uuid::nil(), &text);
         }
     }
