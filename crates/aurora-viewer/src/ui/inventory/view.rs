@@ -353,6 +353,12 @@ pub struct InventoryPreferences {
     pub show_recent: bool,
     pub show_worn: bool,
     pub show_favorites: bool,
+    /// The system folders left out of the trees, by the names of
+    /// `hidden_folders::HIDEABLE` (Preferences › Aurora › System folders).
+    pub hidden_system_folders: Vec<String>,
+    /// Folders with no item anywhere inside, system folders too, are left
+    /// out of the trees (off).
+    pub hide_empty_folders: bool,
     /// Keep the ancestors of favorite entries; off lists favorites directly.
     pub favorites_show_parent_folders: bool,
     pub show_hover_tooltips: bool,
@@ -410,6 +416,8 @@ impl Default for InventoryPreferences {
             show_recent: true,
             show_worn: true,
             show_favorites: true,
+            hidden_system_folders: Vec::new(),
+            hide_empty_folders: false,
             favorites_show_parent_folders: false,
             // off until a better hover card replaces it
             show_hover_tooltips: false,
@@ -573,6 +581,12 @@ pub struct ViewCache {
     /// With Always show folders, the folders that hold a matching item: the
     /// others it lists start closed (`TreeState::prepare`).
     holding: Option<IdSet>,
+    /// The root's folders that System folders can hide, and their bit
+    /// (`hidden_folders::folder_bit`).
+    hideable: IdMap<u32>,
+    /// The folders that hold an item somewhere inside, or a folder not
+    /// loaded yet (it may: it stays until its contents are known).
+    filled: IdSet,
 }
 
 impl ViewCache {
@@ -675,6 +689,33 @@ impl ViewCache {
         self.folder_dates = dates;
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
         self.folders = inv.folders.keys().copied().collect();
+        // Hide empty folders: each item, and each folder still loading,
+        // keeps its folder and the folders above it
+        let mut filled = IdSet::default();
+        let starts = inv.items.values().map(|it| it.parent).chain(
+            inv.folders
+                .iter()
+                .filter(|(_, f)| f.state != crate::world::inventory::FetchState::Fetched)
+                .map(|(id, _)| *id),
+        );
+        for start in starts {
+            let mut id = start;
+            for _ in 0..64 {
+                let Some(f) = inv.folders.get(&id) else { break };
+                if !filled.insert(id) {
+                    break;
+                }
+                id = f.info.parent;
+            }
+        }
+        self.filled = filled;
+        self.hideable = inv
+            .folders
+            .iter()
+            .filter_map(|(id, f)| {
+                super::hidden_folders::folder_bit(f.info.parent == inv.root, f.info.type_default, &f.info.name).map(|b| (*id, b))
+            })
+            .collect();
         // Keep the lists' memory: a folder gone keeps an empty list.
         self.children.values_mut().for_each(Vec::clear);
         for entry in &self.entries {
@@ -694,7 +735,9 @@ impl ViewCache {
 
     /// Changes whenever the sorted children change (see `prepare`).
     pub fn built(&self) -> u64 {
+        // a change of the hidden folders lists the trees again
         self.built
+            .wrapping_add(super::hidden_folders::generation().wrapping_mul(0x9E37_79B9_7F4A_7C15))
     }
 
     /// The rendered sort, without the model generation: a late Delete respects
@@ -715,11 +758,17 @@ impl ViewCache {
     }
 
     pub fn children_iter(&self, parent: Uuid, show_library: bool, lib_root: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+        let hidden = super::hidden_folders::mask();
+        let hide_empty = super::hidden_folders::hide_empty();
         self.children
             .get(&parent)
             .into_iter()
             .flatten()
             .filter(move |id| show_library || **id != lib_root)
+            // the system folders hidden in Preferences › Aurora › System folders
+            .filter(move |id| hidden == 0 || self.hideable.get(id).is_none_or(|b| hidden & (1u64 << b) == 0))
+            // Hide empty folders, system folders included
+            .filter(move |id| !hide_empty || !self.folders.contains(*id) || self.filled.contains(*id))
             .copied()
     }
 

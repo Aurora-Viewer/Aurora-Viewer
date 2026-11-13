@@ -17310,6 +17310,11 @@ impl App {
                 // the chat bar shown only while it is used (#1009); also
                 // AURORA_DEMO_BARS=autohide, for this run, with either bars,
                 // and `chatstart`: Enter pressed at frame 300 on a draft
+                // Preferences › Aurora › System folders, for the inventory trees
+                ui::inventory::hidden_folders::sync(
+                    &self.settings.inventory.hidden_system_folders,
+                    self.settings.inventory.hide_empty_folders,
+                );
                 let demo_autohide = if self.demo { ui::bars::demo::get() } else { Default::default() };
                 let autohide_chat_bar = self.settings.autohide_chat_bar || demo_autohide.autohide;
                 self.chat_ui.autohide = autohide_chat_bar;
