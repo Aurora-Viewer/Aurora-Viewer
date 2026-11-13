@@ -315,6 +315,11 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
+    // Aurora Weather: how much snow is on the avatar wearing it (0..1),
+    // and how much this point faces up on the avatar standing (its rest
+    // pose: the snow stays where it built up as the avatar moves)
+    @location(11) @interpolate(flat) snow: f32,
+    @location(12) snow_up: f32,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -546,6 +551,8 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
 fn vs_land_overlay(in: VsIn) -> VsOut {
     let rec = records[in.instance];
     var out: VsOut;
+    out.snow = 0.0;
+    out.snow_up = 0.0;
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
     if (rec.params.x > 0.5) {
@@ -567,6 +574,13 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip = eye_clip(rec, ep);
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
+    // snow on avatars, judged by the facing just found (before it, the
+    // normal was zero: its up a NaN, and no snow ever showed)
+    out.snow = avatar_snow(rec);
+    out.snow_up = 0.0;
+    if (out.snow > 0.0) {
+        out.snow_up = avatar_rest_up(rec, in, out.normal);
+    }
     var st = face_st(in, rec);
     let animated = has_tex_anim(rec);
     if (animated) {
@@ -904,7 +918,71 @@ fn shadow_normal(m: Material) -> vec3<f32> {
     return m.geo_n;
 }
 
+// Aurora Weather: how much snow is on the avatar a record belongs to: in
+// its skeleton's palette (AVATAR_SNOW), a rigged mesh's from its base, a
+// worn prim's from its anchor's skeleton (palettes are PALETTE_STRIDE
+// apart); none for the rest.
+fn avatar_snow(rec: DrawRecord) -> f32 {
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        return clamp(palettes[rec.flags.y + AVATAR_SNOW][0][0], 0.0, 1.0);
+    }
+    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        let base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
+        return clamp(palettes[base + AVATAR_SNOW][0][0], 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+// How much a point faces up on its avatar: its facing against the
+// skeleton's own up (the avatar turned, leaning, flying tilted or lying as
+// a whole does not move the snow; a limb moving does a little). Not a
+// rigged mesh's normal before the skinning: its axes are the mesh's own,
+// not always the avatar's (a head made facing up snowed its face).
+fn avatar_rest_up(rec: DrawRecord, in: VsIn, world_n: vec3<f32>) -> f32 {
+    var base = rec.flags.y;
+    if ((rec.flags.x & FLAG_SKINNED) == 0u) {
+        base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
+    }
+    let skel = palettes[base + SKELETON_ANCHOR];
+    let up = normalize(skel[2].xyz);
+    return dot(normalize(world_n), up);
+}
+
+// Snow on an avatar's material: on what faces up, in patches that follow
+// the face's texture (not the world: they stay put as it walks), the more
+// of it the more snow; a matte white, its shine and glow covered.
+fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
+    var m = m_in;
+    // on what faces up on the avatar standing; sliding off what now
+    // faces the ground (the avatar upside down)
+    let up = smoothstep(0.2, 0.75, in.snow_up) * smoothstep(-0.6, -0.1, m.n.z);
+    if (in.snow <= 0.001 || up <= 0.0 || hud_pass) { return m; }
+    let p = in.uv * 7.0;
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let h = vec4<f32>(
+        fract(sin(dot(i, vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(1.0, 0.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(0.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(1.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453));
+    let patches = mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+    let cover = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
+    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9), cover), m.color.a);
+    m.roughness = mix(m.roughness, 0.85, cover);
+    m.metallic *= 1.0 - cover;
+    m.legacy_spec *= 1.0 - cover;
+    m.legacy_env *= 1.0 - cover;
+    m.unlit *= 1.0 - cover;
+    m.emissive *= 1.0 - cover;
+    return m;
+}
+
 fn eval_material(in: VsOut, front: bool) -> Material {
+    return avatar_snow_on(eval_material_base(in, front), in);
+}
+
+fn eval_material_base(in: VsOut, front: bool) -> Material {
     portal_clip(records[in.record], in.world_pos);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -998,7 +1076,46 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     let fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
     let gtdenom = 2.0 * nh;
     let gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
-    return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
+    return legacy_finite(lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl));
+}
+
+// AURORA_LEGACY_NAN=off|check (frame.light_mode.z): `off` lets a legacy
+// highlight or environment term that is not a number through, as before
+// (0.9.8); `check` paints magenta where one was caught.
+const LEGACY_NAN_OFF: u32 = 0x200000u;
+const LEGACY_NAN_CHECK: u32 = 0x400000u;
+// Whether this fragment caught one (the `check` mode). Reset by
+// shade_material.
+var<private> legacy_nan: bool = false;
+
+fn not_finite(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7f800000u) == 0x7f800000u;
+}
+
+// A legacy lighting term (a highlight, an environment sample) that is not a
+// finite number gives none. The highlight's divisions and powers can give
+// a NaN at grazing angles, and the min, max and clamp that follow are left
+// to the card: NVIDIA returns the other operand (no highlight), AMD keeps
+// the NaN, which `finite_hdr` turns black: black eyebrows, beards and eye
+// layers on mesh heads in 0.9.8, after #3389 had only taken its alpha
+// away. Tested on the bits, as legacy_glare_alpha: a driver may fold
+// `x != x` to false.
+fn legacy_finite(x: f32) -> f32 {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return x;
+    }
+    let bad = not_finite(x);
+    legacy_nan = legacy_nan || bad;
+    return select(x, 0.0, bad);
+}
+
+fn legacy_finite3(c: vec3<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return c;
+    }
+    let bad = not_finite(c.x) || not_finite(c.y) || not_finite(c.z);
+    legacy_nan = legacy_nan || bad;
+    return select(c, vec3<f32>(0.0), bad);
 }
 
 // The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
@@ -1029,8 +1146,7 @@ fn legacy_glare_on() -> bool {
 // `g != g` to false.
 fn legacy_glare_alpha(unlit: f32) -> f32 {
     let g = legacy_glare * (1.0 - clamp(unlit, 0.0, 1.0));
-    let not_finite = (bitcast<u32>(g) & 0x7f800000u) == 0x7f800000u;
-    return select(clamp(g, 0.0, 1.0), 0.0, not_finite || !legacy_glare_on());
+    return select(clamp(g, 0.0, 1.0), 0.0, not_finite(g) || !legacy_glare_on());
 }
 
 // Legacy material lighting applied to the sun + sky result `col`, as
@@ -1080,8 +1196,8 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     }
     // sampleReflectionProbesLegacy clamps both: a very bright sky does not
     // wash a shiny face out
-    gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
-    env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    gloss_sky = clamp(legacy_finite3(gloss_sky), vec3<f32>(0.0), vec3<f32>(10.0));
+    env_sky = clamp(legacy_finite3(env_sky), vec3<f32>(0.0), vec3<f32>(10.0));
     // with GTAO, the glossy reflection fades in creases as a PBR one
     // (specular_occlusion; its roughness from the glossiness, as the probe
     // level above); the sharp environment is a mirror's lobe, which that
@@ -1467,6 +1583,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     legacy_glare = 0.0;
+    legacy_nan = false;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1550,6 +1667,15 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
+    if ((frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
+        // magenta: a legacy term caught by legacy_finite; cyan: the colour
+        // is still not a number, from a source the guard does not cover
+        if (not_finite(col.x) || not_finite(col.y) || not_finite(col.z)) {
+            s.color = vec4<f32>(0.0, 4.0, 4.0, max(alpha, 0.5));
+        } else if (legacy_nan) {
+            s.color = vec4<f32>(4.0, 0.0, 4.0, max(alpha, 0.5));
+        }
+    }
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
@@ -2098,6 +2224,8 @@ struct ShadowOut {
 struct ShadowParams {
     vp: mat4x4<f32>,
     anim_clock: vec4<u32>,  // the animation clocks, as Frame's
+    // x: 1 for the rain prototype's shelter map
+    kind: vec4<u32>,
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -2132,6 +2260,12 @@ fn fs_shadow(in: ShadowOut) {
     portal_clip(rec, in.world_pos);
     let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
+    // the rain's shelter map: any blended texel that is there at all keeps
+    // the rain off (glass); masked ones as they cast
+    if (shadow_params.kind.x == 1u && (rec.flags.x & FLAG_ALPHA_BLEND) != 0u) {
+        if (alpha < 0.02) { discard; }
+        return;
+    }
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
             if (alpha < rec.params.w) { discard; }
@@ -2152,6 +2286,7 @@ const PART_EMISSIVE: u32 = 1u;
 const PART_ADDITIVE: u32 = 2u;
 const PART_AXIS: u32 = 4u;
 const PART_FOLLOW_VELOCITY: u32 = 8u;
+const PART_LINE: u32 = 16u;
 
 struct PartIn {
     @location(0) pos: vec3<f32>,
@@ -2241,7 +2376,11 @@ override PART_MIN_ALPHA: f32 = 0.002;
 fn particle_texel(in: PartOut) -> vec4<f32> {
     let ts = sample_tex(in.texture, in.uv);
     var tex = vec4<f32>(srgb_to_linear(ts.rgb), ts.a);
-    if (in.texture == 0u) {
+    if ((in.flags & PART_LINE) != 0u) {
+        // a line's segment: soft across, even along (its neighbours carry on)
+        let a = clamp(1.0 - abs(in.uv.x * 2.0 - 1.0), 0.0, 1.0);
+        tex = vec4<f32>(1.0, 1.0, 1.0, a * a);
+    } else if (in.texture == 0u) {
         let d = length(in.uv * 2.0 - vec2<f32>(1.0));
         let a = clamp(1.0 - d, 0.0, 1.0);
         tex = vec4<f32>(1.0, 1.0, 1.0, a * a);

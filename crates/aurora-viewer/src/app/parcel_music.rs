@@ -81,6 +81,139 @@ impl Radio {
     }
 }
 
+/// Port of LLViewerAudio's stream fading (indra/newview/llvieweraudio.cpp,
+/// FSFadeAudioStream, FSAudioMusicFadeIn / FSAudioMusicFadeOut): a station
+/// that changes fades out, then the next one fades in. Stopping by hand,
+/// turning the Music channel off or logging out cuts at once
+/// (stopInternetStreamWithAutoFade); starting a station, by hand or with
+/// the parcel, fades in (startInternetStreamWithAutoFade).
+#[derive(Default)]
+pub(super) struct Fade {
+    state: FadeState,
+    /// What the engine plays (getInternetStreamURL).
+    playing: String,
+    /// The station asked for last (mNextStreamURI).
+    next: String,
+    /// When the fade under way started, and how long it lasts.
+    started: Option<(std::time::Instant, f32)>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
+enum FadeState {
+    #[default]
+    Idle,
+    Out,
+    In,
+}
+
+/// The fade's settings: on, fade in and fade out in seconds.
+#[derive(Clone, Copy)]
+pub(super) struct FadeTimes {
+    pub on: bool,
+    pub fade_in: f32,
+    pub fade_out: f32,
+}
+
+/// What the engine is told to do this frame.
+#[derive(Debug, PartialEq)]
+pub(super) enum StreamChange {
+    Play(String),
+    Stop,
+}
+
+/// AUDIO_MUSIC_MINIMUM_FADE_TIME: no division by zero for a fade set to 0.
+const MINIMUM_FADE: f32 = 0.01;
+
+impl Fade {
+    /// The URL the engine plays.
+    #[cfg(test)]
+    pub fn playing(&self) -> &str {
+        &self.playing
+    }
+
+    /// One frame: `want` the station to play ("" none); `smooth` false when
+    /// the change comes from a stop by hand, a channel turned off or a
+    /// logout, which never fade. Returns the engine's change, if any, and
+    /// the music's fade volume (getFadeVolume).
+    pub fn step(&mut self, want: &str, smooth: bool, times: FadeTimes, now: std::time::Instant) -> (Option<StreamChange>, f32) {
+        let mut change = None;
+        if want != self.next {
+            self.next = want.to_owned();
+            if !times.on || !smooth {
+                self.state = FadeState::Idle;
+                self.started = None;
+                if self.playing != want {
+                    change = Some(self.switch_to(want.to_owned()));
+                }
+                return (change, 1.0);
+            }
+            // startInternetStreamWithAutoFade: a fade under way goes on
+            if self.state == FadeState::Idle {
+                if self.playing.is_empty() {
+                    change = Some(self.switch_to(self.next.clone()));
+                    self.start(FadeState::In, times, now);
+                } else {
+                    self.start(FadeState::Out, times, now);
+                }
+            }
+        }
+        let Some((started, length)) = self.started else {
+            return (change, 1.0);
+        };
+        let t = now.duration_since(started).as_secs_f32() / length;
+        if t < 1.0 {
+            let gain = if self.state == FadeState::Out { 1.0 - t } else { t };
+            return (change, gain);
+        }
+        // onIdleUpdate: the fade is done
+        match self.state {
+            FadeState::Out if self.next.is_empty() => {
+                self.state = FadeState::Idle;
+                self.started = None;
+                (Some(self.switch_to(String::new())), 1.0)
+            }
+            FadeState::Out => {
+                let next = self.next.clone();
+                self.start(FadeState::In, times, now);
+                (Some(self.switch_to(next)), 0.0)
+            }
+            FadeState::In if self.next != self.playing => {
+                self.start(FadeState::Out, times, now);
+                (change, 1.0)
+            }
+            _ => {
+                self.state = FadeState::Idle;
+                self.started = None;
+                (change, 1.0)
+            }
+        }
+    }
+
+    fn start(&mut self, state: FadeState, times: FadeTimes, now: std::time::Instant) {
+        let length = if state == FadeState::Out { times.fade_out } else { times.fade_in };
+        self.state = state;
+        self.started = Some((now, length.max(MINIMUM_FADE)));
+        log::info!(
+            "parcel music: fade {} over {length:.2} s",
+            if state == FadeState::Out { "out" } else { "in" }
+        );
+    }
+
+    fn switch_to(&mut self, url: String) -> StreamChange {
+        self.playing = url;
+        if self.playing.is_empty() {
+            StreamChange::Stop
+        } else {
+            StreamChange::Play(self.playing.clone())
+        }
+    }
+
+    /// A logout: nothing plays, nothing is awaited.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// An error worth a local chat line. A dropped stream (`Interrupted`) is
 /// reconnected on its own: it stays in the status tooltip only, so a
 /// station that was playing does not say "Can't play" while it reconnects.
@@ -97,6 +230,74 @@ pub(super) fn first_error_notice(seen: &mut std::collections::HashSet<String>, u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TIMES: FadeTimes = FadeTimes {
+        on: true,
+        fade_in: 3.0,
+        fade_out: 2.0,
+    };
+
+    fn at(start: std::time::Instant, secs: f32) -> std::time::Instant {
+        start + std::time::Duration::from_secs_f32(secs)
+    }
+
+    #[test]
+    fn a_station_fades_in_then_a_new_one_fades_the_old_out_first() {
+        let t0 = std::time::Instant::now();
+        let mut fade = Fade::default();
+        let (a, b) = ("https://radio.example/a", "https://radio.example/b");
+        assert_eq!(fade.step(a, true, TIMES, t0), (Some(StreamChange::Play(a.into())), 0.0));
+        let (change, gain) = fade.step(a, true, TIMES, at(t0, 1.5));
+        assert!(change.is_none() && (gain - 0.5).abs() < 1e-3, "{gain}");
+        assert_eq!(fade.step(a, true, TIMES, at(t0, 3.0)), (None, 1.0));
+        // the parcel changes: a fades out over 2 s, still playing
+        assert_eq!(fade.step(b, true, TIMES, at(t0, 10.0)), (None, 1.0));
+        let (change, gain) = fade.step(b, true, TIMES, at(t0, 11.0));
+        assert!(change.is_none() && (gain - 0.5).abs() < 1e-3, "{gain}");
+        assert_eq!(fade.playing(), a);
+        // then b starts silent and fades in over 3 s
+        assert_eq!(fade.step(b, true, TIMES, at(t0, 12.0)), (Some(StreamChange::Play(b.into())), 0.0));
+        let (_, gain) = fade.step(b, true, TIMES, at(t0, 13.5));
+        assert!((gain - 0.5).abs() < 1e-3, "{gain}");
+        assert_eq!(fade.step(b, true, TIMES, at(t0, 15.0)), (None, 1.0));
+        // a parcel with no music: b fades out, then stops
+        fade.step("", true, TIMES, at(t0, 20.0));
+        assert_eq!(fade.step("", true, TIMES, at(t0, 22.0)), (Some(StreamChange::Stop), 1.0));
+        assert_eq!(fade.playing(), "");
+    }
+
+    #[test]
+    fn a_change_during_a_fade_in_waits_for_its_end() {
+        let t0 = std::time::Instant::now();
+        let mut fade = Fade::default();
+        let (a, b) = ("https://radio.example/a", "https://radio.example/b");
+        fade.step(a, true, TIMES, t0);
+        assert_eq!(fade.step(b, true, TIMES, at(t0, 1.0)).0, None, "a fade in goes on");
+        assert_eq!(fade.step(b, true, TIMES, at(t0, 3.0)), (None, 1.0), "then a fades out");
+        assert_eq!(fade.step(b, true, TIMES, at(t0, 5.0)).0, Some(StreamChange::Play(b.into())));
+    }
+
+    #[test]
+    fn a_stop_by_hand_or_the_fade_off_cut_at_once() {
+        let t0 = std::time::Instant::now();
+        let mut fade = Fade::default();
+        let (a, b) = ("https://radio.example/a", "https://radio.example/b");
+        fade.step(a, true, TIMES, t0);
+        fade.step(b, true, TIMES, at(t0, 4.0));
+        assert_eq!(fade.step("", false, TIMES, at(t0, 4.5)), (Some(StreamChange::Stop), 1.0));
+        assert_eq!(fade.step("", true, TIMES, at(t0, 9.0)), (None, 1.0), "no fade left behind");
+        let off = FadeTimes { on: false, ..TIMES };
+        assert_eq!(fade.step(a, true, off, at(t0, 10.0)), (Some(StreamChange::Play(a.into())), 1.0));
+        assert_eq!(fade.step(b, true, off, at(t0, 10.1)), (Some(StreamChange::Play(b.into())), 1.0));
+        // a fade set to 0 s ends at the next frame
+        let zero = FadeTimes {
+            on: true,
+            fade_in: 0.0,
+            fade_out: 0.0,
+        };
+        fade.step(a, true, zero, at(t0, 11.0));
+        assert_eq!(fade.step(a, true, zero, at(t0, 11.02)).0, Some(StreamChange::Play(a.into())));
+    }
 
     #[test]
     fn an_interrupted_stream_stays_in_the_tooltip() {

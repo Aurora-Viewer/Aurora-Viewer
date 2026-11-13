@@ -358,3 +358,45 @@ fn clicking_a_friend_online_starts_an_im_and_offline_opens_nothing() {
     assert_eq!(w.open_from_notification(off), None);
     assert!(w.social.focus_im.is_none());
 }
+
+/// A contact set with "Show notifications" brings its members' notices
+/// when the global choices are off, as its own two choices say
+/// (FSContactSetsNotificationToast off, ...NearbyChat on by default).
+#[test]
+fn a_contact_set_with_notifications_brings_its_members_notices() {
+    let shown = |w: &World, who: &str| {
+        (
+            w.notifications.list.iter().any(|n| n.kind == Kind::Presence),
+            w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains(who)),
+        )
+    };
+    for (toast, in_chat) in [(false, true), (true, true), (true, false), (false, false)] {
+        let mut w = world();
+        w.notifications.toasts.presence = false;
+        w.notifications.toasts.presence_in_chat = false;
+        w.social.form_friendship(JANE);
+        w.social.form_friendship(TOM);
+        w.contact_sets.add_set("Close");
+        w.contact_sets.add_to_set(&[JANE], "Close", |_| true);
+        w.contact_sets.set_notify("Close", true);
+        w.contact_sets.set_notices_toast(toast);
+        w.contact_sets.set_notices_chat(in_chat);
+        // Tom is in no set: nothing
+        w.social.set_online(&[TOM], true);
+        w.flush_online_notices();
+        assert_eq!(shown(&w, "Tom Smith"), (false, false));
+        w.social.set_online(&[JANE], true);
+        w.flush_online_notices();
+        assert_eq!(shown(&w, "Jane Doe"), (toast, in_chat), "toast {toast}, in chat {in_chat}");
+    }
+    // a set without "Show notifications" brings nothing
+    let mut w = world();
+    w.notifications.toasts.presence = false;
+    w.social.form_friendship(JANE);
+    w.contact_sets.add_set("Quiet");
+    w.contact_sets.add_to_set(&[JANE], "Quiet", |_| true);
+    w.contact_sets.set_notices_toast(true);
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    assert_eq!(shown(&w, "Jane Doe"), (false, false));
+}
