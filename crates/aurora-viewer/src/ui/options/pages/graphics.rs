@@ -3,83 +3,18 @@
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
 //! depth of field), smoothness and parcel visibility.
 
-use super::super::cx::{Cx, Nothing, field};
+use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
-    use aurora_i18n::tr;
     match tab {
         0 => quality(cx),
         1 => light(cx),
-        2 => cx.group(tr!("common-environment"), |cx| {
-            cx.row(
-                tr!("common-time-of-day"),
-                tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
-                &field!(time_of_day),
-                |ui, s| {
-                    let names = crate::ui::bars::time_of_day();
-                    let mut changed = false;
-                    egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
-                        .width(COMBO_W)
-                        .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
-                        .show_ui(ui, |ui| {
-                            for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
-                                changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
-                            }
-                        });
-                    changed
-                },
-            );
-            cx.row(
-                tr!("ui-options-environment-fade"),
-                tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
-                &field!(env_manual_transition),
-                |ui, s| {
-                    ui.add(
-                        egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .step_by(0.5)
-                            .suffix(" s")
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-            // the stars' sky (world/night_sky.rs)
-            {
-                use crate::world::night_sky::NightSky;
-                cx.unfolded().choice(
-                    tr!("ui-options-night-sky"),
-                    tr!("ui-options-night-sky-help"),
-                    &field!(night_sky),
-                    &[
-                        (NightSky::Real, tr!("ui-options-night-sky-real"), false),
-                        (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
-                    ],
-                );
-                let legacy = cx.s.night_sky != NightSky::Real;
-                cx.subs(legacy, night_sky_rows);
-            }
-            // an Aurora difference, also listed in Preferences › Aurora
-            cx.experimental().toggle(
-                tr!("ui-options-colored-sky-ambient"),
-                tr!("ui-options-colored-sky-ambient-help"),
-                &field!(colored_sky_ambient),
-            );
-            cx.toggle(
-                tr!("ui-options-keep-environment"),
-                tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
-                &field!(env_persist),
-            );
-            // the "ignore" box of SettingsMakeNoTrans (Legacy Viewer:
-            // Preferences › Notifications › Alerts)
-            cx.toggle(
-                tr!("ui-options-confirm-no-transfer-settings"),
-                tr!("ui-options-confirm-no-transfer-settings-help"),
-                &field!(confirm_no_transfer_settings),
-            );
-        }),
+        2 => {
+            environment(cx);
+            weather(cx);
+        }
         3 => reflections_and_water(cx),
         4 => image(cx),
         5 => {
@@ -92,14 +27,190 @@ pub fn page(cx: &mut Cx, tab: usize) {
     }
 }
 
+/// Graphics › Sky and environment: the environment's own settings.
+fn environment(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("common-environment"), |cx| {
+        cx.row(
+            tr!("common-time-of-day"),
+            tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
+            &field!(time_of_day),
+            |ui, s| {
+                let names = crate::ui::bars::time_of_day();
+                let mut changed = false;
+                egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
+                    .width(COMBO_W)
+                    .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
+                    .show_ui(ui, |ui| {
+                        for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
+                            changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
+                        }
+                    });
+                changed
+            },
+        );
+        cx.row(
+            tr!("ui-options-environment-fade"),
+            tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
+            &field!(env_manual_transition),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(0.5)
+                        .suffix(" s")
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        // the stars' sky (world/night_sky.rs)
+        {
+            use crate::world::night_sky::NightSky;
+            cx.unfolded().choice(
+                tr!("ui-options-night-sky"),
+                tr!("ui-options-night-sky-help"),
+                &field!(night_sky),
+                &[
+                    (NightSky::Real, tr!("ui-options-night-sky-real"), false),
+                    (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
+                ],
+            );
+            let legacy = cx.s.night_sky != NightSky::Real;
+            cx.subs(legacy, night_sky_rows);
+        }
+        // an Aurora difference, also listed in Preferences › Aurora
+        cx.experimental().toggle(
+            tr!("ui-options-colored-sky-ambient"),
+            tr!("ui-options-colored-sky-ambient-help"),
+            &field!(colored_sky_ambient),
+        );
+        cx.toggle(
+            tr!("ui-options-keep-environment"),
+            tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
+            &field!(env_persist),
+        );
+        // the "ignore" box of SettingsMakeNoTrans (Legacy Viewer:
+        // Preferences › Notifications › Alerts)
+        cx.toggle(
+            tr!("ui-options-confirm-no-transfer-settings"),
+            tr!("ui-options-confirm-no-transfer-settings-help"),
+            &field!(confirm_no_transfer_settings),
+        );
+    });
+}
+
+/// Graphics › Sky and environment › Weather: what the weather costs
+/// and what it lets regions do (the weather itself, what falls and how hard,
+/// is the Aurora Weather window's).
+fn weather(cx: &mut Cx) {
+    use crate::weather::{PUDDLE_DISTANCE, WeatherQuality};
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-weather"), |cx| {
+        cx.choice(
+            tr!("ui-weather-quality"),
+            tr!("ui-weather-quality-tip"),
+            &field!(weather.quality),
+            &[
+                (WeatherQuality::Low, tr!("ui-weather-quality-low"), false),
+                (WeatherQuality::Medium, tr!("ui-weather-quality-medium"), false),
+                (WeatherQuality::High, tr!("ui-weather-quality-high"), false),
+            ],
+        );
+        // the puddles, and behind their cog how far the wet ground goes
+        cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
+        let no_puddles = !cx.s.weather.puddles;
+        cx.subs(no_puddles, |cx| {
+            cx.slider_whole(
+                tr!("ui-weather-distance"),
+                tr!("ui-weather-distance-tip"),
+                &field!(weather.puddle_distance),
+                PUDDLE_DISTANCE,
+                " m",
+            );
+            cx.toggle(tr!("ui-weather-ice"), tr!("ui-weather-ice-tip"), &field!(weather.ice));
+        });
+        // the snow lying, and behind its cog how far it is drawn
+        cx.toggle(
+            tr!("ui-weather-snow-settles"),
+            tr!("ui-weather-snow-settles-tip"),
+            &field!(weather.snow_settles),
+        );
+        let no_snow = !cx.s.weather.snow_settles;
+        cx.subs(no_snow, |cx| {
+            cx.slider_whole(
+                tr!("ui-weather-snow-distance"),
+                tr!("ui-weather-snow-distance-tip"),
+                &field!(weather.snow_distance),
+                crate::weather::SNOW_DISTANCE,
+                " m",
+            );
+            cx.toggle(
+                tr!("ui-weather-footprints"),
+                tr!("ui-weather-footprints-tip"),
+                &field!(weather.snow_footprints),
+            );
+            // parallax through the snow: costly, still being tuned
+            cx.experimental().toggle(
+                tr!("ui-weather-deep-snow"),
+                tr!("ui-weather-deep-snow-tip"),
+                &field!(weather.snow_deep),
+            );
+        });
+        cx.toggle(
+            tr!("ui-weather-avatar-snow"),
+            tr!("ui-weather-avatar-snow-tip"),
+            &field!(weather.snow_on_avatars),
+        );
+        cx.toggle(
+            tr!("ui-weather-region"),
+            tr!("ui-weather-region-tip"),
+            &field!(weather.region_weather),
+        );
+        // the region's wind, and behind its cog the direction used instead
+        cx.toggle(
+            tr!("ui-weather-wind-follow-region"),
+            tr!("ui-weather-wind-follow-region-tip"),
+            &field!(weather.wind_follow_region),
+        );
+        let follow = cx.s.weather.wind_follow_region;
+        cx.subs(follow, |cx| {
+            cx.row(
+                tr!("ui-weather-wind-from"),
+                tr!("ui-weather-wind-from-tip"),
+                &field!(weather.wind_from),
+                |ui, s| {
+                    ui.spacing_mut().slider_width = super::super::SLIDER_W;
+                    ui.add(
+                        egui::Slider::new(&mut s.weather.wind_from, 0.0..=355.0)
+                            .step_by(5.0)
+                            .custom_formatter(|v, _| format!("{v:.0}° {}", crate::ui::environment::compass_point(v as f32)))
+                            .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
+    });
+}
+
 /// The GPU the viewer draws with (#894): automatic (discrete first) or one
 /// by name; the renderer opens it at startup, so the choice applies at the
 /// next start. `AURORA_GPU` overrides it.
-/// The real sky's rows (world/night_sky.rs): where it is seen from, its
-/// latitude (set by a preset, typed for Custom; moving it makes the place
-/// Custom) and the stars' brightness.
+/// The real sky's rows (world/night_sky.rs): what sets its hour (first: it
+/// decides whether the longitude below counts), where it is seen from, its
+/// latitude and longitude (set by a preset, typed for Custom; moving one
+/// makes the place Custom), the stars' brightness and the Milky Way's.
 fn night_sky_rows(cx: &mut Cx) {
-    use crate::world::night_sky::{GAIN_RANGE, SkyPlace};
+    use crate::world::night_sky::{GAIN_RANGE, MILKY_WAY_RANGE, SkyPlace, StarHour};
+    let hours: Vec<(StarHour, &str)> = StarHour::ALL.iter().map(|h| (*h, h.label())).collect();
+    cx.combo(
+        aurora_i18n::tr!("ui-options-night-sky-hour"),
+        aurora_i18n::tr!("ui-options-night-sky-hour-help"),
+        &field!(night_sky_hour),
+        &hours,
+    );
     let places: Vec<(SkyPlace, &str)> = SkyPlace::ALL.iter().map(|p| (*p, p.label())).collect();
     if cx.combo(
         aurora_i18n::tr!("ui-options-night-sky-place"),
@@ -120,12 +231,33 @@ fn night_sky_rows(cx: &mut Cx) {
         cx.s.night_sky_place = SkyPlace::Custom;
         cx.s.sync_night_sky();
     }
+    // the longitude counts with the real time only
+    cx.greyed(cx.s.night_sky_place != SkyPlace::Custom || cx.s.night_sky_hour != StarHour::RealTime);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-longitude"),
+        aurora_i18n::tr!("ui-options-night-sky-longitude-help"),
+        &field!(night_sky_longitude),
+        -180.0..=180.0,
+        "°",
+    ) {
+        cx.s.night_sky_place = SkyPlace::Custom;
+        cx.s.sync_night_sky();
+    }
     cx.greyed(false);
     if cx.slider(
         aurora_i18n::tr!("ui-options-night-sky-brightness"),
         aurora_i18n::tr!("ui-options-night-sky-brightness-help"),
         &field!(night_sky_gain),
         GAIN_RANGE,
+        "×",
+    ) {
+        cx.s.sync_night_sky();
+    }
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-milky-way"),
+        aurora_i18n::tr!("ui-options-night-sky-milky-way-help"),
+        &field!(night_sky_milky_way),
+        MILKY_WAY_RANGE,
         "×",
     ) {
         cx.s.sync_night_sky();
@@ -182,14 +314,34 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
-        // FSR's mode sets the world's size in its place
-        cx.greyed(cx.s.antialiasing == 7);
-        cx.slider(
+        // FSR's mode sets the world's size in their place
+        let fsr = cx.s.antialiasing == 7;
+        cx.greyed(fsr);
+        cx.toggle(
+            tr!("ui-options-render-scale-auto"),
+            tr!("ui-options-render-scale-auto-help"),
+            &field!(render_scale_auto),
+        );
+        // While the world matches the display, the slider shows the
+        // percentage the display gives, greyed: not a choice of the user,
+        // so neither modified nor reset by this row.
+        let scale = Custom {
+            path: "render_scale_percent",
+            modified: |s: &crate::settings::Settings, d: &crate::settings::Settings| {
+                !s.render_scale_auto && s.render_scale_percent != d.render_scale_percent
+            },
+            reset: |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
+                if !s.render_scale_auto {
+                    s.render_scale_percent = d.render_scale_percent;
+                }
+            },
+        };
+        cx.greyed(fsr || cx.s.render_scale_auto);
+        cx.row(
             tr!("ui-options-render-scale"),
             tr!("ui-options-render-scale-help"),
-            &field!(render_scale_percent),
-            50..=100,
-            "%",
+            &scale,
+            |ui, s| super::super::slider(ui, &mut s.render_scale_percent, 50..=100, "%"),
         );
         cx.greyed(false);
         // across, its switch in line with those of the limits below
@@ -497,6 +649,15 @@ fn quality(cx: &mut Cx) {
                 .changed()
             },
         );
+        // ShowMyComplexityChanges: a debug setting only in the Legacy
+        // Viewer, a row here next to the limits it is about
+        cx.slider(
+            tr!("ui-options-complexity-notices"),
+            tr!("ui-options-complexity-notices-help"),
+            &field!(complexity_notice_seconds),
+            0..=60,
+            " s",
+        );
         cx.stepped(
             tr!("ui-options-loading-avatars"),
             tr!("ui-options-particle-cloud-until-the-avatar-and-its-attachments-load"),
@@ -551,6 +712,22 @@ fn quality(cx: &mut Cx) {
 
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.group(tr!("ui-options-local-lights"), |cx| {
+        // the Legacy Viewer's "Max. nearby lights" (RenderLocalLightCount),
+        // up to the 64 the renderer holds (Settings::local_light_count)
+        cx.slider(
+            tr!("ui-options-max-nearby-lights"),
+            tr!("ui-options-max-nearby-lights-help"),
+            &field!(local_light_count),
+            0..=crate::scene::lights::MAX_LIGHTS as u32,
+            "",
+        );
+        cx.toggle(
+            tr!("ui-options-others-attached-lights"),
+            tr!("ui-options-others-attached-lights-help"),
+            &field!(others_attached_lights),
+        );
+    });
     cx.group(tr!("ui-options-shadows"), |cx| {
         let p = cx.p;
         let levels = [

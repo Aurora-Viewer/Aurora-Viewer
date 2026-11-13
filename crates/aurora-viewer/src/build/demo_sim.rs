@@ -18,7 +18,7 @@ const PERM_ALL: u32 = 0x7fff_ffff;
 pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
-    running: HashMap<(Uuid, Uuid), (bool, bool)>,
+    running: HashMap<(Uuid, Uuid), (bool, aurora_net::scripts::CompileTarget)>,
     pending_running: HashMap<(Uuid, Uuid), bool>,
     physics: HashMap<Uuid, PhysicsParams>,
     /// The reports of transform edits held for a round trip
@@ -30,6 +30,9 @@ pub struct DemoSim {
     /// The inventory folder each object rezzed from inventory came from,
     /// sent back in its ObjectProperties (FolderID) as a simulator does.
     rezzed_from: HashMap<Uuid, Uuid>,
+    /// The object each object rezzed from an object's contents came from,
+    /// sent back in its ObjectProperties (FromTaskID).
+    rezzed_from_task: HashMap<Uuid, Uuid>,
     /// Groups supplied by creation requests, including an explicitly empty group.
     rezzed_groups: HashMap<Uuid, Uuid>,
 }
@@ -96,17 +99,24 @@ fn script_copy_demo() -> bool {
 }
 
 impl DemoSim {
-    pub fn save_script(&mut self, target: aurora_net::scripts::ScriptTarget, asset: Uuid, running: bool, mono: bool) {
+    pub fn save_script(
+        &mut self,
+        target: aurora_net::scripts::ScriptTarget,
+        asset: Uuid,
+        running: bool,
+        compile: aurora_net::scripts::CompileTarget,
+    ) {
         if let Some(entry) = self.contents.get_mut(&target.object)
             && let Some(item) = entry.1.iter_mut().find(|i| i.item_id == target.item)
         {
             item.asset_id = asset;
             entry.0 = entry.0.wrapping_add(1);
         }
-        self.running.insert((target.object, target.item), (running, mono));
+        self.running.insert((target.object, target.item), (running, compile));
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
+        let from_task_id = self.rezzed_from_task.get(&id).copied().unwrap_or_default();
         let group = self.rezzed_groups.get(&id).copied();
         self.props.entry(id).or_insert_with(|| {
             let name = world
@@ -158,6 +168,7 @@ impl DemoSim {
                 category: 0,
                 inventory_serial: 1,
                 folder_id,
+                from_task_id,
                 name,
                 description: String::new(),
                 touch_name: touch_name.into(),
@@ -194,6 +205,8 @@ impl DemoSim {
                 demo_item(id, 1, aurora_i18n::tr!("build-demo-sim-door-script"), 10, 10),
                 demo_item(id, 2, aurora_i18n::tr!("build-demo-sim-instructions"), 7, 7),
                 demo_item(id, 3, aurora_i18n::tr!("build-demo-sim-light-wood"), 0, 0),
+                // an object to drag out onto the land (rez from contents)
+                demo_item(id, 4, aurora_i18n::tr!("build-demo-sim-chair"), 6, 6),
             ];
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("contents-move-plain,")) {
                 items.retain(|i| i.asset_type != 10);
@@ -309,6 +322,44 @@ impl DemoSim {
                     });
                 }
                 events
+            }
+            // Save back to object contents: a copy of the object, as an
+            // object item of the destination's contents, which the
+            // simulator lists again; the object stays in the world.
+            BuildCmd::DeRez {
+                handle,
+                local_ids,
+                destination,
+                destination_id,
+                ..
+            } if *destination == aurora_net::build::derez::SAVE_INTO_TASK_INVENTORY => {
+                let Some(id) = Self::uuids(world, *handle, local_ids).first().copied() else {
+                    return Vec::new();
+                };
+                let name = self.props_of(world, id).name.clone();
+                let entry = self.contents_of(*destination_id);
+                entry.0 = entry.0.wrapping_add(1);
+                entry.1.push(TaskItem {
+                    item_id: Uuid::new_v4(),
+                    parent_id: *destination_id,
+                    creator_id: DEMO_CREATOR,
+                    owner_id: crate::demo::DEMO_AGENT,
+                    last_owner_id: DEMO_CREATOR,
+                    base_mask: PERM_ALL,
+                    owner_mask: PERM_ALL,
+                    next_owner_mask: perm::MOVE | perm::TRANSFER,
+                    asset_type: 6,
+                    inv_type: 6,
+                    name,
+                    creation_date: 1_700_000_000,
+                    ..Default::default()
+                });
+                let (serial, items) = entry.clone();
+                vec![NetEvent::TaskInventory {
+                    object: *destination_id,
+                    serial: Some(serial),
+                    result: Ok(items),
+                }]
             }
             // worn: it leaves the world (the demo has no inventory item to
             // wear it from)
@@ -511,7 +562,11 @@ impl DemoSim {
             }
             BuildCmd::RezInventory(rez) => {
                 let object = crate::demo::inventory_rez(rez);
-                self.rezzed_from.insert(object.full_id, rez.item.parent);
+                if rez.from_task.is_nil() {
+                    self.rezzed_from.insert(object.full_id, rez.item.parent);
+                } else {
+                    self.rezzed_from_task.insert(object.full_id, rez.from_task);
+                }
                 self.rezzed_groups.insert(object.full_id, rez.group);
                 vec![NetEvent::ObjectUpdates {
                     handle: rez.handle,
@@ -641,7 +696,8 @@ impl DemoSim {
                 entry.0 = entry.0.wrapping_add(1);
                 let serial = entry.0;
                 if let BuildCmd::RezScript { enabled, .. } = c {
-                    self.running.insert((id, script_id), (*enabled, true));
+                    self.running
+                        .insert((id, script_id), (*enabled, aurora_net::scripts::CompileTarget::Mono));
                 }
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
@@ -665,23 +721,30 @@ impl DemoSim {
                 if script_copy_demo() {
                     self.pending_running.insert((*object_id, *item_id), *running);
                 } else {
-                    self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                    self.running
+                        .entry((*object_id, *item_id))
+                        .or_insert((true, aurora_net::scripts::CompileTarget::Mono))
+                        .0 = *running;
                 }
                 Vec::new()
             }
             BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
                 let initial = *object_id != super::replace::demo::id(super::replace::demo::ROOT + 6);
-                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((initial, true));
+                let (running, compile) = self
+                    .running
+                    .get(&(*object_id, *item_id))
+                    .copied()
+                    .unwrap_or((initial, aurora_net::scripts::CompileTarget::Mono));
                 // First reply observes the previous state; the next query
                 // confirms the asynchronous script-engine operation.
                 if let Some(next) = self.pending_running.remove(&(*object_id, *item_id)) {
-                    self.running.insert((*object_id, *item_id), (next, mono));
+                    self.running.insert((*object_id, *item_id), (next, compile));
                 }
                 vec![NetEvent::ScriptRunning {
                     object_id: *object_id,
                     item_id: *item_id,
                     running,
-                    mono: Some(mono),
+                    compile: Some(compile),
                 }]
             }
             // the hover tips' parcel under the pointer
@@ -722,12 +785,33 @@ impl DemoSim {
                 })
                 .into_iter()
                 .collect(),
-            BuildCmd::ParcelRequest { handle, sequence, .. } => match world.parcel.clone() {
-                Some(p) => vec![NetEvent::SelectedParcel {
-                    handle: *handle,
-                    sequence: *sequence,
-                    parcel: p,
-                }],
+            BuildCmd::ParcelRequest {
+                handle,
+                sequence,
+                west,
+                south,
+                east,
+                north,
+                ..
+            } => match world.parcel.clone() {
+                Some(mut p) => {
+                    // Explicit offline aggregate fixture: no unique owner, and
+                    // an area matching the rectangle must not disable Join.
+                    if *sequence >= aurora_net::build::BUILD_PARCEL_SEQ + 1000
+                        && std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("select-join,"))
+                        && (east - west) * (north - south) > 16.0
+                    {
+                        let p = std::sync::Arc::make_mut(&mut p);
+                        p.request_result = aurora_net::land::PARCEL_RESULT_MULTIPLE;
+                        p.owner_id = Uuid::nil();
+                        p.area = ((east - west) * (north - south)) as i32;
+                    }
+                    vec![NetEvent::SelectedParcel {
+                        handle: *handle,
+                        sequence: *sequence,
+                        parcel: p,
+                    }]
+                }
                 None => Vec::new(),
             },
             BuildCmd::Cap { cap, body, tag, .. } => vec![NetEvent::CapReply {

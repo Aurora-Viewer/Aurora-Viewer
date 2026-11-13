@@ -71,6 +71,16 @@ pub(super) fn matches_name(world: &World, id: &Uuid, shown: &str, filter: &str) 
 /// Id of the window.
 pub(crate) const WINDOW: &str = "people";
 
+/// Why a double click on the radar does not move the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ZoomRefusal {
+    /// Not drawn, and farther than the draw distance (metres).
+    BeyondDrawDistance { range: f32, draw_distance: f32 },
+    /// Not drawn, and its coarse location has no height: there is no point
+    /// to look at.
+    Unplaced,
+}
+
 pub enum PeopleAction {
     OpenIm(Uuid),
     /// "View profile" (menu_people_nearby.xml / friends, Avatar.Profile).
@@ -90,9 +100,12 @@ pub enum PeopleAction {
         flag: u32,
         on: bool,
     },
-    /// Double click on an avatar of the radar that is not drawn
-    /// (ZoomToAvatarNotPossible).
-    TooFarToZoom,
+    /// Double click on an avatar of the radar the camera cannot go to
+    /// (FSRadar::zoomAvatar's camera_no_focus): the chat says why.
+    ZoomRefused {
+        name: String,
+        why: ZoomRefusal,
+    },
     /// "+" of the friends tab: choose a resident to offer friendship to
     /// (People.AddFriendWizard).
     PickFriend,
@@ -291,6 +304,9 @@ pub struct PeopleUi {
     pub wanted_images: HashSet<Uuid>,
     /// The tab shown last frame: another one starts afresh.
     shown_tab: Option<u8>,
+    /// The last refused zoom (resident, ui time): double clicks on the
+    /// same row say it once.
+    zoom_refused: Option<(Uuid, f64)>,
 }
 
 impl PeopleUi {
@@ -472,7 +488,7 @@ pub fn people_window(
             }
             1 => friends_tab(ui, p, world, st, radar.pics, friends, &mut actions),
             _ => {
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
                 ui.add_space(4.0);
                 let filter = st.filter.trim().to_lowercase();
                 if panels.people_tab == 2 {
@@ -714,7 +730,7 @@ fn friends_tab(
         radar::tool_menu(ui, p, "arrows-sort", aurora_i18n::tr!("people-view-sort-options"), true, |ui| {
             friends_view_menu(ui, p, settings);
         });
-        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });
     ui.add_space(4.0);
     let filter = st.filter.trim().to_lowercase();
@@ -755,7 +771,7 @@ fn friends_tab(
                     let col = if f.online { p.indigo_light } else { p.muted };
                     // complete names can be long: cut before the rights
                     // and buttons (full name on hover)
-                    let buttons = if settings.permissions { 140.0 } else { 80.0 };
+                    let buttons = if settings.permissions { 168.0 } else { 108.0 };
                     let w = (ui.available_width() - buttons).max(60.0);
                     let r = ui
                         .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -774,6 +790,9 @@ fn friends_tab(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         // the icons these actions have in the avatar menus
+                        if widgets::icon_button(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), f.online) {
+                            context::request(ui.ctx(), context::CtxAction::RequestTeleport(f.id));
+                        }
                         if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
                             actions.push(PeopleAction::OfferTeleport(f.id));
                         }

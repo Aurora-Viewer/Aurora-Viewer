@@ -58,7 +58,11 @@ impl Scene {
         })
     }
 
-    pub fn build_huds(&mut self, world: &World, size: [u32; 2], visible: bool) {
+    pub fn build_huds(&mut self, world: &World, size: [u32; 2], visible: bool, model: impl Fn(u32) -> Option<Mat4>) {
+        self.build_huds_in(world, size, visible, model, blend_order::face_sort_enabled());
+    }
+
+    fn build_huds_in(&mut self, world: &World, size: [u32; 2], visible: bool, model: impl Fn(u32) -> Option<Mat4>, face_sort: bool) {
         self.lists.hud_view = None;
         self.lists.hud_opaque.clear();
         self.lists.hud_blend.clear();
@@ -97,7 +101,20 @@ impl Scene {
             for id in &g.tex_ids {
                 self.textures.note_usage_fixed(id, TEXTURE_PIXELS);
             }
-            for face in &g.faces {
+            // render_hud_attachments uses a +X camera and the ordinary
+            // LLDrawable::updateDistance / genDrawInfo alpha-face sort. Use
+            // the record's actual HUD placement (including local zoom), not
+            // the world camera or another walk of the object's parent chain.
+            let face_depth = (face_sort && !g.rigged && g.faces.iter().any(|f| f.pass == Pass::Blend))
+                .then(|| {
+                    let model = model(g.faces.first()?.record)?;
+                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                        return None;
+                    };
+                    Some((blend_order::FaceDepth::new(model, Vec3::ZERO, Vec3::X), geom))
+                })
+                .flatten();
+            for (face_order, face) in g.faces.iter().enumerate() {
                 // LLDrawPoolAlpha::renderDebugAlpha also runs in the HUD pass.
                 if self.debug_alpha.is_some() {
                     match face.pass {
@@ -118,7 +135,14 @@ impl Scene {
                 }
                 match face.pass {
                     Pass::Hidden => {}
-                    Pass::Blend => blend.push((g.center.x, face.cmd)),
+                    Pass::Blend => {
+                        let depth = face_depth
+                            .as_ref()
+                            .and_then(|(depth, geom)| geom.pick_faces.get(face.te_index as usize)?.as_ref().map(|f| depth.of(f.bounds)))
+                            .unwrap_or(g.center.x);
+                        let tie = if g.rigged { face_order as u32 } else { u32::from(face.te_index) };
+                        blend.push((depth, idx as u32, tie, face.cmd));
+                    }
                     _ => self.lists.hud_opaque.push(face.cmd),
                 }
             }
@@ -126,8 +150,18 @@ impl Scene {
         if min_x.is_finite() && max_x.is_finite() {
             self.lists.hud_view = Some(world.hud_view(size, min_x, max_x));
         }
-        blend.sort_by(|a, b| b.0.total_cmp(&a.0));
-        self.lists.hud_blend.extend(blend.into_iter().map(|(_, cmd)| cmd));
+        blend.sort_by(|a, b| {
+            let depth = b.0.total_cmp(&a.0);
+            if face_sort {
+                depth
+                    .then(a.1.cmp(&b.1))
+                    .then(a.2.cmp(&b.2))
+                    .then(a.3.first_index.cmp(&b.3.first_index))
+            } else {
+                depth
+            }
+        });
+        self.lists.hud_blend.extend(blend.into_iter().map(|(_, _, _, cmd)| cmd));
     }
 
     /// Left clicks and hover intercept HUD geometry regardless of opacity.
@@ -139,6 +173,13 @@ impl Scene {
             false,
             picking::FacePick::Surface,
         )
+    }
+
+    /// Press target and depth for HUD media and object actions. Invisible
+    /// buttons take the press; a plain alpha-zero media panel lets the next
+    /// HUD surface take it.
+    pub fn hud_click_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), false, picking::FacePick::HudClick)
     }
 
     /// The HUD move gesture reaches IGNORE prims, but respects texture holes.
@@ -179,7 +220,9 @@ impl Scene {
             };
             if !g.hud
                 || g.owner_avatar != Some(own)
-                || (!include_hidden && mode != picking::FacePick::Surface && g.faces.iter().all(|f| f.pass == Pass::Hidden))
+                || (!include_hidden
+                    && !matches!(mode, picking::FacePick::Surface | picking::FacePick::HudClick)
+                    && g.faces.iter().all(|f| f.pass == Pass::Hidden))
                 || (!include_ignored && o.click_action == crate::interaction::code::IGNORE)
                 || !picking::ray_may_hit(g, ray)
             {
@@ -209,6 +252,141 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn layered_hud() -> (World, Scene, usize) {
+        let (world, mut scene, idx, _) = crate::scene::picking::tests::scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let key = scene.gpu[idx].geom.unwrap();
+        let template = scene.gpu[idx].faces[0];
+        let mut pick_faces = Vec::new();
+        let mut faces = Vec::new();
+        for (te_index, x) in [(0, -1.0), (1, 0.0), (2, 0.0), (3, 1.0), (4, 0.0)] {
+            pick_faces.push((te_index != 1).then(|| picking::PickFace::new(vec![[x, -0.5, -0.5], [x, 0.5, 0.5]], vec![], vec![])));
+            if te_index == 1 {
+                continue; // No record for this hidden face; TE indices stay sparse.
+            }
+            let mut face = template;
+            face.te_index = te_index;
+            face.record = 10 + u32::from(te_index);
+            face.cmd.record = face.record;
+            face.cmd.first_index = u32::from(te_index) * 6;
+            face.pass = match te_index {
+                1 => Pass::Hidden,
+                4 => Pass::Mask,
+                _ => Pass::Blend,
+            };
+            face.pbr_alpha = (te_index == 2).then_some(1);
+            face.legacy_alpha = (te_index == 3).then_some(legacy_mat::alpha_mode::BLEND);
+            faces.push(face);
+        }
+        let mut hidden = template;
+        hidden.te_index = 5;
+        hidden.pass = Pass::Hidden;
+        faces.push(hidden);
+        scene.geoms.insert(
+            key,
+            GeomEntry {
+                refs: 2,
+                zero_since: 0,
+                state: GeomState::Ready(Arc::new(GpuGeom {
+                    faces: vec![],
+                    min: Vec3::splat(-1.0),
+                    max: Vec3::ONE,
+                    joint_bounds: vec![],
+                    pick_faces,
+                })),
+            },
+        );
+        let g = &mut scene.gpu[idx];
+        g.hud = true;
+        g.owner_avatar = Some(own);
+        g.center = Vec3::ZERO;
+        g.radius = 2.0;
+        g.faces = faces;
+        scene.index_objects();
+        (world, scene, idx)
+    }
+
+    fn blended_records(scene: &Scene) -> Vec<u32> {
+        scene.lists.hud_blend.iter().map(|c| c.record).collect()
+    }
+
+    #[test]
+    fn hud_alpha_sort_uses_each_face_and_actual_placement_for_legacy_and_pbr() {
+        let (mut world, mut scene, _) = layered_hud();
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), false);
+        assert_eq!(blended_records(&scene), [10, 12, 13], "old object-centre order");
+        for (model, expected) in [
+            (Mat4::IDENTITY, [13, 12, 10]),
+            (Mat4::from_rotation_z(std::f32::consts::PI), [10, 12, 13]),
+            (Mat4::from_scale(Vec3::new(-0.5, 2.0, 0.3)), [10, 12, 13]),
+            (
+                Mat4::from_scale_rotation_translation(Vec3::splat(0.5), Quat::IDENTITY, Vec3::new(20.0, -0.2, 0.1)),
+                [13, 12, 10],
+            ),
+        ] {
+            let calls = std::cell::Cell::new(0);
+            scene.build_huds_in(
+                &world,
+                [1280, 800],
+                true,
+                |_| {
+                    calls.set(calls.get() + 1);
+                    Some(model)
+                },
+                true,
+            );
+            assert_eq!(blended_records(&scene), expected);
+            assert_eq!(calls.get(), 1, "factor the placement once per blended HUD object");
+            assert_eq!(scene.lists.hud_opaque.iter().map(|c| c.record).collect::<Vec<_>>(), [14]);
+        }
+        world.agent.position += Vec3::splat(1000.0);
+        world.agent.yaw += 1.7;
+        world.hud_zoom = 0.5;
+        scene.build_huds_in(&world, [1920, 1080], true, |_| Some(Mat4::IDENTITY), true);
+        assert_eq!(
+            blended_records(&scene),
+            [13, 12, 10],
+            "independent of world camera and HUD viewport zoom"
+        );
+    }
+
+    #[test]
+    fn hud_alpha_sort_missing_geometry_or_model_keeps_the_object_fallback() {
+        let (world, mut scene, idx) = layered_hud();
+        scene.build_huds_in(&world, [1280, 800], true, |_| None, true);
+        assert_eq!(blended_records(&scene), [10, 12, 13]);
+        let key = scene.gpu[idx].geom.unwrap();
+        for state in [GeomState::Pending, GeomState::Failed] {
+            scene.geoms.get_mut(&key).unwrap().state = state;
+            scene.build_huds_in(&world, [1280, 800], true, |_| Some(Mat4::IDENTITY), true);
+            assert_eq!(blended_records(&scene), [10, 12, 13]);
+        }
+        scene.build_huds_in(&world, [1280, 800], false, |_| Some(Mat4::IDENTITY), true);
+        assert!(scene.lists.hud_view.is_none());
+        assert!(scene.lists.hud_blend.is_empty());
+        assert!(scene.lists.hud_opaque.is_empty());
+    }
+
+    #[test]
+    fn hud_alpha_sort_leaves_rigged_hud_face_order_unchanged() {
+        let (world, mut scene, idx) = layered_hud();
+        scene.gpu[idx].rigged = true;
+        scene.gpu[idx].faces.reverse();
+        scene.build_huds_in(&world, [1280, 800], true, |_| panic!("no rigid bounds for skinned faces"), true);
+        assert_eq!(blended_records(&scene), [13, 12, 10]);
+    }
+
+    #[test]
+    fn hud_alpha_sort_equal_depth_keeps_face_order_when_gathering_order_changes() {
+        let (world, mut scene, idx) = layered_hud();
+        let flat = Mat4::from_scale(Vec3::new(0.0, 1.0, 1.0));
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(flat), true);
+        assert_eq!(blended_records(&scene), [10, 12, 13]);
+        scene.gpu[idx].faces.reverse();
+        scene.build_huds_in(&world, [1280, 800], true, |_| Some(flat), true);
+        assert_eq!(blended_records(&scene), [10, 12, 13]);
+    }
 
     #[test]
     fn local_zoom_scales_linked_offsets_without_changing_simulator_transforms() {

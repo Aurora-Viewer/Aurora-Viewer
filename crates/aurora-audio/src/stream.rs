@@ -1,7 +1,7 @@
 //! Parcel music: internet radio streaming on a background thread.
 //!
 //! Behaviour mirrors the viewer's streaming audio (`LLStreamingAudioInterface`
-//! in Firestorm's `indra/llaudio`): one stream at a time, a new URL replaces
+//! in the Legacy Viewer's `indra/llaudio`): one stream at a time, a new URL replaces
 //! the current one, an empty URL stops. In addition this implementation
 //! reconnects with exponential backoff when the connection drops.
 
@@ -18,6 +18,7 @@ use crate::decode::{DecodeStream, hint_for_content_type, hint_for_path};
 use crate::http;
 use crate::icy::{IcyReader, TitleSlot};
 use crate::mixer::{Channel, Command, ENGINE_SAMPLE_RATE, PcmSource};
+use crate::playlist;
 use crate::resample::{Resampler, to_stereo};
 
 /// State of the parcel music stream.
@@ -31,7 +32,59 @@ pub enum StreamStatus {
     /// Ogg comment title), when the station sends one.
     Playing { title: Option<String> },
     /// Last attempt failed; a reconnect is scheduled.
-    Error(String),
+    Error(StreamError),
+}
+
+/// Stable error categories for translated UI text; server text stays in the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum StreamError {
+    #[error("web page with no radio stream")]
+    WebPage,
+    #[error("radio playlist the decoder cannot follow")]
+    Playlist,
+    #[error("HTTP status {0}")]
+    HttpStatus(u16),
+    #[error("secure connection failed")]
+    Tls,
+    #[error("connection failed")]
+    Connection,
+    #[error("invalid or unsupported stream address")]
+    Address,
+    #[error("unsupported or invalid audio format")]
+    AudioFormat,
+    #[error("audio stream interrupted")]
+    Interrupted,
+    #[error("audio worker could not start")]
+    Worker,
+}
+
+impl From<http::HttpError> for StreamError {
+    fn from(error: http::HttpError) -> Self {
+        log::warn!("music HTTP failure: {error}");
+        match error {
+            http::HttpError::Status(code) => Self::HttpStatus(code),
+            http::HttpError::Tls(_) => Self::Tls,
+            http::HttpError::Io(ref error) if error.get_ref().is_some_and(|cause| cause.is::<rustls::Error>()) => Self::Tls,
+            http::HttpError::Url(_) | http::HttpError::Scheme(_) | http::HttpError::PlaylistOrigin => Self::Address,
+            _ => Self::Connection,
+        }
+    }
+}
+
+impl From<playlist::PlaylistError> for StreamError {
+    fn from(error: playlist::PlaylistError) -> Self {
+        match error {
+            playlist::PlaylistError::Http(error) => error.into(),
+            other => {
+                log::warn!("music playlist failure: {other}");
+                match other {
+                    playlist::PlaylistError::WebPage(_) => Self::WebPage,
+                    playlist::PlaylistError::Read(_) => Self::Connection,
+                    _ => Self::Playlist,
+                }
+            }
+        }
+    }
 }
 
 /// Ring buffer between the decoder thread and the mixer (5 s at 48 kHz).
@@ -61,7 +114,12 @@ pub(crate) struct StatusHandle {
 impl StatusHandle {
     fn set(&self, status: StreamStatus) {
         let mut slot = self.slot.lock();
-        if slot.generation == self.generation && slot.status != status {
+        // A retry must not erase the reason for silence. Only decoded audio,
+        // a newer failure or a controller generation change clears it.
+        if slot.generation == self.generation
+            && slot.status != status
+            && !(matches!(status, StreamStatus::Connecting) && matches!(slot.status, StreamStatus::Error(_)))
+        {
             slot.status = status;
         }
     }
@@ -155,7 +213,7 @@ impl StreamController {
             .spawn(move || stream_thread(url, stop, status, cmd_tx));
         if let Err(e) = spawned {
             log::warn!("cannot start music stream thread: {e}");
-            self.slot.lock().status = StreamStatus::Error(e.to_string());
+            self.slot.lock().status = StreamStatus::Error(StreamError::Worker);
             self.stop = None;
         }
     }
@@ -262,19 +320,22 @@ fn stream_thread(url: String, stop: Arc<AtomicBool>, status: StatusHandle, cmd_t
     log::info!("music stream: stopped {url}");
 }
 
-fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &Sender<Command>) -> Result<EndReason, String> {
-    let resp = http::open(url, stop).map_err(|e| e.to_string())?;
+fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &Sender<Command>) -> Result<EndReason, StreamError> {
+    let resp = playlist::open(url, stop)?;
     let hint = resp
         .content_type
         .as_deref()
         .and_then(hint_for_content_type)
-        .or_else(|| url::Url::parse(url).ok().and_then(|u| hint_for_path(u.path())));
+        .or_else(|| hint_for_path(resp.url.path()));
     let title: TitleSlot = Arc::new(Mutex::new(None));
     let reader: Box<dyn std::io::Read + Send + Sync> = match resp.metaint {
         Some(mi) => Box::new(IcyReader::new(resp.body, mi, title.clone())),
         None => resp.body,
     };
-    let mut decoder = DecodeStream::open(Box::new(ReadOnlySource::new(reader)), hint).map_err(|e| e.to_string())?;
+    let mut decoder = DecodeStream::open(Box::new(ReadOnlySource::new(reader)), hint).map_err(|e| {
+        log::warn!("music decoder failure: {e}");
+        StreamError::AudioFormat
+    })?;
 
     let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(MUSIC_RING_FRAMES * 2);
     let starved = Arc::new(AtomicBool::new(false));
@@ -308,7 +369,8 @@ fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &
                     if stop.load(Ordering::Relaxed) {
                         return Ok(EndReason::Ended);
                     }
-                    return Err(e.to_string());
+                    log::warn!("music decoding interrupted: {e}");
+                    return Err(StreamError::Interrupted);
                 }
             };
             stereo.clear();
@@ -368,6 +430,151 @@ mod tests {
     use crate::decode::tests::mp3_silence;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn parcel_music_retry_keeps_last_error_until_audio_returns() {
+        let slot = Arc::new(Mutex::new(StatusSlot {
+            generation: 1,
+            status: StreamStatus::Error(StreamError::Connection),
+        }));
+        let handle = StatusHandle {
+            slot: slot.clone(),
+            generation: 1,
+        };
+        handle.set(StreamStatus::Connecting);
+        assert!(matches!(slot.lock().status, StreamStatus::Error(_)));
+        handle.set(StreamStatus::Playing { title: None });
+        assert_eq!(slot.lock().status, StreamStatus::Playing { title: None });
+    }
+
+    /// The error a station serving `body` as `content_type` ends in, through
+    /// the controller's real path (`playlist::open`, then the decoder).
+    fn loopback_content_error(content_type: &str, body: &str) -> StreamError {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/stream", listener.local_addr().unwrap());
+        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n{body}");
+        let server = thread::spawn(move || {
+            let (sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut sock = std::io::BufReader::new(sock);
+            let mut line = String::new();
+            loop {
+                use std::io::BufRead;
+                line.clear();
+                if sock.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                    break;
+                }
+            }
+            sock.get_mut().write_all(response.as_bytes()).unwrap();
+            sock.get_mut().shutdown(std::net::Shutdown::Write).unwrap();
+            let mut drain = Vec::new();
+            let _ = sock.read_to_end(&mut drain);
+        });
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut ctl = StreamController::new(tx);
+        ctl.play(&url);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let error = loop {
+            if let StreamStatus::Error(error) = ctl.status() {
+                break error;
+            }
+            assert!(Instant::now() < deadline, "{:?}", ctl.status());
+            thread::sleep(Duration::from_millis(10));
+        };
+        ctl.stop();
+        server.join().unwrap();
+        error
+    }
+
+    #[test]
+    fn parcel_music_loopback_html_has_a_readable_error() {
+        // A page that exports no radio playlist (not an AzuraCast player).
+        let error = loopback_content_error("text/html; charset=utf-8", "<html>Not a radio stream</html>");
+        assert_eq!(error, StreamError::WebPage);
+        assert!(error.to_string().contains("web page"), "{error}");
+    }
+
+    #[test]
+    fn parcel_music_loopback_playlists_have_a_readable_error() {
+        // Playlists the radio decoder cannot follow: HLS, and one without a stream.
+        for (mime, body) in [
+            ("application/vnd.apple.mpegurl", "#EXTM3U\n#EXT-X-TARGETDURATION:10\nsegment.ts"),
+            ("audio/x-mpegurl", "#EXTM3U\n#EXTINF:-1,nothing"),
+            ("audio/x-scpls", "[playlist]\nNumberOfEntries=0"),
+        ] {
+            let error = loopback_content_error(mime, body);
+            assert_eq!(error, StreamError::Playlist, "{mime}");
+            assert!(error.to_string().contains("playlist"), "{error}");
+        }
+        // A playlist link to another site is refused as an address.
+        assert_eq!(
+            loopback_content_error("audio/x-mpegurl", "http://radio.example/stream"),
+            StreamError::Address
+        );
+    }
+
+    #[test]
+    fn parcel_music_loopback_http_error_survives_pending_retry() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/stream", listener.local_addr().unwrap());
+        let (ready_tx, ready_rx) = crossbeam_channel::bounded(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let server = thread::spawn(move || {
+            for attempt in 0..2 {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let (mut sock, _) = loop {
+                    match listener.accept() {
+                        Ok(client) => break client,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "client did not connect");
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("{e}"),
+                    }
+                };
+                sock.set_nonblocking(false).unwrap();
+                sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = sock.read(&mut buf).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buf[..n]);
+                }
+                if attempt == 0 {
+                    sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .unwrap();
+                    sock.shutdown(std::net::Shutdown::Write).unwrap();
+                    let _ = sock.read(&mut buf);
+                } else {
+                    ready_tx.send(()).unwrap();
+                    let _ = done_rx.recv_timeout(Duration::from_secs(5));
+                }
+            }
+        });
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut ctl = StreamController::new(tx);
+        ctl.play(&url);
+        ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let status = ctl.status();
+        ctl.stop();
+        let _ = done_tx.send(());
+        server.join().unwrap();
+        assert_eq!(status, StreamStatus::Error(StreamError::HttpStatus(404)));
+    }
+
+    #[test]
+    fn parcel_music_classifies_tls_address_and_http_errors() {
+        assert_eq!(StreamError::from(http::HttpError::Status(503)), StreamError::HttpStatus(503));
+        let tls = std::io::Error::other(rustls::Error::General("handshake failed".into()));
+        assert_eq!(StreamError::from(http::HttpError::Io(tls)), StreamError::Tls);
+        assert_eq!(StreamError::from(http::HttpError::PlaylistOrigin), StreamError::Address);
+        assert_eq!(
+            StreamError::from(http::HttpError::Connect("unreachable".into())),
+            StreamError::Connection
+        );
+    }
 
     #[test]
     fn starvation_log_is_rate_limited_and_consumes_each_signal() {

@@ -16,6 +16,18 @@ a grey veil. A required offer shows only Quit and Update; neither Esc nor a
 click outside can close it. The login button stays disabled as long as this
 update is required.
 
+**Grace period** ([#3014](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3014)).
+Below a new minimum version, the viewer may still log in for the release's
+grace period: 12 hours unless the policy says otherwise (`grace_hours`).
+It counts from the first time this installation sees that minimum (saved in
+the settings, `update_grace`), so a relaunch or a later release with the
+same minimum does not start it again, and a clock set back does not stretch
+it. During it, the offer shows "Sign in anyway (N h left)" and Update, with
+no "Skip this version"; it comes back at each launch. Once it is over, the
+offer is the required one above. A session already in the world is never
+cut. The Legacy Viewer blocks at once, as a release with `grace_hours: 0`
+does.
+
 The modes take up the choices of the Legacy Viewer's `UpdaterServiceSetting`:
 required only, ask, download automatically. Aurora chooses "Ask before
 downloading" by default, to meet the request for an offer at launch;
@@ -83,12 +95,13 @@ The Release workflow publishes together:
 - `aurora-update-policy.json`: `schema: 1`, `version: X.Y.Z`,
   `minimum_supported_version`, `cache_invalidation_before` and
   `settings_reset_before`: `null` or a stable SemVer version ≤ X.Y.Z;
+  optionally `grace_hours`, 0 to 72 (absent: 12, above);
 - `Aurora-Viewer-vX.Y.Z-windows-x64-symbols.zip` and its `.zip.sha256`: the
   exe's crash symbols ([crash reports](BUG_REPORTING.md#crash-symbols)),
   never downloaded by the viewer, which looks for the package's exact name;
 - then `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` and its `.tar.gz.sha256`,
-  built on Ubuntu 24.04 by a second job once the release exists: a failed
-  Linux build leaves the Windows release published.
+  built on Ubuntu 24.04 by a second job and added once the release exists:
+  a failed Linux build leaves the Windows release published.
 
 On Linux the viewer checks the releases the same way, with the same policy
 (a required update still blocks the login), but does not install them: its
@@ -109,7 +122,11 @@ version, Cache and Settings choices come before the confirmation. The
 minimum keeps the current one by default (the higher of `update-policy.json`
 and the last stable tag), can require the release's own version (every
 earlier installation must update) or take an earlier X.Y.Z typed by hand,
-never below the current minimum. A pre-release is never offered its own
+never below the current minimum. A new minimum then asks for its **grace
+period**: 12 hours (the usual choice, written as no `grace_hours`), 24, 72
+or 6 hours, or none (`grace_hours: 0`, login blocked at once, for a release
+that cannot wait). A release, or a beta, that keeps the minimum keeps its
+grace period without asking. A pre-release is never offered its own
 number: `0.9.2-beta.1` comes before `0.9.2`, so its users would be refused
 it, and an inherited minimum it does not reach is left out, as in the
 nightly. Keeping the cache and the
