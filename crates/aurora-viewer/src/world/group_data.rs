@@ -432,6 +432,20 @@ impl GroupMgr {
         });
     }
 
+    /// A ban the server took outside this window (a ban in all our groups):
+    /// our copy of the list follows, when we have one (createBanEntry /
+    /// removeBanEntry).
+    pub fn note_ban(&mut self, group: Uuid, agent: Uuid, ban: bool) {
+        let Some(bans) = self.groups.get_mut(&group).and_then(|g| g.bans.as_mut()) else {
+            return;
+        };
+        bans.retain(|(id, _)| *id != agent);
+        if ban {
+            // no date, as `ban` adds them
+            bans.push((agent, 0.0));
+        }
+    }
+
     /// LLPanelGroupBulkBan::submit: residents banned by name (not ourselves,
     /// not those already banned, up to GB_MAX_BANNED_AGENTS in all), then
     /// ejected; what was left out is returned to be told.

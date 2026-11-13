@@ -1432,6 +1432,25 @@ ui-inventory-properties-creator-unknown-multiple = (unknown / multiple)
 ui-inventory-properties-creator-unknown-multiple-hint = The simulator gives no creator for this item: an object whose parts were made by several residents has none.
 world-groups-action-denied = Action denied
 world-groups-error-while-moderating = Error while moderating.
+world-ban-all-title = Group bans
+world-ban-all-started = { $count ->
+    [one] Updating the group ban of { $name } in { $count } group. A report will follow when done.
+   *[other] Updating the group bans of { $name } in { $count } groups, one group at a time. A report will follow when done.
+}
+world-ban-all-report =
+    { $count ->
+        [one] { $name } has been banned in { $done } of { $count } group.
+       *[other] { $name } has been banned in { $done } of { $count } groups.
+    }
+    Banned in: { $succeeded }
+    Failed in: { $failed }
+world-unban-all-report =
+    { $count ->
+        [one] The ban on { $name } has been lifted in { $done } of { $count } group.
+       *[other] The ban on { $name } has been lifted in { $done } of { $count } groups.
+    }
+    Lifted in: { $succeeded }
+    Failed in: { $failed }
 common-enable = Enable
 common-activate = Activate
 ui-options-enable-this-channel = Enable this channel
@@ -4616,6 +4635,16 @@ ui-chat-eject-from-group = Eject from group
 ui-chat-allow-text-chat = Allow text chat
 ui-chat-forbid-text-chat = Forbid text chat
 ui-chat-ban-member = Ban member
+ui-chat-ban-from-all-groups = Ban from all my groups
+ui-chat-unban-from-all-groups = Unban from all my groups
+ui-chat-ban-from-all-groups-confirm = { $count ->
+    [one] You are about to ban { $name } from the only group you can manage bans in:
+   *[other] You are about to ban { $name } from all { $count } groups you can manage bans in:
+}
+ui-chat-unban-from-all-groups-confirm = { $count ->
+    [one] You are about to lift the ban on { $name } in the only group you can manage bans in:
+   *[other] You are about to lift the ban on { $name } in all { $count } groups you can manage bans in:
+}
 common-moderate = Moderate
 ui-worldmap-moderate = Moderate
 common-me = Me

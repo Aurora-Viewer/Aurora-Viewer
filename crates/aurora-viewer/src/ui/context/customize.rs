@@ -318,6 +318,8 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::ModerateGroupText { allow: false, .. } => "ForbidGroupText",
         CtxAction::GroupChatEject { .. } => "GroupChatEject",
         CtxAction::GroupChatBan { .. } => "GroupChatBan",
+        CtxAction::BanFromAllGroups { ban: true, .. } => "BanFromAllGroups",
+        CtxAction::BanFromAllGroups { .. } => "UnbanFromAllGroups",
         CtxAction::SetVoiceVolume(..) => "SetVoiceVolume",
         CtxAction::ToggleVoiceMute(..) => "ToggleVoiceMute",
         CtxAction::ModerateVoice(..) => "ModerateVoice",

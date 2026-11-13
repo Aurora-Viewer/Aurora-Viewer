@@ -3111,6 +3111,7 @@ impl Session<'_> {
             | NetCommand::EjectGroupMembers { .. }
             | NetCommand::GroupRoleChanges { .. }
             | NetCommand::GroupBans { .. }
+            | NetCommand::BanInGroups { .. }
             | NetCommand::GroupRoleUpdate { .. }
             | NetCommand::UpdateGroupInfo { .. }
             | NetCommand::CreateGroup { .. }
