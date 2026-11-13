@@ -14358,6 +14358,33 @@ ui-weather-source-region = Cette région fixe la météo. Ces réglages reprenne
 ui-weather-source-use-mine = Utiliser ma propre météo
 ui-weather-source-none = Les régions fixent la météo, et celle-ci n’en fixe aucune : le ciel est dégagé ici. Ces réglages reprennent si vous utilisez la vôtre.
 ui-weather-region-tip = Les régions et parcelles dont l'environnement porte un code Météo Aurora choisissent la pluie, la neige, le vent et l'orage ; tous ceux qui les laissent faire voient la même météo au même moment. Là où une région n’en fixe aucune, le ciel est dégagé
+wearable-favorites-all = Tous les préférés
+wearable-favorites-new-folder = Nouveau dossier
+wearable-favorites-rename-folder = Renommer le dossier
+wearable-favorites-delete-folder = Supprimer le dossier
+wearable-favorites-delete-confirm = Supprimer le dossier « { $name } » ? { $count ->
+    [one] Son favori en est retiré
+   *[other] Ses { $count } favoris en sont retirés
+} ; les objets restent dans votre inventaire.
+wearable-favorites-invalid-name = Le nom de dossier « { $name } » ne peut pas contenir de barre oblique.
+wearable-favorites-filter = Filtrer les préférés
+wearable-favorites-sort = Trier
+wearable-favorites-sort-name = Trier par nom
+wearable-favorites-sort-recent = Trier par date, le plus récent d'abord
+wearable-favorites-sort-type = Trier par type et nom
+wearable-favorites-remove = Retirer des préférés
+wearable-favorites-empty = Aucun préféré pour le moment. Glissez ici des vêtements, des parties du corps ou des objets depuis votre inventaire.
+wearable-favorites-no-match = Aucun préféré ne correspond à ce filtre.
+wearable-favorites-assign = Affecter au dossier
+wearable-favorites-delete-real-items = Ce dossier contient vos propres objets, pas seulement des favoris. Déplacez-les d'abord.
+wearable-favorites-loading = Votre inventaire est encore en cours de chargement.
+wearable-favorites-sync = Synchroniser depuis le Legacy Viewer
+wearable-favorites-sync-tip = Ajoute à cette liste les préférés de #Firestorm/#Wearable Favorites. Les sous-dossiers sont associés par nom. Rien n'est retiré et le dossier du Legacy Viewer n'est pas modifié.
+wearable-favorites-synced = { $count ->
+    [one] { $count } préféré ajouté.
+   *[other] { $count } préférés ajoutés.
+}
+wearable-favorites-synced-none = Déjà synchronisé.
 
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 

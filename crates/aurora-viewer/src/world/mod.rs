@@ -113,6 +113,7 @@ pub mod tphistory;
 pub mod transcripts;
 pub mod user_info;
 pub mod voice_moderation;
+pub mod wearable_favorites;
 pub mod windlight_presets;
 pub mod worldmap;
 pub mod worn_listed;

@@ -538,6 +538,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
         "region_tracker" => "location-filled",
+        "wearable_favorites" => "hanger-2-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",

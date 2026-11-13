@@ -887,6 +887,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "appearance",
             &mut panels.appearance,
         );
+        // menu_viewer.xml: Avatar › Favorite Wearables
+        flip_window(
+            ui,
+            p,
+            "hanger-2-filled",
+            aurora_i18n::tr!("toolbar-command-wearable-favorites"),
+            super::wearable_favorites::WINDOW,
+            &mut panels.wearable_favorites,
+        );
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("ui-bars-profile")) {
             *action = BarAction::MyProfile;
         }
@@ -2387,6 +2396,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "group_titles" => toggle(super::group_titles::WINDOW, &mut panels.group_titles),
+        "wearable_favorites" => toggle(super::wearable_favorites::WINDOW, &mut panels.wearable_favorites),
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         // ToggleWebBrowser: the browser window on the home page, or closed
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
@@ -2496,6 +2506,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
         "regiontracker" => panels.region_tracker,
+        "wearable_favorites" => panels.wearable_favorites,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
         "destinations" => panels.destinations,
@@ -4067,6 +4078,9 @@ mod tests {
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
+            ("wearable_favorites", super::super::wearable_favorites::WINDOW, |p| {
+                p.wearable_favorites
+            }),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
             ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
