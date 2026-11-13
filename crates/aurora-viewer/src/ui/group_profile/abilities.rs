@@ -18,7 +18,25 @@ pub struct AbilitySet {
     pub abilities: Vec<Ability>,
 }
 
-pub fn catalogue() -> Vec<AbilitySet> {
+/// The power bit of "Post links in chat" (GP_SESSION_POST_LINKS), shown
+/// only where the region applies it.
+pub const POST_LINKS_BIT: u32 = 52;
+
+/// The catalogue; `post_links`: the region we are in applies the ability
+/// to post links in group chat (SimulatorFeatures' GroupChatPostLinksEnabled).
+/// Elsewhere the ability is hidden, as get_unsupported_powers hides it in
+/// LLPanelGroupSubTab::buildActionCategory (indra/newview/llpanelgrouproles.cpp).
+pub fn catalogue(post_links: bool) -> Vec<AbilitySet> {
+    let mut sets = all();
+    if !post_links {
+        for set in &mut sets {
+            set.abilities.retain(|a| a.bit != POST_LINKS_BIT);
+        }
+    }
+    sets
+}
+
+fn all() -> Vec<AbilitySet> {
     vec![
         AbilitySet {
             icon: "users",
@@ -334,6 +352,11 @@ pub fn catalogue() -> Vec<AbilitySet> {
                     bit: 37,
                     name: aurora_i18n::tr!("group-ability-moderate-group-chat"),
                     help: aurora_i18n::tr!("group-ability-moderate-group-chat-help"),
+                },
+                Ability {
+                    bit: POST_LINKS_BIT,
+                    name: aurora_i18n::tr!("group-ability-chat-post-links"),
+                    help: aurora_i18n::tr!("group-ability-chat-post-links-help"),
                 },
             ],
         },

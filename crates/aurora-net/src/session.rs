@@ -1047,6 +1047,8 @@ impl Session<'_> {
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
+                    let lua_scripts = v["LuaScriptsEnabled"].as_bool();
+                    let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1065,12 +1067,14 @@ impl Session<'_> {
                         materials_rate,
                         materials_max,
                         lsl_syntax_id,
+                        lua_scripts,
                         grid_status_feed,
                         grid_status_page,
                         currency_base_uri,
                         opensim,
                         currency_symbol,
                         export_supported,
+                        group_chat_post_links,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -2239,6 +2243,20 @@ impl Session<'_> {
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
                 m.effect.push(reset_skeleton_effect(self.agent_id(), effect, target, animations));
+                self.send_main(&m, false);
+            }
+            NetCommand::Beam {
+                effect,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.effect
+                    .push(beam_effect(self.agent_id(), effect, target, position, color, duration));
                 self.send_main(&m, false);
             }
             NetCommand::SetAlwaysRun(run) => {
@@ -5402,6 +5420,18 @@ impl Session<'_> {
                             animations,
                         },
                     );
+                } else if let Some((source, target, position, color)) = parse_beam(e) {
+                    emit(
+                        self.sh,
+                        NetEvent::Beam {
+                            effect: e.id,
+                            source,
+                            target,
+                            position,
+                            color,
+                            duration: e.duration,
+                        },
+                    );
                 }
             }
         } else if id == SoundTrigger::ID {
@@ -5873,6 +5903,105 @@ fn parse_reset_skeleton(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, 
     let target = uuid::Uuid::from_slice(&e.type_data[0..16]).ok()?;
     let target = if target.is_nil() { e.agent_id } else { target };
     Some((target, e.type_data[16] & 1 != 0))
+}
+
+/// LLHUDObject::LL_HUD_EFFECT_BEAM: the selection and give beams.
+const HUD_EFFECT_BEAM: u8 = 7;
+/// LLHUDEffectSpiral type data: source object (16), target object (16),
+/// target global position (3 x F64; zero when the target is an object).
+const BEAM_PKT_SIZE: usize = 56;
+
+/// What a beam effect carries: its source, target object (nil for none),
+/// global position and RGBA colour.
+type BeamData = (uuid::Uuid, uuid::Uuid, [f64; 3], [u8; 4]);
+
+/// LLHUDEffectSpiral::packData, with LLHUDEffect::packData's header: our
+/// avatar as the source, the target object or else the global position.
+fn beam_effect(
+    agent: uuid::Uuid,
+    effect: uuid::Uuid,
+    target: uuid::Uuid,
+    position: [f64; 3],
+    color: [u8; 4],
+    duration: f32,
+) -> msgs::viewer_effect::Effect {
+    let mut d = Vec::with_capacity(BEAM_PKT_SIZE);
+    d.extend_from_slice(agent.as_bytes());
+    d.extend_from_slice(target.as_bytes());
+    for v in position {
+        d.extend_from_slice(&v.to_le_bytes());
+    }
+    msgs::viewer_effect::Effect {
+        id: effect,
+        agent_id: agent,
+        type_: HUD_EFFECT_BEAM,
+        duration,
+        color: color.to_vec(),
+        type_data: d,
+    }
+}
+
+/// LLHUDEffectSpiral::unpackData: a packet of another size, or a position
+/// that is not finite, is dropped ("Spiral effect with bad size").
+fn parse_beam(e: &msgs::viewer_effect::Effect) -> Option<BeamData> {
+    if e.type_ != HUD_EFFECT_BEAM || e.type_data.len() != BEAM_PKT_SIZE {
+        return None;
+    }
+    let d = &e.type_data;
+    let source = uuid::Uuid::from_slice(&d[0..16]).ok()?;
+    let target = uuid::Uuid::from_slice(&d[16..32]).ok()?;
+    let mut position = [0.0f64; 3];
+    for (i, v) in position.iter_mut().enumerate() {
+        let b: [u8; 8] = d[32 + i * 8..40 + i * 8].try_into().ok()?;
+        *v = f64::from_le_bytes(b);
+        if !v.is_finite() {
+            return None;
+        }
+    }
+    // LLHUDEffect::unpackData reads four bytes; a short field keeps the
+    // effect's white default
+    let mut color = [255u8; 4];
+    for (c, b) in color.iter_mut().zip(&e.color) {
+        *c = *b;
+    }
+    Some((source, target, position, color))
+}
+
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+
+    #[test]
+    fn a_beam_roundtrips_the_legacy_packet_and_bad_data_is_dropped() {
+        let agent = uuid::Uuid::new_v4();
+        let target = uuid::Uuid::new_v4();
+        let effect = uuid::Uuid::new_v4();
+        let mut packet = ViewerEffect::default();
+        packet
+            .effect
+            .push(beam_effect(agent, effect, target, [256.5, -3.25, 4096.0], [10, 20, 30, 200], 0.7));
+        let mut data = aurora_msg::Writer::new();
+        packet.encode_body(&mut data);
+        let decoded = ViewerEffect::decode(&data.buf).expect("decode effect");
+        let e = &decoded.effect[0];
+        assert_eq!(e.type_, 7);
+        assert_eq!(e.type_data.len(), 56);
+        assert_eq!((e.id, e.agent_id, e.duration), (effect, agent, 0.7));
+        assert_eq!(parse_beam(e), Some((agent, target, [256.5, -3.25, 4096.0], [10, 20, 30, 200])));
+        // the look-at's parser does not take it, nor this one a look-at
+        assert!(parse_lookat(e).is_none());
+        let look = lookat_effect(agent, effect, target, [0.0; 3], 1, 1.0);
+        assert!(parse_beam(&look).is_none());
+        let mut short = e.clone();
+        short.type_data.pop();
+        assert!(parse_beam(&short).is_none());
+        let mut nan = e.clone();
+        nan.type_data[40..48].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(parse_beam(&nan).is_none());
+        let mut no_color = e.clone();
+        no_color.color.clear();
+        assert_eq!(parse_beam(&no_color).map(|b| b.3), Some([255; 4]));
+    }
 }
 
 /// AgentFOV as LLViewerCamera::setView fills it: the generation counter
