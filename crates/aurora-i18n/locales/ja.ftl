@@ -9676,6 +9676,10 @@ ui-options-aurora-look-at = 注視先
 ui-options-aurora-look-at-help = 名前のピル付きの光る点、またはワイヤーの十字。「注視先を表示」がオンのときに表示されます（プライバシー）。
 ui-options-aurora-halo = ハロー
 ui-options-aurora-crosshair = 十字（レガシー）
+ui-options-aurora-beams = 選択ビーム
+ui-options-aurora-beams-help = アバターの手から編集中・譲渡中のものへ伸びるビーム：ハローと名前の付いた光る糸、またはLegacy Viewerのような粒子の流れ。
+ui-options-aurora-beams-thread = 糸
+ui-options-aurora-beams-particles = 粒子（Legacy）
 ui-options-aurora-notifications = 通知
 ui-options-aurora-notifications-help = 新しい通知がベルから展開してベルに戻るか、レガシービューアのように別々に積み重なるトースト。
 ui-options-aurora-animated-bell = アニメーションするベル
@@ -14354,6 +14358,10 @@ ui-options-build-new-faces = 新しいオブジェクトの外観
 ui-options-build-editing = 編集
 ui-options-build-auto-material-tab = 選択に合ったマテリアルタブを開く
 ui-options-build-auto-material-tab-hint = オブジェクトを選択すると、いずれかの面にPBRマテリアルが表示されていればPBRタブ、そうでなければBlinn-Phongタブが開きます。オフにすると、最後に選んだタブのままになります。
+ui-options-build-show-beams = 選択ビームを表示
+ui-options-build-show-beams-hint = 自分と他のアバターのビーム（編集・つかむ・譲渡のとき）。表示しなくても送信はされます。
+ui-options-build-beam-color = ビームの色
+ui-options-build-beam-color-hint = 自分のビームの色。他の人にもこの色で見えます。
 
 
 

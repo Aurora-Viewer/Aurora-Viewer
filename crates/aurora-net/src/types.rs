@@ -623,6 +623,18 @@ pub enum NetEvent {
         target: Uuid,
         animations: bool,
     },
+    /// A selection or give beam (ViewerEffect, LLHUDEffectSpiral of type
+    /// LL_HUD_EFFECT_BEAM): from `source` to the `target` object, or to the
+    /// global `position` when the target is nil; the sender's RGBA colour,
+    /// shown for `duration` seconds unless sent again.
+    Beam {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
+    },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
     TeleportLocal {
@@ -1754,6 +1766,16 @@ pub enum NetCommand {
         effect: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// Our selection or give beam (LLHUDEffectSpiral::packData, type
+    /// LL_HUD_EFFECT_BEAM): to the `target` object, or to the global
+    /// `position` when it is nil.
+    Beam {
+        effect: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {

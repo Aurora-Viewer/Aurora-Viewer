@@ -1024,6 +1024,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LAND_BESIDE=1` | A hollow frame on bare land: a right click on the ground in it is the land's |
 | `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]\|ahead` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off; `ahead`: our eyes come back straight when the look-at is turned off |
 | `AURORA_DEMO_POINTING=1\|release\|private\|remote\|remote-release\|aim` | Editing arm and gun targeting, driven by local selection or received point-at effects |
+| `AURORA_DEMO_BEAMS=1\|self\|legacy` | Selection and give beams: another avatar edits a cube and gives, or we edit one |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
@@ -1649,6 +1650,16 @@ when unfocused") is ignored during a screenshot.
     `3000,rigged,menu` and `AURORA_CAPTURE_FRAMES=1100,1460`, the
     screenshots show the menu of an object worn by another avatar then that
     of an object worn by us, the object surrounded by its outline.
+- **`AURORA_DEMO_BEAMS`**: at frame 600, two cubes appear in front of the
+  other avatar, seen from the side. `1`: it edits the first, its beam sent
+  again every 0.25 s toward the point it clicked, and gives to the second
+  every 2.5 s (a one-second beam). `self`: we edit a cube of our own, Build
+  open, and our beam goes from our hand to the side we clicked. `legacy`:
+  the first with the Legacy Viewer's particles. Capture at 760: the thread
+  from the left hand, its glows, the halo on the cube's side and the other
+  avatar's name above it. Add `AURORA_DEMO_CLASSIC=1` to see that avatar
+  dressed rather than as a silhouette. Preferences › Build turns the beams
+  off and sets our colour; Preferences › Aurora switches the style.
 - **`AURORA_DEMO_POINTING`**: at frame 600, select a cube in front of our
   avatar (`1`), or receive another avatar's target (`remote`). `release`
   closes Build at 840; `private` enables selection privacy then;

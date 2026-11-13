@@ -9728,6 +9728,10 @@ ui-options-aurora-look-at = Look-at targets
 ui-options-aurora-look-at-help = A glowing dot with a name pill, or a wire crosshair. Shown when "Show look-at targets" is on (Privacy).
 ui-options-aurora-halo = Halo
 ui-options-aurora-crosshair = Crosshair (Legacy)
+ui-options-aurora-beams = Selection beams
+ui-options-aurora-beams-help = The beam from an avatar's hand to what it edits or gives: a glowing thread with a halo and its name, or a stream of particles like the Legacy Viewer.
+ui-options-aurora-beams-thread = Thread
+ui-options-aurora-beams-particles = Particles (Legacy)
 ui-options-aurora-notifications = Notifications
 ui-options-aurora-notifications-help = New notifications unroll from the bell and fold back into it, or toasts stacked apart like the Legacy Viewer.
 ui-options-aurora-animated-bell = Animated bell
@@ -14431,6 +14435,10 @@ ui-options-build-new-faces = Look of new objects
 ui-options-build-editing = Editing
 ui-options-build-auto-material-tab = Open the material tab that fits the selection
 ui-options-build-auto-material-tab-hint = Selecting an object opens the PBR tab when one of its faces shows a PBR material, Blinn-Phong otherwise. Off: the last tab chosen stays.
+ui-options-build-show-beams = Show selection beams
+ui-options-build-show-beams-hint = Yours and the other avatars', while they edit, grab or give something. They are sent either way.
+ui-options-build-beam-color = Beam colour
+ui-options-build-beam-color-hint = The colour of your beams, as the others see them too.
 
 
 

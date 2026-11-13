@@ -16969,6 +16969,16 @@ impl App {
                         &self.look_at_settings(),
                         &mut self.look_at_fades,
                     );
+                    ui::beams::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        &self.scene,
+                        projector,
+                        self.camera.position,
+                        &self.settings.beams,
+                        self.settings.lookat.show_names,
+                    );
                     self.draw_walk_mark(&ctx, &p, projector);
                 }
                 let classic_tags = self.classic_name_tags();

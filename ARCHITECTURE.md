@@ -1648,6 +1648,17 @@ it runs inside the existing parallel pose workers. Neither motion sends
 AgentAnimation requests. `demo_pointing.rs` exercises local/remote hints,
 release, privacy and gun aim offline.
 
+`world/beams.rs` owns the selection and give beams (ViewerEffect type 7,
+LLHUDEffectBeam): the beams received, dropped with their source or target
+and faded out after their duration, our tractor beam sent every 0.25 s
+toward the point-at position (idleUpdateTractorBeam) and the one-second
+beams of gives and drops (`App::fire_beam` in `app/pointing.rs`, called by
+`app/inventory.rs` and `app/inventory_drag.rs`), and the `beams::Settings`
+of Preferences › Build and › Aurora. `ui/beams.rs` draws them on the world
+layer, hidden by the scene: Aurora's thread from the left wrist to the
+side of the target, or the Legacy Viewer's particles. `demo_beams.rs` is
+`AURORA_DEMO_BEAMS`.
+
 `world/anti_spam.rs` owns session-local counters and source/category blocks,
 following NACLAntiSpamQueue::checkEntry and the incoming message handlers in
 `indra/newview/NACLantispam.cpp`, `llimprocessing.cpp` and `llviewermessage.cpp`.
