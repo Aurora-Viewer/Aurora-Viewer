@@ -294,7 +294,8 @@ impl App {
                 if self.day_editor.item == Some(it.id)
                     && let Some(doc) = &self.day_editor.doc
                 {
-                    it.name = doc.name().to_owned();
+                    // (trimmed, as the rename sent it)
+                    it.name = doc.name().trim().to_owned();
                 }
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.day_editor.saved(

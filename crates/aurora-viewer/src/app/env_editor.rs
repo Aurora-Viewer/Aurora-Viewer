@@ -365,6 +365,12 @@ impl App {
         if name.is_empty() || name == it.name {
             return;
         }
+        // the inventory's own rule (LLItemBridge::isItemRenameable): what
+        // the agent may not modify keeps its name, whatever the editor shows
+        if !crate::world::inventory::actions::renameable(&self.world.inventory, it.id) {
+            log::warn!("settings item not renamed: no right to rename it");
+            return;
+        }
         match crate::world::inventory::actions::patch(&self.world.inventory, it.id, aurora_llsd::llsd_map! { "name" => name }) {
             Ok(change) => self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change)),
             Err(e) => log::warn!("settings item not renamed: {e}"),
@@ -383,7 +389,8 @@ impl App {
                 if self.env_editor.item == Some(it.id)
                     && let Some(doc) = &self.env_editor.doc
                 {
-                    it.name = doc.name().to_owned();
+                    // (trimmed, as the rename sent it)
+                    it.name = doc.name().trim().to_owned();
                 }
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.env_editor.saved(it.id, &it.name, rights);
