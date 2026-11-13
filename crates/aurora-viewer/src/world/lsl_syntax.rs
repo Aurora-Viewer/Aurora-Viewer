@@ -84,6 +84,7 @@ mod tests {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
         });
         w
     }

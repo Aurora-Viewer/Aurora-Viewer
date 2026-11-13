@@ -686,6 +686,9 @@ pub enum NetEvent {
         /// "OpenSimExtras" "ExportSupported": the region honours the export
         /// permission (LFSimFeatureHandler::simSupportsExport).
         export_supported: bool,
+        /// "GroupChatPostLinksEnabled": the region applies the group ability
+        /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
+        group_chat_post_links: bool,
     },
     HoverHeightUpdated {
         region: RegionHandle,
