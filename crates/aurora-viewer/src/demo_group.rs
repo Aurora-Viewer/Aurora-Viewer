@@ -148,6 +148,8 @@ pub fn my_powers() -> u64 {
     match scenario() {
         Scenario::Owner => u64::MAX,
         Scenario::Officer => DEFAULT_OFFICER,
+        // AURORA_DEMO_CONV_MODERATE: every ability, to moderate its chat
+        _ if crate::ui::chat::moderation::demo_mode().is_some() => u64::MAX,
         // AURORA_DEMO_SOCIAL_MENU: someone to invite into it
         _ if super::social_menu::step().is_some() => DEFAULT_OFFICER,
         _ => DEFAULT_MEMBER,
@@ -902,6 +904,21 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
                 b.clone_from(&list);
             }
             vec![NetEvent::GroupBanList { group: *group, bans: list }]
+        }
+        // a ban in all our groups: each group answers; the Northern Wolves
+        // refuse, so that the report has both lists
+        // (AURORA_DEMO_CONV_MODERATE=ban-all-run)
+        NetCommand::BanInGroups { agent, groups, ban } => {
+            log::info!("demo group: ban {ban} of {agent} in {} group(s)", groups.len());
+            groups
+                .iter()
+                .map(|g| NetEvent::GroupBanInGroup {
+                    group: *g,
+                    agent: *agent,
+                    ban: *ban,
+                    ok: *g != crate::demo::DEMO_GROUP2,
+                })
+                .collect()
         }
         NetCommand::GroupRoleUpdate { updates, .. } => {
             log::info!("demo group: {} role update(s)", updates.len());

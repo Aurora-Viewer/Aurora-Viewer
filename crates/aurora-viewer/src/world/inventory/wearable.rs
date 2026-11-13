@@ -24,6 +24,16 @@ const TYPES: [&str; 17] = [
     "universal",
 ];
 
+/// The wearable type named `name` in avatar_lad.xml (LLWearableType).
+pub fn kind_of(name: &str) -> Option<u8> {
+    TYPES.iter().position(|kind| *kind == name).and_then(|i| u8::try_from(i).ok())
+}
+
+/// The avatar_lad.xml name of wearable type `kind` (LLWearableType::getTypeName).
+pub fn type_name(kind: u8) -> Option<&'static str> {
+    TYPES.get(usize::from(kind)).copied()
+}
+
 pub fn default_texture(kind: u8) -> Uuid {
     match kind {
         2 => Uuid::from_u128(0x7ca39b4c_bd19_4699_aff7_f93fd03d3e7b),

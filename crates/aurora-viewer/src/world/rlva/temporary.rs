@@ -20,6 +20,32 @@ impl World {
             })
     }
 
+    /// RlvAttachmentLocks::hasLockedAttachmentPoint(RLV_LOCK_REMOVE)
+    /// (rlvlocks.h): a point is locked against removal (@remattach, or
+    /// @detach with a point, worn or not), or a worn attachment cannot come
+    /// off (its own @detach=n, a folder lock). Advanced › Release Keys is
+    /// greyed out then (LLToolsEnableReleaseKeys, llviewermenu.cpp).
+    pub fn rlva_has_locked_attachment(&self) -> bool {
+        if !self.rlva.inventory_locked() {
+            return false;
+        }
+        let nil = Uuid::nil();
+        if self.rlva.rules_for("remattach", nil).next().is_some()
+            || self.rlva.rules_for("detach", nil).any(|(_, option)| !option.is_empty())
+        {
+            return true;
+        }
+        let locks = super::inventory::FolderLocks::default();
+        self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
+            !self.rlva_attachment_remove_at(item, point, nil)
+                || self
+                    .inventory
+                    .items
+                    .get(&item)
+                    .is_some_and(|item| !self.rlva_folder_allowed_in(&locks, item.parent, false, nil))
+        })
+    }
+
     /// Resolve only a real linkset worn by this agent, including child prims.
     pub(crate) fn rlva_own_attachment_root(&self, source: Uuid) -> Option<Uuid> {
         let mut index = self.objects.index_of_uuid(&source)?;
