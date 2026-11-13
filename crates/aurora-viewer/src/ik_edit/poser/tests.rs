@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn poser_sensitivity_is_persisted_and_scales_the_shared_gizmo_setting() {
+    let mut editor = Editor {
+        poser: State {
+            active: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut config = crate::settings::Settings::default().poser;
+    assert!(!editor.sync_poser_settings(&mut config));
+    editor.set_poser_sensitivity(0.8);
+    assert!(editor.sync_poser_settings(&mut config));
+    assert_eq!(config.sensitivity, 0.8);
+    assert_eq!(editor.poser.sensitivity, 0.8);
+    assert!(!editor.sync_poser_settings(&mut config));
+
+    editor.set_poser_sensitivity(f32::NAN);
+    assert_eq!(editor.poser.sensitivity, super::super::gizmo::DEFAULT_SENSITIVITY);
+    assert_eq!(editor.poser.config.sensitivity, super::super::gizmo::DEFAULT_SENSITIVITY);
+}
 use crate::{demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
 
@@ -241,6 +263,48 @@ fn poser_bone_marker_drag_rotates_the_pose_without_creating_a_binding_or_ik_goal
         assert_eq!(editor.poser.sessions[&world.agent_id].pose.rotations[bone], initial);
     }
 }
+
+#[test]
+fn poser_pelvis_marker_drag_rotates_the_root_without_breaking_its_children() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let pelvis = rig.pelvis;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[pelvis].w_axis.truncate());
+    let pointer = proj.project(frame.joints[pelvis].w_axis.truncate()).unwrap().0;
+    let initial = editor.poser.sessions[&world.agent_id].pose.rotations[pelvis];
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    let p = crate::theme::Theme::default().palette();
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let end = pointer + egui::vec2(35.0, -20.0);
+    for events in [
+        Vec::new(),
+        Vec::new(),
+        vec![egui::Event::PointerMoved(pointer), button(pointer, true)],
+        vec![egui::Event::PointerMoved(end)],
+        vec![button(end, false)],
+    ] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        render(&mut world, &editor);
+    }
+
+    assert_eq!(editor.selected, Some(pelvis));
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(initial.dot(session.pose.rotations[pelvis]).abs() < 0.999);
+    assert_attached(&rig, &session.pose, &base, frame.model);
+    assert_eq!(session.undo.len(), 1);
+    assert!(editor.goals.is_empty());
+    assert!(editor.graph.definition.bindings.is_empty());
+}
+
 #[test]
 fn poser_static_layer_keeps_fk_ancestors_scales_and_world_locks() {
     let (mut world, mut editor) = fixture();
@@ -329,6 +393,75 @@ fn poser_moving_wrists_fingers_and_ankles_preserves_the_complete_shaped_hierarch
     editor.commit_manipulation(rig, &frame, false);
     assert_attached(rig, &editor.poser.sessions[&world.agent_id].pose, &base, frame.model);
 }
+
+#[test]
+fn poser_rotating_the_pelvis_moves_the_body_as_one_attached_hierarchy() {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let frame = editor.editor_frame(&world).unwrap();
+    let pelvis = rig.pelvis;
+    let torso = rig.names["mTorso"];
+    let before = editor.poser.sessions[&world.agent_id].pose.matrices(rig, frame.model);
+    let rotation = Quat::from_rotation_x(0.45);
+
+    editor.select(pelvis, rig, &frame);
+    editor.set_rotation(rotation);
+    editor.commit_manipulation(rig, &frame, true);
+
+    let session = &editor.poser.sessions[&world.agent_id];
+    let after = session.pose.matrices(rig, frame.model);
+    assert!(session.pose.rotations[pelvis].dot(rotation).abs() > 0.99999);
+    assert!(
+        after[torso].w_axis.truncate().distance(before[torso].w_axis.truncate()) > 0.01,
+        "the torso follows the root rotation"
+    );
+    assert_attached(rig, &session.pose, &base, frame.model);
+}
+
+#[test]
+fn poser_selects_and_rotates_every_animation_joint_without_breaking_the_hierarchy() {
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let animated: Vec<_> = rig
+        .canonical_names
+        .iter()
+        .enumerate()
+        .filter_map(|(bone, name)| name.starts_with('m').then_some(bone))
+        .collect();
+    assert!(animated.len() > 100, "the rig includes the full Bento skeleton");
+
+    for bone in animated {
+        let frame = editor.editor_frame(&world).unwrap();
+        editor.select_pose_bone(bone, &rig, &frame);
+        assert_eq!(editor.selected, Some(bone), "select {}", rig.canonical_names[bone]);
+        let before = editor.poser.sessions[&world.agent_id].pose.rotations[bone];
+        let world_rotation = (frame.model.inverse() * frame.joints[bone]).to_scale_rotation_translation().1;
+        editor.set_rotation(Quat::from_rotation_z(0.02) * world_rotation);
+        editor.poser.drag_checkpoint = false;
+        assert!(
+            editor.commit_poser_manipulation(&rig, &frame, true),
+            "edit {}",
+            rig.canonical_names[bone]
+        );
+        render(&mut world, &editor);
+
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        assert!(pose.rotations[bone].is_finite(), "rotation of {}", rig.canonical_names[bone]);
+        assert!(
+            before.dot(pose.rotations[bone]).abs() < 0.999999,
+            "rotation changed for {}",
+            rig.canonical_names[bone]
+        );
+        assert!(pose.valid(&rig), "valid pose after {}", rig.canonical_names[bone]);
+        assert_attached(&rig, pose, &base, frame.model);
+    }
+
+    assert!(editor.goals.is_empty());
+    assert!(editor.graph.definition.bindings.is_empty());
+}
+
 #[test]
 fn poser_world_pins_and_imported_translations_cannot_detach_children() {
     let (world, editor) = fixture();

@@ -226,7 +226,8 @@ impl Voice {
         match Self::wanted(&v, self.session.as_ref().map(|(key, _)| key)) {
             Ok(Some((key, channel, provision, signaling))) => {
                 if self.session.as_ref().map(|(k, _)| k) != Some(&key) {
-                    // changing channel: leave the old one first (drop logs out)
+                    // changing channel: leave the old one first (the drop
+                    // detaches the microphone at once, then logs out)
                     self.session = None;
                     if let Some(engine) = v.engine {
                         match &key {
