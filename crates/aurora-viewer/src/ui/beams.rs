@@ -119,7 +119,6 @@ fn seed(effect: &Uuid) -> f32 {
 
 /// The sender's colour, opaque, and its alpha (0..1).
 fn sender_color(c: [u8; 4]) -> (Color32, f32) {
-    // theme-guard: content — the colour the sender chose for its beam
     (Color32::from_rgb(c[0], c[1], c[2]), f32::from(c[3]) / 255.0)
 }
 
