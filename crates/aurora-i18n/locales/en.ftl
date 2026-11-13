@@ -1020,6 +1020,8 @@ rez-contents-denied = You cannot add this item to the target’s contents.
 rez-transfer-denied = This item cannot be transferred to the target’s owner.
 rez-worn-contents = Take off worn items before putting them into an object’s contents.
 rez-hold-ctrl = Hold Ctrl over an object to put these items into its contents.
+rez-task-single = Drag one object at a time out of an object’s contents.
+rez-task-denied = An object can only be rezzed from contents if you may copy it and its owner may transfer it.
 notecard-task-demo-object = Demo object
 notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = This notecard or its object is no longer available.
@@ -1429,6 +1431,26 @@ ui-inventory-properties-acquired-on = Acquired on:
 ui-inventory-properties-creator-unknown-multiple = (unknown / multiple)
 ui-inventory-properties-creator-unknown-multiple-hint = The simulator gives no creator for this item: an object whose parts were made by several residents has none.
 world-groups-action-denied = Action denied
+world-groups-error-while-moderating = Error while moderating.
+world-ban-all-title = Group bans
+world-ban-all-started = { $count ->
+    [one] Updating the group ban of { $name } in { $count } group. A report will follow when done.
+   *[other] Updating the group bans of { $name } in { $count } groups, one group at a time. A report will follow when done.
+}
+world-ban-all-report =
+    { $count ->
+        [one] { $name } has been banned in { $done } of { $count } group.
+       *[other] { $name } has been banned in { $done } of { $count } groups.
+    }
+    Banned in: { $succeeded }
+    Failed in: { $failed }
+world-unban-all-report =
+    { $count ->
+        [one] The ban on { $name } has been lifted in { $done } of { $count } group.
+       *[other] The ban on { $name } has been lifted in { $done } of { $count } groups.
+    }
+    Lifted in: { $succeeded }
+    Failed in: { $failed }
 common-enable = Enable
 common-activate = Activate
 ui-options-enable-this-channel = Enable this channel
@@ -2132,6 +2154,7 @@ common-blocked = Blocked
 ui-hud-blocked = Blocked
 build-ui-features-wood = Wood
 build-demo-sim-light-wood = Light wood
+build-demo-sim-chair = Chair
 ui-display-name-hello-as-in-real-life-people-need-some-time = { "Hello " }{ $name }{ ",\u000A\u000AAs in real life, people need some time to get used to a new name. Please allow a few days for your name to update in objects, scripts, search, and elsewhere." }
 build-land-bump = Bump
 world-appearance-boots = Boots
@@ -2215,6 +2238,7 @@ demo-sound-reverb-hall = Large hall
 common-world-map = World map
 ui-options-integrated-graphics = Integrated graphics
 ui-contacts-map = Map...
+ui-contacts-map-help = Show the friend's current location on the map
 ui-inventory-view-calling-cards = Calling cards
 common-category = Category:
 ui-contacts-this-contact-set-is-empty = This contact set is empty.
@@ -2479,7 +2503,7 @@ ui-login-critical-message = Important message
 ui-contacts-configure = { "Configure: " }{ $set }
 ui-contacts-configure-selected-contact-set = Configure selected contact set
 world-groups-conference = Conference
-ui-contacts-multi-person-conference-coming-soon-in-aurora = Multi-person conference: coming soon in Aurora
+ui-contacts-conference-friends = Start a conference with the selected residents
 ui-options-conferences = Conferences
 ui-bars-ad-hoc-conferences = Ad hoc conferences
 ui-profile-connected = Connected
@@ -3432,6 +3456,7 @@ ui-profile-let-other-residents-know-your-favorite-places-in-second = Let other r
 build-ui-tools-drag-to-move-ctrl-to-lift-ctrl-shift-to = Drag to move, Ctrl to lift, Ctrl-Shift to rotate
 ui-places-drag-a-landmark-here-to-add-it-to-your = Drag a landmark here to add it to your Favorites.
 demo-family = Family
+demo-set-notices-busy = Back soon, family! I am in do not disturb.
 demo-social-menu-set = Pack
 demo-shop = Shop
 demo-boreal-lagoon = Boreal Lagoon
@@ -3489,6 +3514,8 @@ ui-options-letter-keys-move = Letter keys move me (WASD) instead of starting nea
 ui-options-letter-keys-move-help = Off: pressing a letter key starts typing in the nearby chat.
 ui-options-walk-backwards-without-turning = Walk backward without turning around
 ui-options-walk-backwards-without-turning-help = Avatars walking backward step back instead of turning to face where they go. Only on your screen: others see what their viewer shows. An animation overrider can still turn them.
+ui-options-turn-to-selected = Turn toward the object I select
+ui-options-turn-to-selected-help = When the camera is away from your avatar (after an Alt zoom, for example), selecting an object or right-clicking it turns your avatar to face it. Not while sitting.
 ui-options-automatic-fly = Fly by holding Up
 ui-options-automatic-fly-help = Holding the Jump / Up control starts flying. When off, ground jumps repeat while held, without taking off; moving up in flight still works. Use the Fly button or shortcut to start flying.
 ui-options-automatic-land = Land by holding Down
@@ -3501,6 +3528,8 @@ ui-options-fly-after-teleport = Fly after a teleport
 ui-options-fly-after-teleport-help = The avatar always flies when a teleport arrives, except in a region that blocks flying
 ui-options-always-show-teleport-cancel = Always show the teleport Cancel button
 ui-options-always-show-teleport-cancel-help = Shows Cancel on the teleport screen even when the region says the teleport cannot be cancelled. The region still refuses to cancel those, and RLVa restrictions can still hide the button
+ui-options-show-back-slurl = Say where a teleport came from
+ui-options-show-back-slurl-help = After a teleport to another region, nearby chat shows a link to the place you left, to go back to it
 ui-options-friends-only-show-help = Only you and your friends are shown: the other avatars disappear, and come back at once when it is switched off. The same switch as the toolbar button and the World menu. A teleport switches it off unless the next row keeps it. Kept for each account.
 ui-options-friends-only-keep = Keep "Show friends only" after a teleport
 ui-options-friends-only-keep-help = "Show friends only" stays on when a teleport arrives. Off, the teleport switches it off. Switched off, the other avatars come back at once. Kept for each account.
@@ -4024,6 +4053,7 @@ world-notifications-group-fee = Membership fee: L$ { $fee }
 ui-context-invite-to-group = Invite to group
 ui-profile-invite-to-group-coming-soon = Invite to group (coming soon)
 ui-contacts-invite = Invite...
+ui-contacts-invite-help = Invite residents to this group
 ui-login-i-accept-the-terms-and-want-to-log-in = I accept the terms and want to log in
 ui-login-critical-message-read = I have read this message and want to log in
 ui-login-next-server = Another login server
@@ -4604,6 +4634,21 @@ inventory-thumbnail-save-not-confirmed = The picture could not be confirmed as s
 ui-appearance-gallery-edit-your-outfit = Edit your outfit
 ui-profile-modify-delete-or-take-my-objects = Modify, delete or take my objects
 ui-chat-moderator-click-profile = Moderator · click: profile
+ui-chat-moderator-options = Moderator options
+ui-chat-eject-from-group = Eject from group
+ui-chat-allow-text-chat = Allow text chat
+ui-chat-forbid-text-chat = Forbid text chat
+ui-chat-ban-member = Ban member
+ui-chat-ban-from-all-groups = Ban from all my groups
+ui-chat-unban-from-all-groups = Unban from all my groups
+ui-chat-ban-from-all-groups-confirm = { $count ->
+    [one] You are about to ban { $name } from the only group you can manage bans in:
+   *[other] You are about to ban { $name } from all { $count } groups you can manage bans in:
+}
+ui-chat-unban-from-all-groups-confirm = { $count ->
+    [one] You are about to lift the ban on { $name } in the only group you can manage bans in:
+   *[other] You are about to lift the ban on { $name } in all { $count } groups you can manage bans in:
+}
 common-moderate = Moderate
 ui-worldmap-moderate = Moderate
 common-me = Me
@@ -4643,6 +4688,12 @@ build-ui-common-multiple = Multiple
 ui-options-whisper = Whisper
 common-music = Music
 ui-options-auto-music = Auto music
+ui-options-music-fade = Fade the parcel music
+ui-options-music-fade-help = When the parcel's music changes, the old station fades out, then the new one fades in
+ui-options-music-fade-in = Fade in
+ui-options-music-fade-in-help = Seconds for a station to reach its volume
+ui-options-music-fade-out = Fade out
+ui-options-music-fade-out-help = Seconds for a station to fade away before the next one
 ui-audio-auto-play-parcel-music = Auto-play parcel music
 ui-appearance-items-jaw-2 = Jaw
 ui-options-commands-media = Media
@@ -5349,6 +5400,7 @@ ui-chat-search-conversation = Search conversation
 ui-emoji-search-emoji-name-or-code = Search emoji (name or :code:)…
 ui-options-search-fonts = Search fonts
 ui-contacts-search = Search...
+ui-contacts-search-groups-help = Find groups in Search
 ui-chat-search = Search…
 ui-worldmap-searching = Searching…
 ui-perf-gpu-records = GPU records
@@ -6078,6 +6130,9 @@ stream-title-copy-selected = Copy to clipboard
 stream-title-copy-short = Copy
 ui-bars-animation-explorer = Animation explorer
 ui-bars-edit-particles = Edit particles
+ui-bars-save-to-object-contents = Save back to object contents
+ui-bars-save-to-object-contents-tip = Select an object rezzed from another object's contents (not an attachment), with Edit linked parts off.
+ui-bars-save-to-object-contents-sent = Saving a copy of “{ $name }” into the contents of the object it was rezzed from.
 ui-bars-media-streams-backup = Media streams backup
 ui-bars-import-stream-list = Import the stream list…
 ui-bars-export-stream-list = Export the stream list…
@@ -6552,6 +6607,14 @@ ui-contacts-sort-by-username = Sort by username
 ui-contacts-sort-by-online-status = Sort by online status
 ui-contacts-separate-chats = Display contact set members separately from others
 ui-contacts-separate-chats-tip = Their private conversations get a section of their own, above Private messages, in Conversations. A resident in several such sets goes to the highest-priority one.
+ui-contacts-show-notifications = Show notifications
+ui-contacts-show-notifications-tip = Online and offline notices for this set's members, as chosen under All contact sets, even when they are off for your other friends.
+ui-contacts-set-responses = Automatic responses of this set
+ui-contacts-set-response-busy = Use a custom Do Not Disturb response for this set
+ui-contacts-set-response-autorespond = Use a custom “Auto-reply” response for this set
+ui-contacts-set-response-nonfriends = Use a custom response to non-friends for this set
+ui-contacts-set-notices-toast = Show online notices for sets with notifications as toasts
+ui-contacts-set-notices-chat = Show online notices for sets with notifications in nearby chat
 build-mod-too-many-prims-in-a-single-object-256 = Too many prims in a single object ({ $total }{ " > 256)" }
 session-object-actions-too-many-inventory-requests-in-progress = Too many inventory requests in progress.
 session-object-actions-too-many-inventory-transfers-in-progress = Too many inventory transfers in progress.
@@ -7962,7 +8025,6 @@ ui-profile-aurora-notes-private = Visible to you only
 ui-profile-aurora-notes-saved = Saved
 ui-profile-aurora-notes-hint = What you want to remember about { $name }…
 ui-profile-aurora-notes-kept = The notes are kept by the server, on all your computers.
-ui-contacts-coming-soon-in-aurora = Coming soon in Aurora
 ui-chat-at = { "At " }{ $value0 }
 ui-options-balance-change-above-which-received-spent-l-sounds-are = Balance change above which received/spent L$ sounds are played (UISndMoneyChangeThreshold)
 keybinds-esc = Esc
@@ -7970,6 +8032,7 @@ ui-options-camera-esc-keeps-the-camera-direction-and-turns-the-avatar = Esc keep
 ui-options-camera-esc-turns-avatar = Esc turns avatar
 build-materials-send-failed = { "Send failed: " }{ $e }
 world-mod-teleport-failed = { "Teleport failed: " }{ $reason }
+world-mod-teleport-completed-from = Teleport completed from { $slurl }
 cmdline-mod-calculation-failed = Calculation failed
 common-scale = Scale
 demo-scale-scale-alpha-mask = Scale (SCALE), alpha mask
