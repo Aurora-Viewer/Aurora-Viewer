@@ -22,8 +22,9 @@ use glam::Vec3;
 use std::time::Instant;
 use uuid::Uuid;
 
-/// Size of the frame's light list (`MAX_LIGHTS` of the shaders).
-const MAX_LIGHTS: usize = 64;
+/// Size of the frame's light list (`MAX_LIGHTS` of the shaders), and the
+/// top of Preferences › Graphics › "Maximum nearby lights".
+pub(crate) const MAX_LIGHTS: usize = 64;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
@@ -49,6 +50,9 @@ pub struct LightView {
     pub projector_shadow_limit: u8,
     /// Keep lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
+    /// Lights the frame keeps at most (Preferences › Graphics, "Maximum
+    /// nearby lights": RenderLocalLightCount); 0, none.
+    pub max_lights: usize,
 }
 
 /// A light that may enter the frame's list.
@@ -80,11 +84,16 @@ fn gives_light(color: [f32; 4], radius: f32) -> bool {
 }
 
 /// Keep the frame's lights: those that reach the view first, then the
-/// nearest (equal distances in object order, the order they came in).
-fn select(lights: &mut Vec<Candidate>) {
+/// nearest (equal distances in object order, the order they came in), `max`
+/// of them at most. The Legacy Viewer's RenderLocalLightCount stops
+/// renderDeferredLighting after that many of mNearbyLights, nearest first
+/// (indra/newview/pipeline.cpp, originally LGPL 2.1, Linden Research); the
+/// list here keeps the lights in view first (#1032), so a small limit keeps
+/// the nearest that are seen rather than one behind the camera.
+fn select(lights: &mut Vec<Candidate>, max: usize) {
     // (unstable: a stable sort allocates a buffer as long as the list)
     lights.sort_unstable_by(|a, b| b.in_view.cmp(&a.in_view).then(a.dist.total_cmp(&b.dist)).then(a.idx.cmp(&b.idx)));
-    lights.truncate(MAX_LIGHTS);
+    lights.truncate(max.min(MAX_LIGHTS));
 }
 
 /// The light list's working buffers, kept between frames for their room.
@@ -219,7 +228,12 @@ impl Scene {
             mut objects,
             shadow_map_count,
         } = std::mem::take(&mut self.light_scratch);
-        objects.extend(self.light_objects.iter().copied());
+        // with no local light allowed, none is even looked at (the Legacy
+        // Viewer's calcNearbyLights and renderDeferredLighting skip them all
+        // at RenderLocalLightCount 0)
+        if view.max_lights > 0 {
+            objects.extend(self.light_objects.iter().copied());
+        }
         for idx in objects.drain(..) {
             if !world.parcel_object_visible(idx) {
                 continue;
@@ -280,7 +294,7 @@ impl Scene {
                 texture,
             });
         }
-        select(&mut lights);
+        select(&mut lights, view.max_lights);
         for c in &mut lights {
             if let (Some(id), Some(p)) = (c.texture, c.light.projector.as_mut()) {
                 p.texture = self.projected_texture(renderer, c.idx, id);
@@ -539,6 +553,7 @@ mod tests {
             projector_shadows: true,
             projector_shadow_limit: 2,
             others_attached_lights: true,
+            max_lights: MAX_LIGHTS,
         }
     }
 
@@ -576,7 +591,7 @@ mod tests {
                 let p = view.eye + forward * (5.0 + i as f32 * 1.5) + side * (i as f32 - 5.0) * 0.5;
                 lights.push(candidate(&view, 100 + i, p, 3.0));
             }
-            select(&mut lights);
+            select(&mut lights, MAX_LIGHTS);
             assert_eq!(lights.len(), MAX_LIGHTS);
             let kept: Vec<usize> = lights.iter().map(|c| c.idx).collect();
             assert_eq!(kept[..10], (100..110).collect::<Vec<_>>(), "looking along {forward}");
@@ -584,6 +599,34 @@ mod tests {
             assert!(lights[10..].iter().all(|c| !c.in_view && c.idx < 100));
             assert!(lights[10..].windows(2).all(|w| w[0].dist <= w[1].dist));
         }
+    }
+
+    /// "Maximum nearby lights" (RenderLocalLightCount): the list stops at
+    /// the limit, the lights in view and nearest kept, none at 0, and never
+    /// more than the shaders hold.
+    #[test]
+    fn the_light_limit_keeps_the_nearest_lights_in_view() {
+        let view = camera(Vec3::new(128.0, 128.0, 25.0), Vec3::X);
+        let all = || {
+            let mut lights: Vec<Candidate> = (0..10)
+                .map(|i| candidate(&view, i, view.eye + Vec3::X * (20.0 - i as f32), 1.0))
+                .collect();
+            // a nearer light behind the camera, out of the view
+            lights.push(candidate(&view, 50, view.eye - Vec3::X * 4.0, 0.5));
+            // and more than the shaders hold beyond them
+            lights.extend((0..80).map(|i| candidate(&view, 100 + i, view.eye + Vec3::X * (40.0 + i as f32), 1.0)));
+            lights
+        };
+        let mut lights = all();
+        select(&mut lights, 3);
+        let kept: Vec<usize> = lights.iter().map(|c| c.idx).collect();
+        assert_eq!(kept, [9, 8, 7], "the three nearest in view, not the one behind");
+        let mut lights = all();
+        select(&mut lights, 0);
+        assert!(lights.is_empty());
+        let mut lights = all();
+        select(&mut lights, 1000);
+        assert_eq!(lights.len(), MAX_LIGHTS);
     }
 
     #[test]

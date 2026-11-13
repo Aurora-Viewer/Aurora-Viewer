@@ -126,10 +126,23 @@ pub enum Action {
     /// avatar wears.
     Inspect(uuid::Uuid),
     InspectAvatar(uuid::Uuid),
+    /// Take off a worn object or HUD, by its root prim.
+    Detach(crate::world::objects::ObjKey),
     RegionWindow,
     TopScripts,
     OpenCacheFolder,
     ClearCache,
+}
+
+/// What the scene section lists: the avatars or the objects around, or
+/// the agent's own worn objects and HUDs (the Legacy Viewer's
+/// Performance window has the last two as its own panels).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneView {
+    Avatars,
+    Objects,
+    Worn,
+    Huds,
 }
 
 /// The monitor's state: its history and what the user chose.
@@ -144,8 +157,8 @@ pub struct Monitor {
     open: HashSet<RowId>,
     selected: Selected,
     filter: String,
-    /// The scene's objects rather than its avatars.
-    scene_objects: bool,
+    /// What the scene section lists.
+    scene_view: SceneView,
     /// The scene's sort column (its index among the figures).
     scene_sort: usize,
     /// The last report written, for the status bar.
@@ -163,7 +176,7 @@ impl Default for Monitor {
             open: [RowId::Render, RowId::Textures].into_iter().collect(),
             selected: Selected::Row(RowId::Textures),
             filter: String::new(),
-            scene_objects: false,
+            scene_view: SceneView::Avatars,
             scene_sort: 1,
             exported: None,
         }
@@ -174,7 +187,15 @@ impl Monitor {
     /// The scene section on its objects (`AURORA_DEMO_PERF=monitor-scene-objects`).
     pub fn show_scene_objects(&mut self) {
         self.tab = Tab::Scene;
-        self.scene_objects = true;
+        self.scene_view = SceneView::Objects;
+    }
+
+    /// The scene section on what the agent wears (`AURORA_DEMO_PERF=monitor-scene-worn`
+    /// or `monitor-scene-huds`).
+    pub fn show_scene_worn(&mut self, huds: bool) {
+        self.tab = Tab::Scene;
+        self.scene_view = if huds { SceneView::Huds } else { SceneView::Worn };
+        self.scene_sort = 0;
     }
 
     /// The subsystems' table sorted by a column, a row selected (the
