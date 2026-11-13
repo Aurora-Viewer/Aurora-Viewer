@@ -8,6 +8,13 @@
 //! the same control, and a release only lowers the count, never below
 //! zero. The counts last as long as the session (the Legacy Viewer never
 //! clears them either).
+//!
+//! Two kinds of question are asked of the counts, as in the Legacy Viewer:
+//! `any` and `left_button_grabbed` (anyControlGrabbed, leftButtonGrabbed)
+//! count both kinds, while `is_grabbed`, `forward_grabbed`, `backward_grabbed`,
+//! `rotate_grabbed`, `up_grabbed` and `down_grabbed` (isControlGrabbed and the
+//! others) count only the controls taken outright: a script that passes its
+//! controls on to the avatar does not grab them.
 
 use crate::control;
 
@@ -48,6 +55,12 @@ impl ScriptControls {
         bit < BITS && (self.taken[bit] > 0 || self.passed_on[bit] > 0)
     }
 
+    /// A control bit taken outright (`pass_on` false), ignoring pass-on holds.
+    fn taken_only(&self, flag: u32) -> bool {
+        let bit = flag.trailing_zeros() as usize;
+        bit < BITS && self.taken[bit] > 0
+    }
+
     /// Whether a script wants the left button (leftButtonGrabbed): its
     /// mouselook bit in mouselook, the plain one otherwise.
     pub fn left_button_grabbed(&self, mouselook: bool) -> bool {
@@ -63,34 +76,41 @@ impl ScriptControls {
         self.taken.iter().chain(self.passed_on.iter()).any(|&n| n > 0)
     }
 
-    /// Whether a script holds a specific control bit (isControlGrabbed).
+    /// Whether a script took a specific control bit without passing it on
+    /// (isControlGrabbed reads only mControlsTakenCount: a pass-on hold does
+    /// not count, unlike in `any` and `left_button_grabbed`).
     pub fn is_grabbed(&self, flag: u32) -> bool {
-        self.held(flag)
+        self.taken_only(flag)
     }
 
-    /// Whether a script holds the forward control (forwardGrabbed).
+    /// Whether a script took the forward control without passing it on
+    /// (forwardGrabbed, mControlsTakenCount only).
     pub fn forward_grabbed(&self) -> bool {
-        self.is_grabbed(control::AT_POS)
+        self.taken_only(control::AT_POS)
     }
 
-    /// Whether a script holds the backward control (backwardGrabbed).
+    /// Whether a script took the backward control without passing it on
+    /// (backwardGrabbed, mControlsTakenCount only).
     pub fn backward_grabbed(&self) -> bool {
-        self.is_grabbed(control::AT_NEG)
+        self.taken_only(control::AT_NEG)
     }
 
-    /// Whether a script holds yaw left or right (rotateGrabbed).
+    /// Whether a script took yaw left or right without passing it on
+    /// (rotateGrabbed, mControlsTakenCount only).
     pub fn rotate_grabbed(&self) -> bool {
-        self.is_grabbed(control::YAW_POS) || self.is_grabbed(control::YAW_NEG)
+        self.taken_only(control::YAW_POS) || self.taken_only(control::YAW_NEG)
     }
 
-    /// Whether a script holds the up/jump control (upGrabbed).
+    /// Whether a script took CONTROL_UP without passing it on (upGrabbed,
+    /// mControlsTakenCount only).
     pub fn up_grabbed(&self) -> bool {
-        self.is_grabbed(control::UP_POS)
+        self.taken_only(control::UP_POS)
     }
 
-    /// Whether a script holds the down/crouch control (downGrabbed).
+    /// Whether a script took the down/crouch control without passing it on
+    /// (downGrabbed, mControlsTakenCount only).
     pub fn down_grabbed(&self) -> bool {
-        self.is_grabbed(control::UP_NEG)
+        self.taken_only(control::UP_NEG)
     }
 }
 
@@ -159,16 +179,28 @@ mod tests {
         );
     }
 
+    /// Every movement query with the control it reads: the Legacy Viewer's
+    /// forwardGrabbed & co read mControlsTakenCount alone.
+    fn movement_queries() -> [(&'static str, u32, fn(&ScriptControls) -> bool); 6] {
+        [
+            ("forward", control::AT_POS, ScriptControls::forward_grabbed),
+            ("backward", control::AT_NEG, ScriptControls::backward_grabbed),
+            ("rotate (yaw left)", control::YAW_POS, ScriptControls::rotate_grabbed),
+            ("rotate (yaw right)", control::YAW_NEG, ScriptControls::rotate_grabbed),
+            ("up", control::UP_POS, ScriptControls::up_grabbed),
+            ("down", control::UP_NEG, ScriptControls::down_grabbed),
+        ]
+    }
+
     #[test]
     fn movement_controls_grabbed_detection() {
         let mut c = ScriptControls::default();
-        assert!(!c.forward_grabbed());
-        assert!(!c.backward_grabbed());
-        assert!(!c.rotate_grabbed());
-        assert!(!c.up_grabbed());
-        assert!(!c.down_grabbed());
+        for (name, flag, grabbed) in movement_queries() {
+            assert!(!grabbed(&c), "{name}: nothing taken");
+            assert!(!c.is_grabbed(flag), "{name}: nothing taken (is_grabbed)");
+        }
 
-        // Vehicle script takes forward and yaw controls
+        // A vehicle script takes forward and yaw controls outright
         c.apply(true, control::AT_POS | control::YAW_POS, false);
         assert!(c.forward_grabbed());
         assert!(c.rotate_grabbed());
@@ -176,14 +208,62 @@ mod tests {
         assert!(!c.up_grabbed());
         assert!(!c.down_grabbed());
 
-        // Script takes up and down controls passed on
-        c.apply(true, control::UP_POS | control::UP_NEG, true);
-        assert!(c.up_grabbed());
-        assert!(c.down_grabbed());
-
-        // Release forward
+        // Release forward: yaw stays grabbed
         c.apply(false, control::AT_POS, false);
         assert!(!c.forward_grabbed());
         assert!(c.rotate_grabbed());
+    }
+
+    #[test]
+    fn a_pass_on_hold_does_not_grab_a_movement_control() {
+        for (name, flag, grabbed) in movement_queries() {
+            let mut c = ScriptControls::default();
+
+            // taken with pass_on TRUE (a HUD that only listens): not grabbed,
+            // so the camera keys keep their meaning
+            c.apply(true, flag, true);
+            assert!(!grabbed(&c), "{name}: passed on only");
+            assert!(!c.is_grabbed(flag), "{name}: passed on only (is_grabbed)");
+
+            // the two kinds are still held for the questions that count both
+            assert!(c.any(), "{name}: a pass-on hold still counts for any");
+
+            // taken outright as well: grabbed
+            c.apply(true, flag, false);
+            assert!(grabbed(&c), "{name}: taken outright");
+            assert!(c.is_grabbed(flag), "{name}: taken outright (is_grabbed)");
+
+            // released outright: the pass-on hold alone does not grab it
+            c.apply(false, flag, false);
+            assert!(!grabbed(&c), "{name}: outright hold released, pass-on hold left");
+            assert!(!c.is_grabbed(flag), "{name}: outright hold released (is_grabbed)");
+
+            c.apply(false, flag, true);
+            assert!(!grabbed(&c), "{name}: everything released");
+            assert!(!c.any(), "{name}: everything released (any)");
+        }
+    }
+
+    #[test]
+    fn a_pass_on_hold_still_counts_for_the_left_button_and_any() {
+        // leftButtonGrabbed and anyControlGrabbed count both kinds
+        let mut c = ScriptControls::default();
+        c.apply(true, control::LBUTTON_DOWN, true);
+        assert!(c.left_button_grabbed(false));
+        assert!(c.any());
+        // ... while the movement queries and isControlGrabbed do not
+        assert!(!c.is_grabbed(control::LBUTTON_DOWN));
+    }
+
+    #[test]
+    fn one_grabbed_movement_control_leaves_the_others_free() {
+        for (name, flag, _) in movement_queries() {
+            let mut c = ScriptControls::default();
+            c.apply(true, flag, false);
+            for (other, other_flag, grabbed) in movement_queries() {
+                let same_query = other_flag == flag || (name.starts_with("rotate") && other.starts_with("rotate"));
+                assert_eq!(grabbed(&c), same_query, "{name} taken, {other} asked");
+            }
+        }
     }
 }
