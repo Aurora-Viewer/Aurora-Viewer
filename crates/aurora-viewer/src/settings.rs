@@ -5334,6 +5334,21 @@ mod tests {
         dir.join("settings.json")
     }
 
+    #[test]
+    fn glow_off_survives_saving_and_loading_settings() {
+        let path = scratch_settings_file();
+        let settings = Settings {
+            glow: false,
+            ..Settings::default()
+        };
+
+        settings.save_to(&path);
+        let loaded = Settings::load_from(&path);
+
+        assert!(!loaded.glow);
+        let _ = std::fs::remove_dir_all(path.parent().expect("settings directory"));
+    }
+
     fn read_back(path: &Path) -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(path).expect("saved settings")).expect("saved JSON")
     }
