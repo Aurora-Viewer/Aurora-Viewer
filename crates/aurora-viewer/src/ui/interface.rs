@@ -1,10 +1,12 @@
 //! Hiding the interface: Firestorm's Show User Interface (Alt+Shift+U;
 //! LLViewToggleUI, llviewermenu.cpp, and LLViewerWindow::setUIVisibility,
 //! llviewerwindow.cpp, originally LGPL 2.1) and the bars in mouselook
-//! (LLAgent::changeCameraToMouselook, FSShowInterfaceInMouselook), with the
+//! (LLAgent::changeCameraToMouselook, FSShowInterfaceInMouselook)with the
 //! windows and the keyboard focus (`Interface::follow_mouselook`). Hidden,
-//! the interface keeps the world with its name tags, the HUDs, the toasts
-//! and the chat lines; the bars go, and the windows open then
+//! the interface keeps the world and the HUDs; the bars, the avatars' name
+//! tags with their chat bubbles, the chat lines, the toasts, the look-at
+//! crosshairs and the mouselook crosshair go, as everything the Legacy
+//! Viewer draws in its UI layer, and the windows open then
 //! (`widgets::hide_windows`) come back with it. With the islands, a hint
 //! says how to bring it back, and a screen edge hovered shows its bars for
 //! as long as the pointer stays on them (the bars mockup); with Firestorm's
@@ -209,6 +211,26 @@ impl Interface {
             self.peek_sides[i] = at[i] || (self.peek_sides[i] && (on[i] || f.menu_open));
         }
         self.peek_sides
+    }
+
+    /// The view is cleared of what the Legacy Viewer draws in its UI layer
+    /// (LLViewerWindow::setUIVisibility hides the root view's children): the
+    /// interface hidden, not immersive mode, which keeps the chat and has
+    /// its own name tag button.
+    pub fn clears_view(&self) -> bool {
+        self.hidden && !self.immersive
+    }
+
+    /// What the avatars' name tags (and the chat bubbles under them) show:
+    /// nothing while the interface is hidden; otherwise as immersive mode's
+    /// button (`immersive_tags`) or World › Hide name tags (`show_name_tags`)
+    /// say (`hud::avatar_tags`).
+    pub fn name_tags(&self, immersive_tags: bool, show_name_tags: bool) -> super::hud::AvatarTags {
+        if self.clears_view() {
+            super::hud::AvatarTags::Hidden
+        } else {
+            super::hud::avatar_tags(self.immersive, immersive_tags, show_name_tags)
+        }
     }
 
     /// Seconds left to the hint at `now` (the islands' look), while shown;
@@ -434,6 +456,32 @@ mod tests {
             bottom_top: 806.0,
             menu_open: false,
         }
+    }
+
+    /// Hidden, the view is cleared and the name tags go, as in the Legacy
+    /// Viewer; immersive mode keeps its chat and follows its tag button.
+    #[test]
+    fn hidden_clears_the_view_and_immersive_keeps_its_choices() {
+        use super::super::hud::AvatarTags;
+        let mut ui = Interface::default();
+        assert!(!ui.clears_view());
+        assert_eq!(
+            ui.name_tags(false, true),
+            AvatarTags::Shown,
+            "shown: the tags whatever immersive's choice"
+        );
+        assert_eq!(
+            ui.name_tags(false, false),
+            AvatarTags::Bubbles,
+            "World › Hide name tags keeps the bubbles"
+        );
+        ui.hidden = true;
+        assert!(ui.clears_view());
+        assert_eq!(ui.name_tags(true, true), AvatarTags::Hidden, "hidden: no tag, no bubble");
+        ui.immersive = true;
+        assert!(!ui.clears_view());
+        assert_eq!(ui.name_tags(true, false), AvatarTags::Shown);
+        assert_eq!(ui.name_tags(false, true), AvatarTags::Hidden);
     }
 
     const BOTH: Shown = Shown { top: true, bottom: true };

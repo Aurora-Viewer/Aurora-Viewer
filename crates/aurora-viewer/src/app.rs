@@ -16957,9 +16957,10 @@ impl App {
                     audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
                     Instant::now(),
                 );
-                // the look-at crosshairs under the name tags (none over a held
-                // photo, nor the walk mark)
-                if !held {
+                // the look-at crosshairs under the name tags (none, nor the
+                // walk mark, over a held photo or with the interface hidden,
+                // like the Legacy Viewer's UI layer)
+                if !held && !self.interface.clears_view() {
                     ui::lookat_targets::draw(
                         &ctx,
                         &p,
@@ -17003,11 +17004,8 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook() && !(self.avatar_studio.active && self.avatar_studio.animation_editor),
-                        ui::hud::avatar_tags(
-                            self.interface.immersive,
-                            self.settings.immersive_name_tags,
-                            self.settings.show_name_tags,
-                        ),
+                        self.interface
+                            .name_tags(self.settings.immersive_name_tags, self.settings.show_name_tags),
                         &self.settings,
                         &mut self.name_tag_visibility,
                         &voice_levels,
@@ -17826,7 +17824,8 @@ impl App {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
                     // LLToolGun::draw: in the middle of the world view; the
                     // grab tool that Alt brings draws none
-                    if !self.alt_cursor.free() {
+                    // (none with the interface hidden, like the Legacy Viewer)
+                    if !self.alt_cursor.free() && !self.interface.clears_view() {
                         let demo = ui::crosshair::demo(&self.settings.crosshair);
                         let crosshair = demo.as_ref().unwrap_or(&self.settings.crosshair);
                         let picture = ui::crosshair::picture(&ctx, crosshair);
@@ -17847,7 +17846,11 @@ impl App {
                         painter.text(at, egui::Align2::CENTER_BOTTOM, &text, font, p.ink.gamma_multiply(0.6));
                     }
                 }
+                // the chat lines go with the hidden interface (the Legacy
+                // Viewer's nearby chat toasts are in its UI layer); immersive
+                // mode keeps them
                 if self.skin.layout.chat_toasts
+                    && !self.interface.clears_view()
                     && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
                 {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
@@ -18739,12 +18742,14 @@ impl App {
                         n.read = true;
                     }
                 }
-                // nothing over the view in mouselook or the photo's full frame;
+                // nothing over the view in mouselook, the photo's full frame or
+                // with the interface hidden (the Legacy Viewer's toasts are in
+                // its UI layer); the script menus come back with it;
                 // in do not disturb only the script menus come out, in both
                 // styles (#491)
                 let aurora = self.notifications_aurora();
                 let dnd = self.world.status.dnd;
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || self.interface.clears_view();
                 self.world.notifications.aurora = aurora;
                 // #465: a friendship offer in the middle of the screen, before
                 // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)

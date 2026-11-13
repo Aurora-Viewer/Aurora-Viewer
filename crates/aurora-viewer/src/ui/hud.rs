@@ -346,7 +346,8 @@ pub enum AvatarTags {
     /// their name, as with the name tags turned off in Preferences
     /// (LLVOAvatar::idleUpdateNameTag: `visible_chat`).
     Bubbles,
-    /// Immersive mode without name tags: no plate, no bubble.
+    /// Immersive mode without name tags, or the interface hidden: no
+    /// plate, no bubble.
     Hidden,
 }
 
