@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ui::scripts::Action;
+use crate::world::inventory::actions as rules;
 use aurora_net::build::{BuildCmd, perm};
 use aurora_net::scripts::{DEFAULT_SOURCE, ScriptSaved, ScriptTarget};
 use uuid::Uuid;
@@ -52,6 +53,15 @@ default
 }
 "#;
 
+/// `AURORA_DEMO_SCRIPTS=lua`: a Lua (SLua) source, item subtype SST_LUA.
+const LUA_DEMO_SOURCE: &str = r#"-- A Lua script: saved for the Luau VM, never as LSL
+local function greet(name: string)
+    ll.Say(0, "Hello, " .. name .. "!")
+end
+
+greet("Avatar")
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -59,12 +69,28 @@ struct ScriptInfo {
     asset: Uuid,
     can_read: bool,
     can_edit: bool,
+    /// From the item subtype: a Lua source keeps its "luau" target.
+    luau: aurora_net::scripts::Luau,
 }
 
-fn permissions(mask: u32, library: bool) -> (bool, bool) {
+/// Read and edit rights: copy and modify, or copy alone for the library
+/// (read only). Any god reads any script (LLPreviewLSL::loadAsset,
+/// LLLiveLSLEditor::loadAsset: isGodlike() first); editing goes through
+/// LLAgent::allowOperation, so only from GOD_MAINTENANCE ([`rules::with_god`]).
+fn permissions(mask: u32, library: bool, god_level: u8) -> (bool, bool) {
+    let mask = rules::with_god(mask, god_level);
     let copy = mask & perm::COPY != 0;
     let modify = mask & perm::MODIFY != 0;
-    (copy && (modify || library), copy && modify && !library)
+    (god_level > 0 || copy && (modify || library), copy && modify && !library)
+}
+
+/// Read and edit rights on a script inside an object: as [`permissions`]
+/// for a resident; any god reads and edits it, whatever its level
+/// (LLLiveLSLEditor::loadAsset loads it for isGodlike(), and onLoadComplete
+/// turns editing on without asking LLAgent::allowOperation again). Only an
+/// inventory script keeps GOD_MAINTENANCE for editing (LLPreviewLSL).
+fn task_permissions(mask: u32, god_level: u8) -> (bool, bool) {
+    if god_level > 0 { (true, true) } else { permissions(mask, false, 0) }
 }
 
 /// What an `#include` may take of an inventory script, from least to most.
@@ -89,7 +115,7 @@ enum IncludeUse {
 /// id (fslslpreproc.cpp, found_include_directive, opened_include_file).
 fn include_use(mask: u32, library: bool, creator: Uuid, agent: Uuid) -> IncludeUse {
     let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
-    if !permissions(mask, library).0 {
+    if !permissions(mask, library, 0).0 {
         IncludeUse::Unreadable
     } else if mask & full == full {
         IncludeUse::SourceAndAsset
@@ -257,6 +283,12 @@ impl App {
                 self.panels.inventory = true;
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 let target = ScriptTarget { object: Uuid::nil(), item };
+                if mode == "lua"
+                    && let Some(it) = self.world.inventory.items.get_mut(&item)
+                {
+                    it.flags = (it.flags & !0xff) | 1;
+                    self.demo_script_sources.insert(target, LUA_DEMO_SOURCE.into());
+                }
                 if syntax_demo {
                     self.demo_script_sources.insert(
                         target,
@@ -398,6 +430,18 @@ impl App {
                 self.apply_script_action(action);
             }
         }
+        if self.frame_count == 320 && mode == "lua" {
+            let target = ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(8102),
+            };
+            if let Some(action) = self
+                .script_editors
+                .demo_edit(target, LUA_DEMO_SOURCE.replace("Avatar", "Aurora"), true)
+            {
+                self.apply_script_action(action);
+            }
+        }
         if self.frame_count == 320 && matches!(mode.as_str(), "error" | "save" | "object-save") {
             let target = if mode == "object-save" {
                 let Some(target) = self
@@ -457,7 +501,7 @@ impl App {
             let inv = &self.world.inventory;
             let it = inv.items.get(&target.item).filter(|it| it.asset_type == 10)?;
             let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, it.id, inv.lib_root);
-            let (can_read, can_edit) = permissions(crate::world::inventory::actions::held(inv, it), library);
+            let (can_read, can_edit) = permissions(rules::held(inv, it), library, self.world.god_level);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: self.world.main_region.unwrap_or_default(),
@@ -465,6 +509,7 @@ impl App {
                 asset: it.asset_id,
                 can_read,
                 can_edit,
+                luau: aurora_net::scripts::Luau::from_flags(it.flags),
             })
         } else {
             let idx = self.world.objects.index_of_uuid(&target.object)?;
@@ -478,13 +523,9 @@ impl App {
                 .iter()
                 .find(|it| it.item_id == target.item && it.asset_type == 10)?;
             let member = !it.group_id.is_nil() && self.world.groups.is_member(&it.group_id);
-            let mask = if it.owner_id == self.world.agent_id || it.group_owned && member {
-                it.owner_mask
-            } else {
-                it.everyone_mask | if member { it.group_mask } else { 0 }
-            };
+            let mask = rules::task_script_mask(it, self.world.agent_id, member);
             let modify = !task_script_refused(&self.build, &self.world, target.object);
-            let (can_read, can_edit) = permissions(mask, false);
+            let (can_read, can_edit) = task_permissions(mask, self.world.god_level);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: object.key.region,
@@ -492,6 +533,7 @@ impl App {
                 asset: it.asset_id,
                 can_read: can_read && modify,
                 can_edit: can_edit && modify,
+                luau: aurora_net::scripts::Luau::from_flags(it.flags),
             })
         }
     }
@@ -509,6 +551,7 @@ impl App {
         }
         let Some(info) = self.script_info(target) else { return };
         if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
+            self.script_editors.set_luau(target, info.luau);
             self.send(NetCommand::LoadScript {
                 request,
                 target,
@@ -554,6 +597,9 @@ impl App {
         {
             self.apply_script_action(action);
         }
+        // the copies of the unsaved scripts (ui/scripts/backup.rs)
+        self.sync_script_backup_dir();
+        self.script_editors.back_up();
         self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);
     }
 
@@ -794,6 +840,11 @@ impl App {
                 // A named marker simulates a server diagnostic in demo mode;
                 // this is deliberately not a local LSL compiler.
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
+                log::info!(
+                    "demo scripts: saved {} for target {}",
+                    target.item,
+                    aurora_net::scripts::compile_target(options.mono, options.luau)
+                );
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);
@@ -837,11 +888,63 @@ mod tests {
 
     #[test]
     fn script_source_requires_copy_and_modify_except_read_only_library() {
-        assert_eq!(permissions(perm::COPY | perm::MODIFY, false), (true, true));
-        assert_eq!(permissions(perm::COPY, false), (false, false));
-        assert_eq!(permissions(perm::MODIFY, false), (false, false));
-        assert_eq!(permissions(perm::COPY, true), (true, false));
-        assert_eq!(permissions(perm::COPY | perm::MODIFY, true), (true, false));
+        assert_eq!(permissions(perm::COPY | perm::MODIFY, false, 0), (true, true));
+        assert_eq!(permissions(perm::COPY, false, 0), (false, false));
+        assert_eq!(permissions(perm::MODIFY, false, 0), (false, false));
+        assert_eq!(permissions(perm::COPY, true, 0), (true, false));
+        assert_eq!(permissions(perm::COPY | perm::MODIFY, true, 0), (true, false));
+        // any god reads any script; only from GOD_MAINTENANCE does it edit
+        // one without modify (LLAgent::allowOperation), OpenSim's 200 to 249 not
+        for level in [1, 200, 225, rules::GOD_MAINTENANCE - 1] {
+            assert_eq!(permissions(0, false, level), (true, false), "level {level}");
+            assert_eq!(permissions(perm::COPY | perm::MODIFY, false, level), (true, true), "level {level}");
+        }
+        assert_eq!(permissions(0, false, rules::GOD_MAINTENANCE), (true, true));
+        assert_eq!(
+            permissions(0, true, rules::GOD_MAINTENANCE),
+            (true, false),
+            "the library stays read only"
+        );
+        // a script inside an object: any god reads and edits it
+        // (LLLiveLSLEditor), a resident needs copy and modify
+        for level in [1, 200, 225, rules::GOD_MAINTENANCE] {
+            assert_eq!(task_permissions(0, level), (true, true), "level {level}");
+        }
+        assert_eq!(task_permissions(perm::COPY, 0), (false, false));
+        assert_eq!(task_permissions(perm::COPY | perm::MODIFY, 0), (true, true));
+    }
+
+    /// A copy of the unsaved text (ui/scripts/backup.rs) is kept only for a
+    /// script its editor may edit: the editing right of [`permissions`],
+    /// read from the agent's mask (rules::agent_mask).
+    #[test]
+    fn an_unsaved_script_is_copied_only_when_it_may_be_edited() {
+        use aurora_net::inventory::InvItem;
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+        let item = |owner: Uuid, owner_mask: u32, everyone_mask: u32, group_owned: bool| InvItem {
+            owner,
+            owner_mask,
+            everyone_mask,
+            group_owned,
+            asset_type: 10,
+            ..Default::default()
+        };
+        let copied = |it: &InvItem, library: bool| permissions(rules::agent_mask(it, me), library, 0).1;
+        assert!(copied(&item(me, full, 0, false), false), "full permissions");
+        assert!(
+            copied(&item(me, perm::COPY | perm::MODIFY, 0, false), false),
+            "no transfer, as the Legacy Viewer"
+        );
+        assert!(!copied(&item(me, perm::MODIFY | perm::TRANSFER, 0, false), false), "no copy");
+        assert!(!copied(&item(me, perm::COPY | perm::TRANSFER, 0, false), false), "no modify");
+        assert!(!copied(&item(other, full, 0, false), false), "someone else's, nothing for everyone");
+        assert!(copied(&item(other, 0, full, false), false), "someone else's, editable by everyone");
+        assert!(!copied(&item(me, full, 0, true), false), "group-owned: the everyone mask");
+        assert!(!copied(&item(other, 0, full, false), true), "a Library script is read only");
+        // in an object: copy and modify, as for opening it
+        assert!(task_permissions(perm::COPY | perm::MODIFY, 0).1);
+        assert!(!task_permissions(perm::COPY, 0).1 && !task_permissions(perm::MODIFY, 0).1);
     }
 
     #[test]

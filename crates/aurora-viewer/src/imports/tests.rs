@@ -212,6 +212,7 @@ fn authored_native_animation_opens_the_normal_inspector_without_starting_or_char
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.2,
         ease_out: 0.3,
         hand_pose: 0,
@@ -282,7 +283,12 @@ fn texture_size_limit_defaults_off_and_new_rows_capture_the_latest_persisted_cho
                 "material.gltf".into(),
                 Ok(Source::Material {
                     value: PbrMaterial::default(),
-                    images: Box::new([None, None, None, None]),
+                    images: Box::new([
+                        Some(files::local_image((*image(2048, 1024)).clone(), "Base color".into())),
+                        None,
+                        None,
+                        None,
+                    ]),
                 }),
                 Default::default(),
             ),
@@ -308,10 +314,15 @@ fn texture_size_limit_defaults_off_and_new_rows_capture_the_latest_persisted_cho
             added[2].source.as_ref().expect("rounded image").dimensions(added[2].options),
             (1024, 1024)
         );
+        assert_eq!((added[3].options.max_width, added[3].options.max_height), (2048, 2048));
+        let Some(Source::Material { images, .. }) = &added[3].source else {
+            panic!("material source")
+        };
+        let map = images[0].as_ref().expect("base color map");
         assert_eq!(
-            added[3].options,
-            import_texture::Options::default(),
-            "material-map defaults stay independent"
+            import_texture::dimensions(map.pixels.width, map.pixels.height, added[3].options),
+            (2048, 1024),
+            "material maps retain the Legacy Viewer 2K upload size, even when texture uploads are limited"
         );
         prefs.limit_texture_size = limit;
         prefs = serde_json::from_slice(&serde_json::to_vec(&prefs).expect("save preferences")).expect("restore preferences");
