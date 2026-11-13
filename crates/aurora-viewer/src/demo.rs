@@ -6622,6 +6622,17 @@ pub fn demo_media_page() -> &'static str {
 /// west face (towards the avatar) carries media. Returns the update, the
 /// object id and the face index.
 pub fn media_screen() -> (NetEvent, Uuid, u8) {
+    media_screen_at(900, 135.5, 129.5)
+}
+
+/// AURORA_DEMO_NEARBY_MEDIA: the other screens, the same as
+/// [`media_screen`]: one further north in the plaza's parcel, one outside
+/// it (east of x = 192 m).
+pub fn nearby_media_screens() -> [(NetEvent, Uuid, u8); 2] {
+    [media_screen_at(901, 141.5, 137.5), media_screen_at(902, 196.0, 129.5)]
+}
+
+fn media_screen_at(n: u32, x: f32, y: f32) -> (NetEvent, Uuid, u8) {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     // the box face looking down -X
     let mesh = aurora_prim::generate_volume(&boxp, 1.0);
@@ -6647,9 +6658,8 @@ pub fn media_screen() -> (NetEvent, Uuid, u8) {
     f.media_flags |= 1;
     f.scale_t = 576.0 / 1024.0;
     f.offset_t = -(1.0 - f.scale_t) * 0.5;
-    let (x, y) = (135.5, 129.5);
     let o = prim(
-        900,
+        n,
         Vec3::new(x, y, floor_at(x, y) + 1.9),
         Quat::IDENTITY,
         Vec3::new(0.1, 4.0, 2.25),
