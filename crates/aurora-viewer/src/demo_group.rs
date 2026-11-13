@@ -141,7 +141,33 @@ const DEFAULT_OFFICER: u64 = DEFAULT_MEMBER
     | powers::MEMBER_OPTIONS
     | powers::ROLE_ASSIGN_MEMBER_LIMITED
     | powers::NOTICES_SEND
-    | powers::MEMBER_VISIBLE_IN_DIR;
+    | powers::MEMBER_VISIBLE_IN_DIR
+    | powers::SESSION_POST_LINKS;
+
+/// With AURORA_DEMO_GROUP_PROFILE, the region applies the ability to post
+/// links in group chat, like the grid's (GroupChatPostLinksEnabled), so the
+/// role editor lists it; `<scenario>:no-links` leaves it off, as on a
+/// region that does not apply it yet.
+pub fn simulator_features() -> Option<NetEvent> {
+    let v = std::env::var("AURORA_DEMO_GROUP_PROFILE").ok()?;
+    Some(NetEvent::SimulatorFeatures {
+        handle: super::HANDLE,
+        animated_object_max_tris: 0,
+        voice_server_type: String::new(),
+        avatar_hover_height: false,
+        materials_rate: None,
+        materials_max: None,
+        lsl_syntax_id: Uuid::nil(),
+        lua_scripts: false,
+        grid_status_feed: String::new(),
+        grid_status_page: String::new(),
+        currency_base_uri: String::new(),
+        opensim: Default::default(),
+        currency_symbol: String::new(),
+        export_supported: false,
+        group_chat_post_links: !v.split(':').any(|part| part == "no-links"),
+    })
+}
 
 /// Our powers in "Aurora Builders" (AgentGroupDataUpdate).
 pub fn my_powers() -> u64 {

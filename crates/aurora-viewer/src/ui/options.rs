@@ -509,6 +509,9 @@ pub struct OptionsUi {
     pub chat_log_status: String,
     /// The transcripts are in a folder the user chose (set by the app).
     pub chat_log_custom: bool,
+    /// The transcripts are in the Legacy layout, shared with the Legacy
+    /// Viewer: no import nor erasing (set by the app).
+    pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// "Reset …?" confirmation open, then the reset it said yes to, done by
@@ -756,7 +759,8 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
         Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
         Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
         Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
-        Failure::Unsupported => aurora_i18n::tr!("media-plugins-error-unsupported"),
+        // the media pack goes to the data folder: never a drive root's
+        Failure::Unsupported | Failure::DriveRoot => aurora_i18n::tr!("media-plugins-error-unsupported"),
     }
 }
 
