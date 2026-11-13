@@ -1009,6 +1009,9 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
 | `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
+| `AURORA_DEMO_TURN_SELECT=1` | The avatar turns to face an object selected while the camera is off it |
+| `AURORA_DEMO_FIDGET=1` | The stock stand signalled, so the standing avatar's variants start |
+| `AURORA_DEMO_URL_FLOATER=1` | The simulator asks for a web window (llOpenFloater) |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
@@ -1420,6 +1423,9 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
   Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
   stays, through her map rights), and enabled again at frame 1000.
+  The departure's arrival also says "Teleport completed from" and a link to
+  the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
+  return says nothing, the far region having no name.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
@@ -1544,6 +1550,25 @@ when unfocused") is ignored during a screenshot.
   (done|cancelled): …`. `menu` opens the wolf menu at frame 540, Me at 560
   and its "Double-click on the ground" entry at 580 (`menu,y`: another
   height in points): capture frame 620.
+- **`AURORA_DEMO_TURN_SELECT=1`**: at frame 300 the camera looks down on
+  the avatar from above (off the avatar, as after an Alt zoom) and the
+  build tools select the nearest object more than 53° to the avatar's side.
+  The log gives `selection turn: to <yaw>°`, then every 30 frames
+  `demo selection turn: yaw <yaw>°, turning true|false`: with
+  `AURORA_FPS_LIMIT=60`, the yaw reaches about 6° from the target in under
+  a second, then stays.
+- **`AURORA_DEMO_FIDGET=1`**: from frame 60 the demo's simulator signals
+  the stock stand for our avatar (instead of the demo's idle animation), so
+  the stand variants start. The log gives `stand fidget: variant <id>` or
+  `stand fidget: plain stand` at once, then every 8 to 20 s; with
+  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=2700`
+  (`AURORA_CAPTURE_EXIT=1`), about three lines in 45 s. Nothing is logged
+  when the AO is on.
+- **`AURORA_DEMO_URL_FLOATER=1`**: at frame 300 a "URLFloater" message as
+  the simulator sends it for llOpenFloater (escaped URL, `trusted_content`
+  asked for) goes through aurora-net's reader, then the app. The log gives
+  `demo URLFloater: https://example.invalid/welcome`; capture frame 360:
+  the link question for an unknown address, with that URL.
 - **`AURORA_DEMO_RCLICK`**: right click at (x, y) at frame 225, or with
   `tag` on the name plate of the nearest other avatar at frame 600.
 - **`AURORA_DEMO_PIE`**: `1` forces the pie menu, `0` forces the list, only
@@ -5789,6 +5814,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; also fills Me › Experiences |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
+| `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history, offline IMs and saved private/group conversation restoration |
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
@@ -5815,6 +5841,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -7369,6 +7396,30 @@ failure. Grid validation and any paid upload are performed by the human.
   up: closing keeps the older reading position. Also check the sender menus
   in Bubbles and Legacy, and Copy/Quote/Ignore against the original target.
 
+- **`AURORA_DEMO_CONV_MODERATE=menu|eject|ban|banned|error|ban-all|unban-all|ban-all-run|profile`**: with
+  `AURORA_DEMO_CONV=aurora:group` and `AURORA_FPS_LIMIT=60`, we moderate
+  Aurora Builders' chat with every ability (the Appearance window closed).
+  `menu` right-clicks Tess, a builder, in the members' panel at frame 702 and points at "Moderator options" from frame
+  730 (capture at 800): Eject from group, Allow / Forbid text chat, then
+  Ban member under the resident's entries; Eject is enabled while the
+  group's members are not loaded, as in the Legacy Viewer. `eject` and
+  `ban` show the confirmation about Tess from frame 650. `banned` bans her
+  at frame 650: the log shows the group's members, roles and pairs asked
+  first, then `demo group: ban action` once they came, and the nearby chat
+  "You ejected Tess…". `error` forbids her text at frame 650 and the demo
+  refuses it: the group chat shows "Error while moderating.".
+  In every mode we may also manage bans in the Northern Wolves, so the
+  menu adds "Ban from all my groups" under Ban member. `ban-all` and
+  `unban-all` show at frame 650 the question about a ban (or its lifting)
+  in both groups, listed by name. `ban-all-run` sends it at frame 650:
+  a "Group bans" notice says it started, then the report (attention
+  asked) gives Aurora Builders under "Banned in" and the Northern Wolves,
+  which the demo refuses, under "Failed in"; the log shows `ban true of`
+  and the ejection from Aurora Builders. `profile`, with
+  `AURORA_DEMO_PROFILE=nova`, clicks the profile's menu button at frame
+  702 (capture at 760): "Ban from all my groups" and "Unban from all my
+  groups" above the copy entries.
+
 - **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's
   conversation), forty earlier messages come before the scenario's lines and
@@ -8585,7 +8636,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty|conference|map|invite`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
   picker of "Add...". Combine with `AURORA_DEMO_CONTACTS_FILTER=<query>` to prefill the groups filter when `AURORA_DEMO_CONTACTS=groups` (e.g. confirming that "None (no group tag)" stays visible while filtering groups; only the groups filter is filled). The detached window has the look of the tab it
@@ -8593,8 +8644,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Aurora or Compact conversation style, the contact list otherwise (add
   `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
   the run; `hidden` disables it with Contacts initially selected, showing
-  the fallback to nearby chat. The saved preference defaults to off
+  the fallback to nearby chat. `conference` selects the online friends (IM starts a
+  conference), `map` one friend who shares their location (Map enabled), `invite`
+  the first group where we may invite, on the Groups tab (Invite enabled; add
+  `AURORA_DEMO_GROUP_PROFILE=officer`, a plain member may not invite), at frame 600;
+  add `AURORA_DEMO_PEOPLE=legacy` to see the classic buttons. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
+- **`AURORA_DEMO_SET_NOTICES=config|config-responses|config-bottom|chat`**: at frame 60 the
+  set Family (the demo friend Nova in it, in memory only) gets "Show
+  notifications" and its own Do Not Disturb response, and the friends'
+  global online notices (toast and nearby chat) are off for the run.
+  `config` opens the set's settings window on its switches
+  ("Show notifications"); `config-responses` scrolls it down to the three
+  custom responses, below the appearance options; `config-bottom` to "All
+  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  nearby chat: at frames 300 and 360 Nova and another demo friend go
+  offline and online, and only Nova gets the two lines; at 400 do not
+  disturb comes on, at 420 Nova writes, and the log line `demo set
+  notices:` gives the response sent (the set's text). Capture at 620.
     In Aurora's look, Friends has no display-options gear: search, profile
     pictures and friendship rights stay available. Contact-set lists always
     show pictures; names use the set's explicit UI-name appearance and
@@ -10417,7 +10484,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
 | `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
-| `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_MUSIC=<url>`, `1` or `fade` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
@@ -10690,10 +10757,12 @@ What the inventory must show with these scenarios:
   Edit menu shortcuts reach the page. The clipboard holds "stale" first:
   "stalestale" means the paste took the system clipboard instead of the
   page's cut (the cut stays in the page under Wayland). Under X11 the
-  page gets no Cut, so the selection stays and "stalestale" is right
-  there. With `paste`, the viewer puts "pasted" on the clipboard, as
-  another program would, then presses Ctrl+V: the field reads
-  "aurorapasted" when the page gets the system clipboard.
+  page gets no Cut, so the selection stays: the field keeps "aurora",
+  or reads "stalestale" where the page can read the X clipboard. With
+  `paste`, the viewer puts "pasted" on the clipboard, as another program
+  would, then presses Ctrl+V: the field reads "aurorapasted" when the
+  page gets the system clipboard (Windows, macOS), "aurora" on Linux,
+  where the page, drawn off screen, cannot read it.
   `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
@@ -10730,7 +10799,11 @@ What the inventory must show with these scenarios:
   `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
-  music waits for the radio button.
+  music waits for the radio button. `fade`: the same address, the radio
+  turned on at frame 300 and the parcel's station changed at frame 600
+  (`AURORA_FPS_LIMIT=60`); the log gives `parcel music: fade in over 3.00 s`,
+  then `fade out over 2.00 s` and `fade in` again on the new address, with
+  the Preferences âº Sound fade times.
   For #1628, use `https://stream.electroradio.fm/320k` and enable the parcel
   radio: music should play and the stream title should update. Stop and
   restart the radio, then check another HTTP/ICY station. The explicit
@@ -11008,6 +11081,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_LEGACY_GLARE=0` | Transparent legacy materials without their glare (wet and shine layers invisible), as before #3259 |
+| `AURORA_LEGACY_NAN=off` or `check` | Legacy highlights unguarded against a NaN as in 0.9.8, or magenta where the guard caught one |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
@@ -11603,6 +11677,14 @@ What the inventory must show with these scenarios:
   as before #3259. For a tester whose card shows squares on blended leaves
   or streaks in hair: the same place with and without it tells whether the
   glare is the cause.
+- **`AURORA_LEGACY_NAN=off|check`**: a legacy material's highlight
+  (sun, local lights, projectors) or environment sample that is not a
+  finite number gives none, whatever the card's min, max and clamp do with
+  a NaN (AMD cards kept it, and the face was drawn black: black eyebrows,
+  beards and eye layers on mesh heads in 0.9.8). `off` lets it through as
+  before. `check` paints magenta where the guard caught one, cyan where
+  the colour is still not a number from another source: it works on any
+  card, NVIDIA included, as the NaN itself is computed on every card.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
