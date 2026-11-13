@@ -4410,22 +4410,22 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ENV_KEYS=u\|y\|n\|x\|j` | World › Environment shortcut pressed (Ctrl+Shift + the letter) |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
-| `AURORA_RAIN=<0..1>` | Rain of this strength until the Weather section is used |
-| `AURORA_SNOW=<0..1>` | Snow of this strength until the Weather section is used |
+| `AURORA_RAIN=<0..1>` | Rain of this strength until the Aurora Weather window is used |
+| `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow already lying this deep while it snows |
-| `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Weather section is used |
-| `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Weather section is used |
+| `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
+| `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
-| `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Weather section is used |
+| `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
 
 ### Details
 
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
-  weather of the Environment window's Aurora Weather section is drawn for
+  weather of the Aurora Weather window is drawn for
   this viewer only. `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a
-  downpour) for captures and stays until the section is touched in that
+  downpour) for captures and stays until the window is touched in that
   session; `AURORA_SNOW=<0..1>` sets snow the same way (it wins over
   `AURORA_RAIN`), and `AURORA_SNOW_LYING=<0..1>` starts it with that much
   snow on the ground (it builds over minutes otherwise: a dusting, then a
@@ -4448,7 +4448,7 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` turns the northern
   lights on at that brightness, toward `deg` (compass, 0 north; default
   0) with `colours` 0 green, 1 violet or 2 red (default 0), until the
-  section is touched; they show only at night: with
+  window is touched; they show only at night: with
   `AURORA_DEMO_NIGHT_SKY=real:<azimuth>,20` looking their way, curtains
   low over the horizon, green at their foot, folding and drifting.
 - **`AURORA_DEMO_TERRAIN_CROSSING=1`** seeds a neighbouring region's terrain

@@ -945,9 +945,9 @@ pub(crate) fn compass_point(degrees: f32) -> String {
     .to_string()
 }
 
-/// "Weather": the rain (and later snow, wind, thunder) of this viewer only,
-/// folded away until opened. The controls not working yet are greyed out.
-/// The Aurora Weather window's rows.
+/// The Aurora Weather window's rows: the weather of this viewer only (what
+/// falls, rain or snow, and how hard, the wind, thunder, the northern
+/// lights).
 /// `fill`: set when the snow is to lie everywhere at once (its button).
 fn weather_body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, fill: &mut bool) {
     let before = w.clone();
