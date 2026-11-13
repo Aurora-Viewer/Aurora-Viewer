@@ -1121,6 +1121,34 @@ pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
     super::context::request(ctx, CtxAction::OpenUrl(web_target(url).into_owned()));
 }
 
+/// The web addresses of a text and their byte ranges, in order, for the
+/// places that draw a one-line text with clickable links (the location
+/// field of the bars, `bars::place`): the Legacy Viewer linkifies the URLs
+/// an owner typed in a parcel name (LLUrlRegistry, LLURLLineEditor). Place
+/// and agent links stay text there.
+pub(crate) fn web_links(text: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    let mut base = 0;
+    while !rest.is_empty() {
+        let Some((i, len, seg)) = next_link(rest) else { break };
+        if len == 0 {
+            break;
+        }
+        if let Seg::Url(url) = seg {
+            let start = base + i;
+            let end = start + len;
+            // a labelled link shows its label, not the address: leave it text
+            if text.get(start..end) == Some(url) {
+                out.push((start..end, url));
+            }
+        }
+        base += i + len;
+        rest = &rest[i + len..];
+    }
+    out
+}
+
 /// Who wrote a bubble line, drawn before the name.
 enum Sender {
     Avatar(uuid::Uuid),
