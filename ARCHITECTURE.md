@@ -2859,6 +2859,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/preview.rs`, `shaders/preview.wgsl` | 3D previews in the windows: PBR rendering and skinning on the GPU thread, off-screen targets linked directly to egui, deduplication of the shared maps, no GPU readback and no wait on the GPU in the interface loop. Shared orbit, screen-space pan, zoom and camera reset; material previews use Sphere / Cube / Aurora 3D and four worker-prepared thumbnails, with a self-contained bundled GLB |
 | `build/ui/shape_preview.rs`, `aurora-render/src/preview_mesh.rs`, `shaders/preview_mesh.wgsl` | Create thumbnails from the actual volume parameters and placement rotations, with shared studio shading and readable framing in both layouts. Cached GPU MSAA and supersampling box-filter premultiplied coverage at physical display resolution (64 samples for small tiles, bounded sampling for larger HiDPI tiles). Same-sized tiles share transient render targets; only final images remain cached until their source/size changes or the palette closes. No CPU readback or GPU wait in the frame loop. |
 | `build/new_defaults.rs`, `ui/options/pages/build.rs` | What a prim made with the Create tool starts as (FSCommon::applyDefaultBuildPreferences): colour, transparency, glow, full bright, shininess, physical, temporary and phantom, given when it arrives ours with full rights; Preferences › Build lists them with the size and material |
+| `weather/mod.rs`, `weather/region.rs`, `ui/environment.rs`, `scene/rain_sound.rs`, `scene/thunder.rs`, `scene/snow_detail.rs`, `scene/snow_trail.rs`, `scene/avatar_snow.rs`, `scene/rain_ground.rs`, `aurora-render/src/projector_shadows.rs` (`shelter_slot`) | Aurora Weather: the settings and the gusting wind, the region weather read from sky and day names, the Aurora Weather window, the rain's sound, thunder and lightning, the snow's detail texture, footprints, snow on avatars, the terrain under the puddles, and the shelter map's place in the shadow atlas (the first map past the projectors'); the drawing itself is in `shaders/env.wgsl` (see "Aurora Weather" below) |
 | `scene/surface_area.rs` | Large surface protection (RenderVolumeSAProtection): prims and sculpts measured on their swept grid (`VolumeMesh::grid_area`, kept per geometry), those past their threshold added from the smallest each frame, the rest not drawn past the total; the object's drawing goes and comes back through `Scene::stop_drawing` and the sync planner |
 | `build/replace.rs`, `build/replace/`, `build/ui/replace.rs` | Guided replacement of a linked part: locked target, selection of the replacement, options and progress; steps confirmed by the server, copy of the contents through the resident's inventory, script states preserved, recovery of the initial configuration and offline simulator |
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Editing cycle of the documents: draft and save correlated with the window, closing after confirmation, refusal that keeps the text; import of v1 / v2 notecards, v2 export with a bounded UTF-8 length and the permissions of the attachments still referenced preserved |
@@ -3360,6 +3361,42 @@ the consumed modifier state, while keyboard Ctrl is restored immediately.
 Scene object actions and visible HUDs therefore remain usable without moving
 the AF point; Alt camera gestures and Shift group focus keep their priority.
 The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
+
+Aurora Weather (Aurora's own; the Legacy Viewer has none): `weather/mod.rs`
+holds the settings of the Aurora Weather window (`ui/environment.rs`, its own
+floater, opened from the Environment window and the toolbar) and of Preferences ›
+Graphics › Sky and environment (rain or snow, amount, wind lulls, gusts and
+direction, puddles, thunder, quality) and the gusting `Wind`.
+`weather/region.rs` is the opt-in region weather, laid out as EEP is: a
+sky carries the weather of its moment (what falls, its chance, the
+lightest and heaviest, the wind, thunder) as a nine-letter code at the end
+of its name, the day cycle the timing (its key frames, blended as their
+colours are; a sky without a code is clear) and, at the end of the day's
+name, a five-letter schedule (the period, 5 minutes to a day, and the
+seed). The names reach every viewer, an EEP item's description does not. A known
+limit: the Legacy Viewer saves a day without its frames' names
+(LLSettingsDay::getSettings), so a region's day saved again by such a
+viewer loses its key frames' weather (the day's schedule stays); applying
+the coded skies again with Aurora restores it. Aurora's own "Apply to
+region" sends the frames' names, which the Legacy Viewer never does.
+In each period a seeded hash decides whether and how hard it falls, eased
+between periods, so viewers with the same environment and clock show the
+same weather with nothing sent. The sky editor's Aurora Weather tab writes
+a sky's code and previews it; the day editor writes the schedule and marks
+the key frames that carry weather. `App::update_weather_now` lays it over the settings each frame. The rain and
+snow are drawn by `aurora-render` (`shaders/env.wgsl`, the rain sections:
+drops or flakes, the shelter map, distant layers, wet ground and puddles),
+the snow lying on the ground by the same wet pass from the memory's third channel, with its detail
+texture uploaded by `scene/snow_detail.rs` (assets/snow, CC0) and footprints pressed by
+`scene/snow_trail.rs` (the feet of the avatars near, set down) into a trail map
+(`fs_snow_trail_update`), the thunder and lightning by
+`scene/thunder.rs` (its bolts as particles),
+the rain's sound by `scene/rain_sound.rs`, the snow gathering on the avatars
+near the camera by `scene/avatar_snow.rs` (an amount per avatar in its joint
+palette, melting under cover or in rain) and the terrain's dips the puddles
+gather in by `scene/rain_ground.rs` (the heightmap around the camera, only
+while it rains). The footprints and the snow on avatars run only while snow
+falls or lies (`RenderStats::snow_lying`).
 
 ## Life of a frame
 
@@ -4435,8 +4472,15 @@ pose editor. It retains contact definitions while keyed samples and staged
 pose goals drive the own avatar. `clip/document.rs` captures LL-local
 rotations and scaled-parent positions, records pelvis translations by default
 and other directly edited position channels, trims/rebases native tracks and
-samples new boundaries. `clip/ui.rs` separates timeline, per-bone priorities
-and classic playback metadata. `clip/files.rs` binds previews and runs the
+samples new boundaries; every key edit matches a key by the frame the
+timeline draws it on, so off-grid imported keys stay editable. `clip/ui.rs`
+draws the editor's own window: Bone, Tracks, Clip and Display pages over the
+key/export footer. `clip/timeline.rs` draws the timeline window: one toolbar
+(transport, Move/Rotate, IK/FK, Mirror, keying, edit, view, File), a frame
+ruler sharing the lanes' scale, and the bone lanes with their keys.
+`clip/picker.rs` builds the Bone page's clickable Body/Hands/Face skeleton
+from the rig's rest pose (pure classification, projection and fit, cached per
+rig). `clip/files.rs` binds previews and runs the
 existing `aurora_assets::import_animation` codec, full native validation,
 file dialogs and writes on background jobs. Preview revisions atomically
 replace the sample before recorded corrections are removed; later pose edits
@@ -4445,6 +4489,12 @@ keep concurrent worker results separate. Generated native bytes enter the
 ordinary `Imports::authored_animation` inspector with normal folder selection;
 no upload/payment command is created by this handoff. Real skeletal keys
 include captured IK results; virtual control definitions remain in rig LSL.
+Auto-key records on pose release, waits for the rebuilt preview to replace the
+temporary edit, then advances by a saved, adjustable time step (0.5 seconds by
+default); the visible timeline range extends when needed. Timeline preview
+looping can use the full timeline or end at the last key of an enabled authored
+track, independently of exported loop metadata. The timeline's resize container
+keeps the track list scrollable within the user's chosen panel height.
 
 `ik_edit/prim_targets.rs` keeps read-only scene designation separate from the
 object Edit selection. A single edited prim proposes a draft target; an
@@ -4611,6 +4661,29 @@ parallel pose workers. Animation signals and controller clocks continue, so
 releasing the override restores the current phase. The shaped rest skeleton is
 retained, with A-Pose lowering each straight arm 45 degrees. Leaving the studio
 releases the local override.
+The Hover control applies a session-only vertical offset to the displayed joint
+and attachment palettes after posing. The stage and avatar world transform stay
+fixed, and animation keys are untouched; Reset returns the offset to zero.
+Studio's optional Animation Editor mode reuses the native IK Edit clip document
+and avatar pose preview rather than rendering a second avatar. Its bottom
+timeline captures and scrubs bone tracks while the Studio orbit, pan and zoom
+remain active. The whole timeline body scrolls vertically so wrapped controls
+cannot push tracks beyond the window. Changing the auto-key advance step can be
+applied to existing keys as one reversible time-scale around the clip start;
+the operation rejects frame collisions and durations over 60 seconds. Timeline
+FPS and smooth, linear, stepped or editable Bézier
+interpolation are editor properties; eased curves are sampled at up to 60 Hz
+within the native per-joint key limit, and authored key times are preserved in
+the ANIM format on export.
+Optional auto-key records changed joints
+once a pose drag ends. Compatible `.anim` and `.bvh` files become editable
+native joint tracks, while `.auroraanim` project files preserve editor-only
+interpolation and timing.
+Final uploads still pass through the ordinary upload inspector for review and
+fee confirmation. The editor suspends around that upload flow and reopens the
+same draft when the inspector closes. Opening Studio's Animation Editor also
+suspends any active Poser session so its early-return pose path cannot bypass
+animation key capture.
 Each preset's final matrices are translated as one unit so the lowest foot
 joint, less the shared sole-height approximation, meets the entry floor. The
 conversion uses the actual skeleton model, including mesh pelvis offsets and
@@ -4661,6 +4734,14 @@ aged, additive GPU billboards drift outwards and fade within 1.2 seconds,
 without world emitters or asset loading. Reduced motion skips both reveal
 effects; the ordinary particle budget also bounds the burst. Teleport,
 logout, VR and camera restrictions cancel pending transitions immediately.
+
+The Studio Animation Editor entry point reuses `ik_edit::clip::Document` and
+the existing native clip preview, capture, timeline, history, ANIM/BVH import
+and ANIM export jobs. It does not add another skeleton, animation clock or renderer. While the
+editor is active the Studio preset override is released so the authored clip
+is visible on the live local avatar; the existing Studio view-projection keeps
+bone handles aligned with the inspection camera. Closing the Studio-owned
+editor ends its clip preview and returns to the Studio's ordinary pose mode.
 
 ## Local interactive water
 

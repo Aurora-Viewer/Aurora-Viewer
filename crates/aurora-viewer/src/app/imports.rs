@@ -796,6 +796,9 @@ impl App {
         }
         self.imports.save_local_registry(false);
         self.show_local_appearance_status(ctx, palette);
+        if self.avatar_studio.active && self.avatar_studio.animation_editor && !self.imports.any_window_open() {
+            self.ik_editor.resume_after_upload(&self.world);
+        }
     }
 
     fn show_local_appearance_status(&mut self, ctx: &egui::Context, palette: &Palette) {
