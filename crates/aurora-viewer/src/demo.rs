@@ -4425,6 +4425,7 @@ pub fn events() -> Vec<NetEvent> {
             billable_factor: 1.0,
         })),
     ];
+    ev.extend(group::simulator_features());
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];

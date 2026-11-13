@@ -1048,6 +1048,7 @@ impl Session<'_> {
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
                     let lua_scripts = v["LuaScriptsEnabled"].as_bool();
+                    let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1073,6 +1074,7 @@ impl Session<'_> {
                         opensim,
                         currency_symbol,
                         export_supported,
+                        group_chat_post_links,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),

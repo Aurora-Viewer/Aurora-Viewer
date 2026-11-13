@@ -36,6 +36,9 @@ pub struct View<'a> {
     pub member: Option<&'a GroupMembership>,
     pub data: Option<&'a GroupData>,
     pub active: bool,
+    /// The region applies the ability to post links in group chat: the
+    /// role editor lists it (abilities::catalogue).
+    pub post_links: bool,
     member_count: Option<i64>,
 }
 
@@ -58,6 +61,7 @@ impl<'a> View<'a> {
             member,
             data: world.group_data.get(&id),
             active: world.groups.active == id && !id.is_nil(),
+            post_links: world.group_chat_post_links(),
             member_count: world.group_member_count(id),
         }
     }
