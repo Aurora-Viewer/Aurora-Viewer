@@ -4424,9 +4424,47 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ENV_KEYS=u\|y\|n\|x\|j` | World › Environment shortcut pressed (Ctrl+Shift + the letter) |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
+| `AURORA_RAIN=<0..1>` | Rain of this strength until the Aurora Weather window is used |
+| `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
+| `AURORA_SNOW_LYING=<0..1>` | Snow already lying this deep while it snows |
+| `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
+| `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
+| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
+| `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
+| `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
+| `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
 
 ### Details
 
+- **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
+  weather of the Aurora Weather window is drawn for
+  this viewer only. `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a
+  downpour) for captures and stays until the window is touched in that
+  session; `AURORA_SNOW=<0..1>` sets snow the same way (it wins over
+  `AURORA_RAIN`), and `AURORA_SNOW_LYING=<0..1>` starts it with that much
+  snow on the ground (it builds over minutes otherwise: a dusting, then a
+  white cover on what faces up, none on walls or steep roofs).
+  `AURORA_SNOW_DEEP` and `AURORA_WEATHER_QUALITY` set deep snow and the
+  quality the same way, to measure each with `AURORA_PROFILE`. The wind,
+  the puddles and the thunder come from the settings.
+  `AURORA_RAIN_DEBUG=1` colours the
+  ground by its wetness memory: yellow, outside the memory; red, only
+  assumed open (seen beyond the shelter map); green, wet; blue, dry under
+  cover; brighter, the wetter. `AURORA_THUNDER_AT=<s>` makes one strike
+  1 km away, `s` seconds after the start, whether Thunder is on or not: its
+  flash at once and, for most strikes, a bolt in the sky in its direction,
+  then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in
+  demo mode). `AURORA_THUNDER_HOLD=<flash>` holds the lightning's light on
+  the world at this brightness (about 1 for a strike a kilometre away, up to
+  1.6 for the nearest), to capture the lit sky and scene; it does not hold
+  the bolt. A capture of the bolt itself: `AURORA_THUNDER_AT` with
+  `AURORA_CAPTURE_FRAMES` set to land within a tenth of a second of it.
+  `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` turns the northern
+  lights on at that brightness, toward `deg` (compass, 0 north; default
+  0) with `colours` 0 green, 1 violet or 2 red (default 0), until the
+  window is touched; they show only at night: with
+  `AURORA_DEMO_NIGHT_SKY=real:<azimuth>,20` looking their way, curtains
+  low over the horizon, green at their foot, folding and drifting.
 - **`AURORA_DEMO_TERRAIN_CROSSING=1`** seeds a neighbouring region's terrain
   at frame 60, then changes the main region at frames 600 and 900 while
   preserving the global position at each transition. Capture frames `590,601,605,610`:
@@ -12441,6 +12479,14 @@ packet into GPU work while the main thread is already on the next frame.
 With `AURORA_RENDER_THREAD=0`, everything that follows runs on the main
 thread.
 
+The weather's cost, feature by feature: `scripts/weather-profile.py` runs
+the release viewer in demo mode once per scene (no weather, light and heavy
+rain at each quality, a held strike, snow falling, lying and deep, a night
+with and without the northern lights), 20 s each with `AURORA_PROFILE=1`,
+and prints a Markdown table of the medians: frame, GPU, `g_weather` and its
+parts, against the scene without weather. `--scenes` picks some,
+`--parse-only` reads the last runs' logs again.
+
 - `fps`, `frame` (average time of a frame, in ms), `p95`, `max` and `slow`:
   the number of frames beyond 1.5 × the median of that second (the hitches
   shown by the frame graph). The frame is that of the main thread: the time
@@ -12588,6 +12634,12 @@ thread.
     reflection probe face with its filtering, the copy of the scene for
     refraction and SSR (the cut-out pass and the submerged water particles
     are counted with it), and SSR;
+  - `g_shelter`, `g_weather_memory`, `g_wet_ground`, `g_drops`: what
+    `g_weather` is made of: the shelter map (drawn with the shadows while
+    it rains or snows, or the ground is still wet), the wetness and
+    footprints memories, the wet ground with the snow lying (deep snow
+    included), and the drops or flakes with their splashes and the distant
+    layers;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,

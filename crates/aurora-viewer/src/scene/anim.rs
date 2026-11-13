@@ -22,9 +22,17 @@ use uuid::Uuid;
 pub const FETCH_KIND_ANIM: u64 = 4 << 60;
 
 /// Palette entries reserved per skeleton instance: its joints, the anchors
-/// of the objects it wears (anchors.rs), then the weights of its live
-/// morphs (live_morphs.rs).
-pub const PALETTE_JOINTS: usize = super::live_morphs::WEIGHTS + super::live_morphs::WEIGHT_MATRICES;
+/// of the objects it wears (anchors.rs), the weights of its live morphs
+/// (live_morphs.rs), then the snow on it (avatar_snow.rs).
+pub const PALETTE_JOINTS: usize = AVATAR_SNOW + 1;
+
+/// The palette entry holding how much snow is on the avatar (x of its
+/// first column): after the live morphs' weights.
+pub const AVATAR_SNOW: usize = super::live_morphs::WEIGHTS + super::live_morphs::WEIGHT_MATRICES;
+
+// the shaders find them as these (common.wgsl)
+const _: () = assert!(AVATAR_SNOW == aurora_render::AVATAR_SNOW as usize);
+const _: () = assert!(PALETTE_JOINTS == aurora_render::PALETTE_STRIDE as usize);
 
 /// First anchor matrix of a palette; the joints are below it.
 pub const ANCHOR_BASE: usize = aurora_render::SKELETON_ANCHOR as usize;
