@@ -360,7 +360,8 @@ pub struct RegionDay {
 
 impl RegionDay {
     /// The weather of sky track `track` (0-based, the ground first; an empty
-    /// track takes the ground's, as EEP's skies do) of `day`, or None when
+    /// track takes the next lower one's, as the sky drawn does:
+    /// `DayCycle::track_for_altitude`, selectTrackNumber) of `day`, or None when
     /// none of its skies carries a weather (the region sets none there).
     pub fn read(day: &aurora_llsd::Llsd, track: usize, length: f64, offset: f64) -> Option<RegionDay> {
         let frames = &day["frames"];
@@ -381,9 +382,11 @@ impl RegionDay {
                 })
                 .collect()
         };
+        let mut track = track;
         let mut keys = keys_of(track);
-        if keys.is_empty() && track > 0 {
-            keys = keys_of(0);
+        while keys.is_empty() && track > 0 {
+            track -= 1;
+            keys = keys_of(track);
         }
         if keys.iter().all(|(_, w)| w.is_none()) {
             return None;
@@ -844,6 +847,22 @@ mod tests {
         assert!(RegionDay::read(&day("Day", &[(0.0, "a", "Plain")]), 0, 14_400.0, 0.0).is_none());
         // an empty upper track takes the ground's
         assert!(RegionDay::read(&d, 2, 14_400.0, 0.0).is_some());
+        // ... or the next lower one's, as the sky drawn does: track 3 empty,
+        // track 2 calm, the ground stormy (review of #2410)
+        let key = |name: &str| Llsd::Array(vec![llsd_map! {"key_keyframe" => 0.0, "key_name" => name}]);
+        let tiered = llsd_map! {
+            "name" => "Day",
+            "frames" => llsd_map! {
+                "storm" => llsd_map! {"type" => "sky", "name" => s.name_with("Storm")},
+                "calm" => llsd_map! {"type" => "sky", "name" => SkyWeather::CLEAR.name_with("Calm")},
+            },
+            "tracks" => Llsd::Array(vec![Llsd::Array(vec![]), key("storm"), key("calm"), Llsd::Array(vec![])]),
+        };
+        assert_eq!(
+            RegionDay::read(&tiered, 2, 14_400.0, 0.0).expect("calm").state_at(0.0),
+            SkyWeather::CLEAR
+        );
+        assert_eq!(RegionDay::read(&tiered, 0, 14_400.0, 0.0).expect("storm").state_at(0.0), s);
     }
 
     #[test]

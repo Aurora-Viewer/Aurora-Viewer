@@ -749,8 +749,11 @@ pub struct App {
     /// environment sets over them when regions may (`update_weather_now`).
     weather_now: crate::weather::WeatherSettings,
     /// The region weather read from the environment in effect, keyed by its
-    /// day cycle's map and sky track (parsed again only when they change).
-    region_weather: Option<(usize, usize, Option<crate::weather::region::RegionDay>)>,
+    /// day cycle (held, compared by identity: a pointer alone could come
+    /// back as another region's day), sky track, length and offset (parsed
+    /// again only when one changes).
+    #[allow(clippy::type_complexity)]
+    region_weather: Option<(Arc<aurora_llsd::Llsd>, usize, f64, f64, Option<crate::weather::region::RegionDay>)>,
     /// How deep a region's snow lies so far (its history played again), and
     /// when that was worked out (again every ten seconds).
     snow_lying: (f32, Option<Instant>),
@@ -6110,23 +6113,24 @@ impl App {
             && let Ok((day, length, offset)) = self.world.eep.day_settings(true)
         {
             let altitudes = self.world.eep.altitudes();
-            let z = self.camera.position.z;
-            // LLEnvironment::calculateSkyTrackForAltitude (0-based)
+            // the agent's altitude, as LLEnvironment::calculateSkyTrackForAltitude
+            // takes it (not the camera's); 0-based
+            let z = self.world.agent.position.z;
             let track = match altitudes.iter().position(|a| z <= *a) {
                 Some(0) => 0,
                 None => 3,
                 Some(i) => i.min(4) - 1,
             };
-            let key = (Arc::as_ptr(&day) as usize, track);
-            let fresh = !matches!(&self.region_weather, Some((ptr, t, _)) if (*ptr, *t) == key);
+            let fresh = !matches!(&self.region_weather,
+                Some((d, t, l, o, _)) if Arc::ptr_eq(d, &day) && *t == track && *l == length && *o == offset);
             if fresh {
                 let read = RegionDay::read(&day, track, length, offset);
                 if read.is_some() {
                     log::info!("region weather on sky track {}", track + 1);
                 }
-                self.region_weather = Some((key.0, key.1, read));
+                self.region_weather = Some((day, track, length, offset, read));
             }
-            if let Some((_, _, Some(day))) = &self.region_weather {
+            if let Some((_, _, _, _, Some(day))) = &self.region_weather {
                 if due {
                     self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
                 }
