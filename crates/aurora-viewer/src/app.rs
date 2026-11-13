@@ -20328,6 +20328,9 @@ impl ApplicationHandler for App {
                 } else if v == "monitor-scene-objects" {
                     ui::perf::set_full(&self.egui_ctx, true);
                     self.monitor.show_scene_objects();
+                } else if v == "monitor-scene-worn" || v == "monitor-scene-huds" {
+                    ui::perf::set_full(&self.egui_ctx, true);
+                    self.monitor.show_scene_worn(v.ends_with("huds"));
                 } else if let Some(tab) = v.strip_prefix("monitor-").and_then(ui::monitor::Tab::from_key) {
                     ui::perf::set_full(&self.egui_ctx, true);
                     ui::monitor::demo_tab(&self.egui_ctx, tab);
@@ -22485,7 +22488,8 @@ impl ApplicationHandler for App {
                 }
                 self.settings.show_huds = mode != "hidden";
                 self.panels.inventory = false;
-                self.panels.perf = false;
+                // (kept with AURORA_DEMO_PERF: its Scene › HUDs lists these)
+                self.panels.perf &= std::env::var_os("AURORA_DEMO_PERF").is_some();
                 self.panels.chat = false;
                 self.panels.appearance = false;
                 self.panels.settings = false;
