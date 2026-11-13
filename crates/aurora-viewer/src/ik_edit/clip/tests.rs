@@ -180,10 +180,13 @@ fn studio_animation_timeline_stays_inside_narrow_viewports() {
             viewport.inner_rect = Some(screen);
         }
         let ctx = egui::Context::default();
-        let mut run_frame = || ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
-        let _ = run_frame();
+        let mut run_frame = || {
+            let mut output = ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
+            output.textures_delta.clear();
+        };
+        run_frame();
         ctx.set_zoom_factor(zoom);
-        let _ = run_frame();
+        run_frame();
         let timeline = ctx.memory(|memory| memory.area_rect(id)).expect("timeline overlay");
         let visible = ctx.content_rect();
         assert!(
@@ -225,12 +228,16 @@ fn closing_studio_timeline_releases_its_egui_hit_layer() {
         ..Default::default()
     };
     let id = egui::Id::unique("avatar-studio-animation-timeline-window-v3");
-    let _ = ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
+    let mut run_frame = |editor: &mut Editor| {
+        let mut output = ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
+        output.textures_delta.clear();
+    };
+    run_frame(&mut editor);
     assert!(ctx.memory(|memory| memory.areas().visible_layer_ids().iter().any(|layer| layer.id == id)));
 
     editor.clip.timeline_open = false;
-    let _ = ctx.run_ui(input.clone(), |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
-    let _ = ctx.run_ui(input, |ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world));
+    run_frame(&mut editor);
+    run_frame(&mut editor);
     assert!(!ctx.memory(|memory| memory.areas().visible_layer_ids().iter().any(|layer| layer.id == id)));
 }
 

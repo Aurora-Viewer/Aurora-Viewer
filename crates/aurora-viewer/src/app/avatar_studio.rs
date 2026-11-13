@@ -726,7 +726,7 @@ mod hover_menu_tests {
         let mut row_height = None;
         let mut hover_height = 0.35;
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(screen),
                 ..Default::default()
@@ -735,6 +735,7 @@ mod hover_menu_tests {
                 row_height = Some(studio_hover_reset_row(ui, &mut hover_height).rect.height());
             },
         );
+        output.textures_delta.clear();
         assert!(row_height.is_some_and(|height| height <= 40.0));
         assert_eq!(hover_height, 0.35);
     }
