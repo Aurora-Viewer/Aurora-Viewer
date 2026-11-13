@@ -210,6 +210,16 @@ const BEFORE: &[&str] = &[
     "chat_bubbles_hide_console",
     "typing_bubbles",
     "chat_bubble_opacity",
+    "window_opacity_active",
+    "window_opacity_inactive",
+    "conversations_opacity",
+    "conversations_active_opacity_override",
+    "bar_opacity",
+    "menu_opacity",
+    "console_opacity",
+    "minimap_opacity",
+    "pie_opacity_override",
+    "pie_opacity",
     "toast_friends_online",
     "friends_online_in_chat",
     "presence_position",
@@ -1797,6 +1807,18 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
+}
+
+#[test]
+fn the_weather_lives_in_graphics_only() {
+    // (and in the Aurora Weather window; Preferences › Aurora, the choices
+    // between Aurora's look and the Legacy Viewer's, has none of it)
+    let paths = collected();
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
+    assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
 }
 
 #[test]

@@ -499,6 +499,13 @@ impl App {
                         request,
                         item,
                         asset_type: kind,
+                        lua: kind == 10
+                            && self
+                                .world
+                                .inventory
+                                .items
+                                .get(&item)
+                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,

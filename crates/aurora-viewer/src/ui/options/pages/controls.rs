@@ -58,6 +58,12 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
         );
+        // FSTurnAvatarToSelectedObject
+        cx.toggle(
+            tr!("ui-options-turn-to-selected"),
+            tr!("ui-options-turn-to-selected-help"),
+            &field!(turn_to_selected),
+        );
         // AutomaticFly (agent_jump / LLAgent::propagate), split into two
         // independent choices at the human's request.
         cx.toggle(
@@ -87,6 +93,12 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-always-show-teleport-cancel"),
             tr!("ui-options-always-show-teleport-cancel-help"),
             &field!(always_show_tp_cancel),
+        );
+        // FSShowBackSLURL (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-show-back-slurl"),
+            tr!("ui-options-show-back-slurl-help"),
+            &field!(show_back_slurl),
         );
         friends_only_row(cx);
         friends_only_keep_row(cx);
