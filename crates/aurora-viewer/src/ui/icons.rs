@@ -207,6 +207,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "user-x",
     "users",
     "users-group",
+    "users-minus",
     "users-plus",
     "vector",
     "volume",

@@ -88,6 +88,7 @@ mod debug_settings;
 mod draw_stepping;
 mod graphics_start;
 mod grid_status;
+mod group_chat_moderation;
 mod group_titles;
 mod hover_height;
 mod hover_tips;
@@ -141,6 +142,7 @@ mod shape_editor;
 mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
+mod stand_fidget;
 mod stream_list;
 mod suggest_demo;
 mod task_notecards;
@@ -472,17 +474,6 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
-    /// The pages (their plugin's process id) that cut or copied, each with
-    /// the system clipboard's text at its last cut or copy: the cut stays
-    /// in that page's own clipboard under Wayland
-    /// (keys::paste_through_viewer). The latest last, at most
-    /// `keys::PAGE_COPIES`; empty under X11, where no page cuts
-    /// (keys::page_cuts).
-    page_copy: Vec<(u32, Option<String>)>,
-    /// What the last Paste press gave the page (`media_clipboard`), which
-    /// its key repeats give again without reading the clipboard each time;
-    /// told every key event (keys::HeldPaste).
-    held_paste: crate::media::keys::HeldPaste,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -612,6 +603,9 @@ pub struct App {
     /// The yaw the avatar turns to, facing what it selected
     /// (FSTurnAvatarToSelectedObject, app/selection_turn.rs).
     selection_turn: Option<f32>,
+    /// The stock stand variants of a standing avatar without an AO
+    /// (LLAgent::fidget, app/stand_fidget.rs).
+    stand_fidget: stand_fidget::Fidget,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     /// Build › Edit particles (ParticleEditor).
@@ -720,6 +714,8 @@ pub struct App {
     moderation_ask: Option<land_moderation::Ask>,
     /// A resident's Admin › Kick / Freeze / Unfreeze, waiting for its message.
     god_kick_ask: Option<admin_status::KickAsk>,
+    /// A group chat moderator's ejection or ban, asked first.
+    group_chat_confirm: Option<ui::chat::moderation::Confirm>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -1639,8 +1635,6 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
-            page_copy: Vec::new(),
-            held_paste: Default::default(),
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -1716,6 +1710,7 @@ impl App {
             double_press: false,
             autopilot: None,
             selection_turn: None,
+            stand_fidget: Default::default(),
             autopilot_flags: 0,
             autopilot_stop_pending: false,
             mic_on: false,
@@ -1765,6 +1760,7 @@ impl App {
             delete_confirm: None,
             moderation_ask: None,
             god_kick_ask: None,
+            group_chat_confirm: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -3320,6 +3316,14 @@ impl App {
             }
             return;
         }
+        // llOpenFloater (LLUrlFloaterDispatchHandler): the Legacy Viewer
+        // opens its web_content window at once. Aurora takes the way of any
+        // other link instead: refused schemes, the question for a dangerous
+        // or unknown address, and the resident's choice of browser.
+        if let NetEvent::UrlFloater { url } = ev {
+            self.open_web_link(url, None);
+            return;
+        }
         if let NetEvent::TeleportRegionResolved { request, result } = ev {
             if !self.settings.rlva_enabled {
                 self.named_teleport.cancel_scripts();
@@ -4439,6 +4443,51 @@ impl App {
     /// AURORA_DEMO_CAMERA: scripted camera input (camera/demo.rs).
     fn demo_camera_steps(&mut self, spec: &str) {
         use crate::camera::demo::Step;
+        let demo_joint = match spec {
+            "head-follow" => Some(crate::camera::CameraFollowJoint::Head),
+            "pelvis-follow" => Some(crate::camera::CameraFollowJoint::Pelvis),
+            "hand-follow" => Some(crate::camera::CameraFollowJoint::LeftWrist),
+            _ => None,
+        };
+        if let Some(joint) = demo_joint {
+            // Set the scenario's initial choice once. Reapplying it each
+            // frame made the Preferences picker impossible to change.
+            if self.frame_count == 1 {
+                self.settings.camera.third_person_follow_joint = Some(joint);
+            }
+            if self.frame_count == 540 {
+                if let Some(joint_rest) = self
+                    .world
+                    .avatar_lib
+                    .rig
+                    .names
+                    .get(joint.rig_name())
+                    .and_then(|&i| self.world.avatar_lib.rig.local_pos.get(i))
+                    .copied()
+                {
+                    let id = uuid::Uuid::from_u128(0x1015_eeef);
+                    let axis = if joint == crate::camera::CameraFollowJoint::LeftWrist {
+                        Vec3::X
+                    } else {
+                        Vec3::Z
+                    };
+                    self.scene.anims.insert(
+                        id,
+                        Arc::new(crate::scene::anim::BoundAnim::bind(
+                            crate::demo::third_person_joint_animation(joint.rig_name(), joint_rest, axis),
+                            &self.world.avatar_lib.rig,
+                        )),
+                    );
+                    self.world.apply(NetEvent::AvatarAnimations {
+                        avatar: self.world.agent_id,
+                        anims: vec![(id, 1)],
+                        sources: Vec::new(),
+                    });
+                } else {
+                    log::warn!("demo camera follow: rig has no {} rest position", joint.rig_name());
+                }
+            }
+        }
         if spec.ends_with("-body-on") || spec.ends_with("-body-off") {
             self.settings.camera.show_avatar_in_mouselook = spec.ends_with("-body-on");
             self.settings.camera.mouselook_follow_eyes = spec.contains("-eyes-on");
@@ -5775,8 +5824,9 @@ impl App {
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
-            presence: self.settings.toast_friends_online,
-            presence_in_chat: self.settings.friends_online_in_chat,
+            // AURORA_DEMO_SET_NOTICES: only the contact set's notices
+            presence: self.settings.toast_friends_online && !(self.demo && crate::demo::set_notices::active()),
+            presence_in_chat: self.settings.friends_online_in_chat && !(self.demo && crate::demo::set_notices::active()),
             im: self.settings.toast_im,
             // AURORA_DEMO_TOASTS shows a group message too (off by default)
             group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
@@ -10032,10 +10082,14 @@ impl App {
                     .filter(|id| self.build.edits_object(&self.world, id))
                     .map(|_| self.settings.build.follow_edit_object),
                 eye_offset: None,
+                follow_joint_offset: None,
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
-            if frame.edit_tracking.is_some() || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+            if frame.edit_tracking.is_some()
+                || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera)
+                || self.camera.needs_animated_joint(&self.settings.camera)
+            {
                 // Evaluate the focused edit selection after the local drag,
                 // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
@@ -10451,6 +10505,7 @@ impl App {
                 crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
             }
             self.update_ao(now);
+            self.update_stand_fidget(now);
             if self.demo && crate::demo::animation_edit_demo() {
                 match self.frame_count {
                     420 | 750 => {
@@ -10676,7 +10731,14 @@ impl App {
             let camera_changed = late_camera_frame.is_some() || panned;
             if let Some(mut frame) = late_camera_frame {
                 frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
-                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+                frame.follow_joint_offset = self
+                    .settings
+                    .camera
+                    .third_person_follow_joint
+                    .and_then(|joint| self.scene.joint_offset(&self.world, &self.world.agent_id, joint.rig_name()));
+                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera)
+                    || self.camera.needs_animated_joint(&self.settings.camera)
+                {
                     frame.now = now;
                 }
                 if self.vr_camera.is_some() {
@@ -12796,6 +12858,55 @@ impl App {
                 }
             }
         }
+        if self.demo
+            && let Some(mode) = crate::demo::set_notices::mode()
+        {
+            use crate::demo::set_notices as demo;
+            if self.frame_count == demo::SETUP {
+                demo::setup(&mut self.world);
+                self.panels.perf = false;
+                self.panels.appearance = false;
+                if mode.starts_with("config") {
+                    self.panels.chat = false;
+                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                } else {
+                    self.panels.chat = true;
+                }
+            }
+            if self.frame_count == demo::DND {
+                self.world.set_dnd(true);
+            }
+            // once the window has its height
+            if self.frame_count == demo::SETUP + 30 {
+                self.contacts_ui.demo_scroll = match mode.as_str() {
+                    "config-responses" => Some(ui::contacts::DemoScroll::Responses),
+                    "config-bottom" => Some(ui::contacts::DemoScroll::Bottom),
+                    _ => None,
+                };
+            }
+            if self.frame_count == demo::MESSAGE + 5 {
+                let reply = self
+                    .world
+                    .social
+                    .ims
+                    .iter()
+                    .find(|s| s.other == crate::demo::DEMO_FRIEND)
+                    .and_then(|s| {
+                        s.lines
+                            .iter()
+                            .rev()
+                            .find(|l| l.kind == crate::world::ChatKind::System)
+                            .map(|l| l.text.clone())
+                    });
+                log::info!("demo set notices: {reply:?}");
+            }
+            let agent = self.world.agent_id;
+            for event in demo::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         if self.demo && crate::demo::im_announce::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::im_announce::events(self.frame_count, agent) {
@@ -13212,6 +13323,16 @@ impl App {
             }
             if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
                 self.world.media_filter.answer(&url, true, crate::media::filter::Remember::Once);
+            }
+        }
+        // AURORA_DEMO_URL_FLOATER=1: at frame 300 the simulator's llOpenFloater
+        // ("URLFloater", read by aurora-net's url_floater) asks for a web
+        // window on an unknown address: the link question comes up
+        if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_URL_FLOATER").is_some() {
+            let message = br#"{'action':'OpenURL','action_data':{'floater_title':'web_content','floater_url':'https%3A%2F%2Fexample.invalid%2Fwelcome','floater_params':{'trusted_content':1}}}"#;
+            if let Some(url) = aurora_net::url_floater::url(message) {
+                log::info!("demo URLFloater: {url}");
+                self.on_app_event(NetEvent::UrlFloater { url });
             }
         }
         // AURORA_DEMO_TURN_SELECT=1: the camera off the avatar, then an
@@ -14115,7 +14236,6 @@ impl App {
                     false,
                     k.is_multiple_of(2).then_some(ch),
                     mods,
-                    None,
                 );
             }
             // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
@@ -14124,7 +14244,8 @@ impl App {
             // first: a cut that does nothing leaves "stalestale", not a pass
             // from an earlier run's clipboard. `paste`: the clipboard holds
             // "pasted", set by the viewer as another program would, then
-            // Ctrl+V, so the field reads "aurorapasted".
+            // Ctrl+V, so the field reads "aurorapasted" where the page reads
+            // the system clipboard (not on Linux: keys::edit).
             let edit = v.split(',').any(|s| s.trim() == "edit");
             let paste = v.split(',').any(|s| s.trim() == "paste");
             if (edit || paste) && f == 864 {
@@ -14146,9 +14267,7 @@ impl App {
                     command: cfg!(target_os = "macos"),
                     ..Default::default()
                 };
-                let clipboard = self.media_clipboard(None, code, pressed, false, mods);
-                self.media
-                    .on_key(&self.world, None, code, 0, pressed, false, None, mods, clipboard.as_deref());
+                self.media.on_key(&self.world, None, code, 0, pressed, false, None, mods);
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -14676,6 +14795,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
             BarAction::EditParticles => self.open_particle_editor(),
+            BarAction::SaveToObjectContents => self.build.save_to_contents(&mut self.world),
             BarAction::ToggleNameTags => {
                 self.settings.show_name_tags = !self.settings.show_name_tags;
                 self.settings.save();
@@ -15545,51 +15665,6 @@ impl App {
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
             || self.destinations_ui.web_has_focus(self.panels.destinations)
-    }
-
-    /// The text a Paste puts into a page by script on Linux
-    /// (keys::paste_through_viewer), read from the system clipboard; None
-    /// lets the page paste from its own clipboard: for any other key, and
-    /// when the clipboard has not changed since this page's last cut or
-    /// copy. Another page's copy never reaches this one, so it goes by script.
-    /// A held Paste repeats the press's text without reading again.
-    fn media_clipboard(
-        &mut self,
-        letter: Option<char>,
-        code: KeyCode,
-        pressed: bool,
-        repeat: bool,
-        mods: aurora_media::Modifiers,
-    ) -> Option<String> {
-        use crate::media::keys;
-        if !pressed || !keys::paste_through_viewer() {
-            return None;
-        }
-        let cmd = keys::edit_shortcut(letter, code, mods)?;
-        // the page that gets the key: a web window first, as the key handler
-        let page = match self.focused_web() {
-            Some(p) => p.pid(),
-            None => self.media.focused_pid(),
-        };
-        let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
-        match cmd {
-            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat && keys::page_cuts() => {
-                if let Some(pid) = page {
-                    let text = read();
-                    keys::record_copy(&mut self.page_copy, pid, text);
-                }
-                None
-            }
-            aurora_media::EditCommand::Paste => {
-                if !repeat {
-                    let at_copy = self.page_copy.iter().find(|(pid, _)| Some(*pid) == page);
-                    let text = keys::paste_text(at_copy.map(|(_, text)| text), read());
-                    self.held_paste.press(code, text);
-                }
-                self.held_paste.text(code)
-            }
-            _ => None,
-        }
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -16830,6 +16905,7 @@ impl App {
                         .map(|b| b.label())
                         .unwrap_or_default(),
                     edit_particles: self.particle_editor_target().is_some(),
+                    save_to_contents: self.build.save_to_contents_target(&self.world).is_some(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -18163,6 +18239,7 @@ impl App {
                 }
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
+                self.group_chat_moderation_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -22035,13 +22112,6 @@ impl ApplicationHandler for App {
         {
             return;
         }
-        // a held Paste keeps its text only while its key stays down: told
-        // every key, wherever it goes next (keys::HeldPaste)
-        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
-            && let PhysicalKey::Code(code) = ke.physical_key
-        {
-            self.held_paste.on_key(code, ke.state == ElementState::Pressed, ke.repeat);
-        }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
@@ -22422,21 +22492,12 @@ impl ApplicationHandler for App {
                         command: self.command,
                     };
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
-                    // Paste on Linux: the viewer reads the clipboard
-                    // and pastes it into the page by script (keys::paste_through_viewer)
-                    // only for a key the page gets: a media face skips a press egui took
-                    let page_keys = !typing && (self.focused_web().is_some() || (self.media.focus.is_some() && !resp.consumed));
-                    let clipboard = if page_keys {
-                        self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)
-                    } else {
-                        None
-                    };
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods, clipboard.as_deref())
+                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
                             || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
                             || pressed
                         {
@@ -22453,17 +22514,10 @@ impl ApplicationHandler for App {
                             shift: self.shift,
                             command: self.command,
                         };
-                        if self.media.on_key(
-                            &self.world,
-                            letter,
-                            code,
-                            scancode,
-                            pressed,
-                            ke.repeat,
-                            ke.text.as_deref(),
-                            mods,
-                            clipboard.as_deref(),
-                        ) && pressed
+                        if self
+                            .media
+                            .on_key(&self.world, letter, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
+                            && pressed
                         {
                             return;
                         }
