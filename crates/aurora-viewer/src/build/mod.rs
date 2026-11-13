@@ -2607,6 +2607,15 @@ impl BuildTool {
             .collect()
     }
 
+    pub fn draw_world_guides(&self, ctx: &egui::Context, pal: &crate::theme::Palette, world: &World, s: &BuildSettings, mods: Mods) {
+        if !self.open || self.tool != Tool::Edit || self.cam.hud.is_some() || self.replacement_active() || self.ui.color_picker.pipette {
+            return;
+        }
+        let p = draw::Painter3d::new(crate::ui::hud::world_painter(ctx), &self.cam, *pal);
+        self.manip
+            .draw_world_guides(&p, world, s, &self.selection, self.selection_linked, self.effective_mode(mods));
+    }
+
     /// Selection outlines, manipulators, land brush and selection rectangle
     /// over the scene.
     pub fn draw_overlay(
