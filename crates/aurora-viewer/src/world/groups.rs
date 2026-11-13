@@ -421,7 +421,9 @@ impl World {
     }
 
     /// Open (or focus) the chat of one of our groups (LLGroupActions::startIM).
-    pub fn start_group_chat(&mut self, group: Uuid) {
+    /// `to_type`: the user opened it, so its field takes the keyboard
+    /// (FSFloaterIM::show → setFocus); a call starts the session without it.
+    pub fn start_group_chat(&mut self, group: Uuid, to_type: bool) {
         let Some(g) = self.groups.group(&group).cloned() else {
             return;
         };
@@ -435,7 +437,7 @@ impl World {
             self.set_group_chat_blocked(group, false);
         }
         self.groups.unsnooze(&group);
-        self.social.focus_im = Some(group);
+        self.focus_conversation(group, to_type);
         let known = self.groups.sessions.get(&group).is_some_and(|s| s.active && !s.closed);
         self.info_mut(group, &g.name);
         self.session_lines(group);
@@ -453,7 +455,7 @@ impl World {
         // Sending is an explicit request to open the displayed conversation,
         // just like its call button; do not send into an unjoined preview.
         if self.groups.restoring.contains(&session) {
-            self.start_group_chat(session);
+            self.start_group_chat(session, false);
             if self.groups.restoring.contains(&session) {
                 return;
             }
@@ -1037,6 +1039,32 @@ mod tests {
                 list_in_profile: false,
             }] if group == Uuid::from_u128(2)
         ));
+    }
+
+    /// A group chat the user opens takes the keyboard (LLGroupActions::startIM
+    /// → FSFloaterIM::show → setFocus); a call only starts its session.
+    #[test]
+    fn a_group_chat_the_user_opens_takes_the_keyboard_a_call_does_not() {
+        let group = Uuid::from_u128(2);
+        let membership = || aurora_net::GroupMembership {
+            id: group,
+            name: "Group".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(membership());
+        w.start_group_chat(group, true);
+        assert_eq!(w.social.focus_im, Some(group));
+        assert!(w.social.focus_im_to_type, "the user opened it, ready to type");
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(membership());
+        w.start_group_chat(group, false);
+        assert_eq!(w.social.focus_im, Some(group));
+        assert!(!w.social.focus_im_to_type, "a call leaves the keyboard where it was");
     }
 
     /// Online status › Ad hoc conferences (LLIMMgr::addMessage, FSIgnoreAdHocSessions):

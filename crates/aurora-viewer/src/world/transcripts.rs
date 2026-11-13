@@ -795,7 +795,7 @@ mod tests {
         w.chat_log.append(&stem, t0 - Duration::from_secs(3600), "Jane Doe", "old news");
         w.chat_log.append(&stem, t0, "Jane Doe", "same minute, in the file");
         assert!(w.chat_log.flush(WAIT));
-        w.start_group_chat(group);
+        w.start_group_chat(group, false);
         let unix = |t: SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs() as u32;
         let line = |time: u32, text: &str| HistoryLine {
             from_id: jane,

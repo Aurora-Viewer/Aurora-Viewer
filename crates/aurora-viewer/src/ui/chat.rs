@@ -540,6 +540,12 @@ impl ChatUi {
         self.popped.contains(None)
     }
 
+    /// `conversation` is in a window of its own (`popout.rs`): showing it
+    /// does not need the Conversations window.
+    pub fn in_own_window(&self, conversation: uuid::Uuid) -> bool {
+        self.popped.contains(Some(conversation))
+    }
+
     /// The nearby chat's own window is on screen, expanded.
     pub fn nearby_window_shown(&self, ctx: &egui::Context) -> bool {
         self.popped.shown(None) && !super::widgets::floater_minimized(ctx, &popout::floater_id(None))
@@ -3184,18 +3190,31 @@ pub fn show(
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     let opening_conversation = world.social.focus_im.is_some();
-    if let Some(f) = world.social.focus_im.take() {
+    if let Some(f) = world.social.focus_im {
         let conversation = (!f.is_nil()).then_some(f);
-        if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
-            // the keyboard asked of the Conversations window goes to its own
-            let focus = std::mem::take(&mut st.conv_focus_request);
-            st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
-            // and the Conversations window, opened for it, stays closed
-            if !st.main_open {
-                *open = false;
+        let own_window = popout::opens_in_own_window(&st.popped, conversation, st.own_windows);
+        // a request for the Conversations window waits while it is closed:
+        // the app may open it next (a new call opens it), and consuming the
+        // request now would let the "window opened" rule below take the
+        // keyboard for a conversation a call only asked to show
+        if own_window || *open {
+            // a conversation the user opened asks for the keyboard too
+            // (World::focus_conversation; FSFloaterIM::show → setFocus(true)
+            // → focusFirstItem); a call shows it alone
+            let take_keyboard = std::mem::take(&mut world.social.focus_im_to_type);
+            world.social.focus_im = None;
+            if own_window {
+                // the keyboard asked of the Conversations window goes to its own
+                let focus = std::mem::take(&mut st.conv_focus_request) || take_keyboard;
+                st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
+                // and the Conversations window, opened for it, stays closed
+                if !st.main_open {
+                    *open = false;
+                }
+            } else {
+                st.open(f);
+                st.conv_focus_request |= take_keyboard;
             }
-        } else {
-            st.open(f);
         }
     }
     let docked = !contacts_settings.torn_off;
@@ -5887,14 +5906,13 @@ mod tests {
         };
         let field = |c: uuid::Uuid| egui::Id::unique(("conv_input", Some(c)));
         // opened by a call: shown, the keyboard stays nowhere
-        world.social.focus_im = Some(a);
+        world.focus_conversation(a, false);
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(a));
         assert!(ctx.memory(|m| m.focused()).is_none());
         // opened by the user: shown and ready to type in
-        world.social.focus_im = Some(b);
-        st.conv_focus_request = true;
+        world.focus_conversation(b, true);
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(b));
@@ -5905,8 +5923,7 @@ mod tests {
         frame(&mut st, &mut world, &mut open);
         frame(&mut st, &mut world, &mut open);
         assert!(crate::ui::widgets::floater_minimized(&ctx, "conversations"));
-        world.social.focus_im = Some(a);
-        st.conv_focus_request = true;
+        world.focus_conversation(a, true);
         crate::ui::notifications::open_conversations(&ctx, &mut open);
         for _ in 0..4 {
             frame(&mut st, &mut world, &mut open);

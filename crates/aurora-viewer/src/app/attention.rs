@@ -277,12 +277,12 @@ impl App {
                         continue;
                     }
                     self.world.social.session_mut(session);
-                    self.world.social.focus_im = Some(session);
-                    self.chat_ui.conv_focus_request = true;
+                    self.world.focus_conversation(session, true);
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::NearbyChat) => {
                     self.world.social.focus_im = Some(uuid::Uuid::nil());
+                    self.world.social.focus_im_to_type = false;
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::Notifications) => self.notif_ui.open = true,

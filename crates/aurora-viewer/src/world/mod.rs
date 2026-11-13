@@ -5533,6 +5533,16 @@ impl World {
         }
     }
 
+    /// Show `conversation` in the Conversations window. `to_type` gives its
+    /// field the keyboard too, as FSFloaterIM::show → setFocus(true) →
+    /// focusFirstItem (indra/newview/fsfloaterim.cpp) does for a conversation
+    /// the user asked for; a call shows it alone, leaving the keyboard where
+    /// it was.
+    pub fn focus_conversation(&mut self, conversation: Uuid, to_type: bool) {
+        self.social.focus_im = Some(conversation);
+        self.social.focus_im_to_type = to_type;
+    }
+
     /// A friend's or a message's card clicked: it is acknowledged (gone from
     /// the bell, the conversation read) and the conversation to show is
     /// returned — the friend's IM (LLAvatarActions::startIM) or the session
@@ -5552,7 +5562,8 @@ impl World {
             s.unread = 0;
         }
         self.acknowledge_read_messages();
-        self.social.focus_im = Some(session);
+        // a click on the toast or the card: ready to type in
+        self.focus_conversation(session, true);
         Some(session)
     }
 

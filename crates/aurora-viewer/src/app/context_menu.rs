@@ -958,7 +958,7 @@ impl App {
             CtxAction::LeaveGroup(id) => self.contacts_ui.ask_leave_group(id),
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.start_group_chat(id);
+                self.world.start_group_chat(id, true);
                 self.show_conversations();
             }
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
