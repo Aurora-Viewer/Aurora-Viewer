@@ -71,9 +71,9 @@ pub(super) fn visible_tag(tags: &[(Uuid, Vec3)], depth: Option<Vec3>, ray: Optio
 }
 
 /// Whether a plate click acts, and so shows the hand: an action chosen, on
-/// someone else's plate.
+/// someone else's plate, or Profile / Menu on our own.
 pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid) -> bool {
-    action != PlateClick::Nothing && plate.is_some_and(|id| id != me)
+    action != PlateClick::Nothing && plate.is_some_and(|id| id != me || matches!(action, PlateClick::Profile | PlateClick::Menu))
 }
 
 /// Alt retains LLToolCamera's gestures; Ctrl+Shift retains the grab tool
@@ -329,13 +329,13 @@ mod tests {
     }
 
     #[test]
-    fn a_click_acts_only_with_an_action_and_on_someone_else() {
+    fn own_plate_allows_profile_and_menu_but_not_im_or_teleport() {
         let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
         assert!(!plate_click_acts(PlateClick::Nothing, Some(other), me));
         for action in PlateClick::ALL.into_iter().filter(|a| *a != PlateClick::Nothing) {
             assert!(plate_click_acts(action, Some(other), me), "{action:?}");
-            // our own plate and no plate: the click is the world's
-            assert!(!plate_click_acts(action, Some(me), me));
+            let acts_on_self = matches!(action, PlateClick::Profile | PlateClick::Menu);
+            assert_eq!(plate_click_acts(action, Some(me), me), acts_on_self, "{action:?}");
             assert!(!plate_click_acts(action, None, me));
         }
     }
