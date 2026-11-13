@@ -1288,6 +1288,39 @@ mod tests {
     }
 
     #[test]
+    fn decoded_clip_edges_stay_smooth_in_ui_world_and_looped_playback() {
+        let clip = crate::SoundClip::decode(&crate::decode::tests::wav_bytes(48_000, 1, &[16_384; 512])).unwrap();
+        for mode in 0..3 {
+            let (mut m, _params, tx) = mixer();
+            settle(&mut m);
+            let command = match mode {
+                0 => Command::PlayClip(ClipVoice::new(Channel::Ui, clip.samples.clone(), 1.0)),
+                _ => Command::PlayWorld(WorldVoice::new(1, Channel::Sfx, clip.samples.clone(), mode == 2, (1.0, 1.0))),
+            };
+            tx.send(command).unwrap();
+            let mut out = Vec::new();
+            // Audio callback boundaries deliberately cut through the fades
+            // and through loop wraps; the envelope belongs to the clip.
+            for frames in [37, 191, 3, 1024, 500] {
+                let mut block = vec![0.0; frames * 2];
+                m.render(&mut block);
+                out.extend(block);
+            }
+            assert_eq!(out[0], 0.0, "start in mode {mode}");
+            assert_eq!(out[2 * 511], 0.0, "end in mode {mode}");
+            assert_eq!(out[2 * 512], 0.0, "wrap/silence in mode {mode}");
+            let step = out
+                .as_chunks::<2>()
+                .0
+                .windows(2)
+                .map(|w| (w[1][0] - w[0][0]).abs())
+                .fold(0.0f32, f32::max);
+            assert!(step < 0.01, "step {step} in mode {mode}");
+            assert_eq!(m.source_count(), usize::from(mode == 2));
+        }
+    }
+
+    #[test]
     fn mute_and_disable_silence_a_bus() {
         let (mut m, params, tx) = mixer();
         let data: Arc<[f32]> = vec![0.5f32; 96_000].into();

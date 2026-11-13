@@ -207,7 +207,7 @@ impl Exposure {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("auto exposure read back"),
-            size: 16,
+            size: crate::readback::readback_size(16),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

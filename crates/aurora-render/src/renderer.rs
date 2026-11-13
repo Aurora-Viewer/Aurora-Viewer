@@ -131,8 +131,13 @@ struct FrameU {
     /// 1/w, 1/h; 0: `screen`), for the reflections that keep the main
     /// view's `screen` but draw smaller.
     sky_star_pass: [f32; 4],
+    studio_aurora: [[f32; 4]; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
+    /// The poser's hovered part: bit j for palette joint j (shaders'
+    /// `in_poser_part`).
+    part_joints: [[u32; 4]; 2],
+    part_classes: [[u32; 4]; 8],
     rez_gradient: [[f32; 4]; 3],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
@@ -539,14 +544,7 @@ impl Glow {
                 strength: Self::STRENGTH,
                 _pad: 0.0,
             };
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("glow params"),
-                    contents: bytemuck::bytes_of(&u),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            )
+            crate::gpu_alloc::buffer_init(device, "glow params", bytemuck::bytes_of(&u), wgpu::BufferUsages::UNIFORM)
         };
         let h = ubuf([Self::DELTA, 0.0]);
         let v = ubuf([0.0, Self::DELTA]);
@@ -800,10 +798,11 @@ pub enum RenderError {
     DeviceLost,
 }
 
-/// A device lost while the backend is being made: the error, before the next
-/// `create_buffer_init`, whose mapping panics on a buffer that could not be
-/// made ("water effects" on Intel Iris Xe, #1892). Nothing fails before that:
-/// a lost device takes every other call without a word. As in `Backend`'s
+/// A device lost while the backend is being made: the error, at the points
+/// where wgpu's `create_buffer_init` used to panic on a buffer that could
+/// not be made ("water effects" on Intel Iris Xe, #1892;
+/// `gpu_alloc::buffer_init` no longer panics there). Nothing fails on its
+/// own: a lost device takes every call without a word. As in `Backend`'s
 /// `Drop` (#1650), the surface is left to the process.
 fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surface<'static>>) -> Result<(), RenderError> {
     if !lost.get() {
@@ -956,6 +955,10 @@ struct Pipelines {
     physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
+    /// The poser's hovered part on the subject's skinned faces.
+    part_mask: wgpu::RenderPipeline,
+    /// The visible part of the subject's faces (part_pick.rs).
+    part_pick: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
@@ -1232,7 +1235,7 @@ impl GpuTimer {
                 (
                     device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("timestamp readback"),
-                        size: GPU_TIMESTAMPS as u64 * 8,
+                        size: crate::readback::readback_size(GPU_TIMESTAMPS as u64 * 8),
                         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     }),
@@ -1270,11 +1273,8 @@ impl GpuTimer {
         for (slot, (buf, ready, pending)) in self.readback.iter_mut().enumerate() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let ts: &[u64] = bytemuck::cast_slice(&view[..GPU_TIMESTAMPS as usize * 8]);
-                    let ms = |a: u32, b: u32| {
-                        let (a, b) = (ts[a as usize], ts[b as usize]);
-                        (b.saturating_sub(a) as f64 * self.period_ns as f64 / 1e6) as f32
-                    };
+                    let ts = crate::readback::u64_array::<{ GPU_TIMESTAMPS as usize }>(&view[..GPU_TIMESTAMPS as usize * 8]);
+                    let ms = |a: u32, b: u32| crate::readback::elapsed_gpu_ms(&ts, a, b, self.period_ns);
                     if ts[1] > ts[0] {
                         self.last_ms = Some(ms(0, 1));
                         self.last_pixels = self.slot_pixels[slot].get();
@@ -1609,12 +1609,37 @@ pub(crate) struct Backend {
     target_bytes: Option<(u64, u64)>,
     taa_bytes: u64,
     surface_srgb: bool,
-    egui: egui_wgpu::Renderer,
+    egui: EguiSlot,
     ui_blur: Option<crate::ui_blur::Blur>,
+    /// What a full video memory refused of the frame's targets, and when to
+    /// try again (gpu_alloc.rs).
+    oom: crate::gpu_alloc::Refusals,
+    /// What the renderer was made from, kept until its start is over: made,
+    /// then the user's settings applied by a frame, with nothing refused.
+    seed: Option<Box<BackendInit>>,
+    /// Video memory refused part of what the start makes outside the render
+    /// targets (the placeholders, probes, shadow atlases, culling and
+    /// particle buffers…, or the atlases the settings make again): the
+    /// frame's bind groups hold it, so no try of the targets could bring the
+    /// world back. The whole renderer is made again from `seed`, on the same
+    /// device and window, at the targets' next try (`remake_refused`).
+    remake: bool,
+    /// The installed set is the 1x1 one that frees a refused set, made just
+    /// before the next try (`rebuild_targets`): FSR's display-size part is
+    /// made at that size too.
+    targets_shrunk: bool,
+    /// When to try the interface's blur and glass again; it goes without
+    /// them until then.
+    ui_targets_backoff: crate::gpu_alloc::Backoff,
     ui_glass: Option<crate::ui_glass::Glass>,
     previews: crate::preview::Cache,
     selection: Option<crate::selection::Overlay>,
     hud_selection: Option<crate::selection::Overlay>,
+    /// The poser's hovered part (`part_faces`), as the selection's halo.
+    part: Option<crate::selection::Overlay>,
+    /// Seeded from post depth while hovering; part faces resolve their own
+    /// nearest surface here, including blended unrigged accessories.
+    part_depth: Option<wgpu::TextureView>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
     frame_layout: wgpu::BindGroupLayout,
@@ -1630,6 +1655,8 @@ pub(crate) struct Backend {
     water_effects: crate::water_effects::WaterGpu,
     /// The night sky's stars (stars.rs), made once.
     stars: wgpu::Buffer,
+    /// The Milky Way map (stars.rs milky_way_texels), made once.
+    milky_way: wgpu::TextureView,
     contact: crate::contact_shadows::ContactShadows,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -1709,6 +1736,15 @@ pub(crate) struct Backend {
     depth_pick: crate::pick::DepthPick,
     /// Faces drawn under a clicked pixel (drawn_pick.rs).
     drawn_pick: crate::drawn_pick::DrawnPick,
+    /// The poser's part under the cursor (part_pick.rs), and this frame's
+    /// pixel to read; whether the part overlay draws this frame (a part is
+    /// lit: the subject's faces are also listed for the pick alone).
+    part_pick: crate::part_pick::PartPick,
+    part_pick_px: Option<([u32; 2], [u32; 2])>,
+    part_lit: bool,
+    /// Frames since a part was last lit: its overlay images go after
+    /// `PART_IDLE_FRAMES`.
+    part_idle: u32,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -1780,10 +1816,32 @@ impl Drop for Backend {
     }
 }
 
+/// egui's renderer, made once and moved from one backend to the next by
+/// `Backend::remake_refused`: egui-wgpu makes its buffers with
+/// `create_buffer_init`, which panics on a buffer a full video memory
+/// refused, and its textures (the fonts) are only sent once. Empty only
+/// inside `remake_refused`.
+struct EguiSlot(Option<egui_wgpu::Renderer>);
+
+impl std::ops::Deref for EguiSlot {
+    type Target = egui_wgpu::Renderer;
+
+    fn deref(&self) -> &egui_wgpu::Renderer {
+        self.0.as_ref().expect("egui renderer: only taken inside remake_refused")
+    }
+}
+
+impl std::ops::DerefMut for EguiSlot {
+    fn deref_mut(&mut self) -> &mut egui_wgpu::Renderer {
+        self.0.as_mut().expect("egui renderer: only taken inside remake_refused")
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
+    grading: Option<crate::vr_mirror::HeadsetGrade>,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -1945,6 +2003,45 @@ fn sprite_layout() -> wgpu::VertexBufferLayout<'static> {
         attributes: &ATTRS,
     }
 }
+
+/// The tint inside the poser's hovered part (the selection overlay's pulse,
+/// held): which part reads at once, its clothing still seen through it.
+const PART_TINT: f32 = 0.4;
+/// The part's halo against the selection's: a little wider, a soft glow
+/// around the body rather than a line (a game's hover outline on a
+/// character).
+const PART_HALO: f32 = 1.25;
+/// Frames without a lit part before its overlay images are freed (about
+/// 4 s at 60 fps).
+const PART_IDLE_FRAMES: u32 = 240;
+/// The part passes' depth test against the scene's (`post_depth`): with an
+/// upscaler, that depth is the nearest render pixel's at the display's size,
+/// a little in front of a slanted surface's own pixels, which would fail one
+/// in two (a hatched tint, holes in the pick); a bias that grows with the
+/// slope covers that gap, the constant one the selection's.
+const PART_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 1,
+    slope_scale: 2.0,
+    clamp: 0.0,
+};
+
+// Both passes resolve nearest subject coverage in a private copy of scene
+// depth. Keep these states shared: otherwise mask and pick can disagree.
+fn part_desc(base: PipeDesc<'_>, format: wgpu::TextureFormat, write_mask: wgpu::ColorWrites) -> PipeDesc<'_> {
+    PipeDesc {
+        cull: None, // the fragments retain each material's sidedness
+        samples: 1,
+        format: Some(format),
+        depth_write: true,
+        write_mask,
+        depth_bias: PART_DEPTH_BIAS,
+        ..base
+    }
+}
+
+#[cfg(test)]
+#[path = "part_tests.rs"]
+mod part_tests;
 
 #[derive(Clone, Copy)]
 struct PipeDesc<'a> {
@@ -2238,6 +2335,66 @@ pub(crate) fn shadow_bind_group(
             },
         ],
     })
+}
+
+/// The outcome of a target made on first use (`refused`: the memory refused
+/// it, or `AURORA_GPU_OOM_FIRST_USE`), said in the log the first time: a
+/// required one stops the world as the render targets do, an extra is left
+/// out for a while (`gpu_alloc::Refusals`). Returns whether it was refused.
+/// A free function: the frame's encoding holds borrows of other fields.
+fn first_use(oom: &mut crate::gpu_alloc::Refusals, what: &str, required: bool, refused: bool) -> bool {
+    let refused = refused || crate::gpu_alloc::first_use_refused();
+    let now = Instant::now();
+    if required {
+        if oom.first_use(refused, now) {
+            log::warn!("{what}: out of video memory, the interface alone until it can be made");
+        }
+    } else if oom.extra(refused, now) {
+        log::warn!("{what}: out of video memory, drawn without it for now");
+    }
+    refused
+}
+
+/// An extra made on first use with `make`, checked: `None` while refused
+/// or waiting.
+fn extra<T>(
+    oom: &mut crate::gpu_alloc::Refusals,
+    device: &wgpu::Device,
+    lost: bool,
+    what: &str,
+    make: impl FnOnce(&wgpu::Device) -> T,
+) -> Option<T> {
+    if !oom.extras_ready(Instant::now()) {
+        return None;
+    }
+    let (made, refused) = crate::gpu_alloc::scoped(device, || make(device));
+    // (a lost device's refusals are the device-loss path's, `lost`)
+    (!first_use(oom, what, false, refused && !lost)).then_some(made)
+}
+
+/// The depth of field's targets for `size` are made, checked: false while
+/// refused or waiting (the frame goes without the effect).
+fn dof_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    dof: &mut Option<crate::dof::Dof>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let d = dof.get_or_insert_with(|| crate::dof::Dof::new(device, HDR_FORMAT));
+    if d.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "depth of field", false, refused && !lost) {
+        d.release();
+        return false;
+    }
+    true
 }
 
 pub(crate) fn make_view(
@@ -2715,6 +2872,7 @@ struct Ranges {
     physics_shapes: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
+    part_faces: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
     water_air_terrain: (u64, u32),
@@ -2742,7 +2900,59 @@ struct Ranges {
 
 impl Backend {
     /// Surface configuration, pipelines, targets and per-frame buffers.
+    ///
+    /// Made in one error scope: a full video memory that refuses any of it
+    /// outside the render targets (those have their own scope and retry)
+    /// leaves the renderer showing the interface alone, with the "Video
+    /// memory full" notice, until `remake_refused` can make it whole.
     pub fn new(init: BackendInit) -> Result<Backend, RenderError> {
+        Self::new_with(init, false)
+    }
+
+    /// `egui_later`: made without egui's renderer, which the backend this
+    /// one replaces hands over once it has come through whole.
+    fn new_with(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
+        let seed = Box::new(init.clone());
+        let device = init.device.clone();
+        let lost = init.lost.clone();
+        let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui_later));
+        let mut backend = made?;
+        // (AURORA_GPU_OOM_START's own refusal is a usage error, which the
+        // scope does not read as memory)
+        let oom = oom || crate::gpu_alloc::start_refused();
+        backend.seed = Some(seed);
+        if crate::gpu_alloc::start_remade(oom, invalid, backend.oom.targets, lost.get()) {
+            backend.refused_at_start();
+        }
+        Ok(backend)
+    }
+
+    /// The interface alone, with the notice, until `remake_refused` makes
+    /// the renderer whole.
+    fn refused_at_start(&mut self) {
+        log::warn!("renderer: out of video memory while it was made, made again once memory is freed");
+        if !self.oom.targets {
+            self.oom.targets_failed(Instant::now());
+        }
+        self.remake = true;
+    }
+
+    /// The settings a frame asks for. Until the start is over, applied in
+    /// an error scope: the shadow atlas and the probes they make again
+    /// belong to the start, and a refused one is remade with the rest.
+    fn apply_frame_settings(&mut self, settings: RenderSettings) {
+        if self.seed.is_none() {
+            self.apply_settings(settings);
+            return;
+        }
+        let device = self.device.clone();
+        let ((), oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || self.apply_settings(settings));
+        if !self.remake && crate::gpu_alloc::start_remade(oom, invalid, self.oom.targets, self.lost.get()) {
+            self.refused_at_start();
+        }
+    }
+
+    fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let BackendInit {
@@ -2946,6 +3156,17 @@ impl Backend {
                     },
                     count: None,
                 },
+                // the Milky Way map (stars.rs milky_way_texels)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 25,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3108,7 +3329,9 @@ impl Backend {
         });
 
         let dummies = {
-            let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+            // AURORA_GPU_OOM_START: refused as by a full card (no usage)
+            let refuse = crate::gpu_alloc::start_refused();
+            let usage = crate::gpu_alloc::start_usage(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, refuse);
             let (wt, white) = make_view(&device, "dummy white", 1, 1, wgpu::TextureFormat::Rgba8Unorm, 1, usage);
             let (_, black) = make_view(&device, "dummy black", 1, 1, HDR_FORMAT, 1, usage);
             let (_, depth) = make_view(
@@ -3118,7 +3341,10 @@ impl Backend {
                 1,
                 DEPTH_FORMAT,
                 1,
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                crate::gpu_alloc::start_usage(
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    refuse,
+                ),
             );
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -3173,36 +3399,77 @@ impl Backend {
         let gtao = crate::gtao::Gtao::new(&device);
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
-        let contact = crate::contact_shadows::ContactShadows::new(&device);
+        let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
-        let targets = Self::make_targets(
-            &device,
-            &post_layout,
-            &post_sampler,
-            &post_buffer,
-            &glow.views[1],
-            &gtao,
-            &contact,
-            config.width,
-            config.height,
-            msaa_samples,
-            &settings,
-        );
+        let refuse = crate::gpu_alloc::targets_refused();
+        let (targets, refused) = crate::gpu_alloc::scoped(&device, || {
+            Self::make_targets(
+                &device,
+                &post_layout,
+                &post_sampler,
+                &post_buffer,
+                &glow.views[1],
+                &gtao,
+                &contact,
+                config.width,
+                config.height,
+                msaa_samples,
+                &settings,
+                refuse,
+            )
+        });
+        let mut oom = crate::gpu_alloc::Refusals::default();
+        // (a device lost meanwhile ends the start at the next
+        // `lost_at_start`, not as video memory full)
+        if (refused && !lost.get()) || refuse {
+            log::warn!("render targets: out of video memory, the interface alone until they can be made");
+            oom.targets_failed(Instant::now());
+        }
         let mut exposure = crate::exposure::Exposure::new(&device);
         exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
         let mut histogram = crate::histogram::Histogram::new(&device);
         histogram.bind(&device, &targets.color);
         lost_at_start(&lost, &surface)?;
-        let stars = wgpu::util::DeviceExt::create_buffer_init(
+        let stars = crate::gpu_alloc::buffer_init(
             &device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("night sky stars"),
-                contents: &crate::stars::buffer_contents(),
-                usage: wgpu::BufferUsages::STORAGE,
-            },
+            "night sky stars",
+            &crate::stars::buffer_contents(),
+            wgpu::BufferUsages::STORAGE,
         );
+        let milky_way = {
+            use crate::stars::{MILKY_WAY_HEIGHT, MILKY_WAY_WIDTH};
+            let (texture, view) = make_view(
+                &device,
+                "milky way map",
+                MILKY_WAY_WIDTH,
+                MILKY_WAY_HEIGHT,
+                wgpu::TextureFormat::R32Uint,
+                1,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            );
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&crate::stars::milky_way_texels()),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(MILKY_WAY_WIDTH * 4),
+                    rows_per_image: Some(MILKY_WAY_HEIGHT),
+                },
+                wgpu::Extent3d {
+                    width: MILKY_WAY_WIDTH,
+                    height: MILKY_WAY_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+            view
+        };
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -3217,6 +3484,7 @@ impl Backend {
             &probes,
             &water_effects,
             &stars,
+            &milky_way,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -3226,6 +3494,7 @@ impl Backend {
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
         let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
+        let part_pick = crate::part_pick::PartPick::new(&device);
         let label_depth = crate::label_depth::LabelDepth::new(&device, format);
         lost_at_start(&lost, &surface)?;
         let occlusion = crate::occlusion::Occlusion::new(&device);
@@ -3239,7 +3508,7 @@ impl Backend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let egui = egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
+        let egui = EguiSlot((!egui_later).then(|| egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())));
         let timer = timestamps.then(|| GpuTimer::new(&device, &queue));
 
         let mut r = Backend {
@@ -3264,11 +3533,18 @@ impl Backend {
             surface_srgb,
             egui,
             ui_blur: None,
+            oom,
+            seed: None,
+            remake: false,
+            targets_shrunk: false,
+            ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
             ui_glass: None,
             previews: Default::default(),
             selection: None,
             cutout: None,
             hud_selection: None,
+            part: None,
+            part_depth: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -3280,6 +3556,7 @@ impl Backend {
             gtao,
             water_effects,
             stars,
+            milky_way,
             contact,
             contact_now: false,
             gtao_normals_now: false,
@@ -3332,6 +3609,10 @@ impl Backend {
             gpu_cull,
             depth_pick,
             drawn_pick,
+            part_pick,
+            part_pick_px: None,
+            part_lit: false,
+            part_idle: 0,
             label_depth,
             impostors,
             motion_history,
@@ -3608,26 +3889,34 @@ impl Backend {
                 })
             })
         };
-        let blend_pipe = |label: &'static str, early: bool, depth_write: bool, clip: f64| {
+        let blend_pipe = |label: &'static str, early: bool, depth_write: bool, clip: f64, depth_compare| {
             sided_pipe(PipeDesc {
                 blend: Some(suppress),
                 write_mask: wgpu::ColorWrites::ALL,
                 depth_write,
-                depth_compare: wgpu::CompareFunction::Greater,
+                depth_compare,
                 constants: &[("BLEND_EARLY_DISCARD", if early { 1.0 } else { 0.0 }), ("WATER_CLIP", clip)],
                 ..base(label, "vs_main", "fs_blend")
             })
         };
-        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late, false, 1.0);
-        let blend_late = (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false, false, 1.0));
+        // The blended faces of static objects pass equal depths, as the
+        // Legacy Viewer's alpha pass (LLDrawPoolAlpha::renderAlpha,
+        // LLGLDepthTest's GL_LEQUAL): a blended face lying exactly on an
+        // opaque face of the same mesh (a dirt track over a road's grass
+        // base, a decal) shows over it (#3059). The same vertex shader
+        // (`@invariant` position) gives both the very same depth.
+        let static_compare = wgpu::CompareFunction::GreaterEqual;
+        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late, false, 1.0, static_compare);
+        let blend_late =
+            (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false, false, 1.0, static_compare));
         // LLDrawPoolAlpha::forwardRender(true): rigged alpha writes depth
         // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
-        let blend_depth = blend_pipe("blend rigged", true, true, 1.0);
+        let blend_depth = blend_pipe("blend rigged", true, true, 1.0, wgpu::CompareFunction::Greater);
         // POOL_ALPHA_PRE_WATER: the blended faces under the water, before it,
         // their part on the far side of the surface, writing depth from
         // 1/255 ("needed for accurate water fog", lldrawpoolalpha.cpp): the
         // water's refraction and fog then reach them, not the ground behind
-        let blend_under = blend_pipe("blend under water", true, true, 2.0);
+        let blend_under = blend_pipe("blend under water", true, true, 2.0, static_compare);
         // The rigged faces' depth only where at least half covered
         // (fs_depth_contact): a soft fringe no longer hides the glass behind
         // it (#556). Before their colour with `RiggedBlendDepth::HalfCovered`
@@ -3899,6 +4188,18 @@ impl Backend {
             },
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
+        // The poser's hovered part: the subject's skinned faces kept where
+        // their weights are the part's joints (`vs_part_mask`)
+        let part_mask = pipe(part_desc(
+            base("poser part coverage", "vs_part_mask", "fs_part_mask"),
+            wgpu::TextureFormat::Rg8Unorm,
+            wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN,
+        ));
+        let part_pick = pipe(part_desc(
+            base("poser part pick", "vs_part_pick", "fs_part_pick"),
+            crate::part_pick::FORMAT,
+            wgpu::ColorWrites::RED,
+        ));
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -4238,6 +4539,8 @@ impl Backend {
             select_root_wire,
             select_child_wire,
             selection_mask,
+            part_mask,
+            part_pick,
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
@@ -4345,11 +4648,18 @@ impl Backend {
         height: u32,
         samples: u32,
         s: &RenderSettings,
+        refuse: bool,
     ) -> Targets {
         let (w, h) = (width.max(1), height.max(1));
         let att = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let sampled = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-        let (color_tex, color) = make_view(device, "hdr", w, h, HDR_FORMAT, 1, sampled | wgpu::TextureUsages::COPY_SRC);
+        // (AURORA_GPU_OOM_TARGETS)
+        let hdr_usage = if refuse {
+            wgpu::TextureUsages::empty()
+        } else {
+            sampled | wgpu::TextureUsages::COPY_SRC
+        };
+        let (color_tex, color) = make_view(device, "hdr", w, h, HDR_FORMAT, 1, hdr_usage);
         let color_msaa = (samples > 1).then(|| make_view(device, "hdr msaa", w, h, HDR_FORMAT, samples, att).1);
         let (depth_msaa_tex, depth_msaa) = match (samples > 1).then(|| {
             make_view(
@@ -4507,6 +4817,7 @@ impl Backend {
         probes: &crate::probes::Probes,
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
+        milky_way: &wgpu::TextureView,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -4530,6 +4841,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 24,
                         resource: stars.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 25,
+                        resource: wgpu::BindingResource::TextureView(milky_way),
                     },
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -4852,6 +5167,7 @@ impl Backend {
                 &self.probes,
                 &self.water_effects,
                 &self.stars,
+                &self.milky_way,
             );
         }
     }
@@ -4872,6 +5188,7 @@ impl Backend {
             &self.probes,
             &self.water_effects,
             &self.stars,
+            &self.milky_way,
         );
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4913,6 +5230,15 @@ impl Backend {
         }
     }
 
+    /// `rebuild_bind_groups` outside the render targets' remake, checked: it
+    /// remakes the TAA history, which a full video memory can refuse; then
+    /// the interface alone until the next try makes every target again.
+    fn rebuild_bind_groups_checked(&mut self, what: &str) {
+        let device = self.device.clone();
+        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.rebuild_bind_groups());
+        first_use(&mut self.oom, what, true, refused && !self.lost.get());
+    }
+
     /// The bytes of the live textures and buffers (wgpu's counters).
     fn live_bytes(&self) -> u64 {
         let live = self.device.get_internal_counters().hal;
@@ -4942,7 +5268,65 @@ impl Backend {
         }
     }
 
+    /// The render targets for the current size. Refused, frames show the
+    /// interface alone and the targets are tried again later: what is
+    /// installed then is invalid and drawn with by nothing. A set is made
+    /// while the one it replaces still lives, so a refused set (most of its
+    /// textures made, one refused) gives way to a 1x1 one before the next
+    /// try: otherwise a card with room for one set but not two would refuse
+    /// every try.
     fn rebuild_targets(&mut self) {
+        // (a renderer waiting for its remake draws no world: its targets
+        // stay small and the notice stays, whatever asks for them)
+        if self.remake {
+            self.shed_world();
+            return;
+        }
+        let device = self.device.clone();
+        let refuse = crate::gpu_alloc::targets_refused();
+        if self.oom.targets {
+            // what a first use left refused (installed for the frame that
+            // found it) is made again on its next use
+            self.drop_first_use_targets();
+            let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
+        }
+        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
+        if self.memory_refused(refused) || refuse {
+            if self.oom.targets_failed(Instant::now()) {
+                log::warn!("render targets: out of video memory, the interface alone until they can be made");
+            }
+        } else {
+            // the world's return is said when a frame goes through
+            // (`Refusals::settle`): a required target may refuse first
+            self.oom.targets_made();
+        }
+    }
+
+    /// The targets made on first use, let go: each is made again, checked,
+    /// when next needed.
+    fn drop_first_use_targets(&mut self) {
+        self.targets.blend_layers = None;
+        self.rlva_spheres = None;
+        self.rlva_scaled = None;
+        self.selection = None;
+        self.hud_selection = None;
+        if let Some(dof) = &mut self.dof {
+            dof.release();
+        }
+        if let Some(looks) = &mut self.looks {
+            looks.release();
+        }
+    }
+
+    /// Whether a scope's refusal is the memory: a lost device leaves every
+    /// object invalid too, but that is the device-loss path's to report,
+    /// never "Video memory full".
+    fn memory_refused(&self, refused: bool) -> bool {
+        refused && !self.lost.get()
+    }
+
+    /// `size` forces a size: the 1x1 set that frees a refused one.
+    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
         self.occlusion.invalidate();
         self.depth_pick.scene_changed();
         let scale = if self.snapshot_window.is_some() {
@@ -4951,18 +5335,21 @@ impl Backend {
             self.settings.render_scale_percent
         };
         let window = (self.config.width, self.config.height);
-        let size = match self.fsr_upscale() {
+        let forced = size.is_some();
+        let size = size.unwrap_or_else(|| match self.fsr_upscale() {
             Some(ratio) => crate::fsr::render_size(window, ratio),
             None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
-        };
-        log::info!(
-            "world resolution: {}x{} (output {}x{}, scale {}%)",
-            size.0,
-            size.1,
-            self.config.width,
-            self.config.height,
-            scale
-        );
+        });
+        if !forced {
+            log::info!(
+                "world resolution: {}x{} (output {}x{}, scale {}%)",
+                size.0,
+                size.1,
+                self.config.width,
+                self.config.height,
+                scale
+            );
+        }
         // the new targets are made while the old ones live: the counters'
         // growth in between is what this size takes
         let before = self.live_bytes();
@@ -4978,6 +5365,7 @@ impl Backend {
             size.1,
             self.msaa_samples,
             &self.settings,
+            refuse,
         );
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa
@@ -4990,6 +5378,7 @@ impl Backend {
         self.exposure
             .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
         self.histogram.bind(&self.device, &self.targets.color);
+        self.targets_shrunk = forced;
         self.rebuild_bind_groups();
     }
 
@@ -5184,7 +5573,11 @@ impl Backend {
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
             if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
-                self.remake_taa();
+                let device = self.device.clone();
+                let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
+                // (refused, the next try makes every target again, the TAA
+                // history with them)
+                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
             }
         } else {
             self.taa = None;
@@ -5194,7 +5587,7 @@ impl Backend {
         if targets_dirty {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
-            self.rebuild_bind_groups();
+            self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
     }
 
@@ -5348,7 +5741,9 @@ impl Backend {
         };
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
         let fsr = with_fsr.then(|| {
-            let display = if self.fsr_upscale().is_some() {
+            // (the 1x1 set that frees a refused one shrinks FSR's display
+            // size part too, rebuild_targets)
+            let display = if self.fsr_upscale().is_some() && !self.targets_shrunk {
                 (self.config.width, self.config.height)
             } else {
                 self.scene_size()
@@ -5476,6 +5871,11 @@ impl Backend {
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
         u.selection_color = f.selection_color;
+        u.part_joints = [
+            [f.part_joints[0], f.part_joints[1], f.part_joints[2], f.part_joints[3]],
+            [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
+        ];
+        u.part_classes = std::array::from_fn(|i| std::array::from_fn(|j| f.part_classes[i * 4 + j]));
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
@@ -5568,6 +5968,7 @@ impl Backend {
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
         u.sky_stars = s.stars.uniform();
         u.sky_star_pass = [0.0; 4];
+        u.studio_aurora = s.studio_aurora;
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
         for (i, m) in cascades.iter().enumerate() {
@@ -5603,6 +6004,67 @@ impl Backend {
         u
     }
 
+    /// A frame with no render targets: the interface over black, none of
+    /// the passes that need the targets, its glass and blur left out. Its
+    /// markers are taken out as the full frame takes them.
+    fn interface_alone(&mut self, target: &wgpu::Texture, ui: Option<crate::ui_frame::UiFrame>) -> Vec<wgpu::CommandBuffer> {
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("interface alone"),
+        });
+        let mut cmds = Vec::new();
+        let mut screen = None;
+        let mut ui = ui;
+        if let Some(ui) = &mut ui {
+            crate::ui_world::take_end(&mut ui.primitives);
+            crate::ui_blur::take_boundary(&mut ui.primitives);
+            crate::ui_glass::skip(&mut ui.primitives);
+            crate::label_depth::skip(&mut ui.primitives);
+            // the previews draw into targets of their own: they stay, and
+            // egui-wgpu gets meshes, not callbacks it does not know
+            self.previews.render(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                ui.pixels_per_point,
+            );
+            let sd = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [self.config.width, self.config.height],
+                pixels_per_point: ui.pixels_per_point,
+            };
+            cmds = self
+                .egui
+                .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
+            screen = Some(sd);
+        }
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("interface alone"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            if let (Some(ui), Some(sd)) = (&ui, &screen) {
+                let uploaded = crate::ui_frame::meshes_uploaded(&ui.primitives);
+                let jobs = crate::ui_frame::paint_jobs(&ui.primitives, uploaded);
+                self.egui.render(&mut pass, &jobs, sd);
+            }
+        }
+        cmds.push(encoder.finish());
+        cmds
+    }
+
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
     fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
@@ -5613,6 +6075,7 @@ impl Backend {
             hover: self.depth_pick.latest(),
             picks: self.depth_pick.take_click_answers(),
             drawn: self.drawn_pick.take_answers(),
+            part_pick: self.part_pick.take_answer(),
             cull: self.cull.last,
             captured,
             snapshot,
@@ -5673,6 +6136,7 @@ impl Backend {
         uploads.after_submit();
         // (nothing was drawn for the pixel this frame began to answer)
         self.drawn_pick.abandon();
+        self.part_pick.abandon();
         self.result(index, stats, None, spent)
     }
 
@@ -5690,7 +6154,15 @@ impl Backend {
                 return Err(Box::new(packet));
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
-                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
+                let session = crate::xr_frame::Session::new(
+                    runtime,
+                    *system,
+                    &self.device,
+                    &self.queue,
+                    self.config.format,
+                    packet.settings.vr_resolution,
+                )?;
+                self.vr.set_default_resolution(Some(session.default_resolution));
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;
@@ -5705,6 +6177,8 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
+                    grading: ([packet.settings.vr_gamma, packet.settings.vr_vibrancy] != [1.0; 2] && !session.grades_on_submission())
+                        .then(|| crate::vr_mirror::HeadsetGrade::new(&self.device, session.output_template())),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -5737,7 +6211,21 @@ impl Backend {
         if !self.vr.wanted() {
             world.session.request_stop();
         }
-        let eyes = match world.session.begin(&world.runtime, packet.params.view, packet.params.near) {
+        let frame = world.session.begin(
+            &world.runtime,
+            packet.params.view,
+            packet.params.near,
+            packet.params.vr_rig,
+            packet.params.vr_revision,
+        );
+        let focused = world.session.focused
+            && frame
+                .as_ref()
+                .is_ok_and(|eyes| eyes.as_ref().is_some_and(|e| e.head_rotation.is_some()));
+        if !focused {
+            self.vr.set_focused(false);
+        }
+        let eyes = match frame {
             Ok(Some(eyes)) => eyes,
             Ok(None) => {
                 self.xr_world = Some(world);
@@ -5751,6 +6239,19 @@ impl Backend {
                 return Err(Box::new(packet));
             }
         };
+        if let Some(rotation) = eyes.head_rotation {
+            self.vr.set_head_pose(crate::HeadPose {
+                rotation,
+                position: eyes.head_position,
+                rig_position: packet.params.view.inverse().w_axis.truncate(),
+                generation: self.vr.reference(eyes.reference_changed),
+                origin: packet.params.vr_origin,
+                revision: packet.params.vr_revision,
+                mode: packet.params.vr_rig,
+                sampled: std::time::Instant::now(),
+            });
+        }
+        self.vr.set_focused(focused);
         self.vr.started();
         // Keep the desktop egui texture atlas current, even though the headset has no UI.
         let mirror_ui = packet.ui.take().map(|mut ui| {
@@ -5788,9 +6289,23 @@ impl Backend {
             motion_cut: packet.motion_cut,
             input_at: None,
         };
+        let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
+        let grade = [
+            bounded(packet.settings.vr_gamma, 0.5, 2.5),
+            bounded(packet.settings.vr_vibrancy, 0.0, 2.0),
+        ];
+        if grade == [1.0; 2] || world.session.grades_on_submission() {
+            world.grading = None;
+        }
+        let grading = (grade != [1.0; 2] && !world.session.grades_on_submission()).then(|| {
+            world
+                .grading
+                .get_or_insert_with(|| crate::vr_mirror::HeadsetGrade::new(&self.device, &eyes.textures[0]))
+        });
+        let sources = grading.as_ref().map_or(&eyes.textures, |grading| &grading.sources);
         let apply = |p: &mut FramePacket, i: usize| {
             let eye = eyes.cameras[i];
-            p.output = Some(eyes.textures[i].clone());
+            p.output = Some(sources[i].clone());
             p.params.view = eye.view;
             p.params.proj = eye.projection;
             p.params.camera_pos = eye.position;
@@ -5815,16 +6330,19 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
+        if let Some(grading) = grading.as_ref() {
+            grading.encode(&self.device, &self.queue, &eyes.textures, grade);
+        }
         first.stats.presented = world.mirror.present(
             &self.device,
             &self.queue,
             &self.surface,
-            &eyes.textures[0],
+            &sources[0],
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
             mirror_ui.as_ref(),
         );
-        if let Err(e) = world.session.end() {
+        if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
             self.vr.finish(true);
             self.motion_cut = true;
@@ -5864,7 +6382,80 @@ impl Backend {
         self.render_view(packet)
     }
 
+    /// The renderer made again, whole, from what it was first made from:
+    /// once video memory lets all of it through, it takes this one's place
+    /// (egui's renderer moved over), the world comes back with no relog,
+    /// and the old one's memory is freed. Not a GPU loss: same device, same
+    /// window, nothing counted for the crash report, and it works with GPU
+    /// recovery turned off. Refused again, it is dropped and tried later on
+    /// the targets' backoff.
+    fn remake_refused(&mut self, scene: &SceneGpu, settings: RenderSettings) {
+        let Some(seed) = self.seed.as_ref() else {
+            return;
+        };
+        let mut init = (**seed).clone();
+        init.width = self.config.width;
+        init.height = self.config.height;
+        init.output_format = Some(self.config.format);
+        init.vsync = self.vsync;
+        init.scene = scene.clone();
+        // what this one holds for a world it no longer draws is let go
+        // first: a card with room for one renderer but not two would
+        // otherwise refuse every try
+        self.shed_world();
+        // (how long a try holds the frame: the render thread makes the
+        // whole renderer, its pipelines included)
+        let started = Instant::now();
+        let made = Backend::new_with(init, true).map(|mut fresh| {
+            // the settings the frame asks for, as part of the remake: the
+            // atlases they make again could still be refused
+            if !fresh.remake {
+                fresh.apply_frame_settings(settings);
+            }
+            fresh
+        });
+        let took = started.elapsed().as_millis();
+        match made {
+            Ok(mut fresh) if !fresh.remake => {
+                log::info!("renderer: made again, whole ({took} ms)");
+                fresh.egui.0 = self.egui.0.take();
+                *self = fresh;
+            }
+            Ok(_) => {
+                log::info!("renderer: try refused ({took} ms)");
+                self.oom.targets_failed(Instant::now());
+            }
+            // (a lost device, which ends the viewer: egui's renderer stays
+            // here, nothing is made on the lost device)
+            Err(e) => {
+                log::warn!("renderer: could not be made again: {e}");
+                self.oom.targets_failed(Instant::now());
+            }
+        }
+    }
+
+    /// Lets go of the largest of what a renderer waiting for its remake
+    /// holds for the world it no longer draws: the render targets, down to
+    /// 1x1, and the shadow atlas, down to its smallest. In a scope: what
+    /// binds the start's refused resources fails again, and is dropped with
+    /// this renderer.
+    fn shed_world(&mut self) {
+        let device = self.device.clone();
+        let _ = crate::gpu_alloc::scoped(&device, || {
+            // (the size the settings ask for stays recorded: no frame's
+            // settings make the full atlas again before the remake)
+            self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
+            self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
+            self.make_targets_now(false, Some((1, 1)));
+        });
+    }
+
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
+        // (here, not in `render`: the eyes' backends of VR are made, and
+        // can be refused, like the window's)
+        if self.remake && self.oom.targets_due(Instant::now()) {
+            self.remake_refused(&packet.scene, packet.settings);
+        }
         let FramePacket {
             output,
             index,
@@ -5895,6 +6486,7 @@ impl Backend {
         self.depth_pick.harvest();
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
+        self.part_pick.harvest();
         self.drawn_pick.ask(drawn);
         let previous_scene = self.scene_size();
         let picks = picks
@@ -5922,12 +6514,20 @@ impl Backend {
         }
         stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
-            self.apply_settings(settings);
+            self.apply_frame_settings(settings);
+        }
+        // the start is over: made, and its settings applied, with nothing
+        // refused
+        if !self.remake {
+            self.seed = None;
         }
         stats.settings = Some(self.settings);
         // the tiled photo is done: its context goes with the targets that
         // bind it
         if params.photo_context == crate::types::PhotoContext::None && self.gtao.drop_context() {
+            self.rebuild_targets();
+        }
+        if self.oom.targets_due(Instant::now()) {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
@@ -5949,6 +6549,12 @@ impl Backend {
             .as_ref()
             .and_then(|t| t.fsr.as_ref())
             .map_or(world_size, |(fsr, _)| fsr.display_size());
+        // the user's render scale, upscaled smoothly to the window (RLVa's
+        // divisor keeps nearest pixels, a photo renders at full size)
+        let spatial_upscale = post_size != (self.config.width, self.config.height)
+            && self.settings.render_scale_percent < 100
+            && self.rlva_resolution_divisor <= 1
+            && snapshot.is_none();
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &mut egui_frame {
@@ -6049,10 +6655,33 @@ impl Backend {
                 _ => None,
             }
         };
+        // (before the skip: a frame without a surface image, as in a resize,
+        // must not take the notice away)
+        stats.video_memory_full = self.oom.targets;
         let Some(surface_tex) = surface_tex else {
             let spent = Spent { writes, lists: draw_lists };
             return self.skip(index, stats, upload_cmds, frame_uploads, spent);
         };
+        if self.oom.targets {
+            let ui = egui_frame.map(EguiFrame::tessellate);
+            let mut cmds = self.interface_alone(surface_tex.texture(), ui);
+            // (a capture gets what the window shows)
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            let capture = (wanted == Some(Capture::Full))
+                .then(|| self.encode_capture(&mut encoder, surface_tex.texture(), false))
+                .flatten();
+            cmds.push(encoder.finish());
+            crate::device_lost::submit_tracked(&self.lost, &self.queue, index, upload_cmds.into_iter().chain(cmds));
+            if let FrameTarget::Surface(t) = surface_tex {
+                self.queue.present(t);
+                stats.presented = true;
+            }
+            let captured = capture.and_then(|capture| self.read_capture(capture, false));
+            let spent = Spent { writes, lists: draw_lists };
+            let mut result = self.skip(index, stats, None, frame_uploads, spent);
+            result.captured = captured;
+            return result;
+        }
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
         let mut prof = Marks::start("acquire", t0);
@@ -6073,12 +6702,22 @@ impl Backend {
         if let Some(ui) = ui.as_ref().filter(|_| blur_boundary.is_some()) {
             let size = [self.config.width, self.config.height];
             if !self.ui_blur.as_ref().is_some_and(|blur| blur.matches(size, ui.pixels_per_point)) {
-                self.ui_blur = Some(crate::ui_blur::Blur::new(
-                    &self.device,
-                    self.config.format,
-                    size,
-                    ui.pixels_per_point,
-                ));
+                self.ui_blur = None;
+                let now = Instant::now();
+                if self.ui_targets_backoff.ready(now) {
+                    let format = self.config.format;
+                    let (blur, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                        crate::ui_blur::Blur::new(&self.device, format, size, ui.pixels_per_point)
+                    });
+                    if self.memory_refused(refused) || crate::gpu_alloc::ui_targets_refused(size) {
+                        log::warn!("interface blur: out of video memory, the windows go without it for now");
+                        self.ui_targets_backoff.failed(now);
+                    } else {
+                        // (the glass made later in the frame may still be refused)
+                        self.ui_targets_backoff.made();
+                        self.ui_blur = Some(blur);
+                    }
+                }
             }
         } else {
             self.ui_blur = None;
@@ -6090,16 +6729,90 @@ impl Backend {
         if !lists.select_faces.is_empty() {
             let size = [post_size.0, post_size.1];
             if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
-                self.selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
+                let format = self.config.format;
+                self.selection = extra(&mut self.oom, &self.device, self.lost.get(), "selection outline", |device| {
+                    crate::selection::Overlay::new(device, format, size)
+                });
             }
             if let Some(selection) = &self.selection {
                 selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
             }
         }
+        // the subject's faces serve the pick (Ctrl over it) and the overlay
+        // (a part lit): the overlay only when a joint is set
+        self.part_lit = !lists.part_faces.is_empty() && f.part_joints != [0; 8];
+        // the cursor, in window pixels, on the target drawn at `post_size`
+        // (a lower render scale, RLVa's divisor); none on a photo frame,
+        // whose `config` is the photo's (the hover is skipped there too)
+        let (window_w, window_h) = (self.config.width.max(1), self.config.height.max(1));
+        self.part_pick_px = f
+            .part_pick
+            .filter(|_| !lists.part_faces.is_empty() && snapshot.is_none())
+            .map(|px| {
+                let at = crate::part_pick::target_pixel(px, [window_w, window_h], [post_size.0, post_size.1]);
+                (at, px)
+            });
+        // its target under the video memory guard, freed once idle
+        let pick_size = [post_size.0, post_size.1];
+        if self.part_pick_px.is_some() {
+            if self.part_pick.needs_target(pick_size) {
+                let texture = extra(&mut self.oom, &self.device, self.lost.get(), "poser part pick", |device| {
+                    crate::part_pick::PartPick::make_target(device, pick_size)
+                });
+                self.part_pick.set_target(texture, pick_size);
+            }
+        } else {
+            self.part_pick.idle();
+        }
+        // the part's overlay images go the same way once no part is lit
+        self.part_idle = if self.part_lit { 0 } else { self.part_idle.saturating_add(1) };
+        if self.part_idle > PART_IDLE_FRAMES {
+            self.part = None;
+            if self.part_pick_px.is_none() {
+                self.part_depth = None;
+            }
+        }
+        if self.part_lit || self.part_pick_px.is_some() {
+            let size = [post_size.0, post_size.1];
+            if self
+                .part_depth
+                .as_ref()
+                .is_none_or(|depth| depth.texture().width() != size[0] || depth.texture().height() != size[1])
+            {
+                self.part_depth = extra(&mut self.oom, &self.device, self.lost.get(), "poser part depth", |device| {
+                    make_view(
+                        device,
+                        "poser part depth",
+                        size[0],
+                        size[1],
+                        DEPTH_FORMAT,
+                        1,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                    )
+                    .1
+                });
+            }
+        }
+        if self.part_lit {
+            let size = [post_size.0, post_size.1];
+            if self.part.as_ref().is_none_or(|part| part.size != size) {
+                let format = self.config.format;
+                self.part = extra(&mut self.oom, &self.device, self.lost.get(), "poser part outline", |device| {
+                    crate::selection::Overlay::new_part(device, format, size)
+                });
+            }
+            if let Some(part) = &self.part {
+                // a steady tint inside, a wide halo outside
+                part.update(&self.queue, f.part_color, PART_TINT, f.selection_scale * PART_HALO);
+            }
+        }
         if !lists.hud_select_faces.is_empty() {
             let size = [self.config.width, self.config.height];
             if self.hud_selection.as_ref().is_none_or(|selection| selection.size != size) {
-                self.hud_selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
+                let format = self.config.format;
+                self.hud_selection = extra(&mut self.oom, &self.device, self.lost.get(), "HUD selection outline", |device| {
+                    crate::selection::Overlay::new(device, format, size)
+                });
             }
             if let Some(selection) = &self.hud_selection {
                 selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
@@ -6326,6 +7039,21 @@ impl Backend {
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
         self.blend_ao_depth = blend_ao == BlendAo::New;
+        // AURORA_LEGACY_GLARE=0: the blended legacy faces without the glare
+        // of #3259 (object.wgsl LEGACY_GLARE_OFF)
+        static GLARE_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *GLARE_OFF.get_or_init(|| std::env::var("AURORA_LEGACY_GLARE").is_ok_and(|v| v.trim() == "0")) {
+            main.light_sets.mode[2] |= 0x100000;
+        }
+        // AURORA_LEGACY_NAN=off|check: the legacy highlights and
+        // environment unguarded against a NaN as in 0.9.8, or magenta where
+        // the guard caught one (object.wgsl LEGACY_NAN_OFF, LEGACY_NAN_CHECK)
+        static LEGACY_NAN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        main.light_sets.mode[2] |= *LEGACY_NAN.get_or_init(|| match std::env::var("AURORA_LEGACY_NAN").as_deref().map(str::trim) {
+            Ok("off") => 0x200000,
+            Ok("check") => 0x400000,
+            _ => 0,
+        });
         main.light_sets.mode[2] |= match blend_ao {
             BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
@@ -6569,6 +7297,10 @@ impl Backend {
         // gammaCorrect, which only encodes and clamps (legacyGamma kept on
         // skies without a probe ambiance, as no_post below)
         let hdr = self.settings.hdr;
+        // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
+        // faint sub-pixel pattern into a visible checkerboard
+        let cas = hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_));
+        let (post_sharpen, upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
         let post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
@@ -6587,13 +7319,7 @@ impl Backend {
                 }
             },
             fxaa: if self.settings.aa == AntiAliasing::Fxaa { 1.0 } else { 0.0 },
-            // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
-            // faint sub-pixel pattern into a visible checkerboard
-            sharpen: if hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_)) {
-                f.sharpen.clamp(0.0, 1.0)
-            } else {
-                0.0
-            },
+            sharpen: post_sharpen,
             glow: if glow_on { 1.0 } else { 0.0 },
             debug_glow: {
                 static DEBUG_GLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -6775,9 +7501,19 @@ impl Backend {
 
         // ---- indirect args
         self.indirect_cpu.clear();
+        // The CPU-built lists get the same index-range bound as cull.wgsl's
+        // write_args: wgpu's indirect validation is off (main_thread.rs).
+        let index_limit = (scene.indices.size() / 2).min(u64::from(u32::MAX)) as u32;
+        let cpu_clamped = std::cell::Cell::new(0u32);
         let push = |cpu: &mut Vec<DrawIndexedIndirect>, l: &[DrawCmd]| -> (u64, u32) {
             let start = cpu.len() as u64 * std::mem::size_of::<DrawIndexedIndirect>() as u64;
-            cpu.extend(l.iter().map(DrawIndexedIndirect::from));
+            cpu.extend(l.iter().map(|c| {
+                let mut d = DrawIndexedIndirect::from(c);
+                if crate::gpu_cull::bound_cpu_draw(&mut d, index_limit) {
+                    cpu_clamped.set(cpu_clamped.get() + 1);
+                }
+                d
+            }));
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
@@ -6885,8 +7621,9 @@ impl Backend {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
             }
+            // the same limit as the CPU-built lists' bound (`push`)
             self.cull
-                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
+                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, index_limit, frame);
         }
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
@@ -6904,6 +7641,7 @@ impl Backend {
         rg.physics_shapes = push(cpu, &lists.physics_shapes);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
+        rg.part_faces = push(cpu, &lists.part_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if let Some(c) = &capture {
@@ -6957,6 +7695,13 @@ impl Backend {
         for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
         }
+        // after every CPU-built list: main view, HUD, debug, selection,
+        // preview, shadows and probes
+        if cpu_clamped.get() > 0 {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            let n = cpu_clamped.get();
+            ONCE.call_once(|| log::warn!("indirect draws: {n} CPU-built draws had an index range past the index buffer and were skipped"));
+        }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {
             let mut size = self.indirect.size();
@@ -7006,8 +7751,8 @@ impl Backend {
             let c = self.cull.last;
             stats.draws += c.main_draws() + c.bins[BIN_WATER_EXCLUSION];
             stats.shadow_draws += c.shadow_draws();
-            for k in 0..CASCADES {
-                stats.shadow.draws[k] += c.cascade_draws(k);
+            for (k, draws) in stats.shadow.draws.iter_mut().enumerate() {
+                *draws += c.cascade_draws(k);
             }
             stats.shadow.triangles = c.shadow_triangles;
             stats.shadow.rigged_draws = c.shadow_rigged;
@@ -7030,7 +7775,7 @@ impl Backend {
             &lists.water_events,
             &lists.water_contacts,
         ) {
-            self.rebuild_bind_groups();
+            self.rebuild_bind_groups_checked("TAA history after a water effects change");
         }
         stats.particles += self.water_effects.particles;
         prof.mark("lists");
@@ -7990,7 +8735,7 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
-            if !f.cutout {
+            if !f.cutout && !f.hide_sky {
                 pass.set_pipeline(&self.pipelines.sky);
                 pass.draw(0..3, 0..1);
             }
@@ -8144,15 +8889,21 @@ impl Backend {
         {
             let size = self.targets.depth_ss_tex.size();
             let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-            self.targets.blend_layers = Some(make_view(
-                &self.device,
-                "rigged blend layers depth",
-                size.width,
-                size.height,
-                DEPTH_FORMAT,
-                samples,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
-            ));
+            let (layers, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                make_view(
+                    &self.device,
+                    "rigged blend layers depth",
+                    size.width,
+                    size.height,
+                    DEPTH_FORMAT,
+                    samples,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                )
+            });
+            self.targets.blend_layers = Some(layers);
+            // refused, this frame is lost; the next ones make every target
+            // again
+            first_use(&mut self.oom, "rigged blend layers depth", true, refused && !self.lost.get());
         }
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
@@ -8338,9 +9089,22 @@ impl Backend {
                                 continue;
                             }
                             let run = (b0 + from as u64 * stride, end - from);
-                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            if lists.blend_depth_quiet.binary_search(&end).is_ok() {
+                                // eyelashes and brows, drawn before the hair:
+                                // their depth where nearly opaque only (a
+                                // lash itself, in front of a strand), then
+                                // their colour, so that neither their
+                                // card's nearly empty part nor their lashes
+                                // blurred into a band by the mipmaps cut
+                                // the hair drawn after them in straight
+                                // edges (#2121)
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, run, from);
+                                blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                            } else {
+                                blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            }
                             from = end;
                         }
                     }
@@ -8563,8 +9327,22 @@ impl Backend {
         // ---- depth of field, on the resolved (and TAA-steady) image,
         // before the glow and the tone mapping (not in probe captures)
         match &f.dof {
-            Some(params) => {
-                let dof = self.dof.get_or_insert_with(|| crate::dof::Dof::new(&self.device, HDR_FORMAT));
+            Some(params)
+                if dof_targets(
+                    &mut self.oom,
+                    &mut self.dof,
+                    &self.device,
+                    &crate::dof::PostInputs {
+                        layout: &self.post_layout,
+                        sampler: &self.post_sampler,
+                        buffer: &self.post_buffer,
+                        glow: &self.glow.views[1],
+                    },
+                    post_size,
+                    self.lost.get(),
+                ) =>
+            {
+                let dof = self.dof.as_mut().expect("made by dof_targets");
                 post_bg = dof.encode(
                     &self.device,
                     &self.queue,
@@ -8584,6 +9362,8 @@ impl Backend {
                     f.cutout,
                 );
             }
+            // (refused by a full video memory: the frame goes without it)
+            Some(_) => {}
             None => {
                 if let Some(dof) = &mut self.dof {
                     dof.release();
@@ -8634,27 +9414,42 @@ impl Backend {
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
         if post_size != (self.config.width, self.config.height) {
-            let smooth = self.settings.render_scale_percent < 100 && self.rlva_resolution_divisor <= 1 && snapshot.is_none();
+            let smooth = spatial_upscale;
             if self
                 .rlva_scaled
                 .as_ref()
                 .is_none_or(|scaled| scaled.size() != post_size || scaled.smooth != smooth)
             {
-                self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(
-                    &self.device,
-                    self.config.format,
-                    post_size,
-                    smooth,
-                ));
+                let format = self.config.format;
+                let (scaled, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                    crate::rlva::resolution::Scaled::new(&self.device, format, post_size, smooth)
+                });
+                // refused, it stays for this frame, which fails as a whole:
+                // drawn without it, the frame would show the world at a
+                // resolution RLVa does not allow
+                self.rlva_scaled = Some(scaled);
+                first_use(&mut self.oom, "RLVa reduced scene", true, refused && !self.lost.get());
             }
         } else {
             self.rlva_scaled = None;
         }
         let composed_view = self.rlva_scaled.as_ref().map_or(&surface_view, |scaled| &scaled.view);
         let scene_target = if !f.rlva_spheres.is_empty() {
-            self.rlva_spheres
-                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, self.config.format))
-                .prepare(&self.device, post_size, self.config.format)
+            let format = self.config.format;
+            let spheres = self
+                .rlva_spheres
+                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, format));
+            if spheres.needs_targets(post_size) {
+                // refused, they stay for this frame, which fails as a
+                // whole: drawn without them, it would show what the
+                // spheres hide
+                let device = &self.device;
+                let (_, refused) = crate::gpu_alloc::scoped(device, || {
+                    spheres.prepare(device, post_size, format);
+                });
+                first_use(&mut self.oom, "RLVa vision spheres", true, refused && !self.lost.get());
+            }
+            spheres.prepare(&self.device, post_size, format)
         } else {
             self.rlva_spheres = None;
             composed_view
@@ -8663,18 +9458,36 @@ impl Backend {
         // and its passes into the frame
         let look = f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty()));
         if look.is_some() {
-            self.looks
-                .get_or_insert_with(|| crate::looks::Looks::new(&self.device))
-                .prepare(&self.device, self.config.format, post_size);
+            let format = self.config.format;
+            let looks = self.looks.get_or_insert_with(|| crate::looks::Looks::new(&self.device));
+            if !looks.needs_targets(format, post_size) {
+                looks.prepare(&self.device, format, post_size);
+            } else if self.oom.extras_ready(Instant::now()) {
+                let device = &self.device;
+                let (_, refused) = crate::gpu_alloc::scoped(device, || looks.prepare(device, format, post_size));
+                if first_use(&mut self.oom, "photo look", false, refused && !self.lost.get()) {
+                    // (no input: the frame is drawn without the look)
+                    looks.release();
+                }
+            } else {
+                // waiting: images of another size or format are not drawn
+                // through (no input: the frame goes without the look)
+                looks.release();
+            }
         } else if let Some(looks) = &mut self.looks {
             looks.idle();
         }
         let looks = look.and(self.looks.as_ref()).and_then(|looks| Some((looks, looks.input()?)));
         let post_target = looks.map_or(scene_target, |(_, input)| input);
+        // the selection outline is drawn only when its images exist (an
+        // outline refused by a full video memory is not): the frame's last
+        // timestamp goes to whichever pass really ends it
+        let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
+        let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && rg.select_faces.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -8744,7 +9557,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_part => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -8752,6 +9565,75 @@ impl Backend {
                 _ => None,
             };
             selection.encode(&mut encoder, scene_target, timestamps);
+            calls.set(calls.get() + 2);
+        }
+
+        // Resolve subject coverage against private depth. Without depth
+        // writes the last visited face wins, including the body behind a
+        // visible unrigged Blend attachment. The scene depth stays intact.
+        let part_depth = self.part_depth.as_ref().filter(|_| draws_part || self.part_pick_px.is_some());
+        if let Some(depth) = part_depth {
+            encoder.copy_texture_to_texture(
+                post_depth.texture().as_image_copy(),
+                depth.texture().as_image_copy(),
+                depth.texture().size(),
+            );
+        }
+        if rg.part_faces.1 > 0
+            && let Some(depth) = part_depth
+            && let Some((px, tag)) = self.part_pick_px
+            && let Some(view) = self.part_pick.begin([post_size.0, post_size.1], px, tag)
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("poser part pick"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // the cursor's pixel alone is read: only it is rasterized
+            pass.set_scissor_rect(px[0], px[1], 1, 1);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.part_pick, rg.part_faces);
+            drop(pass);
+            self.part_pick.encode_copy(&mut encoder);
+            calls.set(calls.get() + 1);
+        }
+
+        if rg.part_faces.1 > 0
+            && self.part_lit
+            && let Some(depth) = part_depth
+            && let Some(part) = &self.part
+        {
+            let mut pass = part.begin_mask(&mut encoder, depth);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            part.encode(&mut encoder, scene_target, timestamps);
             calls.set(calls.get() + 2);
         }
 
@@ -8769,7 +9651,7 @@ impl Backend {
             calls.set(calls.get() + passes as u32);
         }
         if let Some(scaled) = &self.rlva_scaled {
-            scaled.encode(&mut encoder, &surface_view);
+            scaled.encode(&self.queue, &mut encoder, &surface_view, upscale_sharpen);
             calls.set(calls.get() + 1);
         }
 
@@ -8799,16 +9681,41 @@ impl Backend {
                     if let Some(old) = self.ui_glass.take() {
                         old.free(&mut self.egui);
                     }
-                    self.ui_glass = Some(crate::ui_glass::Glass::new(
-                        &self.device,
-                        &mut self.egui,
-                        self.config.format,
-                        size,
-                        scale,
-                    ));
+                    let now = Instant::now();
+                    if self.ui_targets_backoff.ready(now) {
+                        let format = self.config.format;
+                        let egui = &mut self.egui;
+                        let (glass, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                            crate::ui_glass::Glass::new(&self.device, egui, format, size, scale)
+                        });
+                        if self.memory_refused(refused) || crate::gpu_alloc::ui_targets_refused(size) {
+                            log::warn!("interface glass: out of video memory, the windows go without it for now");
+                            glass.free(&mut self.egui);
+                            self.ui_targets_backoff.failed(now);
+                        } else {
+                            // (the labels' copy below may still be refused)
+                            self.ui_targets_backoff.made();
+                            self.ui_glass = Some(glass);
+                        }
+                    }
                 }
             } else if let Some(old) = self.ui_glass.take() {
                 old.free(&mut self.egui);
+            }
+            // the labels' copy, made on its first use: checked that once,
+            // not on every frame that shows it
+            if label_glass.is_some()
+                && let Some(glass) = self.ui_glass.as_mut().filter(|glass| !glass.has_under())
+            {
+                let egui = &mut self.egui;
+                let (_, refused) = crate::gpu_alloc::scoped(&self.device, || glass.make_under(&self.device, egui));
+                if self.memory_refused(refused)
+                    && let Some(old) = self.ui_glass.take()
+                {
+                    log::warn!("interface glass: out of video memory, the labels go without it for now");
+                    old.free(&mut self.egui);
+                    self.ui_targets_backoff.failed(Instant::now());
+                }
             }
             match (label_glass, &mut self.ui_glass) {
                 (Some(area), Some(glass)) => {
@@ -8913,6 +9820,7 @@ impl Backend {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
         }
+        let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
         if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
@@ -8936,7 +9844,7 @@ impl Backend {
                     stencil_ops: None,
                 }),
                 timestamp_writes: match (&self.timer, timer_slot) {
-                    (Some(t), Some(_)) if hud_select_faces_range.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
+                    (Some(t), Some(_)) if !draws_hud_selection => Some(wgpu::RenderPassTimestampWrites {
                         query_set: &t.query_set,
                         beginning_of_pass_write_index: None,
                         end_of_pass_write_index: Some(1),
@@ -9057,34 +9965,7 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
-        let mut captured = None;
-        if let Some((buf, w, h, row)) = capture {
-            buf.map_async(wgpu::MapMode::Read, .., |_| {});
-            // (a device lost before: no image, the photo fails)
-            if self.lost.wait(&self.device)
-                && let Ok(view) = buf.get_mapped_range(..)
-            {
-                let bgra = matches!(
-                    self.config.format,
-                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-                );
-                // (a cut-out photo keeps its coverage, cutout.rs)
-                let opaque = if f.cutout { 0 } else { 255 };
-                let mut out = Vec::with_capacity((w * h * 4) as usize);
-                for y in 0..h {
-                    let r = &view[(y * row) as usize..(y * row + w * 4) as usize];
-                    for px in r.as_chunks::<4>().0 {
-                        let a = px[3] | opaque;
-                        if bgra {
-                            out.extend_from_slice(&[px[2], px[1], px[0], a]);
-                        } else {
-                            out.extend_from_slice(&[px[0], px[1], px[2], a]);
-                        }
-                    }
-                }
-                captured = Some((w, h, out));
-            }
-        }
+        let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
 
         if let (Some(t), Some(slot)) = (&mut self.timer, timer_slot) {
             let ready = t.readback[slot].1.clone();
@@ -9101,6 +9982,7 @@ impl Backend {
         self.exposure.after_submit();
         self.histogram.after_submit();
         self.drawn_pick.after_submit();
+        self.part_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         if let FrameTarget::Surface(t) = surface_tex {
@@ -9112,6 +9994,7 @@ impl Backend {
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
+        self.part_pick.harvest();
         prof.mark("present");
         let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;
@@ -9158,8 +10041,42 @@ impl Backend {
         stats.cpu_encode_ms = encode_ms;
         stats.water_reflection = do_water_refl;
         stats.mirror = mirror.is_some();
+        // a frame that went through: a try made earlier in it is settled
+        if self.oom.settle() {
+            log::info!("render targets: made again, the world is back");
+        }
+        self.ui_targets_backoff.settle();
         let spent = Spent { writes, lists: draw_lists };
         self.result(index, stats, captured, spent)
+    }
+
+    /// The image of a capture encoded in a frame just submitted.
+    fn read_capture(&self, (buf, w, h, row): (wgpu::Buffer, u32, u32, u32), cutout: bool) -> Option<(u32, u32, Vec<u8>)> {
+        buf.map_async(wgpu::MapMode::Read, .., |_| {});
+        // (a device lost before: no image, the photo fails)
+        if !self.lost.wait(&self.device) {
+            return None;
+        }
+        let view = buf.get_mapped_range(..).ok()?;
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        // (a cut-out photo keeps its coverage, cutout.rs)
+        let opaque = if cutout { 0 } else { 255 };
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let r = &view[(y * row) as usize..(y * row + w * 4) as usize];
+            for px in r.as_chunks::<4>().0 {
+                let a = px[3] | opaque;
+                if bgra {
+                    out.extend_from_slice(&[px[2], px[1], px[0], a]);
+                } else {
+                    out.extend_from_slice(&[px[0], px[1], px[2], a]);
+                }
+            }
+        }
+        Some((w, h, out))
     }
 
     /// Copy the swapchain image to a readback buffer (frame captures).
@@ -9179,7 +10096,7 @@ impl Backend {
         let row = (w * 4).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("capture"),
-            size: (row * h) as u64,
+            size: crate::readback::readback_size((row * h) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -9391,7 +10308,7 @@ mod tests {
         encoder.copy_texture_to_texture(before.as_image_copy(), after.as_image_copy(), before.size());
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("impostor atlas test"),
-            size: 512,
+            size: crate::readback::readback_size(512),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -10014,7 +10931,7 @@ mod tests {
         }
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: (SIZE * SIZE * 4) as u64,
+            size: crate::readback::readback_size((SIZE * SIZE * 4) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

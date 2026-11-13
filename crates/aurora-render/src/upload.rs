@@ -238,14 +238,48 @@ impl StagingPool {
     pub fn stage(&self, size: u64, fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>)) -> Option<Staged> {
         let size = align(size.max(4));
         let (chunk, offset) = self.allocate(size)?;
+        // One job writes at a time: staging memory is write-combined, and
+        // 30 jobs streaming into it at once stalled every thread of the
+        // process, the main one included (a 16 ms frame per wave of
+        // textures in AURORA_DEMO_STREAM). One writer still moves ~9 GB/s,
+        // far more than a region streams.
+        let turn = self.write_turn.lock().unwrap_or_else(|e| e.into_inner());
+        Self::write(chunk, offset, size, turn, fill)
+    }
+
+    /// [`stage`](Self::stage) for the main thread, which never waits for
+    /// the pool: None at once when a job holds the pool or the write turn,
+    /// or when no chunk has room now; the caller then writes directly.
+    pub fn try_stage(&self, size: u64, fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>)) -> Option<Staged> {
+        let size = align(size.max(4));
+        if size > self.chunk_bytes {
+            return None;
+        }
+        // the turn first, so that a region is never reserved and left
+        // unwritten (a job fills it for a few ms)
+        let turn = match self.write_turn.try_lock() {
+            Ok(t) => t,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        let (chunk, offset) = {
+            let mut s = self.try_lock()?;
+            self.receive(&mut s);
+            Self::take_room(&mut s, size)?
+        };
+        Self::write(chunk, offset, size, turn, fill)
+    }
+
+    /// Fill a reserved region, holding the write turn.
+    fn write(
+        chunk: Arc<Chunk>,
+        offset: u64,
+        size: u64,
+        _turn: std::sync::MutexGuard<'_, ()>,
+        fill: impl FnOnce(&mut wgpu::WriteOnly<'_, [u8]>),
+    ) -> Option<Staged> {
         {
             let view = chunk.buffer.get_mapped_range_mut(offset..offset + size);
-            // One job writes at a time: staging memory is write-combined,
-            // and 30 jobs streaming into it at once stalled every thread of
-            // the process, the main one included (a 16 ms frame per wave of
-            // textures in AURORA_DEMO_STREAM). One writer still moves
-            // ~9 GB/s, far more than a region streams.
-            let _turn = self.write_turn.lock().unwrap_or_else(|e| e.into_inner());
             match view {
                 Ok(mut view) => fill(&mut view.slice(..)),
                 Err(e) => {
@@ -270,20 +304,8 @@ impl StagingPool {
             {
                 let mut s = self.lock();
                 self.receive(&mut s);
-                if s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
-                    return Self::bump(&mut s, size);
-                }
-                // the next free chunk; with none, the open one stays open
-                // for smaller requests
-                if let Some(chunk) = s.free.pop() {
-                    if let Some(o) = s.open.replace(Open {
-                        chunk,
-                        offset: 0,
-                        frames: 0,
-                    }) {
-                        s.closed.push(o.chunk);
-                    }
-                    return Self::bump(&mut s, size);
+                if let Some(region) = Self::take_room(&mut s, size) {
+                    return Some(region);
                 }
             }
             // every chunk is in use: wait for one to come back
@@ -297,6 +319,24 @@ impl StagingPool {
                 }
             }
         }
+    }
+
+    /// A region of the open chunk, or of the next free one; None when
+    /// neither has room (the open one then stays open for smaller
+    /// requests).
+    fn take_room(s: &mut PoolState, size: u64) -> Option<(Arc<Chunk>, u64)> {
+        if s.open.as_ref().is_some_and(|o| o.offset + size <= o.chunk.size()) {
+            return Self::bump(s, size);
+        }
+        let chunk = s.free.pop()?;
+        if let Some(o) = s.open.replace(Open {
+            chunk,
+            offset: 0,
+            frames: 0,
+        }) {
+            s.closed.push(o.chunk);
+        }
+        Self::bump(s, size)
     }
 
     /// A region of the open chunk (which has room for it).
@@ -499,13 +539,24 @@ impl StagedTexture {
     /// Stage tightly packed levels of `format` (level 0 first, sizes in
     /// texels); None when the pool is full or the data does not fit the sizes.
     pub fn with_format(pool: &StagingPool, format: TexelFormat, mips: &[(u32, u32, &[u8])]) -> Option<Self> {
+        Self::staged(pool, format, mips, true)
+    }
+
+    /// [`new`](Self::new) for the main thread, which never waits for the
+    /// pool ([`StagingPool::try_stage`]).
+    pub fn try_new(pool: &StagingPool, mips: &[(u32, u32, &[u8])]) -> Option<Self> {
+        Self::staged(pool, TexelFormat::Rgba8, mips, false)
+    }
+
+    fn staged(pool: &StagingPool, format: TexelFormat, mips: &[(u32, u32, &[u8])], wait: bool) -> Option<Self> {
         let usable = mips.iter().all(|(w, h, d)| d.len() as u64 >= format.level_bytes(*w, *h));
         if mips.is_empty() || !usable || !format.fits(mips[0].0, mips[0].1) {
             return None;
         }
         let (levels, size) = level_layout(format, mips.iter().map(|m| (m.0, m.1)));
         let data: Vec<&[u8]> = mips.iter().map(|m| m.2).collect();
-        let staged = pool.stage(size, |dst| write_levels(dst, format, &levels, &data))?;
+        let fill = |dst: &mut wgpu::WriteOnly<'_, [u8]>| write_levels(dst, format, &levels, &data);
+        let staged = if wait { pool.stage(size, fill) } else { pool.try_stage(size, fill) }?;
         Some(StagedTexture {
             format,
             levels,
@@ -710,6 +761,36 @@ impl FrameUploads {
 mod tests {
     use super::*;
 
+    /// The main thread's staging never waits: with every chunk in use, or
+    /// a job writing, it gives up at once where `stage` would wait 100 ms
+    /// (GPU test).
+    #[test]
+    #[ignore]
+    fn try_stage_gives_up_at_once() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let pool = StagingPool::new(&device, true);
+        assert!(pool.try_stage(64, |_| {}).is_some(), "room in the open chunk");
+        // a job holds the write turn
+        {
+            let _turn = pool.write_turn.lock().expect("turn");
+            assert!(pool.try_stage(64, |_| {}).is_none());
+        }
+        // every chunk taken, none returned
+        let chunk = 16 << 20;
+        let held: Vec<Staged> = std::iter::from_fn(|| pool.try_stage(chunk, |_| {})).take(64).collect();
+        assert!(!held.is_empty());
+        let start = Instant::now();
+        assert!(pool.try_stage(chunk, |_| {}).is_none());
+        assert!(start.elapsed() < STAGE_WAIT / 2, "it did not wait");
+        assert!(pool.try_stage(chunk + 4, |_| {}).is_none(), "larger than a chunk");
+    }
+
     /// After a device loss the viewer makes a new pool: what a job staged in
     /// the old one is told apart (GPU test).
     #[test]
@@ -752,7 +833,7 @@ mod tests {
         const PER_ROUND: usize = 8;
         let dst = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (REGION * PER_ROUND) as u64,
+            size: crate::readback::readback_size((REGION * PER_ROUND) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

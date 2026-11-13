@@ -364,7 +364,13 @@ fn view(device: &wgpu::Device, label: &str, (w, h): (u32, u32), format: wgpu::Te
         h,
         format,
         1,
-        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | if format.is_depth_stencil_format() {
+                wgpu::TextureUsages::COPY_SRC
+            } else {
+                wgpu::TextureUsages::empty()
+            },
     )
     .1
 }
