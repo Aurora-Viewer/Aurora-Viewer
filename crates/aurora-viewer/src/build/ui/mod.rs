@@ -317,6 +317,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     for ev in pressed {
         let egui::Event::Key {
             key,
+            physical_key,
             pressed: true,
             repeat,
             modifiers: m,
@@ -330,7 +331,9 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             shift: m.shift,
             alt: m.alt,
         };
-        if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
+        // Position for 1–5; consume the logical key so AZERTY's `'` is taken.
+        let shortcut_key = keyboard::position_key(key, physical_key);
+        if let Some(command) = Shortcut::from_key(shortcut_key, mods, tool.open) {
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
             if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {

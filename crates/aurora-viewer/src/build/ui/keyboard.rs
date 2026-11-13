@@ -32,6 +32,19 @@ pub enum Shortcut {
     },
 }
 
+/// Ctrl+1–5 follow the key position when the event carries one. The Legacy
+/// Viewer's LLKeyboardWin32 constructor (indra/llwindow/llkeyboardwin32.cpp)
+/// maps the number row and numpad by virtual key, and menu_viewer.xml binds
+/// Focus through Land to `control|1` through `control|5`. Letters stay on
+/// the typed character, so a quote key that is not in the 4 position does
+/// not open Create.
+pub(super) fn position_key(key: Key, physical: Option<Key>) -> Key {
+    match physical {
+        Some(digit @ (Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5)) => digit,
+        _ => key,
+    }
+}
+
 impl Shortcut {
     pub fn from_key(key: Key, mods: Mods, open: bool) -> Option<Self> {
         if let Some(history) = EditHistory::from_key(key, mods) {
@@ -352,5 +365,133 @@ mod tests {
         settings.set_snap_mode(crate::build::SnapMode::Grid);
         tool.update(&mut world, &settings, None, (0.0, 0.0), false, Default::default());
         assert!(!tool.place.active, "the grid snap ends it");
+    }
+
+    /// French AZERTY types `'` on the key in the 4 position. The number row
+    /// follows that position (LLKeyboardWin32 constructor,
+    /// indra/llwindow/llkeyboardwin32.cpp; menu_viewer.xml control|1…5).
+    #[test]
+    fn azerty_number_row_follows_the_key_position() {
+        let quote = NativeKey::Character("'".into());
+        for (code, num) in [
+            (KeyCode::Digit1, Key::Num1),
+            (KeyCode::Digit2, Key::Num2),
+            (KeyCode::Digit3, Key::Num3),
+            (KeyCode::Digit4, Key::Num4),
+            (KeyCode::Digit5, Key::Num5),
+            (KeyCode::Numpad4, Key::Num4),
+        ] {
+            assert_eq!(
+                crate::keybinds::native_shortcut_key(&quote, code),
+                Some(num),
+                "{code:?} follows the key position, not the typed quote"
+            );
+        }
+        assert_eq!(
+            crate::keybinds::native_shortcut_key(&NativeKey::Character("4".into()), KeyCode::Digit4),
+            Some(Key::Num4),
+            "QWERTY Digit4 already is Num4"
+        );
+        assert_eq!(
+            crate::keybinds::native_shortcut_key(&NativeKey::Character("b".into()), KeyCode::KeyB),
+            Some(Key::B)
+        );
+        assert_eq!(
+            crate::keybinds::native_shortcut_key(&quote, KeyCode::Quote),
+            Some(Key::Quote),
+            "a quote key that is not in the 4 position stays Quote"
+        );
+    }
+
+    /// Ctrl+4 opens Create and leaves the physical hold out of movement.
+    /// The gesture path runs only when this returns nothing that keeps the key.
+    #[test]
+    fn azerty_ctrl_digit4_opens_create_and_drops_the_hold() {
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let quote = NativeKey::Character("'".into());
+        let mut down = HashSet::from([Input::key(KeyCode::Digit4)]);
+        assert_eq!(
+            Shortcut::take_native_key(&quote, KeyCode::Digit4, ctrl, false, true, &mut down),
+            Some(Shortcut::Open(Tool::Create))
+        );
+        assert!(!down.contains(&Input::key(KeyCode::Digit4)), "Ctrl+4 must not stay a held move");
+        let mut typed = HashSet::from([Input::key(KeyCode::Digit4)]);
+        assert_eq!(
+            Shortcut::take_native_key(&quote, KeyCode::Digit4, Mods::default(), false, true, &mut typed),
+            None,
+            "Digit4 without Ctrl still types"
+        );
+        assert!(typed.contains(&Input::key(KeyCode::Digit4)));
+        let shifted = Mods {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            Shortcut::take_native_key(&quote, KeyCode::Digit4, shifted, false, true, &mut HashSet::new()),
+            None,
+            "Shift+Digit4 is not a build tool"
+        );
+    }
+
+    /// The egui dispatcher sees logical Quote and physical Num4 for that key.
+    #[test]
+    fn azerty_quote_on_digit4_opens_create_in_the_build_frame() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut tool = BuildTool::default();
+        let mut settings = BuildSettings::default();
+        let ctx = egui::Context::default();
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::ModifiersChanged(modifiers),
+                    egui::Event::Key {
+                        key: Key::Quote,
+                        physical_key: Some(Key::Num4),
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                ],
+                focused: true,
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            },
+            |ui| {
+                super::super::shortcuts(ui.ctx(), &mut tool, &mut world, &mut settings);
+                assert_eq!(tool.tool, Tool::Create);
+                assert!(tool.open);
+                assert!(!ui.input(|i| i.key_pressed(Key::Quote)), "the typed quote is consumed");
+            },
+        );
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut tool = BuildTool::default();
+        let mut settings = BuildSettings::default();
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: Key::Quote,
+                    physical_key: Some(Key::Quote),
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                focused: true,
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            },
+            |ui| {
+                super::super::shortcuts(ui.ctx(), &mut tool, &mut world, &mut settings);
+            },
+        );
+        assert!(!tool.open, "a real quote key does not open Create");
+        assert_ne!(tool.tool, Tool::Create);
     }
 }
