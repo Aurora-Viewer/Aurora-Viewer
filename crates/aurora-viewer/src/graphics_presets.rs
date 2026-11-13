@@ -114,6 +114,8 @@ impl Preset {
                 avatar_physics_detail: 0.0,
                 hdr_emissive: false,
                 max_texture_resolution: 512,
+                // RenderLocalLightCount 8
+                local_light_count: 8,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
@@ -143,6 +145,7 @@ impl Preset {
                 avatar_physics_detail: 0.75,
                 hdr_emissive: false,
                 max_texture_resolution: 1024,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -173,6 +176,7 @@ impl Preset {
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -205,6 +209,7 @@ impl Preset {
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::HIGH,
             },
             // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
@@ -243,6 +248,7 @@ impl Preset {
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::DELUXE,
             },
         }
@@ -538,6 +544,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -559,6 +566,7 @@ pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -578,6 +586,7 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
         let current = Values {
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -596,12 +605,28 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
         let level = preset.values();
         let current = Values {
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
             s.tree_lod_factor = level.tree_lod_factor;
             return;
         }
+    }
+}
+
+/// Settings files written before the levels set the nearby lights (version
+/// 38), all with every light: a profile exactly on Potato apart from it
+/// takes its 8 (the Legacy Viewer's Low); any other keeps them all. (The
+/// earlier upgrades leave the lights aside too: files of then hold none.)
+pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
+    let level = Preset::Potato.values();
+    let current = Values {
+        local_light_count: level.local_light_count,
+        ..Values::read(s)
+    };
+    if current.as_shown() == level.as_shown() {
+        s.local_light_count = level.local_light_count;
     }
 }
 
@@ -695,7 +720,19 @@ pub struct Values {
     /// default then).
     #[serde(default = "max_texture_resolution")]
     pub max_texture_resolution: u32,
+    /// RenderLocalLightCount: 8 in Low, all the lights the renderer holds
+    /// above (the Legacy Viewer's 256 to 8192 are more than its 64; a backup
+    /// or a saved preset written before it holds none: all, the default).
+    #[serde(default = "all_lights")]
+    pub local_light_count: u32,
     pub effects: Effects,
+}
+
+/// Every local light the renderer holds: the levels above Potato.
+const ALL_LIGHTS: u32 = crate::scene::lights::MAX_LIGHTS as u32;
+
+fn all_lights() -> u32 {
+    ALL_LIGHTS
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -799,6 +836,7 @@ impl Values {
             avatar_physics_detail: s.avatar_physics_detail,
             hdr_emissive: s.hdr_emissive,
             max_texture_resolution: s.max_texture_resolution,
+            local_light_count: s.local_light_count,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
@@ -840,6 +878,8 @@ impl Values {
         s.hdr_emissive = self.hdr_emissive;
         // (a saved profile edited by hand: the nearest choice of the combo)
         s.max_texture_resolution = crate::settings::max_texture_resolution_choice(self.max_texture_resolution);
+        // (a saved profile edited by hand: no more than the renderer holds)
+        s.local_light_count = self.local_light_count.min(ALL_LIGHTS);
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -1159,7 +1199,72 @@ mod tests {
             assert!(a.anisotropy <= b.anisotropy);
             assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
             assert!(a.max_texture_resolution <= b.max_texture_resolution);
+            assert!(a.local_light_count <= b.local_light_count);
         }
+    }
+
+    /// RenderLocalLightCount 8 in the Legacy Viewer's Low (featuretable.txt);
+    /// 256 to 8192 above, more than the 64 the renderer holds: all of them.
+    #[test]
+    fn potato_draws_eight_nearby_lights_like_the_legacy_viewer_low() {
+        let lights = |p: Preset| p.values().local_light_count;
+        assert_eq!(lights(Preset::Potato), 8);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(lights(p), ALL_LIGHTS, "{p:?}");
+        }
+        assert_eq!(Settings::default().local_light_count, ALL_LIGHTS);
+        // changed by hand: custom
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.local_light_count = 20;
+        assert_eq!(Preset::matching(&s), None);
+        // a file of version 37 exactly on Potato (all the lights then)
+        // takes its 8; one from before version 24 too, through the earlier
+        // upgrades, which leave the lights aside
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, 8);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.max_texture_resolution = 2048;
+        s.hdr_emissive = true;
+        s.avatar_physics_detail = 1.0;
+        s.tree_lod_factor = 0.5;
+        upgrade_physics_detail(&mut s);
+        upgrade_hdr_emissive(&mut s);
+        upgrade_max_texture_resolution(&mut s);
+        upgrade_tree_detail(&mut s);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        // a custom profile and the other levels keep every light
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.draw_distance = 300.0;
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            p.apply(&mut s);
+            upgrade_local_light_count(&mut s);
+            assert_eq!(s.local_light_count, ALL_LIGHTS, "{p:?}");
+            assert_eq!(Preset::matching(&s), Some(p));
+        }
+        // a safe graphics backup or a saved preset written before it holds
+        // none: every light
+        let mut json = serde_json::to_value(Preset::Potato.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("local_light_count");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert_eq!(read.local_light_count, ALL_LIGHTS);
+        // a saved profile edited by hand: no more than the renderer holds
+        let mut odd = Preset::Medium.values();
+        odd.local_light_count = 256;
+        odd.write(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
     }
 
     #[test]

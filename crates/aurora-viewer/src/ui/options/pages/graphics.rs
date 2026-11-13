@@ -713,6 +713,15 @@ fn quality(cx: &mut Cx) {
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-local-lights"), |cx| {
+        // the Legacy Viewer's "Max. nearby lights" (RenderLocalLightCount),
+        // up to the 64 the renderer holds (Settings::local_light_count)
+        cx.slider(
+            tr!("ui-options-max-nearby-lights"),
+            tr!("ui-options-max-nearby-lights-help"),
+            &field!(local_light_count),
+            0..=crate::scene::lights::MAX_LIGHTS as u32,
+            "",
+        );
         cx.toggle(
             tr!("ui-options-others-attached-lights"),
             tr!("ui-options-others-attached-lights-help"),
