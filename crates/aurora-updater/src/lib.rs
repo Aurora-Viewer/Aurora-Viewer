@@ -77,6 +77,9 @@ pub enum Failure {
     Filesystem,
     Package,
     Unsupported,
+    /// The viewer's folder sits at the root of a drive (`E:\Aurora Viewer`):
+    /// no folder above it to hold the update, the backup and the lock.
+    DriveRoot,
     Busy,
     Startup,
 }

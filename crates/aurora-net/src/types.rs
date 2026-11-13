@@ -513,6 +513,13 @@ pub enum NetEvent {
         result: Option<aurora_llsd::Llsd>,
         not_found: bool,
     },
+    /// A "mute update" of `NetCommand::ModerateText` failed
+    /// (LLIMSpeakerMgr::moderationActionCoro); `forbidden` when the server
+    /// answered 403, we are not a moderator of the session.
+    SessionModerationFailed {
+        session: Uuid,
+        forbidden: bool,
+    },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),
     /// Answer of a voice call request: the body, or the HTTP status of the
@@ -615,6 +622,18 @@ pub enum NetEvent {
         source: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// A selection or give beam (ViewerEffect, LLHUDEffectSpiral of type
+    /// LL_HUD_EFFECT_BEAM): from `source` to the `target` object, or to the
+    /// global `position` when the target is nil; the sender's RGBA colour,
+    /// shown for `duration` seconds unless sent again.
+    Beam {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
     },
     /// TeleportLocal (a teleport inside the current region), sent just before
     /// its AgentMovementComplete: whether the simulator says we are flying.
@@ -1068,6 +1087,14 @@ pub enum NetEvent {
     GroupBanList {
         group: Uuid,
         bans: Vec<(Uuid, f64)>,
+    },
+    /// One group of a `BanInGroups`: whether the server took the ban (or
+    /// its lifting).
+    GroupBanInGroup {
+        group: Uuid,
+        agent: Uuid,
+        ban: bool,
+        ok: bool,
     },
     /// The group's parcels and land totals (PlacesReply), one packet.
     GroupLand(Box<crate::group_money::GroupLandReply>),
@@ -1607,6 +1634,13 @@ pub enum NetCommand {
         method: crate::social::SessionMethod,
         session: Uuid,
     },
+    /// A moderator allows or forbids someone's text in a group chat: the
+    /// "mute update" of ChatSessionRequest (LLIMSpeakerMgr::allowTextChat).
+    ModerateText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
     /// Voice call request on ChatSessionRequest (credentials, P2P start /
     /// decline); `server_type` is the region's VoiceServerType.
     Call {
@@ -1732,6 +1766,16 @@ pub enum NetCommand {
         effect: Uuid,
         target: Uuid,
         animations: bool,
+    },
+    /// Our selection or give beam (LLHUDEffectSpiral::packData, type
+    /// LL_HUD_EFFECT_BEAM): to the `target` object, or to the global
+    /// `position` when it is nil.
+    Beam {
+        effect: Uuid,
+        target: Uuid,
+        position: [f64; 3],
+        color: [u8; 4],
+        duration: f32,
     },
     /// Raw IM with a given dialog (offer answers: accepted / declined...).
     SendImDialog {
@@ -1965,6 +2009,14 @@ pub enum NetCommand {
         ids: Vec<Uuid>,
         /// BAN_UPDATE: the list asked again after the action.
         refresh: bool,
+    },
+    /// The GroupAPIv1 capability, one group after the other, half a second
+    /// apart: `agent` banned (or unbanned) in each of `groups`; each answer
+    /// is a `GroupBanInGroup` (LLGroupActions::banFromAllGroupsCoro).
+    BanInGroups {
+        agent: Uuid,
+        groups: Vec<Uuid>,
+        ban: bool,
     },
     /// GroupRoleUpdate (LLGroupMgrGroupData::sendRoleChanges).
     GroupRoleUpdate {

@@ -716,7 +716,24 @@ impl App {
             if rez { "rez" } else { "contents" },
             drop.consume.is_some()
         );
+        // LLToolDragAndDrop::dropObject (at the point hit) and dropInventory /
+        // dropScript (at the object): a beam from our hand
+        let beam = match &drop.command {
+            BuildCmd::RezInventory(r) => {
+                let (x, y) = aurora_net::handle_to_origin(r.handle);
+                let at = r.ray_end;
+                Some((
+                    Uuid::nil(),
+                    glam::DVec3::new(f64::from(x) + f64::from(at.x), f64::from(y) + f64::from(at.y), f64::from(at.z)),
+                ))
+            }
+            BuildCmd::UpdateTaskInventory { item, .. } | BuildCmd::RezScript { item, .. } => Some((item.parent_id, glam::DVec3::ZERO)),
+            _ => None,
+        };
         self.send(NetCommand::Build(drop.command));
+        if let Some((target, position)) = beam {
+            self.fire_beam(target, position);
+        }
         if let Some(id) = drop.consume {
             self.world.inventory.consume_item(id);
         }

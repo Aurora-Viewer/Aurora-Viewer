@@ -13,6 +13,7 @@ pub mod calling_cards;
 
 mod arrival_wait;
 pub mod beacons;
+pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
@@ -39,6 +40,7 @@ pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;
+pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -475,6 +477,8 @@ pub struct World {
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
+    /// Selection and give beams, ours and the others' (`beams`).
+    pub beams: beams::Beams,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
@@ -623,6 +627,9 @@ pub struct World {
     pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// Local dressing-room visibility; independent of photo choices.
     pub avatar_studio: bool,
+    /// Avatar Studio's display-only hover height (metres) that our avatar's
+    /// entry of `avatar_poses` carries, as the scene last posed it.
+    pub avatar_studio_lift: f32,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -703,6 +710,8 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// A ban (or its lifting) on its way to all our groups.
+    pub ban_all: group_ban_all::BanAll,
     /// The group title worn by region, and every group's titles for the
     /// Group titles window (FSGroupTitleRegionMgr).
     pub region_titles: region_titles::RegionTitles,
@@ -886,6 +895,7 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
+            beams: beams::Beams::default(),
             object_im_filter: object_im_filter::Settings::default(),
             anti_spam: Default::default(),
             appearance_counter: 1,
@@ -968,6 +978,7 @@ impl World {
             parcel_visibility: Default::default(),
             photo_isolation: Default::default(),
             avatar_studio: false,
+            avatar_studio_lift: 0.0,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -993,6 +1004,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            ban_all: Default::default(),
             region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
@@ -1158,6 +1170,8 @@ impl World {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.beams
+            .forget(std::time::Instant::now(), |id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -3174,6 +3188,7 @@ impl World {
             | NetEvent::SessionStarted { .. }
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
+            | NetEvent::SessionModerationFailed { .. }
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
                 match &ev {
@@ -3417,6 +3432,10 @@ impl World {
                 }
                 None
             }
+            NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
+                log::info!("alert muted during a ban in all groups: {message}");
+                None
+            }
             NetEvent::Alert { message } => {
                 self.map.on_alert(&message);
                 let restart = message.to_lowercase().contains("restart");
@@ -3447,11 +3466,14 @@ impl World {
                 self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
                 None
             }
-            // process_script_question drops only the questions of a blocked
-            // object (LLMuteList::isMuted(taskid)): not those of a blocked
-            // owner, nor on any other condition (no click needed, object out
-            // of view or unknown, another region, Do Not Disturb)
-            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
+            // A permission question follows the same block rule as script
+            // dialogs and URLs (`object_blocked`): a blocked object, by id or
+            // by name, or the blocked owner of an object in the scene.
+            // process_script_question checks the object id alone
+            // (LLMuteList::isMuted(taskid)); the owner and name checks are
+            // stricter. No other condition drops it (no click needed, object
+            // out of view or unknown, another region, Do Not Disturb).
+            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
@@ -4081,6 +4103,10 @@ impl World {
                 self.search.events.insert(e.id, *e);
                 None
             }
+            NetEvent::GroupBanInGroup { group, agent, ban, ok } => {
+                self.on_group_ban_in_group(group, agent, ban, ok);
+                None
+            }
             ev @ (NetEvent::GroupMembers(_)
             | NetEvent::GroupRoles(_)
             | NetEvent::GroupRoleMembers(_)
@@ -4394,6 +4420,25 @@ impl World {
                     .is_some_and(|o| o.is_avatar());
                 if source != self.agent_id && known {
                     self.point_at.receive(effect, source, target, offset, kind);
+                }
+                None
+            }
+            NetEvent::Beam {
+                effect,
+                source,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                // LLHUDEffectSpiral::unpackData: its source and its target
+                // object must be in the world; ours are drawn on their own
+                if source != self.agent_id {
+                    let objects = &self.objects;
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
                 }
                 None
             }
