@@ -1807,7 +1807,6 @@ ui-bars-fly-override-off = Ignorer l'interdiction de voler : désactivé
 ui-bars-fly-override-caution = Utilisez cette fonction de manière responsable ! Voler sans l'autorisation du propriétaire du terrain peut entraîner le bannissement de votre avatar de la parcelle où vous volez.
 ui-audio-stop-parcel-music = Arrêter la musique de la parcelle
 ui-media-stop-loading = Arrêter le chargement
-ui-audio-stop-parcel-media = Arrêter le média de la parcelle
 ui-context-stop-animations = Arrêter les animations
 ui-context-stop-scripts = Arrêter les scripts
 ui-land-options-arts-and-culture = Art et Culture
@@ -4472,7 +4471,6 @@ ui-options-stream-title-announce-help = Chuchote aussi le titre sur ce canal, po
 ui-options-stream-title-channel = Canal
 ui-options-mute-when-minimized = Couper le son quand la fenêtre est réduite
 ui-options-mute-when-minimized-help = Plus aucun son tant que le viewer est réduit dans la barre des tâches (perdre le focus ne suffit pas). Pas sous Wayland, qui ne dit pas à une fenêtre qu’elle est réduite
-ui-audio-play-parcel-media = Lire le média de la parcelle
 ui-options-camera-smoothing = Lissage
 build-land-smooth = Lisser
 ui-bars-block-list = Liste de blocage
@@ -5107,7 +5105,6 @@ common-particles = Particules
 ui-land-options-no-pushing = Pas de bousculades
 ui-land-options-no-pushing-region-rules-take-precedence = Pas de bousculades (les règles de la région priment)
 ui-audio-no-music-on-this-parcel = Pas de musique sur cette parcelle
-ui-audio-no-media-on-this-parcel = Pas de média sur cette parcelle
 ui-profile-no-web-profile-on-this-grid = Pas de profil web sur cette grille.
 ui-options-camera-no-mouse-wheel-zoom = Pas de zoom à la molette
 common-not-available-in-aurora-yet = Pas encore disponible dans Aurora
@@ -7642,6 +7639,28 @@ photo-images = Images
 keybinds-photo-window = Fenêtre Photo
 keybinds-photo-to-disk = Prendre une photo sur le disque
 ui-media-volume-for-this-media = Volume de ce média
+ui-nearby-media-show = Les médias que la liste affiche
+ui-nearby-media-show-label = Afficher :
+ui-nearby-media-show-all = Tout
+ui-nearby-media-show-in-parcel = Sur cette parcelle
+ui-nearby-media-show-outside-parcel = Hors de cette parcelle
+ui-nearby-media-show-on-others = Sur d'autres avatars
+ui-nearby-media-parcel-media = Média de la parcelle
+ui-nearby-media-empty = <vide>
+ui-nearby-media-playing = { $name } (en lecture)
+ui-nearby-media-stop-all = Arrêter tout
+ui-nearby-media-stop-all-tip = Arrêter tous les médias aux alentours
+ui-nearby-media-start-all = Tout lire
+ui-nearby-media-start-all-tip = Lire tous les médias aux alentours
+ui-nearby-media-none = Aucun média à proximité
+ui-nearby-media-turn-off = Arrêter ce média
+ui-nearby-media-turn-on = Lire ce média
+ui-nearby-media-copy-url = Copier l'URL
+ui-nearby-media-copy-data = Copier les données
+ui-nearby-media-stop = Arrêter le média sélectionné
+ui-nearby-media-zoom = Zoomer sur le média sélectionné
+ui-nearby-media-unzoom = Réinitialiser la caméra
+ui-nearby-media-select = Choisissez un média dans la liste
 ui-options-volumes = Volumes
 ui-options-your-complexity-below-your-name = Votre complexité sous votre nom
 ui-display-name-your-display-name-must-contain-characters-other-than-punctuation = Votre nom d'affichage doit contenir des lettres autres que des signes de ponctuation.
@@ -8392,6 +8411,8 @@ hud-local-scale-forget = Oublier le réglage mémorisé
 hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.
 cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi, une grille enregistrée ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  --vr             Passer en VR dès que le monde s'affiche (casque connecté)\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  --uninstall     Retire ce qu'Aurora a enregistré hors de ses dossiers (liens,\u000A                  coffre d'identifiants, module Blender), l'affiche avec les dossiers restants, puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
+demo-nearby-media-page-cinema = { "data:text/html;charset=utf-8,<html><head><title>Cinéma de la place</title></head><body style='margin:0;height:100vh;background:%23402060;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Cinéma</h1></body></html>" }
+demo-nearby-media-page-next-door = { "data:text/html;charset=utf-8,<html><head><title>Parcelle voisine</title></head><body style='margin:0;height:100vh;background:%23205040;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Chez le voisin</h1></body></html>" }
 
 # Secondary labels and status messages
 status-none-touch-touch = NONE / TOUCH : toucher

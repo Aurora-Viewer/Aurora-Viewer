@@ -1804,7 +1804,6 @@ ui-bars-fly-override-off = Fly override: off
 ui-bars-fly-override-caution = Use the fly override responsibly! Flying with it without the land owner's permission may get your avatar banned from the parcel you fly in.
 ui-audio-stop-parcel-music = Stop parcel music
 ui-media-stop-loading = Stop loading
-ui-audio-stop-parcel-media = Stop parcel media
 ui-context-stop-animations = Stop animations
 ui-context-stop-scripts = Stop scripts
 ui-land-options-arts-and-culture = Arts and Culture
@@ -4466,7 +4465,6 @@ ui-options-stream-title-announce-help = Also whisper the title on this channel, 
 ui-options-stream-title-channel = Channel
 ui-options-mute-when-minimized = Mute when minimised
 ui-options-mute-when-minimized-help = No sound at all while the viewer is minimised to the taskbar (losing the focus is not enough). Not on Wayland, which does not tell a window that it is minimised
-ui-audio-play-parcel-media = Play parcel media
 ui-options-camera-smoothing = Smoothing
 build-land-smooth = Smooth
 ui-bars-block-list = Block list
@@ -5101,7 +5099,6 @@ common-particles = Particles
 ui-land-options-no-pushing = No pushing
 ui-land-options-no-pushing-region-rules-take-precedence = No pushing (region rules take precedence)
 ui-audio-no-music-on-this-parcel = No music on this parcel
-ui-audio-no-media-on-this-parcel = No media on this parcel
 ui-profile-no-web-profile-on-this-grid = No web profile on this grid.
 ui-options-camera-no-mouse-wheel-zoom = No mouse wheel zoom
 common-not-available-in-aurora-yet = Not available in Aurora yet
@@ -7634,6 +7631,28 @@ photo-images = Images
 keybinds-photo-window = Photo window
 keybinds-photo-to-disk = Take a photo to disk
 ui-media-volume-for-this-media = Volume for this media
+ui-nearby-media-show = Which media the list shows
+ui-nearby-media-show-label = Show:
+ui-nearby-media-show-all = All
+ui-nearby-media-show-in-parcel = In this parcel
+ui-nearby-media-show-outside-parcel = Outside this parcel
+ui-nearby-media-show-on-others = On other avatars
+ui-nearby-media-parcel-media = Parcel streaming media
+ui-nearby-media-empty = <empty>
+ui-nearby-media-playing = { $name } (playing)
+ui-nearby-media-stop-all = Stop all
+ui-nearby-media-stop-all-tip = Turn all nearby media off
+ui-nearby-media-start-all = Start all
+ui-nearby-media-start-all-tip = Turn all nearby media on
+ui-nearby-media-none = No media nearby
+ui-nearby-media-turn-off = Turn this media off
+ui-nearby-media-turn-on = Turn this media on
+ui-nearby-media-copy-url = Copy URL
+ui-nearby-media-copy-data = Copy data
+ui-nearby-media-stop = Stop selected media
+ui-nearby-media-zoom = Zoom into selected media
+ui-nearby-media-unzoom = Reset the camera
+ui-nearby-media-select = Select a media in the list
 ui-options-volumes = Volumes
 ui-options-your-complexity-below-your-name = Your complexity below your name
 ui-display-name-your-display-name-must-contain-characters-other-than-punctuation = Your display name must contain characters other than punctuation.
@@ -8387,6 +8406,8 @@ hud-local-scale-forget = Forget saved size
 hud-local-scale-help = Hold the HUD key: left drag to move, wheel to resize, Shift for finer steps. Size is saved on this PC by name and creator, for this account. While editing a HUD, the wheel without this key zooms the view of all HUDs.
 cli-help = { "Aurora Viewer\u000A\u000AUsage: aurora-viewer [--title <text>] [--fps-limit <fps>] [--vr] [--language <code>] [--grid <name>]\u000A                     [--login <first> <last> <password>] [--version] [--uninstall] [<slurl>]\u000A\u000A  --title <text>   Name this window (\"Aurora Viewer <version> - <text>\") and its log\u000A                   file (aurora-<text>.log, aurora-demo-<text>.log in demo mode)\u000A  --fps-limit <fps>  Cap this process at 1..500 FPS without saving preferences\u000A  --language <code>  Override this process's UI language (" }{ $languages }{ ")\u000A  --grid <name>    Start on agni, aditi, a saved grid name or a login URI (also --loginuri <uri>)\u000A  --login <first> <last> <password>  Log in with this account at once\u000A  <slurl>, --url <slurl>  Start at this place; nothing after it is read. A viewer\u000A                   already running receives it instead\u000A  --vr             Enter VR once the world shows (headset connected)\u000A  -V, --version   Show the compiled viewer version without starting it\u000A  --uninstall      Remove what Aurora registered outside its folders (link handler,\u000A                   credential store, Blender add-on), print it and the folders left, then exit\u000A  -h, --help       Show this help\u000A\u000ATest switches are environment variables (AURORA_DEMO=1, AURORA_CAPTURE=...):\u000Asee README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Clicked!'\" style='font-size:48px;padding:10px 40px'>Click</button><br><input placeholder='Type here' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
+demo-nearby-media-page-cinema = { "data:text/html;charset=utf-8,<html><head><title>Plaza cinema</title></head><body style='margin:0;height:100vh;background:%23402060;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Cinema</h1></body></html>" }
+demo-nearby-media-page-next-door = { "data:text/html;charset=utf-8,<html><head><title>Parcel next door</title></head><body style='margin:0;height:100vh;background:%23205040;color:white;font:64px sans-serif;text-align:center'><h1 style='margin-top:180px'>Next door</h1></body></html>" }
 
 # Secondary labels and status messages
 status-none-touch-touch = NONE / TOUCH: touch
