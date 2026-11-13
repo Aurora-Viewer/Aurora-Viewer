@@ -905,6 +905,21 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
             }
             vec![NetEvent::GroupBanList { group: *group, bans: list }]
         }
+        // a ban in all our groups: each group answers; the Northern Wolves
+        // refuse, so that the report has both lists
+        // (AURORA_DEMO_CONV_MODERATE=ban-all-run)
+        NetCommand::BanInGroups { agent, groups, ban } => {
+            log::info!("demo group: ban {ban} of {agent} in {} group(s)", groups.len());
+            groups
+                .iter()
+                .map(|g| NetEvent::GroupBanInGroup {
+                    group: *g,
+                    agent: *agent,
+                    ban: *ban,
+                    ok: *g != crate::demo::DEMO_GROUP2,
+                })
+                .collect()
+        }
         NetCommand::GroupRoleUpdate { updates, .. } => {
             log::info!("demo group: {} role update(s)", updates.len());
             Vec::new()

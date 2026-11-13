@@ -683,6 +683,9 @@ impl App {
             CtxAction::GroupChatBan { group, agent } => {
                 self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Ban { group, agent });
             }
+            CtxAction::BanFromAllGroups { agent, ban } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::BanAll { agent, ban });
+            }
             // the volumes of the call's participants: applied live, saved
             // once the slider rests
             CtxAction::SetVoiceVolume(id, v) => {

@@ -1429,6 +1429,16 @@ ui-inventory-properties-creator-unknown-multiple = （不明／複数）
 ui-inventory-properties-creator-unknown-multiple-hint = シミュレーターはこのアイテムの制作者を返しません：複数の住人が作ったパーツからなるオブジェクトには制作者がありません。
 world-groups-action-denied = 操作が拒否されました
 world-groups-error-while-moderating = モデレート中にエラーが発生しました。
+world-ban-all-title = グループのバン
+world-ban-all-started = { $count }個のグループで{ $name }のバンを更新しています。１つずつ処理し、終わったら結果をお知らせします。
+world-ban-all-report =
+    { $name }を{ $count }個のグループのうち{ $done }個でバンしました。
+    バンしたグループ：{ $succeeded }
+    失敗したグループ：{ $failed }
+world-unban-all-report =
+    { $name }のバンを{ $count }個のグループのうち{ $done }個で解除しました。
+    解除したグループ：{ $succeeded }
+    失敗したグループ：{ $failed }
 common-enable = 有効にする
 common-activate = 有効化
 ui-options-enable-this-channel = このチャンネルを有効にする
@@ -4607,6 +4617,10 @@ ui-chat-eject-from-group = グループから追放
 ui-chat-allow-text-chat = テキストチャットを許可
 ui-chat-forbid-text-chat = テキストチャットを禁止
 ui-chat-ban-member = メンバーをバン
+ui-chat-ban-from-all-groups = 自分のすべてのグループからバン
+ui-chat-unban-from-all-groups = 自分のすべてのグループでバンを解除
+ui-chat-ban-from-all-groups-confirm = バンを管理できる{ $count }個のグループすべてから{ $name }をバンしようとしています：
+ui-chat-unban-from-all-groups-confirm = バンを管理できる{ $count }個のグループすべてで{ $name }のバンを解除しようとしています：
 common-moderate = 中程度
 ui-worldmap-moderate = 中程度
 common-me = 自分
