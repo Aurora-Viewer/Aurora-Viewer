@@ -146,7 +146,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
-                // depends on it; ChatBubbleOpacity is in its Colors), #673
+                // depends on it; ChatBubbleOpacity is in Appearance › Skin,
+                // as it is in its Colors), #673
                 cx.toggle(
                     tr!("ui-options-chat-bubbles"),
                     tr!("ui-options-chat-bubbles-hint"),
@@ -163,13 +164,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         tr!("ui-options-typing-bubbles"),
                         tr!("ui-options-typing-bubbles-hint"),
                         &field!(typing_bubbles),
-                    );
-                    cx.slider(
-                        tr!("ui-options-chat-bubble-opacity"),
-                        "",
-                        &field!(chat_bubble_opacity),
-                        0.0..=1.0,
-                        "",
                     );
                 });
             });

@@ -499,6 +499,13 @@ impl App {
                         request,
                         item,
                         asset_type: kind,
+                        lua: kind == 10
+                            && self
+                                .world
+                                .inventory
+                                .items
+                                .get(&item)
+                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,
@@ -590,6 +597,8 @@ impl App {
                                 bucket,
                             });
                             self.world.inventory_offer_sent(resident, &name, folder);
+                            // FSCreateGiveInventoryParticleEffect (on)
+                            self.fire_beam(resident, glam::DVec3::ZERO);
                             self.world.inventory.remove(&removed);
                         }
                         Err(reason) => self.inventory_ui.message = reason,
