@@ -109,7 +109,8 @@ const F_WATER_AIR: u32 = 1024u;
 const F_BLEND_CASTS: u32 = 2048u;
 const F_FIRST_PERSON: u32 = 4096u;
 const F_SHOW_SELF: u32 = 8192u;
-// projector map 1 is the rain's shelter map: what moves is left out of it
+// projector map groups.w is the rain's shelter map: what moves is left out
+// of it
 const F_SPOT_SHELTER: u32 = 16384u;
 
 struct CullFace {
@@ -181,7 +182,8 @@ struct CullFrame {
     dist: vec4<f32>,
     // x faces, y objects, z slots per bin, w flags
     sizes: vec4<u32>,
-    // x classify workgroups, y first-person avatar + 1, z index buffer length
+    // x classify workgroups, y first-person avatar + 1, z index buffer length,
+    // w the projector map of the rain's shelter (F_SPOT_SHELTER)
     groups: vec4<u32>,
 }
 
@@ -392,7 +394,8 @@ fn face_mask(i: u32) -> u32 {
     // the rain's shelter map takes all of its square, however far the
     // shadows reach (a roof beyond them would leave the floor under it
     // open to the rain, cut at the seams between a building's meshes)
-    let shelters = (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << 1u)) != 0u && spot_in(1u, c, r);
+    let shelter_map = min(frame.groups.w, 15u);
+    let shelters = (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << shelter_map)) != 0u && spot_in(shelter_map, c, r);
     if (!viewed && !shadow_reach && !reflect_reach && !captured && !shelters) {
         return 0u;
     }
@@ -450,14 +453,14 @@ fn face_mask(i: u32) -> u32 {
     // (the shelter map takes blended faces too: a glass roof keeps the rain
     // off as well as a tiled one)
     if (caster || shelters) {
-        // the rain's shelter map (projector map 1): what stands still
+        // the rain's shelter map (projector map groups.w): what stands still
         // overhead only (an avatar, a rigged mesh, a rolling ball leave no
         // dry patch)
         // (an attachment too, rigged or not: horns, hair, a hat; the snow
         // would settle on it at once, as deep as on the ground)
         let moves = (o.flags & (OBJ_AVATAR | OBJ_RIGGED | OBJ_PHYSICAL)) != 0u || o.avatar < n;
         for (var k = 0u; k < 16u; k++) {
-            let shelter = k == 1u && (fl & F_SPOT_SHELTER) != 0u;
+            let shelter = k == shelter_map && (fl & F_SPOT_SHELTER) != 0u;
             let takes = caster || shelter;
             if (takes && (fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
                 m |= 1u << (BIN_SPOT + k);

@@ -524,22 +524,21 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: bool) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
-    // Rain prototype: while it rains (or the ground is still wet:
-    // `shelter`, see `Backend::rain_shelter`), map 1 is the shelter map, the
-    // depth of what is overhead seen straight down, before a projector's
-    // (that projector, the second that weighs most on screen, casts no
-    // shadow meanwhile). Map 1 whatever the projector budget: its place in
-    // the atlas is there at every budget (`projector_shadows::map_origin`).
-    // No light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
-    if shelter {
-        views[RAIN_SHELTER_MAP] = Some((
+    // Aurora Weather: while it rains (or the ground is still wet, see
+    // `Backend::rain_shelter`), map `shelter` is the shelter map, the depth
+    // of what is overhead seen straight down: the first map past the
+    // projectors' (`projector_shadows::shelter_slot`), so that none of them
+    // loses its shadow; the last projector's only at the full budget. No
+    // light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
+    if let Some(slot) = shelter.filter(|&k| k < SPOT_SHADOWS) {
+        views[slot] = Some((
             SpotShadow {
                 light: u32::MAX,
                 fade: 0.0,
@@ -550,9 +549,6 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: bool) -> [Option<(S
     views
 }
 
-/// Projector map slot the rain prototype takes for its shelter map
-/// (`rain_sheltered` in env.wgsl; the culling's shelter bin, cull.wgsl).
-const RAIN_SHELTER_MAP: usize = 1;
 /// The shelter map's entry in the frame's spot lights: not a light, and not
 /// -1 either (an empty slot's).
 const RAIN_SHELTER_LIGHT: i32 = -2;
@@ -1845,6 +1841,9 @@ pub(crate) struct Backend {
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
     shadow_count: u8,
+    /// The projector map the rain's shelter takes while it is drawn
+    /// (`projector_shadows::shelter_slot`): past the projectors' maps.
+    shelter_slot: usize,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -2499,6 +2498,11 @@ impl Backend {
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+    }
+
+    /// The projector map the shelter is drawn into this frame, if it is.
+    fn rain_shelter_map(&self, f: &FrameParams) -> Option<usize> {
+        self.rain_shelter(f).then_some(self.shelter_slot)
     }
 }
 
@@ -3664,7 +3668,7 @@ impl Backend {
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
         let shadow_size = 2048u32;
-        let shadow_view = Self::make_shadow_atlas(&device, shadow_size, 2);
+        let shadow_view = Self::make_shadow_atlas(&device, shadow_size, crate::projector_shadows::atlas_maps(2, 2));
         let probe_shadow_view = Self::make_shadow_atlas(&device, crate::probes::SHADOW_SIZE, 0);
         let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &shadow_view, shadow_size, SHADOW_FORMAT);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -3990,6 +3994,7 @@ impl Backend {
             shadow_bind_groups,
             shadow_size,
             shadow_count: 2,
+            shelter_slot: 2,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -6090,15 +6095,21 @@ impl Backend {
             .shadow_resolution
             .clamp(512, 8192)
             .min(self.device.limits().max_texture_dimension_2d / 2);
-        let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, self.device.limits().max_texture_dimension_2d);
+        let max_dimension = self.device.limits().max_texture_dimension_2d;
+        let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, max_dimension);
         let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
         if shadows_dirty {
-            self.shadow_view = Self::make_shadow_atlas(&self.device, res, count);
+            // one more map for the rain's shelter where it fits: free up to
+            // three projectors (the fourth tile), a row at 4, 8 and 12
+            let shelter = crate::projector_shadows::shelter_slot(res, count, max_dimension);
+            let maps = crate::projector_shadows::atlas_maps(count, shelter);
+            self.shadow_view = Self::make_shadow_atlas(&self.device, res, maps);
             self.shadow_size = res;
             self.shadow_count = count;
-            let (width, height) = crate::projector_shadows::atlas_size(res, count);
+            self.shelter_slot = shelter;
+            let (width, height) = crate::projector_shadows::atlas_size(res, maps);
             log::info!(
-                "projector shadow budget: requested {}, effective {count}, map {} px, atlas {width}x{height} ({} MiB)",
+                "projector shadow budget: requested {}, effective {count}, shelter map {shelter}, map {} px, atlas {width}x{height} ({} MiB)",
                 s.projector_shadow_limit,
                 res / 2,
                 u64::from(width) * u64::from(height) * 4 / (1024 * 1024)
@@ -6535,6 +6546,9 @@ impl Backend {
         u.studio_aurora = s.studio_aurora;
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
+        // Aurora Weather: the shelter map's slot + 1, 0 when it is not drawn
+        // (env.wgsl `rain_shelter_on`)
+        u.features[1] = self.rain_shelter_map(f).map_or(0, |k| k as u32 + 1);
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -6555,7 +6569,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter(f))
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -7882,14 +7896,15 @@ impl Backend {
             );
         }
         // projector shadow maps of the frame (none without shadows)
-        let shelter = self.rain_shelter(f);
-        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f, self.shadow_count as usize, shelter).map(|v| v.map(|(_, m)| m));
+        let shelter_map = self.rain_shelter_map(f);
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
-                kind: [u32::from(shelter && i == CASCADES + RAIN_SHELTER_MAP), 0, 0, 0],
+                kind: [u32::from(shelter_map.is_some_and(|k| i == CASCADES + k)), 0, 0, 0],
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
@@ -8237,6 +8252,7 @@ impl Backend {
                 probe_shadow_now,
                 flags,
             );
+            frame.groups[3] = self.shelter_slot as u32;
             if let Some(c) = &capture {
                 frame.probe_eye = c.origin.extend(c.reach).to_array();
             }
@@ -8657,7 +8673,7 @@ impl Backend {
                                     pass_mark(&mut pass, MARK_SHELTER_END);
                                     shelter_ended = true;
                                 }
-                                if shelter && k == RAIN_SHELTER_MAP {
+                                if shelter && k == self.shelter_slot {
                                     pass_mark(&mut pass, MARK_SHELTER_BEGIN);
                                     shelter_marked = true;
                                 }

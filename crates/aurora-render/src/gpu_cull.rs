@@ -182,9 +182,9 @@ pub mod frame_flags {
     pub const BLEND_CASTS: u32 = 2048;
     pub const FIRST_PERSON: u32 = 4096;
     pub const SHOW_SELF: u32 = 8192;
-    /// Projector map 1 is the rain prototype's shelter map: what moves
-    /// (avatars, rigged meshes, physical objects) is left out of it, so
-    /// that it leaves no dry patch following it.
+    /// Projector map `CullFrame::groups[3]` is the rain's shelter map: what
+    /// moves (avatars, rigged meshes, physical objects) is left out of it,
+    /// so that it leaves no dry patch following it.
     pub const SPOT_SHELTER: u32 = 16384;
 }
 
@@ -400,7 +400,8 @@ pub struct CullFrame {
     /// Faces, objects, slots per bin, `frame_flags`.
     pub sizes: [u32; 4],
     /// x classify workgroups, y first-person avatar index + 1 (0: none),
-    /// z bound index-buffer length in u16 indices.
+    /// z bound index-buffer length in u16 indices, w the projector map of
+    /// the rain's shelter (`frame_flags::SPOT_SHELTER`).
     pub groups: [u32; 4],
 }
 
@@ -546,7 +547,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         && sphere_in(&frame.probe, c, r);
     // the rain's shelter map: all of its square, blended faces too, shadows
     // or not (cull.wgsl)
-    let shelters = fl & frame_flags::SPOT_SHELTER != 0 && fl & (frame_flags::SPOT << 1) != 0 && sphere_in(&frame.spots[1], c, r);
+    let shelter_map = (frame.groups[3] as usize).min(SPOT_SHADOWS - 1);
+    let shelters =
+        fl & frame_flags::SPOT_SHELTER != 0 && fl & (frame_flags::SPOT << shelter_map) != 0 && sphere_in(&frame.spots[shelter_map], c, r);
     if !viewed && !shadow_reach && !reflect_reach && !captured && !shelters {
         return (0, false);
     }
@@ -584,7 +587,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     if caster || shelters {
         let moves = o.flags & (object_flags::AVATAR | object_flags::RIGGED | object_flags::PHYSICAL) != 0 || o.avatar < n;
         for (k, planes) in frame.spots.iter().enumerate() {
-            let shelter = k == 1 && fl & frame_flags::SPOT_SHELTER != 0;
+            let shelter = k == shelter_map && fl & frame_flags::SPOT_SHELTER != 0;
             if (caster || shelter) && fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) && !(shelter && moves) {
                 m |= 1 << (BIN_SPOT + k);
             }

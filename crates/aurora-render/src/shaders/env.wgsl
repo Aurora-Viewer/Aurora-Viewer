@@ -1945,28 +1945,43 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     return out;
 }
 
-// The shelter map is drawn this frame: projector map 1 holds it (renderer.rs
-// RAIN_SHELTER_MAP, its spot light RAIN_SHELTER_LIGHT; -1 is an empty map).
+// The shelter map is drawn this frame, in the projector map past the
+// projectors' (renderer.rs `rain_shelter_map`, features.y its slot + 1).
 fn rain_shelter_on() -> bool {
-    return frame.spot_lights[0].y == -2;
+    return frame.features.y != 0u;
 }
 
-// Projector map 1's square in the shadow atlas (texels): xy its corner, z
-// its side, as projector_shadows.rs `map_origin` packs it (the first four
-// maps share the fourth cascade tile, whatever the budget).
+// Its slot among the projector maps.
+fn rain_shelter_slot() -> u32 {
+    return frame.features.y - 1u;
+}
+
+// Its view-projection.
+fn rain_shelter_vp() -> mat4x4<f32> {
+    return frame.spot_vp[min(rain_shelter_slot(), 15u)];
+}
+
+// Its square in the shadow atlas (texels): xy its corner, z its side, as
+// projector_shadows.rs `map_origin` packs it (the first four maps in the
+// fourth cascade tile, then rows of four below the atlas's cascades).
 fn rain_shelter_tile() -> vec3<f32> {
     let size = f32(textureDimensions(shadow_map).x) * 0.5;
     let half = size * 0.5;
-    return vec3<f32>(size + half, size, half);
+    let slot = rain_shelter_slot();
+    if (slot < 4u) {
+        return vec3<f32>(size + f32(slot % 2u) * half, size + f32(slot / 2u) * half, half);
+    }
+    let k = slot - 4u;
+    return vec3<f32>(f32(k % 4u) * half, size * 2.0 + f32(k / 4u) * half, half);
 }
 
 // How much a point is under cover: 1 under a roof, a tree or the ground, 0
-// in the open. The shelter map is projector map 1 while it rains
-// (renderer.rs, RAIN_SHELTER_MAP), seen straight down; outside it, or
+// in the open. The shelter map is drawn while it rains (renderer.rs,
+// `rain_shelter_map`), seen straight down; outside it, or
 // when it is not drawn, nothing shelters.
 fn rain_sheltered(world: vec3<f32>) -> f32 {
     if (!rain_shelter_on()) { return 0.0; }
-    let lp = frame.spot_vp[1] * vec4<f32>(world, 1.0);
+    let lp = rain_shelter_vp() * vec4<f32>(world, 1.0);
     if (lp.w < 0.5) { return 0.0; }
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
@@ -3226,7 +3241,7 @@ fn rain_splash_none() -> RainOut {
 // map, 0 when not.
 fn rain_shelter_texel(xy: vec2<f32>, near_z: f32) -> vec3<f32> {
     if (!rain_shelter_on()) { return vec3<f32>(0.0); }
-    let m = frame.spot_vp[1];
+    let m = rain_shelter_vp();
     let lp = m * vec4<f32>(xy, near_z, 1.0);
     if (lp.w < 0.5) { return vec3<f32>(0.0); }
     let ndc = lp.xyz / lp.w;
@@ -3239,7 +3254,7 @@ fn rain_shelter_texel(xy: vec2<f32>, near_z: f32) -> vec3<f32> {
 // The height of the topmost surface in the shelter map's texel `at` (kept
 // within the map's square of the atlas), -1e9 where nothing was drawn.
 fn rain_shelter_height_at(at: vec2<i32>) -> f32 {
-    let m = frame.spot_vp[1];
+    let m = rain_shelter_vp();
     let tile = rain_shelter_tile();
     let lo = vec2<i32>(tile.xy);
     let hi = vec2<i32>(tile.xy + vec2<f32>(tile.z)) - vec2<i32>(1);
@@ -3250,7 +3265,7 @@ fn rain_shelter_height_at(at: vec2<i32>) -> f32 {
 
 fn rain_surface_height(xy: vec2<f32>, near_z: f32) -> f32 {
     if (!rain_shelter_on()) { return -1e9; }
-    let m = frame.spot_vp[1];
+    let m = rain_shelter_vp();
     let lp = m * vec4<f32>(xy, near_z, 1.0);
     if (lp.w < 0.5) { return -1e9; }
     let ndc = lp.xyz / lp.w;

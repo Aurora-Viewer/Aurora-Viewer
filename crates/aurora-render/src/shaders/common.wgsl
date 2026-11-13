@@ -110,7 +110,7 @@ struct Frame {
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
-    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
     // the last frame's for the same positions, and this frame's clip space
