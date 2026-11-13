@@ -138,12 +138,6 @@ pub(crate) fn method(setting_oit: bool) -> Method {
     method_with(env_value(), setting_oit)
 }
 
-/// The stochastic method can be the frame's (not ruled out by the
-/// environment): the GPU timer logs its passes then.
-pub(crate) fn wanted() -> bool {
-    method_with(env_value(), true) == Method::Stochastic
-}
-
 /// Whether a frame tries to draw its blended faces with the method: it is
 /// on, the frame has some, and it is the plain main view (not a photo, one
 /// of its tiles or a snapshot, whose size and history the method would mix
