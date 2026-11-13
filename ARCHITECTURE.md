@@ -3364,7 +3364,12 @@ lightest and heaviest, the wind, thunder) as a nine-letter code at the end
 of its name, the day cycle the timing (its key frames, blended as their
 colours are; a sky without a code is clear) and, at the end of the day's
 name, a five-letter schedule (the period, 5 minutes to a day, and the
-seed). The names reach every viewer, an EEP item's description does not.
+seed). The names reach every viewer, an EEP item's description does not. A known
+limit: the Legacy Viewer saves a day without its frames' names
+(LLSettingsDay::getSettings), so a region's day saved again by such a
+viewer loses its key frames' weather (the day's schedule stays); applying
+the coded skies again with Aurora restores it. Aurora's own "Apply to
+region" sends the frames' names, which the Legacy Viewer never does.
 In each period a seeded hash decides whether and how hard it falls, eased
 between periods, so viewers with the same environment and clock show the
 same weather with nothing sent. The sky editor's Aurora Weather tab writes

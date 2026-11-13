@@ -22,6 +22,12 @@
 //! them as part of the name; Aurora shows the name without it, tagged
 //! Aurora Weather.
 //!
+//! **A limit.** The Legacy Viewer writes no frame names when it saves a day
+//! (LLSettingsDay::getSettings): a region's day saved again by such a
+//! viewer keeps its own name, and so its schedule, but its key frames lose
+//! their codes, and with them the weather. Aurora keeps sending them: the
+//! day's name has room for one code, not one per key frame.
+//!
 //! **How every viewer sees the same weather.** Nothing is sent while it
 //! runs. The day's position is the clock's, shared by all; time is also
 //! cut into periods (5 minutes to a day), and in each a hash of the seed
