@@ -291,6 +291,10 @@ enum MouseMode {
     None,
     /// Left button held on our avatar, or the optional world chord: steer it.
     Steer,
+    /// Left button held on our avatar with `left_drag_avatar_moves_camera`:
+    /// the camera turns around it like a right drag, the avatar keeps its
+    /// heading. The right button pressed as well turns this into `Steer`.
+    AvatarOrbit,
     /// Alt+left held: alt-camera drag (zoom; Ctrl orbit; Ctrl+Shift pan).
     FocusOrbit,
 }
@@ -4476,6 +4480,12 @@ impl App {
             if !self.alt_cursor.free() {
                 self.camera.look(dx, dy, s, &mut self.world.agent);
             }
+        } else if self.mouse_mode == MouseMode::AvatarOrbit {
+            // the camera only, as the right drag below: the avatar keeps its heading
+            match self.camera.free_mut() {
+                Some(free) => free.drag(dx, dy, s),
+                None => self.camera.orbit_drag(dx, dy, s, &mut self.world.agent),
+            }
         } else if self.mouse_mode != MouseMode::None {
             // LLToolCamera: steering is the zoom tool on our avatar; the
             // modifiers held now choose the drag (AltGr: Ctrl + Alt)
@@ -4799,6 +4809,14 @@ impl App {
         if self.right_drag {
             self.right_gesture.walked = true;
         }
+        self.set_mouselook_grab(true);
+    }
+
+    /// A left drag on our avatar that moves the camera only (Preferences ›
+    /// Mouse and keyboard › "Dragging your avatar moves the camera only").
+    fn begin_avatar_orbit(&mut self) {
+        self.camera.begin_drag(false);
+        self.mouse_mode = MouseMode::AvatarOrbit;
         self.set_mouselook_grab(true);
     }
 
@@ -5385,7 +5403,11 @@ impl App {
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
-            self.begin_mouse_steer();
+            if self.settings.left_drag_avatar_moves_camera && !self.right_drag {
+                self.begin_avatar_orbit();
+            } else {
+                self.begin_mouse_steer();
+            }
         } else if crate::autopilot::takes_ground_double_click(crate::autopilot::Press {
             double,
             alt: self.alt,
@@ -7846,10 +7868,15 @@ impl App {
             return;
         }
         let was_drag = self.right_drag;
-        self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
+        let held_on_avatar = matches!(self.mouse_mode, MouseMode::Steer | MouseMode::AvatarOrbit);
+        self.right_drag = pressed && (!over_ui || held_on_avatar) && self.in_world();
         if pressed {
             self.right_gesture = RightGesture::default();
             self.start_world_mouse_walk();
+            // both buttons on our avatar still walk, whatever the left drag does
+            if self.right_drag && self.mouse_mode == MouseMode::AvatarOrbit {
+                self.begin_mouse_steer();
+            }
         }
         if self.mouse_walks() {
             self.right_gesture.walked = true;
