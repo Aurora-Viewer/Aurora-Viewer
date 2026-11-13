@@ -129,6 +129,7 @@ pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
 pub mod stream_title;
+pub mod surface_opacity;
 pub(crate) mod text_menu;
 pub mod texture_library;
 pub mod texture_picker;
