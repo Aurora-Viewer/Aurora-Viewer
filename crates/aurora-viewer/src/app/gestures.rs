@@ -17,7 +17,6 @@ pub(super) struct State {
     pub new_editor: bool,
     pending: BTreeMap<Uuid, Load>,
     saves: BTreeMap<Uuid, Save>,
-    failed: BTreeSet<(Uuid, Uuid)>,
     cof: BTreeSet<Uuid>,
     generation: Option<u64>,
     scan_generation: Option<u64>,
@@ -35,6 +34,9 @@ struct Load {
     active: Option<bool>,
     requested: bool,
     inform: bool,
+    /// The resident asked for it (open, play, their own activation), unlike
+    /// the window's background loads, the login restore and outfit changes.
+    user: bool,
 }
 struct Save {
     item: Uuid,
@@ -58,6 +60,7 @@ impl State {
         }
         load.open |= open;
         load.play |= play;
+        load.user |= open || play;
         if active.is_some() {
             load.active = active;
             load.inform = inform;
@@ -75,6 +78,21 @@ impl State {
             load.play = false;
         }
         self.manager.active.remove(&item)
+    }
+
+    /// LLGestureMgr::onLoadComplete: a gesture that cannot be read is logged
+    /// and left out alone ("Unable to load gesture"); its row says why. The
+    /// window's message names it only for a load the resident started.
+    fn load_failed(&mut self, item: Uuid, asset: Uuid, name: &str, user: bool, error: String) {
+        log::warn!("gesture {item} \"{name}\" (asset {asset}) not loaded: {error}");
+        if user {
+            self.ui.message = aurora_i18n::tr!("gesture-load-failed-named", name = name, reason = error.as_str());
+        }
+        if let Some(editor) = self.ui.editors.get_mut(&item) {
+            editor.message.clone_from(&error);
+        }
+        self.ui.failed.insert((item, asset), error);
+        self.manager.active.remove(&item);
     }
 
     fn take_load(&mut self, item: Uuid, asset: Uuid) -> Option<Load> {
@@ -147,7 +165,7 @@ impl App {
             }
             return;
         }
-        self.gesture_state.failed.remove(&(id, asset));
+        self.gesture_state.ui.failed.remove(&(id, asset));
         self.gesture_state.queue_load(id, asset, open, play, active, inform);
         self.world.active_gestures.clone_from(&self.gesture_state.manager.active);
         if asset.is_nil() {
@@ -186,12 +204,8 @@ impl App {
                 }
             }
             Err(error) => {
-                self.gesture_state.failed.insert((item, asset));
-                self.gesture_state.ui.message.clone_from(&error);
-                if let Some(editor) = self.gesture_state.ui.editors.get_mut(&item) {
-                    editor.message = error;
-                }
-                self.gesture_state.manager.active.remove(&item);
+                let name = self.world.inventory.items.get(&item).map_or("", |it| it.name.as_str());
+                self.gesture_state.load_failed(item, asset, name, load.user, error);
                 self.world.active_gestures.clone_from(&self.gesture_state.manager.active);
             }
         }
@@ -367,6 +381,9 @@ impl App {
                     }
                     if on {
                         self.gesture_request(id, false, false, Some(true), true);
+                        if let Some(load) = self.gesture_state.pending.get_mut(&id) {
+                            load.user = true;
+                        }
                     } else {
                         self.gesture_active(id, false, true);
                     }
@@ -424,7 +441,8 @@ impl App {
             Action::Refresh => {
                 self.gesture_state.scan_generation = None;
                 self.gesture_state.manager.changed();
-                self.gesture_state.failed.clear();
+                self.gesture_state.ui.failed.clear();
+                self.gesture_state.ui.message.clear();
                 self.gesture_state
                     .manager
                     .entries
@@ -588,7 +606,7 @@ impl App {
                     self.world.inventory.items.get(id).is_some_and(|it| {
                         !self.gesture_state.manager.entries.contains_key(id)
                             && !self.gesture_state.pending.contains_key(id)
-                            && !self.gesture_state.failed.contains(&(*id, it.asset_id))
+                            && !self.gesture_state.ui.failed.contains_key(&(*id, it.asset_id))
                     })
                 })
                 .take(capacity)
@@ -1268,6 +1286,29 @@ mod tests {
         assert!(state.unavailable(&inv).is_empty());
         inv.items.remove(&item);
         assert_eq!(state.unavailable(&inv), [item]);
+    }
+    /// #2500: opening the window loads every listed gesture; one that cannot
+    /// be read is marked on its row only, and the window's message names a
+    /// gesture only for a load the resident started.
+    #[test]
+    fn a_background_load_failure_leaves_the_window_message_empty() {
+        let mut state = State::default();
+        let (item, asset) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let error = aurora_i18n::tr!("gesture-invalid").to_owned();
+        let fail = |state: &mut State, open, play, active, inform| {
+            state.queue_load(item, asset, open, play, active, inform);
+            let load = state.take_load(item, asset).expect("pending load");
+            state.load_failed(item, asset, "Wave", load.user, error.clone());
+        };
+        // the window's scan, then an outfit change activating it
+        fail(&mut state, false, false, None, false);
+        fail(&mut state, false, false, Some(true), true);
+        assert_eq!(state.ui.message, "");
+        assert_eq!(state.ui.failed.get(&(item, asset)), Some(&error));
+        assert!(!state.manager.active.contains(&item));
+        fail(&mut state, false, true, Some(true), true);
+        let message = &state.ui.message;
+        assert!(message.contains("Wave") && message.contains(&error), "{message}");
     }
     #[test]
     fn activation_can_be_cancelled_before_loading_and_stale_results_do_not_replace_new_requests() {

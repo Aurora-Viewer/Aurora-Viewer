@@ -11559,6 +11559,7 @@ gesture-unsaved = 閉じる前にこのジェスチャーの変更を保存し�
 gesture-discard = 破棄
 gesture-invalid = このジェスチャーのアセットは無効です。
 gesture-load-unavailable = このリージョンではジェスチャーを読み込めません。
+gesture-load-failed-named = 「{ $name }」：{ $reason }
 gesture-modify-denied = このジェスチャーのステップや説明を変更することはできません。
 gesture-too-large = このジェスチャーは1,000バイトの上限を超えています。ステップを減らすか、テキストを短くしてください。
 gesture-new-name = 新しいジェスチャー

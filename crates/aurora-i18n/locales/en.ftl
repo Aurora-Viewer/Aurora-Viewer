@@ -11620,6 +11620,7 @@ gesture-unsaved = Save changes to this gesture before closing?
 gesture-discard = Discard
 gesture-invalid = This gesture asset is invalid.
 gesture-load-unavailable = Gesture loading is unavailable in this region.
+gesture-load-failed-named = “{ $name }”: { $reason }
 gesture-modify-denied = You cannot change this gesture’s steps or description.
 gesture-too-large = This gesture exceeds the 1,000-byte limit. Remove some steps or shorten their text.
 gesture-new-name = New gesture

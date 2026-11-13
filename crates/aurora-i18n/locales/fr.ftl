@@ -11619,6 +11619,7 @@ gesture-unsaved = Enregistrer les modifications de ce geste avant de fermer ?
 gesture-discard = Abandonner
 gesture-invalid = Le contenu de ce geste est invalide.
 gesture-load-unavailable = Le chargement des gestes est indisponible dans cette région.
+gesture-load-failed-named = « { $name } » : { $reason }
 gesture-modify-denied = Vous ne pouvez pas modifier les étapes ni la description de ce geste.
 gesture-too-large = Ce geste dépasse la limite de 1 000 octets. Supprimez des étapes ou raccourcissez leur texte.
 gesture-new-name = Nouveau geste
