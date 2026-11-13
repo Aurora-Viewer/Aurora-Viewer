@@ -278,6 +278,11 @@ pub const SKELETON_ANCHOR: u32 = 208;
 /// First matrix of the weights of a skeleton's live morphs, after its 48
 /// anchors: column `k` is `palettes[base + LIVE_MORPH_WEIGHTS + k / 16][k / 4 % 4][k % 4]`.
 pub const LIVE_MORPH_WEIGHTS: u32 = 256;
+/// The palette entry after a skeleton's live morph weights (four matrices)
+/// holding how much snow is on the avatar (Aurora Weather).
+pub const AVATAR_SNOW: u32 = 260;
+/// Palette entries per skeleton (the viewer's `anim::PALETTE_JOINTS`).
+pub const PALETTE_STRIDE: u32 = 261;
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
 #[repr(C)]
@@ -577,6 +582,8 @@ pub struct DrawLists {
     pub water_events: Vec<crate::WaterEvent>,
     pub water_contacts: Vec<crate::WaterEvent>,
     pub water_ground: crate::WaterGround,
+    /// Rain prototype: the terrain's heights around the camera.
+    pub rain_ground: crate::RainGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
     /// The blended faces under the water while the camera is above it, back
@@ -609,6 +616,11 @@ pub struct DrawLists {
     /// Per `blend_under_water` entry: the same sidedness rule before water.
     pub blend_under_double_sided: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
+    /// Aurora Weather, CPU lists only: what the rain's shelter map takes in
+    /// its square around the camera, shadows or not: what stands still
+    /// (no avatar, worn, rigged or physical object), blended faces too (a
+    /// glass roof), as the GPU culling's shelter bin (cull.wgsl).
+    pub shelter_casters: Vec<ShadowCaster>,
     /// Terrain chunks casting shadows: drawn depth only like the opaque
     /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
     /// never through `fs_shadow`.
@@ -761,6 +773,7 @@ impl DrawLists {
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
         self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
+        self.shelter_casters.clone_from(&src.shelter_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
@@ -770,6 +783,7 @@ impl DrawLists {
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
+        self.rain_ground.clone_from(&src.rain_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
@@ -812,6 +826,7 @@ impl DrawLists {
         self.blend_depth_runs.clear();
         self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
+        self.shelter_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();
@@ -821,6 +836,7 @@ impl DrawLists {
         self.water_events.clear();
         self.water_contacts.clear();
         self.water_ground = Default::default();
+        self.rain_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
         self.blend_double_sided.clear();
@@ -888,6 +904,10 @@ pub mod particle_flags {
     pub const AXIS: u32 = 4;
     /// Velocity-oriented billboard: project its axis onto the viewing plane.
     pub const FOLLOW_VELOCITY: u32 = 8;
+    /// A segment of a line of light (the weather's lightning): with `AXIS`,
+    /// soft across its width only, so that segments end to end make one
+    /// unbroken line instead of a string of beads.
+    pub const LINE: u32 = 16;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1118,6 +1138,10 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    /// Rain prototype: the G-buffer of the screen-space reflections is drawn
+    /// while it rains, even with them off, for the wet surfaces' smooth
+    /// facings and materials (the reflections themselves only with `ssr`).
+    pub rain_surfaces: bool,
     /// Anisotropic texture filtering (1 = off, 2, 4, 8, 16).
     pub anisotropy: u16,
     /// Reflection probe cube slots, the default probe included
@@ -1125,6 +1149,13 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
+}
+
+impl RenderSettings {
+    /// The frame draws the G-buffer (normal, roughness, metallic).
+    pub fn gbuffer(&self) -> bool {
+        self.ssr || self.rain_surfaces
+    }
 }
 
 impl Default for RenderSettings {
@@ -1152,6 +1183,7 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,
@@ -1336,6 +1368,97 @@ pub struct OverlayEffect {
     pub texture: [u32; 4],
 }
 
+/// Rain prototype: the weather settings the wet ground follows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RainLook {
+    /// Puddles gather on level ground; in snow, the snow settles.
+    pub puddles: bool,
+    /// How far the wet ground and its puddles are drawn (m); in snow, the
+    /// snow lying.
+    pub distance: f32,
+    /// The wind now (m/s): the drops' slant.
+    pub wind: [f32; 2],
+    /// How far the wind has carried the drops so far (m).
+    pub drift: [f32; 2],
+    /// How much of the weather is drawn: 0 low, 1 medium, 2 high (the
+    /// drops and splashes, the distant rain's layers, the puddles' ring
+    /// layers and their reflections).
+    pub quality: u32,
+    /// What falls is snow, with the flakes' size scale (0.5 to 2; 0: rain):
+    /// flakes instead of drops, nothing wets.
+    pub snow: f32,
+    /// The lying snow's detail texture (normal and height): its bindless
+    /// slot, 0 for none.
+    pub snow_detail: u32,
+    /// How deep snow lies in the open at least (0..1): a region's weather
+    /// gives its whole history (who comes in late sees what has built up).
+    pub snow_lying: f32,
+    /// Footprints are kept in the lying snow.
+    pub footprints: bool,
+    /// Their map: how wide (m, 32 to 64: the wider, the coarser) and where
+    /// its centre is (my avatar: a camera zoomed out keeps them).
+    pub trail_extent: f32,
+    pub trail_centre: [f32; 2],
+    /// Puddles freeze while it snows or snow lies (they neither drain nor
+    /// dry while frozen).
+    pub ice: bool,
+    /// Deep snow (experimental): the lying snow's surface traced with
+    /// parallax, its lumps and footprints standing up from what it lies on.
+    pub deep_snow: bool,
+    /// The lightning lighting the sky from where it struck: x, y the way to
+    /// it (unit), z the sine of the glow's height in the sky, w how bright
+    /// (0: none).
+    pub lightning: [f32; 4],
+    /// The aurora in the night sky (env.wgsl `aurora_sky`): x how bright
+    /// (0: none, 1 a strong display), y the way it stands (rad, clockwise
+    /// from north), z the height of its foot (0 on the horizon, 1 overhead),
+    /// w its colours (0 green, 1 green under violet, 2 green under red).
+    pub aurora: [f32; 4],
+    /// Feet set down this frame: x, y (m), the foot's heading (rad), its half
+    /// length (m); the first `snow_stamp_count`.
+    pub snow_stamps: [[f32; 4]; SNOW_STAMPS],
+    pub snow_stamp_count: u32,
+    /// The soles' heights (m), the stamps' order: a foot presses only
+    /// where it stands on the snow (a flying avatar's feet press nothing).
+    pub snow_stamp_z: [f32; SNOW_STAMPS],
+    /// This frame starts the weather's memory again: no snow lying, the
+    /// ground dry, no puddles (the Weather window's clean-up button).
+    pub clean: bool,
+    /// This frame starts it again full of snow: lying everywhere as deep as
+    /// a long snowfall leaves it (the snow-fill button).
+    pub fill: bool,
+}
+
+/// The most feet set down in the snow in one frame.
+pub const SNOW_STAMPS: usize = 16;
+
+impl Default for RainLook {
+    fn default() -> Self {
+        Self {
+            puddles: true,
+            distance: 38.0,
+            wind: [0.0; 2],
+            drift: [0.0; 2],
+            quality: 2,
+            snow: 0.0,
+            snow_detail: 0,
+            snow_lying: 0.0,
+            footprints: false,
+            trail_extent: 32.0,
+            trail_centre: [0.0; 2],
+            ice: false,
+            deep_snow: false,
+            lightning: [0.0; 4],
+            aurora: [0.0; 4],
+            snow_stamps: [[0.0; 4]; SNOW_STAMPS],
+            snow_stamp_count: 0,
+            snow_stamp_z: [0.0; SNOW_STAMPS],
+            clean: false,
+            fill: false,
+        }
+    }
+}
+
 /// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
 /// each tile: a tile drawn alone has no scene past its guard band, and near
 /// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
@@ -1471,6 +1594,19 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
+    pub rain: f32,
+    /// Aurora Weather: the footprints kept in the region, each x, y (m),
+    /// heading (rad), half length (m), the sole's height (m), the snow
+    /// fallen when it was pressed (`snow_fallen`'s count), 0, 0; and their
+    /// generation (uploaded again when it changes).
+    pub snow_prints: Option<std::sync::Arc<Vec<[f32; 8]>>>,
+    pub snow_prints_gen: u64,
+    /// How much snow has fallen so far (seconds of falling, times how hard):
+    /// a print fills in as it grows.
+    pub snow_fallen: f32,
+    /// Rain prototype: the puddles and how far the wet ground is drawn.
+    pub rain_look: RainLook,
     /// The sky's rendering type is hidden (the viewer's Advanced ›
     /// Rendering types): the view starts from `clear_color` instead.
     pub hide_sky: bool,
@@ -1632,6 +1768,9 @@ pub struct RenderStats {
     /// the previous ones while the pipelines for new ones compile (#1746).
     /// None until the backend has answered a frame.
     pub settings: Option<RenderSettings>,
+    /// Aurora Weather: snow lies on the ground (local or the region's), as
+    /// the footprints' map and the snow cover read it.
+    pub snow_lying: bool,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,
@@ -1702,6 +1841,10 @@ pub struct RenderStats {
     /// the scene copy (with the cut-out pass and the submerged water
     /// particles), the SSR.
     pub gpu_effects: Option<[f32; 4]>,
+    /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
+    /// the wetness and footprints memories, the wet ground (with the snow
+    /// lying), the drops and flakes with the distant layers.
+    pub gpu_weather: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -1790,19 +1933,23 @@ pub enum GpuElement {
     Water,
     /// Blended faces and particles.
     Transparent,
+    /// Aurora Weather: the shelter map, the memories, the wet ground and
+    /// the snow lying, the drops and flakes (`RenderStats::gpu_weather`).
+    Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,
 }
 
 impl GpuElement {
     /// In frame order.
-    pub const ALL: [GpuElement; 7] = [
+    pub const ALL: [GpuElement; 8] = [
         GpuElement::ShadowsDepth,
         GpuElement::Effects,
         GpuElement::TerrainSky,
         GpuElement::Objects,
         GpuElement::Water,
         GpuElement::Transparent,
+        GpuElement::Weather,
         GpuElement::Post,
     ];
 
@@ -1815,6 +1962,7 @@ impl GpuElement {
             GpuElement::Objects => "objects",
             GpuElement::Water => "water",
             GpuElement::Transparent => "transparent",
+            GpuElement::Weather => "weather",
             GpuElement::Post => "post",
         }
     }
@@ -2268,5 +2416,13 @@ mod tests {
         for src in [object, include_str!("shaders/env.wgsl")] {
             assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
         }
+    }
+
+    #[test]
+    fn draw_record_control_flags_do_not_overlap() {
+        assert_eq!(flags::STUDIO_STAGE & flags::OBJECT_MASK_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
     }
 }
