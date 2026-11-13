@@ -5069,7 +5069,6 @@ ui-chat-today-at = 今日の{ $time }
 ui-chat-yesterday-at = 昨日の{ $time }
 ui-chat-date-at = { $date }の{ $time }
 ui-chat-new-messages = 新規
-ui-chat-latest = 最新のメッセージへ移動
 ui-chat-latest-new = { $count ->
     [one] 新着メッセージ{ $count }件
    *[other] 新着メッセージ{ $count }件

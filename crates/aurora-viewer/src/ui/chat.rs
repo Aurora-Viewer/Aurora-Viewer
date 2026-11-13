@@ -2706,7 +2706,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if resume || (!ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
+    if resume || (!ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
