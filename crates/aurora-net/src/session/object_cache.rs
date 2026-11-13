@@ -299,6 +299,7 @@ mod tests {
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
             viewer_stats_posts: Default::default(),
+            seen_avatars: Default::default(),
         };
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
@@ -333,6 +334,7 @@ mod tests {
             login,
             sims: addrs.map(|addr| (addr, Sim::new(addr, 10))).into(),
             main: Some(addrs[0]),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -342,6 +344,7 @@ mod tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
@@ -353,6 +356,7 @@ mod tests {
             finished: false,
             agent_moved: false,
             viewer_stats: Default::default(),
+            render_info: crate::render_info::Schedule::new(Instant::now()),
             regions_visited: Default::default(),
             cam_requested_at: None,
             login_arrival: false,

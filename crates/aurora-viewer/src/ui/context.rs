@@ -126,6 +126,9 @@ pub struct ObjectFacts {
     pub delete: bool,
     /// LLSelectMgr::enableUnlinkObjects: a linkset we can modify.
     pub unlink: bool,
+    /// enable_save_into_task_inventory: Build › Save back to object
+    /// contents applies to the menu's selection.
+    pub save_to_contents: bool,
     /// Blocked (LLMuteList), for "Ignore" / "Stop ignoring".
     pub blocked: bool,
     /// Name from ObjectProperties (block list entry).
@@ -193,8 +196,14 @@ pub struct Facts {
     pub ground_sit_blocked: bool,
     pub stand_blocked: bool,
     pub object_sit_blocked: bool,
+    /// RLVa is on for the session: Derender is greyed on our own
+    /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
+    pub rlva_enabled: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
+    /// Appearance > Export shape XML: the worn shape may be written to a
+    /// file (`actions::appearance_xml_export_allowed`) and no export runs.
+    pub shape_xml_export: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -292,6 +301,9 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
+    /// Appearance > Export shape XML: the worn shape, by inventory item,
+    /// to an appearance XML file (`shape_editor::xml_export`).
+    ExportShapeXml(Uuid),
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,
@@ -373,6 +385,29 @@ pub enum CtxAction {
     RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// A group chat's moderator allows or forbids a member's text
+    /// (LLIMSpeakerMgr::allowTextChat).
+    ModerateGroupText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
+    /// "Eject from group" / "Ban member" of a group chat's members, asked
+    /// first (`ui::chat::moderation`).
+    GroupChatEject {
+        group: Uuid,
+        agent: Uuid,
+    },
+    GroupChatBan {
+        group: Uuid,
+        agent: Uuid,
+    },
+    /// "Ban from all my groups" / "Unban from all my groups", asked first
+    /// (`world::group_ban_all`).
+    BanFromAllGroups {
+        agent: Uuid,
+        ban: bool,
+    },
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
     /// LLSpeakerVolumeStorage).
     SetVoiceVolume(Uuid, f32),
@@ -428,6 +463,8 @@ pub enum CtxAction {
     RefreshAvatarTextures(Uuid),
     /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
     Rebake,
+    /// "Reload avatar": every refresh of an avatar at once (`app/avatar_reload.rs`).
+    ReloadAvatar(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),
@@ -443,6 +480,9 @@ pub enum CtxAction {
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
     Unlink(Uuid),
+    /// "Save back to object contents" (Tools.SaveToObjectInventory), on
+    /// the menu's selection.
+    SaveToObjectContents,
     /// Link the selected objects (Tools.Link).
     Link(Uuid),
     /// "Take as separate items" / "Take copies as separate items"
@@ -506,6 +546,9 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser whatever the browser choice, after the same link checks.
+    OpenUrlExternal(String),
     /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
     AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),

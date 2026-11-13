@@ -262,6 +262,14 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             true,
             CtxAction::EditLinkedParts(!f.edit_linked),
         );
+        // Not in the Legacy Viewer's object menu (only Build › Object):
+        // added under Edit linked parts, which greys it, for quicker reach.
+        ui.item_if(
+            "package-import",
+            aurora_i18n::tr!("ui-bars-save-to-object-contents"),
+            o.save_to_contents,
+            CtxAction::SaveToObjectContents,
+        );
         ui.separator();
         // Tools.SelectedScriptAction (EditableSelected)
         for (icon, label, action) in [
@@ -593,11 +601,13 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::ObjectInfo(f.object.id),
     );
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        // Object.EnableDerender of menu_attachment_self.xml: never while
+        // RLVa is on (enable_derender_object, FIRE-10082)
         derender_items(
             ui,
             f.object.id,
             aurora_i18n::tr!("ui-context-derender-temporarily"),
-            !f.object.id.is_nil(),
+            !f.object.id.is_nil() && !f.rlva_enabled,
         );
         particles_submenu(ui, f);
     });
@@ -802,6 +812,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
         },
     );
+    reload_avatar_item(ui, id);
     ui.submenu("restore", aurora_i18n::tr!("ui-context-reset-options"), true, |ui| {
         reset_skeleton_items(ui, id);
         ui.item(
@@ -958,6 +969,7 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     sit_stand(ui, f);
     take_off_submenu(ui, f);
     appearance_submenu(ui, f);
+    reload_avatar_item(ui, id);
     community_submenu(ui, id);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
     ui.item(
@@ -1066,6 +1078,12 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             f.worn_shape.is_some(),
             CtxAction::EditWorn(f.worn_shape.unwrap_or_default()),
         );
+        ui.item_if(
+            "file-export",
+            aurora_i18n::tr!("ui-context-export-shape-xml"),
+            f.worn_shape.is_some() && f.shape_xml_export,
+            CtxAction::ExportShapeXml(f.worn_shape.unwrap_or_default()),
+        );
         ui.item(
             "pencil-filled",
             aurora_i18n::tr!("ui-context-edit-outfit"),
@@ -1112,6 +1130,16 @@ fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
             CtxAction::NewContactSet(vec![id]),
         );
     });
+}
+
+/// "Reload avatar" (`app/avatar_reload.rs`), ours or another's: not in the
+/// Legacy Viewer's menus, which spread its steps over several entries.
+fn reload_avatar_item(ui: &mut Builder, avatar: Uuid) {
+    ui.item(
+        "refresh-dot",
+        aurora_i18n::tr!("ui-context-reload-avatar"),
+        CtxAction::ReloadAvatar(avatar),
+    );
 }
 
 /// Avatar.ResetSkeleton / Avatar.ResetSkeletonAndAnimations: enabled for
@@ -1269,6 +1297,29 @@ mod tests {
     }
 
     #[test]
+    fn save_back_to_object_contents_follows_edit_linked_parts_in_the_object_submenu() {
+        for enabled in [false, true] {
+            let mut facts = Facts::default();
+            facts.object.id = ID;
+            facts.object.save_to_contents = enabled;
+            let menu = world_menu(&object_target(), &facts, Vec3::ZERO);
+            let object = menu
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("common-object"))
+                .expect("Object submenu");
+            let Kind::Submenu(children) = object.kind else { panic!("submenu") };
+            let at = children
+                .iter()
+                .position(|e| matches!(e.kind, Kind::Action(CtxAction::EditLinkedParts(_))))
+                .expect("Edit linked parts");
+            let save = &children[at + 1];
+            assert!(matches!(save.kind, Kind::Action(CtxAction::SaveToObjectContents)));
+            assert_eq!(save.label, aurora_i18n::tr!("ui-bars-save-to-object-contents"));
+            assert_eq!(save.enabled, enabled);
+        }
+    }
+
+    #[test]
     fn particles_over_sky_show_only_the_particle_menu() {
         let facts = Facts {
             particle_sources: vec![particle_source(1, 10, "Smoke", false)],
@@ -1325,6 +1376,23 @@ mod tests {
                     actions.iter().any(
                         |e| matches!(e.kind, Kind::Action(CtxAction::Derender { id, permanent: p }) if id == expected && p == permanent)
                     )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reload_avatar_is_offered_on_ourselves_and_on_others() {
+        let id = Uuid::from_u128(7);
+        for own in [true, false] {
+            for attachment in [None, Some(ID)] {
+                let target = Target::Avatar { id, own, attachment };
+                let entries = world_menu(&target, &Facts::default(), Vec3::ZERO);
+                assert!(
+                    entries
+                        .iter()
+                        .any(|e| matches!(e.kind, Kind::Action(CtxAction::ReloadAvatar(a)) if a == id)),
+                    "a top-level row, own {own}, attachment {attachment:?}"
                 );
             }
         }
@@ -1559,6 +1627,7 @@ mod tests {
             expected.extend(tr(&[
                 "ui-context-display-options>",
                 "ui-context-information-options>",
+                "ui-context-reload-avatar",
                 "ui-context-reset-options>",
                 "ui-context-disturbance>",
             ]));
@@ -1663,6 +1732,41 @@ mod tests {
             assert!(matches!(entry.kind, Kind::Action(CtxAction::EditWorn(id)) if id == item));
             assert!(!find(&Facts::default()).enabled);
         }
+    }
+
+    #[test]
+    fn the_worn_shape_exports_to_xml_only_when_the_rule_allows_it() {
+        let item = Uuid::from_u128(43);
+        let target = Target::Avatar {
+            id: Uuid::nil(),
+            own: true,
+            attachment: None,
+        };
+        let find = |facts: &Facts| {
+            world_menu(&target, facts, Vec3::ZERO)
+                .into_iter()
+                .find_map(|entry| {
+                    let Kind::Submenu(entries) = entry.kind else { return None };
+                    entries
+                        .into_iter()
+                        .find(|entry| entry.label == aurora_i18n::tr!("ui-context-export-shape-xml"))
+                })
+                .expect("export action")
+        };
+        let allowed = Facts {
+            worn_shape: Some(item),
+            shape_xml_export: true,
+            ..Default::default()
+        };
+        let entry = find(&allowed);
+        assert!(entry.enabled);
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::ExportShapeXml(id)) if id == item));
+        let refused = Facts {
+            shape_xml_export: false,
+            ..allowed
+        };
+        assert!(!find(&refused).enabled, "no modify rights");
+        assert!(!find(&Facts::default()).enabled, "no worn shape");
     }
 
     #[test]
@@ -2156,5 +2260,24 @@ mod rlva_sit_tests {
         assert!(!enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
         f.ground_sit_blocked = false;
         assert!(enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
+    }
+
+    #[test]
+    fn rlva_greys_derender_on_our_own_attachments() {
+        let worn = Target::Attachment {
+            key: ObjKey { region: 1, local_id: 2 },
+        };
+        let temporary = aurora_i18n::tr!("ui-context-derender-temporarily");
+        let blacklist = aurora_i18n::tr!("ui-context-derender-blacklist");
+        let mut f = Facts {
+            me: Uuid::from_u128(1),
+            ..Facts::default()
+        };
+        f.object.id = Uuid::from_u128(2);
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
+        f.rlva_enabled = true;
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
     }
 }

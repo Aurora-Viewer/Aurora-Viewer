@@ -813,6 +813,30 @@ fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others()
 }
 
 #[test]
+fn an_appearance_xml_export_needs_modify_rights_on_the_wearable() {
+    let (agent, other, library) = (id(9911), id(9912), id(9913));
+    let item = |owner, group_owned, owner_mask, everyone_mask| InvItem {
+        owner,
+        group_owned,
+        owner_mask,
+        everyone_mask,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own item, full permissions", item(agent, false, FULL, 0), true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0), true),
+        ("no transfer", item(agent, false, COPY | MODIFY, 0), true),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0), false),
+        ("group owned", item(agent, true, FULL, COPY), false),
+        ("someone else's", item(other, false, FULL, COPY), false),
+        ("a Library item", item(library, false, FULL, COPY | TRANSFER), false),
+    ];
+    for (what, item, allowed) in cases {
+        assert_eq!(appearance_xml_export_allowed(&item, agent), allowed, "{what}");
+    }
+}
+
+#[test]
 fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     let (agent, friend) = (id(9921), id(9922));
     let item = |owner_id, group_owned| aurora_net::build::TaskItem {
@@ -825,6 +849,57 @@ fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
     assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
     assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
+fn an_object_rezzes_from_contents_when_the_agent_may_copy_it_and_its_owner_transfer_it() {
+    let (agent, other, library, group) = (id(9931), id(9932), id(9933), id(9934));
+    let item = |owner_id, group_owned, owner_mask, group_mask, everyone_mask| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        group_id: group,
+        owner_mask,
+        group_mask,
+        everyone_mask,
+        asset_type: 6,
+        inv_type: 6,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own object, full permissions", item(agent, false, FULL, 0, 0), group, true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0, 0), group, false),
+        ("no transfer, even its own", item(agent, false, COPY | MODIFY, 0, 0), group, false),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0, 0), group, true),
+        ("group owned, active group may copy", item(group, true, FULL, COPY, 0), group, true),
+        (
+            "group owned, another active group",
+            item(group, true, FULL, COPY, 0),
+            Uuid::nil(),
+            false,
+        ),
+        (
+            "group owned, owner may not transfer",
+            item(group, true, COPY | MODIFY, COPY, COPY),
+            group,
+            false,
+        ),
+        (
+            "someone else's, everyone may copy",
+            item(other, false, FULL, 0, COPY),
+            Uuid::nil(),
+            true,
+        ),
+        (
+            "someone else's, no copy for everyone",
+            item(other, false, FULL, 0, 0),
+            Uuid::nil(),
+            false,
+        ),
+        ("a Library item", item(library, false, FULL, 0, COPY | TRANSFER), Uuid::nil(), true),
+    ];
+    for (what, item, active, allowed) in cases {
+        assert_eq!(task_rez_allowed(&item, agent, active), allowed, "{what}");
+    }
 }
 
 #[test]

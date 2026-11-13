@@ -7,6 +7,54 @@ use crate::ui::context::{CtxAction, Facts, ObjectFacts, Target};
 use uuid::Uuid;
 
 impl App {
+    /// Open a web link already checked (`open_web_link`) where the browser
+    /// choice sends it: the system browser, the Marketplace window for a
+    /// Marketplace page, else the Web browser window, shown and brought to
+    /// the front like LLWeb::loadURLInternal (indra/newview/llweb.cpp).
+    pub(super) fn route_web_link(&mut self, url: String, entry: crate::link_trust::BrowserEntryPoint) {
+        let marketplace = self.marketplace_home();
+        let marketplace_url = matches!(
+            entry,
+            crate::link_trust::BrowserEntryPoint::MarketplaceLink | crate::link_trust::BrowserEntryPoint::MarketplaceWindow
+        ) || marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let system = crate::link_trust::should_use_system_browser(&url, self.settings.browser_behavior, entry);
+        if system {
+            self.egui_ctx.open_url(egui::OpenUrl::new_tab(url));
+        } else if marketplace_url {
+            self.marketplace_ui.open(Some(url));
+        } else {
+            self.web_browser_ui.go_to(&url);
+            let window = ui::web_browser::WINDOW;
+            ui::widgets::open_floater(&self.egui_ctx, window, &mut self.panels.web_browser);
+            ui::widgets::bring_floater_front(&self.egui_ctx, window);
+        }
+    }
+
+    /// A web link clicked anywhere: refused when it is not a web page, then
+    /// checked (the link warning) and routed (`route_web_link`). `entry`
+    /// None reads it from the URL: a Marketplace page or an ordinary link.
+    pub(super) fn open_web_link(&mut self, url: String, requested_entry: Option<crate::link_trust::BrowserEntryPoint>) {
+        use crate::link_trust::Trust;
+
+        if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
+            log::warn!("link not opened: the {scheme} scheme is not a web page");
+            return;
+        }
+        let marketplace = self.marketplace_home();
+        let marketplace_url = marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let entry = requested_entry.unwrap_or(if marketplace_url {
+            crate::link_trust::BrowserEntryPoint::MarketplaceLink
+        } else {
+            crate::link_trust::BrowserEntryPoint::Link
+        });
+        let trust = crate::link_trust::classify(&url);
+        match trust {
+            Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why), entry)),
+            Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None, entry)),
+            _ => self.route_web_link(url, entry),
+        }
+    }
+
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
         if self.photo_full_frame() {
@@ -123,6 +171,9 @@ impl App {
                         // (LLToolSelect::handleObjectSelection, temp_select)
                         self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
+                        if let Some(bounds) = self.build.bounds(&self.world, Instant::now()) {
+                            self.turn_to_selection(idx, bounds.center);
+                        }
                         Target::Object { key, full_id, offset }
                     }
                 }
@@ -167,12 +218,14 @@ impl App {
         let w = &self.world;
         let mut f = Facts {
             worn_shape: crate::shape_editor::worn_shape(&self.world),
+            shape_xml_export: self.worn_shape_xml_allowed() && !self.shape_ui.xml_menu.busy(),
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
             // Account options remain accessible while region support loads.
             hover_height: w.login.is_some(),
             edit_linked: self.settings.build.edit_linked,
+            rlva_enabled: w.rlva.enabled(),
             property_lines: self.settings.world_overlays.property_lines,
             voice: self.settings.audio.voice_enabled,
             particle_sources: self.particle_menu_sources(),
@@ -292,6 +345,8 @@ impl App {
             f.hud_move_locked = w.hud_locks.locked(root.full_id);
         }
         self.object_menu_facts(idx, &mut f);
+        // the right click selected the object (or kept the selection)
+        f.save_to_contents = self.build.save_to_contents_target(w).is_some();
         f.local_preview = o.is_editable_preview();
         if f.local_preview {
             f.wear = true;
@@ -488,6 +543,7 @@ impl App {
             CtxAction::EstateTeleportHome(id) => self.ask_estate(id, land_moderation::EstateAct::TeleportHome),
             CtxAction::EstateBan(id) => self.ask_estate(id, land_moderation::EstateAct::Ban),
             CtxAction::GodKick(id, flags) => self.ask_god_kick(id, flags),
+            CtxAction::ExportShapeXml(item) => self.export_worn_shape_xml(item),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
                     self.open_wearable_editor(item);
@@ -618,6 +674,18 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::ModerateGroupText { session, agent, allow } => {
+                self.send(aurora_net::NetCommand::ModerateText { session, agent, allow });
+            }
+            CtxAction::GroupChatEject { group, agent } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Eject { group, agent });
+            }
+            CtxAction::GroupChatBan { group, agent } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Ban { group, agent });
+            }
+            CtxAction::BanFromAllGroups { agent, ban } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::BanAll { agent, ban });
+            }
             // the volumes of the call's participants: applied live, saved
             // once the slider rests
             CtxAction::SetVoiceVolume(id, v) => {
@@ -694,6 +762,7 @@ impl App {
             CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
             CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
             CtxAction::Rebake => self.rebake(),
+            CtxAction::ReloadAvatar(id) => self.reload_avatar(id),
             CtxAction::Take(id) | CtxAction::TakeCopy(id) => {
                 let copy = matches!(act, CtxAction::TakeCopy(_));
                 if let Some(idx) = self.world.objects.index_of_uuid(&id) {
@@ -752,6 +821,10 @@ impl App {
                     }
                     self.flush_build();
                 }
+            }
+            CtxAction::SaveToObjectContents => {
+                self.build.save_to_contents(&mut self.world);
+                self.flush_build();
             }
             CtxAction::Link(id) => self.menu_link(id),
             CtxAction::TakeSeparate { id, copy } => self.take_separate(id, copy),
@@ -852,31 +925,8 @@ impl App {
                 self.teleport_to_location(region, pos);
             }
             CtxAction::AppLink(link) => self.run_app_link(link),
-            CtxAction::OpenUrl(url) => {
-                use crate::link_trust::Trust;
-                // only web pages go to the system, as the links of a
-                // notification: a link of a text, a profile or a server reply
-                // must not start a local program (the scheme alone is logged)
-                if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
-                    log::warn!("link not opened: the {scheme} scheme is not a web page");
-                    return;
-                }
-                // LLWeb::loadURLInternal: a Marketplace page opens in the
-                // Marketplace window (Firestorm's default browser choice keeps
-                // the Second Life sites inside the viewer)
-                let marketplace = self.marketplace_home();
-                if marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home))
-                    && !matches!(crate::link_trust::classify(&url), Trust::Dangerous(_))
-                {
-                    self.marketplace_ui.open(Some(url));
-                } else {
-                    match crate::link_trust::classify(&url) {
-                        Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why))),
-                        Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None)),
-                        _ => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
-                    }
-                }
-            }
+            CtxAction::OpenUrl(url) => self.open_web_link(url, None),
+            CtxAction::OpenUrlExternal(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::ExplicitExternal)),
             CtxAction::TeleportToPlaceConfirmed(region, pos) => {
                 self.teleport_to_location(region, pos);
             }

@@ -40,6 +40,28 @@ pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
     if owned { item.owner_mask } else { item.everyone_mask }
 }
 
+/// Whether an object of an object's contents may be rezzed from there, by a
+/// drag onto the land or onto another object: copy for the agent, transfer
+/// for its owner. LLToolDragAndDrop::dad3dRezFromObjectOnLand and
+/// dad3dRezFromObjectOnObject (indra/newview/lltooldraganddrop.cpp), that is
+/// LLPermissions::allowCopyBy(agent, active group) and
+/// allowTransferTo(null) (indra/llinventory/llpermissions.h): the owner's
+/// mask must allow transfer, even for the agent's own item. Stricter than
+/// the Legacy Viewer's land check (LLAgent::allowOperation, which lets a
+/// member with the group power act as the owner of a group-owned item and
+/// reads the group mask for any group of the agent): only the active
+/// group's mask counts here, on land as on an object.
+pub fn task_rez_allowed(item: &aurora_net::build::TaskItem, agent: Uuid, active_group: Uuid) -> bool {
+    let copy = if !item.group_owned && item.owner_id == agent {
+        item.owner_mask
+    } else if !item.group_id.is_nil() && item.group_id == active_group {
+        item.group_mask | item.everyone_mask
+    } else {
+        item.everyone_mask
+    };
+    copy & COPY != 0 && item.owner_mask & TRANSFER != 0
+}
+
 /// Rights on a task script with the agent's group membership, following
 /// LLLiveLSLEditor::loadAsset (indra/newview/llpreviewscript.cpp).
 /// Unlike agent inventory, task scripts also use the object's group rights.
@@ -101,6 +123,19 @@ pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
     use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
     [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
         || inv.items.values().any(|it| it.asset_id == asset && held(inv, it) & FULL == FULL)
+}
+
+/// Whether the agent may write a wearable's slider values to an appearance
+/// XML file (the Export XML button of the shape, physics and layer editors).
+/// Stricter than the Legacy Viewer, whose Advanced > Character > Appearance
+/// to XML (LLVOAvatar::dumpArchetypeXML, indra/newview/llvoavatar.cpp)
+/// checks nothing: it asks modify rights, like the Import button
+/// (LLPanelEditWearable `import_btn`, allowModifyBy,
+/// indra/newview/llpaneleditwearable.cpp). A no-modify shape is often a
+/// bought one; its sliders stay visible, but it is not written to a file.
+/// The file never carries a texture id.
+pub fn appearance_xml_export_allowed(item: &InvItem, agent: Uuid) -> bool {
+    agent_mask(item, agent) & MODIFY != 0
 }
 
 /// [`asset_uuid_shown`] for an agent that may be a god: a god sees every

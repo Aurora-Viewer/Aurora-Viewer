@@ -38,6 +38,8 @@ pub mod particle_editor;
 pub mod place;
 mod property_query;
 pub mod replace;
+#[cfg(test)]
+mod save_to_contents_tests;
 pub mod script_queue;
 #[cfg(test)]
 mod selection_tests;
@@ -146,6 +148,8 @@ pub struct BuildSettings {
     /// with `snap` (`snap_mode`); off by default, so moving behaves as the
     /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
+    /// The inline Snap control remembers its choice while disabled.
+    pub snap_objects_preferred: bool,
     /// "Place on surface" (`place.rs`; Aurora's own): whether it turns the
     /// selection ("Auto rotate") or keeps its rotation, and the side it then
     /// puts against the surface.
@@ -292,8 +296,22 @@ impl BuildSettings {
         }
     }
     pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        let choice = if mode == SnapMode::Off { self.snap_mode() } else { mode };
+        if choice != SnapMode::Off {
+            self.snap_objects_preferred = choice == SnapMode::Objects;
+        }
         self.snap = mode == SnapMode::Grid;
         self.object_snap = mode == SnapMode::Objects;
+    }
+    pub fn snap_choice(&self) -> SnapMode {
+        match self.snap_mode() {
+            SnapMode::Off if self.snap_objects_preferred => SnapMode::Objects,
+            SnapMode::Off => SnapMode::Grid,
+            mode => mode,
+        }
+    }
+    pub fn set_snap_enabled(&mut self, enabled: bool) {
+        self.set_snap_mode(if enabled { self.snap_choice() } else { SnapMode::Off });
     }
     /// `gizmo_scale` within the slider's range; an edited settings file
     /// falls back to the Legacy Viewer's size.
@@ -340,7 +358,7 @@ mod worn_tests;
 /// whole no-modify object is allowed; linked edits and stretching need Modify.
 /// LLViewerObject::permMove / permModify inherit the root's effective flags.
 pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) -> bool {
-    if !world.rlva_can_edit(idx) {
+    if !world.rlva_can_edit(idx) || linking::permanent(world, idx) || linking::permanent(world, root_of(world, idx)) {
         return false;
     }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
@@ -621,6 +639,7 @@ impl Default for BuildSettings {
             grid_mode: 0,
             snap: true,
             object_snap: false,
+            snap_objects_preferred: false,
             place_rotate: false,
             place_side: place::Side::Bottom,
             place_offset: 0.0,
@@ -1002,9 +1021,10 @@ pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Qua
     let parent_idx = world.objects.parent_of(o)?;
     let (p, r, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
     if world.objects.get(parent_idx)?.is_avatar() {
-        // the attachment point as posed now, on the body or in the HUD
+        // the attachment point as posed now, on the body or in the HUD (the
+        // root is drawn at most 3.5 m from it, scene/draw_limits.rs)
         let rotation = (r * o.rotation.inverse()).normalize();
-        Some((p - rotation * o.position, rotation))
+        Some((p - rotation * crate::scene::draw_limits::attachment_offset(o.position), rotation))
     } else {
         crate::scene::Scene::object_transform(world, parent_idx, now, 0).map(|(p, r, _)| (p, r))
     }
@@ -1607,6 +1627,66 @@ impl BuildTool {
             .unwrap_or_default()
     }
 
+    /// The root "Save back to object contents" sends, and the object it was
+    /// rezzed from (enable_save_into_task_inventory,
+    /// indra/newview/llviewermenu.cpp): the first root node of the
+    /// selection, the latest linkset selected, once its full properties
+    /// name a source object, never an attachment. With "Edit linked parts"
+    /// the prims are individual selections, which are no root nodes
+    /// (LLObjectSelection::is_root): nothing.
+    pub fn save_to_contents_target(&self, world: &World) -> Option<(usize, Uuid)> {
+        if self.selection_linked {
+            return None;
+        }
+        let root = root_of(world, world.objects.index_of(self.selection.first()?)?);
+        let object = world.objects.get(root)?;
+        if object.parent_id != 0 {
+            return None;
+        }
+        let from = self.props.get(&object.full_id).filter(|p| p.full)?.from_task_id;
+        (!from.is_nil()).then_some((root, from))
+    }
+
+    /// Build › Save back to object contents (LLToolsSaveToObjectInventory,
+    /// save_object_back_to_contents and derez_objects): a copy of the
+    /// target root alone goes into the contents of the object it was
+    /// rezzed from, in one DeRezObject (DRD_SAVE_INTO_TASK_INVENTORY) with
+    /// the active group. Like the Legacy Viewer, the other selected roots
+    /// stay out, no permission is asked here (the simulator decides) and
+    /// the selection stays.
+    ///
+    /// Unlike the Legacy Viewer, which says nothing, a notice in the nearby
+    /// chat names the object being saved (the simulator sends no reply to
+    /// a save), and the source object's Contents list is read again.
+    pub fn save_to_contents(&mut self, world: &mut World) {
+        let Some((root, from)) = self.save_to_contents_target(world) else {
+            return;
+        };
+        let Some(object) = world.objects.get(root) else {
+            return;
+        };
+        let (handle, local_id) = (object.key.region, object.key.local_id);
+        let name = self
+            .props
+            .get(&object.full_id)
+            .map(|p| p.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| aurora_i18n::tr!("common-object").to_string());
+        self.send(BuildCmd::DeRez {
+            handle,
+            local_ids: vec![local_id],
+            destination: derez::SAVE_INTO_TASK_INVENTORY,
+            destination_id: from,
+            group_id: world.groups.active,
+        });
+        world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
+        world.system_notice(
+            aurora_i18n::tr!("ui-bars-save-to-object-contents-sent", name = name),
+            crate::world::notice_topics::Topic::Items,
+        );
+        self.contents_changed(from);
+    }
+
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).
     /// The active group goes in DeRezObject, like LLSelectMgr::packDeRezHeader
     /// (indra/newview/llselectmgr.cpp), regardless of the parcel group.
@@ -1646,7 +1726,7 @@ impl BuildTool {
                 not_owned = format!("{}", not_owned)
             )
         } else {
-            aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = format!("{}", roots.len()))
+            String::new()
         };
         self.deselect_all(world);
     }

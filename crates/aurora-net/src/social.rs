@@ -26,6 +26,9 @@ pub enum MuteListSource {
     File(String),
     /// UseCachedMuteList: our cached copy is current.
     UseCache,
+    /// GenericMessage "emptymutelist" (LLDispatchEmptyMuteList): the
+    /// resident blocks nobody, so the server sends no file.
+    ServerEmpty,
 }
 
 /// First message of a group / conference session (ChatterBoxInvitation).
@@ -80,6 +83,20 @@ impl SessionMethod {
             SessionMethod::DeclineInvitation => "decline invitation",
             SessionMethod::FetchHistory => "fetch history",
         }
+    }
+}
+
+/// The body of a moderator's "mute update" (LLIMSpeakerMgr::allowTextChat):
+/// `mute_info.text` is true to forbid the text, as a plain value and not a
+/// toggle (the Legacy Viewer's choice, against accidental unmuting).
+pub fn mute_update_body(session: Uuid, agent: Uuid, allow: bool) -> Llsd {
+    aurora_llsd::llsd_map! {
+        "method" => "mute update",
+        "session-id" => session,
+        "params" => aurora_llsd::llsd_map! {
+            "agent_id" => agent,
+            "mute_info" => aurora_llsd::llsd_map! { "text" => !allow },
+        },
     }
 }
 
@@ -328,6 +345,20 @@ pub fn ll_crc(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
     use aurora_llsd::llsd_map;
+
+    #[test]
+    fn a_mute_update_forbids_or_allows_the_text_as_a_value() {
+        let (session, agent) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let forbid = mute_update_body(session, agent, false);
+        assert_eq!(forbid["method"].as_str(), "mute update");
+        assert_eq!(forbid["session-id"].as_uuid(), session);
+        assert_eq!(forbid["params"]["agent_id"].as_uuid(), agent);
+        assert!(forbid["params"]["mute_info"]["text"].as_bool());
+        let allow = mute_update_body(session, agent, true);
+        assert!(!allow["params"]["mute_info"]["text"].as_bool());
+        // the text only: the voice is left as it is
+        assert!(allow["params"]["mute_info"].as_map().is_some_and(|m| m.len() == 1));
+    }
 
     #[test]
     fn voice_invitations_are_told_apart_from_messages() {
