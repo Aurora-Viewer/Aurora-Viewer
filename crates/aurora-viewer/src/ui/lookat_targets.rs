@@ -48,7 +48,7 @@ const NAME_ABOVE: f32 = 0.3;
 /// The name over a target, in the format of DebugLookAtShowNames (1
 /// complete, 2 display, 3 legacy "Firstname Lastname", 4 username); none
 /// for 0 or a name not known yet.
-fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
+pub(crate) fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
     let names = &world.social.avatar_names;
     let n = names.get(id)?;
     let o = &names.options;

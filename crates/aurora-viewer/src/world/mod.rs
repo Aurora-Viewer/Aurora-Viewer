@@ -13,6 +13,7 @@ pub mod calling_cards;
 
 mod arrival_wait;
 pub mod beacons;
+pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
@@ -165,6 +166,8 @@ pub struct Region {
     pub avatar_hover_height: bool,
     /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
     pub lsl_syntax_id: Option<Uuid>,
+    /// SimulatorFeatures' LuaScriptsEnabled: the region runs SLua scripts.
+    pub lua_scripts: bool,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -182,6 +185,9 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
+    /// post links in chat applies here, so the role editor shows it.
+    pub group_chat_post_links: bool,
     pub max_link_children: Option<u32>,
     pub animated_object_max_tris: u32,
 }
@@ -473,6 +479,8 @@ pub struct World {
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
+    /// Selection and give beams, ours and the others' (`beams`).
+    pub beams: beams::Beams,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     /// The Omnifilter's rules (`crate::omnifilter`, `world/omnifilter.rs`).
@@ -894,6 +902,7 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
+            beams: beams::Beams::default(),
             object_im_filter: object_im_filter::Settings::default(),
             omnifilter: Default::default(),
             omnifilter_replies: Vec::new(),
@@ -1174,6 +1183,8 @@ impl World {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.beams
+            .forget(std::time::Instant::now(), |id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -2213,6 +2224,7 @@ impl World {
             voice_server: String::new(),
             avatar_hover_height: false,
             lsl_syntax_id: None,
+            lua_scripts: false,
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
@@ -2222,6 +2234,7 @@ impl World {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -2778,21 +2791,25 @@ impl World {
                 materials_rate,
                 materials_max,
                 lsl_syntax_id,
+                lua_scripts,
                 grid_status_feed,
                 grid_status_page,
                 currency_base_uri,
                 opensim,
                 currency_symbol,
                 export_supported,
+                group_chat_post_links,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
+                r.lua_scripts = lua_scripts;
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.opensim = opensim;
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
+                r.group_chat_post_links = group_chat_post_links;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -2832,8 +2849,8 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
-            NetEvent::LslSyntax { id, keywords } => {
-                self.on_lsl_syntax(id, keywords);
+            NetEvent::LslSyntax { id, keywords, lua } => {
+                self.on_lsl_syntax(id, keywords, lua);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {
@@ -4406,6 +4423,25 @@ impl World {
                 }
                 None
             }
+            NetEvent::Beam {
+                effect,
+                source,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                // LLHUDEffectSpiral::unpackData: its source and its target
+                // object must be in the world; ours are drawn on their own
+                if source != self.agent_id {
+                    let objects = &self.objects;
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
+                }
+                None
+            }
             NetEvent::ResetSkeleton {
                 source,
                 target,
@@ -5617,6 +5653,12 @@ impl World {
     /// (LFSimFeatureHandler::simSupportsExport).
     pub fn export_supported(&self) -> bool {
         self.main().is_some_and(|r| r.export_supported)
+    }
+
+    /// The region we are in applies the ability to post links in group
+    /// chat (LLViewerRegion::groupChatPostLinksEnabled for gAgent's region).
+    pub fn group_chat_post_links(&self) -> bool {
+        self.main().is_some_and(|r| r.group_chat_post_links)
     }
 
     /// The status feed and page the agent's region names for its OpenSim
@@ -8897,12 +8939,14 @@ mod motion_tests {
                 materials_rate: None,
                 materials_max: None,
                 lsl_syntax_id: Uuid::nil(),
+                lua_scripts: false,
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());
