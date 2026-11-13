@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MOAP secondlife:// link test</title>
+<style>
+body { margin: 0; min-height: 100vh; background: linear-gradient(135deg, #2a1f4a, #0f6d6d); color: #fff; font: 24px sans-serif; text-align: center; }
+h1 { font-size: 34px; margin: 24px 0 8px; }
+p { margin: 14px; }
+a, button { display: inline-block; padding: 10px 22px; border: 0; border-radius: 8px; background: #7a3b9c; color: #fff; font-size: 24px; text-decoration: none; cursor: pointer; }
+small { color: #bfefff; }
+</style>
+<main>
+<h1>MOAP secondlife:// link test</h1>
+<p><a href="secondlife:///app/chat/824619/link">Chat bridge (anchor)</a></p>
+<p><button onclick="window.location.href='secondlife:///app/chat/824619/script'">Chat bridge (script navigation)</button></p>
+<p><a href="secondlife://{{REGION}}/128/128/25">Place link (anchor)</a></p>
+<p><button onclick="window.location.href='secondlife://{{REGION}}/128/128/25'">Place (script navigation)</button></p>
+<p><small>{{REGION_NAME}}: the demo listener answers channel 824619 in nearby chat; a place link opens its profile.</small></p>
+</main>

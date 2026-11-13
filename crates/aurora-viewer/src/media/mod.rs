@@ -477,6 +477,10 @@ pub struct MediaManager {
     nav_rx: crossbeam_channel::Receiver<(Uuid, u8, Result<(), String>)>,
     /// Messages for the chat / notifications (drained by the app).
     pub messages: Vec<String>,
+    /// `secondlife://` links clicked in a page shown on a prim or a HUD,
+    /// drained by the app (LLViewerMediaImpl::handleMediaEvent,
+    /// MEDIA_EVENT_CLICK_LINK_NOFOLLOW).
+    pub links: Vec<String>,
     /// Offline demo: autoplay regardless of the settings.
     force_autoplay: bool,
     /// Periodic state summary in the log.
@@ -522,6 +526,7 @@ impl Default for MediaManager {
             nav_tx,
             nav_rx,
             messages: Vec::new(),
+            links: Vec::new(),
             force_autoplay: false,
             last_diag: Instant::now() - Duration::from_secs(15),
             pick_cache: HashMap::new(),

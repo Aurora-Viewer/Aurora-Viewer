@@ -11081,6 +11081,9 @@ impl App {
                     language: aurora_i18n::language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
+                for url in std::mem::take(&mut self.media.links) {
+                    self.on_ctx_action(crate::ui::web_view::clicked_link_action(&url));
+                }
                 self.options_ui.media_plugins = self
                     .media
                     .plugins_found()
@@ -22252,17 +22255,18 @@ impl ApplicationHandler for App {
                     }
                 }
             }
-            // AURORA_DEMO_MEDIA=<url> (1: a test page): a screen with media
-            // on a prim east of the start position, playing at once
+            // AURORA_DEMO_MEDIA=<url> (1: a test page, links: the
+            // secondlife:// link reproduction page): a screen with media on
+            // a prim east of the start position, playing at once
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
                 // Mini controls: the same page, with the address hidden
                 // (LLMediaEntry::MINI, LLPanelPrimMediaControls::updateShape).
                 let mini = v == "mini";
-                let url = if v == "1" || v.is_empty() || mini {
-                    crate::demo::demo_media_page().to_string()
-                } else {
-                    v
+                let url = match v.as_str() {
+                    "1" | "" | "mini" => crate::demo::demo_media_page().to_string(),
+                    "links" => crate::demo::demo_media_links_page(),
+                    _ => v,
                 };
                 let (ev, object, face) = crate::demo::media_screen();
                 if let Some(e) = self.world.apply(ev) {
