@@ -1076,7 +1076,46 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     let fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
     let gtdenom = 2.0 * nh;
     let gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
-    return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
+    return legacy_finite(lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl));
+}
+
+// AURORA_LEGACY_NAN=off|check (frame.light_mode.z): `off` lets a legacy
+// highlight or environment term that is not a number through, as before
+// (0.9.8); `check` paints magenta where one was caught.
+const LEGACY_NAN_OFF: u32 = 0x200000u;
+const LEGACY_NAN_CHECK: u32 = 0x400000u;
+// Whether this fragment caught one (the `check` mode). Reset by
+// shade_material.
+var<private> legacy_nan: bool = false;
+
+fn not_finite(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7f800000u) == 0x7f800000u;
+}
+
+// A legacy lighting term (a highlight, an environment sample) that is not a
+// finite number gives none. The highlight's divisions and powers can give
+// a NaN at grazing angles, and the min, max and clamp that follow are left
+// to the card: NVIDIA returns the other operand (no highlight), AMD keeps
+// the NaN, which `finite_hdr` turns black: black eyebrows, beards and eye
+// layers on mesh heads in 0.9.8, after #3389 had only taken its alpha
+// away. Tested on the bits, as legacy_glare_alpha: a driver may fold
+// `x != x` to false.
+fn legacy_finite(x: f32) -> f32 {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return x;
+    }
+    let bad = not_finite(x);
+    legacy_nan = legacy_nan || bad;
+    return select(x, 0.0, bad);
+}
+
+fn legacy_finite3(c: vec3<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return c;
+    }
+    let bad = not_finite(c.x) || not_finite(c.y) || not_finite(c.z);
+    legacy_nan = legacy_nan || bad;
+    return select(c, vec3<f32>(0.0), bad);
 }
 
 // The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
@@ -1107,8 +1146,7 @@ fn legacy_glare_on() -> bool {
 // `g != g` to false.
 fn legacy_glare_alpha(unlit: f32) -> f32 {
     let g = legacy_glare * (1.0 - clamp(unlit, 0.0, 1.0));
-    let not_finite = (bitcast<u32>(g) & 0x7f800000u) == 0x7f800000u;
-    return select(clamp(g, 0.0, 1.0), 0.0, not_finite || !legacy_glare_on());
+    return select(clamp(g, 0.0, 1.0), 0.0, not_finite(g) || !legacy_glare_on());
 }
 
 // Legacy material lighting applied to the sun + sky result `col`, as
@@ -1158,8 +1196,8 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     }
     // sampleReflectionProbesLegacy clamps both: a very bright sky does not
     // wash a shiny face out
-    gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
-    env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    gloss_sky = clamp(legacy_finite3(gloss_sky), vec3<f32>(0.0), vec3<f32>(10.0));
+    env_sky = clamp(legacy_finite3(env_sky), vec3<f32>(0.0), vec3<f32>(10.0));
     // with GTAO, the glossy reflection fades in creases as a PBR one
     // (specular_occlusion; its roughness from the glossiness, as the probe
     // level above); the sharp environment is a mirror's lobe, which that
@@ -1545,6 +1583,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     legacy_glare = 0.0;
+    legacy_nan = false;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1628,6 +1667,15 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
+    if ((frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
+        // magenta: a legacy term caught by legacy_finite; cyan: the colour
+        // is still not a number, from a source the guard does not cover
+        if (not_finite(col.x) || not_finite(col.y) || not_finite(col.z)) {
+            s.color = vec4<f32>(0.0, 4.0, 4.0, max(alpha, 0.5));
+        } else if (legacy_nan) {
+            s.color = vec4<f32>(4.0, 0.0, 4.0, max(alpha, 0.5));
+        }
+    }
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;

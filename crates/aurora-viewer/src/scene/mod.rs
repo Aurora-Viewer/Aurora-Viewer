@@ -1856,26 +1856,38 @@ impl Scene {
             }
             return matches!(e.state, GeomState::Ready(_));
         }
+        // (a failed build is a geometry that failed: drawn without it)
+        let failed = move || JobResult::GeometryFailed { key };
         match key {
             GeomKey::Prim { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let mesh = aurora_prim::generate_volume(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let mesh = aurora_prim::generate_volume(&params, detail);
+                        JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
+                    },
+                    failed,
+                );
             }
             GeomKey::Flexible { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
-                    let mesh =
-                        aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
+                        let mesh = aurora_prim::volume::generate_flexible_volume(
+                            &params,
+                            detail,
+                            &sim.path(Vec3::ZERO, Quat::IDENTITY),
+                            Vec3::ONE,
+                        );
+                        JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
+                    },
+                    failed,
+                );
             }
             GeomKey::Sculpt { lod, .. } => {
                 let params = obj.volume;
@@ -1887,29 +1899,35 @@ impl Scene {
                     return false; // wait for the sculpt texture
                 };
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    JobResult::geometry(
-                        key,
-                        jobs::volume_to_faces(&mesh),
-                        (mesh.surface_area, mesh.grid_area),
-                        pool.as_deref(),
-                    )
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
+                        JobResult::geometry(
+                            key,
+                            jobs::volume_to_faces(&mesh),
+                            (mesh.surface_area, mesh.grid_area),
+                            pool.as_deref(),
+                        )
+                    },
+                    failed,
+                );
             }
             GeomKey::SculptPlaceholder { lod, .. } => {
                 let params = obj.volume;
                 let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let mesh = aurora_prim::sculpt_placeholder(&params, detail);
-                    JobResult::geometry(
-                        key,
-                        jobs::volume_to_faces(&mesh),
-                        (mesh.surface_area, mesh.grid_area),
-                        pool.as_deref(),
-                    )
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let mesh = aurora_prim::sculpt_placeholder(&params, detail);
+                        JobResult::geometry(
+                            key,
+                            jobs::volume_to_faces(&mesh),
+                            (mesh.surface_area, mesh.grid_area),
+                            pool.as_deref(),
+                        )
+                    },
+                    failed,
+                );
             }
             GeomKey::Mesh { id, lod } => {
                 self.meshes.want(id, lod);
@@ -1917,11 +1935,14 @@ impl Scene {
             }
             GeomKey::Tree { species, lod } => {
                 let pool = self.staging.clone();
-                self.jobs.spawn(move || {
-                    let s = aurora_prim::tree::tree_species(Some(species));
-                    let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
-                });
+                self.jobs.spawn_or(
+                    move || {
+                        let s = aurora_prim::tree::tree_species(Some(species));
+                        let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
+                        JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
+                    },
+                    failed,
+                );
             }
             // (built at once by `request_grass`, which needs the ground)
             GeomKey::Grass { .. } => return false,
@@ -1942,13 +1963,16 @@ impl Scene {
         let key = GeomKey::AvatarMorph { part, weights: hash };
         if !self.geoms.contains_key(&key) {
             let pool = self.staging.clone();
-            self.jobs.spawn(move || match lib.parts.get(part as usize) {
-                Some(p) => {
-                    let (face, min, max) = morph::morphed(p, &w);
-                    JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
-                }
-                None => JobResult::GeometryFailed { key },
-            });
+            self.jobs.spawn_or(
+                move || match lib.parts.get(part as usize) {
+                    Some(p) => {
+                        let (face, min, max) = morph::morphed(p, &w);
+                        JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
+                    }
+                    None => JobResult::GeometryFailed { key },
+                },
+                move || JobResult::GeometryFailed { key },
+            );
             self.geom_insert(key, GeomState::Pending);
         }
         Some(key)
