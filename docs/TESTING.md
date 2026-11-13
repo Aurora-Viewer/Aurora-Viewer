@@ -9504,6 +9504,28 @@ of `other` keep bouncing. Save stores the asset and applies it as the
 appearance, as a simulator bake would.
 
 **Avatar Studio.** `AURORA_DEMO_AVATAR_STUDIO=1` opens the studio at frame 640.
+Shared seating: on the grid, sit on furniture before entering Studio. Its whole
+linkset and other avatars seated on its root or child prims should appear,
+including their body attachments. Other furniture, standing bystanders and
+other residents' HUDs stay hidden. Have a companion join, stand and change seats
+while Studio is open; visibility must update. Stand yourself to return to the
+ordinary own-avatar view. Check a rotated seat, a multi-prim sofa, a low avatar
+detail limit and Photo mode. The podium should be below the furniture's base
+at entry. No object or avatar should move in the simulator because of Studio.
+Rotate the seat by 180 degrees, including a seat on a rotated child prim,
+and reopen Studio: its initial view must face the avatar's front using the
+avatar's full world rotation. A standing avatar's entry view must stay unchanged.
+Use an off-centre seat on a sofa with offset linked parts: the podium must be
+centred under the whole furniture, independent of the sitter's position or worn
+attachments. Move/rotate the furniture or change seats within it: its centre
+must stay on the podium. Camera focus and panning remain avatar-relative.
+Combine with `AURORA_DEMO_LOOKAT=targets`: no look-at dots/crosshairs, names
+or lines should appear in Studio, even for included companions. Combine with
+Studio's `cycle` mode to check that they return on exit with the same preferences.
+For an offline seated-object capture, combine Studio `1` with
+`AURORA_DEMO_CAMERA=sit`, `AURORA_FPS_LIMIT=30` and capture frame 690:
+the demo seat appears at frame 250, our avatar sits at 300 and Studio opens
+at 640. Capture before the existing seat scenario stands our avatar at 700.
 Capture after frame 850. Inspect the circular podium, neutrally lit avatar,
 surrounding water, stars and animated aurora in the login screen's colours.
 Entry and exit fade to black before switching the scene, then uncover it:
