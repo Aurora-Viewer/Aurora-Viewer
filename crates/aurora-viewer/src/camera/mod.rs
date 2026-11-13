@@ -886,12 +886,13 @@ impl Camera {
         }
     }
 
-    /// LLAgentCamera::unlockView: alt-camera on our head.
+    /// LLAgentCamera::unlockView: alt-camera on our head, without animation.
     fn unlock_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
         if self.focus_on_avatar {
             let own = (!self.own.is_nil()).then_some(self.own);
             self.set_focus_global(None, own, None, s);
             self.set_focus_on_avatar(false, false, true, agent, s);
+            self.anim = None;
         }
     }
 
@@ -5173,6 +5174,41 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn held_camera_keys_keep_up_with_walking_using_default_transitions() {
+        for (roll_left, roll_right, pan_up) in [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)] {
+            let settings = CameraSettings::default();
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            world.agent_id = crate::demo::DEMO_AGENT;
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            let keys = CameraKeys {
+                roll_left,
+                roll_right,
+                pan_up,
+                ..Default::default()
+            };
+            let dt = 1.0 / 60.0;
+            for _ in 0..180 {
+                camera.reset_view(&mut world.agent, &settings, true, false, true, false);
+                camera.apply_keys(keys, &mut world.agent, &settings, dt);
+                world.agent.position += Vec3::X * (2.0 * dt);
+                camera.update(&mut world, &settings, &frame(dt));
+            }
+            let goal = camera.focus_target + camera.focus_offset_target;
+            assert!(
+                camera.position.distance(goal) < 0.5,
+                "camera lag: {}",
+                camera.position.distance(goal)
+            );
+            assert!(
+                camera.target.distance(camera.focus_target) < 0.5,
+                "focus lag: {}",
+                camera.target.distance(camera.focus_target)
+            );
         }
     }
 
