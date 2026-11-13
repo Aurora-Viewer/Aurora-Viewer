@@ -6564,6 +6564,18 @@ pub fn demo_media_page() -> &'static str {
     aurora_i18n::tr!("demo-media-page")
 }
 
+/// `AURORA_DEMO_MEDIA=links`: the reproduction page of a `secondlife://`
+/// link clicked in a page shown on a prim (issue #3518), with an anchor and
+/// a script navigation for the chat bridge and for a place.
+pub fn demo_media_links_page() -> String {
+    use base64::Engine as _;
+    let region = aurora_i18n::tr!("common-aurora-demo");
+    let html = include_str!("demo_media_links.html")
+        .replace("{{REGION}}", &crate::slurl::encode(region))
+        .replace("{{REGION_NAME}}", region);
+    format!("data:text/html;base64,{}", base64::engine::general_purpose::STANDARD.encode(html))
+}
+
 /// AURORA_DEMO_MEDIA: a 4 × 2.25 m screen ahead-left of the start position whose
 /// west face (towards the avatar) carries media. Returns the update, the
 /// object id and the face index.

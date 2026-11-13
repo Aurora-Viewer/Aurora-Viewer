@@ -10659,7 +10659,7 @@ What the inventory must show with these scenarios:
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_MEDIA=<url>`, `1` or `mini` | Media on a prim; `mini` uses Mini controls (buttons, no address) |
+| `AURORA_DEMO_MEDIA=<url>`, `1`, `mini` or `links` | Media on a prim; `mini` uses Mini controls (buttons, no address), `links` is the `secondlife://` link reproduction page |
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
 | `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2][,edit\|paste]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
@@ -10948,6 +10948,13 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
+- **`AURORA_DEMO_MEDIA=links`**: the page of a prim in front of the avatar
+  holds a `secondlife:///app/chat/824619/…` and a `secondlife://<region>/…`
+  link, each as an anchor and as a script navigation. A click on a chat
+  link makes the demo's listener answer "Heard on channel 824619: …" in
+  nearby chat; a click on a place link opens that place's profile. This is
+  the reproduction of #3518 (a `secondlife://` link of a media-on-a-prim
+  page did nothing).
 - **Media plugins.** The media scenarios need Aurora's media plugins pack
   (SLPlugin, CEF, LibVLC; on Linux GStreamer instead of LibVLC, from the
   system). A viewer that finds no plugins asks first (the card "Download

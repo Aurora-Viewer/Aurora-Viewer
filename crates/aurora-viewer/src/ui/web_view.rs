@@ -490,8 +490,9 @@ fn clicked_url(event: &MediaEvent) -> Option<&str> {
     }
 }
 
-/// Follow the same SLURL and app-link rules as a clicked link in chat.
-fn clicked_link_action(url: &str) -> super::context::CtxAction {
+/// Follow the same SLURL and app-link rules as a clicked link in chat
+/// (also used for a link clicked in a page shown on a prim, `media/update.rs`).
+pub(crate) fn clicked_link_action(url: &str) -> super::context::CtxAction {
     use super::context::CtxAction;
     if let Some(place) = crate::slurl::place_link(url) {
         let location = place.location;
