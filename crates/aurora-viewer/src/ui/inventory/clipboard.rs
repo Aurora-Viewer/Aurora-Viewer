@@ -143,13 +143,22 @@ pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
 pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
-    let leaving = ui.input(|i| {
-        i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
-            || i.key_pressed(egui::Key::Tab)
-            || i.key_pressed(egui::Key::Escape)
+    let (leaving, pressed) = ui.input(|i| {
+        (
+            i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
+                || i.key_pressed(egui::Key::Tab)
+                || i.key_pressed(egui::Key::Escape),
+            i.pointer.any_pressed(),
+        )
     });
     if leaving {
         st.list_focus_frame = None;
+    }
+    // LLFolderView::handleMouseDown and its KEY_ESCAPE: the typed word
+    // starts again, wherever the click lands. egui takes the list's focus on
+    // Escape before `keyboard::navigate` could see it.
+    if leaving || pressed {
+        st.type_ahead.clear();
     }
     // A discarded sizing pass can omit the list and trigger egui's focus
     // dead-man switch. Restore only its immediately preceding focus request,
@@ -198,6 +207,8 @@ pub(crate) fn offer(
     cut: bool,
     protected: &HashSet<Uuid>,
 ) -> bool {
+    // LLFolderView::copy and cut end the typed word.
+    st.type_ahead.clear();
     let allowed = if cut {
         !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, protected))
     } else {
@@ -280,6 +291,8 @@ pub(super) fn paste(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    // So does LLFolderView::paste.
+    st.type_ahead.clear();
     let cut = st.cut && !links;
     if !links && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, to, root)) {
         actions.push(InvAction::MarketplacePaste {
@@ -1158,6 +1171,78 @@ mod tests {
             h.select(id(20_020), false);
             h.frame(vec![typed("5")]);
             assert_eq!(h.st.selected, Some(id(20_020)), "so does a click");
+
+            // Keys of one frame apply in the order they were typed.
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 05"), arrow(true, false)]);
+            assert_eq!(h.st.selected, Some(id(20_051)), "the word, then the arrow (classic {classic})");
+            h.time += 2.0;
+            h.frame(vec![arrow(true, false), typed("Keyboard 06")]);
+            assert_eq!(h.st.selected, Some(id(20_060)), "the arrow, then the word");
+
+            // Each of these starts the word again: "5" would otherwise
+            // complete "Keyboard 01" into Keyboard 015.
+            let refocus = |h: &mut Harness| {
+                let list = focus_id(&h.st);
+                h.ctx.memory_mut(|m| m.request_focus(list));
+                h.frame(Vec::new());
+            };
+            let resets: [(&str, fn(&mut Harness)); 10] = [
+                ("Home", |h| drop(h.frame(vec![key(egui::Key::Home)]))),
+                ("End", |h| drop(h.frame(vec![key(egui::Key::End)]))),
+                ("Page Up", |h| drop(h.frame(vec![key(egui::Key::PageUp)]))),
+                ("Page Down", |h| drop(h.frame(vec![key(egui::Key::PageDown)]))),
+                ("Escape", |h| drop(h.frame(vec![key(egui::Key::Escape)]))),
+                ("Tab", |h| drop(h.frame(vec![key(egui::Key::Tab)]))),
+                ("a click outside", |h| drop(h.click(egui::pos2(100.0, 500.0), Default::default()))),
+                ("a rename", |h| {
+                    h.st.begin_rename(&h.world.inventory, id(20_010));
+                    h.frame(Vec::new());
+                    h.st.rename = None;
+                }),
+                ("Copy", |h| drop(h.frame(vec![Event::Copy]))),
+                ("Cut", |h| drop(h.frame(vec![Event::Cut]))),
+            ];
+            for (name, reset) in resets {
+                h.time += 2.0;
+                h.frame(vec![typed("Keyboard 01")]);
+                assert_eq!(h.st.selected, Some(id(20_010)), "{name}: the word is typed");
+                reset(&mut h);
+                refocus(&mut h);
+                let before = h.st.selected;
+                h.frame(vec![typed("5")]);
+                assert_ne!(h.st.selected, Some(id(20_015)), "{name} starts a new word (classic {classic})");
+                assert_eq!(h.st.selected, before, "{name}: \"5\" alone matches nothing");
+            }
+            h.time += 2.0;
+            h.frame(vec![typed("Keyboard 01")]);
+            h.frame(vec![Event::Copy]);
+            h.frame(vec![typed("Keyboard 03")]);
+            assert_eq!(h.st.selected, Some(id(20_030)));
+            h.paste();
+            h.frame(vec![typed("5")]);
+            assert_eq!(h.st.selected, Some(id(20_030)), "a paste starts a new word");
+
+            // The search field keeps its letters; the selection stays.
+            h.st.focus_search = true;
+            h.frame(Vec::new());
+            h.frame(vec![typed("Key")]);
+            assert_eq!(h.st.search, "Key", "the focused search field gets the letters");
+            assert_eq!(h.st.selected, Some(id(20_030)));
+
+            // The rows of a search: its own order, through the real list.
+            h.st.search = "Keyboard 04".into();
+            refocus(&mut h);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(20_040), false);
+            h.time += 2.0;
+            h.frame(vec![typed("keyboard 047")]);
+            assert_eq!(h.st.selected, Some(id(20_047)), "a search's rows (classic {classic})");
+            h.time += 2.0;
+            h.frame(vec![typed("keyboard 05")]);
+            assert_eq!(h.st.selected, Some(id(20_047)), "rows the search hides are skipped");
         }
     }
 

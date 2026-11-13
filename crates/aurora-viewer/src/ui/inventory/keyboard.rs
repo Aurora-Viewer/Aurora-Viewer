@@ -25,22 +25,28 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
     }
-    let mut keys = Vec::new();
-    let mut typed = String::new();
+    // In arrival order: "b" then Down within one frame selects the row
+    // after the first "b" match, as the Legacy Viewer handles each key.
+    let mut input = Vec::new();
     let now = ui.input(|i| i.time);
-    ui.input_mut(|input| {
-        input.events.retain(|event| {
+    ui.input_mut(|input_state| {
+        input_state.events.retain(|event| {
             if let egui::Event::Text(text) = event {
-                typed.extend(text.chars().filter(|c| !c.is_control()));
+                let text: String = text.chars().filter(|c| !c.is_control()).collect();
+                if let Some(Typed::Text(last)) = input.last_mut() {
+                    last.push_str(&text);
+                } else if !text.is_empty() {
+                    input.push(Typed::Text(text));
+                }
                 return false;
             }
             if let egui::Event::Key {
-                key: egui::Key::Escape | egui::Key::Home | egui::Key::End | egui::Key::PageUp | egui::Key::PageDown,
+                key: egui::Key::Home | egui::Key::End | egui::Key::PageUp | egui::Key::PageDown,
                 pressed: true,
                 ..
             } = event
             {
-                st.type_ahead.clear();
+                input.push(Typed::Reset);
             }
             if let egui::Event::Key {
                 key,
@@ -59,26 +65,30 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
                     egui::Key::ArrowRight if !explorer => Arrow::Right,
                     _ => return true,
                 };
-                keys.push((arrow, modifiers.shift));
+                input.push(Typed::Arrow(arrow, modifiers.shift));
                 false
             } else {
                 true
             }
         });
     });
-    let mut navigated = !keys.is_empty();
-    if navigated {
-        st.type_ahead.clear();
-    }
-    for (arrow, shift) in keys {
-        match arrow {
-            Arrow::Up | Arrow::Down => step(inv, st, filtered, arrow == Arrow::Down, shift),
-            Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
+    let mut navigated = false;
+    for typed in input {
+        match typed {
+            Typed::Reset => st.type_ahead.clear(),
+            Typed::Arrow(arrow, shift) => {
+                st.type_ahead.clear();
+                navigated = true;
+                match arrow {
+                    Arrow::Up | Arrow::Down => step(inv, st, filtered, arrow == Arrow::Down, shift),
+                    Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
+                }
+            }
+            Typed::Text(text) => {
+                st.type_ahead.push(&text, now);
+                navigated |= type_ahead(inv, st);
+            }
         }
-    }
-    if !typed.is_empty() {
-        st.type_ahead.push(&typed, now);
-        navigated |= type_ahead(inv, st);
     }
     navigated || selected_after_delete
 }
@@ -89,8 +99,9 @@ const TYPE_AHEAD_TIMEOUT: f64 = 1.5;
 const TYPE_AHEAD_MAX: usize = 128;
 
 /// LLFolderView's `mSearchString` and `mSearchTimer`: the letters typed
-/// while the list has the keyboard, emptied after a pause, a click, an
-/// arrow, Escape, Home, End, Page Up or Page Down, or a rename.
+/// while the list has the keyboard, emptied after a pause, a click in the
+/// list, an arrow, Escape, Tab, Home, End, Page Up or Page Down, a rename,
+/// or a copy, cut or paste.
 #[derive(Debug, Default)]
 pub(super) struct TypeAhead {
     text: String,
@@ -112,6 +123,12 @@ impl TypeAhead {
     }
 }
 
+/// Lowercase one letter at a time, without `str::to_lowercase`'s final-sigma
+/// rule, which would fold a typed "ΟΣ" differently from the name "ΟΣΑ".
+fn folded(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars().flat_map(char::to_lowercase)
+}
+
 /// The name a row shows, as LLFolderViewModelItem::getSearchableName gives it.
 fn row_name(inv: &Inventory, id: Uuid) -> String {
     match inv.items.get(&id) {
@@ -124,10 +141,13 @@ fn row_name(inv: &Inventory, id: Uuid) -> String {
 /// LGPL 2.1), called from handleUnicodeCharHere: from the current row
 /// itself, the first shown row whose name starts with the typed letters,
 /// ignoring case and wrapping once, becomes the only selection. The Legacy
-/// Viewer ignores letters past ASCII; any letter matches here, so Japanese
-/// and accented names can be reached too.
+/// Viewer ignores letters past ASCII; any letter typed as text matches here,
+/// so accented names can be reached too. Kana composed with an input method
+/// do not reach the list: egui turns the input method on for text fields
+/// only. Case folds letter by letter, so a typed capital sigma still
+/// matches a name with more letters after it.
 fn type_ahead(inv: &Inventory, st: &mut InventoryUi) -> bool {
-    let typed = st.type_ahead.text.to_lowercase();
+    let typed: Vec<char> = folded(&st.type_ahead.text).collect();
     let order = shown_order(st);
     let start = st
         .selected
@@ -137,7 +157,11 @@ fn type_ahead(inv: &Inventory, st: &mut InventoryUi) -> bool {
     let Some(found) = order[start..]
         .iter()
         .chain(&order[..start])
-        .find(|id| row_name(inv, **id).to_lowercase().starts_with(&typed))
+        .find(|id| {
+            let name = row_name(inv, **id);
+            let mut name = folded(&name);
+            typed.iter().all(|c| name.next() == Some(*c))
+        })
         .copied()
     else {
         return false;
@@ -169,6 +193,14 @@ pub(super) fn shown_order(st: &InventoryUi) -> &[Uuid] {
         ShownOrder::Flat => &st.flat.order,
         ShownOrder::Results => &st.result_tree.order,
     }
+}
+
+/// One list key of a frame, kept in the order it was typed.
+enum Typed {
+    Arrow(Arrow, bool),
+    Text(String),
+    /// Home, End, Page Up or Page Down: the word starts again.
+    Reset,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -424,7 +456,7 @@ mod tests {
             name: "Body Parts".into(),
             ..Default::default()
         }]);
-        for (n, name) in [(11, "Apple"), (12, "banana"), (13, "Berry"), (14, "Été")] {
+        for (n, name) in [(11, "Apple"), (12, "banana"), (13, "Berry"), (14, "Été"), (15, "ΟΣΑ")] {
             inv.items.insert(
                 id(n),
                 aurora_net::inventory::InvItem {
@@ -436,7 +468,7 @@ mod tests {
             );
         }
         let mut st = InventoryUi::default();
-        st.plain.order = [11, 10, 12, 13, 14].map(id).to_vec();
+        st.plain.order = [11, 10, 12, 13, 14, 15].map(id).to_vec();
         let typed = |st: &mut InventoryUi, text: &str| {
             st.type_ahead.clear();
             st.type_ahead.push(text, 0.0);
@@ -456,6 +488,8 @@ mod tests {
         assert_eq!(st.selected, Some(id(11)), "wraps to the top");
         assert!(typed(&mut st, "ét"));
         assert_eq!(st.selected, Some(id(14)), "letters past ASCII match too");
+        assert!(typed(&mut st, "ΟΣ"), "a capital sigma typed last folds as in the name");
+        assert_eq!(st.selected, Some(id(15)));
 
         st.selection = HashSet::from([id(11), id(12)]);
         assert!(!typed(&mut st, "z"), "no match leaves the selection alone");
