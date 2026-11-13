@@ -798,10 +798,14 @@ fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut 
 fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut EnvironmentPicker, close: &mut bool) {
     // the settings folders load as the environment selector's do
     let loading = env_select::scan_step(&mut world.inventory) > 0;
-    let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
-    let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
-    crate::ui::widgets::search_text_edit(ui, p, &mut f.filter, |edit| {
-        edit.hint_text(aurora_i18n::tr!("common-search")).desired_width(f32::INFINITY)
+    let ranks = crate::ui::environment::list_ranks(ui.ctx(), &world.inventory);
+    let catalog = SettingsCatalog::build(&world.inventory, |id| ranks.rank(id));
+    ui.horizontal(|ui| {
+        let width = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
+        crate::ui::widgets::search_text_edit(ui, p, &mut f.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("common-search")).desired_width(width)
+        });
+        crate::ui::environment::order_toggle(ui, p);
     });
     ui.add_space(4.0);
     let needle = f.filter.trim().to_lowercase();
@@ -813,7 +817,7 @@ fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut any = false;
-            for (kind, c) in catalog.choices(settings_kinds(f.track), |id| order.rank(id)) {
+            for (kind, c) in catalog.choices(settings_kinds(f.track), |id| ranks.rank(id)) {
                 let icon = match kind {
                     SettingsKind::Day => "sunrise-filled",
                     SettingsKind::Sky => "sun-filled",

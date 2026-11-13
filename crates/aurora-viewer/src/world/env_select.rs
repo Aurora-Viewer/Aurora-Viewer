@@ -288,6 +288,39 @@ pub fn step(list: &[SettingsChoice], current: usize, forward: bool) -> Option<Uu
     }
 }
 
+/// The place of every settings item in the lists: the inventory selectors'
+/// order (`rank`, the user's items before the library's), or, `by_name`,
+/// A–Z within the user's items then within the library's, `rank` breaking
+/// equal names. The Legacy Viewer's lists are always by name (a
+/// `std::multimap` keyed on the name in loadPresets: case-sensitive, the
+/// library mixed in); Aurora keeps the inventory's order by default since
+/// #812 and compares names as its inventory does (any case, numbers by value).
+pub fn ranks(inv: &Inventory, by_name: bool, rank: impl Fn(Uuid) -> usize) -> HashMap<Uuid, usize> {
+    let places = places(inv);
+    let mut items: Vec<(bool, &str, usize, Uuid)> = inv
+        .items
+        .values()
+        .filter(|it| it.asset_type == AT_SETTINGS)
+        .map(|it| {
+            let library = places.get(&it.parent).is_some_and(|p| p.library);
+            (library, it.name.as_str(), rank(it.id), it.id)
+        })
+        .collect();
+    items.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| {
+                if by_name {
+                    crate::ui::inventory::view::picker_name_cmp(a.1, b.1)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then(a.2.cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+    });
+    items.into_iter().enumerate().map(|(i, (.., id))| (id, i)).collect()
+}
+
 /// The entries whose name contains `query`, ignoring case and the spaces
 /// around it (the lists' search field, an Aurora addition); all of them for
 /// an empty query.
@@ -518,6 +551,63 @@ mod tests {
         // an empty list: nothing to select (NoValidEnvSettingFound)
         assert_eq!(step(&[], 0, true), None);
         assert_eq!(step(&[], 1, false), None);
+    }
+
+    #[test]
+    fn lists_follow_the_inventory_order_or_a_to_z_users_items_first() {
+        use crate::ui::inventory::view::picker_order;
+        let ctx = egui::Context::default();
+        let mut inv = test_inventory();
+        inv.root = Uuid::from_u128(1);
+        inv.lib_root = Uuid::from_u128(10);
+        // the inventory's default order: newest first
+        let dated = |name: &str, flags: u32, asset: u128, parent: u128, at: i64| {
+            let mut it = item(name, flags, asset, Uuid::from_u128(parent));
+            it.created_at = at;
+            it
+        };
+        inv.add_items(vec![
+            dated("Zebra sky", 0, 100, 2, 400),
+            dated("apple sky", 0, 101, 2, 300),
+            dated("Sky 10", 0, 102, 2, 200),
+            dated("Sky 2", 0, 103, 2, 100),
+            dated("Blue water", 1, 104, 2, 350),
+            dated("Midday", 0, 200, 12, 900),
+            dated("A-6PM", 0, 201, 12, 800),
+        ]);
+        let order = picker_order(&ctx, &inv);
+        for by_name in [false, true, false] {
+            let ranks = ranks(&inv, by_name, |id| order.rank(id));
+            let rank = |id| ranks.get(&id).copied().unwrap_or(usize::MAX);
+            let catalog = SettingsCatalog::build(&inv, rank);
+            let sky: Vec<_> = catalog.sky.iter().map(|c| c.name.as_str()).collect();
+            let expected = if by_name {
+                // any case, numbers by value, the library's after the user's
+                ["apple sky", "Sky 2", "Sky 10", "Zebra sky", "A-6PM", "Midday"]
+            } else {
+                ["Zebra sky", "apple sky", "Sky 10", "Sky 2", "Midday", "A-6PM"]
+            };
+            assert_eq!(sky, expected);
+            // the editors' Load menus and the < > arrows follow the same order
+            let items = SettingsCatalog::items_of(&inv, SettingsKind::Sky, rank);
+            assert_eq!(items.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>(), sky);
+            assert_eq!(step(&catalog.sky, 2, true), Some(catalog.sky[1].asset));
+            // the parcel and region pickers mix the kinds in that order
+            let mixed: Vec<_> = catalog
+                .choices(&[SettingsKind::Sky, SettingsKind::Water], rank)
+                .into_iter()
+                .map(|(_, c)| c.name.as_str())
+                .take(3)
+                .collect();
+            assert_eq!(
+                mixed,
+                if by_name {
+                    ["apple sky", "Blue water", "Sky 2"]
+                } else {
+                    ["Zebra sky", "Blue water", "apple sky"]
+                }
+            );
+        }
     }
 
     #[test]

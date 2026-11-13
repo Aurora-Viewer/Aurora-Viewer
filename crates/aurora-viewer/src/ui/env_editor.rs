@@ -354,9 +354,11 @@ impl EnvEditorUi {
                 Vec2::new(0.0, 24.0),
             )
             .on_hover_text(aurora_i18n::tr!("ui-env-editor-load-tip"));
-            super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                let order = super::inventory::view::picker_order(ui.ctx(), inv);
-                let items = SettingsCatalog::items_of(inv, kind, |id| order.rank(id));
+            super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                // the switch stays open in the menu; a name closes it
+                super::environment::order_menu_row(ui, p);
+                let ranks = super::environment::list_ranks(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, kind, |id| ranks.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-no-items")).size(12.0).color(p.muted));
                 }
