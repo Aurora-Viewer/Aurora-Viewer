@@ -7842,8 +7842,8 @@ impl Backend {
         };
         self.clouds_now = cloud_params.is_some() && cloud_targets_ok;
         if self.clouds_now {
-            // (common.wgsl: the sky pass leaves the clouds to clouds.rs)
-            main.features[1] = 1;
+            // (env.wgsl, features.w: the sky pass leaves the clouds to clouds.rs)
+            main.features[3] = 1;
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it

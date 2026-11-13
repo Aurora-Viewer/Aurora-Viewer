@@ -110,7 +110,7 @@ struct Frame {
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
-    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none)
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none); w: 1 where the volumetric clouds replace the Legacy layer (main view)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
     // the last frame's for the same positions, and this frame's clip space
@@ -959,7 +959,14 @@ fn atmos_eval(dir: vec3<f32>, for_clouds: bool) -> Atmos {
     combined_haze = exp(-combined_haze * density_dist);
 
     a.light_dot = dot(rel_norm, lightnorm);
-    var haze_glow = max(1.0 - a.light_dot, 0.001);
+    // The glow's angle is taken from the view direction, not from rel_norm:
+    // skyF.glsl / cloudsF.glsl measure it from the dome point raised by 50 m,
+    // which on the low dome (about 600-850 m away overhead) puts the hotspot
+    // some 3 degrees under the sun or moon. The Legacy Viewer as it renders
+    // shows the glow centred on the body (compared on Agni, #2782): a
+    // deliberate difference from its source, kept to the glow alone (the
+    // haze colour, rainbow and halo still use rel_norm).
+    var haze_glow = max(1.0 - dot(d, lightnorm), 0.001);
     haze_glow *= glow.x;
     haze_glow = pow(haze_glow, glow.z);
     if (for_clouds) {
