@@ -309,6 +309,9 @@ mod tests {
         let p = theme.palette();
         let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
         let bottom_top = 840.0;
+        // one clock for every button: the context is shared, and egui's input
+        // history asserts that its time never goes back
+        let mut time = 0.0;
         for (shown, expected) in [
             (
                 Buttons {
@@ -332,7 +335,6 @@ mod tests {
                 Action::Flycam,
             ),
         ] {
-            let mut time = 0.0;
             let mut frame = |events: Vec<egui::Event>| {
                 time += 1.0 / 60.0;
                 let mut action = None;
