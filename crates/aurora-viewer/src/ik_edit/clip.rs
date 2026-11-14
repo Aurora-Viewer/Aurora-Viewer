@@ -3,7 +3,10 @@
 use super::*;
 use crate::scene::{anim::BoundAnim, jobs::Jobs};
 use aurora_assets::Animation;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
 pub(super) mod document;
 pub(super) mod files;
 #[cfg(test)]
@@ -85,6 +88,11 @@ pub(super) struct State {
     redo: Vec<Arc<Document>>,
     clipboard: Vec<document::Keyframe>,
     drag_key: Option<(usize, u32, u32)>,
+    /// The keys picked in the timeline, as (bone, frame): a drag of one of
+    /// them moves them all, Delete removes them all.
+    pub(super) selected_keys: BTreeSet<(usize, u32)>,
+    /// A box drawn over the lanes to pick the keys inside it.
+    key_box: Option<timeline::KeyBox>,
     /// Presses the timeline's shortcuts acted on, until egui's next pass.
     taken_keys: Vec<(egui::Key, egui::Modifiers)>,
     timeline_zoom: f32,
@@ -142,6 +150,8 @@ impl Default for State {
             redo: Vec::new(),
             clipboard: Vec::new(),
             drag_key: None,
+            selected_keys: BTreeSet::new(),
+            key_box: None,
             taken_keys: Vec::new(),
             timeline_zoom: 1.0,
             timeline_start: 0,
@@ -276,6 +286,8 @@ impl State {
         self.undo.clear();
         self.redo.clear();
         self.drag_key = None;
+        self.selected_keys.clear();
+        self.key_box = None;
     }
     /// Whether another document would push the current one out of the
     /// drafts. With no current document there is nothing to lose.
@@ -451,9 +463,7 @@ impl State {
             }
         }
         if let Some((action, document)) = self.take_file_action() {
-            let import_skeleton = matches!(action, files::Action::Load)
-                .then(|| skeleton.cloned().map(Arc::new))
-                .flatten();
+            let import_skeleton = action.needs_skeleton().then(|| skeleton.cloned().map(Arc::new)).flatten();
             files::start(jobs, ctx, self.tx.clone(), document, action, rig.clone(), import_skeleton);
         }
         if let Some(document) = &self.document {
@@ -634,6 +644,31 @@ impl Editor {
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
             Arc::make_mut(document).remove_keyframe(self.clip.frame);
+            self.clip.changed();
+        }
+        self.clip_seek(self.clip.frame);
+    }
+
+    /// Whether Delete has picked keys to remove: at least one of them on a
+    /// track the user authored (the hidden rest keys of a draft stay).
+    pub(super) fn has_deletable_key_selection(&mut self) -> bool {
+        let Some(tracks) = self.clip.timeline_tracks() else { return false };
+        self.clip.selected_keys.iter().any(|(bone, frame)| {
+            tracks
+                .iter()
+                .any(|track| track.bone == *bone && track.authored && track.keys.binary_search(frame).is_ok())
+        })
+    }
+
+    /// Delete every picked key in one step of the undo history.
+    pub(super) fn studio_delete_selected_keys(&mut self) {
+        if !self.has_deletable_key_selection() {
+            return;
+        }
+        self.clip.checkpoint();
+        let keys = std::mem::take(&mut self.clip.selected_keys);
+        if let Some(document) = self.clip.document.as_mut() {
+            Arc::make_mut(document).remove_selected_keys(&keys);
             self.clip.changed();
         }
         self.clip_seek(self.clip.frame);

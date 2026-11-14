@@ -808,6 +808,53 @@ impl Document {
             remove_keys(&mut track.motion.pos_keys, at, fps);
         }
     }
+    /// Shift every listed key (bone, frame) by `delta` frames, together:
+    /// the shift stops at frame 0 and at the length limit, so that the keys
+    /// keep their spacing. A key of another frame that one of them lands on
+    /// is replaced, as a single key drag does. Returns the shift applied.
+    pub fn move_keys(&mut self, keys: &std::collections::BTreeSet<(usize, u32)>, delta: i64) -> i64 {
+        let max_frame = self.max_frame();
+        let Some(delta) = clamp_shift(keys.iter().map(|(_, frame)| *frame), delta, max_frame) else {
+            return 0;
+        };
+        if delta == 0 {
+            return 0;
+        }
+        let fps = self.fps;
+        let (mut first, mut last) = (u32::MAX, 0);
+        for track in &mut self.tracks {
+            let frames: Vec<u32> = keys
+                .range((track.bone, 0)..=(track.bone, u32::MAX))
+                .map(|(_, frame)| (*frame).min(max_frame))
+                .collect();
+            if frames.is_empty() {
+                continue;
+            }
+            let moved =
+                shift_keys(&mut track.motion.rot_keys, &frames, delta, fps) | shift_keys(&mut track.motion.pos_keys, &frames, delta, fps);
+            track.authored |= moved;
+            for frame in frames {
+                let to = (i64::from(frame) + delta) as u32;
+                (first, last) = (first.min(to), last.max(to));
+            }
+        }
+        // as a single key drag does, the range grows to keep the moved keys
+        if first < self.start || last > self.end {
+            self.range(self.start.min(first), self.end.max(last));
+        }
+        delta
+    }
+    /// Delete the listed keys of the tracks the user authored. The hidden
+    /// rest keys of a fresh draft stay, as with `remove_keyframe`.
+    pub fn remove_selected_keys(&mut self, keys: &std::collections::BTreeSet<(usize, u32)>) {
+        let fps = self.fps;
+        for track in self.tracks.iter_mut().filter(|track| track.authored) {
+            for (_, frame) in keys.range((track.bone, 0)..=(track.bone, u32::MAX)) {
+                remove_keys(&mut track.motion.rot_keys, *frame, fps);
+                remove_keys(&mut track.motion.pos_keys, *frame, fps);
+            }
+        }
+    }
     #[cfg(test)]
     pub fn frames(&self, bone: Option<usize>) -> Vec<u32> {
         let mut frames: Vec<_> = self
@@ -1027,6 +1074,39 @@ fn upsert_key<K: Timed>(keys: &mut Vec<K>, frame: u32, fps: u32, mut key: K) {
     remove_keys(keys, frame, fps);
     keys.push(key);
     keys.sort_by(|a, b| a.time().total_cmp(&b.time()));
+}
+
+/// The part of `delta` that keeps every frame within 0 and `max_frame`;
+/// `None` with no frame at all.
+pub(super) fn clamp_shift(frames: impl Iterator<Item = u32>, delta: i64, max_frame: u32) -> Option<i64> {
+    let (low, high) = frames.fold(None, |range: Option<(u32, u32)>, frame| {
+        Some(range.map_or((frame, frame), |(low, high)| (low.min(frame), high.max(frame))))
+    })?;
+    Some(delta.clamp(-i64::from(low), i64::from(max_frame) - i64::from(high.min(max_frame))))
+}
+
+/// Shift the keys of the listed frames by `delta` frames at once: they are
+/// all taken out before any is put back, so that keys moving onto each
+/// other's frames do not replace one another. True when a key moved.
+fn shift_keys<K: Timed>(keys: &mut Vec<K>, frames: &[u32], delta: i64, fps: u32) -> bool {
+    let mut moving = Vec::new();
+    for &frame in frames {
+        if let Some(mut key) = keys.iter().rfind(|key| key_on_frame(key.time(), frame, fps)).cloned() {
+            let to = (i64::from(frame) + delta).max(0) as u32;
+            key.set_time(frame_time(to, fps));
+            moving.push((to, key));
+        }
+    }
+    if moving.is_empty() {
+        return false;
+    }
+    keys.retain(|key| {
+        !frames.iter().any(|frame| key_on_frame(key.time(), *frame, fps))
+            && !moving.iter().any(|(to, _)| key_on_frame(key.time(), *to, fps))
+    });
+    keys.extend(moving.into_iter().map(|(_, key)| key));
+    keys.sort_by(|a, b| a.time().total_cmp(&b.time()));
+    true
 }
 
 /// Move the frame's last key onto another frame, snapped to that frame's exact
