@@ -3,6 +3,16 @@
 //! holes and disconnected mesh islands work without topology reconstruction.
 //! Screen-space passes run after post processing to avoid TAA trails and keep
 //! the material untouched once the pulse ends. No work without selected faces.
+//!
+//! Faces picked with the build tool's Select face mode also get the Legacy
+//! Viewer's face-select pattern (LLPipeline::renderSelectedFaces,
+//! LLFace::renderSelected, indra/newview/pipeline.cpp and llface.cpp,
+//! originally LGPL 2.1): the grid texture IMG_FACE_SELECT, white at half
+//! alpha, laid on the face with the face's own texture coordinates, so it
+//! follows the repeats, offset, rotation and planar mapping of the diffuse
+//! (PBR: base color) map. It is drawn between the coverage mask and the
+//! halo composite, inside the face where the halo never reaches
+//! (`fs_selection_pattern` in object.wgsl).
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
@@ -260,4 +270,34 @@ impl Overlay {
             pass.draw(0..3, 0..1);
         }
     }
+}
+
+/// The face-select pattern's pass: blended over `target` (the finished
+/// image of the world view or of the HUDs) behind the depth of what was
+/// drawn there, which it reads only.
+pub(crate) fn begin_pattern<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    target: &wgpu::TextureView,
+    depth: &wgpu::TextureView,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("selected face pattern"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: None,
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }

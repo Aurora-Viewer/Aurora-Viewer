@@ -2355,6 +2355,12 @@ impl TextureStreamer {
         self.entries.get(id)?.decoded
     }
 
+    /// The slot a texture currently draws with (it changes when a texture
+    /// met with the table full finally gets one). None: not tracked.
+    pub fn slot_of(&self, id: &Uuid) -> Option<u32> {
+        self.entries.get(id).map(|e| e.slot).or_else(|| self.local_slots.get(id).copied())
+    }
+
     pub fn is_loaded(&self, id: &Uuid) -> bool {
         self.entries.get(id).is_some_and(|e| e.decoded.is_some())
     }

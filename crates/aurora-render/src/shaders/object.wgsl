@@ -2897,7 +2897,7 @@ fn fs_land_overlay(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(sample.rgb, 0.9);
 }
 
-// Selection is a separate coverage mask, never an interior grid. Keep
+// Selection coverage is a separate mask (the halo and the pulse). Keep
 // masked texture holes but retain invisible faces for editing their TE.
 @fragment
 fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
@@ -2908,6 +2908,79 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
         if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
     }
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}
+
+// ------------------------------------------------- face-select pattern
+// Port of LLPipeline::renderSelectedFaces / LLFace::renderSelected
+// (indra/newview/pipeline.cpp, llface.cpp, originally LGPL 2.1) with the
+// highlight shader (app_settings/shaders/class1/interface/highlightF.glsl):
+// a face picked in Select face mode is drawn again with the face-select
+// texture IMG_FACE_SELECT times (1, 1, 1, 0.5), alpha blended, at the
+// face's own texture coordinates. `in.uv` is what the diffuse map reads
+// (PBR: the base color map): repeats, offset and rotation of the texture
+// entry or the base color's KHR transform, planar mapping and texture
+// animation included, so the pattern is an alignment aid that moves with
+// the Texture tab's values. The whole face is drawn, holes of an alpha
+// mask and invisible faces included, as LL draws the face's triangles.
+//
+// The asset is fetched from the grid; frame.features[FEATURE_FACE_SELECT_SLOT] is its slot once
+// loaded, 0 while it loads and offline. Meanwhile `face_select_standin`
+// draws the pattern LL describes for it ("white squares with the rounded
+// cross at the center", llface.cpp): per texture repeat, a white square
+// frame along the tile's edges and a cross with rounded ends at its
+// center, transparent elsewhere. It is drawn here, the asset is not
+// bundled.
+
+// Distance (tile units) from a capsule from -a to a of radius r.
+fn capsule_distance(p: vec2<f32>, a: vec2<f32>, r: f32) -> f32 {
+    let h = clamp(dot(p + a, 2.0 * a) / dot(2.0 * a, 2.0 * a), 0.0, 1.0);
+    return length(p + a - 2.0 * a * h) - r;
+}
+
+// Coverage of the stand-in pattern at `uv`, one tile per texture repeat;
+// `px` is the size of a pixel in tiles, for anti-aliasing and for fading
+// to the pattern's mean coverage where the tiles shrink to a few pixels
+// (what the texture's mip maps do).
+fn face_select_standin(uv: vec2<f32>, px: f32) -> f32 {
+    let p = fract(uv) - vec2<f32>(0.5);
+    // the frame: a band of 0.035 tile along each edge (two at a seam)
+    let edge = 0.5 - max(abs(p.x), abs(p.y));
+    let frame_d = edge - 0.035;
+    // the cross: two capsules 0.36 tile long, 0.06 thick
+    let cross_d = min(capsule_distance(p, vec2<f32>(0.15, 0.0), 0.03), capsule_distance(p, vec2<f32>(0.0, 0.15), 0.03));
+    let d = min(frame_d, cross_d);
+    let w = max(px, 1e-5);
+    let shape = clamp(0.5 - d / w, 0.0, 1.0);
+    // (frame 4 x 0.035 x 0.93 + cross ~ 2 x 0.36 x 0.06: about 0.17)
+    return mix(shape, 0.17, smoothstep(0.15, 0.5, px));
+}
+
+// The pattern's color and alpha: the loaded texture's sample, or the
+// stand-in's coverage while no texture is loaded.
+fn face_select_color(loaded: bool, texel: vec4<f32>, standin: f32) -> vec4<f32> {
+    // highlight_selected_color (pipeline.cpp renderHighlights) times the
+    // highlight program's diffuse color: white, half alpha
+    let c = select(vec4<f32>(1.0, 1.0, 1.0, standin), texel, loaded);
+    return vec4<f32>(c.rgb, c.a * 0.5);
+}
+
+@fragment
+fn fs_selection_pattern(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // (sampled and differentiated before any discard)
+    let slot = frame.features[FEATURE_FACE_SELECT_SLOT];
+    let texel = sample_tex(slot, in.uv);
+    let px = max(length(dpdx(in.uv)), length(dpdy(in.uv)));
+    let standin = face_select_standin(in.uv, px);
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    // LL draws it with back faces culled (renderGeomPostDeferred's
+    // LLGLEnable cull); a double-sided face shows it on both sides
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    let c = face_select_color(slot != 0u, texel, standin);
+    if (c.a <= 0.002) { discard; }
+    var rgb = c.rgb;
+    if (!HUD_SRGB_TARGET) { rgb = ll_linear_to_srgb(rgb); }
+    return vec4<f32>(rgb, c.a);
 }
 
 // The poser's hovered part on the subject's skinned faces (Aurora's own):

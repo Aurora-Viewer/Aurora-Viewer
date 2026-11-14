@@ -21,6 +21,7 @@ pub(crate) mod default_motions;
 pub mod describe;
 pub mod draw_limits;
 pub mod drawn;
+pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
 mod foot_scope;
@@ -1021,6 +1022,11 @@ pub struct Scene {
     pub selection_silhouettes: HashSet<usize>,
     /// Selected texture-entry bits for each prim; all 45 TE slots must fit.
     pub selection_faces: HashMap<usize, u64>,
+    /// The faces of `selection_faces` picked in the build tool's Select face
+    /// mode, which also get the face-select pattern (`face_pattern.rs`).
+    pub pattern_faces: HashMap<usize, u64>,
+    /// The face-select pattern's texture, held once a face showed it.
+    face_pattern: face_pattern::Texture,
     selection_changed: Option<Instant>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
@@ -1674,6 +1680,8 @@ impl Scene {
             mesh_lod_resets: HashMap::new(),
             selection_silhouettes: Default::default(),
             selection_faces: Default::default(),
+            pattern_faces: Default::default(),
+            face_pattern: Default::default(),
             selection_changed: None,
             debug_alpha: None,
             beacon_highlights: Default::default(),
@@ -2381,6 +2389,7 @@ impl Scene {
                 self.textures.release(&id);
             }
         }
+        self.face_pattern.forget(&mut self.textures);
         for (_, (id, _)) in std::mem::take(&mut self.light_textures) {
             self.textures.release(&id);
         }
@@ -4988,6 +4997,7 @@ impl Scene {
         let mirror_plane = self.mirror_plane;
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
+        let pattern_faces = &self.pattern_faces;
         let photo_marks = &self.photo_marks;
         let poser_part = self.poser_part;
         let give_marks = &self.give_marks.1;
@@ -5018,6 +5028,7 @@ impl Scene {
             select_root: Vec<DrawCmd>,
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
+            select_pattern: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
             part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
@@ -5046,6 +5057,7 @@ impl Scene {
             select_root: Vec::new(),
             select_child: Vec::new(),
             select_faces: Vec::new(),
+            select_pattern: Vec::new(),
             part_faces: Vec::new(),
             part_skinned: 0,
             debug_blue: Vec::new(),
@@ -5205,12 +5217,13 @@ impl Scene {
                         Some(false) => l.select_child.push(cmd),
                         None => {}
                     }
-                    if selection_faces
-                        .get(&idx)
-                        .is_some_and(|mask| mask & 1u64.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
+                    if face_pattern::has_face(selection_faces, idx, f.te_index)
                         || ((photo_marks.contains(&idx) || give_marks.contains(&idx)) && pass != Pass::Hidden)
                     {
                         l.select_faces.push(cmd);
+                    }
+                    if face_pattern::has_face(pattern_faces, idx, f.te_index) {
+                        l.select_pattern.push(cmd);
                     }
                     // the poser's hovered part: the subject's body and what it
                     // wears (the shader keeps the part's own skinned
@@ -5346,6 +5359,7 @@ impl Scene {
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
+            a.select_pattern.append(&mut b.select_pattern);
             a.part_faces.append(&mut b.part_faces);
             a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
@@ -5426,6 +5440,7 @@ impl Scene {
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
+        self.lists.select_pattern = result.select_pattern;
         self.lists.part_faces = result.part_faces;
         self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;

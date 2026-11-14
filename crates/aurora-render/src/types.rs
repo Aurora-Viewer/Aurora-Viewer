@@ -728,6 +728,11 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    /// The faces of `select_faces` / `hud_select_faces` picked with the
+    /// build tool's Select face mode: they also get the face-select
+    /// pattern laid along their texture mapping (LLFace::renderSelected).
+    pub select_pattern: Vec<DrawCmd>,
+    pub hud_select_pattern: Vec<DrawCmd>,
     /// The poser subject's skinned faces, while a part is hovered: the part
     /// is kept on them by its joints (`FrameParams::part_joints`).
     pub part_faces: Vec<DrawCmd>,
@@ -803,6 +808,8 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
         self.part_faces.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
@@ -860,6 +867,8 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.select_pattern.clone_from(&src.select_pattern);
+        self.hud_select_pattern.clone_from(&src.hud_select_pattern);
         self.part_faces.clone_from(&src.part_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
@@ -919,6 +928,8 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
         self.part_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
@@ -1558,6 +1569,10 @@ pub struct FrameParams {
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
     pub selection_scale: f32,
+    /// Texture slot of the face-select pattern (the grid asset
+    /// IMG_FACE_SELECT) once it is loaded; 0 while it loads and offline,
+    /// where the shader draws its procedural stand-in.
+    pub face_select_texture: u32,
     /// The poser's hovered part (Aurora's own): bit j for the skeleton's
     /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
     /// as a selection's halo with a light tint inside.
@@ -2189,6 +2204,8 @@ mod tests {
         scene.select_root.push(cmd(5));
         scene.select_faces.push(cmd(6));
         scene.hud_select_faces.push(cmd(22));
+        scene.select_pattern.push(cmd(30));
+        scene.hud_select_pattern.push(cmd(31));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -2241,6 +2258,8 @@ mod tests {
         assert_eq!(packet.terrain_pbr[0].record, 28);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
+        assert_eq!(packet.select_pattern[0].record, 30);
+        assert_eq!(packet.hud_select_pattern[0].record, 31);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -2263,6 +2282,8 @@ mod tests {
         assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
+        assert!(scene.select_pattern.is_empty());
+        assert!(scene.hud_select_pattern.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
