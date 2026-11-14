@@ -1177,6 +1177,74 @@ fn select_only_movable_objects_follows_root_rights_and_permanent_objects() {
 }
 
 #[test]
+fn select_only_locked_and_copyable_objects_follow_the_root_rights() {
+    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_COPY, OBJECT_MOVE};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(child).unwrap().update_flags = OBJECT_MOVE | OBJECT_COPY;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    settings.select_locked_only = true;
+    assert!(!passes_select_filters(&world, &settings, child), "a part follows its movable root");
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    assert!(passes_select_filters(&world, &settings, child));
+    // a permanent object is locked outside the agent's region only
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | AFFECTS_NAVMESH;
+    world.main_region = Some(world.objects.get(root).unwrap().key.region);
+    assert!(!passes_select_filters(&world, &settings, root));
+    world.main_region = None;
+    assert!(passes_select_filters(&world, &settings, root));
+    settings.select_locked_only = false;
+    settings.select_copyable_only = true;
+    assert!(!passes_select_filters(&world, &settings, child), "the root may not be copied");
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_COPY;
+    assert!(passes_select_filters(&world, &settings, child));
+    // both locked and movable: nothing passes, as in the Legacy Viewer
+    settings.select_copyable_only = false;
+    settings.select_locked_only = true;
+    settings.select_movable_only = true;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(!passes_select_filters(&world, &settings, root));
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    assert!(!passes_select_filters(&world, &settings, root));
+}
+
+#[test]
+fn group_owned_objects_leave_only_the_rectangle_and_the_menu_round_trips() {
+    use crate::ui::context::flags::{OBJECT_GROUP_OWNED, OBJECT_MOVE};
+    let (mut world, _, mut settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | OBJECT_GROUP_OWNED;
+    assert!(settings.select_group_owned, "FSSelectIncludeGroupOwned is on by default");
+    assert!(passes_rect_filters(&world, &settings, child));
+    settings.select_group_owned = false;
+    assert!(
+        !passes_rect_filters(&world, &settings, child),
+        "a part follows its group-owned root"
+    );
+    assert!(passes_select_filters(&world, &settings, child), "a click still takes it");
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE;
+    assert!(passes_rect_filters(&world, &settings, child));
+    // Build › Options reads and writes the same switches
+    let mut options = MenuOptions::of(&settings);
+    assert!(!options.group_owned && options.highlight && !options.probe_volumes);
+    options.locked_only = true;
+    options.light_radius = true;
+    options.probe_volumes = true;
+    options.apply(&mut settings);
+    assert!(settings.select_locked_only && settings.show_light_radius && settings.show_probe_volumes);
+    assert_eq!(MenuOptions::of(&settings), options);
+    // saved, except the probe volumes (Persist=0)
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(restored.select_locked_only && restored.show_light_radius && !restored.select_group_owned);
+    assert!(!restored.show_probe_volumes);
+    let old: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(!old.select_locked_only && !old.select_copyable_only && old.select_group_owned);
+    assert!(!old.show_hidden_selection && !old.show_light_radius);
+}
+
+#[test]
 fn selection_filters_persist_and_use_the_current_settings_defaults() {
     use layout::{Item, Layout, Panel};
     let mut settings = BuildSettings::default();

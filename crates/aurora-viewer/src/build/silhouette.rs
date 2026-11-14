@@ -127,7 +127,7 @@ impl Cache {
     }
 
     /// Outline the selected objects ((object index, root color)).
-    pub fn draw(&mut self, p: &Painter3d, world: &World, scene: &Scene, prims: &[(usize, bool)]) {
+    pub fn draw(&mut self, p: &Painter3d, world: &World, scene: &Scene, prims: &[(usize, bool)], hidden: bool) {
         let now = Instant::now();
         let eye = p.cam.eye;
         for &(idx, root) in prims.iter().take(512) {
@@ -171,8 +171,13 @@ impl Cache {
             for e in &topo.border {
                 let (a, b) = (world_pt(e.a), world_pt(e.b));
                 let n = rot * (e.n * inv_scale);
+                // the back side: hidden, unless RenderHiddenSelections asks
+                // for it (fainter, as its GL_GEQUAL pass)
                 if n.dot(if hud { -p.cam.at } else { eye - (a + b) * 0.5 }) < 0.0 {
-                    continue; // back side: hidden (RenderHiddenSelections off)
+                    if hidden {
+                        p.line(a, b, c.gamma_multiply(0.4), 1.5);
+                    }
+                    continue;
                 }
                 p.line(a, b, c, 2.0);
             }

@@ -52,6 +52,7 @@ pub mod flags {
     /// FLAGS_AFFECTS_NAVMESH: flagObjectPermanent.
     pub const AFFECTS_NAVMESH: u32 = 1 << 12;
     pub const OBJECT_TRANSFER: u32 = 1 << 17;
+    pub const OBJECT_GROUP_OWNED: u32 = 1 << 18;
 }
 
 #[derive(Debug, Clone)]
