@@ -6663,6 +6663,7 @@ ui-options-privacy-policy-open = Lire
 ui-options-bars = Barres
 ui-options-at-startup = À l’ouverture
 ui-options-no-system-font = Aucune (police intégrée)
+ui-options-system-fonts-searching = Recherche…
 ui-options-system-font-help = Une police installée sur cet ordinateur, à la place des polices intégrées
 ui-options-preview = Aperçu
 ui-options-skin-folder = Dossier du skin

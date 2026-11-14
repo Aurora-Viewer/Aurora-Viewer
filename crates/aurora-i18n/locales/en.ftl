@@ -6655,6 +6655,7 @@ ui-options-privacy-policy-open = Read
 ui-options-bars = Bars
 ui-options-at-startup = At startup
 ui-options-no-system-font = None (bundled font)
+ui-options-system-fonts-searching = Looking for fonts…
 ui-options-system-font-help = A font installed on this computer, instead of the bundled ones
 ui-options-preview = Preview
 ui-options-skin-folder = Skin folder
