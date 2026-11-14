@@ -4,8 +4,65 @@
 //! rules and replaces the drawings with the interface's icons, at the
 //! human's request.
 use crate::interaction::Action;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PointerLook {
+    Arrow,
+    Crosshair,
+    Ring,
+    Heart,
+    Sparkle,
+    Bow,
+    /// The classic white pointer, rendered at the selected size.
+    Original,
+    /// Defer to the operating system's native pointer and its size setting.
+    #[default]
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TouchLook {
+    #[default]
+    Finger,
+    Click,
+    Move,
+    Heart,
+    Sparkle,
+    NormalPointer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct Preferences {
+    /// Native pointer bitmap size in physical pixels.
+    pub size: u16,
+    pub look: PointerLook,
+    /// Physical pixel size for the in-world touch hand.
+    pub touch_size: u16,
+    pub touch_look: TouchLook,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            size: 32,
+            look: PointerLook::System,
+            touch_size: 32,
+            touch_look: TouchLook::Finger,
+        }
+    }
+}
+
+impl Preferences {
+    pub fn size(&self) -> u32 {
+        self.size.clamp(16, 64).into()
+    }
+}
 
 pub struct Cursors {
+    pointer: Option<egui::CustomCursorImage>,
+    preferences: Preferences,
     touch: Option<egui::CustomCursorImage>,
     sit: Option<egui::CustomCursorImage>,
     buy: Option<egui::CustomCursorImage>,
@@ -29,14 +86,20 @@ impl Default for Cursors {
 }
 impl Cursors {
     pub fn with_palette(palette: &crate::theme::Palette) -> Self {
+        Self::with_preferences(palette, &Preferences::default())
+    }
+
+    pub fn with_preferences(palette: &crate::theme::Palette, preferences: &Preferences) -> Self {
         macro_rules! icon {
             ($name:literal) => {
                 include_bytes!(concat!("../assets/icons/tabler/outline/", $name, ".svg"))
             };
         }
         Self {
+            pointer: pointer_image(palette, preferences),
+            preferences: preferences.clone(),
             // the fingertip is the hotspot, like the system hand
-            touch: tabler_image(icon!("hand-finger"), palette, [12, 4]),
+            touch: touch_image(palette, preferences),
             sit: badge_image(icon!("armchair"), palette),
             buy: badge_image(icon!("shopping-cart"), palette),
             pay: badge_image(icon!("coin"), palette),
@@ -58,7 +121,19 @@ impl Cursors {
     }
 
     pub fn set_palette(&mut self, palette: &crate::theme::Palette) {
-        *self = Self::with_palette(palette);
+        *self = Self::with_preferences(palette, &self.preferences);
+    }
+    pub fn set_preferences(&mut self, palette: &crate::theme::Palette, preferences: &Preferences) {
+        if self.preferences == *preferences {
+            return;
+        }
+        self.pointer = pointer_image(palette, preferences);
+        self.touch = touch_image(palette, preferences);
+        self.preferences.clone_from(preferences);
+    }
+    /// The normal arrow used by the platform when no special action cursor applies.
+    pub fn pointer(&self) -> Option<egui::CustomCursorImage> {
+        self.pointer.clone()
     }
     /// Windows maps the system Grabbing icon to arrows, so use the Tabler
     /// grasping hand with a contrasting native-cursor outline.
@@ -178,9 +253,129 @@ fn finish(pixmap: &resvg::tiny_skia::Pixmap, hotspot: [u16; 2]) -> egui::CustomC
         .collect();
     egui::CustomCursorImage {
         rgba: rgba.into(),
-        size: [32, 32],
+        size: [pixmap.width() as u16, pixmap.height() as u16],
         hotspot,
     }
+}
+
+const POINTER_RING: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>"#;
+
+fn pointer_image(palette: &crate::theme::Palette, preferences: &Preferences) -> Option<egui::CustomCursorImage> {
+    let size = preferences.size();
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
+    let hotspot = match preferences.look {
+        PointerLook::Arrow => {
+            draw_pointer_arrow(&mut pixmap, palette)?;
+            let point = ((size as f32 / 32.0).round() as u16).max(1);
+            [point, point]
+        }
+        PointerLook::Crosshair => {
+            draw_icon(
+                &mut pixmap,
+                include_bytes!("../assets/icons/tabler/outline/crosshair.svg"),
+                palette,
+                size as f32 / 24.0,
+                0.0,
+            )?;
+            [(size / 2) as u16; 2]
+        }
+        PointerLook::Ring => {
+            draw_icon(&mut pixmap, POINTER_RING, palette, size as f32 / 24.0, 0.0)?;
+            [(size / 2) as u16; 2]
+        }
+        PointerLook::Heart => {
+            draw_pointer_arrow(&mut pixmap, palette)?;
+            draw_pointer_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/heart.svg"), palette)?;
+            [1, 1]
+        }
+        PointerLook::Sparkle => {
+            draw_pointer_arrow(&mut pixmap, palette)?;
+            draw_pointer_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/sparkles.svg"), palette)?;
+            [1, 1]
+        }
+        PointerLook::Bow => {
+            draw_pointer_arrow(&mut pixmap, palette)?;
+            draw_pointer_badge(&mut pixmap, POINTER_BOW, palette)?;
+            [1, 1]
+        }
+        PointerLook::Original => {
+            draw_classic_pointer(&mut pixmap, palette)?;
+            [((size * 4) / 32) as u16, ((size * 2) / 32) as u16]
+        }
+        PointerLook::System => return None,
+    };
+    Some(finish(&pixmap, hotspot))
+}
+
+fn draw_classic_pointer(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette) -> Option<()> {
+    // A contrasting classic pointer silhouette, using the active palette so it
+    // remains visible with custom themes and high contrast.
+    let fill = hex(palette.ink);
+    let outline = hex(palette.bar);
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path d=\"M4 2v23l6-6 5 10 4-2-5-10h9L4 2z\" fill=\"{fill}\" stroke=\"{outline}\" stroke-width=\"2.5\" stroke-linejoin=\"round\"/><path d=\"M5.2 4.2v17.9l4.2-4.2 5.1 10.1 1.6-.8-5.2-10.5h7.6L5.2 4.2z\" fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\".6\" stroke-linejoin=\"round\"/></svg>"
+    );
+    let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &resvg::usvg::Options::default()).ok()?;
+    let scale = pixmap.width() as f32 / 32.0;
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Some(())
+}
+
+const POINTER_BOW: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 11C9 7 4 6 3 7c-1 2 1 6 8 6M12 11c3-4 8-5 9-4 1 2-1 6-8 6M12 11l-3 9 3-2 3 2-3-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="11" r="2" fill="currentColor"/></svg>"#;
+
+fn touch_image(palette: &crate::theme::Palette, preferences: &Preferences) -> Option<egui::CustomCursorImage> {
+    use TouchLook::*;
+
+    let size = preferences.touch_size.clamp(16, 64).into();
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
+    if preferences.touch_look == NormalPointer {
+        draw_classic_pointer(&mut pixmap, palette)?;
+        let hotspot = [((4 * size) / 32) as u16, ((2 * size) / 32) as u16];
+        return Some(finish(&pixmap, hotspot));
+    }
+    let hand: &[u8] = match preferences.touch_look {
+        Finger | Heart | Sparkle | NormalPointer => include_bytes!("../assets/icons/tabler/outline/hand-finger.svg"),
+        Click => include_bytes!("../assets/icons/tabler/outline/hand-click.svg"),
+        Move => include_bytes!("../assets/icons/tabler/outline/hand-move.svg"),
+    };
+    draw_icon(&mut pixmap, hand, palette, size as f32 / 24.0, 0.0)?;
+    match preferences.touch_look {
+        Heart => draw_touch_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/heart.svg"), palette)?,
+        Sparkle => draw_touch_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/sparkles.svg"), palette)?,
+        Finger | Click | Move | NormalPointer => {}
+    }
+    let hotspot = [((12 * size) / 32).min(size - 1) as u16, ((4 * size) / 32).min(size - 1) as u16];
+    Some(finish(&pixmap, hotspot))
+}
+
+fn draw_touch_badge(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate::theme::Palette) -> Option<()> {
+    let size = pixmap.width() as f32;
+    draw_icon(pixmap, svg, palette, size / 24.0 * 0.38, size * 0.58)
+}
+
+fn draw_pointer_badge(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate::theme::Palette) -> Option<()> {
+    let scale = pixmap.width() as f32 / 32.0;
+    draw_icon(pixmap, svg, palette, 0.48 * scale, 14.0 * scale)
+}
+
+fn draw_pointer_arrow(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette) -> Option<()> {
+    let svg = std::str::from_utf8(include_bytes!("../assets/icons/tabler/filled/pointer.svg")).ok()?;
+    let options = resvg::usvg::Options::default();
+    let scale = pixmap.width() as f32 / 32.0;
+    let transform = resvg::tiny_skia::Transform::from_scale(0.62 * scale, 0.62 * scale).post_translate(-1.2 * scale, -1.2 * scale);
+    let bar = hex(palette.bar);
+    let outline = format!(
+        "fill=\"{bar}\" stroke=\"{bar}\" stroke-width=\"{}\" stroke-linejoin=\"round\"",
+        3.2 * scale
+    );
+    let ink = format!("fill=\"{}\"", hex(palette.ink));
+    for fill in [outline, ink] {
+        let source = svg.replace("fill=\"currentColor\"", &fill);
+        let tree = resvg::usvg::Tree::from_data(source.as_bytes(), &options).ok()?;
+        resvg::render(&tree, transform, &mut pixmap.as_mut());
+    }
+    Some(())
 }
 
 /// A Tabler outline icon alone as a 32 px cursor.
@@ -204,7 +399,7 @@ mod tests {
     use super::*;
 
     fn opaque(image: &egui::CustomCursorImage, x: usize, y: usize) -> bool {
-        image.rgba[(y * 32 + x) * 4 + 3] > 0
+        image.rgba[(y * image.size[0] as usize + x) * 4 + 3] > 0
     }
 
     #[test]
@@ -232,6 +427,194 @@ mod tests {
         assert_eq!(touch.hotspot, [12, 4]);
         assert!(opaque(&touch, 12, 4), "the hotspot must lie on the fingertip");
         assert!(!opaque(&touch, 12, 0), "nothing is drawn above the fingertip");
+    }
+
+    #[test]
+    fn pointer_preferences_resize_the_pointer_and_keep_each_look_hotspot_visible() {
+        let palette = crate::theme::Theme::default().palette();
+        for size in [16, 32, 48, 64] {
+            for look in [
+                PointerLook::Arrow,
+                PointerLook::Crosshair,
+                PointerLook::Ring,
+                PointerLook::Heart,
+                PointerLook::Sparkle,
+                PointerLook::Bow,
+                PointerLook::Original,
+            ] {
+                let image = pointer_image(
+                    &palette,
+                    &Preferences {
+                        size,
+                        look,
+                        ..Default::default()
+                    },
+                )
+                .expect("pointer image");
+                assert_eq!(image.size, [size; 2]);
+                let point = image.hotspot;
+                assert!(opaque(&image, point[0] as usize, point[1] as usize), "{look:?} hotspot at {size}px");
+                assert!(image.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
+            }
+        }
+        assert_eq!(Preferences::default().look, PointerLook::System);
+        assert_eq!(Preferences::default().touch_look, TouchLook::Finger);
+        assert!(pointer_image(&palette, &Preferences::default()).is_none());
+        let arrow = pointer_image(
+            &palette,
+            &Preferences {
+                look: PointerLook::Arrow,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let crosshair = pointer_image(
+            &palette,
+            &Preferences {
+                size: 32,
+                look: PointerLook::Crosshair,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let ring = pointer_image(
+            &palette,
+            &Preferences {
+                size: 32,
+                look: PointerLook::Ring,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let heart = pointer_image(
+            &palette,
+            &Preferences {
+                size: 32,
+                look: PointerLook::Heart,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let sparkle = pointer_image(
+            &palette,
+            &Preferences {
+                size: 32,
+                look: PointerLook::Sparkle,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let bow = pointer_image(
+            &palette,
+            &Preferences {
+                size: 32,
+                look: PointerLook::Bow,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(arrow.rgba, crosshair.rgba);
+        assert_ne!(crosshair.rgba, ring.rgba);
+        assert_ne!(arrow.rgba, heart.rgba);
+        assert_ne!(heart.rgba, sparkle.rgba);
+        assert_ne!(sparkle.rgba, bow.rgba);
+        let classic = pointer_image(
+            &palette,
+            &Preferences {
+                size: 32,
+                look: PointerLook::Original,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(classic.size, [32, 32]);
+        assert_ne!(classic.rgba, arrow.rgba);
+        let fill = classic.rgba.as_chunks::<4>().0[10 * 32 + 7];
+        assert!(
+            u16::from(fill[0]) + u16::from(fill[1]) + u16::from(fill[2]) > 450,
+            "classic arrow fill should be light"
+        );
+        assert!(
+            pointer_image(
+                &palette,
+                &Preferences {
+                    look: PointerLook::System,
+                    ..Default::default()
+                }
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn changing_pointer_preferences_keeps_fixed_action_cursors_cached() {
+        let palette = crate::theme::Theme::default().palette();
+        let mut cursors = Cursors::with_palette(&palette);
+        let pipette = cursors.pipette().unwrap();
+        let preferences = Preferences {
+            size: 48,
+            look: PointerLook::Arrow,
+            ..Preferences::default()
+        };
+
+        cursors.set_preferences(&palette, &preferences);
+
+        assert_eq!(cursors.pointer().unwrap().size, [48, 48]);
+        assert!(std::sync::Arc::ptr_eq(&pipette.rgba, &cursors.pipette().unwrap().rgba));
+        let unchanged = cursors.pointer().unwrap();
+        cursors.set_preferences(&palette, &preferences);
+        assert!(std::sync::Arc::ptr_eq(&unchanged.rgba, &cursors.pointer().unwrap().rgba));
+    }
+
+    #[test]
+    fn touch_cursor_preferences_resize_and_change_the_hover_hand() {
+        let palette = crate::theme::Theme::default().palette();
+        let mut images = Vec::new();
+        for size in [16, 32, 48, 64] {
+            for look in [
+                TouchLook::Finger,
+                TouchLook::Click,
+                TouchLook::Move,
+                TouchLook::Heart,
+                TouchLook::Sparkle,
+                TouchLook::NormalPointer,
+            ] {
+                let image = touch_image(
+                    &palette,
+                    &Preferences {
+                        touch_size: size,
+                        touch_look: look,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(image.size, [size; 2]);
+                assert!(
+                    opaque(&image, image.hotspot[0] as usize, image.hotspot[1] as usize),
+                    "{look:?} hotspot at {size}px"
+                );
+                images.push(image);
+            }
+        }
+        assert!(images.windows(2).all(|pair| pair[0].rgba != pair[1].rgba));
+        let mouse = touch_image(
+            &palette,
+            &Preferences {
+                touch_look: TouchLook::NormalPointer,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let classic = pointer_image(
+            &palette,
+            &Preferences {
+                look: PointerLook::Original,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(mouse.rgba, classic.rgba, "touch mouse pointer uses the same classic arrow art");
+        assert_eq!(mouse.hotspot, classic.hotspot);
     }
 
     #[test]

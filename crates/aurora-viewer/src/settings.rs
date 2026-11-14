@@ -513,6 +513,8 @@ pub struct Settings {
     pub camera: crate::camera::CameraSettings,
     /// The crosshair in mouselook (ShowCrosshairs; #1166).
     pub crosshair: crate::ui::crosshair::Settings,
+    /// Size and appearance of the ordinary mouse pointer.
+    pub pointer: crate::cursors::Preferences,
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     pub gamepad: crate::joystick::Settings,
@@ -2076,6 +2078,7 @@ impl Default for Settings {
             build: Default::default(),
             camera: Default::default(),
             crosshair: Default::default(),
+            pointer: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
             pending_legacy_gamepad: None,
@@ -3272,6 +3275,8 @@ impl Settings {
             0.5
         };
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
+        self.pointer.size = self.pointer.size.clamp(16, 64);
+        self.pointer.touch_size = self.pointer.touch_size.clamp(16, 64);
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
         self.font_scale = self.font_scale.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX);
@@ -3815,6 +3820,30 @@ mod tests {
                 let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
                 assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
             }
+        }
+    }
+
+    #[test]
+    fn cursor_preferences_keep_defaults_and_clamp_both_saved_sizes() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.pointer.size, 32);
+        assert_eq!(old.pointer.touch_size, 32);
+        assert_eq!(old.pointer.look, crate::cursors::PointerLook::System);
+        assert_eq!(old.pointer.touch_look, crate::cursors::TouchLook::Finger);
+
+        for (size, touch_size, expected_size, expected_touch_size) in [(0, 90, 16, 64), (48, 24, 48, 24), (90, 0, 64, 16)] {
+            let settings = Settings {
+                pointer: crate::cursors::Preferences {
+                    size,
+                    touch_size,
+                    ..Default::default()
+                },
+                ..Settings::default()
+            }
+            .sanitized();
+            assert_eq!(settings.pointer.size, expected_size);
+            assert_eq!(settings.pointer.touch_size, expected_touch_size);
         }
     }
 
