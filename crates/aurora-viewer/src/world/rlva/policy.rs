@@ -6,6 +6,12 @@ use glam::Vec3;
 use uuid::Uuid;
 
 impl World {
+    /// Resident and group payments follow RLV `@pay`; object purchases use
+    /// the independent `@buy` restriction.
+    pub fn rlva_can_pay(&self) -> bool {
+        !self.rlva.has("pay")
+    }
+
     pub fn rlva_allows_im(&self, behaviour: &str, target: Uuid) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -274,7 +280,7 @@ impl World {
             NetCommand::SetAlwaysRun(true) => !blocked("alwaysrun"),
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
-            NetCommand::PayResident { .. } => !blocked("pay"),
+            NetCommand::PayResident { .. } => self.rlva_can_pay(),
             NetCommand::Build(
                 aurora_net::build::BuildCmd::Add(_)
                 | aurora_net::build::BuildCmd::RezInventory(_)

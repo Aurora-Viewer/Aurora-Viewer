@@ -6,9 +6,20 @@ use crate::interaction::Action;
 use ui::pay::PayAction;
 
 impl App {
+    pub(super) fn open_pay(&mut self, id: uuid::Uuid, group: bool) {
+        if !self.pay_ui.open_if_allowed(id, group, &self.world) {
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+        }
+    }
+
     /// The Pay window of a resident or a group, and the payment to an object
     /// in the look chosen (`Settings::classic_pay_window`).
     pub(super) fn show_pay(&mut self, ctx: &egui::Context, p: &Palette, a: &mut UiActions) {
+        if !self.world.rlva_can_pay() && self.pay_ui.close_resident() {
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+        }
         let classic = self.settings.classic_pay_window;
         let (confirm, threshold) = (self.settings.confirm_payments, self.settings.payment_confirm_threshold);
         let paying_object = self.interactions.dialog.as_ref().is_some_and(|d| d.target.action == Action::Pay);

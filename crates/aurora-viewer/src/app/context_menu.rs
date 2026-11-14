@@ -269,6 +269,7 @@ impl App {
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
                 f.im_blocked = !w.rlva_can_start_im(*id);
+                f.pay_blocked = !w.rlva_can_pay();
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
@@ -804,7 +805,7 @@ impl App {
                     self.flush_build();
                 }
             }
-            CtxAction::PayResident(id) => self.pay_ui.open(id, false),
+            CtxAction::PayResident(id) => self.open_pay(id, false),
             CtxAction::Pay(id) | CtxAction::Buy(id) | CtxAction::Open(id) => {
                 let action = match act {
                     CtxAction::Pay(_) => Action::Pay,

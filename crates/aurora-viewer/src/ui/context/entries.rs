@@ -732,7 +732,12 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         aurora_i18n::tr!("common-zoom-2"),
         CtxAction::Zoom(point, Some(id)),
     );
-    ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
+    ui.item_if(
+        "coin-filled",
+        aurora_i18n::tr!("common-pay"),
+        !f.pay_blocked,
+        CtxAction::PayResident(id),
+    );
     ui.separator();
     if let Some(object) = attachment {
         ui.submenu("box", aurora_i18n::tr!("ui-context-clicked-object"), true, |ui| {
@@ -1220,6 +1225,27 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resident_pay_menu_entry_is_disabled_under_rlva_pay() {
+        let id = Uuid::from_u128(77);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        let mut facts = Facts {
+            pay_blocked: true,
+            ..Default::default()
+        };
+        facts.voice = false;
+        let entries = rows(world_menu(&target, &facts, Vec3::ZERO));
+        let pay = entries
+            .iter()
+            .find(|entry| entry.label == aurora_i18n::tr!("common-pay"))
+            .expect("Pay entry");
+        assert!(!pay.enabled);
+    }
 
     fn particle_source(object: u128, owner: u128, name: &str, clicked: bool) -> super::super::ParticleMenuSource {
         super::super::ParticleMenuSource {

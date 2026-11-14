@@ -1486,7 +1486,13 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
             {
                 super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
             }
-            if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
+            if ui
+                .add_enabled(
+                    world.rlva_can_pay(),
+                    egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size),
+                )
+                .clicked()
+            {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
         });
@@ -1540,7 +1546,7 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), world.can_locate_avatar(id)) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
-        if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+        if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), world.rlva_can_pay()) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
         if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {

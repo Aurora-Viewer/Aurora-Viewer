@@ -122,6 +122,15 @@ pub fn needs_confirmation(confirm: bool, threshold: i32, amount: i32, balance: O
 }
 
 impl PayUi {
+    /// Open a resident or group payment only when the current RLVa rules allow it.
+    pub fn open_if_allowed(&mut self, id: Uuid, group: bool, world: &World) -> bool {
+        if !world.rlva_can_pay() {
+            return false;
+        }
+        self.open(id, group);
+        true
+    }
+
     /// LLFloaterPayUtil::payDirectly: a resident, or a group with `group`.
     pub fn open(&mut self, id: Uuid, group: bool) {
         self.raise = true;
@@ -139,10 +148,34 @@ impl PayUi {
         });
     }
 
+    /// Close a resident/group payment not sent yet when RLVa's live
+    /// restrictions forbid paying. A payment already sent (Sending, Sent,
+    /// Failed) stays: its L$ went or the server answered, and closing it
+    /// with the "restricted" notice would say the opposite. The Legacy
+    /// Viewer only refuses to open LLFloaterPay and leaves an open one
+    /// alone; closing an unsent one is stricter, never looser.
+    pub fn close_resident(&mut self) -> bool {
+        if !self
+            .payee
+            .as_ref()
+            .is_some_and(|p| matches!(p.stage, Stage::Edit | Stage::Confirm(_)))
+        {
+            return false;
+        }
+        self.payee = None;
+        self.raise = false;
+        true
+    }
+
     /// LLFloaterPay::give, or the Buy L$ window when the balance is short
     /// (give_money). The Aurora look waits for the server's answer.
-    fn give(&mut self, amount: i32, balance: Option<i32>, actions: &mut Vec<PayAction>) {
+    fn give(&mut self, amount: i32, world: &World, actions: &mut Vec<PayAction>) {
         let Some(payee) = self.payee.as_mut() else { return };
+        if !world.rlva_can_pay() {
+            payee.stage = Stage::Failed(aurora_i18n::tr!("rlva-blocked").into());
+            return;
+        }
+        let balance = world.balance;
         match balance {
             Some(b) if b >= amount => {
                 self.last_amount = amount;
@@ -167,11 +200,15 @@ impl PayUi {
     /// LLFloaterPay::onGive with the amount chosen.
     fn pay(&mut self, amount: i32, world: &World, confirm: bool, threshold: i32, actions: &mut Vec<PayAction>) {
         let Some(payee) = self.payee.as_mut() else { return };
+        if !world.rlva_can_pay() {
+            payee.stage = Stage::Failed(aurora_i18n::tr!("rlva-blocked").into());
+            return;
+        }
         let to_self = !payee.group && payee.id == world.agent_id;
         if needs_confirmation(confirm, threshold, amount, world.balance, to_self) {
             payee.stage = Stage::Confirm(amount);
         } else {
-            self.give(amount, world.balance, actions);
+            self.give(amount, world, actions);
         }
     }
 
@@ -487,7 +524,7 @@ impl PayUi {
             self.pay(amount, world, confirm, threshold, actions);
         }
         if let Some(amount) = give {
-            self.give(amount, world.balance, actions);
+            self.give(amount, world, actions);
         }
         if !open || close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) && ctx.memory(|m| m.focused().is_none()) {
             self.payee = None;
@@ -615,7 +652,7 @@ impl PayUi {
             self.pay(amount, world, confirm, threshold, actions);
         }
         if let Some(amount) = give {
-            self.give(amount, world.balance, actions);
+            self.give(amount, world, actions);
         }
         // Firestorm closes the window as it gives
         if !open
@@ -1050,6 +1087,7 @@ fn sent(ui: &mut egui::Ui, p: &Palette, name: &str, amount: i32, balance: Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aurora_net::NetEvent;
 
     #[test]
     fn both_object_pay_windows_send_menu_payments_and_close() {
@@ -1242,12 +1280,100 @@ mod tests {
     }
 
     #[test]
+    fn rlva_pay_closes_an_unsent_payment_and_leaves_a_sent_one() {
+        let recipient = Uuid::from_u128(3);
+        for (stage, closes) in [
+            (Stage::Edit, true),
+            (Stage::Confirm(25), true),
+            (
+                Stage::Sending {
+                    amount: 25,
+                    since: Instant::now(),
+                },
+                false,
+            ),
+            (
+                Stage::Sent {
+                    amount: 25,
+                    balance: Some(75),
+                },
+                false,
+            ),
+            (Stage::Failed("refused".into()), false),
+        ] {
+            let mut pay = PayUi::default();
+            pay.open(recipient, false);
+            pay.payee.as_mut().unwrap().stage = stage.clone();
+            assert_eq!(pay.close_resident(), closes, "{stage:?}");
+            assert_eq!(pay.payee.is_none(), closes, "{stage:?}");
+        }
+        assert!(!PayUi::default().close_resident(), "nothing open, no notice");
+    }
+
+    #[test]
+    fn rlva_pay_restriction_refuses_residents_and_groups_without_a_sent_state() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva_configure(true);
+        let restriction = aurora_net::ChatMessage {
+            from_name: "RLVa test object".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@pay=n".into(),
+        };
+        assert!(world.rlva.receive(&restriction));
+        assert!(!world.rlva_can_pay());
+        // enough L$: without the check the payment would go out (and not
+        // open Buy L$ instead)
+        world.balance = Some(100);
+        for group in [false, true] {
+            let mut pay = PayUi::default();
+            let recipient = Uuid::from_u128(if group { 4 } else { 3 });
+            pay.open(recipient, group);
+            let mut actions = Vec::new();
+            pay.give(25, &world, &mut actions);
+            assert!(actions.is_empty());
+            pay.on_transaction(true, TRANS_GIFT, recipient, "");
+            pay.on_balance(75);
+            assert_eq!(
+                pay.payee.as_ref().unwrap().stage,
+                Stage::Failed(aurora_i18n::tr!("rlva-blocked").into())
+            );
+        }
+    }
+
+    #[test]
+    fn rlva_pay_restriction_does_not_open_a_resident_or_group_payment() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.rlva_configure(true);
+        let restriction = aurora_net::ChatMessage {
+            from_name: "RLVa test object".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@pay=n".into(),
+        };
+        assert!(world.rlva.receive(&restriction));
+        for group in [false, true] {
+            let mut pay = PayUi::default();
+            assert!(!pay.open_if_allowed(Uuid::from_u128(3), group, &world));
+            assert!(pay.payee.is_none());
+        }
+    }
+
+    #[test]
     fn the_last_amount_is_filled_in_again() {
         let mut pay = PayUi::default();
         pay.open(Uuid::from_u128(1), false);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.apply(NetEvent::Balance(100));
         assert_eq!(pay.payee.as_ref().unwrap().amount, "");
         let mut actions = Vec::new();
-        pay.give(25, Some(100), &mut actions);
+        pay.give(25, &world, &mut actions);
         assert!(matches!(
             actions.as_slice(),
             [PayAction::Send(cmd)] if matches!(**cmd, NetCommand::PayResident { amount: 25, group: false, .. })
@@ -1260,8 +1386,10 @@ mod tests {
     fn a_short_balance_opens_buy_currency_for_what_is_missing() {
         let mut pay = PayUi::default();
         pay.open(Uuid::from_u128(1), false);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.apply(NetEvent::Balance(1000));
         let mut actions = Vec::new();
-        pay.give(1500, Some(1000), &mut actions);
+        pay.give(1500, &world, &mut actions);
         assert!(matches!(actions.as_slice(), [PayAction::BuyCurrency(500)]));
         assert_eq!(pay.payee.as_ref().unwrap().stage, Stage::Edit);
     }
@@ -1271,7 +1399,9 @@ mod tests {
         let to = Uuid::from_u128(1);
         let mut pay = PayUi::default();
         pay.open(to, false);
-        pay.give(25, Some(100), &mut Vec::new());
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.apply(NetEvent::Balance(100));
+        pay.give(25, &world, &mut Vec::new());
         // another transaction does not count
         pay.on_transaction(true, TRANS_GIFT, Uuid::from_u128(9), "");
         assert!(matches!(pay.payee.as_ref().unwrap().stage, Stage::Sending { .. }));
@@ -1286,7 +1416,7 @@ mod tests {
         );
         // a refusal keeps the window open with its reason
         pay.open(to, false);
-        pay.give(25, Some(100), &mut Vec::new());
+        pay.give(25, &world, &mut Vec::new());
         pay.on_transaction(false, TRANS_GIFT, to, "Refused");
         pay.on_balance(100);
         assert_eq!(pay.payee.as_ref().unwrap().stage, Stage::Failed("Refused".into()));

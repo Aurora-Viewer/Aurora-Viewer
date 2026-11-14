@@ -380,7 +380,7 @@ pub(super) fn more_items(
                         actions.push(ConvAction::OpenInventory);
                     }
                 }
-                if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay")) {
+                if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("ui-chat-pay"), world.rlva_can_pay()) {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(other));
                 }
                 let blocked = world.is_avatar_blocked(&other);

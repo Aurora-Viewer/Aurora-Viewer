@@ -69,7 +69,7 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), world.rlva_can_pay()) {
                 act(CtxAction::PayResident(id));
             }
         }

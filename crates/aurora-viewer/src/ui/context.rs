@@ -223,6 +223,8 @@ pub struct Facts {
     pub friend: bool,
     /// RLVa `@startim` forbids an IM with this resident (RlvActions::canStartIM).
     pub im_blocked: bool,
+    /// RLV `@pay` prevents resident and group payments (`RlvActions::canPayAvatar`).
+    pub pay_blocked: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
@@ -979,7 +981,7 @@ fn avatar_menu_reporting(
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), world.rlva_can_pay()) {
                 act(CtxAction::PayResident(id));
             }
             block(ui);
@@ -1052,7 +1054,7 @@ fn avatar_menu_reporting(
             }
             offer_tp(ui);
             request_tp(ui);
-            if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
+            if menu::item_if(ui, p, "coin-filled", aurora_i18n::tr!("common-pay"), world.rlva_can_pay()) {
                 act(CtxAction::PayResident(id));
             }
             navigation(ui);
