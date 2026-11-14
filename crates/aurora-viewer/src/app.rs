@@ -154,6 +154,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod ui_image_cache;
 mod uninstall;
 mod update_notice;
 mod viewer_stats;
@@ -1047,6 +1048,8 @@ pub struct App {
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    /// Which of these and of the pictures go when they are too many.
+    ui_image_cache: ui_image_cache::UiImageCache,
     inventory_hover_images: inventory_hover::Images,
     ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
     rlva_overlay_slots: std::collections::HashMap<uuid::Uuid, u32>,
@@ -2028,6 +2031,7 @@ impl App {
             login_portrait_source: None,
             ui_coarse: Default::default(),
             ui_images: Default::default(),
+            ui_image_cache: Default::default(),
             inventory_hover_images: Default::default(),
             ui_image_masks: Default::default(),
             rlva_overlay_slots: Default::default(),
@@ -9054,6 +9058,8 @@ impl App {
             // the picture its profile names now (saved by us, or the profile
             // read again: LLAvatarIconIDCache follows each reply)
             if self.avatar_pic_sources.get(&agent) == Some(&image) {
+                self.ui_image_cache.used(&image, Instant::now());
+                self.scene.textures.keep_ui_image(renderer, image);
                 continue;
             }
             if image.is_nil() {
@@ -9067,6 +9073,8 @@ impl App {
             if let Some(t) = self.avatar_pic_images.get(&image) {
                 self.avatar_pics.insert(agent, t.clone());
                 self.avatar_pic_sources.insert(agent, image);
+                self.ui_image_cache.used(&image, Instant::now());
+                self.scene.textures.keep_ui_image(renderer, image);
                 continue;
             }
             // (a changed picture shows the old one until the new is decoded)
@@ -9076,6 +9084,7 @@ impl App {
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
                 let t = self.egui_ctx.load_texture(format!("pic-{agent}"), ci, egui::TextureOptions::LINEAR);
+                self.ui_image_cache.note(image, t.id(), w, h, Instant::now());
                 self.avatar_pic_images.insert(image, t.clone());
                 self.avatar_pics.insert(agent, t);
                 self.avatar_pic_sources.insert(agent, image);
@@ -9134,6 +9143,8 @@ impl App {
         }
         for image in images {
             if self.ui_images.contains_key(&image) {
+                self.ui_image_cache.used(&image, Instant::now());
+                self.scene.textures.keep_ui_image(renderer, image);
                 continue;
             }
             self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
@@ -9145,11 +9156,45 @@ impl App {
                     self.ui_image_masks.insert(image, mask);
                 }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
+                self.ui_image_cache.note(image, t.id(), w, h, Instant::now());
                 self.ui_images.insert(image, t);
                 self.note_ui_copy(image);
             }
         }
         self.update_inventory_hover_images(renderer);
+    }
+
+    /// Every few frames: what the frame draws is in use (ours always, for
+    /// the login portrait), and the interface images idle for a while go
+    /// when they are too many. Whatever shows one again asks for it.
+    fn evict_ui_images(&mut self, shapes: &[egui::epaint::ClippedShape]) {
+        let now = Instant::now();
+        if !self.ui_image_cache.look(self.frame_count, shapes, now) {
+            return;
+        }
+        if let Some(own) = self.world.profiles.get(&self.world.agent_id) {
+            self.ui_image_cache.used(&own.sl_image, now);
+        }
+        let gone = self.ui_image_cache.evict(self.scene.textures.stats.pressure > 0, now);
+        if gone.is_empty() {
+            return;
+        }
+        for image in &gone {
+            self.ui_images.remove(image);
+            self.ui_image_masks.remove(image);
+            self.avatar_pic_images.remove(image);
+            self.profile_ui.banners.remove(image);
+            self.scene.textures.release_ui_image(image);
+        }
+        let gone: HashSet<uuid::Uuid> = gone.into_iter().collect();
+        let pics = &mut self.avatar_pics;
+        self.avatar_pic_sources.retain(|agent, image| {
+            let keep = !gone.contains(image);
+            if !keep {
+                pics.remove(agent);
+            }
+            keep
+        });
     }
 
     /// What a profile picture's pixels give besides its texture: the Aurora
@@ -9336,6 +9381,7 @@ impl App {
                         && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
                     {
                         t.set(ci(), egui::TextureOptions::LINEAR);
+                        self.ui_image_cache.note(image, t.id(), w, h, now);
                         if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
                             self.ui_image_masks.insert(image, mask);
                         }
@@ -9345,6 +9391,7 @@ impl App {
                         && ui_copy_can_improve(t.size(), [w as usize, h as usize], target_w, target_h)
                     {
                         t.set(ci(), egui::TextureOptions::LINEAR);
+                        self.ui_image_cache.note(image, t.id(), w, h, now);
                         picture_updated = true;
                     }
                     if picture_updated {
@@ -12561,6 +12608,7 @@ impl App {
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
+        self.evict_ui_images(&full.shapes);
         let mut textures = std::mem::take(&mut full.textures_delta);
         if gpu_recovery::shadow_kept() {
             self.egui_shadow.note(&textures);

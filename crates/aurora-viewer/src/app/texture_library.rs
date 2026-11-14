@@ -634,7 +634,9 @@ impl App {
                 }
                 library::Action::SaveMaterial { item, material, name } => self.resource_material_save(item, material, name),
                 library::Action::RefreshTexture(asset) => {
-                    self.ui_images.remove(&asset);
+                    if let Some(image) = self.ui_images.remove(&asset) {
+                        self.ui_image_cache.forget(&asset, image.id());
+                    }
                     self.scene.textures.refresh(&asset);
                     self.texture_library.refresh_texture(&self.world, asset);
                 }
