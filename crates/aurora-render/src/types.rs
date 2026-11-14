@@ -629,6 +629,13 @@ pub struct DrawLists {
     /// (water and mirror); drawn without face culling, alpha tested.
     /// With their bounds: each reflection pass culls them to its own frustum.
     pub reflection: Vec<ShadowCaster>,
+    /// Blended faces for the mirror, in view or not, with their bounds
+    /// (`DrawCmd::bounds`): the first `reflection_blend_rigged` are rigged
+    /// faces in the Legacy Viewer's order (drawn first, writing depth, as
+    /// `blend_depth`), the others in any order (the mirror sorts them back
+    /// to front from its own camera).
+    pub reflection_blend: Vec<DrawCmd>,
+    pub reflection_blend_rigged: usize,
     /// `reflection` without avatars, their attachments and animesh: what a
     /// static reflection probe captures (LLViewerWindow::cubeSnapshot).
     pub probe: Vec<ShadowCaster>,
@@ -776,6 +783,8 @@ impl DrawLists {
         self.shelter_casters.clone_from(&src.shelter_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
+        self.reflection_blend.clone_from(&src.reflection_blend);
+        self.reflection_blend_rigged = src.reflection_blend_rigged;
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
         self.reflection_terrain_pbr.clone_from(&src.reflection_terrain_pbr);
@@ -829,6 +838,8 @@ impl DrawLists {
         self.shelter_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
+        self.reflection_blend.clear();
+        self.reflection_blend_rigged = 0;
         self.probe.clear();
         self.reflection_terrain.clear();
         self.reflection_terrain_pbr.clear();

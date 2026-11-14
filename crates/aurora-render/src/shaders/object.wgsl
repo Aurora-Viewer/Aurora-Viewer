@@ -1787,6 +1787,34 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
     return vec4<f32>(s.color.rgb, 1.0);
 }
 
+// The mirror's blended faces (lace, sheer cloth, hair strands, lashes,
+// appliers on a blended layer), drawn back to front over its solid image:
+// the Legacy Viewer's hero probe renders the whole scene, its alpha pools
+// included (LLHeroProbeManager::renderProbes -> display_cube_face ->
+// renderGeomPostDeferred). fs_blend's rules with fs_reflect's side and clip.
+@fragment
+fn fs_reflect_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let facing = front != mirrored_pass();
+    if ((!facing && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) || reflection_clip(in.world_pos)) {
+        discard;
+    }
+    let m = eval_material(in, facing);
+    if (m.color.a < 0.004 && !legacy_may_glare(rec, m, in.world_pos, in.clip.xy)) {
+        discard;
+    }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+        discard;
+    }
+    var c = shade_material(in, m).color;
+    c.a = c.a * rez_alpha(rec, in);
+    if (c.a < 0.004) {
+        discard;
+    }
+    // premultiplied alpha
+    return vec4<f32>(c.rgb * c.a, c.a);
+}
+
 // Blended faces: invisible fragments leave before the lighting, as in
 // Firestorm's alphaF.glsl / pbralphaF.glsl (`final_alpha < minimum_alpha`,
 // LLDrawPoolAlpha MINIMUM_ALPHA = 0.004, tested before the atmospherics, the
