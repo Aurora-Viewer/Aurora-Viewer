@@ -1125,6 +1125,13 @@ struct Pipelines {
     /// Terrain casters with the terrain's alpha test (`fs_shadow_terrain`):
     /// the other casters keep `fs_shadow` without the terrain's inputs.
     shadow_terrain: wgpu::RenderPipeline,
+    /// The rain's shelter map: `shadow` and `shadow_terrain` without the
+    /// depth bias. It is a height map, not a shadow: the slope's bias set
+    /// each slope's surface lower than it is, by twice its rise over a
+    /// texel (12 cm on a gentle 20 % slope at 31 cm texels), and the snow,
+    /// lying on what the map says, left every slope bare.
+    shelter: wgpu::RenderPipeline,
+    shelter_terrain: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -5553,6 +5560,30 @@ impl Backend {
                 ..shadow_desc("shadow terrain", Some("fs_shadow_terrain"))
             },
         );
+        let level = wgpu::DepthBiasState {
+            constant: 0,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        };
+        let shelter = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                depth_bias: level,
+                ..shadow_desc("rain shelter", Some("fs_shadow"))
+            },
+        );
+        let shelter_terrain = make_pipeline(
+            device,
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                vs: "vs_shadow_terrain",
+                depth_bias: level,
+                ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -5674,6 +5705,8 @@ impl Backend {
             shadow,
             shadow_depth,
             shadow_terrain,
+            shelter,
+            shelter_terrain,
             post,
             pick,
             pick_terrain,
@@ -9354,12 +9387,17 @@ impl Backend {
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
                                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
-                                draw(&mut pass, &self.pipelines.shadow_terrain, rg.spot_terrain[k]);
+                                let (objects, terrain) = if shelter && k == self.shelter_slot {
+                                    (&self.pipelines.shelter, &self.pipelines.shelter_terrain)
+                                } else {
+                                    (&self.pipelines.shadow, &self.pipelines.shadow_terrain)
+                                };
+                                draw(&mut pass, terrain, rg.spot_terrain[k]);
                                 let (off, count) = rg.spot[k];
                                 if count == 0 && !gpu_on {
                                     continue;
                                 }
-                                pass.set_pipeline(&self.pipelines.shadow);
+                                pass.set_pipeline(objects);
                                 if count > 0 {
                                     pass.multi_draw_indexed_indirect(&self.indirect, off, count);
                                     calls.set(calls.get() + 1);
