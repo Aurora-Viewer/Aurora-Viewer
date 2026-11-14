@@ -150,11 +150,13 @@ where
         slams.push((*cof, links));
         refresh.push(*cof);
     }
+    let mut removed = Vec::new();
     for (folder, links) in &slams {
         if change.create.is_none() || *folder != change.folder {
             for content in fetch(vec![*folder]).await? {
                 for item in content.items.iter().filter(|item| is_link(item.asset_type)) {
                     send_edit(UdpEdit::RemoveItem(item.id)).await?;
+                    removed.push(item.id);
                 }
             }
         }
@@ -183,10 +185,19 @@ where
                     .any(|item| item.asset_id == link.target && is_link(item.asset_type))
             })
         });
+        // the old links already hold everything still wanted: a read that
+        // overtakes the removals would pass without this
+        let gone = !contents.iter().flat_map(|c| &c.items).any(|item| removed.contains(&item.id));
         let complete = refresh
             .iter()
             .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0));
-        if linked && complete {
+        // a visitor's home grid may refuse every removal
+        // (HGSuitcaseInventoryService::DeleteItems): the change stands once
+        // the retries are spent
+        if linked && complete && (gone || attempt == RETRIES) {
+            if !gone {
+                log::warn!("outfit: the server kept links it was asked to remove");
+            }
             contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
             return Ok(contents);
         }
@@ -575,6 +586,81 @@ pub(crate) mod tests {
             panic!("only the link goes over the circuit: {edits:?}");
         };
         assert_eq!(*linked, assigned, "in the folder as the server named it");
+    }
+
+    #[tokio::test]
+    async fn a_removal_is_confirmed_only_once_the_link_has_gone() {
+        let (folder, kept, removed) = (Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(4));
+        let (old_kept, old_removed, new_kept) = (Uuid::from_u128(5), Uuid::from_u128(6), Uuid::from_u128(7));
+        let reply = |items: &[(Uuid, Uuid)]| {
+            let items = items
+                .iter()
+                .map(|(id, target)| llsd_map! { "item_id" => *id, "parent_id" => folder, "asset_id" => *target, "name" => "Hair", "type" => 24, "inv_type" => 18 })
+                .collect();
+            llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
+                "folder_id" => folder, "version" => 3, "categories" => Llsd::Array(Vec::new()), "items" => Llsd::Array(items),
+            }]) }
+        };
+        let before = reply(&[(old_kept, kept), (old_removed, removed)]);
+        let (url, task) = server(vec![
+            (200, before.clone()),
+            // the read overtakes the circuit: everything wanted is there,
+            // and so is what was asked to go
+            (200, before),
+            (200, reply(&[(new_kept, kept)])),
+        ])
+        .await;
+        let (_, send) = recorder();
+        let mut change = new_outfit(folder, Uuid::nil(), kept);
+        change.create = None;
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            change,
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        let contents = result.expect("confirmed");
+        assert_eq!(contents[0].items.iter().map(|i| i.id).collect::<Vec<_>>(), [new_kept]);
+    }
+
+    #[tokio::test]
+    async fn links_the_server_keeps_do_not_fail_the_change() {
+        let (folder, kept, removed) = (Uuid::from_u128(1), Uuid::from_u128(3), Uuid::from_u128(4));
+        let (old_kept, old_removed, new_kept) = (Uuid::from_u128(5), Uuid::from_u128(6), Uuid::from_u128(7));
+        let link = |id: Uuid, target: Uuid| {
+            llsd_map! { "item_id" => id, "parent_id" => folder, "asset_id" => target, "name" => "Hair", "type" => 24, "inv_type" => 18 }
+        };
+        let reply = |items: Vec<Llsd>| {
+            llsd_map! { "folders" => Llsd::Array(vec![llsd_map! {
+                "folder_id" => folder, "version" => 3, "categories" => Llsd::Array(Vec::new()), "items" => Llsd::Array(items),
+            }]) }
+        };
+        let kept_by_server = reply(vec![link(old_kept, kept), link(old_removed, removed), link(new_kept, kept)]);
+        let mut replies = vec![(200, reply(vec![link(old_kept, kept), link(old_removed, removed)]))];
+        // the first read and each retry
+        replies.resize(7, (200, kept_by_server));
+        let (url, task) = server(replies).await;
+        let (_, send) = recorder();
+        let mut change = new_outfit(folder, Uuid::nil(), kept);
+        change.create = None;
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            change,
+            send,
+            &|_| {},
+        )
+        .await;
+        let requests = task.await.expect("requests");
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(requests.len(), 7, "every retry is spent before giving up on the removal");
     }
 
     #[tokio::test]
