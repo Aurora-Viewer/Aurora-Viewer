@@ -617,6 +617,7 @@ keybinds-double-click-teleport = ダブルクリックテレポートのオン�
 keybinds-selection-outlines = 選択範囲の輪郭の表示／非表示
 import-preview-tools = プレビューツール
 import-local-mesh-instance = 適用するモデル
+import-local-mesh-scene = すべてのパーツ（プリムに収める）
 import-suffix-help = これらの設定は次回の読み込み時に適用されます。変更後はモデルを再読み込みしてください。
 import-file-associations = ファイルの照合
 import-emote-none = 表情なし

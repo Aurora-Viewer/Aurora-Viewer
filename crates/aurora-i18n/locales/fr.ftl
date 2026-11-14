@@ -617,6 +617,7 @@ keybinds-double-click-teleport = Activer / désactiver la téléportation par do
 keybinds-selection-outlines = Afficher / masquer les contours de sélection
 import-preview-tools = Outils de visualisation
 import-local-mesh-instance = Modèle à appliquer
+import-local-mesh-scene = Toutes les pièces (ajuster au prim)
 import-suffix-help = Ces réglages s’appliquent au prochain chargement. Rechargez le modèle après modification.
 import-file-associations = Association des fichiers
 import-emote-none = Aucune expression

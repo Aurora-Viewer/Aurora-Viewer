@@ -6527,8 +6527,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   local watching, enable the preview then modify its file or a material
   map; the map's local identifier must stay stable.
   `local-mesh-applied`, with `AURORA_DEMO_ACTIONS=1`, automatically applies
-  the local cube to the selected test box; its server volume stays
-  unchanged. The remove button must restore its original appearance.
+  the static file as a complete assembly fitted uniformly inside its support
+  prim. Set `AURORA_DEMO_IMPORT_FILE` to a plain DAE/glTF/GLB file to inspect
+  its pieces through this same path. The gear menu's **All pieces (fit to
+  prim)** is the default for new static imports; selecting an individual
+  model restores the optional imported dimensions. Check that moving,
+  rotating and nonuniformly resizing the anchor preserves the assembly's
+  proportions, and that removal restores the prim. Assemblies use up to 45
+  face slots; rigged files retain individual-model mode.
+  Without an external file, this scenario uses a local cube. The support
+  prim's server volume stays unchanged. The remove button must restore its
+  original appearance.
   `local-mesh-removed` follows the same flow then removes the preview at frame
   400. The aggregated traces check the GPU binding to the local mesh, then the
   return to the prim, with the server volume kept; no file name or

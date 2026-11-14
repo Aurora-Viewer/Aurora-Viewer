@@ -617,6 +617,7 @@ keybinds-double-click-teleport = Double-click teleport on / off
 keybinds-selection-outlines = Show / hide selection outlines
 import-preview-tools = Preview tools
 import-local-mesh-instance = Model to apply
+import-local-mesh-scene = All pieces (fit to prim)
 import-suffix-help = These settings apply to the next load. Reload the model after making changes.
 import-file-associations = File matching
 import-emote-none = No expression

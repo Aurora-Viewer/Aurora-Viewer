@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+Static local mesh assemblies are baked by `imports/local/scene.rs` on the
+import worker, preserving every instance transform and face slot across LODs.
+Their render-only asset uses `import_mesh::encode::local_asset` (45 faces);
+upload encoding keeps its eight-face limit. `RenderState::local_fit` holds
+the common normalization dimensions; `Object::visual_scale` and
+`visual_scale_at` fit them uniformly to the anchor's damped dimensions.
+The ordinary scene geometry, culling, selection and picking paths consume
+that same visual scale. The registry saves the whole-scene choice separately
+from individual-model mode; older bindings retain their previous behavior.
+
 Inventory Delete carries a `DeleteRequest` with its originating window and
 selection through the Marketplace guard. `app/inventory.rs` binds that intent
 to the mutation's request before sending it, including synchronous demo replies.
