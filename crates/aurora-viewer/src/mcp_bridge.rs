@@ -1312,6 +1312,19 @@ impl App {
                     "subject": subject.map(|id| id.to_string()),
                 }))));
             }
+            ViewerRequest::ScriptPromptList => {
+                let _ = reply_tx.send(Ok(self.mcp_script_prompts()));
+            }
+            ViewerRequest::ScriptPromptRespond {
+                id,
+                button,
+                text,
+                grant,
+                ignore,
+            } => {
+                let resp = self.mcp_script_prompt_respond(id, button, text, grant, ignore);
+                let _ = reply_tx.send(resp);
+            }
             ViewerRequest::FloaterList => {
                 let floaters = self.collect_floater_list();
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
@@ -3082,6 +3095,121 @@ impl App {
             },
             source: source_code,
         });
+    }
+
+    /// The open script prompts (script_prompts): llDialog, llTextBox and
+    /// permission / experience requests, as their cards show them.
+    fn mcp_script_prompts(&self) -> ViewerResponse {
+        use crate::world::notifications::Data;
+        let prompts: Vec<Value> = self
+            .world
+            .notifications
+            .list
+            .iter()
+            .filter_map(|n| match &n.data {
+                Data::Dialog {
+                    object,
+                    object_name,
+                    channel,
+                    buttons,
+                    ..
+                } => Some(json!({
+                    "prompt_id": n.id,
+                    "kind": "dialog",
+                    "object_id": object.to_string(),
+                    "object_name": object_name,
+                    "channel": channel,
+                    "message": n.body,
+                    "buttons": buttons,
+                })),
+                Data::TextBox { object, channel, .. } => Some(json!({
+                    "prompt_id": n.id,
+                    "kind": "text_box",
+                    "object_id": object.to_string(),
+                    "channel": channel,
+                    "title": n.title,
+                    "message": n.body,
+                })),
+                Data::Permissions {
+                    task,
+                    questions,
+                    experience,
+                    caution,
+                    ..
+                } => Some(json!({
+                    "prompt_id": n.id,
+                    "kind": if experience.is_some() { "experience" } else { "permissions" },
+                    "object_id": task.to_string(),
+                    "title": n.title,
+                    "message": n.body,
+                    "questions": questions,
+                    "permissions": crate::world::notifications::permission_lines(*questions),
+                    "experience": experience.as_ref().map(|e| json!({ "id": e.id.to_string(), "name": e.name })),
+                    "caution": caution.is_some(),
+                })),
+                _ => None,
+            })
+            .collect();
+        ViewerResponse::Json(json!({ "count": prompts.len(), "prompts": prompts }))
+    }
+
+    /// Answer one prompt the way its card's buttons do (`respond_notification`).
+    fn mcp_script_prompt_respond(
+        &mut self,
+        id: u64,
+        button: Option<String>,
+        text: Option<String>,
+        grant: Option<bool>,
+        ignore: bool,
+    ) -> Result<ViewerResponse, McpError> {
+        use crate::world::notifications::{Data, Response};
+        let Some(n) = self.world.notifications.list.iter_mut().find(|n| n.id == id) else {
+            return Err(McpError::InvalidParams(format!(
+                "no open script prompt {id} (answered, ignored or expired?): list them with script_prompts"
+            )));
+        };
+        let response = if ignore {
+            Response::Dismiss
+        } else {
+            match &n.data {
+                Data::Dialog { buttons, .. } => {
+                    let Some(label) = button else {
+                        return Err(McpError::InvalidParams(format!("a menu takes `button`, one of {buttons:?}")));
+                    };
+                    let Some(i) = buttons.iter().position(|b| b == &label) else {
+                        return Err(McpError::InvalidParams(format!("no button '{label}' on this menu: {buttons:?}")));
+                    };
+                    Response::Button(i)
+                }
+                Data::TextBox { .. } => {
+                    let Some(t) = text else {
+                        return Err(McpError::InvalidParams("a text box takes `text`".into()));
+                    };
+                    n.text = t;
+                    Response::SendText
+                }
+                Data::Permissions { .. } => match grant {
+                    Some(true) => Response::Accept,
+                    Some(false) => Response::Decline,
+                    None => {
+                        return Err(McpError::InvalidParams("a permission request takes `grant`: true or false".into()));
+                    }
+                },
+                _ => return Err(McpError::InvalidParams(format!("notification {id} is not a script prompt"))),
+            }
+        };
+        let answer = format!("{response:?}");
+        let (commands, _) = self.world.respond_notification(id, response);
+        let sent = commands.len();
+        for command in commands {
+            self.send(command);
+        }
+        Ok(ViewerResponse::Json(json!({
+            "ok": true,
+            "prompt_id": id,
+            "answer": answer,
+            "messages_sent": sent,
+        })))
     }
 
     fn handle_mcp_lsl_listen_output(&self, object_id: Option<Uuid>, local_id: Option<u32>) -> Result<ViewerResponse, McpError> {

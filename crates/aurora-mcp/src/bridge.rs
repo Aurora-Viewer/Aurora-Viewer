@@ -266,6 +266,17 @@ pub enum ViewerRequest {
         subject: Option<Uuid>,
     },
     FloaterList,
+    /// The open llDialog / llTextBox / permission prompts (script_prompts).
+    ScriptPromptList,
+    /// Answer one (script_prompt_respond): a button label, a text box's text,
+    /// grant or deny a permission request, or close it unanswered.
+    ScriptPromptRespond {
+        id: u64,
+        button: Option<String>,
+        text: Option<String>,
+        grant: Option<bool>,
+        ignore: bool,
+    },
     FloaterOpen {
         name: String,
         open: bool,
@@ -661,6 +672,7 @@ impl ViewerRequest {
             | ViewerRequest::SettingGet { .. }
             | ViewerRequest::PoserInspect { .. }
             | ViewerRequest::FloaterList
+            | ViewerRequest::ScriptPromptList
             | ViewerRequest::ViewportCapture { .. }
             | ViewerRequest::InventoryBrowse { .. }
             | ViewerRequest::InventorySearch { .. }
@@ -748,6 +760,7 @@ impl ViewerRequest {
             | ViewerRequest::VoiceSetUserMute { .. }
             | ViewerRequest::VoiceTransmit { .. }
             | ViewerRequest::ViewerLogin { .. }
+            | ViewerRequest::ScriptPromptRespond { .. }
             | ViewerRequest::ViewerShutdown => true,
         }
     }

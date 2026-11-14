@@ -625,6 +625,34 @@ impl McpRouter {
                 Ok(text_block(into_json(resp)))
             }
 
+            "script_prompts" => {
+                let resp = self.send_to_viewer(None, ViewerRequest::ScriptPromptList, 5000).await?;
+                Ok(text_block(into_json(resp)))
+            }
+            "script_prompt_respond" => {
+                let id = args
+                    .get("prompt_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("prompt_id (from script_prompts) is required".into()))?;
+                let button = args.get("button").and_then(Value::as_str).map(str::to_owned);
+                let text = args.get("text").and_then(Value::as_str).map(str::to_owned);
+                let grant = args.get("grant").and_then(Value::as_bool);
+                let ignore = args.get("ignore").and_then(Value::as_bool).unwrap_or(false);
+                let resp = self
+                    .send_to_viewer(
+                        lease_id,
+                        ViewerRequest::ScriptPromptRespond {
+                            id,
+                            button,
+                            text,
+                            grant,
+                            ignore,
+                        },
+                        5000,
+                    )
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
             "floater_open" => {
                 let name = req_str(args, "name")?;
                 let open = args.get("open").and_then(Value::as_bool).unwrap_or(true);
@@ -2650,6 +2678,28 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
             in_compact_profile: false,
         },
         ToolDefinition {
+            name: "script_prompts".into(),
+            description: "List the open script prompts addressed to the avatar: llDialog menus (buttons, channel), llTextBox boxes, and permission / experience requests (the permissions asked). Answer one with script_prompt_respond.".into(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "script_prompt_respond".into(),
+            description: "Answer a script prompt from script_prompts exactly as its card's buttons do: a menu by `button` label, a text box by `text`, a permission or experience request by `grant` (true / false), or `ignore` to close it without replying.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt_id": { "type": "integer", "description": "id from script_prompts" },
+                    "button": { "type": "string", "description": "llDialog: the button label to press" },
+                    "text": { "type": "string", "description": "llTextBox: the text to send" },
+                    "grant": { "type": "boolean", "description": "permission / experience request: true grants, false denies" },
+                    "ignore": { "type": "boolean", "default": false, "description": "close without replying (a menu's Ignore)" }
+                },
+                "required": ["prompt_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "floater_list".into(),
             description: "List viewer panels/floaters and their open state (direct state read, no UI scraping).".into(),
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
@@ -3686,7 +3736,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 111, "expected 111 total tools (43 Legacy + 68 Aurora-native)");
+        assert_eq!(defs.len(), 113, "expected 113 total tools (43 Legacy + 70 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
