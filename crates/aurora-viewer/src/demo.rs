@@ -4420,6 +4420,7 @@ pub fn events() -> Vec<NetEvent> {
                 [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
                     .into_iter()
                     .chain(sim_extras::caps())
+                    .chain(region::open_settings_caps())
                     .collect(),
             ),
         },
@@ -4446,6 +4447,7 @@ pub fn events() -> Vec<NetEvent> {
         })),
     ];
     ev.extend(group::simulator_features());
+    ev.extend(region::open_settings_event(HANDLE));
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];

@@ -31,6 +31,7 @@ pub mod objcache;
 pub mod objects;
 mod offer_hosts;
 pub mod offline_im;
+pub mod open_region;
 pub mod outfits;
 mod packet_loss;
 pub mod pathfinding;

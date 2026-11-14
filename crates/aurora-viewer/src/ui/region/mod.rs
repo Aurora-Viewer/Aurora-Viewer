@@ -14,6 +14,7 @@ mod draft;
 mod estate_wide;
 mod interventions;
 mod manage;
+mod opensim;
 mod overview;
 mod people;
 mod surface;

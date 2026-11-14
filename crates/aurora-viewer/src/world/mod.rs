@@ -188,6 +188,9 @@ pub struct Region {
     /// post links in chat applies here, so the role editor shows it.
     pub group_chat_post_links: bool,
     pub max_link_children: Option<u32>,
+    /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
+    /// window's "Region settings".
+    pub open_settings: Option<aurora_net::open_region::OpenRegionSettings>,
     pub animated_object_max_tris: u32,
 }
 
@@ -2264,6 +2267,7 @@ impl World {
             grid_status: Default::default(),
             currency_base_uri: String::new(),
             max_link_children: None,
+            open_settings: None,
             animated_object_max_tris: 0,
             opensim: Default::default(),
             currency_symbol: String::new(),
@@ -2815,6 +2819,10 @@ impl World {
             }
             NetEvent::RegionLinkLimit { handle, max_children } => {
                 self.ensure_region(handle, (256, 256)).max_link_children = max_children;
+                None
+            }
+            NetEvent::OpenRegionSettings { handle, settings } => {
+                self.ensure_region(handle, (256, 256)).open_settings = Some(*settings);
                 None
             }
             NetEvent::SimulatorFeatures {

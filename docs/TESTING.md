@@ -9040,7 +9040,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions][:pending][:ask-…|:top-…|:pick-…][:telehub|:raw|:pbr][:classic]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions|:open-settings][:pending][:ask-…|:top-…|:pick-…][:telehub|:raw|:pbr][:classic]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -9126,6 +9126,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   notecard dropped from the inventory asks the same. The demo simulator
   keeps the covenant it is sent and answers the next EstateCovenantRequest
   with it (the notecard's text, or "This estate has no covenant").
+  `open-settings` makes the demo region an Aurora-Sim one: it offers
+  DispatchOpenRegionSettings and sends OpenRegionInfo on arrival (draw
+  distance 256 m, prims 64 m and 32 m physical, 255 links and 32
+  physical, no limit on items given, name tags briefly, 60 groups), and
+  Manage scrolls to its "Region settings" (the classic window's tab of
+  that name, after Region). With `pending`, the draw distance turns to
+  512 m and the minimap off, "2 changes not sent yet"; the demo
+  simulator answers Apply with the values sent. Without `open-settings`
+  the section and the tab are not there, as on Second Life and OpenSim.
   `telehub` opens the region rules' Advanced fold, the window taller:
   the demo region's telehub "Arrival point" with two spawn points; the
   demo simulator applies Connect and Add the selection (a prim selected

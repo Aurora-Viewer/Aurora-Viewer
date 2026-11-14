@@ -125,6 +125,12 @@ impl Estate {
         self.out.push(NetCommand::Estate(EstateCommand::SetRegionInfo { handle, rules }));
     }
 
+    /// The "Region settings" tab's "Apply" (onClickOrs).
+    pub fn set_open_region_settings(&mut self, handle: RegionHandle, settings: aurora_net::open_region::OpenRegionSettings) {
+        self.out
+            .push(NetCommand::Estate(EstateCommand::SetOpenRegionSettings { handle, settings }));
+    }
+
     /// The Estate panel's "Apply": the model takes the new estate first,
     /// then sends it (callbackChangeLindenEstate → sendEstateInfo), and the
     /// panel shows the model.

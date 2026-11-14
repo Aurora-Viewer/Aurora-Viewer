@@ -451,6 +451,12 @@ pub enum NetEvent {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
+    /// OpenRegionInfo, whole: the Region / Estate window's "Region
+    /// settings" tab (Aurora-Sim based grids).
+    OpenRegionSettings {
+        handle: RegionHandle,
+        settings: Box<crate::open_region::OpenRegionSettings>,
+    },
     /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
     /// empty on the server.
     MuteList(crate::social::MuteListSource),

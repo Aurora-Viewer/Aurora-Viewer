@@ -69,6 +69,16 @@ impl Session<'_> {
                     }
                 }
             }
+            EstateCommand::SetOpenRegionSettings { handle, settings } => {
+                // onClickOrs: a POST only when the region has the capability
+                match self
+                    .sim_for_handle(handle)
+                    .and_then(|addr| self.sim_cap(addr, crate::open_region::CAP))
+                {
+                    Some(url) => self.estate_post(url, settings.body(), "region settings"),
+                    None => log::info!("region settings: no {} capability", crate::open_region::CAP),
+                }
+            }
             EstateCommand::SetTerrain { handle, terrain, sun } => {
                 let Some(addr) = self.sim_for_handle(handle) else {
                     return;

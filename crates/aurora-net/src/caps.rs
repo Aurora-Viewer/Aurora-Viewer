@@ -31,6 +31,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // the General panel's "Apply", the estate lists, the Estate panel's
     // "Apply", the region's experiences and its restart schedule
     "DispatchRegionInfo",
+    // the "Region settings" tab of Aurora-Sim based grids
+    // (LLPanelRegionOpenSettingsInfo, buildCapabilityNames)
+    "DispatchOpenRegionSettings",
     "EnvironmentSettings",
     "EstateAccess",
     "EstateChangeInfo",
@@ -214,6 +217,7 @@ mod language_tests {
     fn the_region_estate_capabilities_are_requested() {
         for cap in [
             "DispatchRegionInfo",
+            "DispatchOpenRegionSettings",
             "EstateAccess",
             "EstateChangeInfo",
             "RegionExperiences",
