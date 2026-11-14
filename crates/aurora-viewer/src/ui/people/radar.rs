@@ -489,13 +489,18 @@ fn text_right(ui: &egui::Ui, text: String, cell: Rect, size: f32, color: Color32
 /// The cells of the visible columns over `row`, the name taking the rest.
 fn cells(settings: &RadarSettings, row: Rect) -> Vec<(Column, Rect)> {
     let visible: Vec<Column> = Column::ALL.into_iter().filter(|c| settings.shows(*c)).collect();
-    let fixed: f32 = visible.iter().map(|c| c.width()).sum();
-    let name = (row.width() - fixed).max(60.0);
+    let fixed: f32 = visible.iter().filter(|c| **c != Column::Name).map(|c| c.width()).sum();
+    // Never invent width past the row: a 60 px name floor made the table
+    // measure wider than the floater while resizing, so the drag kept
+    // widening (#3033). Elide the name (and clip later columns) instead.
+    let name = (row.width() - fixed).max(0.0);
     let mut x = row.left();
+    let end = row.right();
     visible
         .into_iter()
         .map(|c| {
-            let w = if c == Column::Name { name } else { c.width() };
+            let want = if c == Column::Name { name } else { c.width() };
+            let w = want.min((end - x).max(0.0));
             let cell = Rect::from_min_max(egui::pos2(x, row.top()), egui::pos2(x + w, row.bottom()));
             x += w;
             (c, cell)
@@ -899,7 +904,11 @@ pub fn tab(
         tool_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("radar-options"), true, |ui| {
             options_menu(ui, p, data.settings, blocked);
         });
-        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        // `search_box` keeps the field inside what the buttons leave; raw
+        // `search_field` / TextEdit could allocate wider and grow the floater
+        // every frame while an edge was held (#3033).
+        let w = ui.available_width();
+        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), w);
     });
     ui.add_space(4.0);
     if data.settings.show_minimap {
@@ -1186,6 +1195,30 @@ mod tests {
         // consecutive, without holes
         for pair in cells.windows(2) {
             assert!((pair[0].1.right() - pair[1].1.left()).abs() < 0.01);
+        }
+    }
+
+    /// A narrow list must not invent a name column past the row: that made
+    /// the People table grow while an edge was held (#3033).
+    #[test]
+    fn a_narrow_radar_row_does_not_measure_wider_than_the_list() {
+        let settings = RadarSettings::default();
+        let fixed: f32 = Column::ALL.into_iter().filter(|c| *c != Column::Name).map(Column::width).sum();
+        for width in [fixed - 40.0, fixed + 10.0, 200.0, 320.0] {
+            let row = Rect::from_min_size(egui::pos2(0.0, 0.0), Vec2::new(width, 22.0));
+            let cells = cells(&settings, row);
+            let right = cells.last().expect("columns").1.right();
+            assert!(
+                right <= row.right() + 0.01,
+                "narrow {width}: cells end at {right}, row at {}",
+                row.right()
+            );
+            if width >= fixed {
+                assert!((right - row.right()).abs() < 0.01, "fills the row at {width}");
+                assert!((cells[0].1.width() - (width - fixed)).abs() < 0.01);
+            } else {
+                assert_eq!(cells[0].1.width(), 0.0, "name collapses when fixed columns alone fill {width}");
+            }
         }
     }
 

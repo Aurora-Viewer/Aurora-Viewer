@@ -431,7 +431,12 @@ pub fn people_window(
         st.tab_shown(panels.people_tab);
     }
     nearby::fit_window(ctx, st);
-    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size).help(help);
+    // Hold the body in the floater's exact rect so the Legacy radar table
+    // (and Aurora nearby) cannot ratchet the window wider while an edge is
+    // dragged, then refuse to shrink (#3033). Same pattern as Imports.
+    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size)
+        .help(help)
+        .steady_size();
     if aurora {
         // the mock-up's tabs right under the title
         floater = floater.compact_header();
