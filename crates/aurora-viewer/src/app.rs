@@ -16831,6 +16831,8 @@ impl App {
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         ui.ctx()
             .data_mut(|data| data.insert_temp(egui::Id::unique("vr-active"), renderer.vr_engaged()));
+        // the Avatar Welcome Pack's page, worked out once for the toolbar and the window
+        let avatar_welcome_page = self.avatar_welcome_page();
         // the toolbar's Sit / Stand button, greyed when RLVa would refuse it
         // (RlvActions::canStand / canGroundSit, the same check as the send)
         let sit = if self.world.agent.is_sitting() {
@@ -17393,7 +17395,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
-                    avatar_welcome: self.avatar_welcome_page().is_some(),
+                    avatar_welcome: avatar_welcome_page.is_some(),
                     destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
@@ -19290,7 +19292,6 @@ impl App {
                 );
                 // the Avatar Welcome Pack: the same plugins and browser
                 // settings, and the OpenID cookie on Second Life only
-                let pack = self.avatar_welcome_page();
                 let pack_cookie = cookie
                     .as_ref()
                     .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
@@ -19302,11 +19303,11 @@ impl App {
                         paths: paths.as_ref(),
                         browser: &browser,
                         cookie: pack_cookie,
-                        url: pack.as_deref(),
+                        url: avatar_welcome_page.as_deref(),
                     },
                 );
                 self.welcome_wears.push(wears);
-                self.toolbar_ui.avatar_welcome = pack.is_some();
+                self.toolbar_ui.avatar_welcome = avatar_welcome_page.is_some();
                 // the Destination Guide: the same plugins and browser
                 // settings, and the OpenID cookie on Second Life
                 // (LLFloaterDestinations::postBuild, getOpenIDCookie)
