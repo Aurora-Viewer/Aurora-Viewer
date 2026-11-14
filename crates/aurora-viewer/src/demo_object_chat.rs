@@ -8,6 +8,9 @@
 //! nothing saved; `im` shows the friend's conversation instead, with a
 //! call's and an automatic reply's lines, and `imlines` turns their
 //! sub-option on. `inspect` opens the first object's inspector for captures.
+//! `unnamed` adds an object with an empty name whose line imitates a
+//! resident's ("Nova Example: …"), and `spoof` the same with the mark of
+//! unnamed objects on for the run (FSMarkObjects), nothing saved.
 
 use crate::settings::ChatStyle;
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetEvent};
@@ -27,6 +30,10 @@ pub struct Scene {
     pub im_lines: bool,
     /// Open the greeter's inspector for a visual check.
     pub inspect: bool,
+    /// An unnamed object imitating a resident's line.
+    pub unnamed: bool,
+    /// The same, unnamed objects marked for the run.
+    pub spoof: bool,
 }
 
 pub fn scene() -> Option<Scene> {
@@ -50,6 +57,8 @@ fn parse(v: &str) -> Option<Scene> {
         im: flags.contains(&"im"),
         im_lines: flags.contains(&"imlines"),
         inspect: flags.contains(&"inspect"),
+        unnamed: flags.contains(&"unnamed") || flags.contains(&"spoof"),
+        spoof: flags.contains(&"spoof"),
     })
 }
 
@@ -80,7 +89,12 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
     let (agent_said, object_said) = (ChatSourceType::Agent, ChatSourceType::Object);
     let normal = ChatType::Normal;
     let stranger = Uuid::from_u128(0x0B1E_C7C4_0000_0000_0000_0000_0000_0001);
-    vec![
+    // an object named with spaces, whose line reads like a resident's
+    let spoofer = scene().is_some_and(|s| s.unnamed).then(|| {
+        let imitation = format!("{}: {}", tr!("demo-nova-example"), tr!("demo-object-chat-reply"));
+        say(object(6), stranger, "  ", &imitation, object_said, normal)
+    });
+    let mut events = vec![
         NetEvent::DisplayNames {
             names: vec![aurora_net::AvatarNameData {
                 id: stranger,
@@ -175,7 +189,9 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
             agent_said,
             normal,
         ),
-    ]
+    ];
+    events.extend(spoofer);
+    events
 }
 
 /// The notices of the scenario, said once the world is in: a friend
@@ -212,6 +228,8 @@ mod tests {
                 im: false,
                 im_lines: false,
                 inspect: false,
+                unnamed: false,
+                spoof: false,
             })
         };
         assert_eq!(parse("aurora"), scene(Some(ChatStyle::Aurora), false));
@@ -224,5 +242,9 @@ mod tests {
         let im = parse("aurora:on:im:imlines").expect("a scene");
         assert!(im.on && im.im && im.im_lines);
         assert!(parse("compact:on:inspect").unwrap().inspect);
+        let spoof = parse("aurora:spoof").expect("a scene");
+        assert!(spoof.unnamed && spoof.spoof);
+        let unnamed = parse("aurora:unnamed").expect("a scene");
+        assert!(unnamed.unnamed && !unnamed.spoof);
     }
 }
