@@ -8043,7 +8043,7 @@ ui-profile-aurora-their-map = この人をマップで探す
 ui-profile-aurora-their-objects = この人のオブジェクトを修正、削除、取得
 ui-profile-aurora-received-tip = { $right }：{ $state }
 ui-profile-aurora-tab-profile = プロフィール
-ui-profile-aurora-tab-picks = お気に入りの場所
+ui-profile-aurora-tab-picks = ピック
 ui-profile-aurora-tab-classifieds = クラシファイド広告
 ui-profile-aurora-tab-first-life = ファーストライフ
 ui-profile-aurora-tab-web = Web
@@ -8077,11 +8077,11 @@ ui-profile-aurora-part-bio = 自己紹介
 ui-profile-aurora-part-first-life = ファーストライフ
 ui-profile-aurora-part-notes = メモ
 ui-profile-aurora-part-places = { $count ->
-    [one] { $count }件の場所
-   *[other] { $count }件の場所
+    [one] { $count }件のピック
+   *[other] { $count }件のピック
     }
 ui-profile-aurora-part-classified = クラシファイド広告
-ui-profile-aurora-snapshot = 場所の画像
+ui-profile-aurora-snapshot = ピックの画像
 ui-profile-aurora-teleport = テレポート
 ui-profile-aurora-description = 説明
 ui-profile-aurora-category = カテゴリ
@@ -8097,11 +8097,11 @@ ui-profile-aurora-copy-slurl = Slurlをコピー
 ui-profile-aurora-here = ここでの自分の位置
 ui-profile-aurora-add-here = 現在地を追加
 ui-profile-aurora-picks-count = { $limit }件中{ $count }件（アカウントの上限）
-ui-profile-aurora-picks-empty = お気に入りの場所はまだありません
-ui-profile-aurora-picks-empty-text = { $name }は場所を共有していません。
-ui-profile-aurora-picks-empty-own = お気に入りの場所を共有しましょう
-ui-profile-aurora-picks-empty-own-text = 他の住人があなたのプロフィールで見て、ワンクリックでテレポートできます。
-ui-profile-aurora-delete-pick = 場所「{ $name }」を削除しますか？
+ui-profile-aurora-picks-empty = まだピックはありません
+ui-profile-aurora-picks-empty-text = { $name }はピックを公開していません。
+ui-profile-aurora-picks-empty-own = 大切なものを紹介しましょう
+ui-profile-aurora-picks-empty-own-text = お気に入りの場所や人、大切にしていることをピックで紹介できます。
+ui-profile-aurora-delete-pick = ピック「{ $name }」を削除しますか？
 ui-profile-aurora-classifieds-empty = クラシファイド広告なし
 ui-profile-aurora-classifieds-empty-text = { $name }はクラシファイド広告を掲載していません。
 ui-profile-aurora-classifieds-empty-own = 場所やサービスを宣伝しましょう
