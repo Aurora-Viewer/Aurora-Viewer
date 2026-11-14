@@ -1464,6 +1464,18 @@ pub struct Settings {
     /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
     /// to show, where things touch. Off by default; only with the shadows.
     pub contact_shadows: bool,
+    /// Soft sun shadows, experimental (aurora-render `soft_shadows.rs`): the
+    /// penumbra widens with the distance of the caster, like the sun's in
+    /// real life. Beyond the Legacy Viewer, off by default and in every
+    /// graphics level; only with the shadows.
+    pub soft_shadows: bool,
+    /// With soft shadows, the size of the light: 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = no size, up to 2. Without soft
+    /// shadows it has no effect.
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 0 to 1: 1 = as the Legacy Viewer's,
+    /// less lets the light through. Works with or without soft shadows.
+    pub shadow_intensity: f32,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
@@ -1695,6 +1707,13 @@ pub struct Settings {
 /// bounce) it hardly shows in the demo's coloured corner, at 2 a glow starts
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
+
+/// The default shadow softness, 0.25 (a light about 0.6 degrees across, close
+/// to the real sun (0.53 degrees, a softness of 0.23); 1 is 2.3 degrees), and the range of the slider.
+pub(crate) const SHADOW_SOFTNESS: f32 = 0.25;
+pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 2.0;
+/// The shadows as the Legacy Viewer draws them.
+pub(crate) const SHADOW_INTENSITY: f32 = 1.0;
 
 pub(crate) const DEFAULT_GROUND_FEET_HEIGHT: f32 = 0.4;
 pub(crate) const DEFAULT_GROUND_FEET_AVATARS: u32 = 5;
@@ -2446,6 +2465,9 @@ impl Default for Settings {
             local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
             projector_shadow_limit: 2,
             contact_shadows: false,
+            soft_shadows: false,
+            shadow_softness: SHADOW_SOFTNESS,
+            shadow_intensity: SHADOW_INTENSITY,
             antialiasing: 6,
             blend_order: crate::graphics_presets::BLEND_ORDER_FULL,
             fsr_quality: 1,
@@ -3248,6 +3270,16 @@ impl Settings {
         } else {
             SCREEN_INDIRECT_INTENSITY
         };
+        self.shadow_softness = if self.shadow_softness.is_finite() {
+            self.shadow_softness.clamp(0.0, SHADOW_SOFTNESS_MAX)
+        } else {
+            SHADOW_SOFTNESS
+        };
+        self.shadow_intensity = if self.shadow_intensity.is_finite() {
+            self.shadow_intensity.clamp(0.0, 1.0)
+        } else {
+            SHADOW_INTENSITY
+        };
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
         } else {
@@ -3590,6 +3622,7 @@ impl Settings {
             screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             screen_indirect_intensity: self.screen_indirect_intensity,
             contact_shadows: self.contact_shadows,
+            soft_shadows: self.soft_shadows,
             specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),

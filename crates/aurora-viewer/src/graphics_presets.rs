@@ -662,8 +662,18 @@ pub struct Effects {
     pub bloom: bool,
     pub bloom_strength: f32,
     pub contact_shadows: bool,
+    /// Soft sun shadows, experimental: off in every level. A backup or a
+    /// saved preset written before them holds none: off, the default size.
+    #[serde(default)]
+    pub soft_shadows: bool,
+    #[serde(default = "shadow_softness")]
+    pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
+}
+
+fn shadow_softness() -> f32 {
+    crate::settings::SHADOW_SOFTNESS
 }
 
 impl Effects {
@@ -672,6 +682,8 @@ impl Effects {
         bloom: false,
         bloom_strength: crate::settings::BLOOM_STRENGTH,
         contact_shadows: false,
+        soft_shadows: false,
+        shadow_softness: crate::settings::SHADOW_SOFTNESS,
         screen_indirect_light: false,
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
     };
@@ -801,6 +813,13 @@ impl Values {
                 Effects::OFF.bloom_strength
             },
             contact_shadows: self.shadow_quality > 0 && e.contact_shadows,
+            soft_shadows: self.shadow_quality > 0 && e.soft_shadows,
+            // a size only while the effect is on
+            shadow_softness: if self.shadow_quality > 0 && e.soft_shadows {
+                round(e.shadow_softness, 0.05)
+            } else {
+                Effects::OFF.shadow_softness
+            },
             screen_indirect_light: indirect,
             screen_indirect_intensity: if indirect {
                 round(e.screen_indirect_intensity, 0.1)
@@ -860,6 +879,8 @@ impl Values {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
                 contact_shadows: s.contact_shadows,
+                soft_shadows: s.soft_shadows,
+                shadow_softness: s.shadow_softness,
                 screen_indirect_light: s.screen_indirect_light,
                 screen_indirect_intensity: s.screen_indirect_intensity,
             },
@@ -901,6 +922,8 @@ impl Values {
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
+        s.soft_shadows = self.effects.soft_shadows;
+        s.shadow_softness = self.effects.shadow_softness;
         s.screen_indirect_light = self.effects.screen_indirect_light;
         s.screen_indirect_intensity = self.effects.screen_indirect_intensity;
     }
@@ -908,6 +931,59 @@ impl Values {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_soft_shadows_are_off_in_every_level_at_the_default_size() {
+        for preset in Preset::ALL {
+            let e = preset.values().effects;
+            assert!(!e.soft_shadows, "{preset:?}");
+            assert_eq!(e.shadow_softness, crate::settings::SHADOW_SOFTNESS, "{preset:?}");
+            let mut settings = Settings {
+                soft_shadows: true,
+                shadow_softness: 1.7,
+                ..Settings::default()
+            };
+            preset.apply(&mut settings);
+            assert!(!settings.soft_shadows && settings.shadow_softness == crate::settings::SHADOW_SOFTNESS);
+        }
+    }
+
+    #[test]
+    fn a_preset_saved_before_the_soft_shadows_reads_them_off_and_a_size_counts_only_while_on() {
+        let mut settings = Settings::default();
+        Preset::Deluxe.apply(&mut settings);
+        let mut saved = serde_json::to_value(Values::read(&settings)).expect("save preset");
+        let effects = saved.get_mut("effects").and_then(|e| e.as_object_mut()).expect("effects");
+        effects.remove("soft_shadows");
+        effects.remove("shadow_softness");
+        let old: Values = serde_json::from_value(saved).expect("older preset");
+        assert!(!old.effects.soft_shadows);
+        assert_eq!(old.effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
+        // the size shown is the default while the effect is off
+        let mut v = Values::read(&settings);
+        v.effects.shadow_softness = 1.7;
+        v.effects.soft_shadows = false;
+        assert_eq!(v.as_shown().effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
+        v.effects.soft_shadows = true;
+        assert!((v.as_shown().effects.shadow_softness - 1.7).abs() < 0.03);
+    }
+
+    #[test]
+    fn the_shadow_softness_and_intensity_are_sanitised() {
+        for (softness, intensity) in [(f32::NAN, f32::NAN), (-3.0, -1.0), (50.0, 9.0), (f32::INFINITY, f32::NEG_INFINITY)] {
+            let s = Settings {
+                shadow_softness: softness,
+                shadow_intensity: intensity,
+                ..Settings::default()
+            }
+            .sanitized();
+            assert!(
+                (0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness),
+                "{softness}"
+            );
+            assert!((0.0..=1.0).contains(&s.shadow_intensity), "{intensity}");
+        }
+    }
+
     #[test]
     fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
         let mut settings = Settings::default();
