@@ -151,6 +151,36 @@ pub struct RainGround {
 pub const RAIN_GROUND_SIZE: u32 = 128;
 /// Rain prototype: cells a side of the wetness memory (`fs_rain_wet_update`).
 pub const RAIN_WET_SIZE: u32 = 512;
+
+/// The wetness memory's two textures `size` texels a side: the one drawn
+/// each frame and the copy the next frame and the wet ground read.
+fn wet_textures(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
+    let wet = |label, usage| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // x the height reached, y how wet, z how deep the snow lies
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let target = wet(
+        "rain wetness (drawn)",
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let target_view = target.create_view(&Default::default());
+    let read = wet("rain wetness", wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+    let read_view = read.create_view(&Default::default());
+    (target, target_view, read, read_view)
+}
 /// Snow footprints: texels a side of the trail map (`fs_snow_trail_update`)
 /// and the metres it covers around the camera (3 cm a texel).
 pub const SNOW_TRAIL_SIZE: u32 = 1024;
@@ -256,6 +286,9 @@ pub(crate) struct WaterGpu {
     pub rain_wet_target_view: wgpu::TextureView,
     pub rain_wet: wgpu::Texture,
     pub rain_wet_view: wgpu::TextureView,
+    /// Its texels a side (`resize_wet`): 4 a metre, over the renderer's
+    /// memory square.
+    pub rain_wet_size: u32,
     /// Snow footprints: how deep the snow is pressed down (R), drawn into
     /// `snow_trail_target` and copied into `snow_trail` (frame binding 28).
     pub snow_trail_target: wgpu::Texture,
@@ -311,6 +344,17 @@ impl WaterGpu {
                 depth_or_array_layers: 1,
             },
         );
+    }
+
+    /// The wetness memory at `size` texels a side, its old one dropped
+    /// (the renderer starts it fresh and binds the new views again).
+    pub fn resize_wet(&mut self, device: &wgpu::Device, size: u32) {
+        let (target, target_view, read, read_view) = wet_textures(device, size);
+        self.rain_wet_target = target;
+        self.rain_wet_target_view = target_view;
+        self.rain_wet = read;
+        self.rain_wet_view = read_view;
+        self.rain_wet_size = size;
     }
 
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
@@ -393,30 +437,7 @@ impl WaterGpu {
             view_formats: &[],
         });
         let rain_ground_view = rain_ground.create_view(&Default::default());
-        let wet = |label, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: RAIN_WET_SIZE,
-                    height: RAIN_WET_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                // x the height reached, y how wet, z how deep the snow lies
-                format: wgpu::TextureFormat::Rgba32Float,
-                usage,
-                view_formats: &[],
-            })
-        };
-        let rain_wet_target = wet(
-            "rain wetness (drawn)",
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        );
-        let rain_wet_target_view = rain_wet_target.create_view(&Default::default());
-        let rain_wet = wet("rain wetness", wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
-        let rain_wet_view = rain_wet.create_view(&Default::default());
+        let (rain_wet_target, rain_wet_target_view, rain_wet, rain_wet_view) = wet_textures(device, RAIN_WET_SIZE);
         let trail = |label, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -560,6 +581,7 @@ impl WaterGpu {
             rain_wet_target_view,
             rain_wet,
             rain_wet_view,
+            rain_wet_size: RAIN_WET_SIZE,
             snow_trail_target,
             snow_trail_target_view,
             snow_trail,

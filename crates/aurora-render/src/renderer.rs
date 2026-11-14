@@ -2463,7 +2463,7 @@ fn begin_scene_b_on<'a>(
 }
 
 /// Rain prototype: the wetness memory's bookkeeping. The memory covers
-/// [`RAIN_WET_EXTENT`] m around the camera, its corner snapped to
+/// a square around the camera ([`wet_extent_for`]), its corner snapped to
 /// [`RAIN_WET_SNAP`] m (it moves only after the camera has; the update reads
 /// the last one at the same places). `soak`: how wet a place new to it is
 /// (it rises as the rain goes on, then dries); the ground is drawn wet
@@ -2487,7 +2487,15 @@ struct RainWet {
     snow_cover: [f32; 4],
 }
 
-const RAIN_WET_EXTENT: f32 = 128.0;
+/// The wetness memory's square (m) for the weather drawn `reach` metres
+/// away (`RainLook::memory_reach`): 128 m by default, 256 m or 512 m for
+/// farther puddles or snow, always 4 texels a metre (512 to 2048 a side:
+/// 8 to 128 MB for its two textures). Its square must reach as far as
+/// what is drawn: beyond it no puddle or snow shows.
+fn wet_extent_for(reach: f32) -> f32 {
+    [128.0, 256.0, 512.0].into_iter().find(|e| e * 0.5 >= reach).unwrap_or(512.0)
+}
+const RAIN_WET_TEXELS_PER_M: f32 = 4.0;
 const RAIN_WET_SNAP: f32 = 8.0;
 const RAIN_WET_DRY: f32 = 0.02;
 /// How fast a place soaks while it rains (s, at full rain), and dries
@@ -2557,7 +2565,7 @@ impl RainWet {
 
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
     /// `at`; `ice`: puddles freeze in the snow.
-    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool) {
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool, extent: f32) {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
@@ -2599,11 +2607,11 @@ impl RainWet {
             *self = RainWet::default();
             return;
         }
-        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(RAIN_WET_EXTENT * 0.5);
+        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(extent * 0.5);
         self.origin = Some(origin);
         let fresh = was.is_none() || self.last.is_none();
         let prev = was.unwrap_or(origin);
-        self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
+        self.uniform = [origin.x, origin.y, extent, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
         // z: 1 while rain melts the snow, + 2 while puddles may freeze, + 4
         // deep snow (parallax)
@@ -6984,7 +6992,13 @@ impl Backend {
         // my avatar: deep snow's grid centred on it, not on the camera (an
         // orbiting camera would move it, and its cells resample what they
         // cover: narrow strips spiking as it pans)
-        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], 0.0, 0.0];
+        // z: deep snow's reach (m, env.wgsl `snow_mesh_grid`)
+        u.snow_trail_step = [
+            f.rain_look.trail_centre[0],
+            f.rain_look.trail_centre[1],
+            f.rain_look.deep_reach,
+            0.0,
+        ];
         u.snow_stamps = f.rain_look.snow_stamps;
         for (i, z) in f.rain_look.snow_stamp_z.iter().enumerate() {
             u.snow_stamp_z[i / 4][i % 4] = *z;
@@ -8060,9 +8074,22 @@ impl Backend {
             self.rain_wet = RainWet::default();
             self.rain_wet.snow = 1.0;
         }
+        // the memory's square, as far as the weather is drawn: a new size
+        // starts it again (its textures made anew, the frame groups bound
+        // to them), as a clean-up does
+        let extent = wet_extent_for(f.rain_look.memory_reach);
+        let texels = (extent * RAIN_WET_TEXELS_PER_M) as u32;
+        if texels != self.water_effects.rain_wet_size {
+            log::info!("weather memory: {extent} m square ({texels} texels a side)");
+            self.water_effects.resize_wet(&self.device, texels);
+            self.rebuild_bind_groups();
+            let snow = self.rain_wet.snow;
+            self.rain_wet = RainWet::default();
+            self.rain_wet.snow = snow;
+        }
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
         self.rain_wet
-            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow);
+            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
         // footprints while snow lies and they are wanted
         let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
         let trail_extent = f.rain_look.trail_extent.clamp(16.0, 128.0);
@@ -10082,8 +10109,8 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             let size = wgpu::Extent3d {
-                width: crate::water_effects::RAIN_WET_SIZE,
-                height: crate::water_effects::RAIN_WET_SIZE,
+                width: self.water_effects.rain_wet_size,
+                height: self.water_effects.rain_wet_size,
                 depth_or_array_layers: 1,
             };
             encoder.copy_texture_to_texture(
@@ -11906,6 +11933,19 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_weather_memory_covers_what_is_drawn() {
+        // today's defaults (puddles 38 m, snow 60 m): the same 128 m as before
+        assert_eq!(wet_extent_for(60.0), 128.0);
+        assert_eq!(wet_extent_for(64.0), 128.0);
+        assert_eq!(wet_extent_for(65.0), 256.0);
+        assert_eq!(wet_extent_for(128.0), 256.0);
+        assert_eq!(wet_extent_for(256.0), 512.0);
+        // never more than 512 m (2048 texels)
+        assert_eq!(wet_extent_for(1000.0), 512.0);
+        assert_eq!((wet_extent_for(256.0) * RAIN_WET_TEXELS_PER_M) as u32, 2048);
+    }
 
     /// The mirror's blended faces: those it does not see left out, the rigged
     /// first in their own order, then the others back to front from the

@@ -59,12 +59,18 @@ pub enum WeatherQuality {
 }
 
 /// Puddle view distance, metres: the range of the slider and its default.
-pub const PUDDLE_DISTANCE: std::ops::RangeInclusive<f32> = 10.0..=60.0;
+pub const PUDDLE_DISTANCE: std::ops::RangeInclusive<f32> = 10.0..=256.0;
 pub const PUDDLE_DISTANCE_DEFAULT: f32 = 38.0;
 /// How far snow lying on the ground is drawn, metres: the slider's range
 /// and its default.
-pub const SNOW_DISTANCE: std::ops::RangeInclusive<f32> = 20.0..=120.0;
+pub const SNOW_DISTANCE: std::ops::RangeInclusive<f32> = 20.0..=256.0;
 pub const SNOW_DISTANCE_DEFAULT: f32 = 60.0;
+/// Deep snow's reach around my avatar (m, at High weather quality): as far
+/// as the rain's shelter map, which its surface is read from. The same
+/// cells whatever it is, coarser toward its edge: farther costs nothing
+/// measurable (2026-11-14, `scripts/weather-profile.py`).
+pub const DEEP_SNOW_REACH: std::ops::RangeInclusive<f32> = 10.0..=40.0;
+pub const DEEP_SNOW_REACH_DEFAULT: f32 = 15.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -115,6 +121,8 @@ pub struct WeatherSettings {
     pub ice: bool,
     /// Deep snow (experimental): parallax through the lying snow.
     pub snow_deep: bool,
+    /// How far around my avatar deep snow is drawn (m, `DEEP_SNOW_REACH`).
+    pub snow_deep_reach: f32,
     /// The aurora (northern lights) in the night sky.
     pub aurora: bool,
     /// How bright it is, 0 (faint) to 1 (a strong display).
@@ -152,6 +160,7 @@ impl Default for WeatherSettings {
             snow_on_avatars: true,
             ice: true,
             snow_deep: false,
+            snow_deep_reach: DEEP_SNOW_REACH_DEFAULT,
             aurora: false,
             aurora_intensity: 0.6,
             aurora_heading: 0.0,
@@ -311,6 +320,13 @@ impl WeatherSettings {
             snow_detail: 0,
             // and a region's snow so far (weather/region.rs)
             snow_lying: 0.0,
+            // both distances, whichever falls: the memory's square stays
+            // the same size from rain to snow (a new size starts it again)
+            memory_reach: self
+                .snow_distance
+                .clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end())
+                .max(self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end())),
+            deep_reach: self.snow_deep_reach.clamp(*DEEP_SNOW_REACH.start(), *DEEP_SNOW_REACH.end()),
             footprints: self.snow_footprints && self.snow_settles,
             trail_extent: self.snow_footprints_reach.clamp(32.0, 64.0),
             // the app centres it on my avatar
@@ -482,6 +498,39 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_renderer_gets_both_distances_and_deep_snows_reach() {
+        let w = WeatherSettings {
+            puddle_distance: 200.0,
+            snow_distance: 60.0,
+            snow_deep_reach: 30.0,
+            touched: true,
+            ..WeatherSettings::default()
+        };
+        let look = w.rain_look(&Wind::default());
+        // the farther of the two, whatever falls now
+        assert_eq!(look.memory_reach, 200.0);
+        assert_eq!(look.deep_reach, 30.0);
+        // the defaults keep today's sizes
+        let d = WeatherSettings {
+            touched: true,
+            ..WeatherSettings::default()
+        }
+        .rain_look(&Wind::default());
+        assert_eq!((d.memory_reach, d.deep_reach), (SNOW_DISTANCE_DEFAULT, DEEP_SNOW_REACH_DEFAULT));
+        // out of range: clamped
+        let far = WeatherSettings {
+            snow_deep_reach: 500.0,
+            puddle_distance: 9000.0,
+            ..w
+        };
+        let look = far.rain_look(&Wind::default());
+        assert_eq!(
+            (look.memory_reach, look.deep_reach),
+            (*PUDDLE_DISTANCE.end(), *DEEP_SNOW_REACH.end())
+        );
+    }
 
     #[test]
     fn the_northern_lights_reach_the_renderer_only_while_on() {

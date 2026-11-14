@@ -156,6 +156,16 @@ fn weather(cx: &mut Cx) {
                 tr!("ui-weather-deep-snow-tip"),
                 &field!(weather.snow_deep),
             );
+            let no_deep = !cx.s.weather.snow_deep;
+            cx.subs(no_deep, |cx| {
+                cx.slider_whole(
+                    tr!("ui-weather-deep-snow-reach"),
+                    tr!("ui-weather-deep-snow-reach-tip"),
+                    &field!(weather.snow_deep_reach),
+                    crate::weather::DEEP_SNOW_REACH,
+                    " m",
+                );
+            });
         });
         cx.toggle(
             tr!("ui-weather-avatar-snow"),

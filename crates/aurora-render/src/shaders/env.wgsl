@@ -3641,9 +3641,12 @@ struct SnowMeshOut {
 // centimetres: footprints) and grow outward (`snow_mesh_warp`).
 fn snow_mesh_grid() -> vec2<f32> {
     let q = rain_quality();
-    if (q <= 0) { return vec2<f32>(128.0, 10.0); }
-    if (q == 1) { return vec2<f32>(192.0, 13.0); }
-    return vec2<f32>(256.0, 15.0);
+    // the reach set (frame.snow_trail_step.z, m at High), each quality
+    // its share: as many cells, so farther it is coarser where it is far
+    let reach = select(15.0, frame.snow_trail_step.z, frame.snow_trail_step.z > 0.0) / 15.0;
+    if (q <= 0) { return vec2<f32>(128.0, 10.0 * reach); }
+    if (q == 1) { return vec2<f32>(192.0, 13.0 * reach); }
+    return vec2<f32>(256.0, 15.0 * reach);
 }
 
 // How much of the grid's spacing is even (the rest grows with the cube):
