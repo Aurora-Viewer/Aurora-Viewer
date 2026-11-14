@@ -271,6 +271,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::ObjectProfile(..) => "ObjectProfile",
         CtxAction::SaveAs(_, crate::build::export::Format::Collada) => "SaveCollada",
         CtxAction::SaveAs(_, crate::build::export::Format::Obj) => "SaveObj",
+        CtxAction::SaveAs(_, crate::build::export::Format::Gltf) => "SaveGltf",
         CtxAction::Pathfinding { characters: false, .. } => "RegionObjects",
         CtxAction::Pathfinding { characters: true, .. } => "PathfindingCharacters",
         CtxAction::ResetMeshLod(..) => "ResetMeshLod",

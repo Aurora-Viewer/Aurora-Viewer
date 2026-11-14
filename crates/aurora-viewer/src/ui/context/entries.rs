@@ -955,7 +955,7 @@ fn derender_items(ui: &mut Builder, id: Uuid, temporary: &str, enabled: bool) {
     );
 }
 
-/// "Save as" (Export Menu) on the prim `id`: Collada and OBJ open the
+/// "Save as" (Export Menu) on the prim `id`: Collada, OBJ and glTF open the
 /// export window, which shows what the rights let through
 /// (Object.EnableExport only asks for a selection). Backup waits for its
 /// own task.
@@ -969,6 +969,7 @@ fn save_as_submenu(ui: &mut Builder, id: Uuid) {
             CtxAction::SaveAs(id, Format::Collada),
         );
         ui.item("box", aurora_i18n::tr!("ui-context-save-obj"), CtxAction::SaveAs(id, Format::Obj));
+        ui.item("box", aurora_i18n::tr!("ui-context-save-gltf"), CtxAction::SaveAs(id, Format::Gltf));
     });
 }
 
@@ -1875,7 +1876,7 @@ mod tests {
     }
 
     #[test]
-    fn save_as_opens_the_collada_and_obj_export_of_the_prim() {
+    fn save_as_opens_the_collada_obj_and_gltf_export_of_the_prim() {
         use crate::build::export::Format;
         let f = Facts::default();
         let menu = || world_menu(&object_target(), &f, Vec3::ZERO);
@@ -1883,6 +1884,8 @@ mod tests {
         assert!(collada.enabled && matches!(collada.kind, Kind::Action(CtxAction::SaveAs(id, Format::Collada)) if id == ID));
         let obj = row(menu(), "ui-context-save-obj");
         assert!(obj.enabled && matches!(obj.kind, Kind::Action(CtxAction::SaveAs(id, Format::Obj)) if id == ID));
+        let gltf = row(menu(), "ui-context-save-gltf");
+        assert!(gltf.enabled && matches!(gltf.kind, Kind::Action(CtxAction::SaveAs(id, Format::Gltf)) if id == ID));
     }
 
     #[test]

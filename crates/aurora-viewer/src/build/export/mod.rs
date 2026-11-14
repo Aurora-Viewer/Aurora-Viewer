@@ -1,22 +1,25 @@
-//! Object › Save as › Collada / OBJ: the selected objects written to a 3D
-//! file for an outside tool, with their textures beside it. Port of the
+//! Object › Save as › Collada / OBJ / glTF: the selected objects written to
+//! a 3D file for an outside tool, with their textures beside it (or inside
+//! it, for glTF). Port of the
 //! Legacy Viewer's Collada export (ColladaExportFloater and DAESaver,
 //! indra/newview/daeexport.cpp, Latif Khalifa and Cinder Biscuits; its
 //! rights, FSExportPermsCheck, indra/newview/fsexportperms.cpp, Cinder
-//! Biscuits; LGPL 2.1). OBJ is Aurora's own, from the same model.
+//! Biscuits; LGPL 2.1). OBJ and glTF are Aurora's own, from the same model.
 //!
 //! - `rights.rs`: which prims and textures may be written.
 //! - `gather.rs`: the selection's prims, their facts and geometry, read from
 //!   the world and the scene.
 //! - `model.rs`: the faces gathered per prim, with materials and options.
-//! - `collada.rs`, `obj.rs`: the file formats.
-//! - `textures.rs`: the texture files beside the model.
+//! - `collada.rs`, `obj.rs`, `gltf.rs`: the file formats.
+//! - `textures.rs`: the texture files beside the model, or the PNG images
+//!   embedded in a glTF file.
 //!
 //! The window is `build/ui/export.rs`, the steps on the app's side
 //! `app/object_export.rs`.
 
 pub mod collada;
 pub mod gather;
+pub mod gltf;
 pub mod model;
 pub mod obj;
 pub mod rights;
@@ -32,6 +35,8 @@ pub enum Format {
     #[default]
     Collada,
     Obj,
+    /// Binary glTF 2.0, the textures inside the file.
+    Gltf,
 }
 
 impl Format {
@@ -39,6 +44,7 @@ impl Format {
         match self {
             Format::Collada => "dae",
             Format::Obj => "obj",
+            Format::Gltf => "glb",
         }
     }
 }
@@ -85,7 +91,7 @@ pub struct Settings {
     pub format: Format,
     /// DAEExportTextures: write the textures we may beside the file.
     pub textures: bool,
-    /// DAEExportTexturesFormat.
+    /// DAEExportTexturesFormat (glTF always embeds PNG).
     pub texture_format: ImageFormat,
     /// DAEExportConsolidateMaterials: one material per texture and colour.
     pub consolidate: bool,

@@ -1,15 +1,17 @@
-//! Object › Save as › Collada / OBJ on the app's side: the window opened on
-//! the menu's selection, the rights read again as properties, shapes and
-//! texture comments arrive, then Save as: the file dialog, the shapes
-//! gathered and the file written on a worker, the textures beside it.
+//! Object › Save as › Collada / OBJ / glTF on the app's side: the window
+//! opened on the menu's selection, the rights read again as properties,
+//! shapes and texture comments arrive, then Save as: the file dialog, the
+//! shapes gathered and the file written on a worker, the textures beside it
+//! (for glTF, fetched first and written inside the file).
 //! Port of ColladaExportFloater (indra/newview/daeexport.cpp, Latif Khalifa
 //! and Cinder Biscuits, LGPL 2.1); the rules are in `build/export/`.
 
 use super::App;
 use crate::build::export::gather::{self, PrimInput, Waiting};
+use crate::build::export::gltf::Embedded;
 use crate::build::export::rights::{self, Context};
 use crate::build::export::textures::TextureSaver;
-use crate::build::export::{Format, Settings, TextureFiles, collada, model, obj};
+use crate::build::export::{Format, Settings, TextureFiles, collada, gltf, model, obj};
 use crate::build::ui::export::{Action, Progress, Summary};
 use crate::world::inventory::actions::ExportGrid;
 use crate::world::objects::ObjKey;
@@ -56,10 +58,18 @@ enum Stage {
         since: Instant,
         inputs: HashMap<ObjKey, PrimInput>,
     },
+    /// glTF: the textures fetched into memory before the file is written.
+    Embedding {
+        path: PathBuf,
+        inputs: HashMap<ObjKey, PrimInput>,
+        saver: TextureSaver,
+    },
     Writing {
         path: PathBuf,
         reply: Receiver<Result<(), String>>,
         textures: Option<TextureSaver>,
+        /// Embedded textures that did not arrive.
+        missing: usize,
     },
     Textures {
         path: PathBuf,
@@ -70,7 +80,7 @@ enum Stage {
 impl Job {
     pub(super) fn wanted_images(&mut self) -> impl Iterator<Item = Uuid> + '_ {
         let saving = match &mut self.stage {
-            Stage::Textures { saver, .. } => Some(saver.wanted_images.drain()),
+            Stage::Textures { saver, .. } | Stage::Embedding { saver, .. } => Some(saver.wanted_images.drain()),
             _ => None,
         };
         saving.into_iter().flatten()
@@ -398,6 +408,7 @@ impl App {
                 aurora_i18n::tr!("object-export-collada"),
             ),
             Format::Obj => (aurora_i18n::tr!("object-export-obj-files"), aurora_i18n::tr!("object-export-obj")),
+            Format::Gltf => (aurora_i18n::tr!("object-export-gltf-files"), aurora_i18n::tr!("object-export-gltf")),
         };
         let (filter, title) = (filter.to_owned(), title.to_owned());
         let (tx, rx) = crossbeam_channel::bounded(1);
@@ -463,11 +474,30 @@ impl App {
                     Stage::Gathering { path, since, inputs }
                 }
             }
-            Stage::Writing { path, reply, textures } => match reply.try_recv() {
+            Stage::Embedding { path, inputs, mut saver } => {
+                saver.poll(ctx, &mut self.scene, now);
+                self.object_export.progress = Some(Progress::Textures {
+                    left: saver.total - saver.written - saver.failed.len(),
+                    total: saver.total,
+                });
+                if saver.done() {
+                    self.object_export.progress = Some(Progress::Writing);
+                    let missing = saver.failed.len();
+                    self.object_export_write_file(ctx, path, inputs, saver.embedded, missing)
+                } else {
+                    Stage::Embedding { path, inputs, saver }
+                }
+            }
+            Stage::Writing {
+                path,
+                reply,
+                textures,
+                missing,
+            } => match reply.try_recv() {
                 Ok(Ok(())) => match textures {
                     Some(saver) => Stage::Textures { path, saver },
                     None => {
-                        self.object_export_done(&path, Ok(0));
+                        self.object_export_done(&path, Ok(missing));
                         Stage::Idle
                     }
                 },
@@ -479,7 +509,12 @@ impl App {
                     self.object_export_done(&path, Err("stopped".into()));
                     Stage::Idle
                 }
-                Err(crossbeam_channel::TryRecvError::Empty) => Stage::Writing { path, reply, textures },
+                Err(crossbeam_channel::TryRecvError::Empty) => Stage::Writing {
+                    path,
+                    reply,
+                    textures,
+                    missing,
+                },
             },
             Stage::Textures { path, mut saver } => {
                 saver.poll(ctx, &mut self.scene, now);
@@ -497,27 +532,56 @@ impl App {
         };
     }
 
-    /// DAESaver::saveDAE and its OBJ sibling, on a worker: the shapes made
-    /// at their highest detail, the model, the file(s).
-    fn object_export_write(&mut self, ctx: &egui::Context, path: PathBuf, mut inputs: HashMap<ObjKey, PrimInput>) -> Stage {
-        let settings: Settings = self.settings.build.export.clone();
-        // the file's prims in the selection's order, the first root first
-        let ordered: Vec<PrimInput> = self.object_export_job.allowed.iter().filter_map(|k| inputs.remove(k)).collect();
-        let format = settings.texture_format;
-        let files = TextureFiles::new(
+    /// The textures this export may save, named for their files.
+    fn object_export_files(&self, settings: &Settings) -> TextureFiles {
+        TextureFiles::new(
             if settings.textures {
                 self.object_export_job.files.clone()
             } else {
                 Vec::new()
             },
-            format,
-        );
+            settings.texture_format,
+        )
+    }
+
+    /// The shapes are here: a glTF file first fetches the textures it holds,
+    /// the other formats are written at once.
+    fn object_export_write(&mut self, ctx: &egui::Context, path: PathBuf, inputs: HashMap<ObjKey, PrimInput>) -> Stage {
+        let settings = &self.settings.build.export;
+        let files = self.object_export_files(settings);
+        if settings.format == Format::Gltf && settings.textures && !files.names.is_empty() {
+            let saver = TextureSaver::embed(&files);
+            self.object_export.progress = Some(Progress::Textures {
+                left: saver.total,
+                total: saver.total,
+            });
+            return Stage::Embedding { path, inputs, saver };
+        }
+        self.object_export_write_file(ctx, path, inputs, HashMap::new(), 0)
+    }
+
+    /// DAESaver::saveDAE and its OBJ and glTF siblings, on a worker: the
+    /// shapes made at their highest detail, the model, the file(s).
+    fn object_export_write_file(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        mut inputs: HashMap<ObjKey, PrimInput>,
+        images: HashMap<uuid::Uuid, Embedded>,
+        missing: usize,
+    ) -> Stage {
+        let settings: Settings = self.settings.build.export.clone();
+        // the file's prims in the selection's order, the first root first
+        let ordered: Vec<PrimInput> = self.object_export_job.allowed.iter().filter_map(|k| inputs.remove(k)).collect();
+        let format = settings.texture_format;
+        let files = self.object_export_files(&settings);
         let tool = format!("Aurora Viewer {}", aurora_version::version());
         let author = Some(self.world.own_name())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| "Unknown".into());
         let date = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        let textures = (settings.textures && !files.names.is_empty()).then(|| TextureSaver::new(&files, &path, format));
+        let beside = settings.format != Format::Gltf && settings.textures && !files.names.is_empty();
+        let textures = beside.then(|| TextureSaver::new(&files, &path, format));
         let (tx, rx) = crossbeam_channel::bounded(1);
         let wake = ctx.clone();
         let target = path.clone();
@@ -537,6 +601,7 @@ impl App {
                     crate::atomic_file::write(&mtl, obj::write_mtl(&model, &files, &settings, &tool).as_bytes())
                         .and_then(|()| crate::atomic_file::write(&target, obj::write_obj(&model, &mtl_name, &tool).as_bytes()))
                 }
+                Format::Gltf => crate::atomic_file::write(&target, &gltf::write_glb(&model, &files, &images, &settings, &tool)),
             };
             log::info!(
                 "object export: {} prims, {} triangles, {} materials",
@@ -551,7 +616,12 @@ impl App {
             self.object_export_done(&path, Err(e.to_string()));
             return Stage::Idle;
         }
-        Stage::Writing { path, reply: rx, textures }
+        Stage::Writing {
+            path,
+            reply: rx,
+            textures,
+            missing,
+        }
     }
 
     /// onTexturesSaved: ExportColladaSuccess or ExportColladaFailure, and
@@ -587,7 +657,7 @@ impl App {
 }
 
 impl App {
-    /// AURORA_DEMO_OBJECT_EXPORT: the garden lamp before us, then the window
+    /// AURORA_DEMO_OBJECT_EXPORT (collada, obj or gltf): the garden lamp before us, then the window
     /// on it; with
     /// AURORA_DEMO_OBJECT_EXPORT_FILE, Save as to that file without the
     /// dialog.
@@ -619,7 +689,11 @@ impl App {
                 log::info!("demo object export: lamp at {at:?}");
             }
             700 => {
-                let format = if mode == "obj" { Format::Obj } else { Format::Collada };
+                let format = match mode {
+                    "obj" => Format::Obj,
+                    "gltf" => Format::Gltf,
+                    _ => Format::Collada,
+                };
                 self.open_object_export(root, format);
             }
             900 => {
