@@ -17178,6 +17178,7 @@ impl App {
                             opacity: self.settings.chat_bubble_opacity,
                             now: Instant::now(),
                         }),
+                        self.look_hover.and_then(|(idx, _)| idx),
                     )
                 };
                 ui::contact_markers::draw(
@@ -20501,6 +20502,7 @@ impl ApplicationHandler for App {
                 }
             }
             crate::demo::contact_markers::apply_preferences(&mut self.settings);
+            crate::demo::floating_text::apply_preferences(&mut self.settings);
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }
