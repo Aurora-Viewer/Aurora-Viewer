@@ -2065,14 +2065,22 @@ fn rain_path_up(i: i32, slope: f32) -> f32 {
 // surface there, or higher where cover upwind keeps it off (a surface `top`
 // high, `dz` up the path, shelters everything below `top - dz` here).
 fn rain_reached_height(xy: vec2<f32>, near_z: f32) -> f32 {
-    var top = rain_surface_height(xy, near_z);
+    let here = rain_surface_height(xy, near_z);
+    var top = here;
     let s = rain_slant();
     if (top < -1e8 || dot(s, s) < 0.0025) { return top; }
     let slope = length(s);
     for (var i = 0; i < rain_path_points(); i++) {
         let dz = rain_path_up(i, slope);
         let up = rain_surface_height(xy - s * dz, near_z);
-        if (up > -1e8) { top = max(top, up - dz); }
+        // cover is what stands up out of the ground along the path (a wall,
+        // a building, a tree), rising faster than 35° from here: ground that
+        // only climbs toward the wind (a hillside, a ramp, a kerb) takes the
+        // snow, as snow drifts into a lee. Counted as cover, the slow snow's
+        // shallow path left every slope facing away from the wind bare, in
+        // stripes along it (the map's texels a stair on it), and the square
+        // the map covers bare while all beyond it lay white
+        if (up > -1e8 && up - here > 0.7 * RAIN_PATH_OUT[i] + 0.1) { top = max(top, up - dz); }
     }
     return top;
 }
