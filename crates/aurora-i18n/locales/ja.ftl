@@ -14467,3 +14467,9 @@ joystick-layout-positional = 位置に基づく
 
 joystick-layout-auto = 自動
 joystick-layout-xinput = XInput
+
+# Minimap avatar name format.
+ui-minimap-avatar-name-format = アバター名の表示形式
+ui-minimap-name-display = 表示名
+ui-minimap-name-legacy = 従来の名前
+ui-minimap-name-display-legacy = 表示名（従来の名前）

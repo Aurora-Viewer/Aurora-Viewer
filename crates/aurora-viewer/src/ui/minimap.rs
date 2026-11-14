@@ -12,7 +12,7 @@ use super::context::{self, AvatarList, CtxAction};
 use super::map_tiles::MapTiles;
 use super::menu;
 use crate::scene::Scene;
-use crate::settings::MapSettings;
+use crate::settings::{MapSettings, MiniAvatarNameFormat};
 use crate::theme::Palette;
 use crate::world::World;
 use aurora_net::RegionHandle;
@@ -242,11 +242,141 @@ pub fn avatars(world: &World) -> Vec<(Uuid, Vec3, bool)> {
     out
 }
 
-pub fn avatar_name(world: &World, id: &Uuid) -> String {
+fn formatted_avatar_name(
+    name: &crate::world::names::AvatarName,
+    options: &crate::world::names::NameOptions,
+    format: MiniAvatarNameFormat,
+) -> String {
+    let legacy = name.user_name_for_display(options);
+    match format {
+        MiniAvatarNameFormat::Display => name.display_name.clone(),
+        MiniAvatarNameFormat::Legacy => legacy,
+        MiniAvatarNameFormat::DisplayAndLegacy => {
+            if name.is_default || name.display_name == legacy {
+                name.display_name.clone()
+            } else {
+                format!("{} ({})", name.display_name, legacy)
+            }
+        }
+    }
+}
+
+pub fn avatar_name(world: &World, id: &Uuid, format: MiniAvatarNameFormat) -> String {
+    if let Some(name) = world.social.avatar_names.get(id) {
+        return formatted_avatar_name(name, &world.social.avatar_names.options, format);
+    }
     world
         .avatar_name(id)
         .or_else(|| world.social.names.get(id).cloned())
         .unwrap_or_else(|| "…".into())
+}
+
+#[cfg(test)]
+mod name_format_tests {
+    use super::*;
+    use crate::world::names::{AvatarName, NameOptions};
+
+    fn example_name() -> AvatarName {
+        AvatarName {
+            username: "john.smith".into(),
+            display_name: "Captain Jack".into(),
+            legacy_first: "John".into(),
+            legacy_last: "Smith".into(),
+            ..AvatarName::default()
+        }
+    }
+
+    #[test]
+    fn each_minimap_name_format() {
+        let name = example_name();
+        let options = NameOptions::default();
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::Display),
+            "Captain Jack"
+        );
+        assert_eq!(formatted_avatar_name(&name, &options, MiniAvatarNameFormat::Legacy), "John Smith");
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::DisplayAndLegacy),
+            "Captain Jack (John Smith)"
+        );
+    }
+
+    #[test]
+    fn default_or_identical_names_are_not_repeated() {
+        let mut name = example_name();
+        let options = NameOptions::default();
+        name.is_default = true;
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::DisplayAndLegacy),
+            "Captain Jack"
+        );
+        name.is_default = false;
+        name.display_name = "John Smith".into();
+        assert_eq!(
+            formatted_avatar_name(&name, &options, MiniAvatarNameFormat::DisplayAndLegacy),
+            "John Smith"
+        );
+    }
+
+    #[test]
+    fn minimap_names_honor_rlva_privacy_in_all_formats() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let known = Uuid::from_u128(42);
+        let not_cached = Uuid::from_u128(43);
+        world.social.avatar_names.on_display_names(
+            &[aurora_net::AvatarNameData {
+                id: known,
+                username: "john.smith".into(),
+                display_name: "Captain Jack".into(),
+                legacy_first: "John".into(),
+                legacy_last: "Smith".into(),
+                ..Default::default()
+            }],
+            &[],
+            Some(3600),
+        );
+        // The legacy fallback has a real name even though the display cache does not.
+        world.social.names.insert(not_cached, "Other Resident".into());
+
+        let formats = [
+            MiniAvatarNameFormat::Display,
+            MiniAvatarNameFormat::Legacy,
+            MiniAvatarNameFormat::DisplayAndLegacy,
+        ];
+        let expected = ["Captain Jack", "John Smith", "Captain Jack (John Smith)"];
+        for (format, name) in formats.into_iter().zip(expected) {
+            assert_eq!(avatar_name(&world, &known, format), name);
+        }
+
+        // RLVa must win over both a cached real name and the legacy fallback.
+        world.social.avatar_names.set_rlva_privacy(true, Default::default());
+        for id in [known, not_cached] {
+            let anonymous = crate::world::rlva::privacy::anonymous(id).display_name.as_str();
+            for format in formats {
+                assert_eq!(avatar_name(&world, &id, format), anonymous, "privacy leak for {id} in {format:?}");
+            }
+        }
+
+        // An explicit RLVa exception can reveal only that resident's name.
+        world
+            .social
+            .avatar_names
+            .set_rlva_privacy(true, std::collections::HashSet::from([known]));
+        for (format, name) in formats.into_iter().zip(expected) {
+            assert_eq!(avatar_name(&world, &known, format), name);
+            assert_eq!(
+                avatar_name(&world, &not_cached, format),
+                crate::world::rlva::privacy::anonymous(not_cached).display_name
+            );
+        }
+
+        // Removing the restriction restores the normal formatting and fallback.
+        world.social.avatar_names.set_rlva_privacy(false, Default::default());
+        for (format, name) in formats.into_iter().zip(expected) {
+            assert_eq!(avatar_name(&world, &known, format), name);
+            assert_eq!(avatar_name(&world, &not_cached, format), "Other Resident");
+        }
+    }
 }
 
 /// LLWorldMapView::drawAvatar: a dot, with a cap above / below when the
@@ -631,7 +761,7 @@ impl MiniMap {
             if !rect.expand(dot_r).contains(sp) {
                 continue;
             }
-            let name = avatar_name(world, &id);
+            let name = avatar_name(world, &id, opts.mini_avatar_name_format);
             let col = self
                 .marks
                 .get(&id)
@@ -725,7 +855,7 @@ impl MiniMap {
             } else {
                 pos.truncate().distance(me.truncate())
             };
-            let name = avatar_name(world, &id);
+            let name = avatar_name(world, &id, opts.mini_avatar_name_format);
             resp.clone().on_hover_text_at_pointer(aurora_i18n::tr!(
                 "status-name-distance-d-m",
                 name = name.to_string(),
@@ -799,7 +929,7 @@ impl MiniMap {
                     // "View profile ▸" lists the avatars under the pointer
                     menu::submenu(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true, |ui| {
                         for id in &avs {
-                            if menu::item(ui, p, "user-filled", &avatar_name(world, id)) {
+                            if menu::item(ui, p, "user-filled", &avatar_name(world, id, opts.mini_avatar_name_format)) {
                                 actions.push(MiniMapAction::Profile(*id));
                             }
                         }
@@ -917,6 +1047,27 @@ impl MiniMap {
                     &mut opts.mini_collision,
                 );
             });
+            menu::submenu(
+                ui,
+                p,
+                "user-filled",
+                aurora_i18n::tr!("ui-minimap-avatar-name-format"),
+                true,
+                |ui| {
+                    for (label, choice) in [
+                        (aurora_i18n::tr!("ui-minimap-name-display"), MiniAvatarNameFormat::Display),
+                        (aurora_i18n::tr!("ui-minimap-name-legacy"), MiniAvatarNameFormat::Legacy),
+                        (
+                            aurora_i18n::tr!("ui-minimap-name-display-legacy"),
+                            MiniAvatarNameFormat::DisplayAndLegacy,
+                        ),
+                    ] {
+                        if menu::check(ui, p, "user-filled", label, opts.mini_avatar_name_format == choice, true) {
+                            opts.mini_avatar_name_format = choice;
+                        }
+                    }
+                },
+            );
             if menu::check(
                 ui,
                 p,
