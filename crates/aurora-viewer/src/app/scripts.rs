@@ -42,6 +42,21 @@ default
 }
 "#;
 
+const SLUA_DEMO_SOURCE: &str = r#"--[[ SLua: comments, strings and library calls ]]
+local count = 0
+local delay = 1.5
+
+local function greet(resident: string): string
+    return `Hello, {ll.Key2Name(resident)}!`
+end
+
+LLEvents:on("touch_start", function(events)
+    count += 1
+    ll.Say(PUBLIC_CHANNEL, greet(events[1]:getKey()))
+    ll.SetText(string.format("%d touches", count), vector(1, 1, 1), 1.0)
+end)
+"#;
+
 const WORD_WRAP_DEMO_SOURCE: &str = r#"// A long comment stays readable when the editor is resized: each continuation belongs to the same source line, and saving or copying keeps the original text exactly as written.
 string message = "This long string wraps visually inside the script editor without inserting any newline into the script or changing the string sent to nearby chat.";
 default
@@ -69,8 +84,8 @@ struct ScriptInfo {
     asset: Uuid,
     can_read: bool,
     can_edit: bool,
-    /// From the item subtype: a Lua source keeps its "luau" target.
-    luau: aurora_net::scripts::Luau,
+    /// The item's flags: its low byte is the script language.
+    flags: u32,
 }
 
 /// Read and edit rights: copy and modify, or copy alone for the library
@@ -238,6 +253,7 @@ impl App {
                 | "word-wrap"
                 | "no-word-wrap"
                 | "word-wrap-preferences"
+                | "slua"
         );
         if self.frame_count == 280 {
             self.panels.perf = false;
@@ -264,6 +280,15 @@ impl App {
             ) {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
+                if mode == "slua" {
+                    // SST_LUA in the item's flags, on a region that runs SLua
+                    if let Some(it) = self.world.inventory.items.get_mut(&item) {
+                        it.flags |= 1;
+                    }
+                    if let Some(region) = self.world.main_region.and_then(|h| self.world.regions.get_mut(&h)) {
+                        region.lua_scripts = true;
+                    }
+                }
                 if mode == "readonly"
                     && let Some(it) = self.world.inventory.items.get_mut(&item)
                 {
@@ -296,6 +321,8 @@ impl App {
                             COLORS_DEMO_SOURCE
                         } else if matches!(mode.as_str(), "word-wrap" | "no-word-wrap" | "word-wrap-preferences") {
                             WORD_WRAP_DEMO_SOURCE
+                        } else if mode == "slua" {
+                            SLUA_DEMO_SOURCE
                         } else {
                             SYNTAX_DEMO_SOURCE
                         }
@@ -509,7 +536,7 @@ impl App {
                 asset: it.asset_id,
                 can_read,
                 can_edit,
-                luau: aurora_net::scripts::Luau::from_flags(it.flags),
+                flags: it.flags,
             })
         } else {
             let idx = self.world.objects.index_of_uuid(&target.object)?;
@@ -533,7 +560,7 @@ impl App {
                 asset: it.asset_id,
                 can_read: can_read && modify,
                 can_edit: can_edit && modify,
-                luau: aurora_net::scripts::Luau::from_flags(it.flags),
+                flags: it.flags,
             })
         }
     }
@@ -550,8 +577,15 @@ impl App {
             return;
         }
         let Some(info) = self.script_info(target) else { return };
-        if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
-            self.script_editors.set_luau(target, info.luau);
+        if let Some(request) = self
+            .script_editors
+            .open(target, info.name, info.can_read, info.can_edit, info.flags)
+        {
+            // an SLua script, or one that may become one: its keywords are
+            // read while the source loads, not on the frame that draws it
+            if aurora_net::scripts::is_slua_item(info.flags) || self.world.main().is_some_and(|r| r.lua_scripts) {
+                crate::lsl_keywords::warm_lua();
+            }
             self.send(NetCommand::LoadScript {
                 request,
                 target,
@@ -575,6 +609,9 @@ impl App {
     pub(super) fn show_scripts(&mut self, ctx: &egui::Context, p: &Palette) {
         self.script_editors.agent = self.world.agent_id;
         self.script_editors.agent_name = self.world.social.name_of(&self.world.agent_id);
+        // shortcut: the agent's region, not the object's (have_lua_enabled); fine
+        // until objects in a neighbour region are edited across a SLua border
+        self.script_editors.lua_scripts = self.world.main().is_some_and(|r| r.lua_scripts);
         let rights: Vec<_> = self
             .script_editors
             .documents
@@ -840,16 +877,12 @@ impl App {
                 // A named marker simulates a server diagnostic in demo mode;
                 // this is deliberately not a local LSL compiler.
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
-                log::info!(
-                    "demo scripts: saved {} for target {}",
-                    target.item,
-                    aurora_net::scripts::compile_target(options.mono, options.luau)
-                );
+                log::info!("demo scripts: saved {} for target {}", target.item, options.compile.name());
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);
                 self.build_demo
-                    .save_script(*target, asset, compiled && options.running, options.mono);
+                    .save_script(*target, asset, compiled && options.running, options.compile);
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,

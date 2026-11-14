@@ -1426,6 +1426,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
         settings.max_avatars = v;
     }
+    if let Some(v) = std::env::var("AURORA_LOCAL_LIGHTS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.local_light_count = v.min(crate::scene::lights::MAX_LIGHTS as u32);
+    }
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
@@ -3048,6 +3051,8 @@ impl App {
         if log.identity().is_none() {
             log.set_folder(chat_log_root(&s.chat_log_location));
         }
+        // no file moves: a no-op once applied
+        log.set_legacy_layout(s.log_legacy_layout);
     }
 
     // ------------------------------------------------------------------ login
@@ -3912,18 +3917,16 @@ impl App {
                 object_id,
                 item_id,
                 running,
-                mono,
-                luau,
+                compile,
             } => {
-                self.build.contents.running.insert((object_id, item_id), (running, mono));
+                self.build.contents.running.insert((object_id, item_id), (running, compile));
                 self.script_editors.running(
                     aurora_net::scripts::ScriptTarget {
                         object: object_id,
                         item: item_id,
                     },
                     running,
-                    mono,
-                    luau,
+                    compile,
                 );
             }
             NetEvent::PhysicsProperties(list) => {
@@ -11707,6 +11710,7 @@ impl App {
                     gfx.renderer.max_texture_dimension(),
                 ),
                 others_attached_lights: self.settings.others_attached_lights,
+                max_lights: self.settings.local_light_count as usize,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
@@ -16521,6 +16525,7 @@ impl App {
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
+        self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
         self.poll_settings_backup();
         if let Some(done) = self.world.chat_log.take_relocated() {
@@ -17095,6 +17100,16 @@ impl App {
                         self.camera.position,
                         &self.look_at_settings(),
                         &mut self.look_at_fades,
+                    );
+                    ui::beams::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        &self.scene,
+                        projector,
+                        self.camera.position,
+                        &self.settings.beams,
+                        self.settings.lookat.show_names,
                     );
                     self.draw_walk_mark(&ctx, &p, projector);
                 }
@@ -21308,7 +21323,7 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore | Mode::Shared { .. })
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
@@ -21332,6 +21347,39 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Shared { on } => {
+                        // the synthetic Legacy Viewer folder, chosen for this
+                        // run only: never saved in the demo's settings, which
+                        // every worktree shares. The option itself is saved
+                        // like any setting; without a chosen folder it does
+                        // nothing.
+                        let account = self.world.login.as_ref().map(|l| crate::legacy_profile::Account {
+                            first: l.first_name.clone(),
+                            last: l.last_name.clone(),
+                            grid: "demo".into(),
+                        });
+                        let place = self
+                            .world
+                            .chat_log
+                            .dir()
+                            .map(chatlog::legacy_root)
+                            .zip(account.and_then(|a| a.chat_folder()));
+                        if let Some((root, folder)) = place {
+                            if let Err(e) = chatlog::seed_shared(&root, &folder, &self.world.own_name()) {
+                                log::warn!("demo Legacy Viewer transcripts not written: {e}");
+                            }
+                            if on {
+                                self.settings.log_legacy_layout = true;
+                                self.world.chat_log.set_legacy_layout(true);
+                            }
+                            self.world.chat_log.relocate(Some(root));
+                        }
+                        // the history read from the Legacy Viewer's file,
+                        // then a new message added to it
+                        self.world.apply(chatlog::new_message(me));
+                        self.panels.settings = true;
+                        self.options_ui.open(ui::options::Page::Chat, 3);
+                    }
                     Mode::Import(stage) => {
                         use chatlog::ImportStage;
                         let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);

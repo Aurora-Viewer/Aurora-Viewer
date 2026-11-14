@@ -1,0 +1,23 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="currentColor"
+  class="icon aurora-luau"
+>
+  <!-- Aurora-drawn Luau mark (not a Tabler icon): the Legacy Viewer's
+       Inv_Script_Luau, a tilted square with a square notch -->
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path fill-rule="evenodd" transform="rotate(16 12 12)" d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2z M13.5 7.5h3v3h-3z" />
+<g xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     inkscape:groupmode="layer"
+     id="layer3"
+     inkscape:label="shortcut"><path
+       fill="#ffffff"
+       stroke="#202222"
+       stroke-width="0.267044"
+       stroke-linejoin="round"
+       d="m 0.40847535,23.751788 v -1.982789 c 0,-1.143281 0.93587905,-2.082204 2.10152605,-2.082204 h 0.8406115 v -1.667974 l 2.790827,2.247896 -2.790827,2.115345 V 21.255353 H 2.5100014 c -0.4875543,0 -0.6220516,0.281675 -0.6220516,0.673816 v 1.822619 z"
+       id="path1-4" /></g>
+</svg>
