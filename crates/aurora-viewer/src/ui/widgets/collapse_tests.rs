@@ -518,3 +518,11 @@ fn a_floater_paints_between_the_bars_only() {
         "{clip:?}"
     );
 }
+
+#[test]
+fn ordinary_floater_title_icon_is_square_when_minimized_and_minus_when_expanded() {
+    assert_eq!(minimize_title_icon(false, true), "square");
+    assert_eq!(minimize_title_icon(false, false), "minus");
+    assert_eq!(minimize_title_icon(true, true), "arrows-maximize");
+    assert_eq!(minimize_title_icon(true, false), "arrows-minimize");
+}
