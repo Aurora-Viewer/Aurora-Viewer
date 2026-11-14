@@ -776,6 +776,15 @@ fn a_double_clicked_word_is_copied_alone() {
                     _ => None,
                 });
                 assert_eq!(copied.as_deref(), Some(word), "{style:?}, {conversation:?}, {said:?}");
+                // a third click selects and copies the whole paragraph alone
+                h.frame(vec![button(true)]);
+                h.frame(vec![button(false)]);
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied.as_deref(), Some(said), "{style:?}, {conversation:?}, {said:?}");
             }
         }
     }

@@ -286,6 +286,12 @@ fn a_double_click_selects_one_word_of_a_line() {
     h.settle();
     let (start, end) = h.st.selection.1.bounds().expect("a word is selected");
     assert_eq!((start.seq, start.at, end.at), (end.seq, 6, 10), "\"from\" of \"hello from Jane\"");
+    // a third click selects the whole paragraph instead of clearing it
+    h.frame(vec![button(true)]);
+    h.frame(vec![button(false)]);
+    h.settle();
+    let (start, end) = h.st.selection.1.bounds().expect("the paragraph is selected");
+    assert_eq!((start.seq, start.at, end.at), (end.seq, 0, 15), "\"hello from Jane\"");
 }
 
 #[test]

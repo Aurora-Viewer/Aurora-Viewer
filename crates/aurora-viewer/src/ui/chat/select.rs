@@ -53,8 +53,9 @@ pub struct Selection {
     /// The text of the lines its ends are in, as laid out when they were
     /// set (a partly selected line is copied from it).
     texts: HashMap<u64, String>,
-    /// Set by a double click: the copy is the word alone, never the line's
-    /// "[time] Name: " prefix, even for a word at the start of its line.
+    /// Set by a double or triple click: the copy is the selected word or
+    /// paragraph alone, never the line's "[time] Name: " prefix, even at the
+    /// start of its line.
     word: bool,
 }
 
@@ -92,7 +93,8 @@ impl Selection {
         self.head = Some(p);
     }
 
-    /// Characters `range` of one line (a double click on a word).
+    /// Characters `range` of one line (a double click on a word, or a triple
+    /// click on a paragraph).
     pub fn select_in_row(&mut self, seq: u64, range: Range<usize>, row_text: &str) {
         self.word = true;
         self.texts.clear();
@@ -422,6 +424,26 @@ pub fn word_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
     Some((row.seq, range, &row.text))
 }
 
+/// What a triple click at `pos` selects: the paragraph (up to a line break, or
+/// the whole message) under the pointer (`paragraph_range`). None off the lines
+/// or on an empty paragraph.
+pub fn paragraph_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
+    let row = rows.iter().find(|r| r.rect.top() <= pos.y && pos.y < r.rect.bottom())?;
+    let piece = nearest_piece(row, pos)?;
+    let range = paragraph_range(&row.text, piece.at(pos))?;
+    Some((row.seq, range, &row.text))
+}
+
+/// The paragraph around caret `at` of `text`, bounded by line breaks (`\n`) or
+/// the message's ends.
+fn paragraph_range(text: &str, at: usize) -> Option<Range<usize>> {
+    let chars: Vec<char> = text.chars().collect();
+    let at = at.min(chars.len());
+    let start = chars[..at].iter().rposition(|&c| c == '\n').map_or(0, |p| p + 1);
+    let end = chars[at..].iter().position(|&c| c == '\n').map_or(chars.len(), |p| at + p);
+    (start < end).then_some(start..end)
+}
+
 /// LLWStringUtil::isPartOfWord: a letter, a digit or '_'.
 fn part_of_word(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
@@ -551,6 +573,21 @@ mod tests {
         assert_eq!(word_range(text, usize::MAX), None);
         // a message of one word
         assert_eq!(word_range("hello", 3), Some(0..5));
+    }
+
+    #[test]
+    fn a_triple_click_takes_the_paragraph_under_it() {
+        assert_eq!(paragraph_range("hello from Jane", 7), Some(0..15));
+        assert_eq!(paragraph_range("hello from Jane", 0), Some(0..15));
+        assert_eq!(paragraph_range("hello from Jane", 15), Some(0..15));
+        let multi = "first paragraph\nsecond paragraph\nthird";
+        assert_eq!(paragraph_range(multi, 0), Some(0..15));
+        assert_eq!(paragraph_range(multi, 15), Some(0..15));
+        assert_eq!(paragraph_range(multi, 16), Some(16..32));
+        assert_eq!(paragraph_range(multi, 32), Some(16..32));
+        assert_eq!(paragraph_range(multi, 33), Some(33..38));
+        assert_eq!(paragraph_range(multi, usize::MAX), Some(33..38));
+        assert_eq!(paragraph_range("", 0), None);
     }
 
     #[test]
