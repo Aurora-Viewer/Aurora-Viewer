@@ -221,16 +221,6 @@ impl BackgroundFetch {
             self.send_legacy(inv, agent, library, &mut out);
         }
         self.queue.extend(self.waiting.drain(..));
-        if !self.is_idle() && self.busy.is_some() {
-            log::debug!(
-                "DIAG not idle: queue={} in_flight={} retries={} waiting={} orphans={:?}",
-                self.queue.len(),
-                self.in_flight.len(),
-                self.retries.len(),
-                self.waiting.len(),
-                self.orphans_pending
-            );
-        }
         if self.is_idle()
             && let Some((since, requests)) = self.busy.take()
         {
@@ -430,12 +420,6 @@ impl BackgroundFetch {
         };
         let single = children.is_empty();
         let targets = if single { vec![folder] } else { children.clone() };
-        if let Err(error) = &outcome {
-            log::debug!(
-                "DIAG reply {request}: {kind:?} {folder} single={single} targets={} err={error}",
-                targets.len()
-            );
-        }
         if let Err(error) = outcome {
             // A throttled or briefly unavailable server: ask again later
             // instead of ending the walk with this folder missing. The HTTP

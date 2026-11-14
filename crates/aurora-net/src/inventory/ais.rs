@@ -128,7 +128,7 @@ fn parse_folder(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<FolderContents, &'s
 /// The server caps deeper requests and refuses a reply that would be too big.
 pub const MAX_FOLDER_DEPTH: i32 = 50;
 
-/// Retries after the first attempt, like Firestorm's `llcorehttp` default
+/// Retries after the first attempt, like the Legacy Viewer's `llcorehttp` default
 /// (`HTTP_RETRY_COUNT_DEFAULT`, 5, with a 1 to 5 s backoff).
 const RETRY_ATTEMPTS: u32 = 5;
 const RETRY_BACKOFF_MIN: std::time::Duration = std::time::Duration::from_secs(1);
@@ -283,7 +283,7 @@ fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], de
     Ok(out)
 }
 
-/// One AIS read, retried on the conditions Firestorm's HTTP layer retries
+/// One AIS read, retried on the conditions the Legacy Viewer's HTTP layer retries
 /// (timeout, 408/425/429 and 5xx), with its backoff and `Retry-After`.
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
     let mut attempt = 0;

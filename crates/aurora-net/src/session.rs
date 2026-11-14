@@ -3386,6 +3386,27 @@ impl Session<'_> {
                         Ok(contents) => {
                             let _ = events.send(NetEvent::InventoryContents(contents));
                         }
+                        // One refused folder fails the whole batch: read each
+                        // one alone, so that only the folder the server
+                        // refuses by itself is over the limit
+                        // (BGFolderHttpHandler::processFailure splits a 403).
+                        Err(error) if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 => {
+                            for id in chunk {
+                                match crate::inventory::ais::fetch_folders(&http, &cap, owner, std::slice::from_ref(id)).await {
+                                    Ok(contents) => {
+                                        let _ = events.send(NetEvent::InventoryContents(contents));
+                                    }
+                                    Err(error) => {
+                                        log::warn!("inventory fetch of {id} failed: {error}");
+                                        let _ = events.send(NetEvent::InventoryFetchFailed {
+                                            folders: vec![*id],
+                                            too_big: error.kind == crate::inventory::ais::FetchFailure::TooBig,
+                                            status: error.status,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             log::warn!("inventory fetch failed: {error}");
                             let too_big = error.kind == crate::inventory::ais::FetchFailure::TooBig;
@@ -3423,12 +3444,21 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            for chunk in folders.chunks(16) {
-                let body = crate::inventory::fetch_request_body(chunk, owner);
+            // BGFolderHttpHandler::processFailure: a batch refused with 403 is
+            // too large and split; only a folder refused alone is over the
+            // limit (InventoryLimitReachedAIS).
+            let mut batches: Vec<Vec<uuid::Uuid>> = folders.chunks(16).rev().map(<[uuid::Uuid]>::to_vec).collect();
+            while let Some(chunk) = batches.pop() {
+                let body = crate::inventory::fetch_request_body(&chunk, owner);
                 match caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory).await {
                     Ok(v) => {
                         let contents = crate::inventory::parse_fetch_response(&v);
                         let _ = events.send(NetEvent::InventoryContents(contents));
+                    }
+                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 => {
+                        let (first, second) = chunk.split_at(chunk.len() / 2);
+                        batches.push(second.to_vec());
+                        batches.push(first.to_vec());
                     }
                     Err(e) => {
                         log::warn!("inventory fetch failed: {e}");
@@ -3437,8 +3467,8 @@ impl Session<'_> {
                             _ => None,
                         };
                         let _ = events.send(NetEvent::InventoryFetchFailed {
-                            folders: chunk.to_vec(),
                             too_big: status == Some(403),
+                            folders: chunk,
                             status,
                         });
                     }
