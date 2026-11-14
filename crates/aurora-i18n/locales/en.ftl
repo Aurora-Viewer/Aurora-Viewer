@@ -254,6 +254,7 @@ keybinds-render-objects = Rendering type: Objects
 keybinds-render-grass = Rendering type: Grass
 keybinds-render-clouds = Rendering type: Clouds
 owned-land-title = My land
+linden-home-menu = My Linden Home…
 owned-land-refresh = Refresh
 owned-land-empty = You do not own any parcels.
 owned-land-area = { $actual } m² · { $billable } m² billable

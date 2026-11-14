@@ -254,6 +254,7 @@ keybinds-render-objects = レンダリングタイプ：オブジェクト
 keybinds-render-grass = レンダリングタイプ：草
 keybinds-render-clouds = レンダリングタイプ：雲
 owned-land-title = 所有地
+linden-home-menu = リンデンホーム…
 owned-land-refresh = リフレッシュ
 owned-land-empty = 区画を所有していません。
 owned-land-area = { $actual }㎡・課金対象{ $billable }㎡
