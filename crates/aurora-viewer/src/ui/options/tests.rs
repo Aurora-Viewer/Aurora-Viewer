@@ -250,6 +250,7 @@ const BEFORE: &[&str] = &[
     "reopen_ims",
     "log_dated_names",
     "log_import_at_login",
+    "log_legacy_layout",
     "autoresponse",
     "mute_all_groups",
     "mute_groups_without_notices",

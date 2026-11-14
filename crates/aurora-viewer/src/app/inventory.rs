@@ -505,7 +505,7 @@ impl App {
                                 .inventory
                                 .items
                                 .get(&item)
-                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
+                                .is_some_and(|it| aurora_net::scripts::is_slua_item(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,

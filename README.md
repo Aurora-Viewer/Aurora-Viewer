@@ -111,33 +111,34 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.8 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.9 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Building, like the Legacy Viewer</h3>
-      Edit Face selects the faces of what you wear again, and Derender
-      with Edit linked parts hides only the selected part.
+      <h3>Aurora Weather</h3>
+      Rain, snow, wind, thunder and northern lights, with puddles, lying
+      snow and footprints. Choose yours in the Environment window, or let
+      regions set it (off by default).
     </td>
     <td width="50%" valign="top">
-      <h3>Chat and voice</h3>
-      The channel selector shows by every nearby chat input and keeps the
-      channel you chose. Nearby voice now connects on slow, high-latency
-      links too.
+      <h3>Avatar Studio</h3>
+      A calm space to dress, pose and photograph your avatar, with its own
+      animation editor: keyframes, a timeline, ANIM and BVH import.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Right on every graphics card</h3>
-      Tree leaves and mesh hair look right again on AMD cards, and
-      blended eyelashes stay visible behind mesh hair.
+      <h3>Lua scripts</h3>
+      SLua scripts get a real editor: Lua colours, completion, hover help,
+      and the compile target of your choice. New script can create a Lua
+      script on a region with SLua.
     </td>
     <td valign="top">
-      <h3>Smoother starts</h3>
-      A small Aurora window shows while the viewer starts and after an
-      update's restart. The avatar complexity notice no longer repeats,
-      and invisible HUD buttons take a left click again.
+      <h3>Gamepad and VR</h3>
+      Switch between First Person, Avatar Mode and Flycam with a gamepad,
+      on the desktop or in VR. The camera can also follow an animated
+      body part.
     </td>
   </tr>
 </table>

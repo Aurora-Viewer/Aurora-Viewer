@@ -899,6 +899,7 @@ pub struct Scene {
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
     studio_visible: bool,
+    studio_roots: Vec<Uuid>,
     pub studio_stage: avatar_studio::Stage,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
@@ -1619,6 +1620,7 @@ impl Scene {
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
             studio_visible: false,
+            studio_roots: Vec::new(),
             studio_stage: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
@@ -2756,10 +2758,20 @@ impl Scene {
         let types = self.hidden_types;
         // (a HUD is no rendering type: it stays)
         let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
-        if self.photo_isolation_version != iso.version || self.hidden_types_applied != types || self.studio_visible != world.avatar_studio {
+        let studio_roots = if world.avatar_studio {
+            isolate::studio_roots(world)
+        } else {
+            Vec::new()
+        };
+        if self.photo_isolation_version != iso.version
+            || self.hidden_types_applied != types
+            || self.studio_visible != world.avatar_studio
+            || self.studio_roots != studio_roots
+        {
             self.photo_isolation_version = iso.version;
             self.hidden_types_applied = types;
             self.studio_visible = world.avatar_studio;
+            self.studio_roots = studio_roots;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
                 let hidden = left_out(idx, g.hud);
                 if g.hidden != hidden {
@@ -5347,6 +5359,10 @@ impl Scene {
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
+        self.lists.blend_precision = blend_order::precision();
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact {
+            blend_order::nearest_first(&mut self.blend_tmp, self.lists.blend_depth);
+        }
         let runs = match self.lists.blend_depth_mode {
             aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,
             aurora_render::RiggedBlendDepth::Split => blend_order::rig_objects,
