@@ -1355,7 +1355,7 @@ mod tests {
     fn selector_label_column_fits_water_environment() {
         let ctx = egui::Context::default();
         let mut width = 0.0;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
                 ..Default::default()
@@ -1374,6 +1374,9 @@ mod tests {
                 });
             },
         );
+        // the font atlas of the first frame: dropped uncleared, it panics
+        // under debug assertions (`--profile ci`, the merge queue)
+        output.textures_delta.clear();
         assert!(
             width > LABEL_W,
             "English Water environment needs more than the old {LABEL_W} px column, got {width}"
