@@ -4137,11 +4137,7 @@ impl Scene {
                     .flatten();
                 let material = loaded.map(|m| (*m).clone()).or_else(|| {
                     (local_normal.is_some() || local_specular.is_some()).then(|| legacy_mat::LegacyMaterial {
-                        diffuse_alpha_mode: if self.textures.has_alpha(&tf.texture).unwrap_or(false) {
-                            legacy_mat::alpha_mode::BLEND
-                        } else {
-                            legacy_mat::alpha_mode::NONE
-                        },
+                        diffuse_alpha_mode: self.textures.default_alpha_mode(&tf.texture),
                         ..Default::default()
                     })
                 });
@@ -7660,6 +7656,28 @@ mod tests {
             ..test_face(Pass::Blend, false)
         };
         assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
+    }
+
+    /// The build tools default a face to Alpha blending from the texture's
+    /// alpha channel, and offer Alpha mode for it: a channel with no
+    /// see-through texel stays in the opaque pass with or without that
+    /// material, and an explicit Mask leaves it.
+    #[test]
+    fn blending_an_opaque_alpha_channel_keeps_the_opaque_pass() {
+        let alpha = [AlphaKind::Opaque];
+        let channel = [true];
+        let face = |legacy: Option<u8>| FaceDraw {
+            legacy_alpha: legacy,
+            base_slot: 0,
+            ..test_face(Pass::Hidden, false)
+        };
+        for legacy in [None, Some(legacy_mat::alpha_mode::BLEND), Some(legacy_mat::alpha_mode::NONE)] {
+            assert_eq!(face_mode(&face(legacy), &alpha, &channel, true).0, Pass::Opaque);
+        }
+        assert_eq!(
+            face_mode(&face(Some(legacy_mat::alpha_mode::MASK)), &alpha, &channel, true).0,
+            Pass::Mask
+        );
     }
 
     /// LLFace::canRenderAsMask: never auto alpha-mask a rigged face, a HUD
