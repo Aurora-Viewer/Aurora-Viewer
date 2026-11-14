@@ -16,6 +16,8 @@ use uuid::Uuid;
 pub mod anti_spam;
 #[path = "demo_beacons.rs"]
 pub mod beacons;
+#[path = "demo_beams.rs"]
+pub mod beams;
 #[path = "demo_parcel_visibility.rs"]
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
@@ -305,6 +307,10 @@ pub mod tortured_prims;
 /// Fast camera turns (AURORA_DEMO_TURN).
 #[path = "demo_turn.rs"]
 pub mod turn;
+/// A hall hung with lace curtains crossing one another, and glowing
+/// strings among them (AURORA_DEMO_VEILS).
+#[path = "demo_veils.rs"]
+pub mod veils;
 /// The Voice controls window with residents in the nearby channel
 /// (AURORA_DEMO_VOICE_CONTROLS).
 #[path = "demo_voice_controls.rs"]
@@ -4423,6 +4429,7 @@ pub fn events() -> Vec<NetEvent> {
             billable_factor: 1.0,
         })),
     ];
+    ev.extend(group::simulator_features());
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];
@@ -6200,6 +6207,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
@@ -8995,6 +9003,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if let Some(pane) = blend_shadows::texture(id) {
         return Some(pane);
+    }
+    if let Some(lace) = veils::texture(id) {
+        return Some(lace);
     }
     if let Some(picture) = tags::picture_pixels(id) {
         return Some(picture);
