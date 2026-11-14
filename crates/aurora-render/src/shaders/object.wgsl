@@ -3392,6 +3392,13 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     return out;
 }
 
+// Whether a fragment of the shelter map belongs to a triangle facing up:
+// seen from above through its orthographic view (+Y up on the map, as on
+// the ground), an upward face keeps the winding it has seen from above.
+fn shelter_faces_up(front: bool) -> bool {
+    return front;
+}
+
 // Transparent texels cast no shadow; semi-transparent texels use alternating
 // shadow-map columns. Opaque material modes ignore the texture alpha.
 // Blended faces (a blended face that is also alpha-tested casts like a
@@ -3404,9 +3411,15 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 // - rigged and avatars: dithered under 0.598, as avatarAlphaShadowF.glsl
 //   (LLDrawPoolAvatar::renderShadow).
 @fragment
-fn fs_shadow(in: ShadowOut) {
+fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    // the rain's shelter map, seen from straight above: only a surface
+    // that faces up keeps the rain and snow off. A ceiling whose roof is
+    // fully transparent (a skybox's painted sky, its top not drawn at all)
+    // lets the snow fall through it, as people asked; a visible roof, glass
+    // too, still keeps it off (its top faces up)
+    if (shadow_params.kind.x == 1u && !shelter_faces_up(front)) { discard; }
     let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     // the rain's shelter map: any blended texel that is there at all keeps
