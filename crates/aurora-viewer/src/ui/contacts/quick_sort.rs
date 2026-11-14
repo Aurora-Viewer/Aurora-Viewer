@@ -728,12 +728,12 @@ mod tests {
         let pics = HashMap::new();
         let mut frames = crate::ui::widgets::elide_tests::Frames::new();
         let mut text = String::new();
-        let field = egui::Id::new("field-over-quick-sort");
+        let field = egui::Id::unique("field-over-quick-sort");
         let mut run = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
             frames.run(events, |ui| {
                 // drawn before Quick sort, as a window earlier in the frame
                 let at = ui.ctx().content_rect().center() - Vec2::new(100.0, 12.0);
-                egui::Area::new(egui::Id::new("over-quick-sort"))
+                egui::Area::new(egui::Id::unique("over-quick-sort"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(at)
                     .show(ui.ctx(), |ui| {
