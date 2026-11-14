@@ -582,8 +582,11 @@ impl App {
                     target,
                     handle: creation.handle,
                     options: ScriptOptions {
-                        mono: creation.mono,
-                        luau: aurora_net::scripts::Luau::Off,
+                        compile: if creation.mono {
+                            aurora_net::scripts::CompileTarget::Mono
+                        } else {
+                            aurora_net::scripts::CompileTarget::Lsl2
+                        },
                         running: creation.running,
                         experience: Uuid::nil(),
                     },
@@ -3061,19 +3064,30 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                             it,
                             self.world.agent_id,
                         );
-                        let (running, mono) = self
+                        let (running, compile_target) = self
                             .build
                             .contents
                             .running
                             .get(&(object_uuid, it.item_id))
                             .copied()
-                            .unwrap_or((true, Some(true)));
+                            .unwrap_or((true, Some(aurora_net::scripts::CompileTarget::Mono)));
+                        let compile_target_name = compile_target.map(|t| match t {
+                            aurora_net::scripts::CompileTarget::Lsl2 => "lsl2",
+                            aurora_net::scripts::CompileTarget::Mono => "mono",
+                            aurora_net::scripts::CompileTarget::Luau => "luau",
+                            aurora_net::scripts::CompileTarget::LslLuau => "lsl_luau",
+                        });
+                        let is_mono = matches!(
+                            compile_target,
+                            Some(aurora_net::scripts::CompileTarget::Mono) | None
+                        );
                         json!({
                             "item_id": it.item_id.to_string(),
                             "name": it.name,
                             "description": it.description,
                             "running": running,
-                            "mono": mono,
+                            "mono": is_mono,
+                            "compile_target": compile_target_name,
                             "permissions": {
                                 "copy": (mask & perm::COPY) != 0,
                                 "modify": (mask & perm::MODIFY) != 0,
@@ -3256,11 +3270,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 if let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, template, running) {
                     self.send(NetCommand::Build(drop.command));
                 } else {
-                    self.build.new_script(&self.world, idx);
+                    self.build.new_script(&self.world, idx, false);
                     self.flush_build();
                 }
             } else {
-                self.build.new_script(&self.world, idx);
+                self.build.new_script(&self.world, idx, false);
                 self.flush_build();
             }
             self.build.request_contents(&self.world, idx, true);
@@ -3322,8 +3336,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             target,
             handle,
             options: ScriptOptions {
-                mono,
-                luau: aurora_net::scripts::Luau::Off,
+                compile: if mono {
+                    aurora_net::scripts::CompileTarget::Mono
+                } else {
+                    aurora_net::scripts::CompileTarget::Lsl2
+                },
                 running,
                 experience: Uuid::nil(),
             },
