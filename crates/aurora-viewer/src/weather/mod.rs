@@ -2,6 +2,7 @@
 //! section sets, kept in the settings. It is drawn for your view only.
 
 pub mod region;
+pub mod sky_mark;
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};

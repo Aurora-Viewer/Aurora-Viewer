@@ -5991,12 +5991,6 @@ impl Scene {
         // only the skeletons posed this frame are uploaded (the others
         // keep their last pose), by the sync: with the anchors of what they
         // wear, which need their owner's place in this frame
-        // the snow on each avatar, after its pose (which fills its entries)
-        for (id, slot) in &self.palette_slots {
-            if let Some(m) = self.palettes.get_mut(*slot as usize * anim::PALETTE_JOINTS + anim::AVATAR_SNOW) {
-                *m = [[self.avatar_snow.amount(id), 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
-            }
-        }
         self.posed_slots.clear();
         self.posed_slots.extend(posed.iter().map(|p| p.1));
         for (owner, slot) in posed {
