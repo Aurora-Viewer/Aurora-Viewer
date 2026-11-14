@@ -334,3 +334,33 @@ fn disabling_then_reenabling_before_the_echo_keeps_one_ao_and_no_stale_default_p
     assert_eq!(pose, later);
     assert!(changes.is_empty());
 }
+
+#[test]
+fn a_replacement_that_never_loads_holds_the_previous_swim_pose_for_a_bounded_time() {
+    let (_, mut set) = fixture();
+    unique(&mut set, State::SwimmingUp, 26001);
+    unique(&mut set, State::Floating, 26101);
+    let now = Instant::now();
+    let mut runtime = Runtime::default();
+    let swim = |state, at| {
+        let mut f = frame(&[]);
+        f.swim_hold = Some((state, signal(state, at)));
+        f
+    };
+    let (rising, _) = runtime.update(Some(&set), swim(State::SwimmingUp, now), now, |_| true, |_| 0);
+    let up = rising[0];
+    assert_eq!(up.id, Uuid::from_u128(26001));
+    // The Floating asset is missing on the grid: it never becomes ready.
+    let broken = Uuid::from_u128(26101);
+    for millis in [20, 1000, 2900] {
+        let at = now + Duration::from_millis(millis);
+        let (held, changes) = runtime.update(Some(&set), swim(State::Floating, at), at, |id| *id != broken, |_| 0);
+        assert_eq!(held, rising, "{millis} ms: the complete pose waits for a download");
+        assert!(changes.is_empty());
+    }
+    let at = now + Duration::from_millis(3100);
+    let (pose, changes) = runtime.update(Some(&set), swim(State::Floating, at), at, |id| *id != broken, |_| 0);
+    assert!(!pose.iter().any(|a| a.id == up.id), "Swimming Up is not kept for ever");
+    assert!(changes.contains(&(up.id, false)) && changes.contains(&(broken, true)));
+    assert_eq!(runtime.current, Some(State::Floating));
+}

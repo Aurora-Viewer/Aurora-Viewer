@@ -7,6 +7,12 @@ use crate::world::PlayingAnimation;
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
+/// Longest the last complete selection is kept while its replacement
+/// downloads. A replacement that never loads (a missing or broken asset in
+/// the set, retried every 30 s) would otherwise hold a Swimming Up / Down
+/// pose for as long as the avatar stays in the water.
+const LOADING_HOLD: Duration = Duration::from_secs(3);
+
 pub struct Frame<'a> {
     pub raw: &'a [PlayingAnimation],
     /// Movement enhancer's bounded ground-contact grace; never changes raw signals.
@@ -59,6 +65,7 @@ pub struct Runtime {
     restoring: Option<(State, PlayingAnimation, Instant)>,
     anchor_blend: super::anchor_blend::Blend,
     anchor_signal: Option<PlayingAnimation>,
+    hold_since: Option<Instant>,
 }
 
 impl Default for Runtime {
@@ -85,6 +92,7 @@ impl Default for Runtime {
             restoring: None,
             anchor_blend: Default::default(),
             anchor_signal: None,
+            hold_since: None,
         }
     }
 }
@@ -578,6 +586,11 @@ impl Runtime {
             && !desired.is_empty()
             && (previous_state == self.current || (water_loop(previous_state) && water_loop(self.current)))
             && desired.iter().any(|id| !ready(id));
+        self.hold_since = holding.then(|| self.hold_since.unwrap_or(now));
+        let holding = holding
+            && self
+                .hold_since
+                .is_some_and(|since| now.saturating_duration_since(since) < LOADING_HOLD);
         if holding {
             // Keep the last complete selection while a cycle/continuous swim
             // replacement downloads. Network and local selection change together.

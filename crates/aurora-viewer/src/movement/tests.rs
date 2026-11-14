@@ -571,11 +571,11 @@ fn surface_return_survives_crossing_flotation_while_falling_and_a_slow_ascent() 
 }
 
 #[test]
-fn automatic_surface_return_uses_the_same_goal_as_a_short_underwater_ascent_tap() {
+fn an_underwater_ascent_rises_only_while_held_and_keeps_the_depth_it_reaches() {
+    use crate::ao::State as Pose;
     let now = Instant::now();
     let prefs = prefs();
-    let mut automatic = Runtime::default();
-    let mut manual = Runtime::default();
+    let mut runtime = Runtime::default();
     let mut f = frame();
     f.position.z = 16.0;
     let down = MoveInput {
@@ -586,80 +586,62 @@ fn automatic_surface_return_uses_the_same_goal_as_a_short_underwater_ascent_tap(
         up: true,
         ..Default::default()
     };
-    manual.update(&prefs, &f, &down, now);
-    let auto_goal = automatic.update(&prefs, &f, &MoveInput::default(), now);
-    let manual_goal = manual.update(&prefs, &f, &up, now + Duration::from_millis(10));
-    assert_eq!(auto_goal.motion.mode, 8);
-    assert_eq!(manual_goal.motion, auto_goal.motion);
-    for (millis, height) in [(90, 16.0), (1000, 17.0), (6000, 18.0), (9000, 19.55)] {
-        f.position.z = height;
-        let at = now + Duration::from_millis(millis);
-        let auto_step = automatic.update(&prefs, &f, &MoveInput::default(), at);
-        let manual_step = manual.update(&prefs, &f, &MoveInput::default(), at);
-        assert_eq!(auto_step.motion, manual_step.motion);
-        assert_eq!(automatic.state, manual.state);
-    }
-    assert_eq!(automatic.state, State::Surface);
+    runtime.update(&prefs, &f, &down, now);
+    // Like descent: the motor's depth follows the held key (bridge.lsl mode
+    // 6), no surface goal is installed by a press.
+    let rising = runtime.update(&prefs, &f, &up, now + Duration::from_millis(10));
+    assert_eq!(rising.motion.mode, 6);
+    assert_eq!(runtime.swim_intent(&up), Some(Pose::SwimmingUp));
+    f.position.z = 17.0;
+    let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(400));
+    assert_eq!(released.motion.mode, 6, "the reached depth is held");
+    assert_ne!(released.flying, Some(true));
+    assert_eq!(runtime.state, State::Submerged);
+    assert_eq!(runtime.swim_intent(&MoveInput::default()), Some(Pose::UnderwaterFloating));
+    let later = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_secs(10));
+    assert_eq!(later.motion.mode, 6);
 }
 
 #[test]
 fn descent_cancels_a_surface_return_while_repeated_ascent_keeps_returning() {
     let now = Instant::now();
     let prefs = prefs();
-    for manual in [false, true] {
-        for up in [false, true] {
-            let mut runtime = Runtime::default();
-            let mut f = frame();
-            f.position.z = 16.0;
-            if manual {
-                runtime.update(
-                    &prefs,
-                    &f,
-                    &MoveInput {
-                        down: true,
-                        ..Default::default()
-                    },
-                    now,
-                );
-                runtime.update(
-                    &prefs,
-                    &f,
-                    &MoveInput {
-                        up: true,
-                        ..Default::default()
-                    },
-                    now + Duration::from_millis(10),
-                );
-            }
-            let returning = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(90));
-            assert_eq!(returning.motion.mode, 8);
-            let input = MoveInput {
-                up,
-                down: !up,
+    for up in [false, true] {
+        let mut runtime = Runtime::default();
+        let mut f = frame();
+        f.position.z = 16.0;
+        let returning = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(90));
+        assert_eq!(returning.motion.mode, 8);
+        let input = MoveInput {
+            up,
+            down: !up,
+            ..Default::default()
+        };
+        let interrupted = runtime.update(&prefs, &f, &input, now + Duration::from_millis(500));
+        assert_eq!(interrupted.motion.mode, if up { 8 } else { 6 }, "up={up}");
+        let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(590));
+        assert_eq!(
+            released.motion.mode,
+            if up { 8 } else { 6 },
+            "release retains the requested destination"
+        );
+        assert_ne!(released.flying, Some(true));
+        // Still approaching: a goal that stops getting closer is let go.
+        f.position.z = 17.0;
+        let idle = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_secs(5));
+        assert_eq!(idle.motion.mode, if up { 8 } else { 6 });
+        let restarted = runtime.update(
+            &prefs,
+            &f,
+            &MoveInput {
+                up: true,
                 ..Default::default()
-            };
-            let interrupted = runtime.update(&prefs, &f, &input, now + Duration::from_millis(500));
-            assert_eq!(interrupted.motion.mode, if up { 8 } else { 6 }, "manual={manual}, up={up}");
-            let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(590));
-            assert_eq!(
-                released.motion.mode,
-                if up { 8 } else { 6 },
-                "release retains the requested destination"
-            );
-            assert_ne!(released.flying, Some(true));
-            let idle = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_secs(5));
-            assert_eq!(idle.motion.mode, if up { 8 } else { 6 });
-            let restarted = runtime.update(
-                &prefs,
-                &f,
-                &MoveInput {
-                    up: true,
-                    ..Default::default()
-                },
-                now + Duration::from_secs(6),
-            );
-            assert_eq!(restarted.motion.mode, 8, "a later tap can request the surface again");
-        }
+            },
+            now + Duration::from_secs(6),
+        );
+        // A press resumes a return under way; once cancelled, ascent
+        // rises only while held.
+        assert_eq!(restarted.motion.mode, if up { 8 } else { 6 });
     }
 }
 
@@ -1538,7 +1520,7 @@ fn short_down_tap_completes_a_dive_after_release_and_keeps_the_new_depth() {
 }
 
 #[test]
-fn short_up_tap_underwater_returns_to_flotation_without_starting_flight() {
+fn an_underwater_up_hold_to_the_surface_floats_without_starting_flight() {
     let now = Instant::now();
     let mut runtime = Runtime::default();
     let mut f = frame();
@@ -1561,17 +1543,17 @@ fn short_up_tap_underwater_returns_to_flotation_without_starting_flight() {
         ..Default::default()
     };
     let rising = runtime.update(&prefs, &f, &up, now + Duration::from_millis(10));
-    assert_eq!(rising.motion.mode, 8);
-    assert_eq!(runtime.state, State::Submerged, "resurfacing cannot declare arrival before moving");
+    assert_eq!(rising.motion.mode, 6);
+    assert_eq!(runtime.state, State::Submerged);
     assert!(rising.motion.valid());
-    let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(90));
-    assert_eq!(released.motion, rising.motion);
-    assert_ne!(released.flying, Some(true));
+    assert_ne!(rising.flying, Some(true));
     f.position.z = 20.0 - (f.height * 0.5 - 0.4) + prefs.float_height;
-    let arrived = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_secs(1));
+    let arrived = runtime.update(&prefs, &f, &up, now + Duration::from_secs(1));
     assert_eq!(arrived.motion.mode, 3);
     assert_eq!(runtime.state, State::Surface);
     assert_ne!(arrived.flying, Some(true));
+    let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(1100));
+    assert_eq!(released.motion.mode, 3, "holding through arrival is not a jump");
 }
 
 #[test]
@@ -1816,16 +1798,8 @@ fn an_unreachable_water_target_expires_and_opposite_controls_can_cancel_takeoff(
         up: true,
         ..Default::default()
     };
-    runtime.update(
-        &prefs,
-        &f,
-        &MoveInput {
-            down: true,
-            ..Default::default()
-        },
-        now,
-    );
-    runtime.update(&prefs, &f, &up, now + Duration::from_millis(10));
+    // The automatic return after entering the water deep.
+    runtime.update(&prefs, &f, &MoveInput::default(), now);
     let rising = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(90));
     assert_eq!(rising.motion.mode, 8);
     let blocked = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_secs(10));
@@ -1939,7 +1913,8 @@ fn an_underwater_up_hold_arrives_in_surface_swimming_without_flight_jump_or_a_se
     );
     runtime.update(&prefs, &f, &held, now + Duration::from_millis(20));
     let rising = runtime.update(&prefs, &f, &held, now + Duration::from_secs(1));
-    assert_eq!(rising.motion.mode, 8);
+    assert_eq!(rising.motion.mode, 6, "the held key raises the motor's depth");
+    assert_eq!(runtime.swim_intent(&held), Some(Pose::SwimmingUp));
     assert_ne!(rising.flying, Some(true));
     f.position.z = 19.4;
     f.velocity.z = 0.8;
@@ -2179,4 +2154,101 @@ fn surface_double_ascent_requires_two_edges_and_expires_or_cancels_with_context(
         Some(Action::Jump),
         "an underwater return must not count as the first surface tap"
     );
+}
+
+#[test]
+fn a_dive_tap_stopped_by_the_seabed_releases_its_pose_and_motor() {
+    let now = Instant::now();
+    let prefs = prefs();
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    // 2.5 m of water: deep enough to swim, too shallow for the dive goal.
+    f.ground = Some(17.5);
+    f.on_ground = false;
+    f.position.z = 20.0 - (f.height * 0.5 - 0.4);
+    runtime.update(&prefs, &f, &MoveInput::default(), now);
+    let down = MoveInput {
+        down: true,
+        ..Default::default()
+    };
+    assert_eq!(runtime.update(&prefs, &f, &down, now + Duration::from_millis(10)).motion.mode, 7);
+    f.position.z = 17.5 + f.height * 0.5;
+    f.on_ground = true;
+    let pose = |runtime: &Runtime| runtime.swim_intent(&MoveInput::default());
+    let held = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(400));
+    assert_eq!(held.motion.mode, 7, "a released tap still completes its dive");
+    assert_eq!(pose(&runtime), Some(crate::ao::State::SwimmingDown));
+    let resting = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(1950));
+    assert_eq!(resting.motion.mode, 6, "the seabed ends the dive at its depth");
+    assert_eq!(runtime.state, State::Submerged);
+    assert_eq!(pose(&runtime), Some(crate::ao::State::UnderwaterFloating));
+}
+
+#[test]
+fn a_surface_return_blocked_under_a_ceiling_ends_although_the_body_bobs() {
+    let now = Instant::now();
+    let prefs = prefs();
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    f.on_ground = false;
+    f.position.z = 17.0;
+    assert_eq!(runtime.update(&prefs, &f, &MoveInput::default(), now).motion.mode, 8);
+    // A dock 1 m under the surface: the motor presses the body against it,
+    // which bobs 6 cm. Each bob used to renew the surface budget, up to 60 s.
+    let mut ended = None;
+    for tick in 1..=200u64 {
+        f.position.z = 18.5 + if tick % 10 < 5 { 0.0 } else { 0.06 };
+        f.velocity.z = if tick % 10 < 5 { 0.1 } else { -0.1 };
+        let step = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(10 + 50 * tick));
+        let rising = runtime.swim_intent(&MoveInput::default()) == Some(crate::ao::State::SwimmingUp);
+        assert_eq!(step.motion.mode == 8, rising, "tick {tick}");
+        if !rising {
+            ended.get_or_insert(tick * 50);
+        }
+    }
+    let ended = ended.expect("the blocked ascent ends");
+    assert!((1500..=2500).contains(&ended), "ended after {ended} ms");
+    assert_eq!(runtime.state, State::Submerged);
+}
+
+#[test]
+fn a_takeoff_under_a_ceiling_hands_back_to_swimming_and_moving_goals_never_stall() {
+    let now = Instant::now();
+    let prefs = prefs();
+    let up = MoveInput {
+        up: true,
+        ..Default::default()
+    };
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    f.on_ground = false;
+    f.position.z = 20.0 - (f.height * 0.5 - 0.4);
+    runtime.update(&prefs, &f, &MoveInput::default(), now);
+    runtime.update(&prefs, &f, &up, now + Duration::from_millis(10));
+    runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(60));
+    assert_eq!(runtime.update(&prefs, &f, &up, now + Duration::from_millis(150)).motion.mode, 10);
+    f.flying = true;
+    // A roof right above the water: the body never rises.
+    runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(1000));
+    assert_eq!(runtime.swim_intent(&MoveInput::default()), Some(crate::ao::State::WaterFlightExit));
+    let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(2700));
+    assert_ne!(released.motion.mode, 10);
+    assert!(!matches!(
+        runtime.swim_intent(&MoveInput::default()),
+        Some(crate::ao::State::WaterFlightExit | crate::ao::State::SwimmingUp)
+    ));
+
+    // A fast fall away from a surface goal is movement, not a stall.
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    f.on_ground = false;
+    f.ground = Some(-50.0);
+    f.position.z = 17.0;
+    assert_eq!(runtime.update(&prefs, &f, &MoveInput::default(), now).motion.mode, 8);
+    for tick in 1..=60u64 {
+        f.position.z = 17.0 - 0.3 * tick as f32;
+        f.velocity.z = -6.0;
+        let step = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(10 + 50 * tick));
+        assert_eq!(step.motion.mode, 8, "tick {tick}");
+    }
 }
