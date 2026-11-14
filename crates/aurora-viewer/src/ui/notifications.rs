@@ -728,15 +728,22 @@ pub(super) fn card(
                 }
             }
             if !buttons.is_empty() {
+                // Indent the whole wrap column: a leading `add_space` inside
+                // `horizontal_wrapped` only shifts the first row, so a long
+                // Mute Owner label in French started left of the card text
+                // (#2932). Nesting the wrap after the indent keeps every row
+                // aligned with the body.
                 ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
                     ui.add_space(indent);
-                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                    for (label, r, primary) in buttons {
-                        if button(ui, p, &label, primary).clicked() {
-                            out = Some(r);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                        for (label, r, primary) in buttons {
+                            if button(ui, p, &label, primary).clicked() {
+                                out = Some(r);
+                            }
                         }
-                    }
+                    });
                 });
             }
         }
@@ -1474,6 +1481,108 @@ mod tests {
                 "aurora={aurora}: saved"
             );
         }
+    }
+
+    /// In the Legacy toast style, French Mute Owner wraps under Accept /
+    /// Discard and must keep the same left edge as those buttons (#2932).
+    #[test]
+    fn legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french() {
+        let previous = aurora_i18n::language().to_owned();
+        aurora_i18n::select("fr", Some("fr"));
+        let mute = aurora_i18n::tr!("ui-notifications-mute-owner");
+        let accept = aurora_i18n::tr!("ui-notifications-accept");
+        let discard = aurora_i18n::tr!("ui-notifications-discard");
+        assert_eq!(mute, "Ignorer le propriétaire");
+
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let icons = Icons::default();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut list = Notifications::default();
+        let body = "Un objet nommé Distributeur appartenant à Jane Doe vous a donné cet objet :\nNote de bienvenue";
+        list.push(
+            Kind::Inventory,
+            "Distributeur",
+            body,
+            Data::Inventory {
+                from: JANE,
+                tx: Uuid::from_u128(3),
+                asset_type: 7,
+                object: Uuid::nil(),
+                task: true,
+                task_offer: Some(crate::world::inventory_offers::TaskOffer {
+                    object_name: "Distributeur".into(),
+                    item_name: "Note de bienvenue".into(),
+                    from_group: false,
+                    own_object: false,
+                }),
+            },
+        );
+        list.link_name(list.last_id(), "Jane Doe", crate::world::notifications::NameTarget::Avatar(JANE));
+
+        let mut time = 0.0;
+        let mut frame = || {
+            time += 0.1;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(320.0);
+                    card(
+                        ui,
+                        &p,
+                        &icons,
+                        &world,
+                        &HashMap::new(),
+                        &mut HashSet::new(),
+                        &mut list.list[0],
+                        true,
+                        false,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        for _ in 0..3 {
+            frame();
+        }
+        let output = frame();
+        let text_rect = |wanted: &str| {
+            output.shapes.iter().find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.text() == wanted => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+                _ => None,
+            })
+        };
+        let accept_rect = text_rect(accept).expect("Accept visible");
+        let discard_rect = text_rect(discard).expect("Discard visible");
+        let mute_rect = text_rect(mute).expect("Mute Owner visible");
+        assert!(
+            (accept_rect.min.y - discard_rect.min.y).abs() < 1.0,
+            "Accept and Discard stay on the first row: {accept_rect:?} {discard_rect:?}"
+        );
+        assert!(
+            mute_rect.min.y > accept_rect.max.y + 1.0,
+            "Mute Owner wraps under the first row: {mute_rect:?} above {accept_rect:?}"
+        );
+        // Label glyphs sit a couple of pixels inside each button face, so
+        // allow a small inset difference while still catching the old bug
+        // that dropped the whole 22 px Legacy indent on the wrapped row.
+        assert!(
+            (mute_rect.min.x - accept_rect.min.x).abs() < 4.0,
+            "wrapped Mute Owner keeps Accept's left edge: mute={mute_rect:?} accept={accept_rect:?}"
+        );
+        assert!(
+            mute_rect.min.x > accept_rect.min.x - 8.0,
+            "wrapped Mute Owner must not lose the Legacy indent: mute={mute_rect:?} accept={accept_rect:?}"
+        );
+
+        aurora_i18n::select(&previous, Some(&previous));
     }
 
     #[test]
