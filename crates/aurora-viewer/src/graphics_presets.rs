@@ -755,6 +755,10 @@ fn all_lights() -> u32 {
 
 /// `Settings::blend_order`: the exact order at its finest precision.
 pub(crate) const BLEND_ORDER_FULL: u8 = 4;
+/// `Settings::blend_order`: the stochastic transparency (aurora-render
+/// oit_stochastic.rs), an estimate of the exact order that is also drawn
+/// under MSAA.
+pub(crate) const BLEND_ORDER_STOCHASTIC: u8 = 5;
 
 fn blend_order_full() -> u8 {
     BLEND_ORDER_FULL

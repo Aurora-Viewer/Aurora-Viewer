@@ -1459,7 +1459,9 @@ pub struct Settings {
     /// the true order of their fragments at each pixel, beyond the Legacy
     /// Viewer, from its lightest precision to its finest
     /// (`aurora_render::BlendPrecision`: 1 fast, 2 balanced, 3 high, 4 full,
-    /// the default). Sorted under MSAA.
+    /// the default), sorted under MSAA; 5 the stochastic transparency
+    /// (aurora-render oit_stochastic.rs), an estimate of that order from 8
+    /// random samples per pixel, under MSAA too.
     pub blend_order: u8,
     /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
     /// 2 balanced, 3 performance, 4 ultra performance.
@@ -1610,11 +1612,6 @@ pub struct Settings {
     pub display_name_notices: bool,
     /// Screen-space reflections.
     pub ssr: bool,
-    /// Order-independent transparency (aurora-render oit_stochastic.rs):
-    /// the blended faces drawn with depth-based stochastic transparency
-    /// rather than in the sorted order. An Aurora addition, off by
-    /// default (an opt-in); in every anti-aliasing mode.
-    pub oit: bool,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2489,7 +2486,6 @@ impl Default for Settings {
             ssr: false,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
-            oit: false,
             anisotropy: 8,
             cache_size_mb: 20480,
             cache_location: String::new(),
@@ -3298,7 +3294,9 @@ impl Settings {
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(7);
-        self.blend_order = self.blend_order.min(4);
+        if self.blend_order > crate::graphics_presets::BLEND_ORDER_STOCHASTIC {
+            self.blend_order = crate::graphics_presets::BLEND_ORDER_FULL;
+        }
         self.fsr_quality = self.fsr_quality.min(4);
         self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
@@ -3590,7 +3588,8 @@ impl Settings {
             rain_surfaces: false,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
-            oit: self.oit,
+            // the stochastic choice of the order of the blended faces
+            oit: self.blend_order == crate::graphics_presets::BLEND_ORDER_STOCHASTIC,
         }
     }
 
@@ -5315,6 +5314,21 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(odd.sanitized().blend_order, 4);
+        // the stochastic transparency is a choice of the same setting
+        let stochastic = Settings {
+            blend_order: 5,
+            ..Settings::default()
+        };
+        assert_eq!(stochastic.clone().sanitized().blend_order, 5);
+        assert!(stochastic.render_settings().oit);
+        assert!((0..=4).all(|order| {
+            !Settings {
+                blend_order: order,
+                ..Settings::default()
+            }
+            .render_settings()
+            .oit
+        }));
     }
 
     #[test]

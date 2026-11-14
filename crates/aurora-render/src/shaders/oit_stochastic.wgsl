@@ -5,14 +5,30 @@
 //
 // 1. cs_resolve: per pixel, the accumulated colour and alpha averaged over
 //    the passes' samples (the paper's "filtered" values: a box filter over
-//    the pixel), and the total alpha averaged over the samples (1 - the
-//    product of the transparencies). Blended with the previous frame's,
-//    reprojected through the camera's motion (the temporal blend).
-// 2. fs_composite: per sample of the scene, the opaque colour dimmed by that
+//    the pixel), the total alpha averaged over the samples (1 - the product
+//    of the transparencies), the colour times the alpha correction (the
+//    ratio of the total alpha to the accumulated alpha), and how uncertain
+//    that colour is: it is the total alpha times the mean, weighted by their
+//    alpha, of the samples' colours (each its accumulated colour over its
+//    accumulated alpha), so its standard error is their spread over the
+//    root of their count. Where one layer covers the pixel every sample
+//    holds the same colour, the spread is 0 and the colour is exact.
+// 2. cs_temporal: that colour blended with the previous frame's, reprojected
+//    through the camera's motion, only as much as its uncertainty asks for:
+//    an exact pixel is this frame's alone, so one layer neither softens nor
+//    trails. The previous frame's colour is left out where its total alpha
+//    (no noise in it) is not this pixel's (something else was there) and
+//    where the camera slid the pixel's layers past one another.
+// 3. cs_smooth: what grain the blend leaves (all of this frame's where the
+//    previous one was left out), averaged with the neighbours whose colour
+//    is within that grain of the pixel's (and of a like total alpha): broad
+//    glass comes out even, while an edge or a texture stronger than the
+//    grain stays as it is. Its result is drawn, not kept: the next frame
+//    blends with cs_temporal's.
+// 4. fs_composite: per sample of the scene, the opaque colour dimmed by that
 //    sample's transparency (the blend's destination factor) plus the
-//    accumulated colour times the alpha correction (the ratio of the total
-//    alpha to the accumulated alpha).
-// 3. fs_composite_glow: the blended faces' glow, accumulated like their
+//    resolved colour.
+// 5. fs_composite_glow: the blended faces' glow, accumulated like their
 //    colour (object.wgsl fs_st_glow) and corrected the same way, added to
 //    the scene alpha (the glow amount) once the composite has dimmed it.
 
@@ -23,12 +39,12 @@ struct ResolveParams {
     samples_hw: u32,
     // bit 0 temporal blend, bit 1 glowing faces accumulated (glow_ms),
     // bit 2 the scene single-sampled: the composite dims each pixel by its
-    // resolved total alpha (the transmittance at the passes' samples)
+    // total alpha (trans_one),
+    // bit 3 the history holds an earlier frame of this view
     flags: u32,
-    // the temporal blend: weight of this frame
+    // the temporal blend: the least weight of this frame
     temporal_weight: f32,
-    // samples per pixel of the transmittance's target: the scene's with
-    // MSAA, the stochastic passes' (samples_hw) without
+    // samples per pixel of the transmittance's target: the scene's
     trans_samples: u32,
     _pad0: u32,
     _pad1: u32,
@@ -39,68 +55,56 @@ struct ResolveParams {
 // the accumulation and the transmittance, multisampled
 @group(0) @binding(1) var accum_ms: texture_multisampled_2d<f32>;
 @group(0) @binding(2) var trans_ms: texture_multisampled_2d<f32>;
-// cs_resolve writes: the averaged accumulation, and the total alpha (red)
-// with the blended faces' corrected glow (green)
+// cs_resolve writes this frame's corrected colour with its total alpha,
+// cs_temporal the blended colour with that total alpha, cs_smooth the
+// colour drawn
 @group(0) @binding(3) var resolved_w: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(4) var total_w: texture_storage_2d<rg32float, write>;
-// the previous frame's resolved colour (temporal)
+// cs_resolve writes: the farthest stochastic depth, the blended faces'
+// corrected glow, the colour's uncertainty (its standard error) and the
+// nearest stochastic depth
+@group(0) @binding(4) var aux_w: texture_storage_2d<rgba16float, write>;
+// the previous frame's blended colour and total alpha (cs_temporal,
+// cs_smooth)
 @group(0) @binding(5) var history: texture_2d<f32>;
-// fs_composite reads
+// cs_temporal reads this frame's colour, cs_smooth the blended one,
+// fs_composite the smoothed one
 @group(0) @binding(6) var resolved_r: texture_2d<f32>;
-@group(0) @binding(7) var total_r: texture_2d<f32>;
-// the stochastic depth (cs_resolve, temporal): the nearest transparent
-// winner of the pixel, reprojected
+@group(0) @binding(7) var aux_r: texture_2d<f32>;
+// the stochastic depth (cs_resolve): the nearest transparent winner of the
+// pixel, which the temporal blend reprojects
 @group(0) @binding(10) var st_depth_ms: texture_depth_multisampled_2d;
 // the glow accumulated over the stochastic passes' samples (red)
 @group(0) @binding(11) var glow_ms: texture_multisampled_2d<f32>;
+// the transmittance of a single-sampled scene (trans_ms is then unused)
+@group(0) @binding(12) var trans_one: texture_2d<f32>;
 
-// The averaged accumulation of a pixel (the pass has at most 8 samples).
-fn resolve_pixel(px: vec2<i32>) -> vec4<f32> {
-    var sum = vec4<f32>(0.0);
-    let n = min(rp.samples_hw, 8u);
-    for (var s = 0u; s < n; s += 1u) {
-        sum += textureLoad(accum_ms, px, i32(s));
-    }
-    return sum / f32(max(n, 1u));
-}
+// The uncertainty left in a colour drawn, as a part of that colour (of a
+// dim one, as a part of QUIET_DIM): a pixel under it is this frame's alone,
+// one over it takes as much of the previous frames as brings it there.
+const QUIET = 0.004;
+const QUIET_DIM = 0.05;
+// The difference of total alpha from which the previous frame's colour is
+// another surface's, and the span over which it is left.
+const OTHER_FROM = 0.004;
+const OTHER_SPAN = 0.012;
+// The pixels the camera's motion has slid the farthest of a pixel's layers
+// past its nearest from which the previous frame's colour, reprojected as
+// the nearest, is no longer what lies behind it, and the span over which it
+// is left.
+const SLID_FROM = 0.25;
+const SLID_SPAN = 0.5;
+// How far from a pixel's colour, in the uncertainty the blend leaves in it,
+// a neighbour's still is the same colour under the grain (cs_smooth).
+const GRAIN_REACH = 2.0;
 
-// Temporal: the last frame's resolved colour where this pixel's nearest
-// transparent surface was, through the camera's motion only (the hair's own
-// sway is not reprojected), clamped to the 3 x 3 neighbourhood of this frame
-// as TAA does, then blended. Ghosts and smears where the clamp does not
-// catch a change.
-fn reprojected(px: vec2<i32>, cur: vec4<f32>) -> vec4<f32> {
-    var z = 0.0;
-    let n = min(rp.samples_hw, 8u);
-    for (var s = 0u; s < n; s += 1u) {
-        z = max(z, textureLoad(st_depth_ms, px, i32(s)));
-    }
-    if (z <= 0.0) {
-        return cur;
-    }
-    let size = vec2<f32>(f32(rp.width), f32(rp.height));
-    let ndc = vec2<f32>((f32(px.x) + 0.5) / size.x * 2.0 - 1.0, 1.0 - (f32(px.y) + 0.5) / size.y * 2.0);
-    let pp = rp.reproj * vec4<f32>(ndc, z, 1.0);
-    if (pp.w <= 0.0) {
-        return cur;
-    }
-    let pn = pp.xy / pp.w;
-    let puv = vec2<f32>(pn.x * 0.5 + 0.5, 0.5 - pn.y * 0.5);
-    if (puv.x < 0.0 || puv.y < 0.0 || puv.x >= 1.0 || puv.y >= 1.0) {
-        return cur;
-    }
-    let old = textureLoad(history, vec2<i32>(puv * size), 0);
-    var mn = cur;
-    var mx = cur;
-    for (var dy = -1; dy <= 1; dy += 1) {
-        for (var dx = -1; dx <= 1; dx += 1) {
-            let q = clamp(px + vec2<i32>(dx, dy), vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));
-            let c = resolve_pixel(q);
-            mn = min(mn, c);
-            mx = max(mx, c);
-        }
-    }
-    return mix(clamp(old, mn, mx), cur, rp.temporal_weight);
+// This frame's weight in the temporal blend for a colour `c` of uncertainty
+// `unsure` to come out quiet: all of it where the colour is sure, the least
+// where it is far from it (a blend of weight w leaves w / (2 - w) of the
+// variance).
+fn frame_weight(c: vec3<f32>, unsure: f32) -> f32 {
+    let quiet = QUIET * max(max(c.r, c.g), max(c.b, QUIET_DIM));
+    let q2 = quiet * quiet;
+    return clamp(2.0 * q2 / (unsure * unsure + q2), rp.temporal_weight, 1.0);
 }
 
 @compute @workgroup_size(8, 8)
@@ -109,37 +113,191 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(g.xy);
+    let n = min(rp.samples_hw, 8u);
+    let tn = min(rp.trans_samples, 16u);
     var trans = 0.0;
-    let n = min(rp.trans_samples, 16u);
-    for (var s = 0u; s < n; s += 1u) {
-        trans += textureLoad(trans_ms, px, i32(s)).x;
+    if (tn <= 1u) {
+        trans = textureLoad(trans_one, px, 0).x;
+    } else {
+        for (var s = 0u; s < tn; s += 1u) {
+            trans += textureLoad(trans_ms, px, i32(s)).x;
+        }
+        trans /= f32(tn);
     }
-    var resolved = resolve_pixel(px);
-    let total = 1.0 - trans / f32(max(n, 1u));
+    var sum = vec4<f32>(0.0);
+    // the sums of alpha x colour squared and of alpha squared, for the
+    // spread of the samples' colours
+    var squares = vec3<f32>(0.0);
+    var alphas = 0.0;
+    var z = 0.0;
+    var z_far = 1.0;
+    for (var s = 0u; s < n; s += 1u) {
+        let a = textureLoad(accum_ms, px, i32(s));
+        sum += a;
+        if (a.a > 1e-5) {
+            squares += a.rgb * a.rgb / a.a;
+            alphas += a.a * a.a;
+        }
+        let depth = textureLoad(st_depth_ms, px, i32(s));
+        z = max(z, depth);
+        z_far = min(z_far, depth);
+    }
+    let nf = f32(max(n, 1u));
+    let resolved = sum / nf;
+    // (the total alpha is at the scene's samples, the accumulation at the
+    // passes': a sliver that covers the first and none of the second has no
+    // colour to show, and is left out rather than drawn black)
+    let total = select(0.0, 1.0 - trans, resolved.a > 0.0);
     // the glow, averaged as the colour and corrected by the same ratio
     var glow = 0.0;
     if ((rp.flags & 2u) != 0u) {
-        let m = min(rp.samples_hw, 8u);
-        for (var s = 0u; s < m; s += 1u) {
+        for (var s = 0u; s < n; s += 1u) {
             glow += textureLoad(glow_ms, px, i32(s)).x;
         }
-        glow /= f32(max(m, 1u));
+        glow /= nf;
     }
-    // nothing blended here (a glowing face of alpha 0 has glow alone): no
-    // reprojection, which is the costly part
+    // nothing blended here (a glowing face of alpha 0 has glow alone)
     if (resolved.a <= 0.0 && total <= 0.0 && glow <= 0.0) {
         textureStore(resolved_w, px, vec4<f32>(0.0));
-        textureStore(total_w, px, vec4<f32>(0.0));
+        textureStore(aux_w, px, vec4<f32>(0.0));
         return;
     }
+    var corr = 1.0;
+    var unsure = 0.0;
     if (resolved.a > 1e-5) {
-        glow *= total / resolved.a;
+        corr = total / resolved.a;
+        // the standard error of the weighted mean of the samples' colours,
+        // times the total alpha
+        let mean = sum.rgb / sum.a;
+        let spread = max(squares / sum.a - mean * mean, vec3<f32>(0.0));
+        let count = sum.a * sum.a / max(alphas, 1e-10);
+        unsure = total * sqrt(max(spread.r, max(spread.g, spread.b)) / max(count - 1.0, 1.0));
     }
-    if ((rp.flags & 1u) != 0u) {
-        resolved = reprojected(px, resolved);
+    textureStore(resolved_w, px, vec4<f32>(resolved.rgb * corr, total));
+    textureStore(aux_w, px, vec4<f32>(z_far, glow * corr, unsure, z));
+}
+
+// Where, in the last frame's pixels, what this pixel shows at the depth `z`
+// was, through the camera's motion only (the hair's own sway is not
+// reprojected). z < 0: behind the last frame's camera.
+fn reprojected(px: vec2<i32>, z: f32) -> vec3<f32> {
+    let size = vec2<f32>(f32(rp.width), f32(rp.height));
+    let ndc = vec2<f32>((f32(px.x) + 0.5) / size.x * 2.0 - 1.0, 1.0 - (f32(px.y) + 0.5) / size.y * 2.0);
+    let pp = rp.reproj * vec4<f32>(ndc, z, 1.0);
+    if (pp.w <= 0.0) {
+        return vec3<f32>(-1.0);
     }
-    textureStore(resolved_w, px, resolved);
-    textureStore(total_w, px, vec4<f32>(total, glow, 0.0, 0.0));
+    let pn = pp.xy / pp.w;
+    return vec3<f32>((pn.x * 0.5 + 0.5) * size.x, (0.5 - pn.y * 0.5) * size.y, 1.0);
+}
+
+// The last frame's colour for a pixel of total alpha `total`, and in alpha
+// how much of it is left out (1: all of it): where the nearest layer was,
+// unless that total alpha is not the pixel's (something else was there) or
+// the farthest layer slid past the nearest since (the camera moved sideways:
+// what shows through the nearest is no longer what was behind it).
+fn last_frame(px: vec2<i32>, aux: vec4<f32>, total: f32) -> vec4<f32> {
+    let last = vec2<i32>(i32(rp.width), i32(rp.height)) - vec2<i32>(1);
+    // the farthest depth of the neighbourhood: which of a pixel's layers win
+    // its few samples is chance, and so would be what is left out
+    var z_far = aux.x;
+    for (var dy = -1; dy <= 1; dy += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            z_far = min(z_far, textureLoad(aux_r, clamp(px + vec2<i32>(dx, dy), vec2<i32>(0), last), 0).x);
+        }
+    }
+    let at = reprojected(px, aux.w);
+    let back = reprojected(px, z_far);
+    let inside = at.x >= 0.0 && at.y >= 0.0 && at.x < f32(rp.width) && at.y < f32(rp.height);
+    if ((rp.flags & 8u) == 0u || aux.w <= 0.0 || at.z <= 0.0 || back.z <= 0.0 || !inside) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    // (between its four texels: the nearest alone would put every edge up
+    // to half a pixel off while the camera turns)
+    let corner = floor(at.xy - 0.5);
+    let part = at.xy - 0.5 - corner;
+    let c00 = vec2<i32>(corner);
+    let h00 = textureLoad(history, clamp(c00, vec2<i32>(0), last), 0);
+    let h10 = textureLoad(history, clamp(c00 + vec2<i32>(1, 0), vec2<i32>(0), last), 0);
+    let h01 = textureLoad(history, clamp(c00 + vec2<i32>(0, 1), vec2<i32>(0), last), 0);
+    let h11 = textureLoad(history, clamp(c00 + vec2<i32>(1, 1), vec2<i32>(0), last), 0);
+    let h = mix(mix(h00, h10, part.x), mix(h01, h11, part.x), part.y);
+    let slid = clamp((length(back.xy - at.xy) - SLID_FROM) / SLID_SPAN, 0.0, 1.0);
+    let other = clamp((abs(h.a - total) - OTHER_FROM) / OTHER_SPAN, 0.0, 1.0);
+    return vec4<f32>(h.rgb, max(other, slid));
+}
+
+@compute @workgroup_size(8, 8)
+fn cs_temporal(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x >= rp.width || g.y >= rp.height) {
+        return;
+    }
+    let px = vec2<i32>(g.xy);
+    let cur = textureLoad(resolved_r, px, 0);
+    let aux = textureLoad(aux_r, px, 0);
+    let weight = frame_weight(cur.rgb, aux.z);
+    if ((rp.flags & 1u) == 0u || weight >= 1.0) {
+        textureStore(resolved_w, px, cur);
+        return;
+    }
+    let h = last_frame(px, aux, cur.a);
+    if (h.a >= 1.0) {
+        textureStore(resolved_w, px, cur);
+        return;
+    }
+    // the last frame's colour within the extent of the neighbourhood, as
+    // TAA takes it
+    let last = vec2<i32>(i32(rp.width), i32(rp.height)) - vec2<i32>(1);
+    var mn = cur.rgb;
+    var mx = cur.rgb;
+    for (var dy = -1; dy <= 1; dy += 1) {
+        for (var dx = -1; dx <= 1; dx += 1) {
+            let c = textureLoad(resolved_r, clamp(px + vec2<i32>(dx, dy), vec2<i32>(0), last), 0).rgb;
+            mn = min(mn, c);
+            mx = max(mx, c);
+        }
+    }
+    textureStore(resolved_w, px, vec4<f32>(mix(clamp(h.rgb, mn, mx), cur.rgb, mix(weight, 1.0, h.a)), cur.a));
+}
+
+@compute @workgroup_size(8, 8)
+fn cs_smooth(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x >= rp.width || g.y >= rp.height) {
+        return;
+    }
+    let px = vec2<i32>(g.xy);
+    let c = textureLoad(resolved_r, px, 0);
+    let aux = textureLoad(aux_r, px, 0);
+    let unsure = aux.z;
+    // a sure colour stays as it is
+    let weight = frame_weight(c.rgb, unsure);
+    if (weight >= 1.0) {
+        textureStore(resolved_w, px, c);
+        return;
+    }
+    // what the blend left of the uncertainty, more of it where it went
+    // without the last frame
+    let left = mix(sqrt(weight / (2.0 - weight)), 1.0, last_frame(px, aux, c.a).a);
+    let reach = GRAIN_REACH * unsure * left;
+    let last = vec2<i32>(i32(rp.width), i32(rp.height)) - vec2<i32>(1);
+    // twice: the nearest neighbours around the pixel's own colour first,
+    // which is off by its grain, then the wider ones around their mean
+    var mid = c.rgb;
+    for (var radius = 1; radius <= 2; radius += 1) {
+        // (the mean so far weighs a little, should no neighbour be like it)
+        var sum = vec4<f32>(mid, 1.0) * 0.01;
+        for (var dy = -radius; dy <= radius; dy += 1) {
+            for (var dx = -radius; dx <= radius; dx += 1) {
+                let q = textureLoad(resolved_r, clamp(px + vec2<i32>(dx, dy), vec2<i32>(0), last), 0);
+                let d = abs(q.rgb - mid);
+                let apart = max(d.r, max(d.g, d.b)) / reach;
+                let like = max(1.0 - abs(q.a - c.a) / OTHER_FROM, 0.0);
+                sum += vec4<f32>(q.rgb, 1.0) * like * exp(-apart * apart);
+            }
+        }
+        mid = sum.rgb / sum.a;
+    }
+    textureStore(resolved_w, px, vec4<f32>(mid, c.a));
 }
 
 @vertex
@@ -156,28 +314,23 @@ fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs_composite(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) -> @location(0) vec4<f32> {
     let px = vec2<i32>(p.xy);
-    let total = textureLoad(total_r, px, 0).x;
+    let c = textureLoad(resolved_r, px, 0);
     var trans: f32;
     if ((rp.flags & 4u) != 0u) {
-        trans = 1.0 - total;
+        trans = 1.0 - c.a;
     } else {
         trans = textureLoad(trans_ms, px, i32(s)).x;
     }
-    let c = textureLoad(resolved_r, px, 0);
-    var corr = 1.0;
-    if (c.a > 1e-5) {
-        corr = total / c.a;
-    }
-    if (total <= 0.0 && trans >= 1.0) {
+    if (c.a <= 0.0 && trans >= 1.0) {
         discard;
     }
-    return vec4<f32>(c.rgb * corr, 1.0 - trans);
+    return vec4<f32>(c.rgb, 1.0 - trans);
 }
 
 // The blended faces' glow added to the scene alpha (alpha only, additive).
 @fragment
 fn fs_composite_glow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-    let glow = textureLoad(total_r, vec2<i32>(p.xy), 0).y;
+    let glow = textureLoad(aux_r, vec2<i32>(p.xy), 0).y;
     if (glow <= 0.0) {
         discard;
     }

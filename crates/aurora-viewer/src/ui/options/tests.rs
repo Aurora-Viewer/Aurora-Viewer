@@ -412,7 +412,7 @@ fn a_setting_has_one_page() {
         // Graphics, and Aurora with the other differences from the Legacy
         // Viewer;
         // inventory delete confirm: Confirmations and Inventory (#2344)
-        if path == "keybinds" || path == "colored_sky_ambient" || path == "oit" || path == "inventory.confirm_delete" {
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
         let elsewhere: Vec<_> = paths

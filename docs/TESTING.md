@@ -164,7 +164,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
-| `AURORA_BLEND_ORDER=<0..4>` | Override the order of transparent surfaces: 0 sorted (Standard), 1 to 4 exact, from fast to full |
+| `AURORA_BLEND_ORDER=<0..5>` | Override the order of transparent surfaces: 0 sorted (Standard), 1 to 4 exact, from fast to full, 5 stochastic |
 | `AURORA_LOCAL_LIGHTS=0..64` | Overrides "Maximum nearby lights" (Graphics › Light) |
 | `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
@@ -11338,7 +11338,7 @@ What the inventory must show with these scenarios:
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=exact`, `layers` or `exact-alt` | The order of the blended faces whatever the setting says: composed in the order of their fragments at each pixel; sorted, as the Standard choice of the setting; or the sorted order one second in three |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (`layers`, the Standard order of the setting); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
-| `AURORA_OIT=0` or `1` | Order-independent transparency (stochastic) off or on for this launch, whatever the setting (`stochastic` is the same as `1`) |
+| `AURORA_OIT=0`, `1` or `alt` | The stochastic transparency off or on for this launch, whatever the setting "Order of transparent surfaces" says (`stochastic` is the same as `1`); `alt`: on two seconds in three, the setting's order the third |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -12009,9 +12009,15 @@ What the inventory must show with these scenarios:
   `split`; with `AURORA_DEMO_HAIR=1` (one mesh per avatar), 0.076 and
   0.082 ms. By default, against `split` (60 fps cap, `alt`): 0.52 → 0.66 ms
   with eight meshes each, 0.083 → 0.131 ms with one.
-- **`AURORA_OIT=0|1`**: order-independent transparency off or on
-  (`oit_stochastic.rs`; Preferences › Aurora, or Graphics › Image ›
-  Transparency; off by default, the sorted order of the Legacy Viewer, per
+- **`AURORA_OIT=0|1|alt`**: the stochastic transparency off or on
+  (`alt`: on two seconds in three and the order of the setting the third,
+  `xmode=new` and `xmode=old` on the profile lines of `AURORA_PROFILE=1`,
+  to compare the two, image and `g_transparent`, from one place in one
+  run; the targets stay through that second and the temporal blend starts
+  again after it)
+  (`oit_stochastic.rs`; the "Stochastic" choice of Graphics › Image ›
+  Transparency › "Order of transparent surfaces", `AURORA_BLEND_ORDER=5`;
+  with `0` and that choice, the sorted order of the Legacy Viewer, per
   face as `scene/blend_order.rs` sorts it): the blended faces drawn with
   depth-based stochastic transparency (Enderton et al., "Stochastic
   Transparency", I3D 2010, section 3.4): the total alpha of every sample,
@@ -12034,14 +12040,24 @@ What the inventory must show with these scenarios:
   their own sample count, the most the device takes up to 8, whatever the
   scene's: their depth starts as the opaque depth spread over those samples
   (each takes the scene sample nearest to it); 8 samples per pixel, their
-  noise averaged over the frames by the temporal blend (the resolved colour
-  blended 1/8 with the last frame's, reprojected through the nearest
-  transparent depth and clamped to the 3 x 3 neighbourhood; the seeds
-  change every frame). With MSAA (`AURORA_AA=2`, `3`, `4`) the total alpha
-  and the composite stay at the scene's samples, each dimmed by its own
-  transparency. Without (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA,
-  `7` FSR) the total alpha runs at the passes' samples against that spread
-  depth, the composite dims each pixel by its resolved transparency, and the
+  noise averaged over the frames by the temporal blend, only where there is
+  some: the resolve measures, per pixel, how far the samples' accumulated
+  alpha spreads around their total alpha (nothing where one layer covers
+  the pixel: every sample holds the same, the colour is exact and this
+  frame's alone, as sharp and as still as with `AURORA_OIT=0`); where
+  layers hide one another the colour is blended, down to 1/8, with the last
+  frame's, reprojected through the nearest transparent depth and clamped
+  to the 3 x 3 neighbourhood (the seeds change every frame), and the last
+  frame's colour is left where its total alpha is not this pixel's
+  (something else was there: the camera slid past layers at different
+  depths, a face moved), the neighbours of a like total alpha standing in
+  for it. Check in motion (`AURORA_DEMO_VEILS=4,0` while orbiting): no
+  trail behind the edge of a curtain, the lace of a single curtain as
+  sharp as with `AURORA_OIT=0`. The total alpha and the composite stay at
+  the scene's samples: with MSAA (`AURORA_AA=2`, `3`, `4`) each sample is
+  dimmed by its own transparency; without (`AURORA_AA=0` none, `1` FXAA,
+  `5` TAA, `6` SMAA, `7` FSR) the pixel is, by its one sample (as the
+  blended faces of the sorted order have one), and the
   anti-aliasing then runs over the result as with `AURORA_OIT=0`: check the
   edges of opaque objects in front of and behind the panes of
   `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` (no halo, the same edge as with
@@ -12069,8 +12085,10 @@ What the inventory must show with these scenarios:
   sample index route` when `spirv_fix.rs` cannot make the module or the
   pipelines made from it are refused: the same image, about four times the
   invocations of that pass) and the targets (`oit stochastic: targets
-  <w>x<h>, the scene at <n> samples, the passes at <p>, <m> MB`: about 198
-  MB at 1600 x 900 and 506 MB at 2560 x 1440 with MSAA 4x). With
+  <w>x<h>, the scene at <n> samples, the passes at <p>, <m> MB`: about 187
+  MB at 1600 x 900 and 478 MB at 2560 x 1440 with MSAA 4x, 179 and 457 MB
+  without MSAA, 16 bytes a pixel more from the first frame with a glowing
+  blended face, logged again). With
   `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=… depth=… accum=…
   resolve_composite=… total=…` every 120 frames. Grain: compare a capture
   with `AURORA_OIT=0` of the same frame where one layer covers the pixel

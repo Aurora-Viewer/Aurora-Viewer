@@ -1232,11 +1232,12 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
-    /// Order-independent transparency (oit_stochastic.rs): the blended
-    /// faces drawn with depth-based stochastic transparency rather than in
-    /// the per-face sorted order (`scene/blend_order.rs`, #3060), in every
-    /// anti-aliasing mode. Off (the default: an opt-in), they are blended
-    /// in that order and nothing of the method is made, or kept.
+    /// The stochastic transparency (oit_stochastic.rs), the "Stochastic"
+    /// choice of the order of transparent surfaces: the blended faces drawn
+    /// with depth-based stochastic transparency rather than in the per-face
+    /// sorted order (`scene/blend_order.rs`, #3060) or the exact one
+    /// (blend_exact.rs), in every anti-aliasing mode. Off (the default),
+    /// nothing of the method is made, or kept.
     pub oit: bool,
 }
 

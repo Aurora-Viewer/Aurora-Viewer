@@ -1,5 +1,6 @@
 //! Order-independent transparency by depth-based stochastic transparency
-//! (the OIT setting; `AURORA_OIT` in docs/TESTING.md). An Aurora addition:
+//! (the "Stochastic" choice of the order of transparent surfaces;
+//! `AURORA_OIT` in docs/TESTING.md). An Aurora addition:
 //! the Legacy Viewer sorts its alpha (LLDrawPoolAlpha).
 //!
 //! Enderton, Sintorn, Shirley and Luebke, "Stochastic Transparency", I3D
@@ -27,15 +28,32 @@
 //! The passes 3 and 4 run at their own sample count, the most the device
 //! has up to 8 (the paper's, section 4), whatever the scene's: their depth
 //! starts as the opaque depth spread over those samples
-//! (`oit_stochastic_expand.wgsl`). With MSAA the total alpha and the
-//! composite stay at the scene's samples (each scene sample dimmed by its
-//! own transparency). Without (SMAA, FXAA, TAA, FSR or none: one sample) the
-//! total alpha runs at the passes' samples against that spread depth and the
-//! composite dims each pixel by its resolved transparency; the scene's
-//! anti-aliasing then runs over the result as over the sorted order. Under
-//! FSR that is the render size, before the upscale. The 8 samples are
-//! averaged over the frames by a temporal blend (weight 1/8, the seeds
-//! changing every frame), off under TAA (`temporal_weight`).
+//! (`oit_stochastic_expand.wgsl`). The total alpha and the composite stay
+//! at the scene's samples: with MSAA each scene sample is dimmed by its own
+//! transparency; without (SMAA, FXAA, TAA, FSR or none: one sample) the
+//! pixel is, and the scene's anti-aliasing then runs over the result as
+//! over the sorted order, whose blended faces have one sample a pixel too.
+//! Under FSR that is the render size, before the upscale. (The total alpha
+//! of a single-sampled scene ran at the passes' 8 samples: every blended
+//! fragment then wrote 8 samples of it, a quarter of the method's time in a
+//! scene of veils, for edges the scene's anti-aliasing smooths anyway.)
+//!
+//! The grain of the 8 samples is taken out by the resolve
+//! (oit_stochastic.wgsl), which first measures it: the colour of a pixel is
+//! its total alpha times the mean of its samples' colours, so its standard
+//! error is their spread over the root of their count, and nothing where one
+//! layer covers the pixel (every sample holds the same: the colour is exact,
+//! and left as it is). Where layers hide one another the colour is blended
+//! with the previous frame's, reprojected through the camera's motion, only
+//! as much as that error asks for (down to a weight of 1/8, the seeds
+//! changing every frame; off under TAA, `temporal_weight`), and the previous
+//! frame's colour is left out where it is another surface's (its total
+//! alpha, which has no noise, is not the pixel's) or the camera slid the
+//! pixel's layers past one another; then what grain is left is averaged
+//! with the neighbours whose colour is within it. (Every pixel blended 1/8
+//! with the last frame's, whatever its grain, made one layer of glass or
+//! hair softer than in the sorted order and left a trail behind every
+//! blended face in motion.)
 //!
 //! Everything here is made the first frame the method is on, on the render
 //! thread, and nothing while it is off: the passes' shaders are a module of
@@ -56,7 +74,8 @@ use bytemuck::{Pod, Zeroable};
 pub const SEEDS: u32 = 2048;
 /// The most samples a stochastic pass takes (the expand map's size).
 pub const MAX_PASS_SAMPLES: u32 = 8;
-/// The temporal blend's weight of the current frame.
+/// The temporal blend's least weight of the current frame (where the
+/// colour is far from sure, oit_stochastic.wgsl `frame_weight`).
 pub const TEMPORAL: f32 = 1.0 / 8.0;
 /// Frames without a blended face after which the targets are freed.
 const IDLE_FRAMES: u32 = 120;
@@ -101,7 +120,7 @@ pub(crate) fn temporal_weight(wanted: f32, history: SceneHistory) -> f32 {
     }
 }
 
-/// How the blended faces are drawn: the OIT setting on means stochastic
+/// How the blended faces are drawn: `RenderSettings::oit` on means stochastic
 /// transparency, off the sorted order (per face, as `scene/blend_order.rs`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Method {
@@ -118,7 +137,7 @@ fn env_value() -> Option<&'static str> {
 
 /// The method for an `AURORA_OIT` value (`0` off, `1` or `stochastic` on,
 /// whatever the setting; anything else, or none, leaves it to the setting)
-/// and the OIT setting.
+/// and `RenderSettings::oit`.
 pub(crate) fn method_with(env: Option<&str>, setting_oit: bool) -> Method {
     match env.map(str::trim) {
         Some("0") => Method::Off,
@@ -133,9 +152,31 @@ pub(crate) fn method_with(env: Option<&str>, setting_oit: bool) -> Method {
     }
 }
 
-/// The method this frame, from the environment or the OIT setting.
+/// The method this frame, from the environment or `RenderSettings::oit`.
 pub(crate) fn method(setting_oit: bool) -> Method {
+    if alternates() {
+        return if ALT_OFF.load(std::sync::atomic::Ordering::Relaxed) {
+            Method::Off
+        } else {
+            Method::Stochastic
+        };
+    }
     method_with(env_value(), setting_oit)
+}
+
+/// With `AURORA_OIT=alt`: this second draws the order the setting names.
+static ALT_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether `AURORA_OIT=alt` is set: the method two seconds in three, the
+/// order the setting names the third (`set_alt_off`; `xmode=old` on the
+/// profile lines), to compare the two from one place in one run. Its
+/// targets stay through that second.
+pub fn alternates() -> bool {
+    env_value().map(str::trim) == Some("alt")
+}
+
+pub fn set_alt_off(off: bool) {
+    ALT_OFF.store(off, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether a frame tries to draw its blended faces with the method: it is
@@ -288,22 +329,17 @@ pub fn expand_map(scene: u32, pass: u32) -> [u32; MAX_PASS_SAMPLES as usize] {
     map
 }
 
-/// The samples of the total alpha's target: the scene's with MSAA (the
-/// composite dims each scene sample by its own), the passes' without (the
-/// composite dims the pixel by the resolved transparency).
-pub fn trans_samples(scene: u32, pass: u32) -> u32 {
-    if scene > 1 { scene } else { pass }
-}
-
 /// The bytes of the targets `make_targets` allocates, from their formats
 /// (Rgba16Float colour, Depth32Float depth): the total alpha, the
-/// accumulation, the glow and the stochastic depth multisampled, the
-/// resolved colour (two with the history) and the total alpha and glow.
-pub fn target_bytes(width: u32, height: u32, samples: u32, pass: u32, history: bool) -> u64 {
+/// accumulation, the glow (with `glow`: once a frame had glowing blended
+/// faces) and the stochastic depth multisampled, this frame's resolved
+/// colour, the blended one (two with the history) and the total alpha with
+/// what goes with it.
+pub fn target_bytes(width: u32, height: u32, samples: u32, pass: u32, history: bool, glow: bool) -> u64 {
     let px = u64::from(width.max(1)) * u64::from(height.max(1));
-    let trans = 2 * u64::from(trans_samples(samples, pass));
-    let per_pass = (8 + 2 + 4) * u64::from(pass);
-    let resolved = 8 * (1 + u64::from(history));
+    let trans = 2 * u64::from(samples.max(1));
+    let per_pass = (8 + 2 * u64::from(glow) + 4) * u64::from(pass);
+    let resolved = 8 * (2 + u64::from(history));
     px * (trans + per_pass + resolved + 8)
 }
 
@@ -327,8 +363,9 @@ struct ResolveParams {
     /// samples per stochastic pass
     samples_hw: u32,
     /// bit 0 temporal blend, bit 1 glowing faces, bit 2 the scene
-    /// single-sampled
+    /// single-sampled, bit 3 the history holds an earlier frame of this view
     flags: u32,
+    /// the least weight of this frame in the temporal blend
     temporal_weight: f32,
     /// samples of the scene (the total alpha's target)
     trans_samples: u32,
@@ -388,6 +425,10 @@ pub(crate) struct Shared {
 /// The resolve's pipelines for one sample count of the scene.
 pub(crate) struct Resolve {
     resolve: wgpu::ComputePipeline,
+    /// the temporal blend of the resolved colour
+    temporal: wgpu::ComputePipeline,
+    /// the grain left averaged with the like neighbours
+    smooth: wgpu::ComputePipeline,
     composite: wgpu::RenderPipeline,
     /// the blended faces' glow added to the scene alpha
     composite_glow: wgpu::RenderPipeline,
@@ -404,16 +445,18 @@ struct Targets {
     pass: u32,
     /// the last frame's resolved colour is kept (the temporal blend)
     history: bool,
-    /// the total alpha's samples (`trans_samples`)
-    trans_samples: u32,
+    /// the total alpha, at the scene's samples
     trans: wgpu::TextureView,
     accum: wgpu::TextureView,
-    /// the glow accumulated (red), at the passes' samples
+    /// the glow accumulated (red), at the passes' samples: made once a
+    /// frame has glowing blended faces (1 x 1 until then)
     glow: wgpu::TextureView,
+    glowing: bool,
     depth_tex: wgpu::Texture,
     depth: wgpu::TextureView,
-    /// per parity of the frame: the resolve's and the composite's groups
-    groups: [(wgpu::BindGroup, wgpu::BindGroup); 2],
+    /// per parity of the frame: the resolve's, the temporal blend's, the
+    /// smoothing's and the composite's groups
+    groups: [[wgpu::BindGroup; 4]; 2],
 }
 
 /// What a frame tells `prepare`.
@@ -446,16 +489,17 @@ pub(crate) struct Stochastic {
     /// oit_stochastic_expand.wgsl `ExpandParams`
     expand_params: wgpu::Buffer,
     /// 1 x 1 stand-ins for the bindings a step does not use (a texture
-    /// written as storage and read as sampled in one group conflicts):
-    /// rgba16float read and written, rg32float read and written
+    /// written as storage and read as sampled in one group conflicts): the
+    /// colour's read and written, the total alpha's (`Targets::aux`) read
+    /// and written
     dummy_rgba_r: wgpu::TextureView,
     dummy_rgba_w: wgpu::TextureView,
-    dummy_rg_r: wgpu::TextureView,
-    dummy_rg_w: wgpu::TextureView,
+    dummy_aux_r: wgpu::TextureView,
+    dummy_aux_w: wgpu::TextureView,
     targets: Option<Targets>,
     /// the targets of this key were refused by the memory: not tried again
     /// until the size or the samples change
-    refused: Option<(u32, u32, u32, u32, bool)>,
+    refused: Option<(u32, u32, u32, u32, bool, bool)>,
     frame: u32,
     /// the targets hold a resolved colour of an earlier frame of this view
     history_ready: bool,
@@ -540,7 +584,7 @@ impl Stochastic {
                 entry(1, all, texture(true)),
                 entry(2, all, texture(true)),
                 entry(3, S::COMPUTE, storage(wgpu::TextureFormat::Rgba16Float)),
-                entry(4, S::COMPUTE, storage(wgpu::TextureFormat::Rg32Float)),
+                entry(4, S::COMPUTE, storage(wgpu::TextureFormat::Rgba16Float)),
                 entry(5, all, texture(false)),
                 entry(6, all, texture(false)),
                 entry(7, all, texture(false)),
@@ -554,11 +598,15 @@ impl Stochastic {
                     },
                 ),
                 entry(11, S::COMPUTE, texture(true)),
+                entry(12, S::COMPUTE, texture(false)),
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit stochastic"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/oit_stochastic.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::water_shader_source(
+                &["oit_stochastic.wgsl"],
+                include_str!("shaders/oit_stochastic.wgsl"),
+            )),
         });
         let expand_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit stochastic expand"),
@@ -644,8 +692,8 @@ impl Stochastic {
             expand_params,
             dummy_rgba_r: small("oit stochastic dummy rgba r", wgpu::TextureFormat::Rgba16Float),
             dummy_rgba_w: small("oit stochastic dummy rgba w", wgpu::TextureFormat::Rgba16Float),
-            dummy_rg_r: small("oit stochastic dummy rg32 r", wgpu::TextureFormat::Rg32Float),
-            dummy_rg_w: small("oit stochastic dummy rg32 w", wgpu::TextureFormat::Rg32Float),
+            dummy_aux_r: small("oit stochastic dummy aux r", wgpu::TextureFormat::Rgba16Float),
+            dummy_aux_w: small("oit stochastic dummy aux w", wgpu::TextureFormat::Rgba16Float),
             targets: None,
             refused: None,
             frame: 0,
@@ -682,26 +730,33 @@ impl Stochastic {
         }
         self.scene_history = f.history;
         let history = temporal > 0.0;
-        let key = (f.width, f.height, f.samples, pass, history);
+        // the glow's target stays once made: glowing faces come and go
+        let glow = f.glow || self.targets.as_ref().is_some_and(|t| t.glowing);
+        let key = (f.width, f.height, f.samples, pass, history, glow);
         if self.refused == Some(key) {
             return false;
         }
-        let stale = self
-            .targets
-            .as_ref()
-            .is_none_or(|t| t.width != f.width || t.height != f.height || t.samples != f.samples || t.pass != pass || t.history != history);
+        let stale = self.targets.as_ref().is_none_or(|t| {
+            t.width != f.width
+                || t.height != f.height
+                || t.samples != f.samples
+                || t.pass != pass
+                || t.history != history
+                || t.glowing != glow
+        });
         if stale {
             // the old ones go first: both sets do not have to fit
             self.targets = None;
             self.history_ready = false;
-            let (made, refused) =
-                crate::gpu_alloc::scoped(device, || self.make_targets(device, f.width, f.height, f.samples, pass, history));
+            let (made, refused) = crate::gpu_alloc::scoped(device, || {
+                self.make_targets(device, f.width, f.height, f.samples, pass, history, glow)
+            });
             if refused {
                 log::warn!(
                     "oit stochastic: the memory refused the targets ({}x{}, {} MB): the sorted order is drawn",
                     f.width,
                     f.height,
-                    target_bytes(f.width, f.height, f.samples, pass, history) / (1024 * 1024)
+                    target_bytes(f.width, f.height, f.samples, pass, history, glow) / (1024 * 1024)
                 );
                 self.refused = Some(key);
                 return false;
@@ -723,16 +778,16 @@ impl Stochastic {
             _pad: 0,
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&sp));
-        // the blend takes this frame alone when the targets are new or the
+        // the blend leaves the history out when the targets are new or the
         // camera jumped: what they hold is not this view's
-        let weight = if self.history_ready && !f.cut { self.temporal } else { 1.0 };
+        let kept = self.history_ready && !f.cut;
         let rp = ResolveParams {
             width: f.width,
             height: f.height,
             samples_hw: pass,
-            flags: u32::from(history) | (u32::from(f.glow) << 1) | (u32::from(f.samples == 1) << 2),
-            temporal_weight: weight,
-            trans_samples: trans_samples(f.samples, pass),
+            flags: u32::from(history) | (u32::from(f.glow) << 1) | (u32::from(f.samples == 1) << 2) | (u32::from(kept) << 3),
+            temporal_weight: if history { self.temporal } else { 1.0 },
+            trans_samples: f.samples,
             _pad: [0; 2],
             reproj: f.reproj,
         };
@@ -742,14 +797,23 @@ impl Stochastic {
         true
     }
 
-    fn make_targets(&self, device: &wgpu::Device, width: u32, height: u32, samples: u32, pass: u32, history: bool) -> Targets {
+    #[allow(clippy::too_many_arguments)]
+    fn make_targets(
+        &self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        samples: u32,
+        pass: u32,
+        history: bool,
+        glowing: bool,
+    ) -> Targets {
         let make = |label, format, samples, usage| crate::renderer::make_view(device, label, width, height, format, samples, usage);
         use wgpu::TextureUsages as U;
-        let trans_n = trans_samples(samples, pass);
         let (_, trans) = make(
             "oit stochastic transmittance",
             wgpu::TextureFormat::R16Float,
-            trans_n,
+            samples,
             U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
         );
         let (_, accum) = make(
@@ -758,8 +822,12 @@ impl Stochastic {
             pass,
             U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
         );
-        let (_, glow) = make(
+        let (glow_width, glow_height) = if glowing { (width, height) } else { (1, 1) };
+        let (_, glow) = crate::renderer::make_view(
+            device,
             "oit stochastic glow",
+            glow_width,
+            glow_height,
             wgpu::TextureFormat::R16Float,
             pass,
             U::RENDER_ATTACHMENT | U::TEXTURE_BINDING,
@@ -771,12 +839,16 @@ impl Stochastic {
             U::RENDER_ATTACHMENT | U::COPY_DST | U::TEXTURE_BINDING,
         );
         let single = U::STORAGE_BINDING | U::TEXTURE_BINDING;
-        // the resolved colour: the last frame's is read by the temporal
+        // this frame's corrected colour and total alpha, before the blend;
+        // then the colour drawn, the blended one smoothed
+        let fresh = make("oit stochastic resolved", wgpu::TextureFormat::Rgba16Float, 1, single).1;
+        // the blended colour: the last frame's is read by the temporal
         // blend alone (otherwise one, the placeholder as its history)
-        let resolved0 = make("oit stochastic resolved 0", wgpu::TextureFormat::Rgba16Float, 1, single).1;
-        let resolved1 = history.then(|| make("oit stochastic resolved 1", wgpu::TextureFormat::Rgba16Float, 1, single).1);
-        // the total alpha (red) and the corrected glow (green)
-        let (_, total) = make("oit stochastic total alpha", wgpu::TextureFormat::Rg32Float, 1, single);
+        let resolved0 = make("oit stochastic blended 0", wgpu::TextureFormat::Rgba16Float, 1, single).1;
+        let resolved1 = history.then(|| make("oit stochastic blended 1", wgpu::TextureFormat::Rgba16Float, 1, single).1);
+        // the farthest stochastic depth, the corrected glow, the colour's
+        // uncertainty and the nearest stochastic depth
+        let (_, aux) = make("oit stochastic total alpha", wgpu::TextureFormat::Rgba16Float, 1, single);
         let groups = std::array::from_fn(|parity| {
             let (cur, old) = match &resolved1 {
                 Some(r1) if parity == 1 => (r1, &resolved0),
@@ -784,10 +856,19 @@ impl Stochastic {
                 None => (&resolved0, &self.dummy_rgba_r),
             };
             let group = |label, entries: [(u32, &wgpu::TextureView); 5]| {
+                // the total alpha of a single-sampled scene is no
+                // multisampled texture: it has a binding of its own, and
+                // each of the two a placeholder when it is the other's turn
+                let (trans_ms, trans_one) = if samples > 1 {
+                    (&trans, &self.dummy_rgba_r)
+                } else {
+                    (&accum, &trans)
+                };
                 let mut all = vec![
                     bind(0, self.resolve_params.as_entire_binding()),
                     bind(1, wgpu::BindingResource::TextureView(&accum)),
-                    bind(2, wgpu::BindingResource::TextureView(&trans)),
+                    bind(2, wgpu::BindingResource::TextureView(trans_ms)),
+                    bind(12, wgpu::BindingResource::TextureView(trans_one)),
                     bind(10, wgpu::BindingResource::TextureView(&depth)),
                     bind(11, wgpu::BindingResource::TextureView(&glow)),
                 ];
@@ -798,27 +879,43 @@ impl Stochastic {
                     entries: &all,
                 })
             };
-            // writes cur and total, reads old
+            // writes fresh and aux
             let resolve = group(
                 "oit stochastic resolve",
-                [(3, cur), (4, &total), (5, old), (6, &self.dummy_rgba_r), (7, &self.dummy_rg_r)],
+                [
+                    (3, &fresh),
+                    (4, &aux),
+                    (5, &self.dummy_rgba_r),
+                    (6, &self.dummy_rgba_r),
+                    (7, &self.dummy_aux_r),
+                ],
             );
-            // reads cur and total
+            // writes cur, reads fresh, aux and old
+            let temporal = group(
+                "oit stochastic temporal blend",
+                [(3, cur), (4, &self.dummy_aux_w), (5, old), (6, &fresh), (7, &aux)],
+            );
+            // writes fresh again, reads cur, aux and old
+            let smooth = group(
+                "oit stochastic smoothing",
+                [(3, &fresh), (4, &self.dummy_aux_w), (5, old), (6, cur), (7, &aux)],
+            );
+            // reads fresh and aux
             let composite = group(
                 "oit stochastic composite",
                 [
                     (3, &self.dummy_rgba_w),
-                    (4, &self.dummy_rg_w),
+                    (4, &self.dummy_aux_w),
                     (5, &self.dummy_rgba_r),
-                    (6, cur),
-                    (7, &total),
+                    (6, &fresh),
+                    (7, &aux),
                 ],
             );
-            (resolve, composite)
+            [resolve, temporal, smooth, composite]
         });
         log::info!(
             "oit stochastic: targets {width}x{height}, the scene at {samples} samples, the passes at {pass}, {:.0} MB",
-            target_bytes(width, height, samples, pass, history) as f64 / (1024.0 * 1024.0)
+            target_bytes(width, height, samples, pass, history, glowing) as f64 / (1024.0 * 1024.0)
         );
         Targets {
             width,
@@ -826,10 +923,10 @@ impl Stochastic {
             samples,
             pass,
             history,
-            trans_samples: trans_n,
             trans,
             accum,
             glow,
+            glowing,
             depth_tex,
             depth,
             groups,
@@ -843,6 +940,13 @@ impl Stochastic {
         }
         self.history_ready = false;
         self.refused = None;
+        self.idle = 0;
+    }
+
+    /// A frame of the other order under `AURORA_OIT=alt`: the targets stay,
+    /// what they hold is no longer the last frame's.
+    pub fn pause(&mut self) {
+        self.history_ready = false;
         self.idle = 0;
     }
 
@@ -866,23 +970,14 @@ impl Stochastic {
         &self.face_group
     }
 
-    /// The total alpha runs against the stochastic depth (the scene without
-    /// MSAA): `begin_iteration` comes before it, to spread the opaque depth
-    /// over the passes' samples.
-    pub fn alpha_on_pass_depth(&self) -> bool {
-        self.targets.as_ref().is_some_and(|t| t.trans_samples != t.samples)
-    }
-
     /// The pass of the total alpha: the target cleared to full
-    /// transmittance, the scene depth (or, `alpha_on_pass_depth`, the
-    /// stochastic depth holding the opaque one) read only.
+    /// transmittance, the scene depth read only.
     pub fn begin_alpha<'a>(
         &'a self,
         encoder: &'a mut wgpu::CommandEncoder,
         scene_depth: &'a wgpu::TextureView,
     ) -> Option<wgpu::RenderPass<'a>> {
         let t = self.targets.as_ref()?;
-        let depth = if t.trans_samples != t.samples { &t.depth } else { scene_depth };
         Some(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("oit stochastic total alpha"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -895,7 +990,7 @@ impl Stochastic {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth,
+                view: scene_depth,
                 depth_ops: None,
                 stencil_ops: None,
             }),
@@ -1023,7 +1118,7 @@ impl Stochastic {
     /// The glow accumulation: additive into the glow target (cleared), the
     /// stochastic depth read only.
     pub fn begin_glow<'a>(&'a self, encoder: &'a mut wgpu::CommandEncoder) -> Option<wgpu::RenderPass<'a>> {
-        let t = self.targets.as_ref()?;
+        let t = self.targets.as_ref().filter(|t| t.glowing)?;
         Some(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("oit stochastic glow"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1046,23 +1141,31 @@ impl Stochastic {
         }))
     }
 
-    /// The resolve.
+    /// The resolve, the temporal blend, then the smoothing.
     pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
         let Some(t) = &self.targets else { return };
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("oit stochastic resolve"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&r.resolve);
-        pass.set_bind_group(0, &t.groups[self.parity()].0, &[]);
-        pass.dispatch_workgroups(t.width.div_ceil(8), t.height.div_ceil(8), 1);
+        let groups = &t.groups[self.parity()];
+        for (label, pipeline, group) in [
+            ("oit stochastic resolve", &r.resolve, &groups[0]),
+            ("oit stochastic temporal blend", &r.temporal, &groups[1]),
+            ("oit stochastic smoothing", &r.smooth, &groups[2]),
+        ] {
+            // (a pass each: each reads what the one before it wrote)
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(label),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(t.width.div_ceil(8), t.height.div_ceil(8), 1);
+        }
     }
 
     /// The composite over the scene, in a scene pass (per sample).
     pub fn composite(&self, pass: &mut wgpu::RenderPass, r: &Resolve) {
         let Some(t) = &self.targets else { return };
         pass.set_pipeline(&r.composite);
-        pass.set_bind_group(0, &t.groups[self.parity()].1, &[]);
+        pass.set_bind_group(0, &t.groups[self.parity()][3], &[]);
         pass.draw(0..3, 0..1);
         if self.glow {
             pass.set_pipeline(&r.composite_glow);
@@ -1169,14 +1272,19 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
         bind_group_layouts: &[Some(&shared.resolve_layout)],
         immediate_size: 0,
     });
-    let resolve = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
-        label: Some("oit stochastic resolve"),
-        layout: Some(&layout),
-        module: &shared.module,
-        entry_point: Some("cs_resolve"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
+    let compute = |label, entry_point| {
+        device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&layout),
+            module: &shared.module,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            cache: None,
+        })
+    };
+    let resolve = compute("oit stochastic resolve", "cs_resolve");
+    let temporal = compute("oit stochastic temporal blend", "cs_temporal");
+    let smooth = compute("oit stochastic smoothing", "cs_smooth");
     let composite_pipeline = |label, fs: &str, blend: wgpu::BlendState, write_mask| {
         device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -1295,6 +1403,8 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
     });
     Resolve {
         resolve,
+        temporal,
+        smooth,
         composite,
         composite_glow,
         expand,
@@ -1436,14 +1546,17 @@ mod tests {
 
     #[test]
     fn the_targets_hold_only_what_is_read() {
-        let mib = |w, h, s, history| target_bytes(w, h, s, 8, history) as f64 / (1024.0 * 1024.0);
-        // MSAA 4x: 136 bytes a pixel without the history, 8 more with it
-        assert_eq!((mib(1600, 900, 4, false) + 0.5) as u32, 187);
-        assert_eq!((mib(2560, 1440, 4, false) + 0.5) as u32, 478);
-        assert_eq!((mib(1600, 900, 4, true) + 0.5) as u32, 198);
-        assert_eq!((mib(2560, 1440, 4, true) + 0.5) as u32, 506);
-        // without MSAA the total alpha is at the passes' samples
-        assert_eq!((mib(1600, 900, 1, false) + 0.5) as u32, 198);
+        let mib = |w, h, s, history, glow| target_bytes(w, h, s, 8, history, glow) as f64 / (1024.0 * 1024.0);
+        // MSAA 4x: 128 bytes a pixel without the history, 8 more with it
+        assert_eq!((mib(1600, 900, 4, false, false) + 0.5) as u32, 176);
+        assert_eq!((mib(2560, 1440, 4, false, false) + 0.5) as u32, 450);
+        assert_eq!((mib(1600, 900, 4, true, false) + 0.5) as u32, 187);
+        assert_eq!((mib(2560, 1440, 4, true, false) + 0.5) as u32, 478);
+        // one sample a pixel: the total alpha has one too, 6 bytes fewer
+        assert_eq!((mib(1600, 900, 1, false, false) + 0.5) as u32, 168);
+        assert_eq!((mib(2560, 1440, 1, true, false) + 0.5) as u32, 457);
+        // glowing blended faces: 16 bytes a pixel more, from their first frame
+        assert_eq!((mib(1600, 900, 4, true, true) + 0.5) as u32, 209);
     }
 
     #[test]

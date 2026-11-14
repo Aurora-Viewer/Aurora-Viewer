@@ -4377,9 +4377,9 @@ impl Backend {
         };
         // the stochastic depth and the accumulation at the passes' own
         // count (oit_stochastic.rs `pass_samples`), the total alpha at the
-        // scene's with MSAA, at the passes' without
+        // scene's
         let pass_samples = st.pass_samples(samples);
-        let alpha_samples = crate::oit_stochastic::trans_samples(samples, pass_samples);
+        let alpha_samples = samples;
         let additive = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -10355,7 +10355,9 @@ impl Backend {
         // or a snapshot (its memory is planned without them), and after a
         // while without a blended face
         if let Some(s) = &mut self.st {
-            if method != crate::oit_stochastic::Method::Stochastic || !plain_view {
+            if method != crate::oit_stochastic::Method::Stochastic && plain_view && crate::oit_stochastic::alternates() {
+                s.pause();
+            } else if method != crate::oit_stochastic::Method::Stochastic || !plain_view {
                 s.release();
             } else if !st_on {
                 s.unused_frame();
@@ -10549,13 +10551,6 @@ impl Backend {
             let rigged = (b0, n_depth);
             let others = (b0 + u64::from(n_depth) * stride, bn - n_depth);
             mark(&mut encoder, MARK_ST_BEGIN);
-            // without MSAA the total alpha is tested against the opaque
-            // depth spread over the passes' samples: the copy of it comes
-            // first
-            let early = st.alpha_on_pass_depth();
-            if early {
-                st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
-            }
             // 2. the total alpha of every sample
             if let Some(mut pass) = st.begin_alpha(&mut encoder, scene_depth) {
                 bind_mesh(&mut pass, &self.groups.b);
@@ -10565,9 +10560,7 @@ impl Backend {
             }
             mark(&mut encoder, MARK_ST_ALPHA_END);
             // 3 and 4: the stochastic depth, then the accumulation
-            if !early {
-                st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
-            }
+            st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
             if let Some(mut pass) = st.begin_depth(&mut encoder) {
                 bind_mesh(&mut pass, &self.groups.b);
                 pass.set_bind_group(3, st.face_group(), &[]);

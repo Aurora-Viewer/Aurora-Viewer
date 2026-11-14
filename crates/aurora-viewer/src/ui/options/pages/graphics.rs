@@ -1019,6 +1019,7 @@ fn image(cx: &mut Cx) {
                 (2, tr!("ui-options-blend-order-balanced")),
                 (3, tr!("ui-options-blend-order-high")),
                 (4, tr!("ui-options-blend-order-full")),
+                (5, tr!("ui-options-blend-order-stochastic")),
             ],
         );
     });
@@ -1046,12 +1047,6 @@ fn image(cx: &mut Cx) {
             0..=100,
             "%",
         );
-    });
-    // Order-independent transparency (aurora-render oit_stochastic.rs), an
-    // Aurora addition
-    cx.group(tr!("ui-options-transparency"), |cx| {
-        cx.experimental()
-            .toggle(tr!("ui-options-oit"), tr!("ui-options-oit-help"), &field!(oit));
     });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
         // "HDR and Emissive" (RenderDisableVintageMode): off, the tone

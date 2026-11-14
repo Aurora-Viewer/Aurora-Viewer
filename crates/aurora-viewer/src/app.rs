@@ -1429,7 +1429,7 @@ fn apply_test_overrides(settings: &mut Settings) {
         settings.shadow_quality = v;
     }
     if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
-        settings.blend_order = v.min(4);
+        settings.blend_order = v.min(crate::graphics_presets::BLEND_ORDER_STOCHASTIC);
     }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
@@ -14818,6 +14818,13 @@ impl App {
             ) {
                 let old = self.sync_alt.is_multiple_of(3);
                 crate::scene::blend_order::set_old_now(old);
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_OIT=alt: the order of the setting one second in three,
+            // the stochastic transparency the others
+            if aurora_render::oit_stochastic::alternates() {
+                let old = self.sync_alt.is_multiple_of(3);
+                aurora_render::oit_stochastic::set_alt_off(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
