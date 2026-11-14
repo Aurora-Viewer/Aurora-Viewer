@@ -14,6 +14,7 @@ impl App {
         let flight = self.snapshots.ui.free;
         let view = View {
             zoom: self.camera.zoom_fraction(),
+            lens_fov: self.camera_lens(),
             roll: self.camera.roll,
             preset: self.settings.camera.preset,
             shots: &self.settings.camera_shots,
@@ -69,6 +70,26 @@ impl App {
         );
     }
 
+    pub(super) fn camera_lens(&self) -> f32 {
+        let shown = self.world.rlva.camera_settings(&self.settings.camera, self.view_aspect()).fov;
+        self.camera.flycam.as_ref().map_or(shown, |flight| flight.fov)
+    }
+
+    pub(super) fn change_camera_lens(&mut self, fov: f32, factor: Option<f32>) {
+        // LLZoomer (indra/newview/llviewermenu.cpp): a user lens change
+        // replaces a forced FOV even under @setcam; FOV bounds still apply.
+        let aspect = self.view_aspect();
+        let fov = crate::camera::zoom_lens(fov, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+        self.settings.camera.fov = fov;
+        self.world.rlva.user_chose_fov();
+        if let Some(flight) = &mut self.camera.flycam {
+            flight.set_fov(fov);
+        }
+        if !self.demo {
+            self.settings.save();
+        }
+    }
+
     fn control_action(&mut self, action: ControlAction) {
         if self.world.rlva.camera_preset_locked(uuid::Uuid::nil())
             && matches!(
@@ -102,6 +123,7 @@ impl App {
             }
             ControlAction::LevelRoll => self.camera.roll = 0.0,
             ControlAction::Zoom(fraction) => self.camera.set_zoom_fraction(fraction),
+            ControlAction::Lens(fov) => self.change_camera_lens(fov, Some(1.0)),
             ControlAction::Mouselook => self.toggle_mouselook(),
             ControlAction::ObjectView => self.object_view = !self.object_view,
             ControlAction::Walk | ControlAction::Run => {

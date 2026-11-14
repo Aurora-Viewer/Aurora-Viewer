@@ -115,6 +115,7 @@ impl ShotNaming {
 pub struct View<'a> {
     /// LLAgentCamera::getCameraZoomFraction (1 all the way in).
     pub zoom: f32,
+    pub lens_fov: f32,
     /// Camera roll in radians.
     pub roll: f32,
     pub preset: CameraPreset,
@@ -162,6 +163,7 @@ pub enum ControlAction {
     /// Every camera setting back, like Preferences › Camera.
     ResetCamera,
     Zoom(f32),
+    Lens(f32),
     RollBy(f32),
     LevelRoll,
     Mouselook,
@@ -368,6 +370,7 @@ impl ControlsUi {
         let width = ui.available_width();
         sticks(ui, p, view, out, width);
         roll_controls(ui, p, view, out);
+        lens_menu(ui, p, view, out);
         // the four views of Preferences › Camera, in one click
         let presets = [
             (CameraPreset::Rear, "user"),
@@ -824,6 +827,40 @@ fn stick_captions(ui: &egui::Ui, p: &Palette, at: &SticksRow, top: f32, names: [
     height
 }
 
+/// Aurora exposes the photo viewfinder's lenses alongside the Legacy
+/// Viewer's camera-distance controls.
+fn lens_menu(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
+    use crate::snapshot::{focal_of_fov, fov_of_focal, viewfinder::FOCAL_PRESETS};
+
+    let mm = focal_of_fov(view.lens_fov).round() as u32;
+    let label = aurora_i18n::tr!("controls-lens-value", mm = mm);
+    let button = widgets::action_button(
+        ui,
+        p,
+        "aperture",
+        &label,
+        widgets::ActionKind::Flat,
+        Vec2::new(ui.available_width(), control_height(ui)),
+    )
+    .on_hover_text(aurora_i18n::tr!("photo-focal-hint"));
+    super::menu::dropdown(&button, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        for mm in FOCAL_PRESETS {
+            let label = match mm as u32 {
+                24 => aurora_i18n::tr!("controls-lens-wide", mm = mm as u32),
+                85 => aurora_i18n::tr!("controls-lens-portrait", mm = mm as u32),
+                mm => aurora_i18n::tr!("controls-lens-mm", mm = mm),
+            };
+            let fov = fov_of_focal(mm);
+            if super::menu::check(ui, p, "", &label, (view.lens_fov - fov).abs() < 1e-4, true) {
+                out.actions.push(ControlAction::Lens(fov));
+            }
+        }
+        if super::menu::item(ui, p, "restore", aurora_i18n::tr!("keybinds-lens-zoom-default")) {
+            out.actions.push(ControlAction::Lens(crate::camera::DEFAULT_FOV));
+        }
+    });
+}
+
 /// The free camera's tab (the mockup's third state): the banner and its way
 /// back, the move and look joysticks with up / down between them, the
 /// speed, the collisions and the keys.
@@ -831,6 +868,7 @@ fn free_tab(ui: &mut egui::Ui, p: &Palette, view: &View, free: FreeView, out: &m
     banner(ui, p, view, out);
     ui.spacing_mut().item_spacing.y = FREE_GAP;
     free_sticks(ui, p, view, out, ui.available_width(), true);
+    lens_menu(ui, p, view, out);
     speed_row(ui, p, free, out);
     collisions_row(ui, p, free, out);
     // the keys, as the keyboard drives the free camera
@@ -1206,6 +1244,7 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
     });
     sticks(ui, p, view, out, ui.available_width());
     roll_controls(ui, p, view, out);
+    lens_menu(ui, p, view, out);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if naming.open {
@@ -1803,6 +1842,7 @@ mod tests {
         let keys = KeyBindings::default();
         let view = View {
             zoom: 0.5,
+            lens_fov: crate::camera::DEFAULT_FOV,
             roll: 0.0,
             preset: CameraPreset::Rear,
             shots: &[],
@@ -1985,6 +2025,7 @@ mod tests {
             time += 0.05;
             let view = View {
                 zoom: 0.5,
+                lens_fov: crate::camera::DEFAULT_FOV,
                 roll: 0.3,
                 preset: CameraPreset::Rear,
                 shots: &[],
@@ -2136,6 +2177,7 @@ mod tests {
                 let views = SavedViews::default();
                 let view = View {
                     zoom: 0.5,
+                    lens_fov: crate::camera::DEFAULT_FOV,
                     roll: 0.0,
                     preset: CameraPreset::Rear,
                     shots: &[],
@@ -2169,6 +2211,10 @@ mod tests {
                     output = Some(frame_output);
                 }
                 let mut labels = vec![
+                    aurora_i18n::tr!(
+                        "controls-lens-value",
+                        mm = crate::snapshot::focal_of_fov(view.lens_fov).round() as u32
+                    ),
                     aurora_i18n::tr!("controls-orbit"),
                     aurora_i18n::tr!("controls-pan"),
                     short_view(CameraPreset::Rear),
@@ -2357,6 +2403,7 @@ mod tests {
             let mut controls = ControlsUi::default();
             let view = View {
                 zoom: 0.5,
+                lens_fov: crate::camera::DEFAULT_FOV,
                 roll: 0.0,
                 preset: CameraPreset::Rear,
                 shots: &shots,
@@ -2431,6 +2478,99 @@ mod tests {
     }
 
     #[test]
+    fn the_lens_menu_selects_presets_and_resets_without_a_distance_action() {
+        use crate::snapshot::{fov_of_focal, viewfinder::FOCAL_PRESETS};
+
+        for focal in FOCAL_PRESETS.into_iter().map(Some).chain([None]) {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let keys = KeyBindings::default();
+            let views = SavedViews::default();
+            let view = View {
+                zoom: 0.5,
+                lens_fov: 0.5,
+                roll: 0.0,
+                preset: CameraPreset::Rear,
+                shots: &[],
+                views: &views,
+                flying: false,
+                always_run: false,
+                seated: false,
+                run_locked: false,
+                fly_locked: false,
+                stand_locked: false,
+                mouselook: false,
+                object_view: false,
+                keys: &keys,
+                free: None,
+            };
+            let mut time = 0.0;
+            let mut frame = |events| {
+                time += 0.1;
+                let mut out = Output::default();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(INNER);
+                        lens_menu(ui, &p, &view, &mut out);
+                    },
+                );
+                output.textures_delta.clear();
+                (output, out)
+            };
+            let text_center = |output: &egui::FullOutput, label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                        _ => None,
+                    })
+                    .expect("the lens control or menu entry is drawn")
+            };
+            let pointer = |pos, pressed| {
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            };
+            let (output, out) = frame(Vec::new());
+            assert!(out.actions.is_empty(), "drawing must not change the lens");
+            let shown_mm = crate::snapshot::focal_of_fov(view.lens_fov).round() as u32;
+            let button = text_center(&output, &aurora_i18n::tr!("controls-lens-value", mm = shown_mm));
+            frame(pointer(button, true));
+            frame(pointer(button, false));
+            for _ in 0..4 {
+                frame(Vec::new());
+            }
+            let label = match focal.map(|mm| mm as u32) {
+                Some(24) => aurora_i18n::tr!("controls-lens-wide", mm = 24u32),
+                Some(85) => aurora_i18n::tr!("controls-lens-portrait", mm = 85u32),
+                Some(mm) => aurora_i18n::tr!("controls-lens-mm", mm = mm),
+                None => aurora_i18n::tr!("keybinds-lens-zoom-default"),
+            };
+            let (output, _) = frame(Vec::new());
+            let entry = text_center(&output, &label);
+            frame(pointer(entry, true));
+            let (_, out) = frame(pointer(entry, false));
+            let expected = focal.map_or(crate::camera::DEFAULT_FOV, fov_of_focal);
+            assert!(matches!(out.actions.as_slice(), [ControlAction::Lens(fov)] if (*fov - expected).abs() < 1e-6));
+        }
+    }
+
+    #[test]
     fn the_buttons_show_the_letter_of_the_layout() {
         let keys = KeyBindings::default();
         let forward = pad_binding(&keys, Action::Forward).expect("forward is bound");
@@ -2446,6 +2586,7 @@ mod tests {
         let views = SavedViews::default();
         let view = |flying: bool, run_locked: bool, fly_locked: bool| View {
             zoom: 0.5,
+            lens_fov: crate::camera::DEFAULT_FOV,
             roll: 0.0,
             preset: CameraPreset::Rear,
             shots: &[],
