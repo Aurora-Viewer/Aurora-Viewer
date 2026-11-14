@@ -355,7 +355,7 @@ impl Editor {
                 .collect::<Vec<_>>()
                 .join(" · ");
             if self.joint_row(ui, p, &label(&base), selected, edited, &names) {
-                let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                let add = ui.input(|i| together::adds_to_selection(i.modifiers));
                 self.click_pose_bone(bone, rig, frame, add);
             }
         }
@@ -485,7 +485,7 @@ impl Editor {
                     let label = aurora_i18n::tr!("poser-numbered-bone", name = name, number = joint).to_string();
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
                     if response.on_hover_text(&rig.canonical_names[bone]).clicked() {
-                        let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                        let add = ui.input(|i| together::adds_to_selection(i.modifiers));
                         self.click_pose_bone(bone, rig, frame, add);
                     }
                 }

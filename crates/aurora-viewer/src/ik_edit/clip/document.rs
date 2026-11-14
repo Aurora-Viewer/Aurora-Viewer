@@ -161,6 +161,16 @@ pub struct Keyframe {
     pub position: Option<Vec3>,
 }
 
+/// A key copied from the timeline, at its offset in frames from the first
+/// copied key, so that a paste keeps the keys' spacing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopiedKey {
+    pub bone: usize,
+    pub offset: u32,
+    pub rotation: Option<Quat>,
+    pub position: Option<Vec3>,
+}
+
 fn eased(mode: Interpolation, curve: Curve, amount: f32) -> f32 {
     let amount = amount.clamp(0.0, 1.0);
     match mode {
@@ -808,6 +818,117 @@ impl Document {
             remove_keys(&mut track.motion.pos_keys, at, fps);
         }
     }
+    /// Shift every listed key (bone, frame) by `delta` frames, together:
+    /// the shift stops at frame 0 and at the length limit, so that the keys
+    /// keep their spacing. A key of another frame that one of them lands on
+    /// is replaced, as a single key drag does. Returns the shift applied.
+    pub fn move_keys(&mut self, keys: &std::collections::BTreeSet<(usize, u32)>, delta: i64) -> i64 {
+        let max_frame = self.max_frame();
+        let Some(delta) = clamp_shift(keys.iter().map(|(_, frame)| *frame), delta, max_frame) else {
+            return 0;
+        };
+        if delta == 0 {
+            return 0;
+        }
+        let fps = self.fps;
+        let (mut first, mut last) = (u32::MAX, 0);
+        for track in &mut self.tracks {
+            let frames: Vec<u32> = keys
+                .range((track.bone, 0)..=(track.bone, u32::MAX))
+                .map(|(_, frame)| (*frame).min(max_frame))
+                .collect();
+            if frames.is_empty() {
+                continue;
+            }
+            let moved =
+                shift_keys(&mut track.motion.rot_keys, &frames, delta, fps) | shift_keys(&mut track.motion.pos_keys, &frames, delta, fps);
+            track.authored |= moved;
+            for frame in frames {
+                let to = (i64::from(frame) + delta) as u32;
+                (first, last) = (first.min(to), last.max(to));
+            }
+        }
+        // as a single key drag does, the range grows to keep the moved keys
+        if first < self.start || last > self.end {
+            self.range(self.start.min(first), self.end.max(last));
+        }
+        delta
+    }
+    /// The listed keys as they are stored, each at its offset from the first
+    /// of them: the keys themselves, not a sample of the curve between them.
+    pub fn copy_keys(&self, keys: &std::collections::BTreeSet<(usize, u32)>) -> Vec<CopiedKey> {
+        let Some(first) = keys.iter().map(|(_, frame)| *frame).min() else {
+            return Vec::new();
+        };
+        let fps = self.fps;
+        keys.iter()
+            .filter_map(|&(bone, frame)| {
+                let track = self.tracks.iter().find(|track| track.bone == bone)?;
+                let rotation = track
+                    .motion
+                    .rot_keys
+                    .iter()
+                    .rfind(|key| key_on_frame(key.time, frame, fps))
+                    .map(|key| key.rotation);
+                let position = track
+                    .motion
+                    .pos_keys
+                    .iter()
+                    .rfind(|key| key_on_frame(key.time, frame, fps))
+                    .map(|key| key.position);
+                (rotation.is_some() || position.is_some()).then_some(CopiedKey {
+                    bone,
+                    offset: frame - first,
+                    rotation,
+                    position,
+                })
+            })
+            .collect()
+    }
+    /// Paste copied keys from frame `at` on, keeping their spacing; a key
+    /// already on one of those frames is replaced. Keys past the length
+    /// limit are left out. Returns the (bone, frame) of the pasted keys.
+    pub fn paste_keys(&mut self, at: u32, keys: &[CopiedKey]) -> std::collections::BTreeSet<(usize, u32)> {
+        let max_frame = self.max_frame();
+        let fps = self.fps;
+        let mut pasted = std::collections::BTreeSet::new();
+        for key in keys {
+            let Some(frame) = at.checked_add(key.offset).filter(|frame| *frame <= max_frame) else {
+                continue;
+            };
+            let Some(track) = self.tracks.iter_mut().find(|track| track.bone == key.bone) else {
+                continue;
+            };
+            let time = frame_time(frame, fps);
+            if let Some(rotation) = key.rotation {
+                upsert_key(&mut track.motion.rot_keys, frame, fps, RotKey { time, rotation });
+            }
+            if let Some(position) = key.position {
+                upsert_key(&mut track.motion.pos_keys, frame, fps, PosKey { time, position });
+            }
+            track.authored = true;
+            pasted.insert((key.bone, frame));
+        }
+        if let (Some(first), Some(last)) = (
+            pasted.iter().map(|(_, frame)| *frame).min(),
+            pasted.iter().map(|(_, frame)| *frame).max(),
+        ) && (first < self.start || last > self.end)
+        {
+            self.range(self.start.min(first), self.end.max(last));
+        }
+        pasted
+    }
+    /// Delete the listed keys of the tracks the user authored. The hidden
+    /// rest keys of a fresh draft stay, as with `remove_keyframe`.
+    pub fn remove_selected_keys(&mut self, keys: &std::collections::BTreeSet<(usize, u32)>) {
+        let fps = self.fps;
+        for track in self.tracks.iter_mut().filter(|track| track.authored) {
+            for (_, frame) in keys.range((track.bone, 0)..=(track.bone, u32::MAX)) {
+                remove_keys(&mut track.motion.rot_keys, *frame, fps);
+                remove_keys(&mut track.motion.pos_keys, *frame, fps);
+            }
+        }
+    }
     #[cfg(test)]
     pub fn frames(&self, bone: Option<usize>) -> Vec<u32> {
         let mut frames: Vec<_> = self
@@ -1027,6 +1148,39 @@ fn upsert_key<K: Timed>(keys: &mut Vec<K>, frame: u32, fps: u32, mut key: K) {
     remove_keys(keys, frame, fps);
     keys.push(key);
     keys.sort_by(|a, b| a.time().total_cmp(&b.time()));
+}
+
+/// The part of `delta` that keeps every frame within 0 and `max_frame`;
+/// `None` with no frame at all.
+pub(super) fn clamp_shift(frames: impl Iterator<Item = u32>, delta: i64, max_frame: u32) -> Option<i64> {
+    let (low, high) = frames.fold(None, |range: Option<(u32, u32)>, frame| {
+        Some(range.map_or((frame, frame), |(low, high)| (low.min(frame), high.max(frame))))
+    })?;
+    Some(delta.clamp(-i64::from(low), i64::from(max_frame) - i64::from(high.min(max_frame))))
+}
+
+/// Shift the keys of the listed frames by `delta` frames at once: they are
+/// all taken out before any is put back, so that keys moving onto each
+/// other's frames do not replace one another. True when a key moved.
+fn shift_keys<K: Timed>(keys: &mut Vec<K>, frames: &[u32], delta: i64, fps: u32) -> bool {
+    let mut moving = Vec::new();
+    for &frame in frames {
+        if let Some(mut key) = keys.iter().rfind(|key| key_on_frame(key.time(), frame, fps)).cloned() {
+            let to = (i64::from(frame) + delta).max(0) as u32;
+            key.set_time(frame_time(to, fps));
+            moving.push((to, key));
+        }
+    }
+    if moving.is_empty() {
+        return false;
+    }
+    keys.retain(|key| {
+        !frames.iter().any(|frame| key_on_frame(key.time(), *frame, fps))
+            && !moving.iter().any(|(to, _)| key_on_frame(key.time(), *to, fps))
+    });
+    keys.extend(moving.into_iter().map(|(_, key)| key));
+    keys.sort_by(|a, b| a.time().total_cmp(&b.time()));
+    true
 }
 
 /// Move the frame's last key onto another frame, snapped to that frame's exact

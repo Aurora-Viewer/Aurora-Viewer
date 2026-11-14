@@ -47,13 +47,17 @@ anim-timeline-file = Fichier
 anim-timeline-delete-frame-keys = Supprimer toutes les clés de cette frame
 anim-timeline-track-enabled = Inclure cet os dans l’animation
 anim-timeline-empty = Aucun os n’a encore de clé : sélectionnez un os, posez-le, puis appuyez sur Clé (K).
+anim-timeline-keys-selected = { $count ->
+    [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
+   *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne
+    }
 anim-edit-shortcut-play = Lire ou mettre en pause (Espace)
 anim-edit-shortcut-rewind = Revenir au début (Origine)
 anim-edit-shortcut-undo = Annuler (Ctrl+Z)
 anim-edit-shortcut-redo = Rétablir (Ctrl+Y ou Ctrl+Maj+Z)
-anim-edit-shortcut-copy = Copier la pose (Ctrl+C)
-anim-edit-shortcut-paste = Coller la pose (Ctrl+V)
-anim-edit-shortcut-delete = Supprimer la clé de l’os sélectionné (Suppr)
+anim-edit-shortcut-copy = Copier les clés choisies, ou la pose (Ctrl+C)
+anim-edit-shortcut-paste = Coller à la tête de lecture (Ctrl+V)
+anim-edit-shortcut-delete = Supprimer les clés choisies, ou la clé de l’os sélectionné (Suppr)
 anim-edit-shortcut-save = Enregistrer le projet (Ctrl+S)
 anim-edit-interpolation-smooth = Fluide
 anim-edit-interpolation-linear = Linéaire
@@ -12729,7 +12733,7 @@ poser-together = { $count ->
     }
 poser-together-clear = Celle-ci seule
 poser-together-clear-tip = Ne garder que cette articulation sélectionnée
-poser-together-tip = Maj + clic sur une articulation, son repère ou sa ligne, pour l’ajouter : elle bouge alors avec celle sélectionnée
+poser-together-tip = Maj ou Ctrl + clic sur une articulation, son repère ou sa ligne, pour l’ajouter : elle bouge alors avec celle sélectionnée
 poser-save-library = Enregistrer
 poser-load-menu = Charger
 poser-load-all = Charger tout
@@ -13057,6 +13061,10 @@ anim-edit-import-hint = Ouvrir l’aperçu d’import habituel. L’envoi et le 
 anim-edit-file-filter = Animation Second Life (.anim)
 anim-edit-bvh-filter = Capture de mouvement BVH (.bvh)
 anim-edit-bvh-unavailable = Le squelette de l’avatar n’est pas disponible pour importer le BVH.
+anim-edit-fine-hint = Maj ou Ctrl + clic ajoute des articulations. Maintenez Maj en faisant glisser une poignée pour des déplacements et rotations 10× plus fins.
+anim-edit-export-bvh = Exporter en .bvh
+anim-edit-export-bvh-hint = Enregistrer l’animation en fichier BVH sur le squelette de l’avatar, pour la retravailler dans Blender ou un autre outil d’animation. Les priorités, la boucle, les transitions et la pose des mains restent dans le .anim uniquement.
+anim-edit-bvh-export-unavailable = Le squelette de l’avatar n’est pas disponible pour exporter le BVH.
 anim-edit-preparing = Préparation de l’animation native…
 anim-edit-building = Mise à jour de l’aperçu des clés…
 anim-edit-saved = Enregistré : { $path }

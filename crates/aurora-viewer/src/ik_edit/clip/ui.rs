@@ -382,12 +382,9 @@ impl Editor {
         ui.label(aurora_i18n::tr!("anim-edit-priority-hint"));
         let mut changes = Vec::new();
         let mut selected = None;
-        for (index, track) in document
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, track)| track.authored || !track.enabled || Some(track.bone) == self.selected)
-        {
+        for (index, track) in document.tracks.iter().enumerate().filter(|(_, track)| {
+            track.authored || !track.enabled || Some(track.bone) == self.selected || self.clip.together.contains(&track.bone)
+        }) {
             ui.push_id(("native-track", track.bone), |ui| {
                 ui.horizontal(|ui| {
                     let mut enabled = track.enabled;
@@ -398,10 +395,17 @@ impl Editor {
                     let mut changed = enabled_response.changed();
                     let mut checkpoint = checkpoint_on_edit(&enabled_response);
                     if ui
-                        .add(egui::Button::selectable(self.selected == Some(track.bone), &track.motion.joint_name).truncate())
+                        .add(
+                            egui::Button::selectable(
+                                self.selected == Some(track.bone) || self.clip_follows(track.bone),
+                                &track.motion.joint_name,
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("poser-together-tip"))
                         .clicked()
                     {
-                        selected = Some(track.bone);
+                        selected = Some((track.bone, ui.input(|i| crate::ik_edit::adds_to_selection(i.modifiers))));
                     }
                     let priority_response = ui.add(egui::DragValue::new(&mut priority).range(-1..=6).speed(1));
                     changed |= priority_response.changed();
@@ -461,8 +465,8 @@ impl Editor {
                 self.clip.changed();
             }
         }
-        if let Some(bone) = selected {
-            self.select(bone, &world.avatar_lib.rig, frame);
+        if let Some((bone, add)) = selected {
+            self.clip_click_bone(bone, &world.avatar_lib.rig, frame, add);
         }
     }
 
@@ -678,6 +682,14 @@ impl Editor {
             {
                 let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
                 self.queue_studio_file_action(files::Action::Save { last_key_only });
+            }
+            if ui
+                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-export-bvh")))
+                .on_hover_text(aurora_i18n::tr!("anim-edit-export-bvh-hint"))
+                .clicked()
+            {
+                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
+                self.queue_studio_file_action(files::Action::ExportBvh { last_key_only });
             }
             if ui
                 .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-upload")))
