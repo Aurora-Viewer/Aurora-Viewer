@@ -27,6 +27,7 @@ mod dof;
 mod drawn_pick;
 mod exposure;
 pub mod frame_priority;
+pub mod xdbg; // XDBG
 mod fsr;
 pub mod gpu_alloc;
 pub mod gpu_cull;
@@ -202,11 +203,6 @@ mod shader_tests {
     #[test]
     fn motion_history_shader_is_valid() {
         validate(include_str!("shaders/motion_history.wgsl"));
-    }
-
-    #[test]
-    fn blend_order_clear_shader_is_valid() {
-        validate(crate::blend_exact::CLEAR_SHADER);
     }
 
     #[test]

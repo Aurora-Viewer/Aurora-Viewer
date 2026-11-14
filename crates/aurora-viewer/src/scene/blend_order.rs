@@ -292,6 +292,47 @@ pub fn mode() -> Mode {
     })
 }
 
+/// Whether AURORA_RIGGED_BLEND names an order: the user's setting then
+/// gives way to it.
+fn mode_named() -> bool {
+    static NAMED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *NAMED.get_or_init(|| std::env::var("AURORA_RIGGED_BLEND").is_ok_and(|v| !v.trim().is_empty()))
+}
+
+/// The user's order of the blended faces (`Settings::blend_order`): 0
+/// sorted, 1 to 4 the exact order from its lightest precision to its finest.
+static USER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Whether the renderer can draw the exact order now: not under MSAA, nor
+/// on a device without the depth test before the shader. The faces are then
+/// sorted, as by default.
+static EXACT_AVAILABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Every frame, before the lists are made: the user's setting and whether
+/// the exact order can be drawn.
+pub fn set_user(level: u8, exact_available: bool) {
+    USER.store(level, std::sync::atomic::Ordering::Relaxed);
+    EXACT_AVAILABLE.store(exact_available, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// From which alpha the exact order composes a fragment in its exact place
+/// (`BlendPrecision`): the level of the user's setting, every layer from
+/// 3 % of alpha when the setting asks for the sorted order and
+/// AURORA_RIGGED_BLEND for the exact one.
+pub fn precision() -> aurora_render::BlendPrecision {
+    precision_at(USER.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The precision of a level of the user's setting.
+fn precision_at(level: u8) -> aurora_render::BlendPrecision {
+    match level {
+        1 => aurora_render::BlendPrecision::Fast,
+        2 => aurora_render::BlendPrecision::Balanced,
+        3 => aurora_render::BlendPrecision::High,
+        _ => aurora_render::BlendPrecision::Full,
+    }
+}
+
 /// With `alt`: the current second draws as `split`.
 static OLD_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -306,7 +347,23 @@ pub fn rigged_apart() -> bool {
 
 /// How the rigged faces write their depth this frame (see the module).
 pub fn depth_mode() -> RiggedBlendDepth {
-    depth_mode_in(mode(), OLD_NOW.load(std::sync::atomic::Ordering::Relaxed))
+    use std::sync::atomic::Ordering::Relaxed;
+    let mode = chosen_mode(mode(), mode_named(), USER.load(Relaxed));
+    drawable(depth_mode_in(mode, OLD_NOW.load(Relaxed)), EXACT_AVAILABLE.load(Relaxed))
+}
+
+/// The order of this run: the one AURORA_RIGGED_BLEND names, else the exact
+/// order when the user's setting asks for it.
+fn chosen_mode(mode: Mode, named: bool, user: u8) -> Mode {
+    if !named && user > 0 { Mode::Exact } else { mode }
+}
+
+/// The exact order where it cannot be drawn: the default one.
+fn drawable(depth: RiggedBlendDepth, exact_available: bool) -> RiggedBlendDepth {
+    match depth {
+        RiggedBlendDepth::Exact | RiggedBlendDepth::ExactHiding if !exact_available => RiggedBlendDepth::Layers,
+        depth => depth,
+    }
 }
 
 fn depth_mode_in(mode: Mode, old_now: bool) -> RiggedBlendDepth {
@@ -350,6 +407,17 @@ pub fn sort(entries: &mut [BlendEntry], rigged_apart: bool) -> usize {
     } else {
         0
     }
+}
+
+/// The entries `sort` put in order, `rigged` of them first, turned nearest
+/// first in each of the two groups, for `RiggedBlendDepth::Exact`: its
+/// result needs no order, but a fragment the nearer ones hide leaves as soon
+/// as it finds them filed (the cut, aurora-render blend_exact.rs), as an
+/// opaque face drawn after a nearer one leaves on the depth test.
+pub fn nearest_first(entries: &mut [BlendEntry], rigged: usize) {
+    let (first, others) = entries.split_at_mut(rigged.min(entries.len()));
+    first.reverse();
+    others.reverse();
 }
 
 /// The runs of the first `n` sorted entries worn on one attachment point
@@ -468,6 +536,30 @@ pub fn water_sides(center_z: f32, radius: f32, plane: Option<f32>) -> (bool, boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_precision_of_the_exact_order_follows_the_level_of_the_setting() {
+        use aurora_render::BlendPrecision::{Balanced, Fast, Full, High};
+        assert_eq!([1, 2, 3, 4].map(precision_at), [Fast, Balanced, High, Full]);
+        assert_eq!(precision_at(0), Full);
+    }
+
+    /// The user's setting asks for the exact order unless the variable
+    /// names one; where the exact order cannot be drawn (MSAA, a device
+    /// without the early depth test), the default one.
+    #[test]
+    fn the_users_setting_gives_way_to_the_variable_and_to_what_can_be_drawn() {
+        assert_eq!(chosen_mode(Mode::Layers, false, 0), Mode::Layers);
+        assert_eq!(chosen_mode(Mode::Layers, false, 1), Mode::Exact);
+        assert_eq!(chosen_mode(Mode::Layers, false, 4), Mode::Exact);
+        assert_eq!(chosen_mode(Mode::Layers, true, 4), Mode::Layers);
+        assert_eq!(chosen_mode(Mode::Split, true, 4), Mode::Split);
+        assert_eq!(chosen_mode(Mode::ExactAlternate, true, 0), Mode::ExactAlternate);
+        assert_eq!(drawable(RiggedBlendDepth::Exact, true), RiggedBlendDepth::Exact);
+        assert_eq!(drawable(RiggedBlendDepth::Exact, false), RiggedBlendDepth::Layers);
+        assert_eq!(drawable(RiggedBlendDepth::ExactHiding, false), RiggedBlendDepth::Layers);
+        assert_eq!(drawable(RiggedBlendDepth::Split, false), RiggedBlendDepth::Split);
+    }
 
     #[test]
     fn nonrigged_faces_reverse_order_when_seen_from_the_other_side() {

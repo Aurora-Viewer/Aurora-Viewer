@@ -4858,6 +4858,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
+| `AURORA_DEMO_VEILS=<n>[,<strings>[,<gap cm>]]` | A hall hung with `n` lace curtains, some crossing the others, and glowing strings among them: order and cost of many blended layers |
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
@@ -5006,6 +5007,20 @@ both open states and the selection count. Capture at frame 620.
     (`AURORA_BLEND_EARLY_DISCARD`): it only pays off where empty
     areas are in one piece on screen. `32,24,90,256` (large empty
     stretches) shows it, `32,24,60,16` (fine strands) gains nothing.
+- **`AURORA_DEMO_VEILS=<n>[,<strings>[,<gap cm>]]`**: `n` lace curtains
+  (40 when `n` is not a number, 400 at most) 14 m wide and 8 m tall, one
+  every `gap` centimeters (100 when left out) from 2.5 m ahead of the start
+  view, in four tints: clear holes, a net 38 % opaque, opaque threads.
+  Three in four hang across the view; the others hang along it or at a
+  slant and cross them, so that no order of the curtains is right on both
+  sides of a crossing. `strings` (as many as curtains when left out)
+  glowing strings, 80 % opaque, hang among them. `40,0,25` is 40 layers
+  on most pixels, most of them hidden by the nearest ones; `4,0` is 4
+  layers that all show. With `AURORA_RIGGED_BLEND=exact` a curtain keeps
+  its tint from one side of a crossing to the other and the nearer of two
+  is over the other on both sides; with the default order one side of each
+  crossing is wrong. The strings behind several curtains glow less than
+  those in front. `AURORA_DEMO_POS="x,y"` moves the hall.
 - **`AURORA_DEMO_SHEER=1`** (with or without `AURORA_DEMO_HAIR`): our
   avatar also wears two rigged shells around the torso, 1.5 cm apart: a
   white dress whose alpha wavers between 0.25 and 0.75 from one 4-texel
@@ -11088,6 +11103,7 @@ What the inventory must show with these scenarios:
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
+| `AURORA_RIGGED_BLEND=exact`, `exact-hiding` or `exact-alt` | Every blended face composed in the order of its fragments at each pixel, whatever order the faces are drawn in; with the Legacy Viewer's hiding between rigged objects; or the default order one second in three |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
@@ -11668,6 +11684,30 @@ What the inventory must show with these scenarios:
   before. `check` paints magenta where the guard caught one, cyan where
   the colour is still not a number from another source: it works on any
   card, NVIDIA included, as the NaN itself is computed on every card.
+- **`AURORA_RIGGED_BLEND=exact|exact-hiding|exact-alt`**: the exact blend
+  order (`aurora-render/src/blend_exact.rs`). Every blended face, rigged or
+  not, is drawn twice: a first pass files each fragment the opaque scene
+  leaves visible in the front of its pixel (where it lies, its alpha), a
+  second gives each fragment the light the fragments in front of it let
+  through. Faces that cross, a face folded over itself, the layers of a
+  hair and the triangles of one face come out in their true order at every
+  pixel; nothing depends on the order of the draws. The ten nearest
+  fragments of a pixel are exact; those under them are mixed as one layer,
+  and not drawn when they would send less than 1/64 of the pixel's light
+  (the ten then share it). A fragment under layers that let less than
+  1/512 through is left out before its texture. Needs a device with
+  storage buffers in fragment shaders and 48 bytes a pixel in one binding;
+  without them the default order is kept. `exact-hiding` keeps one rule
+  of the Legacy Viewer on top, to compare: a rigged object hides what is
+  drawn after it and behind it wherever it has a texel. `exact-alt` draws
+  the default order one second in three and `exact` the others, for
+  measures: the perf summary of `AURORA_PROFILE=1` then tags its lines
+  `xmode=old` and `xmode=new`, and `g_transparent` is the GPU time of the
+  blended faces in each. What to look for: `AURORA_DEMO_VEILS` (curtains
+  that cross keep their tint on both sides of the crossing),
+  `AURORA_DEMO_HAIR_CARDS=<n>,layered,outer` (no dark patches),
+  `AURORA_DEMO_SHEER=1`, `AURORA_DEMO_COPLANAR_LAYERS=1`. Not in the
+  order yet: particles, water and the HUD, drawn as before.
 - **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
   default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)

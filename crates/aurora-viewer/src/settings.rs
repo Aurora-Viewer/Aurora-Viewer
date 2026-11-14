@@ -1411,6 +1411,12 @@ pub struct Settings {
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
     pub antialiasing: u8,
+    /// Order of the blended faces (scene/blend_order.rs): 0 sorted object
+    /// by object as the Legacy Viewer (the default), 1 to 4 the true order
+    /// of their fragments at each pixel, beyond the Legacy Viewer, from its
+    /// lightest precision to its finest (`aurora_render::BlendPrecision`:
+    /// 1 fast, 2 balanced, 3 high, 4 full). Sorted under MSAA.
+    pub blend_order: u8,
     /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
     /// 2 balanced, 3 performance, 4 ultra performance.
     pub fsr_quality: u8,
@@ -2366,6 +2372,7 @@ impl Default for Settings {
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
+            blend_order: 0,
             fsr_quality: 1,
             fsr_sharpness: 80,
             render_scale_percent: 100,
@@ -3212,6 +3219,7 @@ impl Settings {
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(7);
+        self.blend_order = self.blend_order.min(4);
         self.fsr_quality = self.fsr_quality.min(4);
         self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
