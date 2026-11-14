@@ -4212,6 +4212,9 @@ impl App {
                     self.draw_stepping_arrived();
                 } else {
                     self.start_draw_stepping("login");
+                    // llstartup.cpp STATE_STARTED: "look for parcels we
+                    // own", which tells World › My Linden Home its page
+                    self.world.group_money.request_owned_land();
                 }
                 if let Some(journey) = &mut self.portal_journey {
                     journey.arrived = true;
@@ -15394,6 +15397,10 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, ui::owned_land::WINDOW, &mut self.panels.owned_land);
                 self.world.group_money.request_owned_land();
             }
+            BarAction::LindenHome => {
+                let url = self.world.group_money.linden_home_url().to_owned();
+                self.open_web_link(url, None);
+            }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
             BarAction::NewEnvironment(kind) => match kind {
                 crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
@@ -17313,6 +17320,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
+                    linden_home: self.second_life(),
                     destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {

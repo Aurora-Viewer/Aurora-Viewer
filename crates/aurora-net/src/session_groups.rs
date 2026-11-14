@@ -351,13 +351,13 @@ impl Session<'_> {
         true
     }
 
-    /// process_places_reply: a nil query id is the land holdings' (not
-    /// ported), any other the group panel's of that group.
+    /// process_places_reply: a nil query id is the land holdings'
+    /// (LLFloaterLandHoldings::processPlacesReply: My land and the Linden
+    /// Home check), any other the group panel's of that group; the viewer
+    /// sorts them.
     fn on_group_land(&mut self, to: uuid::Uuid, reply: group_money::GroupLandReply) {
         if to != self.agent_id() {
             log::warn!("PlacesReply for another agent");
-        } else if reply.group.is_nil() {
-            log::debug!("PlacesReply for the land holdings: not shown");
         } else {
             emit(self.sh, NetEvent::GroupLand(Box::new(reply)));
         }
