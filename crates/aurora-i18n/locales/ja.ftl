@@ -14472,3 +14472,20 @@ joystick-layout-positional = 位置に基づく
 
 joystick-layout-auto = 自動
 joystick-layout-xinput = XInput
+
+## The agents' control bar (ui/agent_control.rs)
+agent-control-asks = { $agent } がビューアーの使用を求めています
+agent-control-no-purpose = （理由なし）
+agent-control-minutes = 約 { $minutes } 分
+agent-control-allow = 許可
+agent-control-not-now = 今はだめ
+agent-control-auto-in = 応答がなければ { $seconds } 秒後に開始
+agent-control-working = { $agent } がビューアーを使用中
+agent-control-left = 残り { $minutes } 分
+agent-control-take-back = 取り戻す
+agent-control-take-back-hint = 今すぐ順番を終了し、「確認する」か「許可する」を選ぶまでエージェントを止めます
+agent-control-held = エージェントは保留中
+agent-control-waiting = 待機中: { $agents }
+agent-control-mode-ask = 確認する
+agent-control-mode-auto = 許可する
+agent-control-mode-hold = 保留

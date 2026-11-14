@@ -18,7 +18,7 @@ pub use bridge::{
     FRAME_BUDGET_MICROS, LsdOperation, MAX_BOUNDED_ITEMS, McpError, McpRequestEnvelope, PrimTransformSpec, RawCapturedFrame,
     RollbackAction, ViewerRequest, ViewerResponse, create_bridge_channels,
 };
-pub use lease::{LeaseManager, LeaseSnapshot};
+pub use lease::{ControlView, HumanMode, LeaseManager, LeaseSnapshot, QueuedAgent};
 pub use lsd::LinksetDataStore;
 pub use router::{McpProfile, McpRouter, ToolDefinition, all_tool_definitions, list_tools_for_profile};
 pub use server::{MCP_PROTOCOL_VERSION, McpServerHandle, spawn_server};

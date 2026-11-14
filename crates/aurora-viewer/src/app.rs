@@ -16894,6 +16894,7 @@ impl App {
             ),
             &self.ui_images,
         );
+        self.draw_agent_control(&ctx, &p);
         ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
         ui::bars::clock::set_chat_format(self.system_island().clock_format);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();

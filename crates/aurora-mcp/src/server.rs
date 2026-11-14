@@ -19,6 +19,8 @@ const HTTP_IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct McpServerHandle {
     pub bind_addr: SocketAddr,
+    /// The control lease and its queue, for the viewer's control bar.
+    pub leases: std::sync::Arc<crate::lease::LeaseManager>,
     shutdown_tx: watch::Sender<bool>,
     pub sse_tx: broadcast::Sender<String>,
 }
@@ -127,6 +129,7 @@ pub fn spawn_server(
     let local_addr = std_listener.local_addr().unwrap_or(addr);
 
     let router = Arc::new(McpRouter::new(bridge_tx, McpProfile::from_env()));
+    let leases = router.leases.clone();
     let (sse_tx, _) = broadcast::channel::<String>(64);
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let server_sse_tx = sse_tx.clone();
@@ -165,6 +168,7 @@ pub fn spawn_server(
 
     Ok(McpServerHandle {
         bind_addr: local_addr,
+        leases,
         shutdown_tx,
         sse_tx,
     })
