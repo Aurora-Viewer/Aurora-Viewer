@@ -5964,7 +5964,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
-| `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
+| `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; one role of Aurora Builders has a blank title, listed as "<Blank title>"; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
@@ -9196,9 +9196,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   to verify that "None (no group tag)" displays the active tag badge and "Activate" is enabled for groups.
 - **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
   toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
-  600, with every title of the three demo groups and three region rules:
-  the demo region wears "Aurora Builders" › Builder (already worn at the
-  start: the log says `region group title: AlreadyWorn`), "Boreal Lagoon"
+  600, with every title of the three demo groups and three region rules.
+  Aurora Builders also offers a role whose title is blank: the list shows
+  "<Blank title>" (French « <Titre vide> », Japanese 「＜空のタイトル＞」), the
+  filter matches that placeholder, and Activate wears that role. It is not
+  the title worn at the start. The group profile's "Title shown" combo does
+  not list it. The three region rules: the demo region wears "Aurora
+  Builders" › Builder (already worn at the start: the log says `region
+  group title: AlreadyWorn`), "Boreal Lagoon"
   wears "Northern Wolves" › Officer, and "Pine Grove" a group left since
   (listed as "group left, ignored"). The demo server answers every group's
   titles, keeps the title chosen in each and names the active group with

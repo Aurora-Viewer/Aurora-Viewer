@@ -6358,6 +6358,7 @@ ui-place-details-title = タイトル：
 ui-contacts-titles = タイトル
 group-titles-filter = グループのタイトルでフィルタ
 group-titles-no-title = ＜グループタイトルなし＞
+group-titles-blank = ＜空のタイトル＞
 group-titles-col-title = タイトル
 group-titles-col-regions = 自動リージョン
 group-titles-default-tip = 割り当てのないリージョンで使うデフォルトのタイトル

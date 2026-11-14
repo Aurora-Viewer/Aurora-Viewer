@@ -6403,6 +6403,7 @@ ui-place-details-title = Titre :
 ui-contacts-titles = Titres
 group-titles-filter = Filtrer les titres des groupes
 group-titles-no-title = <Aucun titre>
+group-titles-blank = <Titre vide>
 group-titles-col-title = Titre
 group-titles-col-regions = Régions automatiques
 group-titles-default-tip = Titre par défaut porté dans les régions sans assignation
