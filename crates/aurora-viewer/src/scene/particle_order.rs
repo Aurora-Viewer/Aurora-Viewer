@@ -281,10 +281,18 @@ impl Scene {
     /// of the frame.
     pub fn order_particles(&mut self) {
         let t = Instant::now();
+        // `Exact` lists the faces nearest first and draws every particle after
+        // them (the exact blend order has no particles yet): no faces to
+        // place them among, one trailing run
+        let faces: &[BlendEntry] = if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact {
+            &[]
+        } else {
+            &self.blend_sorted
+        };
         place_particles(
             self.alpha_view.as_ref(),
             aurora_render::particle_interleave(),
-            &self.blend_sorted,
+            faces,
             self.lists.blend_depth,
             &self.blend_under_sorted,
             self.blend_under_rigged,
