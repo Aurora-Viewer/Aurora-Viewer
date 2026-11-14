@@ -9677,7 +9677,6 @@ people-sets-selected = { $count ->
 people-sets-smart-all = Dans un cercle
 people-sets-smart-none = Dans aucun cercle
 people-sets-smart-nicknamed = Avec un surnom
-people-sets-smart-not-friends = Non-amis
 people-sets-options = Options de tous les cercles…
 people-sets-your-sets = Vos cercles
 people-sets-smart-lists = Listes automatiques

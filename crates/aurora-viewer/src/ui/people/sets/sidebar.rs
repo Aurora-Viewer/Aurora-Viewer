@@ -23,14 +23,21 @@ const SMART_ROW_H: f32 = 30.0;
 /// The picker's button.
 const PICKER_H: f32 = 46.0;
 
-/// The smart lists: (pseudo-set, icon, label key).
-fn smart_lists() -> [(&'static str, &'static str, &'static str); 4] {
+/// The smart lists: (pseudo-set, icon, label key). Difference (human
+/// decision): the Legacy Viewer's "Non-friends" entry (CS_SET_EXTRA_AVS)
+/// is left out; those residents still show in their own sets and in All
+/// sets, and the classic Contacts window keeps the entry.
+fn smart_lists() -> [(&'static str, &'static str, &'static str); 3] {
     [
         (contact_sets::ALL_SETS, "users", "people-sets-smart-all"),
         (contact_sets::NO_SETS, "user-plus", "people-sets-smart-none"),
         (contact_sets::PSEUDONYM, "edit-filled", "people-sets-smart-nicknamed"),
-        (contact_sets::EXTRA_AVS, "user", "people-sets-smart-not-friends"),
     ]
+}
+
+/// Whether `choice` is one of the smart lists this tab offers.
+pub(super) fn is_smart(choice: &str) -> bool {
+    smart_lists().iter().any(|(id, _, _)| *id == choice)
 }
 
 /// The label of a set or smart list.
@@ -188,12 +195,15 @@ pub(super) fn picker(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &st
                 ui.add_space(6.0);
                 let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());
                 caption(ui, p, aurora_i18n::tr!("people-sets-smart-lists"), r.left() + 8.0, r.center().y);
-                let half = (ui.available_width() - 2.0) / 2.0;
+                let full = ui.available_width();
+                let half = (full - 2.0) / 2.0;
                 for pair in smart_lists().chunks(2) {
+                    // a list left alone on the last line takes the whole width
+                    let width = if pair.len() == 1 { full } else { half };
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for (id, icon, _) in pair {
-                            ui.allocate_ui(Vec2::new(half, SMART_ROW_H), |ui| smart_row(ui, c, st, set, id, icon));
+                            ui.allocate_ui(Vec2::new(width, SMART_ROW_H), |ui| smart_row(ui, c, st, set, id, icon));
                         }
                     });
                 }
@@ -754,7 +764,11 @@ mod tests {
         for (id, _, key) in smart_lists() {
             assert!(contact_sets::ContactSets::is_internal(id));
             assert_eq!(label(id), aurora_i18n::text(key));
+            assert!(is_smart(id));
         }
         assert_eq!(label("Family"), "Family");
+        // the Legacy Viewer's "Non-friends" is not offered here
+        assert!(!is_smart(contact_sets::EXTRA_AVS));
+        assert!(!is_smart("Family"));
     }
 }

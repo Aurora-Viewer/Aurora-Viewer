@@ -9675,7 +9675,6 @@ people-sets-selected = { $count } selected
 people-sets-smart-all = In any set
 people-sets-smart-none = Not in a set
 people-sets-smart-nicknamed = With a nickname
-people-sets-smart-not-friends = Not friends
 people-sets-options = Options for all sets…
 people-sets-your-sets = Your sets
 people-sets-smart-lists = Smart lists

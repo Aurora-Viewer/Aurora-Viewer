@@ -46,9 +46,11 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
 
 /// The set shown: the one chosen while it exists, else the highest set,
 /// else all of them (FSPanelContactSets::refreshSetList, in Aurora's order).
+/// A pseudo-set this tab does not list (Non-friends, chosen in the classic
+/// Contacts window, which shares the choice) falls back the same way.
 fn choice(c: &mut Ctx) -> String {
     let choice = match &c.contacts.set_choice {
-        Some(s) if ContactSets::is_internal(s) || c.world.contact_sets.is_valid(s) => s.clone(),
+        Some(s) if sidebar::is_smart(s) || c.world.contact_sets.is_valid(s) => s.clone(),
         _ => c
             .world
             .contact_sets

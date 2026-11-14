@@ -9620,7 +9620,6 @@ people-sets-selected = { $count }人を選択中
 people-sets-smart-all = いずれかのセット
 people-sets-smart-none = セットなし
 people-sets-smart-nicknamed = ニックネームあり
-people-sets-smart-not-friends = フレンド以外
 people-sets-options = すべてのセットのオプション…
 people-sets-your-sets = あなたのセット
 people-sets-smart-lists = スマートリスト
