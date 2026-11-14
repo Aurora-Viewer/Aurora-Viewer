@@ -677,7 +677,7 @@ impl Scene {
             return format!("{head}: all {count} faces left out for texture-entry alpha 0");
         }
         if g.hud {
-            head.push_str(&self.hud_geometry(world, renderer, o, g));
+            head.push_str(&self.hud_geometry(world, renderer, o, g, ids));
         }
         let mut counts = vec![if g.faces.is_empty() {
             "no faces drawn".to_string()
@@ -699,7 +699,7 @@ impl Scene {
     /// Read the actual HUD draw matrices without changing its placement.
     /// Four vertices per face identify the edges of small panel meshes;
     /// bounding this sample also keeps the live inspector inexpensive.
-    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu, ids: &AssetIds) -> String {
         use std::fmt::Write as _;
 
         let mut text = format!(
@@ -709,8 +709,11 @@ impl Scene {
             o.scale.to_array(),
             o.visual_scale_at(Instant::now()).to_array()
         );
+        // The mesh or sculpt map is the HUD maker's asset: its id follows the
+        // same rule as every other id of these lines (AssetIds), so a copy to
+        // the clipboard never hands out someone's mesh id.
         if let Some(sculpt) = o.visual_volume().sculpt {
-            let _ = write!(text, ", asset {}", sculpt.texture);
+            let _ = write!(text, ", asset {}", ids.id(sculpt.texture));
         }
         if let Some(idx) = world.objects.index_of_uuid(&o.full_id)
             && crate::build::root_of(world, idx) == idx
