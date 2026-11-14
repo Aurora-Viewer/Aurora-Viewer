@@ -5476,6 +5476,7 @@ ui-bars-editable-shortcuts-preferences-shortcuts = 編集可能なショート�
 link-trust-shortened-link-the-real-destination-is-hidden = 短縮リンク：本当の行き先が隠されています。
 demo-root-touch = ルート：タッチ
 build-ui-contents-refresh = リフレッシュ
+build-contents-create-failed = オブジェクト内にアイテムを作成できませんでした：{ $message }
 build-ui-tools-random = ランダム
 keybinds-zoom-camera-in = カメラをズームイン
 ui-contacts-attach-to-conversations = 会話に結合

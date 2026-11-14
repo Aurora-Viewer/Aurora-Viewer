@@ -5506,6 +5506,7 @@ ui-bars-editable-shortcuts-preferences-shortcuts = Raccourcis modifiables : Pré
 link-trust-shortened-link-the-real-destination-is-hidden = Raccourcisseur de lien : la vraie destination est cachée.
 demo-root-touch = Racine : Touch
 build-ui-contents-refresh = Rafraîchir
+build-contents-create-failed = Impossible de créer l’élément dans l’objet : { $message }
 build-ui-tools-random = Random
 keybinds-zoom-camera-in = Rapprocher la caméra
 ui-contacts-attach-to-conversations = Rattacher à Conversations

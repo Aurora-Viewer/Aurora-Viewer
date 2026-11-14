@@ -5500,6 +5500,7 @@ ui-bars-editable-shortcuts-preferences-shortcuts = Editable shortcuts: Preferenc
 link-trust-shortened-link-the-real-destination-is-hidden = Shortened link: the real destination is hidden.
 demo-root-touch = Root: Touch
 build-ui-contents-refresh = Refresh
+build-contents-create-failed = Could not create the item in the object: { $message }
 build-ui-tools-random = Random
 keybinds-zoom-camera-in = Zoom camera in
 ui-contacts-attach-to-conversations = Attach to Conversations
