@@ -1735,46 +1735,7 @@ impl App {
                 }))));
             }
             ViewerRequest::ApplyRollbacks { actions } => {
-                let mut restored = 0usize;
-                for action in actions {
-                    match action {
-                        RollbackAction::RestoreSetting { key, value } => {
-                            if crate::settings::registry::set(&mut self.settings, &key, value).is_ok() {
-                                restored += 1;
-                            }
-                        }
-                        RollbackAction::RestoreCamera {
-                            mode: _,
-                            position,
-                            focus,
-                            fov,
-                        } => {
-                            self.camera.set_view(
-                                Vec3::from_array(position),
-                                Vec3::from_array(focus),
-                                &mut self.world.agent,
-                                &self.settings.camera,
-                            );
-                            self.settings.camera.fov = fov;
-                            self.camera.fov_y = fov;
-                            restored += 1;
-                        }
-                        RollbackAction::ResetPoser => {
-                            self.mcp_bridge.mcp_poses.clear();
-                            restored += 1;
-                        }
-                        RollbackAction::RestoreEnvironment { time_of_day } => {
-                            if time_of_day == 0 {
-                                self.world.eep.clear_local();
-                            } else {
-                                self.world.eep.set_time_of_day(time_of_day);
-                            }
-                            self.panels.time_of_day = time_of_day;
-                            self.settings.time_of_day = time_of_day;
-                            restored += 1;
-                        }
-                    }
-                }
+                let restored = self.mcp_apply_rollbacks(actions);
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
                     "restored_count": restored,
                 }))));
@@ -3418,6 +3379,75 @@ impl App {
             "answer": answer,
             "messages_sent": sent,
         })))
+    }
+
+    /// Undo a lease's temporary overrides (camera, settings, poser, time of
+    /// day): on release, on expiry, and when the person takes the viewer back.
+    pub(crate) fn mcp_apply_rollbacks(&mut self, actions: Vec<RollbackAction>) -> usize {
+        let mut restored = 0usize;
+        for action in actions {
+            match action {
+                RollbackAction::RestoreSetting { key, value } => {
+                    if crate::settings::registry::set(&mut self.settings, &key, value).is_ok() {
+                        restored += 1;
+                    }
+                }
+                RollbackAction::RestoreCamera {
+                    mode: _,
+                    position,
+                    focus,
+                    fov,
+                } => {
+                    self.camera.set_view(
+                        Vec3::from_array(position),
+                        Vec3::from_array(focus),
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                    self.settings.camera.fov = fov;
+                    self.camera.fov_y = fov;
+                    restored += 1;
+                }
+                RollbackAction::ResetPoser => {
+                    self.mcp_bridge.mcp_poses.clear();
+                    restored += 1;
+                }
+                RollbackAction::RestoreEnvironment { time_of_day } => {
+                    if time_of_day == 0 {
+                        self.world.eep.clear_local();
+                    } else {
+                        self.world.eep.set_time_of_day(time_of_day);
+                    }
+                    self.panels.time_of_day = time_of_day;
+                    self.settings.time_of_day = time_of_day;
+                    restored += 1;
+                }
+            }
+        }
+        restored
+    }
+
+    /// The agents' control bar: who has the viewer, Allow / Not now / Take back,
+    /// and how it is shared (ui/agent_control.rs).
+    pub(crate) fn draw_agent_control(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        let Some(leases) = self.mcp_bridge.server_handle.as_ref().map(|h| h.leases.clone()) else {
+            return;
+        };
+        let view = leases.view();
+        if view.active.is_some() || view.asking.is_some() {
+            // the countdowns move: draw again within a second
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+        match crate::ui::agent_control::show(ctx, p, &view) {
+            Some(crate::ui::agent_control::AgentControlAction::Allow(owner)) => leases.human_allow(&owner),
+            Some(crate::ui::agent_control::AgentControlAction::NotNow(owner)) => leases.human_not_now(&owner),
+            Some(crate::ui::agent_control::AgentControlAction::TakeBack) => {
+                let rollbacks = leases.human_take_back();
+                self.mcp_apply_rollbacks(rollbacks);
+            }
+            Some(crate::ui::agent_control::AgentControlAction::Mode(mode)) => leases.set_mode(mode),
+            None => {}
+        }
     }
 
     fn handle_mcp_lsl_listen_output(&self, object_id: Option<Uuid>, local_id: Option<u32>) -> Result<ViewerResponse, McpError> {

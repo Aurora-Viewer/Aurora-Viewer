@@ -14649,3 +14649,20 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
+
+## The agents' control bar (ui/agent_control.rs)
+agent-control-asks = { $agent } demande à utiliser le viewer
+agent-control-no-purpose = (aucune raison donnée)
+agent-control-minutes = Pour environ { $minutes } min
+agent-control-allow = Autoriser
+agent-control-not-now = Pas maintenant
+agent-control-auto-in = Continue dans { $seconds } s sans réponse
+agent-control-working = { $agent } utilise le viewer
+agent-control-left = { $minutes } min restantes
+agent-control-take-back = Reprendre
+agent-control-take-back-hint = Termine son tour maintenant et tient les agents à l'écart jusqu'à ce que vous choisissiez Me demander ou Laisser entrer
+agent-control-held = Agents en attente
+agent-control-waiting = En attente : { $agents }
+agent-control-mode-ask = Me demander
+agent-control-mode-auto = Laisser entrer
+agent-control-mode-hold = Bloquer

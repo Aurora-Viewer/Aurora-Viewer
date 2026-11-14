@@ -176,7 +176,24 @@ impl McpRouter {
                     .or_else(|| args.get("seconds"))
                     .and_then(Value::as_u64)
                     .unwrap_or(DEFAULT_LEASE_SECONDS);
-                let (snap, expired_rollbacks) = self.leases.acquire(owner, ttl, lease_id.as_deref())?;
+                let purpose = args.get("purpose").and_then(Value::as_str).unwrap_or("").trim().to_owned();
+                let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(false);
+                let (snap, expired_rollbacks) = match self.leases.acquire_turn(owner, &purpose, ttl, lease_id.as_deref(), wait)? {
+                    crate::lease::AcquireOutcome::Granted(snap, rb) => (snap, rb),
+                    crate::lease::AcquireOutcome::Waiting(w) => {
+                        return Ok(text_block(json!({
+                            "ok": false,
+                            "waiting": true,
+                            "reason": w.reason,
+                            "position": w.position,
+                            "holder": w.holder,
+                            "holder_purpose": w.holder_purpose,
+                            "holder_remaining_secs": w.holder_remaining_secs,
+                            "retry_after_secs": w.retry_after_secs,
+                            "note": "not yet: call control_acquire again with the same owner after retry_after_secs to keep your place",
+                        })));
+                    }
+                };
                 if !expired_rollbacks.is_empty() {
                     let _ = self
                         .send_to_viewer(
@@ -193,6 +210,8 @@ impl McpRouter {
                     "lease": snap,
                 })))
             }
+
+            "control_queue" => Ok(text_block(json!(self.leases.view()))),
 
             "control_release" | "viewer_control_release" => {
                 let (released, rollbacks) = self.leases.release(lease_id.as_deref())?;
@@ -2333,26 +2352,30 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "control_acquire".into(),
-            description: "Acquire a cooperative viewer control lease (Legacy Viewer MCP compatible). Automatically restores settings/camera on release.".into(),
+            description: "Acquire a cooperative viewer control lease (Legacy Viewer MCP compatible). Automatically restores settings/camera on release. Several agents share one logged-in viewer by taking turns: pass a stable `label` and a `purpose`, and `wait: true` to queue when it is busy; the person at the viewer may be asked first (Allow / Not now).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "label": { "type": "string", "default": "Aurora MCP workflow" },
                     "seconds": { "type": "integer", "default": 300 },
-                    "lease_id": { "type": "string" }
+                    "lease_id": { "type": "string" },
+                    "purpose": { "type": "string", "description": "What you will do with it, shown to the person and to waiting agents (e.g. 'rebuild coop 4 birds')" },
+                    "wait": { "type": "boolean", "default": false, "description": "When busy, join the queue and get {waiting: true, position, retry_after_secs} instead of an error; ask again with the same owner to keep your place" }
                 }
             }),
             in_compact_profile: true,
         },
         ToolDefinition {
             name: "viewer_control_acquire".into(),
-            description: "Acquire or renew a cooperative viewer control lease with automatic rollback stack.".into(),
+            description: "Acquire or renew a cooperative viewer control lease with automatic rollback stack. Several agents share one logged-in viewer by taking turns: pass a stable `owner` and a `purpose`, and `wait: true` to queue when it is busy; the person at the viewer may be asked first (Allow / Not now). Release it as soon as the job is done.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "owner": { "type": "string", "default": "aurora-agent" },
                     "ttl_seconds": { "type": "integer", "default": 300 },
-                    "lease_id": { "type": "string" }
+                    "lease_id": { "type": "string" },
+                    "purpose": { "type": "string", "description": "What you will do with it, shown to the person and to waiting agents (e.g. 'rebuild coop 4 birds')" },
+                    "wait": { "type": "boolean", "default": false, "description": "When busy, join the queue and get {waiting: true, position, retry_after_secs} instead of an error; ask again with the same owner to keep your place" }
                 }
             }),
             in_compact_profile: true,
@@ -2754,6 +2777,12 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                 },
                 "required": ["prompt_id"]
             }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "control_queue".into(),
+            description: "Who holds the viewer and why, who is waiting for it, and how the person at the viewer shares it (mode: ask, auto, hold). Read-only; no lease needed.".into(),
+            input_schema: json!({ "type": "object", "properties": {} }),
             in_compact_profile: true,
         },
         ToolDefinition {
@@ -3845,6 +3874,7 @@ const REQUIRES_LEASE_TOOLS: &[&str] = &[
     "poser_set_bones",
     "poser_reset",
     "floater_open",
+    "script_prompt_respond",
     "capture_orbit",
     "appearance_mutate",
     "prim_rez_new",
@@ -3948,7 +3978,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 113, "expected 113 total tools (43 Legacy + 70 Aurora-native)");
+        assert_eq!(defs.len(), 114, "expected 114 total tools (43 Legacy + 71 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [
@@ -4068,6 +4098,9 @@ mod tests {
             "voice_set_user_volume",
             "voice_set_user_mute",
             "voice_transmit",
+            "script_prompts",
+            "script_prompt_respond",
+            "control_queue",
         ] {
             assert!(names.contains(&native), "missing Aurora-native MCP tool: {native}");
         }
