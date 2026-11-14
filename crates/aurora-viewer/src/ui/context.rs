@@ -281,6 +281,9 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// Save as › Collada / OBJ (Object.ExportCollada) of the prim's
+    /// selection.
+    SaveAs(Uuid, crate::build::export::Format),
     Pathfinding {
         id: Uuid,
         characters: bool,

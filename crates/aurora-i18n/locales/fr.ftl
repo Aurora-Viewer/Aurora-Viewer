@@ -2808,6 +2808,7 @@ build-ui-floaters-deed-object = Céder l'objet
 build-shapes-cone = Cône
 demo-disabled-no-click = DISABLED : aucun clic
 demo-object-menu-bell = Cloche
+demo-object-export-lamp = Lampe de jardin
 demo-object-menu-crate = Caisse
 demo-object-menu-touch-text = Sonner la cloche
 demo-object-menu-sit-text = S'allonger
@@ -9508,6 +9509,7 @@ import-local-rez = Placer un prim pour cet aperçu
 ui-context-sit-stand = S'asseoir / Se lever
 ui-context-save-backup = Sauvegarde
 ui-context-save-collada = Collada
+ui-context-save-obj = OBJ
 ui-context-remove-from-display-exceptions = Retirer des exceptions d'affichage
 ui-context-script-info = Infos sur les Scripts
 
@@ -14076,6 +14078,38 @@ world-outfit-paste-already-in-outfit = Déjà dans cette tenue.
 world-outfit-paste-already-worn = Déjà porté.
 
 ## Build › Modifier les particules (éditeur de particules)
+object-export-title = Enregistrer sous
+object-export-format = Format
+object-export-collada = Collada (.dae)
+object-export-obj = Wavefront OBJ (.obj)
+object-export-collada-files = Fichier Collada
+object-export-obj-files = Fichier Wavefront OBJ
+object-export-object-info = Informations de l'objet
+object-export-prims = Prims exportables : { $count }/{ $total }
+object-export-textures = Textures exportables : { $count }/{ $total }
+object-export-waiting = Lecture des propriétés et des formes des objets…
+object-export-nothing = Aucune de ces prims ne peut être enregistrée : seules les prims qui vous appartiennent et que vous avez créées le peuvent (avec un mesh ou une sculpt map importés par vous).
+object-export-options = Options
+object-export-save-textures = Enregistrer les textures
+object-export-consolidate = Consolider les textures
+object-export-skip-transparent = Ignorer les transparentes
+object-export-texture-params = Appliquer les paramètres de texture
+object-export-single-uv = Carte UV unique
+object-export-single-uv-tip = Donner le même nom aux coordonnées de texture de toutes les prims, pour les outils qui les réunissent ensuite.
+object-export-texture-format = Format des textures
+object-export-texture-list = Textures à enregistrer
+object-export-save = Enregistrer sous…
+object-export-writing = Écriture du fichier…
+object-export-saving-textures = { $count ->
+    [one] Enregistrement des textures ({ $count } restante)
+   *[other] Enregistrement des textures ({ $count } restantes)
+    }
+object-export-success = Enregistrement réussi de { $object } dans { $file }.
+object-export-failure = L'exportation de { $object } vers { $file } a échoué.
+object-export-textures-missing = { $count ->
+    [one] { $count } texture n'a pas pu être enregistrée.
+   *[other] { $count } textures n'ont pas pu être enregistrées.
+    }
 particle-editor-title = Éditeur de particules
 particle-editor-menu-tip = Sélectionnez un objet qui vous appartient pour régler ses particules.
 particle-editor-script-name = Nouveau script de particules

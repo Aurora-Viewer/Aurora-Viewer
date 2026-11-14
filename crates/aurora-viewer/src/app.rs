@@ -35,6 +35,7 @@ mod avatar_render_settings;
 mod bridge;
 mod busy_pause;
 mod movelock;
+mod object_export;
 mod particle_editor;
 mod portals;
 mod poser;
@@ -615,6 +616,8 @@ pub struct App {
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     /// Build › Edit particles (ParticleEditor).
+    object_export: crate::build::ui::export::ExportWindow,
+    object_export_job: object_export::Job,
     particle_editor: crate::build::ui::particles::ParticleEditor,
     particle_inject: particle_editor::Inject,
     portal_drop: Option<portals::landmark::Pending>,
@@ -1900,6 +1903,8 @@ impl App {
             first_arrival_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
+            object_export: Default::default(),
+            object_export_job: Default::default(),
             particle_editor: Default::default(),
             particle_inject: Default::default(),
             portal_drop: None,
@@ -3267,6 +3272,8 @@ impl App {
         self.hover_height_ui = Default::default();
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
+        self.object_export = Default::default();
+        self.object_export_job = Default::default();
         self.particle_editor = Default::default();
         self.particle_inject = Default::default();
         self.portal_drop = None;
@@ -7469,6 +7476,7 @@ impl App {
         self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        self.object_export_demo_steps();
         self.release_keys_demo_steps();
         if self.frame_count == 400
             && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
@@ -9080,6 +9088,8 @@ impl App {
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.particle_editor.wanted_images.drain());
+        images.extend(self.object_export.wanted_images.drain());
+        images.extend(self.object_export_job.wanted_images());
         images.extend(self.particle_editor.picker.wanted_images.drain());
         images.extend(self.wearable_ui.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
@@ -19064,6 +19074,7 @@ impl App {
                 self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 self.particle_editor_window(&ctx, &p);
+                self.object_export_window(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(

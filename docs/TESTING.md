@@ -1804,6 +1804,8 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SLIDESHOW=1[,<s>][,net=<ms>][,mbps=<m>][,crowd=<n>][,preload]` | A panel whose texture a script changes every few seconds, its pictures downloaded from a local server |
 | `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
+| `AURORA_DEMO_OBJECT_EXPORT=collada\|obj` | Object › Save as › Collada / OBJ on a linked lamp, its rights and texture files |
+| `AURORA_DEMO_OBJECT_EXPORT_FILE=<path>` | With the above: Save as writes that file without the file dialog |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
 
@@ -3469,6 +3471,24 @@ drag without blocking buttons, scripts, local resizing or explicit Edit.
 The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
+
+**`AURORA_DEMO_OBJECT_EXPORT=collada|obj`** — at frame 600 a garden lamp of
+four linked prims of ours stands ahead, a little to the right: a tiled base
+(our own texture, its bottom face fully transparent), a post, a violet ring
+another resident created, and a globe with a texture we bought. At frame 700
+the Save as window opens on it in that format: "Exportable prims: 3/4" (the
+ring is not our work), "Exportable textures: 1/3" (the tiles; the blank and
+the bought textures are not saved), the options, the tiles under "Textures to
+save". Capture at frame 860. With `AURORA_DEMO_OBJECT_EXPORT_FILE=<path>`,
+Save as runs at frame 900 without the dialog: the log says "3/4 prims, 1/3
+textures, saving", then "object export: 3 prims, 858 triangles, 3 materials"
+and "saved"; `<path>` (and its `.mtl` for OBJ) and `Garden_tiles.png` are
+written beside it, and a notification names the file. Import the file in
+Blender: the lamp stands upright on its base (Collada is Z up, OBJ Y up),
+the tiles on the base, the globe and the post in their face colours. On the grid, the human compares with the Legacy Viewer's Save as ›
+Collada on an object of their own (prim, sculpt and mesh), on a bought one
+(nothing exportable) and on a megaprim, and checks that a texture they did not
+upload, or have no item of, is never written.
 
 **`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an

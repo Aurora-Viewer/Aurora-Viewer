@@ -192,6 +192,9 @@ pub mod notifs;
 /// not (AURORA_DEMO_OBJECT_CHAT).
 #[path = "demo_object_chat.rs"]
 pub mod object_chat;
+/// The garden lamp of the object export scenario (AURORA_DEMO_OBJECT_EXPORT).
+#[path = "demo_object_export.rs"]
+pub mod object_export;
 /// Objects' messages from near and far, filtered (AURORA_DEMO_OBJECT_IM).
 #[path = "demo_object_im.rs"]
 pub mod object_im;

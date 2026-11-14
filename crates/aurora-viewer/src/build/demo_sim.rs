@@ -144,10 +144,12 @@ impl DemoSim {
                 .map(|o| o.owner_id)
                 .filter(|owner| !owner.is_nil())
                 .unwrap_or(crate::demo::DEMO_AGENT);
+            // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
+            let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);
             ObjectProps {
                 object_id: id,
                 full: true,
-                creator_id: DEMO_CREATOR,
+                creator_id,
                 owner_id,
                 group_id: group.unwrap_or_else(|| {
                     if owner_id == crate::demo::DEMO_AGENT {
