@@ -10131,6 +10131,9 @@ impl App {
             self.world.restore_open_ims(
                 self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
             );
+            // FSDisableReturnObjectNotification (AURORA_DEMO_OBJECT_IM=…,returns:
+            // on for the run)
+            self.world.hide_object_returns = self.settings.hide_object_returns || (self.demo && crate::demo::object_im::hide_returns());
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)

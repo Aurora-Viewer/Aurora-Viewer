@@ -1099,6 +1099,10 @@ pub struct Settings {
     /// and told the user nothing they could act on (human choice,
     /// 2026-10-30).
     pub sim_version_alert: bool,
+    /// FSDisableReturnObjectNotification: the grid's message that an object
+    /// of ours was returned to our inventory is not shown (off, as in the
+    /// Legacy Viewer).
+    pub hide_object_returns: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
@@ -2317,6 +2321,7 @@ impl Default for Settings {
             script_count_alert: false,
             script_count_threshold: 100,
             sim_version_alert: false,
+            hide_object_returns: false,
             object_im_filter: Default::default(),
             anti_spam: Default::default(),
             rlva_enabled: false,

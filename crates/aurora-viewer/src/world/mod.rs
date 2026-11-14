@@ -744,6 +744,9 @@ pub struct World {
     /// "Teleport completed from <SLURL>" in nearby chat after a teleport to
     /// another region (FSShowBackSLURL, from the settings).
     pub show_back_slurl: bool,
+    /// Objects' "returned to your inventory" messages dropped
+    /// (FSDisableReturnObjectNotification, from the settings).
+    pub hide_object_returns: bool,
     /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
     /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
     /// there) and said on its arrival.
@@ -1036,6 +1039,7 @@ impl World {
             collisions: Default::default(),
             fly_after_teleport: false,
             show_back_slurl: true,
+            hide_object_returns: false,
             tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),
@@ -4770,6 +4774,10 @@ impl World {
             return;
         }
         // dialog 19 = MessageFromObject
+        if self.hide_object_returns && object_im_filter::is_return_notice(&im) {
+            log::info!("object return message hidden: {}", im.from_name);
+            return;
+        }
         if self.object_im_filtered(&im) {
             return;
         }

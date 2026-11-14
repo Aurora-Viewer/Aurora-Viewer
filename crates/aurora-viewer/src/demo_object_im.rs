@@ -3,7 +3,9 @@
 //! run only: `off`, on for the region, on for the parcel, or on for the
 //! parcel with friends' objects blocked too. Seven messages reach nearby
 //! chat from frame 700, each saying when it should be hidden; the log has
-//! one "dropped" line for each hidden one.
+//! one "dropped" line for each hidden one. At frame 910 the grid says an
+//! object of ours was returned to our inventory; `,returns` after the mode
+//! hides that message for the run (FSDisableReturnObjectNotification).
 
 use crate::world::object_im_filter::{Scope, Settings};
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, InstantMessage, NetEvent};
@@ -12,7 +14,8 @@ use uuid::Uuid;
 
 /// The filter of this run, if the scenario is on.
 pub fn settings() -> Option<Settings> {
-    let mode = std::env::var("AURORA_DEMO_OBJECT_IM").ok()?;
+    let value = std::env::var("AURORA_DEMO_OBJECT_IM").ok()?;
+    let mode = value.split(',').next().unwrap_or_default();
     let on = |scope, allow_friends| Settings {
         on: true,
         scope,
@@ -24,6 +27,11 @@ pub fn settings() -> Option<Settings> {
         "strict" => on(Scope::Parcel, false),
         _ => on(Scope::Region, true),
     })
+}
+
+/// `,returns`: the return message hidden for the run.
+pub fn hide_returns() -> bool {
+    std::env::var("AURORA_DEMO_OBJECT_IM").is_ok_and(|v| v.split(',').skip(1).any(|w| w.trim() == "returns"))
 }
 
 /// An owner who is neither us nor a friend.
@@ -100,6 +108,19 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             message: aurora_i18n::tr!("demo-object-im-say-to").into(),
         }),
         880 => im(7, STRANGER, agent, "", aurora_i18n::tr!("demo-object-im-no-location")),
+        // the grid's word, in English only, about an object of ours
+        910 => im(
+            8,
+            agent,
+            agent,
+            &format!("{here}/128/128/21"),
+            &format!(
+                "Your object '{}' has {} Lost and Found folder from parcel '{}' at {here} 128, 128 due to parcel auto return.",
+                name(8),
+                crate::world::object_im_filter::RETURNED,
+                aurora_i18n::tr!("common-aurora-plaza")
+            ),
+        ),
         _ => return Vec::new(),
     };
     vec![ev]

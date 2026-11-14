@@ -5935,7 +5935,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_REGION_MESSAGE=1` | Messages to the whole region in the middle of the screen (#1404), one waiting behind the other |
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
-| `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
+| `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict[,returns]` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run; an object returned, its message hidden with `,returns` |
 | `AURORA_DEMO_ABOUT=info\|licences\|libraries[:end]` | Help › About Aurora Viewer opens on its Info, Licences or Libraries tab |
 | `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
@@ -6937,7 +6937,7 @@ failure. Grid validation and any paid upload are performed by the human.
   `history`. A script menu (`AURORA_DEMO_DIALOG=12`) stays rolled out
   until answered. Hover the cards to see them pause. The history is kept in
   memory in demo; on the grid it is saved per account.
-- **`AURORA_DEMO_OBJECT_IM=off|region|parcel|strict`**: the filter of
+- **`AURORA_DEMO_OBJECT_IM=off|region|parcel|strict[,returns]`**: the filter of
   Preferences › Privacy › "Block object messages from elsewhere", set for
   this run only (the saved setting is not changed): `off`, on for the
   region, on for the parcel, or on for the parcel with friends' objects
@@ -6949,7 +6949,11 @@ failure. Grid validation and any paid upload are performed by the human.
   the parcel, and a message with no location. `off` shows all seven,
   `region` hides the first, `parcel` the first, fourth and sixth,
   `strict` the friend's too. Each hidden message logs one line
-  `object message from … dropped`. Capture around frame 1000.
+  `object message from … dropped`. At frame 910 the grid says an object
+  of ours was returned to our inventory (shown in every mode); `,returns`
+  after the mode (`off,returns`) turns Preferences › Confirmations › "Hide
+  'object returned' messages" on for the run: that line is not shown and
+  the log has `object return message hidden`. Capture around frame 1000.
 - **`AURORA_DEMO_PRESENCE=<place>`**: the friends' online / offline toasts
   of Aurora's notification center at `top-left`, `top-center`,
   `top-right`, `bottom-left`, `bottom-center` or `bottom-right`, for this
