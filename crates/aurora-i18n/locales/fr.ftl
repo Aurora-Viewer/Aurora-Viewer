@@ -8433,7 +8433,6 @@ extra-4-days-ago = Il y a 4 jours
 extra-5-days-ago = Il y a 5 jours
 extra-none = aucun
 extra-new-script = New Script
-extra-new-notecard = New Notecard
 extra-rendering-info = INFOS DE RENDU
 extra-location = Location
 extra-chair = Chair

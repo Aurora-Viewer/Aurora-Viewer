@@ -253,7 +253,7 @@ impl BuildTool {
             o.full_id,
             AT_NOTECARD,
             IT_NOTECARD,
-            aurora_i18n::tr!("extra-new-notecard").into(),
+            aurora_i18n::tr!("common-new-notecard").into(),
             new_item_description(now_unix(), "note card"),
         );
         self.create_task_item(o.key.region, item);
@@ -482,7 +482,7 @@ mod tests {
         );
         let (_, note) = &items[0];
         assert_eq!((note.asset_type, note.inv_type, note.flags), (AT_NOTECARD, IT_NOTECARD, 0));
-        assert_eq!(note.name, aurora_i18n::tr!("extra-new-notecard"));
+        assert_eq!(note.name, aurora_i18n::tr!("common-new-notecard"));
         assert!(note.description.ends_with(" note card"));
         assert_eq!(
             (note.parent_id, note.owner_id, note.creator_id),

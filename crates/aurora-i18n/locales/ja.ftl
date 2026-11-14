@@ -8385,7 +8385,6 @@ extra-4-days-ago = 4日前
 extra-5-days-ago = 5日前
 extra-none = なし
 extra-new-script = 新しいスクリプト
-extra-new-notecard = 新しいノートカード
 extra-rendering-info = レンダリング情報
 extra-location = 場所
 extra-chair = 肌

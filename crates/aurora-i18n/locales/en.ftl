@@ -8428,7 +8428,6 @@ extra-4-days-ago = 4 days ago
 extra-5-days-ago = 5 days ago
 extra-none = none
 extra-new-script = New Script
-extra-new-notecard = New Notecard
 extra-rendering-info = RENDERING INFO
 extra-location = Location
 extra-chair = Flesh
