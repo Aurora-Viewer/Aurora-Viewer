@@ -3705,3 +3705,135 @@ fn a_box_dragged_from_under_the_lanes_does_not_move_the_window() {
     assert_eq!(before, after, "the window stays where it was");
     assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
 }
+
+#[test]
+fn a_right_click_over_the_lanes_drops_the_picked_keys() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let lane = frames
+        .shapes(Vec::new(), &mut draw)
+        .into_iter()
+        .filter_map(|shape| {
+            let egui::Shape::LineSegment { points, .. } = shape else {
+                return None;
+            };
+            ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(points)
+        })
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("timeline track baseline");
+    let at = egui::pos2((lane[0].x + lane[1].x) / 2.0, lane[0].y - 4.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frames.run(vec![egui::Event::PointerMoved(at), button(true)], &mut draw);
+    frames.run(vec![button(false)], &mut draw);
+    frames.run(Vec::new(), &mut draw);
+    assert!(editor.clip.selected_keys.is_empty());
+}
+
+#[test]
+fn ctrl_or_shift_click_adds_a_joint_in_the_animation_editor_and_a_plain_click_resets() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (head, left, right) = (rig.names["mHead"], rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    assert_eq!(editor.selected, Some(left));
+    assert_eq!(editor.clip_followers(), vec![right]);
+    assert!(editor.clip_follows(right) && !editor.clip_follows(left));
+    // a second click with the modifier takes it out again
+    editor.clip_click_bone(right, &rig, &original, true);
+    assert!(editor.clip_followers().is_empty());
+    // the selected joint taken out: the follower leads alone
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.clip_click_bone(left, &rig, &original, true);
+    assert_eq!(editor.selected, Some(right));
+    assert!(editor.clip_followers().is_empty());
+    // a drag on a follower makes it lead and keeps the others
+    editor.clip_click_bone(left, &rig, &original, true);
+    editor.clip_grab_bone(left, &rig, &original);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(left), vec![right]));
+    // a plain click selects that joint alone
+    editor.clip_click_bone(head, &rig, &original, false);
+    assert_eq!(editor.selected, Some(head));
+    assert!(editor.clip_followers().is_empty());
+}
+
+#[test]
+fn joints_selected_together_turn_with_the_selected_one_and_are_keyed_with_it() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (left, right) = (rig.names["mShoulderLeft"], rig.names["mShoulderRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.mode = Mode::Direct;
+    editor.orient = true;
+    editor.degrees.x += 40.0;
+    editor.commit_manipulation(&rig, &original, true);
+    assert!(editor.authoring.owns(right), "the follower's turn is an authored edit of its own");
+    assert!(editor.clip.modified.contains(&right), "and it counts as changed for Key changes");
+
+    editor.clip.capture = Some(Capture::Bone(left));
+    editor.capture_clip(&world, &original);
+    let mut rest = Document::new();
+    rest.record(&rig, &original, 0, &[left, right], &[]).unwrap();
+    let key = |document: &Document, bone: usize| {
+        document
+            .tracks
+            .iter()
+            .find(|track| track.bone == bone)
+            .and_then(|track| track.motion.rot_keys.iter().find(|key| key.time == 0.0))
+            .map(|key| key.rotation)
+            .expect("a key at frame 0")
+    };
+    let document = editor.clip.document.as_ref().unwrap();
+    let (turned_left, turned_right) = (
+        key(document, left).angle_between(key(&rest, left)),
+        key(document, right).angle_between(key(&rest, right)),
+    );
+    assert!(turned_left > 0.6, "the selected joint turned: {turned_left}");
+    assert!((turned_left - turned_right).abs() < 0.01, "{turned_left} vs {turned_right}");
+}

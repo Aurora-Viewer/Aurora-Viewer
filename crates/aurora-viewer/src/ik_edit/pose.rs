@@ -95,6 +95,26 @@ impl Editor {
         ui.add_space(ui.spacing().item_spacing.y);
         let pole = self.control == Control::Pole;
         ui.strong(if pole { self.pole_label(rig, bone, name) } else { name });
+        // the joints selected with it (Shift or Ctrl + click), as in the pose editor
+        let followers = self.clip_followers();
+        if !followers.is_empty() {
+            let names = followers
+                .iter()
+                .filter_map(|b| rig.canonical_names.get(*b).map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("poser-together", count = followers.len())).color(palette.teal))
+                    .on_hover_text(names);
+                if ui
+                    .button(aurora_i18n::text("poser-together-clear"))
+                    .on_hover_text(aurora_i18n::text("poser-together-clear-tip"))
+                    .clicked()
+                {
+                    self.clip.together.clear();
+                }
+            });
+        }
         self.chain_mode_ui(ui, palette, rig, frame, bone);
         if self.control == Control::Pole {
             ui.colored_label(palette.violet_light, aurora_i18n::tr!("ik-edit-pole-hint"));
@@ -103,6 +123,7 @@ impl Editor {
                 self.commit_manipulation(rig, frame, false);
             }
         } else {
+            ui.weak(aurora_i18n::tr!("anim-edit-fine-hint"));
             let (moved, rotated) = transform_fields(ui, "animation-bone-pose", &mut self.position, Some(&mut self.degrees), 0.005);
             let mut changed = moved;
             if rotated {

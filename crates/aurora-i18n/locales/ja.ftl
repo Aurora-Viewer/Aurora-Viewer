@@ -48,8 +48,8 @@ anim-timeline-delete-frame-keys = このフレームのキーをすべて削除
 anim-timeline-track-enabled = このボーンをアニメーションに含めます
 anim-timeline-empty = キーのあるボーンはまだありません。ボーンを選んでポーズを付け、「キー」（K）を押してください。
 anim-timeline-keys-selected = { $count ->
-    [one] { $count }個のキーを選択中：ドラッグで移動、Deleteで削除
-   *[other] { $count }個のキーを選択中：1つをドラッグするとすべて移動、Ctrl+Cでコピー、Deleteで削除、Escで選択解除
+    [one] { $count }個のキーを選択中：ドラッグで移動、Deleteで削除、右クリックまたはEscで選択解除
+   *[other] { $count }個のキーを選択中：1つをドラッグするとすべて移動、Ctrl+Cでコピー、Deleteで削除、右クリックまたはEscで選択解除
     }
 anim-edit-shortcut-play = 再生／一時停止（Space）
 anim-edit-shortcut-rewind = 最初に戻る（Home）
@@ -12985,6 +12985,7 @@ anim-edit-import-hint = 通常のインポートのプレビューを開きま�
 anim-edit-file-filter = Second Lifeアニメーション（.anim）
 anim-edit-bvh-filter = BVHモーションキャプチャ（.bvh）
 anim-edit-bvh-unavailable = BVHをインポートするためのアバターのスケルトンがありません。
+anim-edit-fine-hint = Shift＋クリックまたはCtrl＋クリックで関節を追加。ハンドルのドラッグ中にShiftを押すと、移動と回転が10倍細かくなります。
 anim-edit-export-bvh = .bvhを書き出す
 anim-edit-export-bvh-hint = アニメーションをアバターのスケルトンのBVHファイルとして保存し、Blenderなどのアニメーションツールで編集できるようにします。優先度、ループ、イーズ、手のポーズは.animにのみ残ります。
 anim-edit-bvh-export-unavailable = BVHを書き出すためのアバターのスケルトンがありません。

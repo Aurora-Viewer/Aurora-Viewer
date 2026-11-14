@@ -639,6 +639,16 @@ impl Editor {
             )
         });
         let over_timeline = origin.is_some_and(|origin| ui.ctx().layer_id_at(origin) == Some(ui.layer_id()));
+        // a right-click over the lanes drops every picked key (as Esc does)
+        let right_click = ui.input(|input| input.pointer.secondary_clicked().then(|| input.pointer.interact_pos()).flatten());
+        if let Some(at) = right_click
+            && lanes_area.contains(at)
+            && ui.ctx().layer_id_at(at) == Some(ui.layer_id())
+        {
+            self.clip.selected_keys.clear();
+            self.clip.key_box = None;
+            self.clip.key_box_armed = false;
+        }
         if pressed
             && (modifiers.shift || modifiers.ctrl || modifiers.command)
             && over_timeline
