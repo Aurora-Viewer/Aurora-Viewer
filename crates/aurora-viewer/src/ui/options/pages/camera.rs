@@ -311,6 +311,31 @@ fn mouselook(cx: &mut Cx) {
             tr!("ui-options-camera-show-interface-tip"),
             &field!(camera.show_interface_in_mouselook),
         );
+        // FSMouselookCombatFeatures, ExodusMouselookIFF and
+        // ExodusMouselookIFFRange (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-camera-combat"),
+            tr!("ui-options-camera-combat-tip"),
+            &field!(camera.mouselook_combat),
+        );
+        let off = !cx.s.camera.mouselook_combat;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-camera-combat-markers"),
+                tr!("ui-options-camera-combat-markers-tip"),
+                &field!(camera.mouselook_iff),
+            );
+            let off = !cx.s.camera.mouselook_iff;
+            cx.subs(off, |cx| {
+                cx.slider(
+                    tr!("ui-options-camera-combat-range"),
+                    "",
+                    &field!(camera.mouselook_iff_range),
+                    0.0..=500.0,
+                    " m",
+                );
+            });
+        });
     });
 }
 
