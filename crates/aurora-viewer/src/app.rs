@@ -11962,12 +11962,14 @@ impl App {
             // stage, which has its own lighting)
             self.thunder_light(&mut fp);
         }
-        // a photo's look, or the live view's in the photo mode
+        // Photos and their viewfinder use their own look.
         let focus = fp.dof.as_ref().map(|d| d.focus);
         self.snapshots.look_focus = focus;
         fp.look = match &photo {
             Some(f) => f.look.clone(),
-            None => self.live_look((w, h), focus),
+            None if self.panels.snapshot => self.live_look((w, h), focus),
+            None if studio_view.is_none() => self.world_lut_look((w, h)),
+            None => None,
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -16579,6 +16581,9 @@ impl App {
         self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
         self.options_ui.joystick = self.joystick.snapshot.clone();
         self.options_ui.flycam_active = self.joystick.active;
+        if open {
+            self.options_ui.world_lut_files = self.photo_luts().names().to_vec();
+        }
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
         self.sync_appearance_camera();
