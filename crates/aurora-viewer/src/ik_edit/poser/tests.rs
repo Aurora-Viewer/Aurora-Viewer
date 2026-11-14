@@ -2744,3 +2744,26 @@ fn the_drawn_state_and_the_pick_follow_the_subject() {
     editor.set_poser_mesh_pick(Some((21, [10, 10])));
     assert_eq!(editor.poser.mesh_pick, Some((other, 21, [10.0, 10.0])));
 }
+#[test]
+fn hand_presets_turn_each_finger_as_the_legacy_viewer_does() {
+    // #3602: LLMatrix3(roll, pitch, yaw) (indra/llmath/m3math.cpp, setRot),
+    // as FSPoserAnimator::translateRotationToQuaternion builds a preset
+    // joint's rotation, turns X, then Y, then Z: Rx · Ry · Rz in column form.
+    let presets: HashMap<String, HashMap<String, [f32; 3]>> = serde_json::from_str(include_str!("presets.json")).unwrap();
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    for (index, name) in ["Relaxed", "Tight_Grip", "Flat", "Pointing", "Okay"].into_iter().enumerate() {
+        editor.poser.preset = index;
+        editor.hand_preset(&rig, None);
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        for (joint, [x, y, z]) in &presets[name] {
+            let Some(&bone) = rig.names.get(joint) else { continue };
+            let legacy = Quat::from_rotation_x(*x) * Quat::from_rotation_y(*y) * Quat::from_rotation_z(*z);
+            // the angle of the difference, read with atan2: acos near 1
+            // (angle_between) cannot tell 0.1° from 0 in f32
+            let diff = pose.rotations[bone].inverse() * legacy;
+            let off = (2.0 * diff.xyz().length().atan2(diff.w.abs())).to_degrees();
+            assert!(off < 0.01, "{name} {joint}: {off:.1}° away from the Legacy Viewer's rotation");
+        }
+    }
+}
