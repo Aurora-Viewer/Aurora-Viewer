@@ -15,9 +15,11 @@
 //!   their item gives them (never their id);
 //! - a rigged mesh with its rigging (Aurora's own: the Legacy Viewer's
 //!   Collada export writes none): one skeleton for the file, the joints the
-//!   rigged meshes use and their parents, laid out as avatar_skeleton.xml
-//!   places them (the mesh's own joint positions when it carries them,
-//!   LLMeshSkinInfo::mAlternateBindMatrix); per rigged mesh a skin with the
+//!   rigged meshes use and their parents in avatar_skeleton.xml's tree, a
+//!   weighted joint at its bind transform (the mesh shows in its bind pose,
+//!   an A-pose kit stays in its A-pose), the others at their default place
+//!   or the mesh's own joint position (LLMeshSkinInfo::mAlternateBindMatrix);
+//!   per rigged mesh a skin with the
 //!   asset's inverse bind matrices, its vertices placed by its bind shape
 //!   matrix (the bind pose of LLSkinningUtil, `inverse_bind × bind_shape`:
 //!   glTF has no bind shape), and each vertex's joints and weights. Every
@@ -100,13 +102,35 @@ fn skeleton() -> Option<&'static Skeleton> {
         .as_ref()
 }
 
+/// The inverse bind matrix written for a skin's joint. A collision volume's
+/// bind carries the volume's scale (fitted mesh, as the uploaders write it);
+/// a bone cannot hold a scale at rest in Blender, whose importer then
+/// crushes everything weighted to it. Like Blender's own export of the
+/// dev kits, the volume is written without it: its node and its inverse
+/// bind both lose the scale (the bind pose is the same), and an importer
+/// that knows the skeleton puts the volume's scale back, as Aurora's does
+/// (import_mesh/gltf_skin.rs) and Avastar's Collada export.
+fn written_bind(skeleton: &Skeleton, name: &str, inverse: glam::Mat4) -> glam::Mat4 {
+    let volume = skeleton.find(name).is_some_and(|j| skeleton.joints[j].is_collision_volume);
+    let bind = inverse.inverse();
+    if !volume || !bind.is_finite() {
+        return inverse;
+    }
+    let (_, rotation, translation) = bind.to_scale_rotation_translation();
+    glam::Mat4::from_rotation_translation(rotation, translation).inverse()
+}
+
 /// The joint nodes of the rigged meshes' skins, under the root (node 0):
-/// each joint they name and its parents up to mPelvis, at their default
-/// place (LLAvatarBoneInfo: `pos` scaled by the parent's scale, `rot`),
-/// or at the position a mesh carries for it (the first one wins). A
-/// collision volume keeps its own scale, which fitted mesh deforms with;
-/// bones have none. A name the skeleton does not know gets a node of its
-/// own under the root.
+/// each joint they name and its parents up to mPelvis, in the skeleton's
+/// tree. A joint a mesh weights stands at its bind transform, the inverse
+/// of the mesh's inverse bind matrix (the first mesh that names it), so
+/// every tool shows the mesh in its bind pose: a body kit bound in an
+/// A-pose stays in it (on the default T-pose skeleton its arms were pulled
+/// 45° away). A parent no mesh weights stands at its default place
+/// (LLAvatarBoneInfo: `pos` scaled by the parent's scale, `rot`; the mesh's
+/// own joint position when it carries one). Collision volumes go without
+/// their scale (`written_bind`). A name the skeleton does not know gets a
+/// node of its own under the root. Nodes carry a matrix.
 struct Joints {
     /// Each joint name's node (the skeleton's names and aliases, and the
     /// unknown names).
@@ -120,15 +144,20 @@ fn joint_nodes(skeleton: &Skeleton, skins: &[&SkinInfo], nodes: &mut Vec<Value>)
     let count = skeleton.joints.len();
     let mut needed = vec![false; count];
     let mut moved: Vec<Option<Vec3>> = vec![None; count];
-    let mut unknown: Vec<(String, Option<Vec3>)> = Vec::new();
+    let mut bound: Vec<Option<glam::Mat4>> = vec![None; count];
+    let mut unknown: Vec<(String, glam::Mat4)> = Vec::new();
     for skin in skins {
         let positions = (skin.alt_inverse_bind.len() == skin.joint_names.len()).then_some(&skin.alt_inverse_bind);
         for (i, name) in skin.joint_names.iter().enumerate() {
             let position = positions.map(|p| p[i].w_axis.truncate());
+            let bind = written_bind(skeleton, name, skin.inverse_bind[i]).inverse();
             match skeleton.find(name) {
                 Some(j) => {
                     if moved[j].is_none() {
                         moved[j] = position;
+                    }
+                    if bound[j].is_none() && bind.is_finite() {
+                        bound[j] = Some(bind);
                     }
                     let mut at = Some(j);
                     while let Some(k) = at.filter(|k| !needed[*k]) {
@@ -136,7 +165,14 @@ fn joint_nodes(skeleton: &Skeleton, skins: &[&SkinInfo], nodes: &mut Vec<Value>)
                         at = skeleton.joints[k].parent;
                     }
                 }
-                None if !unknown.iter().any(|(n, _)| n == name) => unknown.push((name.clone(), position)),
+                None if !unknown.iter().any(|(n, _)| n == name) => {
+                    let bind = if bind.is_finite() {
+                        bind
+                    } else {
+                        glam::Mat4::from_translation(position.unwrap_or(Vec3::ZERO))
+                    };
+                    unknown.push((name.clone(), bind));
+                }
                 None => {}
             }
         }
@@ -147,20 +183,16 @@ fn joint_nodes(skeleton: &Skeleton, skins: &[&SkinInfo], nodes: &mut Vec<Value>)
     let mut rest = Vec::new();
     // pre-order: a parent's node is made before its children's
     for (j, joint) in skeleton.joints.iter().enumerate().filter(|(j, _)| needed[*j]) {
-        let parent_scale = joint.parent.map_or(Vec3::ONE, |p| skeleton.joints[p].scale);
-        let translation = moved[j].unwrap_or(joint.pos) * parent_scale;
-        let mut node = json!({ "name": joint.name, "translation": translation.to_array() });
-        let rotation = aurora_assets::skeleton::maya_q_xyz(joint.rot_euler_deg);
-        if !rotation.abs_diff_eq(glam::Quat::IDENTITY, 1e-7) {
-            node["rotation"] = json!(rotation.to_array());
-        }
-        let scale = if joint.is_collision_volume { joint.scale } else { Vec3::ONE };
-        if !scale.abs_diff_eq(Vec3::ONE, 1e-7) {
-            node["scale"] = json!(scale.to_array());
-        }
-        let local = glam::Mat4::from_scale_rotation_translation(scale, rotation, translation);
-        global[j] = joint.parent.map_or(glam::Mat4::IDENTITY, |p| global[p]) * local;
-        nodes.push(node);
+        let parent = joint.parent.map_or(glam::Mat4::IDENTITY, |p| global[p]);
+        global[j] = bound[j].unwrap_or_else(|| {
+            let parent_scale = joint.parent.map_or(Vec3::ONE, |p| skeleton.joints[p].scale);
+            let translation = moved[j].unwrap_or(joint.pos) * parent_scale;
+            let rotation = aurora_assets::skeleton::maya_q_xyz(joint.rot_euler_deg);
+            let scale = if joint.is_collision_volume { joint.scale } else { Vec3::ONE };
+            parent * glam::Mat4::from_scale_rotation_translation(scale, rotation, translation)
+        });
+        let local = parent.inverse() * global[j];
+        nodes.push(json!({ "name": joint.name, "matrix": local.to_cols_array() }));
         let index = nodes.len() - 1;
         node_of[j] = Some(index);
         let parent = joint.parent.and_then(|p| node_of[p]).unwrap_or(0);
@@ -175,8 +207,8 @@ fn joint_nodes(skeleton: &Skeleton, skins: &[&SkinInfo], nodes: &mut Vec<Value>)
         }
         rest.push((index, global[j]));
     }
-    for (name, position) in unknown {
-        nodes.push(json!({ "name": name, "translation": position.unwrap_or(Vec3::ZERO).to_array() }));
+    for (name, bind) in unknown {
+        nodes.push(json!({ "name": name, "matrix": bind.to_cols_array() }));
         let index = nodes.len() - 1;
         if let Some(children) = nodes[0]["children"].as_array_mut() {
             children.push(json!(index));
@@ -374,7 +406,7 @@ pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, 
                     node = own;
                 }
                 list.push(node);
-                bind.push(inverse.to_cols_array());
+                bind.push(written_bind(skeleton, name, *inverse).to_cols_array());
             }
             for (node, rest) in &joints.rest {
                 if !list.contains(node) {
@@ -642,7 +674,9 @@ mod tests {
             joint_names: vec!["mChest".into(), "BELLY".into()],
             inverse_bind: vec![
                 Mat4::from_translation(Vec3::new(0.0, 0.0, -1.4)),
-                Mat4::from_translation(Vec3::new(0.0, 0.0, -1.1)),
+                // a collision volume's bind carries its scale (fitted mesh)
+                Mat4::from_scale_rotation_translation(Vec3::new(0.09, 0.08, 0.06), glam::Quat::IDENTITY, Vec3::new(0.0, 0.0, 1.1))
+                    .inverse(),
             ],
             bind_shape: Mat4::from_scale(Vec3::splat(0.5)),
             alt_inverse_bind: vec![
@@ -701,6 +735,25 @@ mod tests {
             .position(|n| n["children"].as_array().is_some_and(|c| c.contains(&json!(child))))
     }
 
+    /// A node's transform from under the root (the root's turn to Y up left
+    /// out), from the nodes' matrices.
+    fn global(doc: &Value, node: usize) -> glam::Mat4 {
+        let local = |n: usize| {
+            let cols: Vec<f32> = doc["nodes"][n]["matrix"]
+                .as_array()
+                .map(|m| m.iter().map(|v| v.as_f64().expect("number") as f32).collect())
+                .unwrap_or_else(|| glam::Mat4::IDENTITY.to_cols_array().to_vec());
+            glam::Mat4::from_cols_slice(&cols)
+        };
+        let mut m = local(node);
+        let mut at = parent_of(doc, node);
+        while let Some(p) = at.filter(|p| *p != 0) {
+            m = local(p) * m;
+            at = parent_of(doc, p);
+        }
+        m
+    }
+
     #[test]
     fn a_rigged_mesh_is_written_with_its_skin_joints_and_weights() {
         let (model, skin) = rigged_model();
@@ -728,8 +781,7 @@ mod tests {
         assert_eq!(&joints[..2], &["mChest", "BELLY"]);
         assert_eq!(joints[2], "mPelvis", "the skeleton from its root, for one armature");
         assert!(joints.contains(&"mSpine4") && joints.len() == 8, "{joints:?}");
-        let (chest, chest_node) = node_named(&doc, "mChest");
-        assert_eq!(chest_node["translation"], json!([-0.02f32, 0.0, 0.25f32]));
+        let (chest, _) = node_named(&doc, "mChest");
         // mChest's parents up to the root, as avatar_skeleton.xml chains them
         let mut chain = Vec::new();
         let mut at = parent_of(&doc, chest);
@@ -738,8 +790,6 @@ mod tests {
             at = parent_of(&doc, node);
         }
         assert_eq!(chain, ["mSpine4", "mSpine3", "mTorso", "mSpine2", "mSpine1", "mPelvis", "root"]);
-        let belly = node_named(&doc, "BELLY").1;
-        assert!(belly.get("scale").is_some(), "a collision volume keeps its scale");
         assert!(
             doc["nodes"].as_array().expect("nodes").iter().all(|n| n["name"] != "mHead"),
             "only the joints used and their parents"
@@ -776,6 +826,23 @@ mod tests {
         let rest = glam::Mat4::from_cols_array(&matrices[32..48].try_into().expect("16 floats"));
         assert!(rest.w_axis.truncate().abs_diff_eq(-pelvis, 1e-5), "{rest:?}");
         assert!(doc["meshes"][1]["primitives"][0]["attributes"].get("JOINTS_0").is_none());
+        // every joint of the skin: its node × its inverse bind is the identity,
+        // so the mesh shows in its bind pose (an A-pose kit stays in it)
+        for (k, joint) in doc["skins"][0]["joints"].as_array().expect("joints").iter().enumerate() {
+            let ibm = glam::Mat4::from_cols_slice(&matrices[k * 16..k * 16 + 16]);
+            let pose = global(&doc, joint.as_u64().expect("joint") as usize) * ibm;
+            assert!(pose.abs_diff_eq(glam::Mat4::IDENTITY, 1e-4), "joint {k}: {pose:?}");
+        }
+        // the volume is written without its scale (Blender bones hold none at rest)
+        let belly = glam::Mat4::from_cols_slice(&matrices[16..32]);
+        assert!(belly.to_scale_rotation_translation().0.abs_diff_eq(Vec3::ONE, 1e-5), "{belly:?}");
+        assert!(belly.inverse().w_axis.truncate().abs_diff_eq(Vec3::new(0.0, 0.0, 1.1), 1e-5));
+        // a weighted joint stands at its bind transform: mChest at 1.4 m
+        assert!(global(&doc, chest).w_axis.truncate().abs_diff_eq(Vec3::new(0.0, 0.0, 1.4), 1e-5));
+        // a parent nothing weights at its default place: mPelvis
+        let (pelvis_node, _) = node_named(&doc, "mPelvis");
+        let pelvis = skeleton().expect("skeleton").joints[skeleton().expect("skeleton").find("mPelvis").expect("mPelvis")].pos;
+        assert!(global(&doc, pelvis_node).w_axis.truncate().abs_diff_eq(pelvis, 1e-5));
     }
 
     #[test]
