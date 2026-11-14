@@ -4,16 +4,28 @@
 //! `PushExpEnvironment` messages of experience environment controllers.
 use super::*;
 
-/// The LLSD document of a generic message parameter (notation, XML or binary,
-/// as LLSDSerialize::deserialize reads it).
+/// The LLSD document of a generic message parameter.
+///
+/// `LLDispatcher::unpackMessage` strips one trailing NUL from the packed
+/// string before `LLSDSerialize::deserialize`. The simulator writes the
+/// C++ header (`<? llsd/notation ?>`), which is not the compact
+/// `<?llsd/notation?>` prefix.
 fn document(bytes: &[u8]) -> Option<aurora_llsd::Llsd> {
-    if bytes.len() > 1024 * 1024 {
+    if bytes.len() > 1024 * 1024 || bytes.is_empty() {
         return None;
     }
-    let bytes = bytes.strip_prefix(b"<?llsd/notation?>").unwrap_or(bytes);
-    aurora_llsd::from_notation(bytes)
-        .or_else(|_| aurora_llsd::from_xml(bytes))
-        .or_else(|_| aurora_llsd::from_binary(bytes).map(|(document, _)| document))
+    let stripped = match bytes.split_last() {
+        Some((0, rest)) if !rest.is_empty() => rest,
+        _ => bytes,
+    };
+    aurora_llsd::deserialize(stripped)
+        .or_else(|_| {
+            if stripped.len() == bytes.len() {
+                Err(aurora_llsd::LlsdError::Invalid("no trailing nul"))
+            } else {
+                aurora_llsd::deserialize(bytes)
+            }
+        })
         .ok()
 }
 
@@ -79,11 +91,22 @@ impl Session<'_> {
                     parameters.len()
                 ),
             },
-            "PushExpEnvironment" => {
-                if let Some(event) = environment(agent, self.agent_id(), invoice, parameters) {
-                    emit(self.sh, event);
+            "PushExpEnvironment" => match environment(agent, self.agent_id(), invoice, parameters) {
+                Some(event) => emit(self.sh, event),
+                None => {
+                    let parsed = parameters.first().and_then(|bytes| document(bytes));
+                    log::warn!(
+                        "PushExpEnvironment dropped: agent {agent} (ours {}), invoice {invoice}, {} parameter(s), document {}",
+                        self.agent_id(),
+                        parameters.len(),
+                        parsed
+                            .as_ref()
+                            .map(|message| message["action"].as_str())
+                            .filter(|action| !action.is_empty())
+                            .unwrap_or("unparsed")
+                    );
                 }
-            }
+            },
             _ => {}
         }
     }
@@ -162,6 +185,30 @@ mod tests {
         assert!(environment(agent, agent, Uuid::nil(), &[push]).is_none());
         assert!(environment(agent, agent, experience, &[b"{'action':'Explode'}"]).is_none());
         assert!(environment(agent, agent, experience, &[b"broken"]).is_none());
+    }
+
+    #[test]
+    fn a_full_environment_push_keeps_the_serialize_header_and_the_packed_nul() {
+        let agent = Uuid::from_u128(1);
+        let experience = Uuid::parse_str("340191e2-a7e7-11ed-9ef6-0242ac110003").unwrap();
+        let asset = Uuid::parse_str("03189ca5-3838-0912-86ad-dfb434e8ed69").unwrap();
+        let mut push = b"<? llsd/notation ?>\n{'action':'PushFullEnvironment','action_data':{'asset_id':u03189ca5-3838-0912-86ad-dfb434e8ed69,'transition_time':r3},'Permission':i17,'OwnerID':u607763b1-9b52-4649-bf2f-57d2dc2f219c}".to_vec();
+        push.push(0);
+        match environment(
+            agent,
+            agent,
+            experience,
+            &[&push, b"Continental EEP control - LOBBY\0", b"The Continental Club\0"],
+        ) {
+            Some(NetEvent::ExperienceEnvironment { experience: id, message }) => {
+                assert_eq!(id, experience);
+                assert_eq!(message["action"].as_str(), "PushFullEnvironment");
+                assert_eq!(message["action_data"]["asset_id"].as_uuid(), asset);
+                assert_eq!(message["action_data"]["transition_time"].as_f32(), 3.0);
+                assert_eq!(message["Permission"].as_i32(), 17);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]

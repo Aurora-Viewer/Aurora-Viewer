@@ -3651,6 +3651,13 @@ impl World {
                 None
             }
             NetEvent::ExperienceEnvironment { experience, message } => {
+                let action = message["action"].as_str();
+                let asset = message["action_data"]["asset_id"].as_uuid();
+                if asset.is_nil() {
+                    log::info!("experience environment {action} from {experience}");
+                } else {
+                    log::info!("experience environment {action} from {experience}, asset {asset}");
+                }
                 self.eep.push_experience(experience, &message);
                 None
             }

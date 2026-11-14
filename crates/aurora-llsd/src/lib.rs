@@ -381,6 +381,69 @@ impl From<Vec<u8>> for Llsd {
     }
 }
 
+/// Which parser a leading `<? ... ?>` header selects.
+enum WireFormat {
+    Notation,
+    Xml,
+    Binary,
+}
+
+/// `LLSDSerialize::deserialize` (llsdserialize.cpp): a `<? llsd/notation ?>`,
+/// `<? LLSD/XML ?>` or `<? LLSD/Binary ?>` header selects the parser. Spacing
+/// and case vary (`<?llsd/notation?>`, `<?llsd/binary?>`). With no LLSD
+/// header, a leading `<` is XML and anything else is notation; raw binary is
+/// the last try, so a headerless binary value still parses.
+pub fn deserialize(data: &[u8]) -> Result<Llsd, LlsdError> {
+    let data = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(data);
+    if let Some((format, body)) = llsd_header(data) {
+        return match format {
+            WireFormat::Notation => from_notation(body),
+            WireFormat::Xml => from_xml(body),
+            WireFormat::Binary => from_binary(body).map(|(value, _)| value),
+        };
+    }
+    from_notation(data)
+        .or_else(|_| from_xml(data))
+        .or_else(|_| from_binary(data).map(|(value, _)| value))
+}
+
+/// The body after an LLSD header, when the first non-space bytes are one.
+fn llsd_header(data: &[u8]) -> Option<(WireFormat, &[u8])> {
+    let start = data.iter().position(|c| !c.is_ascii_whitespace())?;
+    let rest = &data[start..];
+    if !rest.starts_with(b"<?") {
+        return None;
+    }
+    let close = rest.windows(2).position(|w| w == b"?>")?;
+    let token = trim_ascii(&rest[2..close]);
+    let format = if eq_ignore_ascii(token, b"llsd/notation") {
+        WireFormat::Notation
+    } else if eq_ignore_ascii(token, b"llsd/xml") {
+        WireFormat::Xml
+    } else if eq_ignore_ascii(token, b"llsd/binary") {
+        WireFormat::Binary
+    } else {
+        return None;
+    };
+    let mut body = &rest[close + 2..];
+    if let Some(skip) = body.iter().position(|c| !c.is_ascii_whitespace()) {
+        body = &body[skip..];
+    } else {
+        body = &[];
+    }
+    Some((format, body))
+}
+
+fn trim_ascii(bytes: &[u8]) -> &[u8] {
+    let start = bytes.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(bytes.len());
+    let end = bytes.iter().rposition(|c| !c.is_ascii_whitespace()).map(|i| i + 1).unwrap_or(start);
+    &bytes[start..end]
+}
+
+fn eq_ignore_ascii(bytes: &[u8], lower: &[u8]) -> bool {
+    bytes.len() == lower.len() && bytes.iter().zip(lower).all(|(b, l)| b.to_ascii_lowercase() == *l)
+}
+
 /// Build an LLSD map literal: `llsd_map! { "a" => 1, "b" => "x" }`.
 #[macro_export]
 macro_rules! llsd_map {
@@ -390,4 +453,53 @@ macro_rules! llsd_map {
         $( m.insert(($k).to_string(), $crate::Llsd::from($v)); )*
         $crate::Llsd::Map(m)
     }};
+}
+
+#[cfg(test)]
+mod deserialize_tests {
+    use super::*;
+
+    fn push() -> Llsd {
+        llsd_map! {
+            "action" => "PushFullEnvironment",
+            "action_data" => llsd_map! {
+                "asset_id" => Uuid::parse_str("03189ca5-3838-0912-86ad-dfb434e8ed69").unwrap(),
+                "transition_time" => 3.0_f64,
+            },
+        }
+    }
+
+    #[test]
+    fn spaced_and_compact_notation_headers_parse() {
+        let body = to_notation(&push());
+        for header in ["<? llsd/notation ?>\n", "<?llsd/notation?>\n", "<? LLSD/NOTATION ?>\r\n"] {
+            let mut bytes = header.as_bytes().to_vec();
+            bytes.extend(body.as_bytes());
+            let parsed = deserialize(&bytes).expect(header);
+            assert_eq!(parsed["action"].as_str(), "PushFullEnvironment");
+            assert_eq!(
+                parsed["action_data"]["asset_id"].as_uuid(),
+                Uuid::parse_str("03189ca5-3838-0912-86ad-dfb434e8ed69").unwrap()
+            );
+            assert_eq!(parsed["action_data"]["transition_time"].as_f32(), 3.0);
+        }
+    }
+
+    #[test]
+    fn binary_headers_parse_and_a_headerless_document_still_does() {
+        let value = push();
+        let raw = to_binary(&value);
+        for header in ["<? LLSD/Binary ?>\n", "<?llsd/binary?>\n", "<? llsd/binary ?>\n"] {
+            let mut bytes = header.as_bytes().to_vec();
+            bytes.extend(&raw);
+            assert_eq!(deserialize(&bytes).unwrap()["action"].as_str(), "PushFullEnvironment");
+        }
+        assert_eq!(deserialize(to_notation(&value).as_bytes()).unwrap(), value);
+        assert_eq!(deserialize(&raw).unwrap()["action"].as_str(), "PushFullEnvironment");
+        let xml = to_xml_string(&value);
+        assert_eq!(deserialize(xml.as_bytes()).unwrap()["action"].as_str(), "PushFullEnvironment");
+        let mut headed = b"<? LLSD/XML ?>\n".to_vec();
+        headed.extend(xml.as_bytes());
+        assert_eq!(deserialize(&headed).unwrap()["action"].as_str(), "PushFullEnvironment");
+    }
 }
