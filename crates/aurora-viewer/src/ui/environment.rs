@@ -749,16 +749,36 @@ pub fn settings_list(
         // empty, with the field focused so typing filters at once
         let combo_id = ui.make_persistent_id(egui::IdSalt::new(&salt));
         let query_id = combo_id.with("search");
+        let popup_id = combo_id.with("popup");
+        let height_id = combo_id.with("full-height");
         let demo = ui.data_mut(|d| d.remove_temp::<String>(demo_open_id(&salt)));
         if let Some(text) = &demo {
-            egui::Popup::open_id(ui.ctx(), combo_id.with("popup"));
+            egui::Popup::open_id(ui.ctx(), popup_id);
             ui.data_mut(|d| d.insert_temp(query_id, text.clone()));
         }
-        let opening = !egui::ComboBox::is_open(ui.ctx(), combo_id) || demo.is_some();
+        let open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+        let opening = !open || demo.is_some();
         if opening && demo.is_none() {
             ui.data_mut(|d| d.remove_temp::<String>(query_id));
         }
         let mut query: String = ui.data_mut(|d| d.get_temp(query_id)).unwrap_or_default();
+        // an egui popup is bounded by its size of the last frame, so one that
+        // shrank to fewer names could not grow back: it gets the height its
+        // names asked for last frame, never more than the whole list's. Only
+        // what they need, not the whole height: a list opened upward keeps
+        // its bottom on the button through that size.
+        let height: Option<(f32, f32)> = ui.data_mut(|d| d.get_temp(height_id));
+        if opening && demo.is_none() {
+            ui.data_mut(|d| d.remove_temp::<(f32, f32)>(height_id));
+        } else if let Some((full, wanted)) = height
+            && let Some(mut area) = egui::AreaState::load(ui.ctx(), popup_id)
+        {
+            area.size = area.size.map(|s| Vec2::new(s.x, wanted.min(full)));
+            let layer = egui::LayerId::new(egui::Order::Foreground, popup_id);
+            ui.ctx().memory_mut(|m| m.areas_mut().set_state(layer, area));
+        }
+        let margins = egui::Frame::popup(ui.style()).total_margin().sum().y;
+        let mut content_height = None;
         egui::ComboBox::from_id_salt(salt)
             .width(width)
             .height(LIST_H + 40.0)
@@ -796,8 +816,9 @@ pub fn settings_list(
                     ui.close();
                 }
                 // the search stays put above its own scrolling list
-                egui::ScrollArea::vertical().max_height(LIST_H).show(ui, |ui| {
-                    if query.trim().is_empty() {
+                let searching = !query.trim().is_empty();
+                let scroll = egui::ScrollArea::vertical().max_height(LIST_H).show(ui, |ui| {
+                    if !searching {
                         // the two fixed entries show the state; they cannot be
                         // picked (setDefaultPresetsEnabled(false))
                         for (i, label) in [aurora_i18n::tr!("ui-environment-shared-environment"), second]
@@ -830,7 +851,17 @@ pub fn settings_list(
                         }
                     }
                 });
+                // what the names ask for, not only the part of them that fit
+                let cut = scroll.content_size.y.min(LIST_H) - scroll.inner_rect.height();
+                content_height = Some(ui.min_rect().height() + cut.max(0.0));
             });
+        if let Some(content) = content_height
+            && let Some(popup) = egui::AreaState::load(ui.ctx(), popup_id).and_then(|a| a.size)
+        {
+            let full = height.map_or(0.0, |(full, _)| full);
+            let full = if query.trim().is_empty() { full.max(popup.y) } else { full };
+            ui.data_mut(|d| d.insert_temp(height_id, (full, content + margins)));
+        }
         ui.data_mut(|d| d.insert_temp(query_id, query));
     });
     if widgets::icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("common-previous"), !list.is_empty()) {
