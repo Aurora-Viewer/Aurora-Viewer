@@ -299,8 +299,10 @@ opens. It also works when placed in the project folder, next to
 `aurora-viewer/`; alone in an empty folder, it downloads the installer from
 the `main` of GitHub. On the command line, it passes the arguments to the
 tools and returns their exit code, for example
-`aurora-tools.cmd -Action diagnose`. Exclamation marks in the path stay valid
-even from a prompt with delayed expansion.
+`aurora-tools.cmd -Action diagnose` (`.\aurora-tools.cmd` in PowerShell, which
+does not look in the current folder; Windows PowerShell and PowerShell 7 both
+work). Exclamation marks in the path stay valid even from a prompt with delayed
+expansion.
 
 The active choice carries a **›** mark on a violet background; the text
 cursor stays hidden while navigating. Long lists scroll with the selection
