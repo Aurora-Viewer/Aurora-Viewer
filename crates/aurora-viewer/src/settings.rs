@@ -22,6 +22,16 @@ pub enum MarkerAnchor {
     Body,
 }
 
+/// Which floating texts get a background (FSHudTextShowBackground: off,
+/// the hovered object's only, all).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FloatingTextBackground {
+    #[default]
+    Off,
+    Hovered,
+    All,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -936,6 +946,18 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// The objects' floating texts (llSetText) fade from this far from the
+    /// camera (FSHudTextFadeDistance, 8 m) over this range
+    /// (FSHudTextFadeRange, 4 m).
+    pub floating_text_fade_distance: f32,
+    pub floating_text_fade_range: f32,
+    /// A black or white background behind them (FSHudTextShowBackground,
+    /// off), this opaque (FSHudTextBackgroundOpacity, 0.75).
+    pub floating_text_background: FloatingTextBackground,
+    pub floating_text_background_opacity: f32,
+    /// The hovered object's text in front of everything, opaque and unfaded
+    /// (FSHudTextUseHoverHighlight, off).
+    pub floating_text_hover_highlight: bool,
     /// Opacity of the background of the window with the focus
     /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
     pub window_opacity_active: f32,
@@ -2262,6 +2284,11 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            floating_text_fade_distance: 8.0,
+            floating_text_fade_range: 4.0,
+            floating_text_background: FloatingTextBackground::Off,
+            floating_text_background_opacity: 0.75,
+            floating_text_hover_highlight: false,
             window_opacity_active: 1.0,
             window_opacity_inactive: 1.0,
             conversations_opacity: 1.0,
@@ -3331,6 +3358,11 @@ impl Settings {
         } else {
             0.5
         };
+        // the ranges of the Legacy Viewer's spinners (panel_preferences_UI.xml)
+        let finite = |v: f32, lo: f32, hi: f32, default: f32| if v.is_finite() { v.clamp(lo, hi) } else { default };
+        self.floating_text_fade_distance = finite(self.floating_text_fade_distance, 0.0, 64.0, 8.0);
+        self.floating_text_fade_range = finite(self.floating_text_fade_range, 0.25, 32.0, 4.0);
+        self.floating_text_background_opacity = finite(self.floating_text_background_opacity, 0.0, 1.0, 0.75);
         for opacity in [
             &mut self.window_opacity_active,
             &mut self.window_opacity_inactive,

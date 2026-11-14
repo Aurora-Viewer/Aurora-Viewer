@@ -1715,6 +1715,21 @@ impl ObjectStore {
         self.index_of(&o.parent_key()?)
     }
 
+    /// The root of the linkset of `idx`: the prim whose parent is an avatar
+    /// (an attachment) or nothing.
+    pub fn linkset_root(&self, mut idx: usize) -> usize {
+        for _ in 0..16 {
+            let Some(parent) = self.get(idx).and_then(|o| self.parent_of(o)) else {
+                break;
+            };
+            if self.get(parent).is_none_or(Object::is_avatar) {
+                break;
+            }
+            idx = parent;
+        }
+        idx
+    }
+
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
     pub fn worn_on_hud(&self, mut idx: usize) -> bool {

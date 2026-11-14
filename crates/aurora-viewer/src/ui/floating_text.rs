@@ -25,7 +25,17 @@ fn normalize(text: String) -> String {
 
 /// `projection_scale` affects the positions of HUD text, not its glyphs:
 /// get_hud_matrices scales the model, then hud_render_text paints in 2D.
-pub(super) fn paint(painter: &egui::Painter, text: String, anchor: Pos2, size: f32, color: Color32, projection_scale: f32) {
+/// `background`: a card of that color behind the lines
+/// (FSHudTextShowBackground, `hud::floating_text_background`).
+pub(super) fn paint(
+    painter: &egui::Painter,
+    text: String,
+    anchor: Pos2,
+    size: f32,
+    color: Color32,
+    projection_scale: f32,
+    background: Option<Color32>,
+) {
     let text = normalize(text);
     if text.is_empty() || color.a() < 3 {
         return;
@@ -67,6 +77,15 @@ pub(super) fn paint(painter: &egui::Painter, text: String, anchor: Pos2, size: f
         row.pos = ((ideal_origin + row.pos.to_vec2()).round_to_pixels(ppp) - origin).to_pos2();
         layout.rect = layout.rect.union(row.rect());
         layout.mesh_bounds = layout.mesh_bounds.union(row.visuals.mesh_bounds.translate(row.pos.to_vec2()));
+    }
+    if let Some(fill) = background.filter(|c| c.a() > 0) {
+        // the lines' own box, HORIZONTAL_PADDING (16) wider, as
+        // LLHUDText::updateSize measures it; the theme's card radius
+        let rect = layout
+            .rect
+            .translate(origin.to_vec2())
+            .expand2(egui::vec2(8.0, 2.0) * projection_scale);
+        painter.rect_filled(rect, painter.ctx().global_style().visuals.window_corner_radius, fill);
     }
     let [r, g, b, a] = color.to_srgba_unmultiplied();
     let luminance = (r.max(g).max(b) as f32 + r.min(g).min(b) as f32) / 510.0;

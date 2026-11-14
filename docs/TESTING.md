@@ -3353,7 +3353,7 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, Shift-click, move, edit |
-| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures; `background` for the floating text options |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, derender of a linked part, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
@@ -3367,6 +3367,11 @@ letters sit on the ticks; test different UI text sizes and fonts.
 `world` instead adds a purple cube with three centered text rows near the
 default demo start. Last-baseline placement is shared, and interline spacing
 follows the selected font's ascent plus descent minus one, without line gap.
+`background` shows the same cube and a dark text farther away, with
+Preferences › Layout › World tooltips › Floating text set to a background on all objects and a
+fade distance of 16 m: a black card behind the white rows, a white one behind
+the dark text, both faded with their text. Hover the far cube with Highlight
+on hover on: its text turns opaque and comes in front of the scene.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a
