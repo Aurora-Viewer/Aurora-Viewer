@@ -246,11 +246,6 @@ impl App {
         if self.last_render.video_memory_full {
             want = aurora_i18n::tr!("video-memory-full-window-title", title = want.as_str());
         }
-        // XDBG: the ceiling of a pixel, when it changes by itself
-        let most = aurora_render::xdbg::MOST.load(std::sync::atomic::Ordering::Relaxed);
-        if most != 0 {
-            want = format!("[PLAFOND {most}] {want}");
-        }
         if *shown != want {
             g.window.set_title(&want);
             *shown = want;

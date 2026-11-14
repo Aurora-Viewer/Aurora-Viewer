@@ -4164,14 +4164,7 @@ impl Backend {
         let src = format!(
             "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::water_shader_source(
-                &["object.wgsl"],
-                std::env::var("AURORA_XS") // XDBG
-                    .ok()
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                    .map(|s| &*Box::leak(s.into_boxed_str()))
-                    .unwrap_or(include_str!("shaders/object.wgsl"))
-            ),
+            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let src = crate::blend_exact::scene_source(src, device.features());
@@ -4483,10 +4476,7 @@ impl Backend {
                 samples: 1,
                 depth_write: false,
                 depth_compare: static_compare,
-                constants: &[
-                    ("WATER_CLIP", 1.0),
-                    ("BLEND_DBG", std::env::var("AURORA_XD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)),
-                ],
+                constants: &[("WATER_CLIP", 1.0)],
                 ..base("blend once", "vs_main", "fs_blend_once")
             },
         );
@@ -4541,10 +4531,14 @@ impl Backend {
         let blend_over = screen("blend over", "fs_blend_over", over, wgpu::ColorWrites::ALL);
         let summed = wgpu::BlendState { color: add, alpha: add };
         let blend_glow = screen("blend glow", "fs_blend_glow", summed, wgpu::ColorWrites::ALPHA);
-        let blend_both = device
-            .features()
-            .contains(crate::blend_exact::TWO_SOURCES)
-            .then(|| screen("blend both", "fs_blend_both", crate::blend_exact::both_blend(), wgpu::ColorWrites::ALL));
+        let blend_both = device.features().contains(crate::blend_exact::TWO_SOURCES).then(|| {
+            screen(
+                "blend both",
+                "fs_blend_both",
+                crate::blend_exact::both_blend(),
+                wgpu::ColorWrites::ALL,
+            )
+        });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -6127,8 +6121,7 @@ impl Backend {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
         };
-        let reload = crate::xdbg::xs_reload(); // XDBG
-        if (samples, s.gbuffer()) == (self.msaa_samples, self.settings.gbuffer()) && !reload {
+        if (samples, s.gbuffer()) == (self.msaa_samples, self.settings.gbuffer()) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
@@ -6156,7 +6149,6 @@ impl Backend {
                     build.started.elapsed().as_millis()
                 );
                 self.pipeline_build = None;
-                crate::xdbg::xs_reloaded(); // XDBG
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -7271,7 +7263,7 @@ impl Backend {
             self.rebuild_targets();
         }
         stats.present_mode = Some(self.config.present_mode);
-        if settings != self.settings || crate::xdbg::xs_reload() {
+        if settings != self.settings {
             self.apply_frame_settings(settings);
         }
         // the start is over: made, and its settings applied, with nothing
@@ -9851,7 +9843,7 @@ impl Backend {
         }
         // the fronts of `RiggedBlendDepth::Exact`, made on their first use
         // (the size of the scene depth)
-        let exact_mode = matches!(lists.blend_depth_mode, RiggedBlendDepth::Exact | RiggedBlendDepth::ExactHiding);
+        let exact_mode = matches!(lists.blend_depth_mode, RiggedBlendDepth::Exact);
         if exact_mode && rg.blend.1 > 0 && self.targets.blend_exact.is_none() {
             let size = self.targets.depth_ss_tex.size();
             let (order, refused) = crate::gpu_alloc::scoped(&self.device, || {
@@ -10070,12 +10062,13 @@ impl Backend {
         // scene
         if let Some(order) = exact {
             let t = &self.targets;
-            order.xdbg_most(&self.queue); // XDBG
-            // XDBG: the level asked for while the viewer runs (`xdbg::FAINT`)
-            let xfaint = crate::xdbg::FAINT.load(std::sync::atomic::Ordering::Relaxed);
-            order.set_faint(&self.queue, if xfaint != 0 { xfaint } else { lists.blend_precision.faint() });
+            order.set_faint(&self.queue, lists.blend_precision.faint());
             order.clear(&mut encoder);
-            encoder.copy_texture_to_texture(t.depth_ss_tex.as_image_copy(), order.depth_tex.as_image_copy(), t.depth_ss_tex.size());
+            encoder.copy_texture_to_texture(
+                t.depth_ss_tex.as_image_copy(),
+                order.depth_tex.as_image_copy(),
+                t.depth_ss_tex.size(),
+            );
             {
                 let haze = |view| {
                     Some(wgpu::RenderPassColorAttachment {
@@ -10105,10 +10098,6 @@ impl Backend {
                 });
                 bind_mesh(&mut pass, &self.groups.b);
                 pass.set_bind_group(3, &order.write, &[]);
-                let xq = crate::xdbg::query_set(&self.device, 0); // XDBG
-                if let Some(q) = &xq {
-                    pass.begin_pipeline_statistics_query(q, 0);
-                }
                 // the faces come nearest first: between runs of them, the cut
                 // of each pixel goes into the depth, and what lies under it
                 // in the next runs is left out before its shader
@@ -10120,11 +10109,13 @@ impl Backend {
                         pass.draw(0..3, 0..1);
                         calls.set(calls.get() + 1);
                     }
-                    draw_sided(&mut pass, &self.pipelines.blend_once, (b0 + u64::from(from) * stride, to - from), from);
+                    draw_sided(
+                        &mut pass,
+                        &self.pipelines.blend_once,
+                        (b0 + u64::from(from) * stride, to - from),
+                        from,
+                    );
                     from = to;
-                }
-                if xq.is_some() {
-                    pass.end_pipeline_statistics_query();
                 }
             }
             order.count_pool(&mut encoder);
@@ -10140,7 +10131,7 @@ impl Backend {
             // depth is written here, and fs_blend reads neither)
             match lists.blend_depth_mode {
                 // the lists could not be made: as the Legacy Viewer
-                RiggedBlendDepth::Write | RiggedBlendDepth::Exact | RiggedBlendDepth::ExactHiding => {
+                RiggedBlendDepth::Write | RiggedBlendDepth::Exact => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
                     blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
@@ -10258,10 +10249,7 @@ impl Backend {
         if split {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
-            if let Some(order) = exact.filter(|_| {
-                std::env::var("AURORA_X").as_deref() != Ok("nores")
-                    && crate::xdbg::PHASE.load(std::sync::atomic::Ordering::Relaxed) != 3
-            }) {
+            if let Some(order) = exact {
                 // the fronts sorted and laid over what is drawn
                 pass.set_bind_group(3, &order.read, &[]);
                 if let Some(both) = self.pipelines.blend_both.as_ref().filter(|_| exact_glow) {
@@ -11019,10 +11007,6 @@ impl Backend {
             selection.encode(&mut encoder, &surface_view, timestamps);
             calls.set(calls.get() + 2);
         }
-        crate::xdbg::resolve(&mut encoder, (self.targets.depth_ss_tex.width(), self.targets.depth_ss_tex.height())); // XDBG
-        if let Some(lists) = &self.targets.blend_exact {
-            crate::xdbg::dump(&self.device, &mut encoder, lists.xdbg_fronts(), lists.xdbg_pool()); // XDBG
-        }
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             encoder.resolve_query_set(&t.query_set, 0..GPU_TIMESTAMPS, &t.resolve, 0);
             encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.readback[slot].0, 0, GPU_TIMESTAMPS as u64 * 8);
@@ -11121,7 +11105,6 @@ impl Backend {
                 }
             });
         }
-        crate::xdbg::after_submit(); // XDBG
         if let Some(order) = &self.targets.blend_exact {
             order.after_submit();
         }

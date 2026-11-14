@@ -1906,10 +1906,6 @@ fn open_device(
             alim.max_storage_buffers_per_shader_stage
         )));
     }
-    // XDBG
-    if afeat.contains(wgpu::Features::PIPELINE_STATISTICS_QUERY) {
-        features |= wgpu::Features::PIPELINE_STATISTICS_QUERY;
-    }
     let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
     if timestamps {
         features |= wgpu::Features::TIMESTAMP_QUERY;

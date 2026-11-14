@@ -648,7 +648,11 @@ pub(crate) fn upgrade_blend_order(s: &mut Settings) {
         };
         current.as_shown() == level.as_shown()
     };
-    s.blend_order = if on_level(Preset::Potato) || on_level(Preset::Low) { 0 } else { BLEND_ORDER_FULL };
+    s.blend_order = if on_level(Preset::Potato) || on_level(Preset::Low) {
+        0
+    } else {
+        BLEND_ORDER_FULL
+    };
 }
 
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and

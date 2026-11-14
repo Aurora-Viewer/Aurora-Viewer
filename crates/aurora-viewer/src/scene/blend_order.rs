@@ -240,7 +240,10 @@ pub struct BlendEntry {
     pub rig: Option<RigOrder>,
 }
 
-/// AURORA_RIGGED_BLEND: by default the rigged faces apart, object by object
+/// The order of the blended faces is the user's setting
+/// (`Settings::blend_order`, `set_user`): the exact one, or the sorted one
+/// (`Layers`). AURORA_RIGGED_BLEND, when set, names it instead: `layers`
+/// (or any other word), the rigged faces apart, object by object
 /// in their order what is at least half covered writing its depth as it is
 /// drawn, then the fainter texels, then their depth from 1/255, into a copy
 /// of the scene depth (`RiggedBlendDepth::Layers`, #1300); `split`, as
@@ -254,7 +257,7 @@ pub struct BlendEntry {
 /// `write`, from 1/255 into the scene depth as the Legacy Viewer (#499);
 /// `sorted`, sorted with the others and drawn without depth, as before
 /// #499; `alt`, `split` one second in three (`xmode=old` on the profile
-/// lines), the default the others.
+/// lines), `layers` the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Layers,
@@ -268,9 +271,6 @@ pub enum Mode {
     /// `exact`: every blended face, rigged or not, composed in the true
     /// order of its fragments at each pixel (`RiggedBlendDepth::Exact`).
     Exact,
-    /// `exact-hiding`: as `exact`, with the Legacy Viewer's hiding between
-    /// rigged objects (`RiggedBlendDepth::ExactHiding`).
-    ExactHiding,
     /// `exact-alt`: `layers` one second in three, `exact` the others.
     ExactAlternate,
 }
@@ -279,7 +279,6 @@ pub fn mode() -> Mode {
     static MODE: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_RIGGED_BLEND").as_deref().map(str::trim) {
         Ok("exact") => Mode::Exact,
-        Ok("exact-hiding") => Mode::ExactHiding,
         Ok("exact-alt") => Mode::ExactAlternate,
         Ok("split") => Mode::Split,
         Ok("runs") => Mode::Runs,
@@ -305,7 +304,7 @@ static USER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Whether the renderer can draw the exact order now: not under MSAA, nor
 /// on a device without the depth test before the shader. The faces are then
-/// sorted, as by default.
+/// sorted, as the Standard choice of the setting.
 static EXACT_AVAILABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Every frame, before the lists are made: the user's setting and whether
@@ -358,10 +357,10 @@ fn chosen_mode(mode: Mode, named: bool, user: u8) -> Mode {
     if !named && user > 0 { Mode::Exact } else { mode }
 }
 
-/// The exact order where it cannot be drawn: the default one.
+/// The exact order where it cannot be drawn: the sorted one.
 fn drawable(depth: RiggedBlendDepth, exact_available: bool) -> RiggedBlendDepth {
     match depth {
-        RiggedBlendDepth::Exact | RiggedBlendDepth::ExactHiding if !exact_available => RiggedBlendDepth::Layers,
+        RiggedBlendDepth::Exact if !exact_available => RiggedBlendDepth::Layers,
         depth => depth,
     }
 }
@@ -378,7 +377,6 @@ fn depth_mode_in(mode: Mode, old_now: bool) -> RiggedBlendDepth {
         Mode::Alternate => RiggedBlendDepth::Layers,
         Mode::ExactAlternate if old_now => RiggedBlendDepth::Layers,
         Mode::Exact | Mode::ExactAlternate => RiggedBlendDepth::Exact,
-        Mode::ExactHiding => RiggedBlendDepth::ExactHiding,
     }
 }
 
@@ -557,7 +555,6 @@ mod tests {
         assert_eq!(chosen_mode(Mode::ExactAlternate, true, 0), Mode::ExactAlternate);
         assert_eq!(drawable(RiggedBlendDepth::Exact, true), RiggedBlendDepth::Exact);
         assert_eq!(drawable(RiggedBlendDepth::Exact, false), RiggedBlendDepth::Layers);
-        assert_eq!(drawable(RiggedBlendDepth::ExactHiding, false), RiggedBlendDepth::Layers);
         assert_eq!(drawable(RiggedBlendDepth::Split, false), RiggedBlendDepth::Split);
     }
 
@@ -733,7 +730,6 @@ mod tests {
         assert_eq!(depth_mode_in(Mode::Alternate, true), RiggedBlendDepth::Split);
         assert_eq!(depth_mode_in(Mode::Exact, false), RiggedBlendDepth::Exact);
         assert_eq!(depth_mode_in(Mode::Exact, true), RiggedBlendDepth::Exact);
-        assert_eq!(depth_mode_in(Mode::ExactHiding, false), RiggedBlendDepth::ExactHiding);
         // against the default, one second in three
         assert_eq!(depth_mode_in(Mode::ExactAlternate, false), RiggedBlendDepth::Exact);
         assert_eq!(depth_mode_in(Mode::ExactAlternate, true), RiggedBlendDepth::Layers);

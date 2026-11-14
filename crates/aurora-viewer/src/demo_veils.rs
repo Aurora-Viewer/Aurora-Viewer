@@ -122,49 +122,6 @@ pub fn events() -> Vec<NetEvent> {
             0.3,
         ));
     }
-    // XDBG: AURORA_DEMO_LAMPS=1, a row of glowing globes before the curtains
-    if std::env::var("AURORA_DEMO_LAMPS").is_ok() {
-        use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
-        // alpha, glow, hollow, fullbright, light
-        let globes: [(f32, f32, u16, bool, bool); 8] = [
-            (0.5, 0.3, 0, false, false),
-            (0.9, 1.0, 0, false, false),
-            (0.2, 0.1, 45000, false, false),
-            (0.5, 0.3, 0, true, false),
-            (0.0, 0.5, 0, false, false),
-            (0.5, 0.3, 45000, true, true),
-            (0.99, 0.2, 0, true, true),
-            (0.5, 0.05, 0, false, true),
-        ];
-        for (k, (alpha, glow, hollow, fullbright, light)) in globes.into_iter().enumerate() {
-            let mut t = TextureEntry::default();
-            for f in t.faces.iter_mut() {
-                f.texture = aurora_prim::te::BLANK_TEXTURE;
-                f.color = [1.0, 1.0, 1.0, alpha];
-                f.glow = glow;
-                f.bump_shiny_fullbright = if fullbright { 1 << 5 } else { 0 };
-            }
-            let extra = ExtraParams {
-                light: light.then_some(aurora_prim::extra::LightParams {
-                    color: [1.0, 0.95, 0.8, 1.0],
-                    radius: 6.0,
-                    cutoff: 0.0,
-                    falloff: 0.75,
-                }),
-                ..Default::default()
-            };
-            objects.push(prim(
-                FIRST_ID + 5000 + k as u32,
-                at(2.0, (k as f32 - 3.5) * 0.8, 1.0 + (k % 2) as f32 * 0.9),
-                Quat::IDENTITY,
-                Vec3::splat(0.6),
-                shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, hollow, 0),
-                Arc::new(t),
-                extra,
-                "",
-            ));
-        }
-    }
     log::info!("demo veils: {curtains} curtains {gap} m apart, {strings} strings");
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }

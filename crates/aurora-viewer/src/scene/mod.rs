@@ -5360,7 +5360,7 @@ impl Scene {
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
         self.lists.blend_precision = blend_order::precision();
-        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact && std::env::var("AURORA_X").as_deref() != Ok("b2f") {
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact {
             blend_order::nearest_first(&mut self.blend_tmp, self.lists.blend_depth);
         }
         let runs = match self.lists.blend_depth_mode {

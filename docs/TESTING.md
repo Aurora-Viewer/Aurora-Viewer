@@ -5093,10 +5093,10 @@ both open states and the selection count. Capture at frame 620.
   sides of a crossing. `strings` (as many as curtains when left out)
   glowing strings, 80 % opaque, hang among them. `40,0,25` is 40 layers
   on most pixels, most of them hidden by the nearest ones; `4,0` is 4
-  layers that all show. With `AURORA_RIGGED_BLEND=exact` a curtain keeps
+  layers that all show. With the exact order (the default) a curtain keeps
   its tint from one side of a crossing to the other and the nearer of two
-  is over the other on both sides; with the default order one side of each
-  crossing is wrong. The strings behind several curtains glow less than
+  is over the other on both sides; with the sorted one
+  (`AURORA_BLEND_ORDER=0`) one side of each crossing is wrong. The strings behind several curtains glow less than
   those in front. `AURORA_DEMO_POS="x,y"` moves the hall.
 - **`AURORA_DEMO_SHEER=1`** (with or without `AURORA_DEMO_HAIR`): our
   avatar also wears two rigged shells around the torso, 1.5 cm apart: a
@@ -11327,8 +11327,8 @@ What the inventory must show with these scenarios:
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
-| `AURORA_RIGGED_BLEND=exact`, `exact-hiding` or `exact-alt` | Every blended face composed in the order of its fragments at each pixel, whatever order the faces are drawn in; with the Legacy Viewer's hiding between rigged objects; or the default order one second in three |
-| `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
+| `AURORA_RIGGED_BLEND=exact`, `layers` or `exact-alt` | The order of the blended faces whatever the setting says: composed in the order of their fragments at each pixel; sorted, as the Standard choice of the setting; or the sorted order one second in three |
+| `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (`layers`, the Standard order of the setting); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -11908,23 +11908,31 @@ What the inventory must show with these scenarios:
   before. `check` paints magenta where the guard caught one, cyan where
   the colour is still not a number from another source: it works on any
   card, NVIDIA included, as the NaN itself is computed on every card.
-- **`AURORA_RIGGED_BLEND=exact|exact-hiding|exact-alt`**: the exact blend
-  order (`aurora-render/src/blend_exact.rs`). Every blended face, rigged or
-  not, is drawn twice: a first pass files each fragment the opaque scene
-  leaves visible in the front of its pixel (where it lies, its alpha), a
-  second gives each fragment the light the fragments in front of it let
-  through. Faces that cross, a face folded over itself, the layers of a
-  hair and the triangles of one face come out in their true order at every
-  pixel; nothing depends on the order of the draws. The ten nearest
-  fragments of a pixel are exact; those under them are mixed as one layer,
-  and not drawn when they would send less than 1/64 of the pixel's light
-  (the ten then share it). A fragment under layers that let less than
-  1/512 through is left out before its texture. Needs a device with
-  storage buffers in fragment shaders and 48 bytes a pixel in one binding;
-  without them the default order is kept. `exact-hiding` keeps one rule
-  of the Legacy Viewer on top, to compare: a rigged object hides what is
-  drawn after it and behind it wherever it has a texel. `exact-alt` draws
-  the default order one second in three and `exact` the others, for
+- **`AURORA_RIGGED_BLEND=exact|layers|exact-alt`**: the exact blend
+  order (`aurora-render/src/blend_exact.rs`), the default of the setting
+  "Order of transparent surfaces" (`AURORA_BLEND_ORDER`, above), named here
+  whatever the setting says. Every blended face, rigged or not, is drawn
+  once, nearest first: each fragment the opaque scene leaves visible is
+  lit and files its place, its alpha and its light in the front of its
+  pixel; a pass over the screen then sorts the front of each pixel and
+  lays it over what was drawn. Faces that cross, a face folded over
+  itself, the layers of a hair and the triangles of one face come out in
+  their true order at every pixel; nothing depends on the order of the
+  draws. A pixel holds 6 fragments of its own and takes pages of 6 more
+  from a pool the view shares, which grows and shrinks with what the views
+  take ("blend order: a pool of N pages" in the log); the 42 nearest are
+  each in their place, those under them are mixed as one layer. A fragment
+  fainter than the precision of the setting (3 % of alpha at "full", 6 %,
+  13 % and 25 % below) takes no slot: it is summed with the other faint
+  ones of its pixel and composed as one layer among the others. Between
+  runs of faces, the place under which a pixel lets nothing through goes
+  into the depth of the pass, and what lies under it is left out before
+  its shader. Needs a device with the depth test before the fragment
+  shader and 64 bytes a pixel in one binding, plus 64 bytes a page of the
+  pool (about 450 MB at 2560x1369 in a busy region); without them, and
+  under MSAA, the sorted order is drawn. `layers` is that sorted order
+  (the Standard choice of the setting, described below). `exact-alt`
+  draws the sorted order one second in three and `exact` the others, for
   measures: the perf summary of `AURORA_PROFILE=1` then tags its lines
   `xmode=old` and `xmode=new`, and `g_transparent` is the GPU time of the
   blended faces in each. What to look for: `AURORA_DEMO_VEILS` (curtains
@@ -11932,8 +11940,9 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_HAIR_CARDS=<n>,layered,outer` (no dark patches),
   `AURORA_DEMO_SHEER=1`, `AURORA_DEMO_COPLANAR_LAYERS=1`. Not in the
   order yet: particles, water and the HUD, drawn as before.
-- **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: by
-  default the
+- **`AURORA_RIGGED_BLEND=split|runs|copy|depth05|write|sorted|alt`**: in
+  the sorted order (`layers`, the Standard choice of the setting
+  "Order of transparent surfaces") the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
   are drawn before the other blended faces, skeleton by skeleton back to
   front, each skeleton's in the Legacy Viewer's order: the last attachment

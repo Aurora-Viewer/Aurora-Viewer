@@ -14815,43 +14815,9 @@ impl App {
                 crate::scene::blend_order::mode(),
                 crate::scene::blend_order::Mode::Alternate | crate::scene::blend_order::Mode::ExactAlternate
             ) {
-                let mut old = self.sync_alt.is_multiple_of(3);
-                let mut mark = if old { " | xmode=old" } else { " | xmode=new" };
-                // XDBG
-                let xmode = aurora_render::xdbg::xmode();
-                aurora_render::xdbg::WIPE.store(xmode.contains("wipe"), std::sync::atomic::Ordering::Relaxed);
-                if let Some(most) = xmode.split_whitespace().find_map(|word| word.strip_prefix("most=")?.parse::<u32>().ok()) {
-                    aurora_render::xdbg::MOST.store(most, std::sync::atomic::Ordering::Relaxed);
-                }
-                let faint = xmode.split_whitespace().find_map(|word| word.strip_prefix("faint=")?.parse::<u32>().ok());
-                aurora_render::xdbg::FAINT.store(faint.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
-                if xmode.starts_with("steady") {
-                    // (the new order alone)
-                    old = false;
-                    mark = "";
-                    aurora_render::xdbg::PHASE.store(0, std::sync::atomic::Ordering::Relaxed);
-                }
-                if xmode == "cycle" {
-                    let phase = (self.sync_alt % 3) as u8;
-                    old = phase == 0;
-                    mark = [" | xmode=old", " | xmode=new", " | xmode=new0"][phase as usize];
-                    aurora_render::xdbg::PHASE.store(phase, std::sync::atomic::Ordering::Relaxed);
-                }
-                if xmode == "parts" {
-                    let at = (self.sync_alt % 4) as usize;
-                    old = at == 3;
-                    mark = [" | xmode=full", " | xmode=nocut", " | xmode=noscr", " | xmode=old"][at];
-                    aurora_render::xdbg::PHASE.store([0, 2, 3, 0][at], std::sync::atomic::Ordering::Relaxed);
-                }
+                let old = self.sync_alt.is_multiple_of(3);
                 crate::scene::blend_order::set_old_now(old);
-                self.frame_profile.set_mark(mark);
-            }
-            // XDBG: AURORA_XM=cycle, the ceiling of a pixel five seconds each
-            if std::env::var("AURORA_XM").as_deref() == Ok("cycle") {
-                let at = (self.sync_alt / 5 % 5) as usize;
-                aurora_render::xdbg::MOST.store([6, 8, 10, 16, 42][at], std::sync::atomic::Ordering::Relaxed);
-                self.frame_profile
-                    .set_mark([" | xmode=m06", " | xmode=m08", " | xmode=m10", " | xmode=m16", " | xmode=m42"][at]);
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
             if name_tags_env() == Some(NameTagsEnv::Alternate) {

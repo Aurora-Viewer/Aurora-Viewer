@@ -593,12 +593,6 @@ pub enum RiggedBlendDepth {
     /// still takes the rigged faces where half covered, for the particles
     /// drawn after them.
     Exact,
-    /// As `Exact` with one rule of the Legacy Viewer kept, to compare: a
-    /// rigged object hides the rigged objects drawn after it and behind it
-    /// wherever it has a texel (#1300; eyelashes and brows only where
-    /// nearly opaque, #2121). The other blended faces, glass or water,
-    /// still show through it.
-    ExactHiding,
 }
 
 /// Visible draws for a frame, built by the world.

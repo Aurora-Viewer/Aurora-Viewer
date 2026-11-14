@@ -3,8 +3,8 @@
 //! by depth gives, and more layers than a front holds what the shader says
 //! of them (`Pixel`, the same steps on the CPU).
 use crate::blend_exact::{
-    EARLY_TEST, HAZE_FORMAT, Lists, PAGES, SLOTS, TWO_SOURCES, WIDE_RANGE, both_blend, layouts, once_blend, range_blend, range_format, range_shift,
-    scene_source,
+    EARLY_TEST, HAZE_FORMAT, Lists, PAGES, SLOTS, TWO_SOURCES, WIDE_RANGE, both_blend, layouts, once_blend, range_blend, range_format,
+    range_shift, scene_source,
 };
 use crate::types::flags;
 use wgpu::util::DeviceExt;
@@ -362,11 +362,6 @@ fn between(object: &str, from: &str, to: &str) -> String {
 /// The production shader of the exact order with what it needs around it.
 fn shader_source() -> String {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
-    // XDBG: the shader as it is on the disk, without a build
-    let object = match std::env::var("AURORA_XT") {
-        Ok(path) => std::fs::read_to_string(path).expect("AURORA_XT").replace("\r\n", "\n"),
-        Err(_) => object,
-    };
     let mut production = between(&object, "struct BlendOrderInfo {", "const BLEND_OPAQUE: f32 = 8.3;");
     for name in [
         "water_clip",
@@ -775,9 +770,7 @@ impl Bench {
             for i in 0..n {
                 once(&mut encoder, i..i + 1);
                 self.queue.submit([encoder.finish()]);
-                self.device
-                    .poll(wgpu::PollType::wait_indefinitely())
-                    .expect("blend order layer");
+                self.device.poll(wgpu::PollType::wait_indefinitely()).expect("blend order layer");
                 encoder = self.device.create_command_encoder(&Default::default());
             }
         }
@@ -1036,7 +1029,10 @@ fn the_opaque_scene_hides_the_layers_behind_it_on_gpu() {
     }
     // no layer at all: the scene as it was, colour and glow
     let got = bench.pixel(&[], 0.0, Drawn::Together, "no layer");
-    assert!(near(&got, &[BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], SCENE_GLOW], EXACT), "{got:?}");
+    assert!(
+        near(&got, &[BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], SCENE_GLOW], EXACT),
+        "{got:?}"
+    );
 }
 
 #[test]
@@ -1067,7 +1063,11 @@ fn more_layers_than_a_pixel_has_slots_compose_as_their_sort_on_gpu() {
         // what all the layers let through of the scene: its glow, which
         // none of them adds to
         let through: f32 = deep.iter().map(|l| 1.0 - filed(l.alpha)).product();
-        for (name, order) in [("farthest first", &deep), ("nearest first", &nearest_first), ("shuffled", &shuffled)] {
+        for (name, order) in [
+            ("farthest first", &deep),
+            ("nearest first", &nearest_first),
+            ("shuffled", &shuffled),
+        ] {
             assert!(near(&filed_in_order(order)[..3], &want, 2.0e-3), "{count} layers, {name}");
             for way in EVERY_WAY {
                 for got in bench.draw(order, 0.0, way) {
@@ -1075,7 +1075,12 @@ fn more_layers_than_a_pixel_has_slots_compose_as_their_sort_on_gpu() {
                         near(&got[..3], &want, EXACT),
                         "{count} layers, {name}, {way:?}: {got:?}, sorted {want:?}"
                     );
-                    assert!((got[3] - SCENE_GLOW * through).abs() <= EXACT, "{} of {}", got[3], SCENE_GLOW * through);
+                    assert!(
+                        (got[3] - SCENE_GLOW * through).abs() <= EXACT,
+                        "{} of {}",
+                        got[3],
+                        SCENE_GLOW * through
+                    );
                 }
             }
         }
@@ -1097,7 +1102,11 @@ fn more_layers_than_a_pixel_has_slots_compose_as_their_sort_on_gpu() {
     let over = stack(MOST + 8);
     let nearest_first: Vec<Layer> = over.iter().rev().copied().collect();
     let shuffled = shuffle(&over);
-    let orders = [("farthest first", &over), ("nearest first", &nearest_first), ("shuffled", &shuffled)];
+    let orders = [
+        ("farthest first", &over),
+        ("nearest first", &nearest_first),
+        ("shuffled", &shuffled),
+    ];
     let mut every = Vec::new();
     for (name, order) in orders {
         let mut pixel = Pixel::default();
@@ -1108,7 +1117,11 @@ fn more_layers_than_a_pixel_has_slots_compose_as_their_sort_on_gpu() {
         let (kept, tail) = pixel.split(MOST);
         assert_eq!((kept.len(), tail.len()), (MOST, 8));
         let last = kept.last().map(|slot| slot.0);
-        assert_eq!(last, Some((place(&over[8]) << 8) | alpha8(over[8].alpha)), "{name}: the nearest are kept");
+        assert_eq!(
+            last,
+            Some((place(&over[8]) << 8) | alpha8(over[8].alpha)),
+            "{name}: the nearest are kept"
+        );
         let want = pixel.composed();
         every.push(want);
         // (the cut, where it is raised between the layers, hides what shows
@@ -1157,7 +1170,11 @@ fn a_pixel_without_a_page_mixes_the_layers_past_its_slots_on_gpu() {
     let mut shuffled = deep.clone();
     shuffled.sort_by_key(|l| ((l.z * 1000.0) as u32 * 7919) % 31);
     let sort = sorted(&deep);
-    for (name, order) in [("farthest first", &deep), ("nearest first", &nearest_first), ("shuffled", &shuffled)] {
+    for (name, order) in [
+        ("farthest first", &deep),
+        ("nearest first", &nearest_first),
+        ("shuffled", &shuffled),
+    ] {
         let mut pixel = Pixel {
             room: SLOTS as usize,
             ..Pixel::of(&bench)
@@ -1359,7 +1376,12 @@ fn a_light_that_is_not_a_number_stays_out_of_the_pixel_on_gpu() {
         }
     }
     // an infinite glow is the brightest a slot holds
-    let glowing = |glow: f32| [Layer { glow, ..layer(WHITE, 0.5, 0.5) }];
+    let glowing = |glow: f32| {
+        [Layer {
+            glow,
+            ..layer(WHITE, 0.5, 0.5)
+        }]
+    };
     let want = bench.pixel(&glowing(4.0), 0.0, Drawn::Apart, "a bright glow");
     let got = bench.pixel(&glowing(f32::INFINITY), 0.0, Drawn::Apart, "an infinite glow");
     assert!(near(&got, &want, EXACT), "{got:?}, {want:?}");

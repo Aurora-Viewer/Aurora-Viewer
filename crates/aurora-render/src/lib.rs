@@ -27,7 +27,6 @@ mod dof;
 mod drawn_pick;
 mod exposure;
 pub mod frame_priority;
-pub mod xdbg; // XDBG
 mod fsr;
 pub mod gpu_alloc;
 pub mod gpu_cull;

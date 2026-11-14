@@ -29,6 +29,16 @@
 //! fragments are mixed (see the shader). The faces are drawn nearest first,
 //! so that most fragments come behind those that hide them.
 //!
+//! How faint a fragment is of the haze is the precision the user chose
+//! (`BlendPrecision`, `Info::faint`): 3 % of alpha at the finest, where the
+//! picture is the one of the sort, up to 25 %, which files a third fewer
+//! fragments in a busy region. The pool starts at one page for four pixels
+//! and follows what the views take of it (`pool_wanted`): doubled as soon
+//! as three quarters are taken, halved after some ten seconds under a
+//! quarter. Light that is not a number is kept out of the fronts and of the
+//! sums (`blend_finite` of the shader): one such fragment would otherwise
+//! blacken its pixel, or spread through the bloom.
+//!
 //! A pixel also has its cut, the place under which its fragments let
 //! nothing through: between runs of faces it goes into the depth of the
 //! pass, and what lies under it is left out before its shader.
@@ -142,8 +152,7 @@ pub(crate) const WIDE_RANGE: wgpu::Features = wgpu::Features::FLOAT32_BLENDABLE;
 /// The second target of the pass (`BlendOnce::range`): the nearest and the
 /// farthest place of the haze of a pixel, and what it stops.
 pub(crate) fn range_format(features: wgpu::Features) -> wgpu::TextureFormat {
-    // XDBG: AURORA_XN=1, the narrow one whatever the device
-    if features.contains(WIDE_RANGE) && std::env::var_os("AURORA_XN").is_none() {
+    if features.contains(WIDE_RANGE) {
         wgpu::TextureFormat::Rgba32Float
     } else {
         wgpu::TextureFormat::Rgba16Float
@@ -224,25 +233,18 @@ pub(crate) fn fronts_size(pixels: u64, pages: u64, max_binding: u64) -> Option<u
     (size <= max_binding && size / 4 <= u64::from(u32::MAX) && pages <= POOL_MOST).then_some(size)
 }
 
+/// Times the cut of the pixels goes into the depth of the pass of the
+/// blended faces. Each cut is a draw over the screen: three of them, each
+/// run twice the one before, leave out most of what is hidden (2.6 ms of
+/// 28 in a busy region) where a fourth gains nothing more.
+const CUTS: u32 = 3;
+
 /// Ends of the runs of `n` blended faces, nearest first, between which the
-/// cut of the pixels goes into the depth of the pass.
+/// cut of the pixels goes into the depth of the pass: each run twice the
+/// one before, the nearest faces being those that hide the most.
 pub(crate) fn runs(n: u32) -> Vec<u32> {
-    // XDBG: AURORA_XR=<cuts>[u], evenly spaced with `u`, else each run twice the one before
-    let spec = std::env::var("AURORA_XR").unwrap_or_default();
-    let uniform = spec.ends_with('u');
-    let mut cuts = spec.trim_end_matches('u').parse::<u32>().unwrap_or(3).min(64);
-    // XDBG: the third second of the measurement cycle goes without
-    if crate::xdbg::PHASE.load(std::sync::atomic::Ordering::Relaxed) == 2 {
-        cuts = 0;
-    }
-    let mut ends: Vec<u32> = (1..=cuts)
-        .map(|k| {
-            if uniform {
-                (u64::from(n) * u64::from(k) / u64::from(cuts + 1)) as u32
-            } else {
-                n.checked_shr(cuts + 1 - k).unwrap_or(0)
-            }
-        })
+    let mut ends: Vec<u32> = (1..=CUTS)
+        .map(|k| n.checked_shr(CUTS + 1 - k).unwrap_or(0))
         .filter(|end| *end > 0 && *end < n)
         .collect();
     ends.push(n);
@@ -335,8 +337,6 @@ pub(crate) struct Lists {
     info: wgpu::Buffer,
     /// `Info::faint` as the uniform holds it.
     faint: std::sync::atomic::AtomicU32,
-    // XDBG: the ceiling the uniform holds
-    most: std::sync::atomic::AtomicU32,
     /// The view, its pool, and what the views take of it.
     size: (u32, u32),
     pages: u64,
@@ -368,8 +368,6 @@ impl Lists {
         // (a pixel of more layers than its own slots needs a page: no pool,
         // no fronts)
         let pages = pool_start(pixels);
-        // XDBG: AURORA_XP=<n> starts with a pool n times smaller
-        let pages = (pages / std::env::var("AURORA_XP").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(1).max(1)).max(1);
         fronts_size(pixels, pages, max)?;
         Lists::with_pool(device, size, depth_format, pages)
     }
@@ -449,7 +447,6 @@ impl Lists {
     /// (`BlendPrecision::faint`).
     pub fn set_faint(&self, queue: &wgpu::Queue, faint: u32) {
         if self.faint.swap(faint, std::sync::atomic::Ordering::Relaxed) != faint {
-            log::info!("xdbg: blend order faint {faint}"); // XDBG
             queue.write_buffer(&self.info, 24, bytemuck::bytes_of(&faint));
         }
     }
@@ -472,11 +469,7 @@ impl Lists {
                 height: size.1,
                 pool: (pool / 4) as u32,
                 pages: pages as u32,
-                // XDBG: AURORA_XM=<n>, a lower ceiling (6 or more)
-                most: std::env::var("AURORA_XM")
-                    .ok()
-                    .and_then(|v| v.parse::<u32>().ok())
-                    .map_or(SLOTS * (1 + PAGES), |most| most.clamp(SLOTS, SLOTS * (1 + PAGES))),
+                most: SLOTS * (1 + PAGES),
                 shift: range_shift(range_format),
                 faint: crate::BlendPrecision::default().faint(),
             }),
@@ -559,7 +552,6 @@ impl Lists {
             fronts,
             info,
             faint: std::sync::atomic::AtomicU32::new(crate::BlendPrecision::default().faint()),
-            most: std::sync::atomic::AtomicU32::new(0),
             size,
             pages,
             watch: std::sync::Mutex::new(watch),
@@ -574,35 +566,13 @@ impl Lists {
         })
     }
 
-    // XDBG: the ceiling asked for while the viewer runs (`xdbg::MOST`)
-    pub fn xdbg_most(&self, queue: &wgpu::Queue) {
-        use std::sync::atomic::Ordering::Relaxed;
-        let want = crate::xdbg::MOST.load(Relaxed);
-        if want != 0 && self.most.swap(want, Relaxed) != want {
-            let most = want.clamp(SLOTS, SLOTS * (1 + PAGES));
-            queue.write_buffer(&self.info, 16, bytemuck::bytes_of(&most));
-        }
-    }
-
-    // XDBG
-    pub fn xdbg_fronts(&self) -> &wgpu::Buffer {
-        &self.fronts
-    }
-
-    // XDBG: the byte of the fronts where the pool starts
-    pub fn xdbg_pool(&self) -> u64 {
-        self.pool
-    }
-
     /// Empty the fronts before the blended faces of a view: the heads of
     /// the pixels and the count of the pool, which the device does at the
     /// speed of its memory. (Emptying only the pixels the last view used,
     /// in a compute pass, costs twenty times that as soon as most of them
     /// were.)
     pub fn clear(&self, encoder: &mut wgpu::CommandEncoder) {
-        // XDBG: the places of the first four slots too, where asked
-        let planes = if crate::xdbg::WIPE.load(std::sync::atomic::Ordering::Relaxed) { 2 } else { 1 };
-        encoder.clear_buffer(&self.fronts, 0, Some(self.emptied * planes));
+        encoder.clear_buffer(&self.fronts, 0, Some(self.emptied));
         encoder.clear_buffer(&self.fronts, self.pool, Some(u64::from(PAGE_WORDS) * 4));
     }
 }
@@ -614,7 +584,11 @@ mod tests {
     #[test]
     fn the_early_test_leaves_the_shader_where_the_device_lacks_it() {
         let source = include_str!("shaders/object.wgsl");
-        assert_eq!(source.matches("@early_depth_test(force)").count(), 1, "the pass of the blended faces alone");
+        assert_eq!(
+            source.matches("@early_depth_test(force)").count(),
+            1,
+            "the pass of the blended faces alone"
+        );
         assert!(scene_source(source.to_string(), EARLY_TEST).contains("@early_depth_test"));
         assert!(!scene_source(source.to_string(), wgpu::Features::empty()).contains("@early_depth_test"));
         // the one draw over the screen, and what it needs of the device

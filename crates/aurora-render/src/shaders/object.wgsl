@@ -1946,7 +1946,6 @@ struct BlendOrderInfo {
     faint: u32,
 };
 
-override BLEND_DBG: u32 = 0u; // XDBG
 @group(3) @binding(8) var<uniform> blend_order: BlendOrderInfo;
 @group(3) @binding(9) var<storage, read_write> blend_front: array<atomic<u32>>;
 // the same as the pass over the screen reads it, four words at a time: the
