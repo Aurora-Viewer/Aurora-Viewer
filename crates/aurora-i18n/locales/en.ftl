@@ -2793,6 +2793,7 @@ build-ui-floaters-deed-object = Deed object
 build-shapes-cone = Cone
 demo-disabled-no-click = DISABLED: no click
 demo-object-menu-bell = Bell
+demo-object-export-lamp = Garden lamp
 demo-object-menu-crate = Crate
 demo-object-menu-touch-text = Ring the bell
 demo-object-menu-sit-text = Lie down
@@ -9500,6 +9501,7 @@ import-local-rez = Place a prim for this preview
 ui-context-sit-stand = Sit / stand
 ui-context-save-backup = Backup
 ui-context-save-collada = Collada
+ui-context-save-obj = OBJ
 ui-context-remove-from-display-exceptions = Remove from display exceptions
 ui-context-script-info = Script info
 
@@ -14065,6 +14067,35 @@ world-outfit-paste-already-in-outfit = Already in this outfit.
 world-outfit-paste-already-worn = Already worn.
 
 ## Build › Edit particles (particle editor)
+object-export-title = Save as
+object-export-format = Format
+object-export-collada = Collada (.dae)
+object-export-obj = Wavefront OBJ (.obj)
+object-export-collada-files = Collada file
+object-export-obj-files = Wavefront OBJ file
+object-export-object-info = Object info
+object-export-prims = Exportable prims: { $count }/{ $total }
+object-export-textures = Exportable textures: { $count }/{ $total }
+object-export-waiting = Reading the objects' properties and shapes…
+object-export-nothing = None of these prims can be saved: only the prims you own and created yourself can (a mesh or a sculpt map uploaded by you too).
+object-export-options = Options
+object-export-save-textures = Save textures
+object-export-consolidate = Consolidate textures
+object-export-skip-transparent = Skip transparent
+object-export-texture-params = Apply texture params
+object-export-single-uv = Single UV map
+object-export-single-uv-tip = Give every prim's texture coordinates the same name, for tools that join the prims afterwards.
+object-export-texture-format = Texture format
+object-export-texture-list = Textures to save
+object-export-save = Save as…
+object-export-writing = Writing the file…
+object-export-saving-textures = Saving textures ({ $count } remaining)
+object-export-success = Successfully saved { $object } to { $file }.
+object-export-failure = Export of { $object } to { $file } failed.
+object-export-textures-missing = { $count ->
+    [one] { $count } texture could not be saved.
+   *[other] { $count } textures could not be saved.
+    }
 particle-editor-title = Particle editor
 particle-editor-menu-tip = Select an object you own to tune its particles.
 particle-editor-script-name = New Particle Script

@@ -269,6 +269,8 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::LookAtAvatar(..) => "LookAtAvatar",
         CtxAction::EditPbr(..) => "EditPbr",
         CtxAction::ObjectProfile(..) => "ObjectProfile",
+        CtxAction::SaveAs(_, crate::build::export::Format::Collada) => "SaveCollada",
+        CtxAction::SaveAs(_, crate::build::export::Format::Obj) => "SaveObj",
         CtxAction::Pathfinding { characters: false, .. } => "RegionObjects",
         CtxAction::Pathfinding { characters: true, .. } => "PathfindingCharacters",
         CtxAction::ResetMeshLod(..) => "ResetMeshLod",
