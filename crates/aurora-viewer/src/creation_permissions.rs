@@ -129,6 +129,14 @@ impl Defaults {
                 item.group_mask = rights.group;
                 item.everyone_mask = rights.everyone;
             }
+            // LLPanelContents::createTaskInventoryItemHelper: the Scripts or
+            // the Notecards defaults, by the item's asset type
+            NetCommand::Build(aurora_net::build::BuildCmd::CreateTaskItem { item, .. }) => {
+                let rights = if item.asset_type == 10 { self.scripts } else { self.notecards }.permissions();
+                item.next_owner_mask = rights.next_owner;
+                item.group_mask = rights.group;
+                item.everyone_mask = rights.everyone;
+            }
             _ => {}
         }
     }
@@ -248,5 +256,26 @@ mod tests {
         assert!(
             matches!(script, NetCommand::Build(aurora_net::build::BuildCmd::RezScript { item, .. }) if item.next_owner_mask == perm::COPY)
         );
+        // a new item made through CreateTaskInventoryItem takes its category's defaults
+        defaults.notecards.everyone_copy = true;
+        for (asset_type, rights) in [(10, defaults.scripts), (7, defaults.notecards)] {
+            let mut created = NetCommand::Build(aurora_net::build::BuildCmd::CreateTaskItem {
+                handle: 0,
+                item: Box::new(aurora_net::build::TaskItem {
+                    asset_type,
+                    ..Default::default()
+                }),
+                tag: 1,
+            });
+            defaults.prepare(&mut created);
+            let NetCommand::Build(aurora_net::build::BuildCmd::CreateTaskItem { item, .. }) = created else {
+                panic!("created")
+            };
+            let rights = rights.permissions();
+            assert_eq!(
+                (item.next_owner_mask, item.group_mask, item.everyone_mask),
+                (rights.next_owner, rights.group, rights.everyone)
+            );
+        }
     }
 }

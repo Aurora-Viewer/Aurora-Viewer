@@ -4404,6 +4404,31 @@ pub fn friend_location(world: &mut crate::world::World) {
     }
 }
 
+/// The capabilities of the offline demo. The `AURORA_DEMO_INVENTORY` `fetch`
+/// mode adds the inventory ones, so the background walk takes the AIS path
+/// and a cold load can be shown.
+fn caps() -> std::collections::HashMap<String, String> {
+    let mut caps: std::collections::HashMap<String, String> = [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
+        .into_iter()
+        .chain(sim_extras::caps())
+        .chain(crate::build::demo_sim::caps())
+        .chain(region::open_settings_caps())
+        .collect();
+    if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
+        for (name, url) in [
+            ("InventoryAPIv3", "demo://inventory"),
+            ("LibraryAPIv3", "demo://library"),
+            ("FetchInventoryDescendents2", "demo://fetch-inventory"),
+            ("FetchLibDescendents2", "demo://fetch-library"),
+            ("FetchInventory2", "demo://items"),
+            ("FetchLib2", "demo://lib-items"),
+        ] {
+            caps.insert(name.to_owned(), url.to_owned());
+        }
+    }
+    caps
+}
+
 pub fn events() -> Vec<NetEvent> {
     let agent = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
     let login = LoginResponse {
@@ -4430,16 +4455,11 @@ pub fn events() -> Vec<NetEvent> {
     let mut ev = vec![
         NetEvent::LoggedIn(Arc::new(login)),
         NetEvent::MainRegionChanged { handle: HANDLE },
-        // only the People API (names) is simulated, and what the
-        // scenarios of sim_extras add
+        // only the People API (names) is simulated, what the scenarios of
+        // sim_extras add, and the inventory capabilities of a `fetch` demo
         NetEvent::Capabilities {
             handle: HANDLE,
-            caps: Arc::new(
-                [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
-                    .into_iter()
-                    .chain(sim_extras::caps())
-                    .collect(),
-            ),
+            caps: Arc::new(caps()),
         },
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
@@ -4464,6 +4484,7 @@ pub fn events() -> Vec<NetEvent> {
         })),
     ];
     ev.extend(group::simulator_features());
+    ev.extend(region::open_settings_event(HANDLE));
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];
