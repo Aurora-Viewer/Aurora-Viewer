@@ -95,7 +95,11 @@ impl App {
             };
             let (to, confirm) = (*to, *confirm);
             self.about.sysinfo.pending = None;
-            let text = crate::ui::about::copy_text(&self.about_sections(renderer, Some(&machine)));
+            let mut sections = self.about_sections(renderer, Some(&machine));
+            if self.demo {
+                demo_hardware(&mut sections);
+            }
+            let text = crate::ui::about::copy_text(&sections);
             if confirm {
                 self.about.sysinfo.confirm = Some((to, text));
             } else {
@@ -294,5 +298,23 @@ impl App {
             });
         }
         sections
+    }
+}
+
+/// The demo sends a made-up computer and graphics card: a demo capture of
+/// the text never shows the PC it runs on.
+fn demo_hardware(sections: &mut [Section]) {
+    for row in sections.iter_mut().flat_map(|section| section.rows.iter_mut()) {
+        let text = match row.label {
+            "about-os" => "Windows 11 Pro 26100 (x86_64)",
+            "about-cpu" => "Demo CPU, 8 cores",
+            "about-threads" => "16",
+            "about-memory" => "32768 MB (viewer: 2048 MB)",
+            "about-gpu" => "Demo GPU (discrete)",
+            "about-driver" => "1.0.0",
+            "about-vram" => "8192 MB",
+            _ => continue,
+        };
+        row.value = crate::ui::about::Value::Text(text.into());
     }
 }

@@ -7007,7 +7007,9 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_SYSINFO=1`**: at frame 600, "Send system information" of
   the friend's conversation menu: once the computer is read, the
   confirmation shows the About window's text in English (Send / Cancel).
-  Capture at frame 700. Send writes it in the friend's conversation.
+  The demo puts a made-up computer and graphics card in the text (in
+  the menu's text and in "/sysinfo"), never the PC it runs on. Capture
+  at frame 700. Send writes it in the friend's conversation.
 - **`AURORA_DEMO_VOICE_CONTROLS=1`**: the Voice controls window
   (`ui/voice_controls.rs`, the toolbar's `voice` command) opens at frame
   600. Nearby channel: Nova talks in bursts, Tess is in voice and silent,
