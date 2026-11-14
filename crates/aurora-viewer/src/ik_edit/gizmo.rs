@@ -393,6 +393,10 @@ impl Drag {
 #[derive(Default)]
 pub(super) struct Gizmo {
     drag: Option<Drag>,
+    /// Whether Shift held during a handle drag makes it finer (`FINE`): the
+    /// Poser's and the animation editor's. In IK Edit and on the virtual
+    /// bones a handle follows the pointer one to one, Shift or not.
+    pub shift_fine: bool,
 }
 
 impl Gizmo {
@@ -451,7 +455,9 @@ impl Gizmo {
             if (down || released)
                 && let Some(pointer) = pointer
             {
-                change = drag.update_fine(pointer, fine).map(|pose| (pose, drag.geometry.tool));
+                change = drag
+                    .update_fine(pointer, fine && self.shift_fine)
+                    .map(|pose| (pose, drag.geometry.tool));
             }
             let mut visual = drag.geometry;
             if let Some((pose, Tool::Move)) = change {

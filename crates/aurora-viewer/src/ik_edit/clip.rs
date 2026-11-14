@@ -1121,6 +1121,7 @@ impl Editor {
         self.clip.drag_key = None;
         self.clip.auto_key_pending = false;
         self.clip.modified.clear();
+        self.clip.together.clear();
         self.clip.translations.clear();
         self.clip.clear_after = None;
         self.clip.clear_bones.clear();

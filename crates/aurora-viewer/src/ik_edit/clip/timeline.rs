@@ -613,7 +613,8 @@ impl Editor {
             }
             self.clip.changed();
         }
-        self.clip_seek(to);
+        // show the pose at the playhead again, now that the keys moved
+        self.clip_seek(self.clip.frame);
     }
 
     /// Pick every key of the lanes the timeline shows (Ctrl+A). False, and
@@ -1392,7 +1393,7 @@ impl Editor {
         if name_ui.add(egui::Button::selectable(false, name).truncate()).clicked()
             && let Some(frame) = frame
         {
-            self.select(bone, rig, frame);
+            self.clip_lead_bone(bone, rig, frame);
         }
         self.timeline_lane(ui, palette, rig, frame, track, lane, FrameScale::new(lane, lanes.start, lanes.end));
     }
@@ -1434,10 +1435,11 @@ impl Editor {
             let key = origin.and_then(|pointer| key_under(&track.keys, &scale, pointer.x));
             self.clip.drag_key = key.map(|key| (bone, key, key));
             if let Some(key) = key {
+                // the playhead stays where it is: following the grabbed key
+                // would lay its line over the keys being moved
                 pick_key(&mut self.clip.selected_keys, (bone, key), modifiers, true);
-                self.clip_seek(key);
                 if let Some(frame) = frame {
-                    self.select(bone, rig, frame);
+                    self.clip_lead_bone(bone, rig, frame);
                 }
             }
         }
@@ -1454,7 +1456,6 @@ impl Editor {
                 Some((dragged, origin, current)) if dragged == bone => {
                     if current != to {
                         self.clip.drag_key = Some((bone, origin, to));
-                        self.clip_seek(to);
                     }
                 }
                 Some(_) => {}
@@ -1470,7 +1471,7 @@ impl Editor {
                 Some(key) => {
                     pick_key(&mut self.clip.selected_keys, (bone, key), modifiers, false);
                     if let Some(frame) = frame {
-                        self.select(bone, rig, frame);
+                        self.clip_lead_bone(bone, rig, frame);
                     }
                 }
                 // a plain click on an empty spot drops the picked keys

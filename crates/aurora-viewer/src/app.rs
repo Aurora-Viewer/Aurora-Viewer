@@ -4457,6 +4457,7 @@ impl App {
             }
             if self.avatar_studio.rotating {
                 self.avatar_studio.rotate(dx);
+                self.avatar_studio.tilt(dy);
             }
             if self.avatar_studio.panning && self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 let height = self.gfx.as_ref().map_or(900.0, |g| g.renderer.size().1 as f32);

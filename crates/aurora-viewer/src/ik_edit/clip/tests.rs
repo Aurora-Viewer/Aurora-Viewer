@@ -268,6 +268,7 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
         },
         ..Default::default()
     };
+    editor.clip_seek(20);
     let palette = crate::theme::Theme::default().palette();
     let mut frames = Frames::new();
     let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
@@ -319,6 +320,8 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
     let document = editor.clip.document.as_ref().unwrap();
     assert_eq!(document.frames(Some(head)), vec![15, 30]);
     assert_eq!(editor.clip.drag_key, None);
+    // the playhead's line stays put instead of following the key over the lane
+    assert_eq!(editor.clip.frame, 20);
 }
 
 #[test]
@@ -794,7 +797,7 @@ fn releasing_a_key_drag_commits_the_frame_it_reached() {
     assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![15, 30]);
     assert_eq!(editor.clip.drag_key, None);
     assert_eq!(editor.clip.undo.len(), 1);
-    assert_eq!(editor.clip.frame, 15);
+    assert_eq!(editor.clip.frame, 0, "moving a key leaves the playhead where it was");
 }
 
 #[test]
@@ -3795,6 +3798,58 @@ fn ctrl_or_shift_click_adds_a_joint_in_the_animation_editor_and_a_plain_click_re
     editor.clip_click_bone(head, &rig, &original, false);
     assert_eq!(editor.selected, Some(head));
     assert!(editor.clip_followers().is_empty());
+}
+
+#[test]
+fn a_joint_selected_from_the_timeline_never_takes_over_the_joints_picked_with_another() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (head, left, right) = (rig.names["mHead"], rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    // a row or a key of another joint: that joint alone, the eyes no longer follow
+    editor.clip_lead_bone(head, &rig, &original);
+    assert_eq!(editor.selected, Some(head));
+    assert!(editor.clip_followers().is_empty());
+    // a row or a key of a joint of the selection: it leads, the other still follows
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.clip_lead_bone(right, &rig, &original);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(right), vec![left]));
+    // the selected joint's own row or key keeps its followers
+    editor.clip_lead_bone(right, &rig, &original);
+    assert_eq!(editor.clip_followers(), vec![left]);
+    // leaving the animation editor forgets them
+    editor.leave_clip();
+    assert!(editor.clip.together.is_empty());
+}
+
+#[test]
+fn a_joint_added_to_the_selection_does_not_give_the_selected_joint_its_limbs_pole() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (chest, wrist) = (rig.names["mChest"], rig.names["mWristLeft"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(chest, &rig, &original, false);
+    // Ctrl + click on the wrist's handle adds it: the chest stays selected
+    // and must not start with the arm's pole
+    editor.clip_click_bone(wrist, &rig, &original, true);
+    assert_eq!(editor.selected, Some(chest));
+    assert!(!editor.takes_limb_pole(wrist));
+    // selected alone, the wrist takes its own limb's pole as before
+    editor.clip_click_bone(wrist, &rig, &original, false);
+    assert!(editor.takes_limb_pole(wrist));
 }
 
 #[test]

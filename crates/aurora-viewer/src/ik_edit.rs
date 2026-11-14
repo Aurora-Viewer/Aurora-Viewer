@@ -277,6 +277,12 @@ impl Editor {
         !(self.clip.active && self.clip.is_playing())
     }
 
+    /// Whether a click or a grab on `joint`'s handle starts its limb's pole:
+    /// the joint must be the selected one, in IK, with no pole yet.
+    fn takes_limb_pole(&self, joint: usize) -> bool {
+        self.selected == Some(joint) && self.mode == Mode::Ik && self.pole.is_none()
+    }
+
     fn point_drag_enabled(&self, modifiers: egui::Modifiers) -> bool {
         self.drag.is_some() || modifiers.shift || modifiers.ctrl
     }
@@ -963,6 +969,7 @@ impl Editor {
         // the poser's Ctrl picks another part or avatar: the handles let the
         // pointer through (a drag already begun keeps them)
         let picking_parts = self.poser_ctrl_picks(modifiers) && !self.gizmo.dragging();
+        self.gizmo.shift_fine = self.poser.active || self.clip.active;
         let (owns, change) = self
             .gizmo
             .show(ctx, palette, geometry, pose, !point_hit && !picking_parts, self.gizmo_sensitivity());
@@ -1190,8 +1197,10 @@ impl Editor {
                         } else {
                             self.clip_grab_bone(joint, rig, &frame);
                         }
-                        if self.mode == Mode::Ik
-                            && self.pole.is_none()
+                        // only for the joint that leads: one added to the
+                        // selection (Shift or Ctrl + click) must not give the
+                        // selected joint its own limb's pole
+                        if self.takes_limb_pole(joint)
                             && let Some(limb) = limb
                         {
                             self.pole = Some(limb.pole(&frame));

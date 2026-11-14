@@ -48,15 +48,23 @@ impl Editor {
     /// A drag begun on a joint: on a joint of the selection it leads the
     /// others, elsewhere it selects that joint only.
     pub(in crate::ik_edit) fn clip_grab_bone(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
-        if self.selected == Some(bone) {
-            return;
+        if self.selected != Some(bone) {
+            self.clip_lead_bone(bone, rig, frame);
         }
-        if self.clip.together.contains(&bone) {
-            let lead = self.selected;
-            self.clip.together.retain(|b| *b != bone);
-            self.clip.together.extend(lead);
-        } else {
-            self.clip.together.clear();
+    }
+    /// Select `bone` as the timeline does (its row, or one of its keys): a
+    /// joint of the selection leads the others, any other joint is selected
+    /// alone, so that joints picked earlier never follow a joint they were
+    /// not picked with.
+    pub(in crate::ik_edit) fn clip_lead_bone(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
+        if self.selected != Some(bone) {
+            if self.clip.together.contains(&bone) {
+                let lead = self.selected;
+                self.clip.together.retain(|b| *b != bone);
+                self.clip.together.extend(lead);
+            } else {
+                self.clip.together.clear();
+            }
         }
         self.select(bone, rig, frame);
     }

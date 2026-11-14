@@ -4,6 +4,13 @@
 
 use glam::{Mat4, Quat, Vec2, Vec3};
 
+/// The studio camera's default elevation over its focus: a slight look
+/// down, `atan(0.08)`.
+const BASE_ELEVATION: f32 = 0.079_829_99;
+/// How far the tilted orbit may go above or below the focus (80°).
+const MAX_ELEVATION: f32 = 1.396_263_4;
+/// The lowest a tilt brings the eye, over the stage's floor.
+const EYE_CLEARANCE: f32 = 0.05;
 pub const FOV: f32 = 0.65;
 pub const NEAR: f32 = 0.025;
 /// Existing approximation from the foot joint to the studio's sole plane.
@@ -166,6 +173,9 @@ pub struct Studio {
     pub panning_plane: bool,
     pub active: bool,
     pub yaw: f32,
+    /// Tilt of the orbit above (positive) or below the studio's slight
+    /// default elevation, radians; a vertical left drag changes it.
+    pub tilt: f32,
     pub facing: f32,
     pub floor_offset: f32,
     /// Session-only vertical offset for the displayed studio avatar.
@@ -218,12 +228,59 @@ impl Studio {
         }
     }
 
+    /// A vertical left drag tilts the orbit: dragging down looks from
+    /// higher up, dragging up from lower down, short of straight above or
+    /// below so the view never flips.
+    pub fn tilt(&mut self, dy: f32) {
+        if dy.is_finite() {
+            let base = BASE_ELEVATION;
+            self.tilt = (self.tilt + dy * 0.008).clamp(-MAX_ELEVATION - base, MAX_ELEVATION - base);
+            // a drag past the floor does not pile up: the way back starts at once
+            self.tilt = self.elevation() - base;
+        }
+    }
+
+    /// The orbit's radius: at no tilt, the studio's former eye offset.
+    fn radius(&self) -> f32 {
+        self.distance * (1.0 + 0.08 * 0.08_f32).sqrt()
+    }
+
+    /// The orbit's elevation: the studio's slight look down, plus the tilt.
+    /// A tilt below that default stops where the eye would dip under the
+    /// stage's floor: the stage's water lies just below it, and its fog would
+    /// hide the avatar. A focus lowered far enough to put the default view
+    /// under the floor keeps that view, as before the tilt existed.
+    fn elevation(&self) -> f32 {
+        let wanted = BASE_ELEVATION + self.tilt;
+        let radius = self.radius();
+        // the eye's height over the floor: the focus, the pan along the
+        // tilted view plane, then the orbit's rise
+        let eye = |elevation: f32| self.focus_height + self.pan.y * elevation.cos() + radius * elevation.sin();
+        if wanted >= BASE_ELEVATION || eye(wanted) >= EYE_CLEARANCE {
+            return wanted;
+        }
+        if eye(BASE_ELEVATION) < EYE_CLEARANCE {
+            return BASE_ELEVATION;
+        }
+        let (mut low, mut high) = (wanted, BASE_ELEVATION);
+        for _ in 0..24 {
+            let middle = (low + high) * 0.5;
+            if eye(middle) >= EYE_CLEARANCE {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        high
+    }
+
     pub fn view(&self, floor: Vec3, aspect: f32) -> View {
         let rotation = Quat::from_rotation_z(self.yaw);
         let right = rotation * Vec3::Y;
-        let up = rotation * Vec3::new(-0.08, 0.0, 1.0).normalize();
+        let (sin, cos) = self.elevation().sin_cos();
+        let up = rotation * Vec3::new(-sin, 0.0, cos);
         let target = floor + Vec3::Z * self.focus_height + right * self.pan.x + up * self.pan.y;
-        let offset = rotation * Vec3::new(self.distance, 0.0, self.distance * 0.08);
+        let offset = rotation * Vec3::new(cos, 0.0, sin) * self.radius();
         let eye = target + offset;
         View {
             floor,
@@ -532,5 +589,75 @@ mod tests {
         assert_eq!(studio.target_height, focus, "zoom out does not change the chosen focus");
         studio.enter(0.0, 1.8);
         assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, original.eye);
+    }
+
+    #[test]
+    fn a_vertical_drag_tilts_the_orbit_without_flipping_and_entering_resets_it() {
+        let mut studio = Studio::default();
+        studio.enter(0.0, 1.8);
+        let level = studio.view(Vec3::ZERO, 1.5);
+        let target = level.target;
+        let radius = (level.eye - target).length();
+        studio.tilt(f32::NAN);
+        assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, level.eye);
+        // dragging down looks from higher up, at the same distance and focus
+        studio.tilt(60.0);
+        let above = studio.view(Vec3::ZERO, 1.5);
+        assert!(above.eye.z > level.eye.z + 0.5);
+        assert!(((above.eye - above.target).length() - radius).abs() < 1e-4);
+        assert!((above.target - target).length() < 1e-5);
+        // dragging up goes below the focus, never under the stage's floor
+        studio.tilt(-150.0);
+        let below = studio.view(Vec3::ZERO, 1.5);
+        assert!(below.eye.z < target.z);
+        assert!(below.eye.z >= EYE_CLEARANCE - 1e-4, "the eye stays over the floor: {}", below.eye.z);
+        // far drags stop short of straight above, and at the floor below
+        for dy in [100000.0, -100000.0] {
+            studio.tilt(dy);
+            let view = studio.view(Vec3::ZERO, 1.5);
+            let elevation = ((view.eye - view.target).z / radius).asin();
+            assert!(elevation.abs() <= MAX_ELEVATION + 1e-4);
+            assert!(view.eye.z >= EYE_CLEARANCE - 1e-4);
+            assert!(view.view.is_finite());
+        }
+        // a drag past the floor does not pile up: the way back starts at once
+        let held = studio.view(Vec3::ZERO, 1.5).eye.z;
+        studio.tilt(5.0);
+        assert!(studio.view(Vec3::ZERO, 1.5).eye.z > held + 0.01);
+        // close to a raised focus, the view does go well below it
+        studio.pan_vertical(-200.0, 900.0);
+        for _ in 0..12 {
+            studio.zoom(1.0);
+        }
+        for _ in 0..200 {
+            studio.update(1.0 / 60.0);
+        }
+        studio.tilt(-100000.0);
+        let under = studio.view(Vec3::ZERO, 1.5);
+        assert!(((under.eye - under.target).z / (under.eye - under.target).length()).asin() < -1.0);
+        assert!(under.eye.z >= EYE_CLEARANCE - 1e-4);
+        // a focus lowered under the floor keeps the default view, tilt or not
+        let mut low = Studio::default();
+        low.enter(0.0, 1.8);
+        low.pan_vertical(100000.0, 900.0);
+        for _ in 0..200 {
+            low.update(1.0 / 60.0);
+        }
+        let before = low.view(Vec3::ZERO, 1.5).eye;
+        low.tilt(-300.0);
+        assert_eq!(low.view(Vec3::ZERO, 1.5).eye, before);
+        studio.enter(0.0, 1.8);
+        // a pan still moves within the tilted view plane
+        studio.tilt(80.0);
+        let before = studio.view(Vec3::ZERO, 1.5);
+        studio.pan_view(0.0, -120.0, 900.0);
+        for _ in 0..200 {
+            studio.update(1.0 / 60.0);
+        }
+        let after = studio.view(Vec3::ZERO, 1.5);
+        let forward = (before.target - before.eye).normalize();
+        assert!((after.target - before.target).dot(forward).abs() < 1e-4);
+        studio.enter(0.0, 1.8);
+        assert_eq!(studio.view(Vec3::ZERO, 1.5).eye, level.eye);
     }
 }
