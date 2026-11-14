@@ -2278,6 +2278,72 @@ mod tests {
         assert_eq!(landscape.min.y, 0.0);
     }
 
+    /// After the user made Appearance wider, dragging it narrower must stick:
+    /// the old `set_min_width(available_width)` ratcheted the body's min so
+    /// the floater could grow but never shrink again (#3035).
+    #[test]
+    fn appearance_window_can_shrink_again_after_it_was_made_wider() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = wardrobe(0);
+        let mut st = AppearanceUi::default();
+        let area = || ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("floater");
+        for _ in 0..10 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let opened = area();
+        assert!((opened.width() - 580.0).abs() < 1.0, "opens at its default width: {opened:?}");
+        let input = |pos: egui::Pos2, pressed: Option<bool>| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+            events: std::iter::once(egui::Event::PointerMoved(pos))
+                .chain(pressed.map(|pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }))
+                .collect(),
+            ..Default::default()
+        };
+        let drag_right_edge = |world: &mut World, st: &mut AppearanceUi, delta_x: f32| {
+            let rect = area();
+            let grab = egui::pos2(rect.right() - 1.0, rect.center().y);
+            draw_input(&ctx, world, st, input(grab, None));
+            draw_input(&ctx, world, st, input(grab, Some(true)));
+            for i in 1..=40 {
+                draw_input(
+                    &ctx,
+                    world,
+                    st,
+                    input(grab + Vec2::new(delta_x * (i as f32 / 20.0).min(1.0), 0.0), None),
+                );
+            }
+            let dragged = area();
+            draw_input(&ctx, world, st, input(grab + Vec2::new(delta_x, 0.0), Some(false)));
+            for _ in 0..20 {
+                draw(&ctx, world, st, None);
+            }
+            (dragged, area())
+        };
+        let (wide_drag, wide) = drag_right_edge(&mut world, &mut st, 200.0);
+        assert!(
+            wide.width() >= opened.width() + 150.0,
+            "grew wider: {opened:?} -> drag {wide_drag:?} -> rest {wide:?}"
+        );
+        assert_eq!(wide.size(), wide_drag.size(), "wide size sticks after release");
+        let (narrow_drag, narrow) = drag_right_edge(&mut world, &mut st, -180.0);
+        assert!(
+            narrow.width() + 50.0 < wide.width(),
+            "must shrink again after widening: {wide:?} -> drag {narrow_drag:?} -> rest {narrow:?}"
+        );
+        assert_eq!(
+            narrow.size(),
+            narrow_drag.size(),
+            "narrow size sticks after release: {narrow_drag:?} vs {narrow:?}"
+        );
+    }
+
     #[test]
     fn outfit_previews_default_to_fit_and_remember_the_saved_choice() {
         use crate::settings::Settings;
