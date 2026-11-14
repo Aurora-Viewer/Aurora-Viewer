@@ -781,6 +781,9 @@ pub struct World {
     /// An object with an empty name speaks as "(no name)" (FSMarkObjects,
     /// from the settings; `object_speaker_name`).
     pub mark_unnamed_objects: bool,
+    /// Objects' "returned to your inventory" messages dropped
+    /// (FSDisableReturnObjectNotification, from the settings).
+    pub hide_object_returns: bool,
     /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
     /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
     /// there) and said on its arrival.
@@ -1075,6 +1078,7 @@ impl World {
             fly_after_teleport: false,
             show_back_slurl: true,
             mark_unnamed_objects: false,
+            hide_object_returns: false,
             tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),
@@ -4851,6 +4855,10 @@ impl World {
             return;
         }
         // dialog 19 = MessageFromObject
+        if self.hide_object_returns && object_im_filter::is_return_notice(&im) {
+            log::info!("object return message hidden: {}", im.from_name);
+            return;
+        }
         if self.object_im_filtered(&im) {
             return;
         }

@@ -10,6 +10,10 @@
 //! object's link, "Region/x/y/z" in the binary bucket (RLVa cuts the region
 //! name at the first '/'). A message whose origin is unknown passes:
 //! system messages, regions that send no location, a parcel not known yet.
+//!
+//! Apart from it, the grid's word that an object of ours was returned to
+//! our inventory can be hidden (`is_return_notice`, Preferences ›
+//! Confirmations).
 
 use super::World;
 use super::landmarks::in_parcel;
@@ -22,6 +26,18 @@ use uuid::Uuid;
 const DIALOG_FROM_TASK: u8 = 19;
 /// CHAT_TYPE_DIRECT: llRegionSayTo.
 const CHAT_TYPE_DIRECT: u8 = 9;
+
+/// The words of the grid's message that an object was returned to our
+/// Lost and Found folder (only its English text is known).
+pub const RETURNED: &str = "been returned to your inventory";
+
+/// An object's message saying it was returned to our inventory: the
+/// Legacy Viewer's FSDisableReturnObjectNotification hides an
+/// IM_FROM_TASK that contains these words (LLIMProcessing::processNewMessage,
+/// indra/newview/llimprocessing.cpp, originally LGPL 2.1, FIRE-6406).
+pub fn is_return_notice(im: &InstantMessage) -> bool {
+    im.dialog == DIALOG_FROM_TASK && im.message.contains(RETURNED)
+}
 
 /// How far an object may be and still reach us.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -332,5 +348,27 @@ mod tests {
             on_parcel: &unknown,
         };
         assert!(!drops(&on(Scope::Parcel), &h, &sender(STRANGER), Some("Elsewhere"), FAR));
+    }
+
+    /// FSDisableReturnObjectNotification's test: an object's message with the
+    /// grid's words, not a resident's IM with them nor another object line.
+    #[test]
+    fn a_return_notice_is_an_objects_message_with_the_grids_words() {
+        let im = |dialog: u8, message: &str| InstantMessage {
+            from_agent_id: id(ME),
+            from_name: "Box".into(),
+            to_agent_id: id(ME),
+            dialog,
+            session_id: id(9),
+            message: message.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        };
+        let returned = "Your object 'Box' has been returned to your inventory Lost and Found folder from parcel 'Home' at Region 12, 34 due to parcel auto return.";
+        assert!(is_return_notice(&im(DIALOG_FROM_TASK, returned)));
+        assert!(!is_return_notice(&im(0, returned)));
+        assert!(!is_return_notice(&im(DIALOG_FROM_TASK, "Thanks for your visit!")));
     }
 }
