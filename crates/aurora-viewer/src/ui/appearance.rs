@@ -3294,6 +3294,7 @@ mod tests {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@addattach=n,remattach=n,remoutfit:tattoo=n".into(),
         }));
@@ -4343,6 +4344,7 @@ mod tests {
             owner_id: Uuid::from_u128(1),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@showinv=n".into(),
         };
@@ -4409,6 +4411,7 @@ mod tests {
                 owner_id: Uuid::from_u128(1),
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
                 position: glam::Vec3::ZERO,
                 message: String::new(),
             };

@@ -60,6 +60,7 @@ fn said(text: &str) -> NetEvent {
         owner_id: super::DEMO_TESS,
         source_type: ChatSourceType::Agent,
         chat_type: ChatType::Normal,
+        region: Some(crate::demo::HANDLE),
         position: glam::Vec3::new(130.0, 130.0, 22.0),
         message: text.into(),
     })

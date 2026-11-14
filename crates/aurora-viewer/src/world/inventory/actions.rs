@@ -125,6 +125,36 @@ pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
         || inv.items.values().any(|it| it.asset_id == asset && held(inv, it) & FULL == FULL)
 }
 
+/// The Export permission bit (PERM_EXPORT, an OpenSim extension).
+pub const EXPORT: u32 = aurora_net::build::perm::EXPORT;
+
+/// Where an object export is asked: the grid decides which rule applies
+/// (LLGridManager::isInSecondLife, LFSimFeatureHandler::exportPolicy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportGrid {
+    SecondLife,
+    /// An OpenSim region; `export_supported` is its "ExportSupported"
+    /// simulator feature (EXPORT_ALLOWED when true, EXPORT_DENIED else).
+    OpenSim {
+        export_supported: bool,
+    },
+}
+
+/// Whether an inventory item lets its asset (a texture, a sculpt map) be
+/// written to an exported file: FSExportPermsCheck::canExportAsset
+/// (indra/newview/fsexportperms.cpp, Cinder Biscuits, LGPL 2.1). On
+/// Second Life and on an OpenSim region without export, only the item's
+/// creator may; on an OpenSim region with export, the item's Export bit.
+/// The Legacy Viewer reads the item's owner mask there; [`agent_mask`] is
+/// the same for the agent's own items and stricter for the others (their
+/// everyone mask), such as the Library's.
+pub fn asset_export_allowed(item: &InvItem, agent: Uuid, grid: ExportGrid) -> bool {
+    match grid {
+        ExportGrid::OpenSim { export_supported: true } => agent_mask(item, agent) & EXPORT != 0,
+        ExportGrid::SecondLife | ExportGrid::OpenSim { export_supported: false } => !agent.is_nil() && item.creator == agent,
+    }
+}
+
 /// Whether the agent may write a wearable's slider values to an appearance
 /// XML file (the Export XML button of the shape, physics and layer editors).
 /// Stricter than the Legacy Viewer, whose Advanced > Character > Appearance

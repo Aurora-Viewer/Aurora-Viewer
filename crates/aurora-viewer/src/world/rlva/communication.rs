@@ -168,6 +168,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.into(),
         }));

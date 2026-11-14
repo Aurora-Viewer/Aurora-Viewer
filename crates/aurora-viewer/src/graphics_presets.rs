@@ -1310,7 +1310,7 @@ mod tests {
     fn values_stay_inside_what_the_page_offers() {
         for preset in Preset::ALL {
             let v = preset.values();
-            assert!((32.0..=512.0).contains(&v.draw_distance));
+            assert!((crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX).contains(&v.draw_distance));
             assert!((0.5..=4.0).contains(&v.lod_factor));
             assert!((1..=100).contains(&v.max_avatars));
             assert!(v.max_particles <= 8192);

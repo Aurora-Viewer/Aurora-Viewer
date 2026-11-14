@@ -2,6 +2,220 @@ use super::*;
 use std::path::Path;
 
 #[test]
+fn failed_free_material_does_not_cancel_the_rest_of_the_batch() {
+    let ctx = egui::Context::default();
+    let (jobs, _results) = crate::scene::jobs::Jobs::new();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut first = Entry::new(
+        "first.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        }),
+        Default::default(),
+    );
+    let mut second = Entry::new(
+        "second.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        }),
+        Default::default(),
+    );
+    first.status = Status::Preparing;
+    second.status = Status::Preparing;
+    let first_id = first.id;
+    let second_id = second.id;
+    let step = |entry: Uuid| Step {
+        key: entry,
+        entry: Some(entry),
+        kind: Kind::Material,
+        folder: Uuid::nil(),
+        name: "material".into(),
+        description: String::new(),
+        source: Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        },
+        options: Default::default(),
+        sound_options: Default::default(),
+        cost: 0,
+        permissions: Default::default(),
+    };
+    let request = Uuid::new_v4();
+    let mut imports = Imports {
+        entries: vec![first, second],
+        current: Some((request, step(first_id))),
+        queue: VecDeque::from([step(second_id)]),
+        ..Default::default()
+    };
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert_eq!(imports.current.as_ref().and_then(|(_, step)| step.entry), Some(second_id));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+}
+
+fn material_step(entry: &Entry, options: import_texture::Options, images: Box<[Option<LocalImage>; 4]>) -> Step {
+    Step {
+        key: entry.id,
+        entry: Some(entry.id),
+        kind: Kind::Material,
+        folder: Uuid::nil(),
+        name: entry.name.clone(),
+        description: String::new(),
+        source: Source::Material {
+            value: Default::default(),
+            images,
+        },
+        options,
+        sound_options: Default::default(),
+        cost: 0,
+        permissions: Default::default(),
+    }
+}
+
+fn map_step(map: &LocalImage, options: import_texture::Options, cost: i32) -> Step {
+    Step {
+        key: map.upload_key(options),
+        entry: None,
+        kind: Kind::Texture,
+        folder: Uuid::nil(),
+        name: map.name.clone(),
+        description: String::new(),
+        source: Source::Texture(map.pixels.clone()),
+        options,
+        sound_options: Default::default(),
+        cost,
+        permissions: Default::default(),
+    }
+}
+
+/// A Bulk upload scaled to 1K, with an entry set to 2K: the map's step key is
+/// built from the capped options, and the failure must still find its material.
+fn failed_map_batch(map_cost: i32) -> (Imports, Uuid, Uuid, Uuid) {
+    let map = files::local_image((*image(2048, 2048)).clone(), "map".into());
+    let options = import_texture::Options {
+        max_width: 2048,
+        max_height: 2048,
+        ..Default::default()
+    };
+    let with_map = Box::new([Some(map.clone()), None, None, None]);
+    let mut dependent = Entry::new(
+        "dependent.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: with_map.clone(),
+        }),
+        options,
+    );
+    let mut independent = Entry::new(
+        "independent.gltf".into(),
+        Ok(Source::Material {
+            value: Default::default(),
+            images: Box::new([None, None, None, None]),
+        }),
+        options,
+    );
+    dependent.status = Status::Preparing;
+    independent.status = Status::Preparing;
+    let (dependent_id, independent_id) = (dependent.id, independent.id);
+    let mut imports = Imports {
+        choice: Choice::Bulk,
+        scale_bulk_1k: true,
+        ..Default::default()
+    };
+    let capped = imports.options(&dependent);
+    assert_ne!(
+        map.upload_key(capped),
+        map.upload_key(options),
+        "the test needs the 1K cap to change the key"
+    );
+    let request = Uuid::new_v4();
+    imports.queue = VecDeque::from([
+        material_step(&dependent, capped, with_map),
+        material_step(&independent, capped, Box::new([None, None, None, None])),
+    ]);
+    imports.entries = vec![dependent, independent];
+    imports.current = Some((request, map_step(&map, capped, map_cost)));
+    (imports, request, dependent_id, independent_id)
+}
+
+#[test]
+fn failed_material_map_only_fails_materials_that_depend_on_it() {
+    let (mut imports, request, dependent_id, independent_id) = failed_map_batch(0);
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+    assert!(!imports.queue.iter().any(|step| step.entry == Some(dependent_id)));
+    assert_eq!(
+        imports.queue.iter().map(|step| step.entry).collect::<Vec<_>>(),
+        vec![Some(independent_id)]
+    );
+}
+
+#[test]
+fn a_price_change_on_a_free_map_still_stops_the_batch() {
+    let (mut imports, request, _, _) = failed_map_batch(0);
+
+    imports.uploaded(request, Err(Error::PriceChanged(Some(10))));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+    assert!(imports.queue.is_empty());
+}
+
+#[test]
+fn a_failed_paid_map_still_stops_the_batch() {
+    let (mut imports, request, _, _) = failed_map_batch(10);
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+    assert!(imports.queue.is_empty());
+}
+
+#[test]
+fn a_free_map_that_cannot_be_encoded_only_fails_the_materials_that_use_it() {
+    let (mut imports, _, dependent_id, independent_id) = failed_map_batch(0);
+
+    assert!(imports.encoded(Err("the image could not be encoded".into())).is_none());
+    assert!(imports.current.is_none());
+    assert!(matches!(&imports.entries[0].status, Status::Error(reason) if reason == "the image could not be encoded"));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+    assert!(!imports.queue.iter().any(|step| step.entry == Some(dependent_id)));
+    assert_eq!(
+        imports.queue.iter().map(|step| step.entry).collect::<Vec<_>>(),
+        vec![Some(independent_id)]
+    );
+}
+
+#[test]
+fn a_paid_map_that_cannot_be_encoded_still_stops_the_batch() {
+    let (mut imports, _, _, _) = failed_map_batch(10);
+
+    assert!(imports.encoded(Err("the image could not be encoded".into())).is_none());
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+    assert!(imports.queue.is_empty());
+}
+
+#[test]
+fn an_encoded_map_is_sent_with_its_request() {
+    let (mut imports, request, _, _) = failed_map_batch(0);
+
+    let command = imports.encoded(Ok(vec![1, 2, 3]));
+    assert!(matches!(
+        command,
+        Some(aurora_net::NetCommand::UploadAsset { request: sent, upload }) if sent == request && upload.data == [1, 2, 3] && upload.kind == Kind::Texture
+    ));
+    assert!(imports.current.is_some(), "the step waits for its upload result");
+    assert_eq!(imports.queue.len(), 2);
+}
+
+#[test]
 fn protected_upload_defaults_survive_loading_locking_and_queueing_every_asset_type() {
     use crate::world::inventory::actions;
     use aurora_net::inventory::{InvFolder, mesh_upload::Quote};
