@@ -40,6 +40,7 @@ pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
 mod folder_colors;
+pub(crate) mod hidden_folders;
 pub use folder_colors::{demo as folder_colors_demo, demo_frame as folder_colors_demo_frame};
 mod hover;
 pub use hover::demo_events as hover_demo_events;
