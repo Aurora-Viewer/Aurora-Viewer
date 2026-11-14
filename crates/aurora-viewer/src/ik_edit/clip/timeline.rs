@@ -1217,6 +1217,14 @@ impl Editor {
         );
         let lanes_area = egui::Rect::from_min_max(egui::pos2(ruler.left(), ruler.bottom()), egui::pos2(ruler.right(), list_bottom));
         self.arm_key_box(ui, lanes_area);
+        // the list's background takes a press between, beside or under the
+        // lanes: without it the window would take that drag and move, where
+        // a box (or nothing) is meant; the lanes, drawn after, stay on top
+        ui.interact(
+            egui::Rect::from_min_max(ruler_row.left_bottom(), egui::pos2(ruler_row.right(), list_bottom)),
+            ui.scope_id().with("avatar-studio-animation-timeline-list"),
+            egui::Sense::drag(),
+        );
         let (view_start, view_end) = timeline_view(start, end, self.clip.timeline_zoom, self.clip.timeline_start);
         self.clip.timeline_start = view_start;
         let scale = FrameScale::new(ruler, view_start, view_end);
