@@ -225,6 +225,27 @@ impl MediaManager {
                 .is_some_and(|o| world.rlva_can_touch_at(o.key.region, o.key.local_id, position))
     }
 
+    /// Owner and group of the linkset of a media face, from its
+    /// ObjectPropertiesFamily (asked as the pointer comes on it,
+    /// `has_media`), or the owner the object update gave.
+    fn owner_of(&self, world: &World, key: &MediaKey, props: &HashMap<Uuid, aurora_net::build::ObjectProps>) -> Option<(Uuid, Uuid)> {
+        let MediaKey::Prim { object, .. } = key else {
+            return None;
+        };
+        let idx = self.objects.get(object)?.idx;
+        let root = crate::interaction::root(world, idx).map_or(idx, |(r, _)| r);
+        let o = world.objects.get(root)?;
+        props
+            .get(&o.full_id)
+            .map(|p| (p.owner_id, p.group_id))
+            .or_else(|| (!o.owner_id.is_nil()).then_some((o.owner_id, Uuid::nil())))
+    }
+
+    /// Whether the prim `idx` shows prim media.
+    pub fn has_media(&self, world: &World, idx: usize) -> bool {
+        world.objects.get(idx).is_some_and(|o| self.objects.contains_key(&o.full_id))
+    }
+
     /// Left press in the world. Returns true when a media face took it.
     pub fn on_click(
         &mut self,
@@ -236,6 +257,7 @@ impl MediaManager {
         mods: Modifiers,
         hud: bool,
         picked: Option<usize>,
+        props: &HashMap<Uuid, aurora_net::build::ObjectProps>,
     ) -> bool {
         if !settings.enabled || !settings.prim_media {
             return false;
@@ -248,6 +270,21 @@ impl MediaManager {
         if !self.may_touch(world, &hit.key, position) {
             return false;
         }
+        let owner = self.owner_of(world, &hit.key, props);
+        let is_friend = |id: &Uuid| world.social.is_friend(id);
+        let in_group = |id: &Uuid| world.groups.groups.iter().any(|g| g.id == *id);
+        let clicked = first_click::Clicked {
+            hud,
+            owner,
+            agent: world.agent_id,
+            is_friend: &is_friend,
+            in_group: &in_group,
+            parcel: position
+                .filter(|_| !hud)
+                .and_then(|at| world.on_agent_parcel(at).filter(|on| *on))
+                .and(world.parcel.as_ref())
+                .map(|p| (p.owner_id, p.group_id)),
+        };
         let already = self.focus == Some(hit.key);
         if !already {
             self.unfocus();
@@ -270,7 +307,8 @@ impl MediaManager {
             if let Some(p) = m.plugin.as_mut() {
                 p.focus(true);
             }
-            let first_click = settings.first_click_interact && m.entry.as_ref().is_some_and(|e| e.first_click_interact);
+            let face_asks = m.entry.as_ref().is_some_and(|e| e.first_click_interact);
+            let first_click = first_click::allowed(settings.first_click_interact, &settings.first_click, face_asks, &clicked);
             if !first_click || !m.is_loaded() {
                 return true;
             }
@@ -534,6 +572,7 @@ mod tests {
                 Modifiers::default(),
                 true,
                 Some(idx),
+                &HashMap::new(),
             ));
             idx
         };
