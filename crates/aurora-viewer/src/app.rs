@@ -14941,14 +14941,24 @@ impl App {
         });
     }
 
+    /// The rewrites a typed line takes before it is sent (AutoCloseOOC,
+    /// AllowMUpose), from the Chat preferences.
+    fn line_rewrite(&self) -> ui::chat::LineRewrite {
+        ui::chat::LineRewrite {
+            close_ooc: self.settings.auto_close_ooc,
+            colon_emote: self.settings.colon_emote,
+        }
+    }
+
     /// Local chat from the chat bar or the conversations window: a chat bar
     /// command (FSCmdLine) or a line sent on its channel.
     fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
         if c.channel == 0 {
-            // the MU* pose first, then the gesture (FSNearbyChat::sendChat),
-            // and the channel read again from what the gesture says (#1916)
-            let (channel, message, gesture) =
-                ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, self.settings.colon_emote);
+            // the OOC close and the MU* pose first, then the gesture
+            // (FSNearbyChat::sendChat), and the channel read again from what
+            // the gesture says (#1916)
+            let rewrite = self.line_rewrite();
+            let (channel, message, gesture) = ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, rewrite);
             c.channel = channel;
             c.message = message;
             if let Some(id) = gesture {
@@ -15100,10 +15110,9 @@ impl App {
             self.gesture_play(id, None);
         }
         for (to, mut text) in a.ims {
-            // ":" as "/me" in the conversations too (FSFloaterIM::sendMsg)
-            if self.settings.colon_emote {
-                ui::chat::colon_emote(&mut text);
-            }
+            // the OOC close and ":" as "/me" in the conversations too
+            // (FSFloaterIM::sendMsg)
+            self.line_rewrite().apply(&mut text);
             let text = ui::emoji::expand_shortcodes(&text);
             self.chat_ui.recent_emojis.note(&text);
             if self.world.is_group_session(&to) {
