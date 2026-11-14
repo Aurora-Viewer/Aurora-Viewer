@@ -95,7 +95,7 @@ impl Editor {
         ui.add_space(ui.spacing().item_spacing.y);
         let pole = self.control == Control::Pole;
         let title = if pole { self.pole_label(rig, bone, name) } else { name };
-        widgets::section_header(ui, palette, "bone", title);
+        widgets::section_header(ui, palette, "bone-filled", title);
         // the joints selected with it (Shift or Ctrl + click), as in the pose editor
         let followers = self.clip_followers();
         if !followers.is_empty() {
@@ -155,7 +155,15 @@ impl Editor {
         ui.add_space(ui.spacing().item_spacing.y);
         self.clip_bone_track_ui(ui, palette, bone);
         ui.add_space(ui.spacing().item_spacing.y);
-        let size = egui::vec2(0.0, ui.spacing().interact_size.y);
+        let width = clip::equal_width(
+            ui,
+            2,
+            &[
+                ("restore", aurora_i18n::tr!("ik-edit-reset-bone")),
+                ("refresh", aurora_i18n::tr!("ik-edit-reset-all")),
+            ],
+        );
+        let size = egui::vec2(width, ui.spacing().interact_size.y);
         ui.horizontal_wrapped(|ui| {
             if widgets::action_button(
                 ui,

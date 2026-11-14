@@ -19,6 +19,7 @@ mod together;
 mod ui;
 use document::{Document, FPS, MAX_FRAME};
 pub use files::Prepared;
+pub(super) use ui::equal_width;
 
 /// The animation editor's window: its own, narrower than IK contacts'.
 pub(super) const WINDOW: &str = "animation-editor";
@@ -85,6 +86,9 @@ pub(super) struct State {
     rig: Option<Arc<Rig>>,
     pub(super) document: Option<Arc<Document>>,
     history: Vec<Arc<Document>>,
+    /// Where the current document stands among the drafts, so that the list
+    /// keeps every draft in its place when another one is opened.
+    pub(super) draft_slot: usize,
     undo: Vec<Arc<Document>>,
     redo: Vec<Arc<Document>>,
     clipboard: Vec<document::Keyframe>,
@@ -160,6 +164,7 @@ impl Default for State {
             rig: None,
             document: None,
             history: Vec::new(),
+            draft_slot: 0,
             undo: Vec::new(),
             redo: Vec::new(),
             clipboard: Vec::new(),
@@ -397,6 +402,42 @@ impl State {
         }
         self.auto_key_pending |= self.document.as_ref().is_some_and(|document| document.auto_keyframe);
     }
+    /// Keep the document that was current among the drafts, in its place;
+    /// the new one comes last.
+    pub(super) fn shelve(&mut self, old: Arc<Document>) {
+        let at = self.draft_slot.min(self.history.len());
+        self.history.insert(at, old);
+        self.draft_slot = self.history.len();
+    }
+    /// Every draft in its place, the current one included (`None`), for
+    /// the drafts list.
+    pub(super) fn draft_order(&self) -> Vec<Option<usize>> {
+        let slot = self.draft_slot.min(self.history.len());
+        let mut order: Vec<_> = (0..self.history.len()).map(Some).collect();
+        if self.document.is_some() {
+            order.insert(slot, None);
+        }
+        order
+    }
+    /// Open the draft at `position` of `draft_order`: the others keep their
+    /// places, the one that was current included.
+    pub(super) fn pick_draft(&mut self, position: usize) -> bool {
+        let Some(Some(index)) = self.draft_order().get(position).copied() else {
+            return false;
+        };
+        match self.document.take() {
+            Some(current) => {
+                let slot = self.draft_slot.min(self.history.len());
+                let mut all = std::mem::take(&mut self.history);
+                all.insert(slot, current);
+                self.document = Some(all.remove(position));
+                self.history = all;
+            }
+            None => self.document = Some(self.history.remove(index)),
+        }
+        self.draft_slot = position;
+        true
+    }
     pub(super) fn waiting_source(&self) -> bool {
         self.active && self.hold_source && self.preview_revision != Some(self.revision)
     }
@@ -465,7 +506,7 @@ impl State {
                         continue;
                     }
                     if let Some(current) = self.document.replace(Arc::new(document)) {
-                        self.history.push(current);
+                        self.shelve(current);
                     }
                     self.auto_key_retime_from = None;
                     let start = self.document.as_ref().map_or(0, |document| document.start);
@@ -982,7 +1023,7 @@ impl Editor {
             track.authored = false;
         }
         if let Some(old) = self.clip.document.replace(Arc::new(document)) {
-            self.clip.history.push(old);
+            self.clip.shelve(old);
         }
         self.clip.clear_undo_history();
         self.clip.seek(0);

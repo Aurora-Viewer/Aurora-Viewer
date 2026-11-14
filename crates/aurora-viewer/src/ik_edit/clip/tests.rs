@@ -2971,7 +2971,7 @@ fn opening_a_file_with_every_draft_in_use_keeps_the_current_document() {
     state.tick(&jobs, &context, lib.rig.clone(), lib.skeleton.as_ref());
     assert_eq!(state.document.as_ref().unwrap().name, "Opened");
     assert_eq!(state.history.len(), MAX_DRAFTS);
-    assert!(Arc::ptr_eq(state.history.last().unwrap(), &current));
+    assert!(Arc::ptr_eq(&state.history[0], &current), "the document left keeps its place");
     assert!(state.error.is_none());
 
     // and the buttons refuse before the file dialog opens
@@ -3905,4 +3905,55 @@ fn an_edited_joints_fields_hold_still_while_the_shown_pose_only_jitters() {
     editor.clip.cursor += 1.0;
     editor.sync_authored_selection(&jittered);
     assert_ne!(editor.degrees, degrees);
+}
+
+#[test]
+fn the_drafts_list_shows_every_draft_in_its_place_while_switching() {
+    let named = |name: &str| {
+        let mut document = Document::new();
+        document.name = name.into();
+        Arc::new(document)
+    };
+    let mut state = State {
+        document: Some(named("A")),
+        ..Default::default()
+    };
+    let old = std::mem::replace(state.document.as_mut().unwrap(), named("B"));
+    state.shelve(old);
+    let old = std::mem::replace(state.document.as_mut().unwrap(), named("C"));
+    state.shelve(old);
+    let names = |state: &State| {
+        state
+            .draft_order()
+            .into_iter()
+            .map(|entry| match entry {
+                Some(index) => state.history[index].name.clone(),
+                None => format!("[{}]", state.document.as_ref().unwrap().name),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&state), ["A", "B", "[C]"]);
+    assert!(state.pick_draft(0));
+    assert_eq!(names(&state), ["[A]", "B", "C"]);
+    assert!(state.pick_draft(1));
+    assert_eq!(names(&state), ["A", "[B]", "C"]);
+    assert!(!state.pick_draft(1), "the open draft is already open");
+    assert!(state.pick_draft(2));
+    assert_eq!(names(&state), ["A", "B", "[C]"]);
+}
+
+#[test]
+fn the_animation_editor_buttons_use_icons_the_viewer_carries() {
+    for icon in [
+        "bone-filled",
+        "keyframe-filled",
+        "key-filled",
+        "device-floppy-filled",
+        "file-export",
+        "upload",
+        "restore",
+        "refresh",
+    ] {
+        assert!(crate::ui::icons::embedded(icon), "{icon}");
+    }
 }

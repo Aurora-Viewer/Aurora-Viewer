@@ -39,29 +39,37 @@ fn interpolation_combo(ui: &mut egui::Ui, id_salt: impl egui::AsIdSalt, interpol
 }
 
 impl Editor {
-    /// The draft selector. Choosing a draft swaps it with the current one and
-    /// starts it at its first frame.
+    /// The draft selector: every draft in its place, the open one ticked.
+    /// Choosing another opens it at its first frame; the one left keeps
+    /// its place in the list.
     fn drafts_ui(&mut self, ui: &mut egui::Ui, selected_text: String, width: Option<f32>) {
         let mut choice = None;
         let mut combo = egui::ComboBox::from_id_salt("animation-drafts").selected_text(selected_text);
         if let Some(width) = width {
             combo = combo.width(width);
         }
+        let order = self.clip.draft_order();
         combo
             .show_ui(ui, |ui| {
-                for (index, draft) in self.clip.history.iter().enumerate() {
-                    if ui.selectable_label(false, format!("{} · {}", index + 1, draft.name)).clicked() {
-                        choice = Some(index);
+                for (position, entry) in order.iter().enumerate() {
+                    let draft = match entry {
+                        Some(index) => &self.clip.history[*index],
+                        None => match &self.clip.document {
+                            Some(document) => document,
+                            None => continue,
+                        },
+                    };
+                    let label = format!("{} · {}", position + 1, draft.name);
+                    if ui.selectable_label(entry.is_none(), label).clicked() && entry.is_some() {
+                        choice = Some(position);
                     }
                 }
             })
             .response
             .on_hover_text(aurora_i18n::tr!("anim-edit-drafts-hint"));
-        let Some(index) = choice else { return };
-        if let Some(current) = self.clip.document.as_mut() {
-            std::mem::swap(current, &mut self.clip.history[index]);
-        } else {
-            self.clip.document = Some(self.clip.history.remove(index));
+        let Some(position) = choice else { return };
+        if !self.clip.pick_draft(position) {
+            return;
         }
         self.clip.clear_undo_history();
         self.clip.auto_key_retime_from = None;
@@ -354,14 +362,13 @@ impl Editor {
     }
     /// Key this bone (with the joints selected with it), the changes, or the
     /// whole pose at the playhead: icon buttons like the timeline's.
-    pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
+    pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, size: egui::Vec2) {
         let waiting = self.clip.waiting_source();
-        let size = egui::vec2(0.0, ui.spacing().interact_size.y);
         ui.horizontal_wrapped(|ui| {
             if widgets::action_button_if(
                 ui,
                 palette,
-                "keyframe",
+                "keyframe-filled",
                 aurora_i18n::tr!("anim-edit-key-bone"),
                 widgets::ActionKind::Flat,
                 size,
@@ -375,7 +382,7 @@ impl Editor {
             if widgets::action_button_if(
                 ui,
                 palette,
-                "keyframe",
+                "keyframe-filled",
                 aurora_i18n::tr!("anim-edit-key-changes"),
                 widgets::ActionKind::Flat,
                 size,
@@ -388,7 +395,7 @@ impl Editor {
             if widgets::action_button_if(
                 ui,
                 palette,
-                "key",
+                "key-filled",
                 aurora_i18n::tr!("anim-edit-key-pose"),
                 widgets::ActionKind::Flat,
                 size,
@@ -696,17 +703,32 @@ impl Editor {
     pub(in crate::ik_edit) fn clip_export_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
         // the page above scrolls; the keying and the files stay below it
         widgets::divider(ui, palette);
-        self.clip_capture_ui(ui, palette);
+        // the six buttons of the footer as wide as each other, when they fit
+        let size = egui::vec2(
+            equal_width(
+                ui,
+                3,
+                &[
+                    ("keyframe-filled", aurora_i18n::tr!("anim-edit-key-bone")),
+                    ("keyframe-filled", aurora_i18n::tr!("anim-edit-key-changes")),
+                    ("key-filled", aurora_i18n::tr!("anim-edit-key-pose")),
+                    ("device-floppy-filled", aurora_i18n::tr!("anim-edit-save")),
+                    ("file-export", aurora_i18n::tr!("anim-edit-export-bvh")),
+                    ("upload", aurora_i18n::tr!("anim-edit-upload")),
+                ],
+            ),
+            ui.spacing().interact_size.y,
+        );
+        self.clip_capture_ui(ui, palette, size);
         let enabled = !self.clip.busy
             && !self.clip.waiting_source()
             && self.clip.document.as_ref().is_some_and(|document| document.has_exportable_tracks());
-        let size = egui::vec2(0.0, ui.spacing().interact_size.y);
         let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
         ui.horizontal_wrapped(|ui| {
             if widgets::action_button_if(
                 ui,
                 palette,
-                "device-floppy",
+                "device-floppy-filled",
                 aurora_i18n::tr!("anim-edit-save"),
                 widgets::ActionKind::Primary,
                 size,
@@ -756,4 +778,17 @@ impl Editor {
                 .on_hover_text(error);
         }
     }
+}
+
+/// One width for a row of `per_row` action buttons: the widest of
+/// `buttons`, when `per_row` of them fit side by side; otherwise 0 (each
+/// its own width, the row wraps).
+pub(in crate::ik_edit) fn equal_width(ui: &egui::Ui, per_row: usize, buttons: &[(&str, &str)]) -> f32 {
+    let widest = buttons
+        .iter()
+        .map(|(icon, label)| widgets::action_button_fit(ui, icon, label))
+        .fold(0.0, f32::max);
+    let count = per_row.max(1) as f32;
+    let row = widest * count + ui.spacing().item_spacing.x * (count - 1.0);
+    if row <= ui.available_width() { widest } else { 0.0 }
 }
