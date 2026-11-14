@@ -2,12 +2,11 @@
 //! (Firestorm indra/llui/llkeywords.cpp, originally LGPL 2.1). Built-in names
 //! come from the LSL keywords in use (`crate::lsl_keywords`: the Legacy Viewer's
 //! keywords_lsl_default.xml, or the region's). Custom functions are also
-//! recognized at declarations and calls. This lexer never changes the source.
+//! recognized at declarations and calls. SLua scripts use the Lua rules of
+//! LLKeywords::processTokens / findSegments (`mLuauLanguage`) and the bundled
+//! SLua keywords (`lsl_keywords::lua`). This lexer never changes the source.
 
-use super::{
-    reference,
-    settings::{ColorRole, ScriptSettings},
-};
+use super::settings::{ColorRole, ScriptSettings};
 use crate::lsl_keywords::{self, Group};
 use crate::theme::Palette;
 use egui::{
@@ -58,9 +57,14 @@ impl Kind {
     }
 }
 
-/// A built-in name's kind in the LSL keywords in use.
-fn keyword(name: &str) -> Option<Kind> {
-    lsl_keywords::current().word(name).map(|group| match group {
+/// The keywords a script is colored with: SLua's, or the LSL ones in use.
+pub(super) fn catalog(lua: bool) -> &'static lsl_keywords::Catalog {
+    if lua { lsl_keywords::lua() } else { lsl_keywords::current() }
+}
+
+/// A built-in name's kind.
+fn keyword(name: &str, lua: bool) -> Option<Kind> {
+    catalog(lua).word(name).map(|group| match group {
         Group::Control => Kind::Keyword,
         Group::Type => Kind::Type,
         Group::Event => Kind::Event,
@@ -76,7 +80,7 @@ struct Token {
 
 pub(super) fn matching_open_brace(source: &str, close: usize) -> Option<usize> {
     let mut stack = Vec::new();
-    for token in tokens(source) {
+    for token in tokens(source, false) {
         if token.bytes.start > close {
             break;
         }
@@ -166,11 +170,11 @@ fn color_literals(source: &str, tokens: &[Token]) -> Vec<ColorLiteral> {
 }
 
 pub(super) fn colors(source: &str) -> Vec<ColorLiteral> {
-    color_literals(source, &tokens(source))
+    color_literals(source, &tokens(source, false))
 }
 
 pub(super) fn block_comment_at(source: &str, at: usize) -> Option<Range<usize>> {
-    tokens(source)
+    tokens(source, false)
         .into_iter()
         .find(|token| {
             token.kind == Kind::Comment
@@ -184,7 +188,7 @@ pub(super) fn block_comment_at(source: &str, at: usize) -> Option<Range<usize>> 
 pub(super) fn brace_pairs(source: &str) -> Vec<(usize, usize)> {
     let mut stack = Vec::new();
     let mut pairs = Vec::new();
-    for token in tokens(source) {
+    for token in tokens(source, false) {
         if token.kind != Kind::Plain {
             continue;
         }
@@ -266,7 +270,13 @@ fn number_end(bytes: &[u8], mut end: usize) -> usize {
     end
 }
 
-fn tokens(source: &str) -> Vec<Token> {
+fn tokens(source: &str, lua: bool) -> Vec<Token> {
+    let mut result = if lua { lua_lex(source) } else { lsl_lex(source) };
+    resolve(source, &mut result, lua);
+    result
+}
+
+fn lsl_lex(source: &str) -> Vec<Token> {
     let bytes = source.as_bytes();
     let mut result = Vec::new();
     let mut cursor = 0;
@@ -334,22 +344,152 @@ fn tokens(source: &str) -> Vec<Token> {
             kind,
         });
     }
+    result
+}
+
+/// The end of a Lua long bracket opened at `at` (`[[`, `[==[`), or of the
+/// source when it is not closed; None when `at` opens none.
+fn long_bracket(source: &str, at: usize) -> Option<usize> {
+    let rest = source.get(at..)?.strip_prefix('[')?;
+    let level = rest.len() - rest.trim_start_matches('=').len();
+    rest[level..].strip_prefix('[')?;
+    let close = format!("]{}]", "=".repeat(level));
+    let body = at + 1 + level + 1;
+    Some(source[body..].find(&close).map_or(source.len(), |n| body + n + close.len()))
+}
+
+/// Luau numbers: `0x`, `0b`, `_` separators, fractions and exponents.
+fn lua_number_end(bytes: &[u8], start: usize) -> usize {
+    let digits = |mut end: usize, hex: bool| {
+        while bytes
+            .get(end)
+            .is_some_and(|b| *b == b'_' || if hex { b.is_ascii_hexdigit() } else { b.is_ascii_digit() })
+        {
+            end += 1;
+        }
+        end
+    };
+    if bytes[start] == b'0' && matches!(bytes.get(start + 1), Some(b'x' | b'X' | b'b' | b'B')) {
+        return digits(start + 2, true);
+    }
+    let mut end = digits(start, false);
+    if bytes.get(end) == Some(&b'.') {
+        end = digits(end + 1, false);
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let sign = end + 1 + usize::from(matches!(bytes.get(end + 1), Some(b'+' | b'-')));
+        let after = digits(sign, false);
+        if after != sign {
+            end = after;
+        }
+    }
+    end
+}
+
+fn identifier_end(source: &str, mut cursor: usize) -> usize {
+    while let Some(c) = source[cursor..].chars().next() {
+        if c != '_' && !c.is_alphanumeric() {
+            break;
+        }
+        cursor += c.len_utf8();
+    }
+    cursor
+}
+
+/// SLua tokens: `--` and `--[[ ]]` comments, '…', "…", `…` and `[[ ]]`
+/// strings. A dotted name is one token when the catalog knows it whole
+/// (`ll.Say`, `string.format`); otherwise its parts are read one by one,
+/// as LLKeywords::findSegments falls back to them.
+fn lua_lex(source: &str) -> Vec<Token> {
+    let bytes = source.as_bytes();
+    let words = lsl_keywords::lua();
+    let mut result = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let start = cursor;
+        // Every cursor movement below ends on a UTF-8 boundary.
+        let c = source[cursor..].chars().next().expect("cursor inside source");
+        let kind = if bytes[cursor..].starts_with(b"--") {
+            cursor = long_bracket(source, cursor + 2).unwrap_or_else(|| source[cursor..].find('\n').map_or(bytes.len(), |n| cursor + n));
+            Kind::Comment
+        } else if let Some(end) = long_bracket(source, cursor) {
+            cursor = end;
+            Kind::String
+        } else if matches!(c, '"' | '\'' | '`') {
+            cursor += 1;
+            while let Some(d) = source[cursor..].chars().next() {
+                // an unclosed quote stops at the end of its line
+                if d == '\n' {
+                    break;
+                }
+                cursor += d.len_utf8();
+                if d == c {
+                    break;
+                }
+                if d == '\\'
+                    && let Some(escaped) = source[cursor..].chars().next()
+                {
+                    cursor += escaped.len_utf8();
+                }
+            }
+            Kind::String
+        } else if c.is_ascii_digit() || (c == '.' && bytes.get(cursor + 1).is_some_and(u8::is_ascii_digit)) {
+            cursor = lua_number_end(bytes, cursor);
+            let text = &source[start..cursor];
+            if !text.starts_with("0x") && !text.starts_with("0X") && text.contains(['.', 'e', 'E']) {
+                Kind::Float
+            } else {
+                Kind::Number
+            }
+        } else if identifier_start(c) {
+            cursor = identifier_end(source, cursor);
+            let mut chain = cursor;
+            while bytes.get(chain) == Some(&b'.') && source[chain + 1..].chars().next().is_some_and(identifier_start) {
+                chain = identifier_end(source, chain + 1);
+                if words.word(&source[start..chain]).is_some() {
+                    cursor = chain;
+                }
+            }
+            Kind::Variable
+        } else {
+            cursor += c.len_utf8();
+            if c.is_whitespace() {
+                while let Some(c) = source[cursor..].chars().next() {
+                    if !c.is_whitespace() {
+                        break;
+                    }
+                    cursor += c.len_utf8();
+                }
+            }
+            Kind::Plain
+        };
+        result.push(Token {
+            bytes: start..cursor,
+            kind,
+        });
+    }
+    result
+}
+
+/// Names become keywords, functions or variables. LSL's `default`, state
+/// names and jump labels are sections.
+fn resolve(source: &str, result: &mut [Token], lua: bool) {
     // Skip comments and whitespace when recognizing custom function calls.
     // A reverse pass avoids repeatedly scanning long comment blocks.
     let mut next_code = "";
     for token in result.iter_mut().rev() {
         let text = &source[token.bytes.clone()];
         if token.kind == Kind::Variable {
-            token.kind = keyword(text).unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
-            if text == "default" {
+            token.kind = keyword(text, lua).unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
+            if text == "default" && !lua {
                 token.kind = Kind::Section;
             }
             if token.kind == Kind::Constant
-                && let Some(entry) = reference::get(text)
+                && let Some(entry) = catalog(lua).entry(text)
             {
                 token.kind = match entry.data_type.as_str() {
                     "string" | "key" => Kind::StringConstant,
-                    "vector" | "rotation" | "list" => Kind::Compound,
+                    "vector" | "rotation" | "quaternion" | "list" => Kind::Compound,
                     _ => Kind::Constant,
                 };
             }
@@ -358,9 +498,12 @@ fn tokens(source: &str) -> Vec<Token> {
             next_code = text;
         }
     }
+    if lua {
+        return;
+    }
     // Labels and state names are not variables (jump label; @label; state name).
     let mut previous_code = "";
-    for token in &mut result {
+    for token in result.iter_mut() {
         let text = &source[token.bytes.clone()];
         if token.kind == Kind::Variable && matches!(previous_code, "state" | "jump" | "@") {
             token.kind = Kind::Section;
@@ -369,13 +512,15 @@ fn tokens(source: &str) -> Vec<Token> {
             previous_code = text;
         }
     }
-    result
 }
 
 /// Semantic colors shared with fenced LSL in notecards. Tokenize on the
 /// document worker; resolve the current skin and custom colors when drawing.
 pub(crate) fn highlight(source: &str) -> Vec<(Range<usize>, ColorRole)> {
-    tokens(source).into_iter().map(|token| (token.bytes, token.kind.role())).collect()
+    tokens(source, false)
+        .into_iter()
+        .map(|token| (token.bytes, token.kind.role()))
+        .collect()
 }
 
 #[derive(PartialEq)]
@@ -424,6 +569,7 @@ pub(super) struct Highlighter {
     /// The keywords' generation the job was colored with
     /// (`lsl_keywords::generation`): a region's own keywords recolor it.
     keywords: u64,
+    lua: bool,
     job: LayoutJob,
     pub colors: Vec<ColorLiteral>,
 }
@@ -431,7 +577,7 @@ pub(super) struct Highlighter {
 impl Highlighter {
     #[cfg(test)]
     pub(super) fn layout(&mut self, source: &str, p: &Palette, font: FontId) -> LayoutJob {
-        self.custom(source, p, font, &ScriptSettings::default(), "", false)
+        self.custom(source, p, font, &ScriptSettings::default(), "", false, false)
     }
 
     pub(super) fn custom(
@@ -442,17 +588,20 @@ impl Highlighter {
         settings: &ScriptSettings,
         query: &str,
         insensitive: bool,
+        lua: bool,
     ) -> LayoutJob {
         let style = Style::new(p, font, settings, query, insensitive);
         let keywords = lsl_keywords::generation();
-        if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords {
+        if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords || self.lua != lua {
             self.keywords = keywords;
+            self.lua = lua;
             let mut job = LayoutJob {
                 text: source.into(),
                 ..Default::default()
             };
-            let tokens = tokens(source);
-            self.colors = color_literals(source, &tokens);
+            let tokens = tokens(source, lua);
+            // LSL's <r, g, b> literals; SLua writes vector(…) calls
+            self.colors = if lua { Vec::new() } else { color_literals(source, &tokens) };
             for token in tokens {
                 let format = TextFormat {
                     font_id: style.font.clone(),
@@ -520,7 +669,7 @@ mod tests {
     #[test]
     fn detects_only_literal_rgb_vectors_including_endpoints_and_numeric_notation() {
         let source = "// éあ <0,1,0>\nstring s = \"<1,0,0>\"; /* <0,0,1> */\nvector a = <0, 1, .5>; vector b = <+0.1, 1e-1, -0.0>; vector c = <0x0, 0X1, 1.>;\nvector d = <0.25, /*green*/ .75,\n 1>;";
-        let colors = color_literals(source, &tokens(source));
+        let colors = color_literals(source, &tokens(source, false));
         assert_eq!(
             colors.iter().map(|c| c.rgb).collect::<Vec<_>>(),
             [[0.0, 1.0, 0.5], [0.1, 0.1, -0.0], [0.0, 1.0, 1.0], [0.25, 0.75, 1.0]]
@@ -541,7 +690,7 @@ mod tests {
             "<0,0,0.5foo>",
             "#define COLOR <0,1,0>",
         ] {
-            assert!(color_literals(literal, &tokens(literal)).is_empty(), "{literal}");
+            assert!(color_literals(literal, &tokens(literal, false)).is_empty(), "{literal}");
         }
     }
 
@@ -556,6 +705,7 @@ mod tests {
             &ScriptSettings::default(),
             "0",
             false,
+            false,
         );
         assert_eq!(job.text, source);
         assert_eq!(highlighter.colors.len(), 2);
@@ -567,7 +717,11 @@ mod tests {
     }
 
     fn lex(source: &str) -> Vec<(&str, Kind)> {
-        let tokens = tokens(source);
+        lex_as(source, false)
+    }
+
+    fn lex_as(source: &str, lua: bool) -> Vec<(&str, Kind)> {
+        let tokens = tokens(source, lua);
         let mut cursor = 0;
         for token in &tokens {
             assert_eq!(token.bytes.start, cursor);
@@ -575,6 +729,40 @@ mod tests {
         }
         assert_eq!(cursor, source.len());
         tokens.into_iter().map(|t| (&source[t.bytes], t.kind)).collect()
+    }
+
+    #[test]
+    fn slua_reads_library_names_lua_comments_and_strings() {
+        let source = "local n = 0x_ff --[[ block\n]] -- line\n\
+            function greet(who) ll.Say(0, `hi {who}` .. 'x' .. [==[long]] ]==]) end\n\
+            if n then foo.bar(1_000.5e2) end";
+        let parsed = lex_as(source, true);
+        for (text, kind) in [
+            ("local", Kind::Keyword),
+            ("function", Kind::Keyword),
+            ("end", Kind::Keyword),
+            ("0x_ff", Kind::Number),
+            ("1_000.5e2", Kind::Float),
+            ("--[[ block\n]]", Kind::Comment),
+            ("-- line", Kind::Comment),
+            ("ll.Say", Kind::Function),
+            ("greet", Kind::Function),
+            ("`hi {who}`", Kind::String),
+            ("'x'", Kind::String),
+            ("[==[long]] ]==]", Kind::String),
+            ("foo", Kind::Variable),
+            ("bar", Kind::Function),
+            ("who", Kind::Variable),
+        ] {
+            assert!(parsed.contains(&(text, kind)), "{text}: {parsed:?}");
+        }
+        // the same words in LSL are not Lua's
+        assert!(lex("ll.Say(0, x)").contains(&("ll", Kind::Variable)));
+        assert_eq!(keyword("local", false), None);
+        // unclosed: a quote stops at its line, a long bracket at the end
+        assert!(lex_as("x = 'open\ny", true).contains(&("'open", Kind::String)));
+        assert!(lex_as("--[[ open", true).contains(&("--[[ open", Kind::Comment)));
+        assert!(lex_as("a[1]", true).contains(&("[", Kind::Plain)));
     }
 
     #[test]
@@ -599,10 +787,10 @@ mod tests {
             assert!(parsed.contains(&(text, kind)), "{text}: {parsed:?}");
             assert!(parsed.iter().filter(|(t, _)| *t == text).all(|(_, k)| *k == kind));
         }
-        assert_eq!(keyword("llsay"), None);
-        assert_eq!(keyword("rotation"), Some(Kind::Type));
-        assert_eq!(keyword("ALL_SIDES"), Some(Kind::Constant));
-        assert_eq!(keyword("timer"), Some(Kind::Event));
+        assert_eq!(keyword("llsay", false), None);
+        assert_eq!(keyword("rotation", false), Some(Kind::Type));
+        assert_eq!(keyword("ALL_SIDES", false), Some(Kind::Constant));
+        assert_eq!(keyword("timer", false), Some(Kind::Event));
     }
 
     #[test]
