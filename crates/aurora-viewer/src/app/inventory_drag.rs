@@ -1118,6 +1118,7 @@ mod tests {
                 export_supported: false,
                 group_chat_post_links: false,
                 max_link_children: None,
+                open_settings: None,
                 animated_object_max_tris: 0,
             },
         );
