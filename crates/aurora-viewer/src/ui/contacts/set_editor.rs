@@ -655,7 +655,15 @@ fn badge(ui: &mut egui::Ui, p: &Palette, st: &mut ContactsUi, v: &mut Visuals, c
     }
     if v.icon.is_some() {
         ui.add_space(10.0);
-        widgets::switch_labeled(ui, p, &mut v.replace_friend, aurora_i18n::tr!("set-editor-replace-friend"));
+        card(
+            ui,
+            p,
+            aurora_i18n::tr!("set-editor-replace-friend"),
+            aurora_i18n::tr!("set-editor-replace-friend-hint"),
+            |ui| {
+                widgets::switch(ui, p, &mut v.replace_friend);
+            },
+        );
     }
 }
 

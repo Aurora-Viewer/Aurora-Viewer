@@ -9652,8 +9652,6 @@ people-groups-pin = Épingler en haut de la liste
 people-groups-slurl = SLURL
 people-groups-leave = Quitter le groupe
 people-sets-gear = Options et importation
-people-sets-nickname-of = surnom · { $name }
-people-sets-non-friend = non-ami
 people-sets-people = { $count ->
     [one] { $count } personne
    *[other] { $count } personnes
@@ -13470,6 +13468,7 @@ set-editor-badge = Badge
 set-editor-no-badge = Aucun badge
 set-editor-badge-hint = Sur leur étiquette et leur marqueur
 set-editor-replace-friend = Utiliser à la place du symbole d’amitié par défaut
+set-editor-replace-friend-hint = Le badge du cercle prend la place du cœur sur les étiquettes des amis
 set-editor-colour-custom = Couleur personnalisée
 set-editor-marker-show = L’afficher
 set-editor-marker-off-hint = Masqué

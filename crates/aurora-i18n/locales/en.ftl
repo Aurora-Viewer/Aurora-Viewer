@@ -9656,8 +9656,6 @@ people-groups-pin = Pin at the top of the list
 people-groups-slurl = SLurl
 people-groups-leave = Leave the group
 people-sets-gear = Options and import
-people-sets-nickname-of = nickname · { $name }
-people-sets-non-friend = not a friend
 people-sets-people = { $count ->
     [one] { $count } person
    *[other] { $count } people
@@ -13465,6 +13463,7 @@ set-editor-badge = Badge
 set-editor-no-badge = No badge
 set-editor-badge-hint = On their nameplate and their marker
 set-editor-replace-friend = Use instead of default friendship symbol
+set-editor-replace-friend-hint = The set's badge takes the place of the heart on friends' nameplates
 set-editor-colour-custom = Custom colour
 set-editor-marker-show = Show it
 set-editor-marker-off-hint = Hidden

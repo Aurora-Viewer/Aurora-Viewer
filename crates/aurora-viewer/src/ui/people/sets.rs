@@ -26,7 +26,7 @@ use crate::ui::contacts::SetEdit;
 use crate::ui::context::{self, AvatarList};
 use crate::ui::{menu, widgets};
 use crate::world::World;
-use crate::world::contact_sets::{self, ContactSets, DN_REMOVED};
+use crate::world::contact_sets::{self, ContactSets};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -229,23 +229,16 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, quick_s
     });
 }
 
-/// The second line of a member: their nickname's real name, "not a
-/// friend", or their legacy name.
+/// The second line of a member: their legacy name (the friend's heart
+/// beside the name already tells friends apart).
 fn second_line(world: &World, id: &Uuid) -> String {
-    let legacy = world
+    world
         .social
         .avatar_names
         .get(id)
         .map(|n| crate::world::social::format_name(&n.legacy_first, &n.legacy_last))
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| world.social.name_of(id));
-    if world.contact_sets.pseudonym(id).is_some_and(|a| a != DN_REMOVED) {
-        aurora_i18n::tr!("people-sets-nickname-of", name = legacy)
-    } else if !world.social.is_friend(id) {
-        aurora_i18n::tr!("people-sets-non-friend").to_owned()
-    } else {
-        legacy
-    }
+        .unwrap_or_else(|| world.social.name_of(id))
 }
 
 /// The member's other sets, highest first: (name, colour).
