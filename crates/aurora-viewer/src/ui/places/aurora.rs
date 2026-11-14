@@ -18,10 +18,11 @@
 //! landmark are edited where they are shown.
 
 use super::model::{self, Catalog, Key, Place, PlacesSort};
-use super::{Confirm, PlacesAction, PlacesUi, history_sections, now_secs, slurl_at, system_folder};
+use super::{Confirm, PlacesAction, PlacesUi, history_offset, history_sections, now_secs, slurl_at, system_folder};
 use crate::theme::Palette;
 use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::{self, Ctx};
+use crate::ui::widgets::rail_row;
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::inventory::Inventory;
@@ -500,7 +501,8 @@ impl PlacesUi {
                 .collect(),
             Source::History => {
                 let mut out = Vec::new();
-                for (section, indices) in history_sections(history, "", now_secs()) {
+                let now = now_secs();
+                for (section, indices) in history_sections(history, "", now, history_offset(self.history_zone, now)) {
                     let mut first = true;
                     for i in indices {
                         let Some(place) = cat.place(Key::Visit(i), history) else { continue };
@@ -569,7 +571,7 @@ impl PlacesUi {
         tb.spacing_mut().item_spacing.x = 10.0;
         let sort_w = widgets::action_button_fit(&tb, "arrows-sort", self.sort_label(env.sort)) + 18.0;
         let w = (tb.available_width() - sort_w - 10.0).max(80.0);
-        widgets::pills::search_box(&mut tb, p, &mut self.filter, aurora_i18n::tr!("ui-places-search"), w);
+        widgets::clearable_search_box(&mut tb, p, &mut self.filter, aurora_i18n::tr!("ui-places-search"), w);
         self.sort_button(&mut tb, p, c.world, env.sort, actions);
 
         let body = Rect::from_min_max(Pos2::new(full.left(), bar.bottom()), full.max);
@@ -618,6 +620,7 @@ impl PlacesUi {
             }
             Source::History => {
                 menu::check(ui, p, "history", aurora_i18n::tr!("ui-places-sort-newest"), true, false);
+                super::history_zone_menu(ui, p, self.history_zone, actions);
                 menu::separator(ui, p);
                 if menu::item_if(
                     ui,
@@ -820,7 +823,18 @@ impl PlacesUi {
                 Some((s, ..)) => world.place_snapshots.snapshot(s, &world.profiles.parcels).unwrap_or_default(),
                 None => place.thumbnail,
             };
-            let out = place_row(ui, p, c, place, selected, snapshot, self.aurora.source == Source::Favorites, wide);
+            let out = place_row(
+                ui,
+                p,
+                c,
+                place,
+                selected,
+                snapshot,
+                self.aurora.source == Source::Favorites,
+                wide,
+                self.history_zone,
+            );
+            widgets::reveal_search_selection(ui, &out.resp, selected);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
@@ -1260,7 +1274,10 @@ impl PlacesUi {
         if !link {
             let visit = place.last_visit.map_or_else(
                 || aurora_i18n::tr!("ui-places-never-visited").to_owned(),
-                |d| model::visit_label(d, now_secs()),
+                |d| {
+                    let now = now_secs();
+                    model::visit_label(d, now, history_offset(self.history_zone, now))
+                },
             );
             kv(ui, p, aurora_i18n::tr!("ui-places-last-visit"), &visit);
             ui.add_space(6.0);
@@ -1493,7 +1510,7 @@ impl PlacesUi {
         }
         let w = ui.available_width();
         // in a row: the field takes the height of its line only
-        ui.horizontal(|ui| widgets::pills::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
+        ui.horizontal(|ui| widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
         ui.add_space(8.0);
         // the three tabs
         let favorites = model::favorites(cat, env.favorites).len();
@@ -1720,44 +1737,6 @@ fn kv(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
     });
 }
 
-/// A row of the rail: icon, name, count; `depth` indents a sub-folder.
-#[allow(clippy::too_many_arguments)]
-fn rail_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    icon: &str,
-    tint: Color32,
-    label: &str,
-    count: Option<usize>,
-    on: bool,
-    depth: usize,
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    if on {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() {
-        ui.painter().rect_filled(rect, radius, p.raised);
-    }
-    let x = rect.left() + 10.0 + depth as f32 * 14.0;
-    paint_icon(
-        ui.painter(),
-        icon,
-        Rect::from_center_size(Pos2::new(x + 8.0, rect.center().y), Vec2::splat(16.0)),
-        if on && tint == p.muted { p.violet_pale } else { tint },
-    );
-    let num = count.map(|n| line(ui, &n.to_string(), 11.5, p.muted, false, 40.0));
-    let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
-    let ink = if tint == p.violet_light { tint } else { p.ink };
-    let g = line(ui, label, 13.0, ink, false, rect.right() - num_w - x - 25.0);
-    widgets::paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
-    if let Some(g) = num {
-        let w = g.size().x;
-        widgets::paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
-    }
-    resp
-}
-
 /// The favourite star at a row's right end: true when clicked.
 fn star(ui: &mut egui::Ui, p: &Palette, place: &Place) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
@@ -1800,7 +1779,10 @@ fn place_row(
     picture_id: Uuid,
     grip: bool,
     wide: bool,
+    zone: crate::settings::HistoryZone,
 ) -> RowOut {
+    let now = now_secs();
+    let offset = history_offset(zone, now);
     let subtitle = if wide {
         let region = region_line(place, &c.world.map);
         if place.is_landmark() {
@@ -1815,7 +1797,7 @@ fn place_row(
             place.region.clone()
         };
         match place.last_visit {
-            Some(d) => format!("{region} · {}", model::visit_label(d, now_secs())),
+            Some(d) => format!("{region} · {}", model::visit_label(d, now, offset)),
             None => region,
         }
     };
@@ -1845,7 +1827,7 @@ fn place_row(
                 |ui| {
                     if let Some(d) = place.last_visit {
                         ui.add(
-                            egui::Label::new(egui::RichText::new(model::visit_label(d, now_secs())).size(12.0).color(p.muted)).truncate(),
+                            egui::Label::new(egui::RichText::new(model::visit_label(d, now, offset)).size(12.0).color(p.muted)).truncate(),
                         );
                     }
                 },

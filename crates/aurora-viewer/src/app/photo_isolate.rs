@@ -36,7 +36,8 @@ impl App {
     /// Every frame, before it is laid out.
     pub(super) fn photo_isolate_frame(&mut self, renderer: &mut Renderer) {
         self.photo_isolate_demo(renderer);
-        let open = self.panels.snapshot;
+        // (the outfit's auto portrait isolates as the photo mode does)
+        let open = self.panels.snapshot || self.outfit_portrait_studio();
         let agent = self.world.agent_id;
         let iso = &mut self.world.photo_isolation;
         iso.set_own(agent);

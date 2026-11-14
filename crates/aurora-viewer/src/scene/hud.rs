@@ -175,8 +175,9 @@ impl Scene {
         )
     }
 
-    /// Press target and depth for HUD media and object actions. Plain
-    /// alpha-zero panels let the next HUD surface take the press.
+    /// Press target and depth for HUD media and object actions. Invisible
+    /// buttons take the press; a plain alpha-zero media panel lets the next
+    /// HUD surface take it.
     pub fn hud_click_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
         self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), false, picking::FacePick::HudClick)
     }

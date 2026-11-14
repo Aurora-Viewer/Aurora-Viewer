@@ -73,6 +73,7 @@ impl Session<'_> {
                 ids,
                 refresh,
             } => self.group_bans(*group, *action, ids.clone(), *refresh),
+            NetCommand::BanInGroups { agent, groups, ban } => self.ban_in_groups(*agent, groups.clone(), *ban),
             NetCommand::GroupRoleUpdate { group, updates } => {
                 for m in groups::role_update_messages(self.agent_id(), self.session_id(), *group, updates) {
                     self.send_main(&m, true);
@@ -184,6 +185,46 @@ impl Session<'_> {
                     }
                 }
                 Err(e) => log::warn!("group bans: {e}"),
+            }
+        });
+    }
+
+    /// LLGroupActions::banFromAllGroupsCoro: one ban action per group, half a
+    /// second apart so that it never looks like a request flood, each answer
+    /// an event. Without the capability every group fails at once, so the
+    /// report still comes (the Legacy Viewer only logs it).
+    fn ban_in_groups(&mut self, agent: uuid::Uuid, groups: Vec<uuid::Uuid>, ban: bool) {
+        let events = self.sh.events.clone();
+        let Some(cap) = self.main_cap("GroupAPIv1") else {
+            log::warn!("group bans: no GroupAPIv1 capability, cannot change group bans");
+            for group in groups {
+                let _ = events.send(NetEvent::GroupBanInGroup {
+                    group,
+                    agent,
+                    ban,
+                    ok: false,
+                });
+            }
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let action = if ban { groups::ban::CREATE } else { groups::ban::DELETE };
+        let body = groups::ban_body(action, &[agent]);
+        tokio::spawn(async move {
+            for (i, group) in groups.into_iter().enumerate() {
+                if i > 0 {
+                    tokio::time::sleep(groups::BAN_IN_GROUPS_PAUSE).await;
+                }
+                let url = format!("{cap}?group_id={group}");
+                let ok = match crate::caps::post_llsd(&http, &url, &body).await {
+                    Ok(_) => true,
+                    Err(e) => {
+                        let what = if ban { "banning" } else { "unbanning" };
+                        log::warn!("group {group}: {what} {agent} failed ({e})");
+                        false
+                    }
+                };
+                let _ = events.send(NetEvent::GroupBanInGroup { group, agent, ban, ok });
             }
         });
     }

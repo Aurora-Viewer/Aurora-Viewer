@@ -86,6 +86,9 @@ pub struct WorldMapUi {
     pub want_folders: HashSet<Uuid>,
     /// AURORA_DEMO_MAP=legacy: the side panel without touching the setting.
     pub demo_style: Option<WorldMapStyle>,
+    /// The teleport history's days in the drawer: the zone of Places
+    /// (`tp_history_zone`), set by the app before each frame.
+    pub history_zone: crate::settings::HistoryZone,
 }
 
 impl Default for WorldMapUi {
@@ -108,6 +111,7 @@ impl Default for WorldMapUi {
             wanted_pics: HashSet::new(),
             want_folders: HashSet::new(),
             demo_style: None,
+            history_zone: crate::settings::HistoryZone::default(),
         }
     }
 }
@@ -650,7 +654,8 @@ impl WorldMapUi {
                 None
             };
             let teleport = resp.double_clicked() && opts.world_double_click_tp;
-            let z = world.agent.position.z;
+            // a god arrives at 200 m (GODLY_TELEPORT_HEIGHT, LLWorldMapView)
+            let z = if world.god_level > 0 { 200.0 } else { world.agent.position.z };
             match item.filter(|h| !matches!(h.1, ItemKind::Infohub | ItemKind::Telehub)) {
                 Some((_, kind, i)) => {
                     let ty = item_type(kind);
@@ -922,6 +927,7 @@ impl WorldMapUi {
         ui.horizontal(|ui| {
             let r = widgets::search_field(
                 ui,
+                p,
                 &mut self.search,
                 aurora_i18n::tr!("ui-worldmap-regions-by-name"),
                 ui.available_width() - 84.0,
@@ -977,7 +983,7 @@ impl WorldMapUi {
                                 } else {
                                     format!("{name}  ·  {}", access_label(*access))
                                 };
-                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                                widgets::search_list_item(ui, sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
                             })
                             .inner;
                         if clicked {

@@ -118,7 +118,10 @@ impl AvatarPicker {
                             .color(p.muted),
                     );
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(ui.available_width() - 60.0));
+                        let r = {
+                            let width = ui.available_width();
+                            crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| edit.desired_width(width - 60.0))
+                        };
                         let go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         // LLFloaterAvatarPicker::onBtnFind: at least 3 characters
                         ui.add_enabled_ui(self.query.trim().chars().count() >= 3, |ui| {
@@ -173,6 +176,7 @@ impl AvatarPicker {
                             let sel = self.selected.contains(id);
                             // the whole row is selected, like LLScrollListCtrl
                             let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
+                            widgets::reveal_search_selection(ui, &r, self.selected.last() == Some(id));
                             if sel {
                                 ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(0.35));
                             } else if r.hovered() {

@@ -439,8 +439,10 @@ impl MediaManager {
                 };
                 desired.insert(key);
                 let may_navigate = entry.may_navigate(you_own);
+                let may_control = entry.may_control(you_own);
                 if let Some(m) = self.impls.iter_mut().find(|m| m.key == key) {
                     m.may_navigate = may_navigate;
+                    m.may_control = may_control;
                     if m.entry.as_ref() != Some(entry) {
                         let old_url = m.entry.as_ref().map(|e| e.url().to_string()).unwrap_or_default();
                         let (width, height) = (entry.width_pixels as i32, entry.height_pixels as i32);
@@ -470,6 +472,7 @@ impl MediaManager {
                     && ((f.autoplay && self.tentative_autoplay) || (om.hud && f.settings.autoplay_huds) || self.force_autoplay);
                 m.entry = Some(entry.clone());
                 m.may_navigate = may_navigate;
+                m.may_control = may_control;
                 log::info!(
                     "media: {} face {fi}: {} (auto play {}, {}×{}, interact {}, first click {})",
                     id,
@@ -498,7 +501,7 @@ impl MediaManager {
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
     /// unloaded, a refused one is no longer wanted. Media on items we wear
-    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// (whoever made them) is not asked about (`filter_trust_own_worn`). A
     /// script, a file of this computer or a browser page never loads, with
     /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
@@ -1233,7 +1236,7 @@ mod tests {
                 o.owner_id = owner;
                 o.update_flags = if owned { OBJECT_YOU_OWNER } else { 0 };
                 for (interact, expected) in [(entry::PERM_OWNER, owned), (entry::PERM_ANYONE, true), (0, false)] {
-                    for controls in [0, 7] {
+                    for (controls, control_expected) in [(0, false), (entry::PERM_OWNER, owned), (entry::PERM_ANYONE, true), (7, true)] {
                         m.set_object_media(
                             screen,
                             ObjectMediaData {
@@ -1249,10 +1252,14 @@ mod tests {
                         );
                         track(&mut m, &mut w);
                         reconcile(&mut m, &w);
+                        let media = m.find(&key).expect("media");
                         assert_eq!(
-                            m.find(&key).expect("media").may_navigate,
-                            expected,
+                            media.may_navigate, expected,
                             "owned={owned}, owner={owner}, interact={interact}, controls={controls}"
+                        );
+                        assert_eq!(
+                            media.may_control, control_expected,
+                            "control owned={owned}, owner={owner}, interact={interact}, controls={controls}"
                         );
                     }
                 }
