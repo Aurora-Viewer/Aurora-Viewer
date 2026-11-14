@@ -131,6 +131,8 @@ mod god_mode_tests;
 #[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
+mod object_name_tests;
+#[cfg(test)]
 mod toasts_tests;
 
 use crate::agent::AgentState;
@@ -312,6 +314,19 @@ pub struct ChatLine {
     pub kind: ChatKind,
     pub source: Uuid,
     pub origin: Origin,
+}
+
+/// The name an object speaks under in the nearby chat. A name of nothing but
+/// spaces is an empty one, and with `mark` (FSMarkObjects) it becomes "(no
+/// name)": a script that clears its name can no longer write a line that
+/// reads like a resident's. process_chat_from_simulator
+/// (indra/newview/llviewermessage.cpp, FIRE-2434).
+pub fn object_speaker_name(name: String, mark: bool) -> String {
+    match name.trim().is_empty() {
+        false => name,
+        true if mark => aurora_i18n::tr!("world-chat-unnamed-object").to_owned(),
+        true => String::new(),
+    }
 }
 
 /// Drawn speed (m/s) under which our walk stops after a release, with
@@ -744,6 +759,9 @@ pub struct World {
     /// "Teleport completed from <SLURL>" in nearby chat after a teleport to
     /// another region (FSShowBackSLURL, from the settings).
     pub show_back_slurl: bool,
+    /// An object with an empty name speaks as "(no name)" (FSMarkObjects,
+    /// from the settings; `object_speaker_name`).
+    pub mark_unnamed_objects: bool,
     /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
     /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
     /// there) and said on its arrival.
@@ -1036,6 +1054,7 @@ impl World {
             collisions: Default::default(),
             fly_after_teleport: false,
             show_back_slurl: true,
+            mark_unnamed_objects: false,
             tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),
@@ -4589,6 +4608,7 @@ impl World {
         // IDEVO: avatars by their complete name ("Jane Doe (janedoe)")
         let from = match c.source_type {
             ChatSourceType::Agent => self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name),
+            ChatSourceType::Object => object_speaker_name(c.from_name, self.mark_unnamed_objects),
             _ => c.from_name,
         };
         // a resident's line that mentions the agent

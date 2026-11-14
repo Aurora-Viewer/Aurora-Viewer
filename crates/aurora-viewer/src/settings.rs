@@ -874,6 +874,10 @@ pub struct Settings {
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
+    /// An object with an empty name speaks in the nearby chat as "(no
+    /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
+    /// off; Preferences > Chat).
+    pub mark_unnamed_objects: bool,
     /// The local chat bar keeps the keyboard after a message is sent; Enter
     /// on the empty bar gives it back to the world (the Legacy Viewer's
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
@@ -2244,6 +2248,7 @@ impl Default for Settings {
             script_errors_channel: 1,
             compact_automated_chat: false,
             compact_im_system_lines: false,
+            mark_unnamed_objects: false,
             chat_keep_focus: true,
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
