@@ -22,6 +22,16 @@ pub enum MarkerAnchor {
     Body,
 }
 
+/// Which floating texts get a background (FSHudTextShowBackground: off,
+/// the hovered object's only, all).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FloatingTextBackground {
+    #[default]
+    Off,
+    Hovered,
+    All,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -140,6 +150,27 @@ pub enum ClockZone {
     #[default]
     Slt,
     Local,
+}
+
+/// The time zone of the teleport history's days and hours (the Legacy
+/// Viewer's FSTPHistoryTZ, SLT by default): UTC, Second Life time (US
+/// Pacific) or the computer's own.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HistoryZone {
+    Utc,
+    #[default]
+    Slt,
+    Local,
+}
+
+/// A saved history zone: anything unknown falls back to SLT rather than
+/// failing the whole file.
+fn history_zone_or_slt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HistoryZone, D::Error> {
+    Ok(match String::deserialize(d)?.as_str() {
+        "Utc" => HistoryZone::Utc,
+        "Local" => HistoryZone::Local,
+        _ => HistoryZone::Slt,
+    })
 }
 
 /// The hours of the bars' clock: as the system's regional format (Windows'
@@ -713,6 +744,10 @@ pub struct Settings {
     pub inspect_columns: u32,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
+    /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
+    /// in its menu (`ui/places.rs`).
+    #[serde(deserialize_with = "history_zone_or_slt")]
+    pub tp_history_zone: HistoryZone,
     /// Ask before a teleport to a landmark, a history entry or a place link
     /// (TeleportFromLandmark, TeleportToHistoryEntry, TeleportViaSLAPP; the
     /// box "Do not show again" of the confirmation turns it off). Firestorm
@@ -939,6 +974,18 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// The objects' floating texts (llSetText) fade from this far from the
+    /// camera (FSHudTextFadeDistance, 8 m) over this range
+    /// (FSHudTextFadeRange, 4 m).
+    pub floating_text_fade_distance: f32,
+    pub floating_text_fade_range: f32,
+    /// A black or white background behind them (FSHudTextShowBackground,
+    /// off), this opaque (FSHudTextBackgroundOpacity, 0.75).
+    pub floating_text_background: FloatingTextBackground,
+    pub floating_text_background_opacity: f32,
+    /// The hovered object's text in front of everything, opaque and unfaded
+    /// (FSHudTextUseHoverHighlight, off).
+    pub floating_text_hover_highlight: bool,
     /// Opacity of the background of the window with the focus
     /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
     pub window_opacity_active: f32,
@@ -2191,6 +2238,7 @@ impl Default for Settings {
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
+            tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
             warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
@@ -2278,6 +2326,11 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            floating_text_fade_distance: 8.0,
+            floating_text_fade_range: 4.0,
+            floating_text_background: FloatingTextBackground::Off,
+            floating_text_background_opacity: 0.75,
+            floating_text_hover_highlight: false,
             window_opacity_active: 1.0,
             window_opacity_inactive: 1.0,
             conversations_opacity: 1.0,
@@ -3354,6 +3407,11 @@ impl Settings {
         } else {
             0.5
         };
+        // the ranges of the Legacy Viewer's spinners (panel_preferences_UI.xml)
+        let finite = |v: f32, lo: f32, hi: f32, default: f32| if v.is_finite() { v.clamp(lo, hi) } else { default };
+        self.floating_text_fade_distance = finite(self.floating_text_fade_distance, 0.0, 64.0, 8.0);
+        self.floating_text_fade_range = finite(self.floating_text_fade_range, 0.25, 32.0, 4.0);
+        self.floating_text_background_opacity = finite(self.floating_text_background_opacity, 0.0, 1.0, 0.75);
         for opacity in [
             &mut self.window_opacity_active,
             &mut self.window_opacity_inactive,
@@ -4135,6 +4193,25 @@ mod tests {
         })
         .expect("settings json");
         assert_eq!(super::language_in(Some(&saved)), "ja");
+    }
+
+    /// The teleport history's zone: SLT by default (FSTPHistoryTZ), each
+    /// choice kept, anything unknown back to SLT with the rest of the file.
+    #[test]
+    fn the_history_zone_is_slt_unless_chosen() {
+        let read = |json: &str| serde_json::from_str::<super::Settings>(json).expect("settings");
+        assert_eq!(read("{}").tp_history_zone, super::HistoryZone::Slt);
+        for zone in [super::HistoryZone::Utc, super::HistoryZone::Slt, super::HistoryZone::Local] {
+            let saved = serde_json::to_string(&super::Settings {
+                tp_history_zone: zone,
+                ..Default::default()
+            })
+            .expect("settings json");
+            assert_eq!(read(&saved).tp_history_zone, zone);
+        }
+        let odd = read(r#"{"tp_history_zone":"Mars","landmarks_by_date":false}"#);
+        assert_eq!(odd.tp_history_zone, super::HistoryZone::Slt);
+        assert!(!odd.landmarks_by_date);
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name
