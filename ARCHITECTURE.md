@@ -111,7 +111,7 @@ original snapshot, so edits made during saving stay dirty and switching presets 
 not let an older reply replace the new selection. `notecards/save_picker.rs` presents
 one Save selector with an editable name and personal interfaces for replacement; existing
 cards reuse the shared COPY/MODIFY preview rule and native content-update command.
-The selected-interface header and Save/Delete actions stay above the preset section.
+The selected-interface header and Save/Delete actions stay above the preset section. Save is present only for an unsaved interface; a clean personal interface retains Delete. The actions share the selected-interface row, reserving their width and eliding long names. The customization heading has no separate Finish button: the normal floater close path ends editing. The draggable divider sits beside Main/Advanced, outside search filtering.
 `notecards/removal.rs` moves only a selected personal notecard to Trash through the
 shared inventory mutation rules, including protected entries and the existing delete-confirmation preference. Only its matching
 successful acknowledgement clears that selected identity; the displayed layout stays

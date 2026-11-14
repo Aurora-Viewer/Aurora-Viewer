@@ -2754,15 +2754,12 @@ fn opening_and_finishing_interface_editing_exposes_empty_targets_without_saving_
                 > 300.0
         );
     }
-    let done = bench
-        .text
-        .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-done"))
-        .expect("finish editing")
-        .1
-        .center();
-    bench.pointer(done, Some(true));
-    bench.pointer(done, Some(false));
+    assert!(
+        !bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-edit-done")),
+        "the redundant Finish button is absent"
+    );
+    crate::ui::widgets::close_floater(&bench.ctx, editor::WINDOW);
+    bench.frame(Vec::new());
     assert!(!bench.state.open);
     for _ in 0..4 {
         bench.frame(Vec::new());

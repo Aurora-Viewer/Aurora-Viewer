@@ -162,7 +162,6 @@ impl ToolbarUi {
         super::blocks::show(ctx, p, self, settings, layout);
         let dragged = egui::DragAndDrop::payload::<Drag>(ctx);
         let mut open = self.open;
-        let mut done = false;
         let mut window = widgets::Floater::new(
             WINDOW,
             aurora_i18n::tr!("toolbar-title"),
@@ -175,29 +174,39 @@ impl ToolbarUi {
         window.show(ctx, p, &mut open, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 let name = source.as_ref().map_or(aurora_i18n::tr!("toolbar-preset-custom"), |source| {
                     self.notecards.preset_label(source)
                 });
-                ui.label(aurora_i18n::tr!("toolbar-current-preset", name = name));
-                if dirty {
-                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-preset-unsaved")).color(p.violet_light));
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled_ui(!self.notecards.busy(), |ui| {
-                        widgets::action_button(
-                            ui,
-                            p,
-                            "device-floppy-filled",
-                            aurora_i18n::tr!("common-save"),
-                            widgets::ActionKind::Flat,
-                            Vec2::new(150.0, 30.0),
-                        )
-                    })
-                    .inner
-                    .clicked()
+                let caption = aurora_i18n::tr!("toolbar-current-preset", name = name);
+                let personal = matches!(source.as_ref(), Some(super::selection::Source::Personal { .. }));
+                let spacing = ui.spacing().item_spacing.x;
+                let actions_width = if dirty { 150.0 + spacing } else { 0.0 } + if personal { 130.0 + spacing } else { 0.0 };
+                let name_width = (ui.available_width() - actions_width).max(0.0);
+                let (name_rect, name_response) = ui.allocate_exact_size(Vec2::new(name_width, 30.0), egui::Sense::hover());
+                widgets::paint_elided(
+                    ui,
+                    caption.as_str(),
+                    egui::pos2(name_rect.left(), name_rect.center().y),
+                    name_rect.width(),
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    p.ink,
+                );
+                name_response.on_hover_text(caption);
+                if dirty
+                    && ui
+                        .add_enabled_ui(!self.notecards.busy(), |ui| {
+                            widgets::action_button(
+                                ui,
+                                p,
+                                "device-floppy-filled",
+                                aurora_i18n::tr!("common-save"),
+                                widgets::ActionKind::Flat,
+                                Vec2::new(150.0, 30.0),
+                            )
+                        })
+                        .inner
+                        .clicked()
                 {
                     self.notecards.open_save(source.as_ref());
                 }
@@ -222,6 +231,9 @@ impl ToolbarUi {
                     }
                 }
             });
+            if dirty {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-preset-unsaved")).color(p.violet_light));
+            }
             ui.add_space(4.0);
             // Keep the command controls and one catalogue row reachable on short windows.
             let preset_height = (ui.available_height() - 290.0).max(48.0);
@@ -255,37 +267,8 @@ impl ToolbarUi {
                     });
                     self.notecards.presets(ui, p, settings.locked, source.as_ref());
                 });
-            done = super::edit_mode::header(ui, p, settings);
-            // Structural tools stay outside the searchable command catalogue.
-            let command = catalogue::find(super::structure::DIVIDER).expect("built-in divider");
-            let divider = ToolButton {
-                command: command.id.into(),
-                icon: command.icon.into(),
-                tooltip: String::new(),
-            };
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, TILE_H), egui::Sense::hover());
-            let response = tile(
-                ui,
-                p,
-                rect,
-                &divider,
-                label(&divider),
-                if settings.locked { Tile::Placed } else { Tile::Free },
-                false,
-            );
-            ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_catalogue", &divider.command)), rect));
-            if !settings.locked {
-                if response.drag_started_by(egui::PointerButton::Primary) {
-                    response.dnd_set_drag_payload(Drag {
-                        button: divider.clone(),
-                        from: None,
-                        members: Vec::new(),
-                    });
-                }
-                if response.clicked() {
-                    self.pending = Some(Edit::Insert(Bar::Bottom, divider, settings.buttons(layout).len()));
-                }
-            }
+            ui.add_space(8.0);
+            super::edit_mode::header(ui, p, settings);
             let all = super::catalogue_view::entries(layout, settings, &super::commands::catalogue(ctx));
             let count = all.iter().filter(|entry| entry.in_view(self.advanced_catalogue, "")).count();
             let hint = aurora_i18n::tr!("toolbar-search", count = count.to_string());
@@ -293,18 +276,51 @@ impl ToolbarUi {
                 widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
             });
             let searching = !self.search.trim().is_empty();
-            ui.add_enabled_ui(!searching, |ui| {
-                let mut selected = usize::from(self.advanced_catalogue);
-                if widgets::segmented(
+            ui.horizontal_wrapped(|ui| {
+                ui.add_enabled_ui(!searching, |ui| {
+                    let mut selected = usize::from(self.advanced_catalogue);
+                    if widgets::segmented(
+                        ui,
+                        p,
+                        &mut selected,
+                        &[
+                            (aurora_i18n::tr!("toolbar-section-main"), true),
+                            (aurora_i18n::tr!("toolbar-section-advanced"), true),
+                        ],
+                    ) {
+                        self.advanced_catalogue = selected == 1;
+                    }
+                });
+                ui.add_space(16.0);
+                // Structural tools stay outside the searchable command catalogue.
+                let command = catalogue::find(super::structure::DIVIDER).expect("built-in divider");
+                let divider = ToolButton {
+                    command: command.id.into(),
+                    icon: command.icon.into(),
+                    tooltip: String::new(),
+                };
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(180.0, TILE_H), egui::Sense::hover());
+                let response = tile(
                     ui,
                     p,
-                    &mut selected,
-                    &[
-                        (aurora_i18n::tr!("toolbar-section-main"), true),
-                        (aurora_i18n::tr!("toolbar-section-advanced"), true),
-                    ],
-                ) {
-                    self.advanced_catalogue = selected == 1;
+                    rect,
+                    &divider,
+                    label(&divider),
+                    if settings.locked { Tile::Placed } else { Tile::Free },
+                    false,
+                );
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_catalogue", &divider.command)), rect));
+                if !settings.locked {
+                    if response.drag_started_by(egui::PointerButton::Primary) {
+                        response.dnd_set_drag_payload(Drag {
+                            button: divider.clone(),
+                            from: None,
+                            members: Vec::new(),
+                        });
+                    }
+                    if response.clicked() {
+                        self.pending = Some(Edit::Insert(Bar::Bottom, divider, settings.buttons(layout).len()));
+                    }
                 }
             });
             if searching {
@@ -448,7 +464,7 @@ impl ToolbarUi {
                     }
                 });
         });
-        self.open = open && !done;
+        self.open = open;
         if !self.open {
             self.selected = None;
         }

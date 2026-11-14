@@ -201,4 +201,60 @@ mod tests {
         );
         assert_eq!(view.source(Some(&selection)), Some(Source::Custom));
     }
+    #[test]
+    fn toolbar_save_is_visible_only_after_editing_and_disappears_after_reverting() {
+        fn contains(shape: &egui::Shape, wanted: &str) -> bool {
+            match shape {
+                egui::Shape::Text(text) => text.galley.text() == wanted,
+                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| contains(shape, wanted)),
+                _ => false,
+            }
+        }
+        let layout = Layout::default();
+        for personal in [false, true] {
+            let mut selected = Selection::builtin(Preset::OldSchool, &layout);
+            if personal {
+                selected.source = Source::Personal {
+                    item: Uuid::new_v4(),
+                    owner: Uuid::new_v4(),
+                    name: "My interface".into(),
+                };
+            }
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let mut state = super::super::ToolbarUi {
+                open: true,
+                islands: true,
+                ..Default::default()
+            };
+            for edited in [false, true, false] {
+                let mut toolbar = selected.baseline.toolbar.clone();
+                if edited {
+                    toolbar.address_visible = Some(!toolbar.address_visible.unwrap_or(true));
+                }
+                let mut visible = false;
+                for _ in 0..4 {
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            state.show(ui.ctx(), &p, &layout, &toolbar, Some(&selected));
+                        },
+                    );
+                    visible = output
+                        .shapes
+                        .iter()
+                        .any(|shape| contains(&shape.shape, aurora_i18n::tr!("common-save")));
+                }
+                assert_eq!(
+                    visible, edited,
+                    "personal={personal}; an untouched or reverted interface has no Save action"
+                );
+            }
+        }
+    }
 }
