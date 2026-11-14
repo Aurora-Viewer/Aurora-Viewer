@@ -5860,7 +5860,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
-| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
+| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -8175,7 +8175,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
   by frame.
 
-- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
+- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
   llRegionSayTo with a link, then two notices (a friend online, a
@@ -8187,7 +8187,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   with the icon of their kind; the nearby chat's unread count counts the
   two residents' lines only. Compare a run without `:on`: the same lines in
   the style's usual look. Hover a cube: the object's name; click it or the
-  name: the object's inspector (its menu: inspect, ignore). `:im` shows the
+  name: the object's inspector (its menu: inspect, ignore). `:inspect` opens
+  the first object's information window automatically: fixed title, Object/name,
+  owner and location, with Show on map, Block object, Block owner and Close.
+  Use `compact:on:inspect` with `--language en`, `fr` or `ja` to compare labels
+  and the wrapping action row; the owner is a synthetic resident of the demo.
+  The inspector opens at frame 760; use `AURORA_CAPTURE_FRAMES=1800` for a
+  capture after the loading fade.
+  `:im` shows the
   friend's conversation instead, with a call's and an automatic reply's
   lines: unchanged with `:on` alone, compact with their icons (a phone, the
   "i") with `:on:imlines` (the sub-option "Compact the conversations'

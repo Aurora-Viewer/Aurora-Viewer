@@ -7,7 +7,7 @@
 //! window closed). `on` turns the compact object rows on for the run,
 //! nothing saved; `im` shows the friend's conversation instead, with a
 //! call's and an automatic reply's lines, and `imlines` turns their
-//! sub-option on.
+//! sub-option on. `inspect` opens the first object's inspector for captures.
 
 use crate::settings::ChatStyle;
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetEvent};
@@ -25,6 +25,8 @@ pub struct Scene {
     pub im: bool,
     /// The conversations' system lines compacted too, for the run.
     pub im_lines: bool,
+    /// Open the greeter's inspector for a visual check.
+    pub inspect: bool,
 }
 
 pub fn scene() -> Option<Scene> {
@@ -47,6 +49,7 @@ fn parse(v: &str) -> Option<Scene> {
         on: flags.contains(&"on"),
         im: flags.contains(&"im"),
         im_lines: flags.contains(&"imlines"),
+        inspect: flags.contains(&"inspect"),
     })
 }
 
@@ -78,6 +81,18 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
     let normal = ChatType::Normal;
     let stranger = Uuid::from_u128(0x0B1E_C7C4_0000_0000_0000_0000_0000_0001);
     vec![
+        NetEvent::DisplayNames {
+            names: vec![aurora_net::AvatarNameData {
+                id: stranger,
+                username: "demo.owner".into(),
+                display_name: tr!("demo-object-chat-owner").into(),
+                legacy_first: "Demo".into(),
+                legacy_last: "Owner".into(),
+                ..Default::default()
+            }],
+            bad_ids: Vec::new(),
+            max_age: None,
+        },
         say(
             super::DEMO_NOVA,
             Uuid::nil(),
@@ -196,6 +211,7 @@ mod tests {
                 on,
                 im: false,
                 im_lines: false,
+                inspect: false,
             })
         };
         assert_eq!(parse("aurora"), scene(Some(ChatStyle::Aurora), false));
@@ -207,5 +223,6 @@ mod tests {
         assert_eq!(parse("nothing"), None);
         let im = parse("aurora:on:im:imlines").expect("a scene");
         assert!(im.on && im.im && im.im_lines);
+        assert!(parse("compact:on:inspect").unwrap().inspect);
     }
 }

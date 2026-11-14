@@ -439,6 +439,11 @@ pub enum CtxAction {
         id: Uuid,
         name: String,
     },
+    /// Block the resident or group owning a remote object, never toggle it.
+    BlockObjectOwner {
+        owner: Uuid,
+        group_owned: bool,
+    },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
     /// "Inspect": the window of the object's prims (Floater.Show "inspect").
