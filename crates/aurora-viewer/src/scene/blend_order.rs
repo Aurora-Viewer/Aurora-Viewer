@@ -299,7 +299,9 @@ fn mode_named() -> bool {
 }
 
 /// The user's order of the blended faces (`Settings::blend_order`): 0
-/// sorted, 1 to 4 the exact order from its lightest precision to its finest.
+/// sorted, 1 to 4 the exact order from its lightest precision to its finest,
+/// 5 the stochastic transparency (aurora-render oit_stochastic.rs), which
+/// draws the faces of the sorted order's lists.
 static USER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Whether the renderer can draw the exact order now: not under MSAA, nor
@@ -354,7 +356,7 @@ pub fn depth_mode() -> RiggedBlendDepth {
 /// The order of this run: the one AURORA_RIGGED_BLEND names, else the exact
 /// order when the user's setting asks for it.
 fn chosen_mode(mode: Mode, named: bool, user: u8) -> Mode {
-    if !named && user > 0 { Mode::Exact } else { mode }
+    if !named && (1..=4).contains(&user) { Mode::Exact } else { mode }
 }
 
 /// The exact order where it cannot be drawn: the sorted one.
@@ -550,6 +552,8 @@ mod tests {
         assert_eq!(chosen_mode(Mode::Layers, false, 0), Mode::Layers);
         assert_eq!(chosen_mode(Mode::Layers, false, 1), Mode::Exact);
         assert_eq!(chosen_mode(Mode::Layers, false, 4), Mode::Exact);
+        // the stochastic transparency draws the lists of the sorted order
+        assert_eq!(chosen_mode(Mode::Layers, false, 5), Mode::Layers);
         assert_eq!(chosen_mode(Mode::Layers, true, 4), Mode::Layers);
         assert_eq!(chosen_mode(Mode::Split, true, 4), Mode::Split);
         assert_eq!(chosen_mode(Mode::ExactAlternate, true, 0), Mode::ExactAlternate);

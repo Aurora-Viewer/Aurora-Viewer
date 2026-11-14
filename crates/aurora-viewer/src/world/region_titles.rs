@@ -708,6 +708,44 @@ mod tests {
         assert_eq!(t.selected_role(&G1), None);
     }
 
+    /// An empty title is a real role. Arrival matches it by role once the
+    /// list is known, and by the empty string before that.
+    #[test]
+    fn an_empty_title_is_kept_and_a_region_rule_matches_it_by_role() {
+        let mut t = RegionTitles::default();
+        t.saved.assign("North", target(G1, R1, ""));
+        t.request_titles([G1]);
+        let sent = t.take_commands();
+        let [NetCommand::GroupTitlesRequest { request, .. }] = sent[..] else {
+            panic!("one request: {sent:?}");
+        };
+        let titles = [
+            GroupTitle {
+                title: String::new(),
+                role: R1,
+                selected: true,
+            },
+            GroupTitle {
+                title: "Member".into(),
+                role: Uuid::nil(),
+                selected: false,
+            },
+        ];
+        assert!(t.on_titles(G1, request, &titles, "Group"));
+        assert!(t.titles[&G1].iter().any(|x| x.title.is_empty() && x.role == R1));
+        assert_eq!(t.selected_role(&G1), Some(R1));
+        assert_eq!(t.saved.rules[0].target.title, "");
+        assert_eq!(
+            decide(&t.saved, "North", |_| true, |_| wearing(G1, "", Some(R1))),
+            Decision::AlreadyWorn
+        );
+        assert_eq!(
+            decide(&t.saved, "North", |_| true, |_| wearing(G1, "", None)),
+            Decision::AlreadyWorn,
+            "before the titles are known, the empty strings match"
+        );
+    }
+
     #[test]
     fn a_typed_region_is_kept_under_the_maps_spelling_or_refused() {
         let start = Instant::now();
@@ -779,6 +817,7 @@ mod tests {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@setgroup=n".into(),
         }));

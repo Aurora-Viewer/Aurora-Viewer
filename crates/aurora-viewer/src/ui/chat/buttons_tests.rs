@@ -584,12 +584,14 @@ fn the_head_acts() {
             (aurora_i18n::tr!("ui-chat-give-from-inventory"), "give"),
             (aurora_i18n::tr!("ui-call-add-people"), "add"),
             (aurora_i18n::tr!("common-block"), "block"),
+            (aurora_i18n::tr!("ui-chat-send-system-info"), "sysinfo"),
         ] {
             h.press(control_id("head-dots-filled"));
             h.press_text(row);
             let actions = h.take();
             let ok = match wanted {
                 "teleport" => has(&actions, |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
+                "sysinfo" => has(&actions, |a| matches!(a, ConvAction::SendSysinfo(id) if *id == BOB)),
                 "give" => has(&actions, |a| matches!(a, ConvAction::OpenInventory)),
                 "add" => has(&actions, |a| matches!(a, ConvAction::PickPeople(id) if *id == BOB)),
                 _ => has(&actions, |a| matches!(a, ConvAction::ToggleBlock(id) if *id == BOB)),

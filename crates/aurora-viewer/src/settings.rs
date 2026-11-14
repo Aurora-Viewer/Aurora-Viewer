@@ -22,6 +22,16 @@ pub enum MarkerAnchor {
     Body,
 }
 
+/// Which floating texts get a background (FSHudTextShowBackground: off,
+/// the hovered object's only, all).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FloatingTextBackground {
+    #[default]
+    Off,
+    Hovered,
+    All,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -161,6 +171,27 @@ pub enum ClockZone {
     #[default]
     Slt,
     Local,
+}
+
+/// The time zone of the teleport history's days and hours (the Legacy
+/// Viewer's FSTPHistoryTZ, SLT by default): UTC, Second Life time (US
+/// Pacific) or the computer's own.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HistoryZone {
+    Utc,
+    #[default]
+    Slt,
+    Local,
+}
+
+/// A saved history zone: anything unknown falls back to SLT rather than
+/// failing the whole file.
+fn history_zone_or_slt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HistoryZone, D::Error> {
+    Ok(match String::deserialize(d)?.as_str() {
+        "Utc" => HistoryZone::Utc,
+        "Local" => HistoryZone::Local,
+        _ => HistoryZone::Slt,
+    })
 }
 
 /// The hours of the bars' clock: as the system's regional format (Windows'
@@ -480,6 +511,14 @@ impl DebugView {
 /// The former look-at range slider's maximum, which meant no limit.
 const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 
+/// The draw distance's range (m): the Legacy Viewer's Graphics slider
+/// (RenderFarClip, panel_preferences_graphics1.xml, 32 to 1024). A region
+/// sends what it allows of it (OpenSim's MaxDrawDistance, 512 by default).
+pub const DRAW_DISTANCE_MIN: f32 = 32.0;
+pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
+/// The nearest reach of the automatic reflection probes (`probe_range`).
+pub const PROBE_RANGE_MIN: f32 = 32.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -509,6 +548,10 @@ pub struct Settings {
     pub browser_behavior: BrowserBehavior,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
+    /// The floating Stand / Stop flying / Flycam buttons over the world
+    /// (Preferences › Layout; on by default, like the Legacy Viewer's
+    /// panel). Off: the panel never shows, the menus still stand or land.
+    pub show_stand_fly_panel: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
     /// sunbeacon / moonbeacon: a line from the avatar towards the sun or
@@ -722,6 +765,10 @@ pub struct Settings {
     pub inspect_columns: u32,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
+    /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
+    /// in its menu (`ui/places.rs`).
+    #[serde(deserialize_with = "history_zone_or_slt")]
+    pub tp_history_zone: HistoryZone,
     /// Ask before a teleport to a landmark, a history entry or a place link
     /// (TeleportFromLandmark, TeleportToHistoryEntry, TeleportViaSLAPP; the
     /// box "Do not show again" of the confirmation turns it off). Firestorm
@@ -906,6 +953,9 @@ pub struct Settings {
     /// ":" at the start of a line is "/me", in the nearby chat and the
     /// conversations (AllowMUpose, off; #1202): ":waves" is "Name waves".
     pub colon_emote: bool,
+    /// A line that opens "((" (or "[[") without closing it gets its "))" on
+    /// sending, in the nearby chat and the conversations (AutoCloseOOC, off).
+    pub auto_close_ooc: bool,
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
     pub chat_mention_autocomplete: bool,
@@ -957,6 +1007,18 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// The objects' floating texts (llSetText) fade from this far from the
+    /// camera (FSHudTextFadeDistance, 8 m) over this range
+    /// (FSHudTextFadeRange, 4 m).
+    pub floating_text_fade_distance: f32,
+    pub floating_text_fade_range: f32,
+    /// A black or white background behind them (FSHudTextShowBackground,
+    /// off), this opaque (FSHudTextBackgroundOpacity, 0.75).
+    pub floating_text_background: FloatingTextBackground,
+    pub floating_text_background_opacity: f32,
+    /// The hovered object's text in front of everything, opaque and unfaded
+    /// (FSHudTextUseHoverHighlight, off).
+    pub floating_text_hover_highlight: bool,
     /// Opacity of the background of the window with the focus
     /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
     pub window_opacity_active: f32,
@@ -1427,6 +1489,8 @@ pub struct Settings {
     /// FirstUseFlyOverride notification, once ever). The override itself is
     /// never saved (`World::fly_override`).
     pub fly_override_warned: bool,
+    /// The Compass opens in its compact layout (AvatarAlignMini, off).
+    pub avatar_align_mini: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -1492,7 +1556,9 @@ pub struct Settings {
     /// the true order of their fragments at each pixel, beyond the Legacy
     /// Viewer, from its lightest precision to its finest
     /// (`aurora_render::BlendPrecision`: 1 fast, 2 balanced, 3 high, 4 full,
-    /// the default). Sorted under MSAA.
+    /// the default), sorted under MSAA; 5 the stochastic transparency
+    /// (aurora-render oit_stochastic.rs), an estimate of that order from 8
+    /// random samples per pixel, under MSAA too.
     pub blend_order: u8,
     /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
     /// 2 balanced, 3 performance, 4 ultra performance.
@@ -1589,8 +1655,9 @@ pub struct Settings {
     /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=256).
     pub probe_count: u32,
     /// How far automatic reflection probes are placed around the camera
-    /// (m, 32..=512), within the draw distance. The Legacy Viewer has no
-    /// such limit (the draw distance); 512 keeps its reach.
+    /// (m, 32 up to [`DRAW_DISTANCE_MAX`]), within the draw distance. The
+    /// Legacy Viewer has no such limit (the draw distance); the largest
+    /// value keeps its reach. 512 by default.
     pub probe_range: f32,
     /// RenderAvatarMaxComplexity: avatars above it show as grey silhouettes
     /// (0 = no limit; Firestorm's Ultra preset is 350 000).
@@ -1626,6 +1693,11 @@ pub struct Settings {
     pub tag_complexity: bool,
     pub tag_complexity_too_complex_only: bool,
     pub tag_complexity_own: bool,
+    /// The distance to the other avatars in their name tags (FSTagShowDistance,
+    /// off), and their names coloured by it (FSTagShowDistanceColors, off),
+    /// within the chat, within a shout or farther, as the radar colours them.
+    pub tag_distance: bool,
+    pub tag_distance_colors: bool,
     /// Display names (UseDisplayNames, on), the username with them
     /// (NameTagShowUsernames, on) as "Firstname Lastname"
     /// (FSNameTagShowLegacyUsernames, on), "Resident" hidden
@@ -2099,6 +2171,7 @@ impl Default for Settings {
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
+            show_stand_fly_panel: true,
             show_huds: true,
             sun_beacon: false,
             moon_beacon: false,
@@ -2193,6 +2266,7 @@ impl Default for Settings {
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
+            tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
             warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
@@ -2267,6 +2341,7 @@ impl Default for Settings {
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
             colon_emote: false,
+            auto_close_ooc: false,
             chat_mention_autocomplete: true,
             chat_bar: ChatBar::Always,
             former_autohide_chat_bar: None,
@@ -2282,6 +2357,11 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            floating_text_fade_distance: 8.0,
+            floating_text_fade_range: 4.0,
+            floating_text_background: FloatingTextBackground::Off,
+            floating_text_background_opacity: 0.75,
+            floating_text_hover_highlight: false,
             window_opacity_active: 1.0,
             window_opacity_inactive: 1.0,
             conversations_opacity: 1.0,
@@ -2446,6 +2526,7 @@ impl Default for Settings {
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
+            avatar_align_mini: false,
             block_click_sit: false,
             large_surface_protection: false,
             large_surface_prim_threshold: 75.0,
@@ -2509,6 +2590,8 @@ impl Default for Settings {
             tag_complexity: true,
             tag_complexity_too_complex_only: true,
             tag_complexity_own: false,
+            tag_distance: false,
+            tag_distance_colors: false,
             use_display_names: true,
             show_usernames: true,
             group_titles: Default::default(),
@@ -2518,6 +2601,8 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            // an opt-in: the Legacy Viewer sorts its blended faces, and the
+            // method's targets take video memory while it is on
             anisotropy: 8,
             cache_size_mb: 20480,
             cache_location: String::new(),
@@ -3262,7 +3347,7 @@ impl Settings {
         if !self.chat_island_width.is_finite() || self.chat_island_width < 0.0 {
             self.chat_island_width = 0.0;
         }
-        self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
+        self.draw_distance = self.draw_distance.clamp(DRAW_DISTANCE_MIN, DRAW_DISTANCE_MAX);
         self.draw_distance_stepping_interval = self.draw_distance_stepping_interval.clamp(5, 30);
         self.chat_commands.sanitize();
         if let Some(toolbar) = &mut self.toolbar {
@@ -3338,14 +3423,16 @@ impl Settings {
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(7);
-        self.blend_order = self.blend_order.min(4);
+        if self.blend_order > crate::graphics_presets::BLEND_ORDER_STOCHASTIC {
+            self.blend_order = crate::graphics_presets::BLEND_ORDER_FULL;
+        }
         self.fsr_quality = self.fsr_quality.min(4);
         self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 256);
         self.probe_range = if self.probe_range.is_finite() {
-            self.probe_range.clamp(32.0, 512.0)
+            self.probe_range.clamp(PROBE_RANGE_MIN, DRAW_DISTANCE_MAX)
         } else {
             512.0
         };
@@ -3362,6 +3449,11 @@ impl Settings {
         } else {
             0.5
         };
+        // the ranges of the Legacy Viewer's spinners (panel_preferences_UI.xml)
+        let finite = |v: f32, lo: f32, hi: f32, default: f32| if v.is_finite() { v.clamp(lo, hi) } else { default };
+        self.floating_text_fade_distance = finite(self.floating_text_fade_distance, 0.0, 64.0, 8.0);
+        self.floating_text_fade_range = finite(self.floating_text_fade_range, 0.25, 32.0, 4.0);
+        self.floating_text_background_opacity = finite(self.floating_text_background_opacity, 0.0, 1.0, 0.75);
         for opacity in [
             &mut self.window_opacity_active,
             &mut self.window_opacity_inactive,
@@ -3630,6 +3722,8 @@ impl Settings {
             rain_surfaces: false,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
+            // the stochastic choice of the order of the blended faces
+            oit: self.blend_order == crate::graphics_presets::BLEND_ORDER_STOCHASTIC,
         }
     }
 
@@ -3913,6 +4007,33 @@ mod tests {
     }
 
     #[test]
+    fn draw_distance_goes_to_1024_like_the_legacy_slider() {
+        for (asked, kept) in [(16.0, 32.0), (512.0, 512.0), (1024.0, 1024.0), (2000.0, 1024.0)] {
+            let s = super::Settings {
+                draw_distance: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.draw_distance, kept, "{asked} m");
+        }
+    }
+
+    #[test]
+    fn probe_range_reaches_as_far_as_the_draw_distance() {
+        // the largest probe range keeps the whole draw distance's reach; the
+        // default stays 512 m
+        assert_eq!(super::Settings::default().probe_range, 512.0);
+        for (asked, kept) in [(8.0, 32.0), (512.0, 512.0), (1024.0, 1024.0), (5000.0, 1024.0), (f32::NAN, 512.0)] {
+            let s = super::Settings {
+                probe_range: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.probe_range, kept, "{asked} m");
+        }
+    }
+
+    #[test]
     fn legacy_chat_import_at_login_defaults_on_and_keeps_a_saved_off() {
         use super::Settings;
         assert!(Settings::default().log_import_at_login);
@@ -4114,6 +4235,25 @@ mod tests {
         })
         .expect("settings json");
         assert_eq!(super::language_in(Some(&saved)), "ja");
+    }
+
+    /// The teleport history's zone: SLT by default (FSTPHistoryTZ), each
+    /// choice kept, anything unknown back to SLT with the rest of the file.
+    #[test]
+    fn the_history_zone_is_slt_unless_chosen() {
+        let read = |json: &str| serde_json::from_str::<super::Settings>(json).expect("settings");
+        assert_eq!(read("{}").tp_history_zone, super::HistoryZone::Slt);
+        for zone in [super::HistoryZone::Utc, super::HistoryZone::Slt, super::HistoryZone::Local] {
+            let saved = serde_json::to_string(&super::Settings {
+                tp_history_zone: zone,
+                ..Default::default()
+            })
+            .expect("settings json");
+            assert_eq!(read(&saved).tp_history_zone, zone);
+        }
+        let odd = read(r#"{"tp_history_zone":"Mars","landmarks_by_date":false}"#);
+        assert_eq!(odd.tp_history_zone, super::HistoryZone::Slt);
+        assert!(!odd.landmarks_by_date);
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name
@@ -5390,6 +5530,21 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(odd.sanitized().blend_order, 4);
+        // the stochastic transparency is a choice of the same setting
+        let stochastic = Settings {
+            blend_order: 5,
+            ..Settings::default()
+        };
+        assert_eq!(stochastic.clone().sanitized().blend_order, 5);
+        assert!(stochastic.render_settings().oit);
+        assert!((0..=4).all(|order| {
+            !Settings {
+                blend_order: order,
+                ..Settings::default()
+            }
+            .render_settings()
+            .oit
+        }));
     }
 
     #[test]

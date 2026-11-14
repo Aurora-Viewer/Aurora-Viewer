@@ -4312,6 +4312,7 @@ mod tests {
             owner_id: Uuid::from_u128(2),
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: avatar,
             message: "@setcam=n,setcam_avdistmax:2=n,setcam_fovmin:0.8=n".to_owned(),
         }));

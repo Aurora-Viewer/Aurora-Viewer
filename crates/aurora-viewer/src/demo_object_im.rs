@@ -95,6 +95,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             owner_id: STRANGER,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::Other(9),
+            region: Some(crate::demo::HANDLE),
             position: Vec3::new(230.0, 30.0, 21.0),
             message: aurora_i18n::tr!("demo-object-im-say-to").into(),
         }),
