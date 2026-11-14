@@ -5898,6 +5898,16 @@ impl World {
             }
         }
         self.bodies.retain(|id, _| seen.contains(id));
+        // a seat snap lasts while the avatar sits on that seat with the
+        // rotation it was reported with: standing up, another seat or a new
+        // report ends it, so a later sit on the same seat starts afresh
+        let objects = &self.objects;
+        self.seat_snaps.retain(|id, snap| {
+            objects
+                .index_of_uuid(id)
+                .and_then(|i| objects.get(i))
+                .is_some_and(|o| o.parent_id == snap.parent_id && o.rotation == snap.reported)
+        });
         own_turn
     }
 

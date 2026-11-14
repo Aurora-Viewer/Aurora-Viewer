@@ -91,6 +91,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Media lists, `newview/floatermedialists.cpp` — Copyright © 2011 Sione Lomu | `aurora-viewer/src/media/filter.rs` | Originally LGPL 2.1 |
 | Simulator features, `newview/lfsimfeaturehandler.cpp` — Copyright © 2013 Liru Færs | `aurora-viewer/src/grid_status.rs` | Originally LGPL 2.1 |
 | Interface sounds, `newview/fspanelpreferenceuisounds.cpp` — Copyright © 2026 Firestorm Viewer Project | `aurora-viewer/src/ui_sound.rs`, `ui/options/pages/sound.rs` | Originally LGPL 2.1 |
+| Avatar alignment (Compass, Face nearest avatar), `newview/fsfloateravataralign.cpp` — Copyright © 2026 Ayane Lyla | `aurora-viewer/src/avatar_align.rs`, `app/avatar_align.rs`, `ui/avatar_align.rs` | Originally LGPL 2.1 |
 | Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |

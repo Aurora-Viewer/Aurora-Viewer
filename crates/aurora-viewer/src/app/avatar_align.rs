@@ -210,8 +210,28 @@ mod tests {
         let mut standing = World::new(Arc::new(AvatarLibrary::load()));
         standing.agent_id = demo::DEMO_AGENT;
         assert!(!snap_seated(&mut standing, demo::DEMO_AGENT, yaw));
-        // the simulator reports a new rotation: its word wins
+        // standing up ends the snap; sitting again on the same seat, with the
+        // same sit rotation reported, does not bring the old turn back
+        let (seat_id, sit_rotation) = {
+            let o = world.objects.get(idx).expect("avatar");
+            (o.parent_id, o.rotation)
+        };
+        let frame = |world: &mut World| world.update_bodies(Instant::now(), 0.016, Vec3::ZERO, false, false, 1.0);
+        world.objects.get_mut(idx).expect("avatar").parent_id = 0;
+        frame(&mut world);
+        assert!(world.seat_snaps.is_empty());
+        let o = world.objects.get_mut(idx).expect("avatar");
+        o.parent_id = seat_id;
+        o.rotation = sit_rotation;
+        frame(&mut world);
+        assert!(!drawn_forward(&world).abs_diff_eq(wanted, 1e-3));
+        // the simulator reports a new rotation: its word wins, and the snap
+        // is dropped
+        assert!(snap_seated(&mut world, demo::DEMO_AGENT, yaw));
+        assert!(drawn_forward(&world).abs_diff_eq(wanted, 1e-4));
         world.objects.get_mut(idx).expect("avatar").rotation = Quat::from_rotation_z(1.0);
         assert!(!drawn_forward(&world).abs_diff_eq(wanted, 1e-3));
+        frame(&mut world);
+        assert!(world.seat_snaps.is_empty());
     }
 }
