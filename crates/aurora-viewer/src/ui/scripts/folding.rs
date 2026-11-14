@@ -313,7 +313,7 @@ mod tests {
                 item: Uuid::from_u128(42),
             };
             let source = "default {\n    event() {\n        code;\n    }\n}";
-            let request = editors.open(target, "Folding".into(), true, editable).expect("load");
+            let request = editors.open(target, "Folding".into(), true, editable, 0).expect("load");
             editors.loaded(request, target, Ok(source.into()));
             let frame = |editors: &mut Editors, events, time| {
                 let mut output = ctx.run_ui(

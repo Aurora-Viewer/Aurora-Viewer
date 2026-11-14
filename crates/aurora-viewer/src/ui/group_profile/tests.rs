@@ -856,3 +856,52 @@ fn the_group_picker_keeps_its_size() {
         |st, ctx, p| show_group(st, &world, ctx, p),
     );
 }
+
+/// "Post links in chat" is listed only where the region applies it
+/// (GroupChatPostLinksEnabled), in the Chat set after "Moderate Group Chat".
+#[test]
+fn post_links_ability_follows_the_region() {
+    let bits = |post_links| -> Vec<u32> {
+        abilities::catalogue(post_links)
+            .iter()
+            .flat_map(|s| s.abilities.iter().map(|a| a.bit))
+            .collect()
+    };
+    assert!(!bits(false).contains(&abilities::POST_LINKS_BIT));
+    let chat: Vec<u32> = abilities::catalogue(true)
+        .into_iter()
+        .find(|s| s.abilities.iter().any(|a| a.bit == 37))
+        .expect("the Chat set")
+        .abilities
+        .iter()
+        .map(|a| a.bit)
+        .collect();
+    assert_eq!(chat, vec![16, 27, 37, abilities::POST_LINKS_BIT]);
+    assert_eq!(1u64 << abilities::POST_LINKS_BIT, powers::SESSION_POST_LINKS);
+
+    let mut world = world(true, powers::SESSION_POST_LINKS);
+    assert!(!view::View::of(&world, DEMO_GROUP1).post_links);
+    let handle = aurora_net::origin_to_handle(256_000, 256_000);
+    world.main_region = Some(handle);
+    let features = |enabled| NetEvent::SimulatorFeatures {
+        handle,
+        animated_object_max_tris: 0,
+        voice_server_type: String::new(),
+        avatar_hover_height: false,
+        materials_rate: None,
+        materials_max: None,
+        lsl_syntax_id: Uuid::nil(),
+        lua_scripts: false,
+        grid_status_feed: String::new(),
+        grid_status_page: String::new(),
+        currency_base_uri: String::new(),
+        opensim: Default::default(),
+        currency_symbol: String::new(),
+        export_supported: false,
+        group_chat_post_links: enabled,
+    };
+    world.apply(features(true));
+    assert!(view::View::of(&world, DEMO_GROUP1).post_links);
+    world.apply(features(false));
+    assert!(!view::View::of(&world, DEMO_GROUP1).post_links);
+}

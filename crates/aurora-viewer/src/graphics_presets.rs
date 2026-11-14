@@ -107,6 +107,7 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 8,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 // never written by a level (`apply`): the default
@@ -114,6 +115,8 @@ impl Preset {
                 avatar_physics_detail: 0.0,
                 hdr_emissive: false,
                 max_texture_resolution: 512,
+                // RenderLocalLightCount 8
+                local_light_count: 8,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
@@ -137,12 +140,14 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 32,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: true,
                 avatar_physics_detail: 0.75,
                 hdr_emissive: false,
                 max_texture_resolution: 1024,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -167,12 +172,14 @@ impl Preset {
                 reflection_probes: 1,
                 probe_count: 64,
                 antialiasing: 1,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.0,
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -199,12 +206,14 @@ impl Preset {
                 reflection_probes: 2,
                 probe_count: 128,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.4,
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::HIGH,
             },
             // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
@@ -237,12 +246,14 @@ impl Preset {
                 reflection_probes: 3,
                 probe_count: 256,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 16,
                 sharpen: 0.4,
                 glow: true,
                 avatar_physics_detail: 1.0,
                 hdr_emissive: true,
                 max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+                local_light_count: ALL_LIGHTS,
                 effects: Effects::DELUXE,
             },
         }
@@ -538,6 +549,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -559,6 +571,7 @@ pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -578,6 +591,7 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
         let current = Values {
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -596,6 +610,7 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
         let level = preset.values();
         let current = Values {
             tree_lod_factor: level.tree_lod_factor,
+            local_light_count: level.local_light_count,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -603,6 +618,41 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
             return;
         }
     }
+}
+
+/// Settings files written before the levels set the nearby lights (version
+/// 38), all with every light: a profile exactly on Potato apart from it
+/// takes its 8 (the Legacy Viewer's Low); any other keeps them all. (The
+/// earlier upgrades leave the lights aside too: files of then hold none.)
+pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
+    let level = Preset::Potato.values();
+    let current = Values {
+        local_light_count: level.local_light_count,
+        ..Values::read(s)
+    };
+    if current.as_shown() == level.as_shown() {
+        s.local_light_count = level.local_light_count;
+    }
+}
+
+/// Settings files written before the order of the blended faces was a
+/// setting (version 39), all sorted: a profile exactly on Potato or Low
+/// keeps the sorted order, as these levels now say; any other takes the
+/// exact order at its finest, the default.
+pub(crate) fn upgrade_blend_order(s: &mut Settings) {
+    let on_level = |level: Preset| {
+        let level = level.values();
+        let current = Values {
+            blend_order: level.blend_order,
+            ..Values::read(s)
+        };
+        current.as_shown() == level.as_shown()
+    };
+    s.blend_order = if on_level(Preset::Potato) || on_level(Preset::Low) {
+        0
+    } else {
+        BLEND_ORDER_FULL
+    };
 }
 
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and
@@ -666,6 +716,11 @@ pub struct Values {
     pub reflection_probes: u8,
     pub probe_count: u32,
     pub antialiasing: u8,
+    /// `Settings::blend_order`: the sorted order in Potato and Low, the exact
+    /// one at its finest above (a backup or a saved preset written before
+    /// it holds none: the finest, the default then).
+    #[serde(default = "blend_order_full")]
+    pub blend_order: u8,
     pub anisotropy: u16,
     pub sharpen: f32,
     /// RenderGlow. Kept by a saved profile and the safe graphics backup; a
@@ -683,7 +738,26 @@ pub struct Values {
     /// default then).
     #[serde(default = "max_texture_resolution")]
     pub max_texture_resolution: u32,
+    /// RenderLocalLightCount: 8 in Low, all the lights the renderer holds
+    /// above (the Legacy Viewer's 256 to 8192 are more than its 64; a backup
+    /// or a saved preset written before it holds none: all, the default).
+    #[serde(default = "all_lights")]
+    pub local_light_count: u32,
     pub effects: Effects,
+}
+
+/// Every local light the renderer holds: the levels above Potato.
+const ALL_LIGHTS: u32 = crate::scene::lights::MAX_LIGHTS as u32;
+
+fn all_lights() -> u32 {
+    ALL_LIGHTS
+}
+
+/// `Settings::blend_order`: the exact order at its finest precision.
+pub(crate) const BLEND_ORDER_FULL: u8 = 4;
+
+fn blend_order_full() -> u8 {
+    BLEND_ORDER_FULL
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -774,12 +848,14 @@ impl Values {
             reflection_probes: s.reflection_probes,
             probe_count: s.probe_count,
             antialiasing: s.antialiasing,
+            blend_order: s.blend_order,
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
             glow: s.glow,
             avatar_physics_detail: s.avatar_physics_detail,
             hdr_emissive: s.hdr_emissive,
             max_texture_resolution: s.max_texture_resolution,
+            local_light_count: s.local_light_count,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
@@ -812,6 +888,7 @@ impl Values {
         s.reflection_probes = self.reflection_probes;
         s.probe_count = self.probe_count;
         s.antialiasing = self.antialiasing;
+        s.blend_order = self.blend_order;
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
         s.glow = self.glow;
@@ -819,6 +896,8 @@ impl Values {
         s.hdr_emissive = self.hdr_emissive;
         // (a saved profile edited by hand: the nearest choice of the combo)
         s.max_texture_resolution = crate::settings::max_texture_resolution_choice(self.max_texture_resolution);
+        // (a saved profile edited by hand: no more than the renderer holds)
+        s.local_light_count = self.local_light_count.min(ALL_LIGHTS);
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -1083,7 +1162,72 @@ mod tests {
             assert!(a.anisotropy <= b.anisotropy);
             assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
             assert!(a.max_texture_resolution <= b.max_texture_resolution);
+            assert!(a.local_light_count <= b.local_light_count);
         }
+    }
+
+    /// RenderLocalLightCount 8 in the Legacy Viewer's Low (featuretable.txt);
+    /// 256 to 8192 above, more than the 64 the renderer holds: all of them.
+    #[test]
+    fn potato_draws_eight_nearby_lights_like_the_legacy_viewer_low() {
+        let lights = |p: Preset| p.values().local_light_count;
+        assert_eq!(lights(Preset::Potato), 8);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(lights(p), ALL_LIGHTS, "{p:?}");
+        }
+        assert_eq!(Settings::default().local_light_count, ALL_LIGHTS);
+        // changed by hand: custom
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.local_light_count = 20;
+        assert_eq!(Preset::matching(&s), None);
+        // a file of version 37 exactly on Potato (all the lights then)
+        // takes its 8; one from before version 24 too, through the earlier
+        // upgrades, which leave the lights aside
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, 8);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.max_texture_resolution = 2048;
+        s.hdr_emissive = true;
+        s.avatar_physics_detail = 1.0;
+        s.tree_lod_factor = 0.5;
+        upgrade_physics_detail(&mut s);
+        upgrade_hdr_emissive(&mut s);
+        upgrade_max_texture_resolution(&mut s);
+        upgrade_tree_detail(&mut s);
+        upgrade_local_light_count(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        // a custom profile and the other levels keep every light
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_light_count = ALL_LIGHTS;
+        s.draw_distance = 300.0;
+        upgrade_local_light_count(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            p.apply(&mut s);
+            upgrade_local_light_count(&mut s);
+            assert_eq!(s.local_light_count, ALL_LIGHTS, "{p:?}");
+            assert_eq!(Preset::matching(&s), Some(p));
+        }
+        // a safe graphics backup or a saved preset written before it holds
+        // none: every light
+        let mut json = serde_json::to_value(Preset::Potato.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("local_light_count");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert_eq!(read.local_light_count, ALL_LIGHTS);
+        // a saved profile edited by hand: no more than the renderer holds
+        let mut odd = Preset::Medium.values();
+        odd.local_light_count = 256;
+        odd.write(&mut s);
+        assert_eq!(s.local_light_count, ALL_LIGHTS);
     }
 
     #[test]
