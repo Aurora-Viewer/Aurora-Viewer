@@ -525,7 +525,7 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>, map_px: u32) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
@@ -544,14 +544,14 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [
                 light: u32::MAX,
                 fade: 0.0,
             },
-            rain_shelter_matrix(f.camera_pos),
+            rain_shelter_matrix(f.camera_pos, map_px),
         ));
     }
     views
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
-/// the camera stays in its metre (what is built or moved under a roof shows
+/// the camera stays in its texel (what is built or moved under a roof shows
 /// within it).
 const SHELTER_REFRESH: Duration = Duration::from_secs(1);
 
@@ -560,15 +560,26 @@ const SHELTER_REFRESH: Duration = Duration::from_secs(1);
 const RAIN_SHELTER_LIGHT: i32 = -2;
 
 /// The shelter map: 80 m square around the camera, from 60 m above it to
-/// 60 m below, looking straight down; snapped to whole metres so that its
-/// texels do not crawl as the camera moves.
-fn rain_shelter_matrix(camera: Vec3) -> Mat4 {
+/// 60 m below, looking straight down, `map_px` texels a side; snapped to
+/// whole texels on the world's grid, so that a texel covers the same ground
+/// whatever the camera does. Snapped to whole metres (3.2 texels of a 256 px
+/// map, 6.4 of a 512 px one), every step moved the whole map onto a grid
+/// shifted by part of a texel: the edges of the lying snow, of the cover
+/// over it and of deep snow popped as the camera moved or orbited.
+fn rain_shelter_matrix(camera: Vec3, map_px: u32) -> Mat4 {
     // looking down -Z with +Y up, the view is a plain translation; the
     // orthographic projection (right-handed, depth 0 at the top to 1 at
     // the bottom, like the projectors' maps) then scales it
     const HALF: f32 = 40.0;
     const DEPTH: f32 = 120.0;
-    let (cx, cy, top) = (camera.x.round(), camera.y.round(), camera.z.round() + DEPTH * 0.5);
+    // (HALF is a whole number of texels at any power-of-two size: the map's
+    // edges, and so every texel boundary, fall on multiples of a texel)
+    let texel = 2.0 * HALF / map_px.max(2) as f32;
+    let (cx, cy, top) = (
+        (camera.x / texel).round() * texel,
+        (camera.y / texel).round() * texel,
+        camera.z.round() + DEPTH * 0.5,
+    );
     Mat4::from_cols(
         Vec4::new(1.0 / HALF, 0.0, 0.0, 0.0),
         Vec4::new(0.0, 1.0 / HALF, 0.0, 0.0),
@@ -7140,7 +7151,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.shadow_size / 2)
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -8499,7 +8510,7 @@ impl Backend {
         // projector shadow maps of the frame (none without shadows)
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.shadow_size / 2).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
@@ -9179,11 +9190,11 @@ impl Backend {
         let shelter_kept = shelter_only
             && self
                 .shelter_drawn
-                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos) && at.elapsed() < SHELTER_REFRESH);
+                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos, self.shadow_size / 2) && at.elapsed() < SHELTER_REFRESH);
         if f.shadows || !shelter {
             self.shelter_drawn = None;
         } else if shelter_only && !shelter_kept {
-            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos), Instant::now()));
+            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos, self.shadow_size / 2), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
@@ -11933,6 +11944,31 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shelter_map_keeps_its_texels_on_the_ground() {
+        // a point on the ground keeps its place in its texel (the part of
+        // a texel it is at) wherever the camera goes: the map's texels do
+        // not crawl over the ground, nothing sampled from them pops
+        for px in [256u32, 512, 1024] {
+            let ground = Vec3::new(123.37, 77.91, 20.0);
+            let within = |camera: Vec3| {
+                let p = rain_shelter_matrix(camera, px).project_point3(ground);
+                let u = (p.x * 0.5 + 0.5) * px as f32;
+                let v = (0.5 - p.y * 0.5) * px as f32;
+                (u.rem_euclid(1.0), v.rem_euclid(1.0))
+            };
+            let first = within(Vec3::new(100.0, 60.0, 30.0));
+            for step in 1..60 {
+                let camera = Vec3::new(100.0 + step as f32 * 0.37, 60.0 + step as f32 * 0.23, 30.0 + step as f32 * 0.11);
+                let (u, v) = within(camera);
+                assert!(
+                    (u - first.0).abs() < 2e-3 && (v - first.1).abs() < 2e-3,
+                    "{px} px, step {step}: {u},{v} vs {first:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn the_weather_memory_covers_what_is_drawn() {
