@@ -1998,9 +1998,16 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 /// the segment chosen before, as the poser's tracks do (`tracks::icon_track`;
 /// none under Reduce animations). Returns true when the selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    segmented_tall(ui, p, selected, options, SEGMENT_H)
+}
+
+/// `segmented` with a track `height` tall, to line it up with the fields
+/// and buttons of a taller row.
+pub fn segmented_tall(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)], height: f32) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
-    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let size = Vec2::new(segmented_size(ui, options).x, height);
+    let (track, _) = ui.allocate_exact_size(size, Sense::hover());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(track, radius, p.bar);
     let mut rects = Vec::with_capacity(widths.len());

@@ -223,7 +223,7 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, quick_s
         }
         let mut which = usize::from(st.sets_online_only);
         let (all, online) = (aurora_i18n::tr!("common-all"), aurora_i18n::tr!("people-sets-online-only"));
-        if widgets::segmented(ui, p, &mut which, &[(all, false), (online, false)]) {
+        if widgets::segmented_tall(ui, p, &mut which, &[(all, false), (online, false)], rows::TOOLBAR_H) {
             st.sets_online_only = which == 1;
         }
         let w = ui.available_width();
