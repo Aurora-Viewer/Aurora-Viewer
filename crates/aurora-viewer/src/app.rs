@@ -19306,7 +19306,7 @@ impl App {
                         url: avatar_welcome_page.as_deref(),
                     },
                 );
-                self.welcome_wears.push(wears);
+                self.welcome_wears.push(wears, Instant::now());
                 self.toolbar_ui.avatar_welcome = avatar_welcome_page.is_some();
                 // the Destination Guide: the same plugins and browser
                 // settings, and the OpenID cookie on Second Life
