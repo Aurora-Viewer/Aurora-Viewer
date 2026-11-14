@@ -847,3 +847,70 @@ fn stacked_layers_draw_one_after_the_other() {
     let under = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &stacked, (w, h), &image);
     assert_eq!(first, under);
 }
+
+/// A 360° snapshot's faces are looked at one by one, so only an operation
+/// that depends on a pixel's colour alone is applied to them. This match has
+/// no wildcard: a new operation must be classified here, and with it the
+/// answer of `is_pointwise` is checked for every operation of every look.
+#[test]
+fn only_pointwise_operations_are_applied_to_the_faces_of_a_360_snapshot() {
+    fn pointwise(op: &LookOp) -> bool {
+        match op {
+            LookOp::Sepia
+            | LookOp::GrayScale
+            | LookOp::Saturate(_)
+            | LookOp::Rotate(_)
+            | LookOp::Gamma { .. }
+            | LookOp::Colorize { .. }
+            | LookOp::Contrast { .. }
+            | LookOp::Brightness { .. }
+            | LookOp::ColorTransform(_)
+            | LookOp::Selective { .. }
+            | LookOp::GradientMap(_)
+            | LookOp::Split { .. }
+            | LookOp::Lut => true,
+            // a place in the frame, the neighbours, the depth or the histogram
+            LookOp::Stencil { .. }
+            | LookOp::Linearize { .. }
+            | LookOp::Posterize { .. }
+            | LookOp::Screen { .. }
+            | LookOp::Convolve { .. }
+            | LookOp::Grain { .. }
+            | LookOp::Chroma(_)
+            | LookOp::Distort(_)
+            | LookOp::Bars { .. }
+            | LookOp::Frame { .. }
+            | LookOp::Pixelate(_)
+            | LookOp::Glitch { .. }
+            | LookOp::Paint(_)
+            | LookOp::Clarity { .. }
+            | LookOp::Glow { .. }
+            | LookOp::Fog { .. }
+            | LookOp::DepthBlur { .. }
+            | LookOp::Subject { .. } => false,
+        }
+    }
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    let legacy = parse::legacy_looks().iter().map(|(name, ops)| (name.to_string(), ops.clone()));
+    let aurora = parse::aurora_looks().iter().map(|look| (look.id.to_string(), look.ops.clone()));
+    for (name, ops) in legacy.chain(aurora) {
+        let layer = LookLayer {
+            ops: ops.clone(),
+            intensity: 1.0,
+            lut: None,
+        };
+        let expected = ops.iter().all(pointwise);
+        assert_eq!(layer.is_pointwise(), expected, "{name}");
+        for op in ops.iter() {
+            assert_eq!(op.is_pointwise(), pointwise(op), "{name}: {op:?}");
+        }
+        if expected { kept.push(name) } else { dropped.push(name) }
+    }
+    for name in ["Sepia", "BlackAndWhite", "Intense", "keep-red"] {
+        assert!(kept.iter().any(|k| k == name), "{name} is a colour look: {kept:?}");
+    }
+    for name in ["Sharpen", "Spotlight", "Posterize", "fine-grain", "fisheye", "pixel", "haze"] {
+        assert!(dropped.iter().any(|k| k == name), "{name} is not: {dropped:?}");
+    }
+}

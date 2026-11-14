@@ -83,6 +83,8 @@ enum Upload {
     Encoding {
         rx: crossbeam_channel::Receiver<Result<Vec<u8>, String>>,
         cost: i32,
+        /// A 360° panorama: named for the marker (`capture_360::item_name`).
+        pano: bool,
     },
     /// Sent (`NetCommand::UploadAsset`), its answer awaited.
     Sent(Uuid),
@@ -170,6 +172,9 @@ pub(super) struct PhotoFrame {
     /// Its look, placed for the part drawn.
     pub look: Option<aurora_render::looks::PhotoLook>,
     pub context: aurora_render::PhotoContext,
+    /// A face of a 360° snapshot: the square 90° projection, whatever the
+    /// window's proportions (`app/capture_360.rs`).
+    pub cube_face: bool,
 }
 
 type Thumb = (PathBuf, Option<(u32, u32, Vec<u8>)>);
@@ -186,8 +191,8 @@ pub(super) struct Snapshots {
     camera: Option<[f32; 7]>,
     camera_moved: Option<Instant>,
     saving: Option<save::Saving>,
-    message: Option<(String, bool)>,
-    last_saved: Option<PathBuf>,
+    pub(super) message: Option<(String, bool)>,
+    pub(super) last_saved: Option<PathBuf>,
     gallery: Vec<(PathBuf, Option<egui::TextureHandle>)>,
     /// The folder the gallery was read from.
     gallery_folder: Option<PathBuf>,
@@ -218,9 +223,9 @@ pub(super) struct Snapshots {
     quality_ask: bool,
     upload: Option<Upload>,
     /// The message tells of this item, saved to the inventory.
-    message_item: Option<Uuid>,
+    pub(super) message_item: Option<Uuid>,
     /// The message tells of a post to the profile feed ("View").
-    message_profile: bool,
+    pub(super) message_profile: bool,
     /// The photo quality waits since then for the textures in view.
     detail_wait: Option<Instant>,
     /// The wait is over: the next "Take" goes ahead.
@@ -515,7 +520,8 @@ impl App {
         if !self.panels.snapshot || !self.in_world() {
             self.snapshots.ui.freeze_world = false;
         }
-        let wanted = self.snapshots.ui.freeze_world;
+        // (a 360° snapshot holds the world still while its faces are drawn)
+        let wanted = self.snapshots.ui.freeze_world || (self.capture_360.capturing() && self.in_world());
         if wanted != self.snapshots.world_freeze.is_some() {
             self.snapshots.world_freeze = wanted.then_some(snapshot::Hold {
                 at: now,
@@ -554,6 +560,11 @@ impl App {
         let occlusion = self.settings.ssao > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
+        // a 360° snapshot's face first: the photo's own parts wait for it
+        if let Some(frame) = self.capture_360.photo_frame(renderer.size(), self.settings.render_scale_percent) {
+            s.capturing = renderer.snapshot_request;
+            return Some(frame);
+        }
         let job = s.job.as_mut()?;
         // (a part already asked is drawn all the same: the frame that
         // carries it draws the scene, `App::scene_paused`)
@@ -618,6 +629,7 @@ impl App {
                 interface: false,
                 huds: false,
                 photo: (width, height),
+                cube: None,
             };
             renderer.snapshot_request = Some(spec);
             job.asked = true;
@@ -630,6 +642,7 @@ impl App {
                 scale,
                 look: None,
                 context: aurora_render::PhotoContext::Record,
+                cube_face: false,
             });
         }
         let tile = job.tiles[job.next].draw;
@@ -642,6 +655,7 @@ impl App {
             interface: job.interface && single,
             huds: job.huds && single,
             photo: job.size,
+            cube: None,
         };
         renderer.snapshot_request = Some(spec);
         job.asked = true;
@@ -669,6 +683,7 @@ impl App {
             } else {
                 aurora_render::PhotoContext::None
             },
+            cube_face: false,
         })
     }
 
@@ -1105,6 +1120,12 @@ impl App {
 
     /// Start a photo of the destination's size.
     pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
+        // a 360° capture owns the renderer's snapshot slot and the frozen
+        // world until its panorama is made: a photo would be taken for a face
+        if self.capture_360.capturing() {
+            log::info!("photo: not started, a 360° capture is under way");
+            return;
+        }
         let window = renderer.size();
         let outfit = purpose.outfit();
         let full = if purpose == (Purpose::Portrait { preview: false }) {
@@ -1299,7 +1320,7 @@ impl App {
     /// the shutter (UISndSnapshot) as a SoundTrigger, both seen and heard by
     /// everyone around; "Quiet snapshots" (PlayModeUISndSnapshot, the
     /// setting off) skips the two.
-    fn photo_shutter(&mut self) {
+    pub(super) fn photo_shutter(&mut self) {
         if !self.settings.snapshot.sound {
             return;
         }
@@ -1338,7 +1359,18 @@ impl App {
     /// A photo is being taken, saved or uploaded.
     pub(super) fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
-        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| !j.purpose.quiet())
+        s.saving.is_some()
+            || s.upload.is_some()
+            || s.detail_wait.is_some()
+            || s.job.as_ref().is_some_and(|j| !j.purpose.quiet())
+            || self.capture_360.busy()
+    }
+
+    /// Any photo work that still owns the renderer's snapshot slot: a
+    /// part or a preview drawn or awaited, a request out, an answer not yet
+    /// taken (a 360° capture waits for all of it).
+    pub(super) fn photo_work_pending(&self, renderer: &Renderer) -> bool {
+        self.photo_busy() || self.snapshots.job.is_some() || renderer.snapshot_request.is_some() || renderer.snapshot.is_some()
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
@@ -1363,6 +1395,8 @@ impl App {
         // the largest texture when it was read back): its price follows
         let capture = match &self.snapshots.reel.pending {
             Some((_, (w, h, _))) => (*w, *h),
+            // a 360° panorama is the largest texture the grid takes
+            None if self.snapshots.ui.pano => crate::snapshot::capture_360::INVENTORY_OUTPUT,
             None => self.photo_size(window),
         };
         let texture = inventory::texture_size(capture);
@@ -1398,6 +1432,10 @@ impl App {
         if self.photo_busy() {
             return;
         }
+        if self.snapshots.ui.pano {
+            self.capture_360_shutter(super::capture_360::Shutter::Inventory(cost));
+            return;
+        }
         if let Some(held) = &self.snapshots.held {
             let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
             self.photo_encode(size, rgba, cost, cutout);
@@ -1410,6 +1448,16 @@ impl App {
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
     pub(super) fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
         self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
+        self.photo_encode_texture(size, rgba, cost, false);
+    }
+
+    /// A 360° panorama of the inventory, rolled to its heading: the same
+    /// upload, named for the marker, and not in the photo reel.
+    pub(super) fn photo_encode_panorama(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32) {
+        self.photo_encode_texture(size, rgba, cost, true);
+    }
+
+    fn photo_encode_texture(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, pano: bool) {
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -1426,13 +1474,13 @@ impl App {
             }
             let _ = tx.send(encoded);
         });
-        self.snapshots.upload = Some(Upload::Encoding { rx, cost });
+        self.snapshots.upload = Some(Upload::Encoding { rx, cost, pano });
         self.photo_shutter();
     }
 
     /// The encoded texture: its upload to the Photo Album, named after the
     /// place (LLSnapshotLivePreview::saveTexture).
-    fn photo_upload(&mut self, data: Vec<u8>, cost: i32) {
+    fn photo_upload(&mut self, data: Vec<u8>, cost: i32, pano: bool) {
         let w = &self.world;
         let maturity = w
             .main()
@@ -1452,7 +1500,11 @@ impl App {
         let upload = upload::Request {
             kind: Kind::Snapshot,
             folder,
-            name: inventory::item_name(&place),
+            name: if pano {
+                crate::snapshot::capture_360::item_name(&place)
+            } else {
+                inventory::item_name(&place)
+            },
             description: inventory::item_description(&who, &place),
             // PERM_ALL for the next owner; the group and everyone masks of
             // the uploads (LLFloaterPerms::getGroupPerms("Uploads"))
@@ -1609,15 +1661,17 @@ impl App {
             }
         }
         // the texture encoded on its worker: its upload
-        if let Some(Upload::Encoding { rx, cost }) = &self.snapshots.upload
+        if let Some(Upload::Encoding { rx, cost, pano }) = &self.snapshots.upload
             && let Ok(encoded) = rx.try_recv()
         {
-            let cost = *cost;
+            let (cost, pano) = (*cost, *pano);
             match encoded {
-                Ok(data) => self.photo_upload(data, cost),
+                Ok(data) => self.photo_upload(data, cost, pano),
                 Err(e) => {
                     log::warn!("photo: texture not encoded: {e}");
-                    self.snapshots.reel.done(None, None);
+                    if !pano {
+                        self.snapshots.reel.done(None, None);
+                    }
                     self.snapshots.upload = None;
                     self.snapshots.message = Some((aurora_i18n::tr!("photo-upload-failed", error = e.as_str()).to_owned(), true));
                 }
@@ -1762,7 +1816,8 @@ impl App {
             s.camera_moved = None;
             s.preview_wanted = true;
         }
-        if s.preview_wanted && s.job.is_none() && in_world {
+        // (a 360° panorama has no preview to draw: its picture is the last panorama)
+        if s.preview_wanted && s.job.is_none() && in_world && !self.capture_360.capturing() && !s.ui.pano {
             s.preview_wanted = false;
             s.preview_for = Some(key);
             self.photo_job(Purpose::Preview, renderer);
@@ -1782,6 +1837,7 @@ impl App {
                 // quality::DETAIL_WAIT), and for its MSAA, whose pipelines
                 // compile on a worker (#1746)
                 if self.settings.photo_held.is_some()
+                    && !self.snapshots.ui.pano
                     && !std::mem::take(&mut self.snapshots.detail_ready)
                     && (self.scene.textures.pending_in_view() > 0 || !renderer.settings_applied() || self.photo_quality_climbing())
                 {
@@ -1801,6 +1857,9 @@ impl App {
                     return;
                 }
                 match self.snapshots.ui.destination {
+                    // 360°: the panorama's own capture (Ctrl+` and the reel
+                    // keep taking ordinary photos)
+                    Destination::Disk if self.snapshots.ui.pano => self.capture_360_shutter(super::capture_360::Shutter::Disk(None)),
                     Destination::Disk => self.photo_take(renderer, None),
                     Destination::Inventory => self.photo_to_inventory(renderer),
                     Destination::Profile => self.photo_to_profile(renderer),
@@ -1852,6 +1911,7 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
+            Action::SaveAs if self.snapshots.ui.pano => self.capture_360_ask_path(renderer),
             Action::SaveAs | Action::ChooseFolder => {
                 if self.snapshots.dialog.is_some() {
                     return;
@@ -2108,6 +2168,9 @@ LUT_3D_SIZE {n}
     /// What the photo is doing, for a progress line: details loading, the
     /// drawing, the save, the upload.
     fn photo_busy_line(&self) -> Option<(f32, String)> {
+        if let Some(line) = self.capture_360.busy_line() {
+            return Some(line);
+        }
         let s = &self.snapshots;
         if let Some(t) = s.detail_wait {
             let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
@@ -2273,6 +2336,11 @@ LUT_3D_SIZE {n}
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
                 quality_reduced,
+                pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
+                    image: shown.image.clone(),
+                    yaw: shown.yaw,
+                    serial: shown.serial,
+                }),
             };
             // (under the reel's quick view, nothing of the viewfinder acts:
             // no focus by a click, no shutter)
@@ -2298,7 +2366,9 @@ LUT_3D_SIZE {n}
             let mut state = std::mem::take(&mut self.snapshots.ui);
             let tiles = self.photo_tiles(renderer, photo).len();
             let s = &self.snapshots;
-            let busy = if let Some(t) = s.detail_wait {
+            let busy = if let Some(line) = self.capture_360.busy_line() {
+                Some(line)
+            } else if let Some(t) = s.detail_wait {
                 let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
                 Some((
                     (t.elapsed().as_secs_f32() / wait).min(1.0) * 0.5,
@@ -2350,6 +2420,11 @@ LUT_3D_SIZE {n}
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
                 quality_reduced,
+                pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
+                    image: shown.image.clone(),
+                    yaw: shown.yaw,
+                    serial: shown.serial,
+                }),
             };
             let mut open = self.panels.snapshot;
             actions.extend(state.show(
@@ -2380,6 +2455,9 @@ LUT_3D_SIZE {n}
             self.snapshots.reel.quick.close();
         }
         if !self.panels.snapshot {
+            // (a closed window leaves the 360° format, and its panorama is let go)
+            self.snapshots.ui.set_pano(false);
+            self.capture_360.release_shown();
             self.snapshots.quality_ask = false;
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
@@ -2387,6 +2465,15 @@ LUT_3D_SIZE {n}
                 self.snapshots.reel.held = None;
             }
         }
+    }
+
+    /// The frozen photo let go, as "Freeze frame" switched off does.
+    pub(super) fn photo_release_freeze(&mut self) {
+        self.snapshots.ui.freeze = false;
+        self.snapshots.held = None;
+        self.snapshots.held_view = None;
+        self.snapshots.reel.held = None;
+        self.snapshots.preview_wanted = true;
     }
 
     /// The held photo over the world (drawn first, under the windows).

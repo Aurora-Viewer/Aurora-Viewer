@@ -398,6 +398,24 @@ pub struct Camera {
     /// Roll of the view around its direction (radians, positive turns the
     /// picture clockwise): the photo viewfinder's tilt, 0 elsewhere.
     pub roll: f32,
+    /// A view imposed for one frame (a face of the 360° snapshot,
+    /// `app/capture_360.rs`): the eye where the camera is, the view along
+    /// `forward` with `up`, `fov_y` high; nothing else of the camera moves,
+    /// and nothing clears it but its owner.
+    pub fixed_view: Option<FixedView>,
+    /// Where the camera really was before `fixed_view` put it at the eye
+    /// (`release_fixed_view` brings it back).
+    fixed_real_position: Option<Vec3>,
+}
+
+/// A view imposed on the camera for a frame (`Camera::fixed_view`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FixedView {
+    /// The eye, the same for every face (no parallax between them).
+    pub eye: Vec3,
+    pub forward: Vec3,
+    pub up: Vec3,
+    pub fov_y: f32,
 }
 
 impl Default for Camera {
@@ -489,6 +507,8 @@ impl Default for Camera {
             free: None,
             flycam: None,
             flycam_lens: None,
+            fixed_view: None,
+            fixed_real_position: None,
             shake: Vec3::ZERO,
             roll: 0.0,
         }
@@ -538,6 +558,9 @@ impl Camera {
     }
 
     pub fn forward(&self) -> Vec3 {
+        if let Some(fixed) = self.fixed_view {
+            return fixed.forward;
+        }
         (self.target - self.position).normalize_or(Vec3::X)
     }
 
@@ -1930,6 +1953,29 @@ impl Camera {
 
     /// Once per frame, after the avatar moved (LLAgentCamera::updateCamera).
     pub fn update(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
+        self.update_moving(world, s, f);
+        // the imposed view, over whatever the frame did to the camera
+        if let Some(fixed) = self.fixed_view {
+            // (the smoothing and the avatar's walk may have moved the eye:
+            // it is put back where the capture started, and the real place
+            // kept for the frame the view is released)
+            self.fixed_real_position.get_or_insert(self.position);
+            self.position = fixed.eye;
+            self.target = self.position + fixed.forward;
+            self.fov_y = fixed.fov_y;
+            self.roll = 0.0;
+        }
+    }
+
+    /// The imposed view lifted: the camera back where its own motion left it.
+    pub fn release_fixed_view(&mut self) {
+        self.fixed_view = None;
+        if let Some(real) = self.fixed_real_position.take() {
+            self.position = real;
+        }
+    }
+
+    fn update_moving(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
         if self.vr_mode.is_none() {
             self.follow_seated_camera(world, s, f.now);
         }
@@ -2909,6 +2955,9 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
+        if let Some(fixed) = self.fixed_view {
+            return glam::camera::rh::view::look_to_mat4(self.position, fixed.forward, fixed.up);
+        }
         if let Some(flycam) = self.flycam {
             return glam::camera::rh::view::look_to_mat4(self.position + self.shake, flycam.forward(), flycam.up());
         }
@@ -2919,6 +2968,9 @@ impl Camera {
     }
 
     pub fn view_up(&self) -> Vec3 {
+        if let Some(fixed) = self.fixed_view {
+            return fixed.up;
+        }
         if let Some(flycam) = self.flycam {
             return flycam.up();
         }
@@ -3522,6 +3574,33 @@ mod tests {
         // the window's own proportions: its projection
         assert!(cam.photo_proj(window, window).abs_diff_eq(cam.proj(window), 1e-6));
     }
+    #[test]
+    fn a_fixed_view_holds_one_eye_and_releasing_it_brings_the_camera_back() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let real = camera.position;
+        let eye = real + Vec3::new(0.0, 0.0, 3.0);
+        camera.fixed_view = Some(FixedView {
+            eye,
+            forward: Vec3::X,
+            up: Vec3::Z,
+            fov_y: 1.0,
+        });
+        for _ in 0..60 {
+            camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            assert!(camera.position.abs_diff_eq(eye, 1e-5), "every face is seen from the same eye");
+            assert!(camera.target.abs_diff_eq(eye + Vec3::X, 1e-5));
+        }
+        camera.release_fixed_view();
+        assert!(camera.fixed_view.is_none());
+        assert!(camera.position.abs_diff_eq(real, 1e-5), "the real place is back, without drift");
+        // released twice: nothing moves
+        camera.release_fixed_view();
+        assert!(camera.position.abs_diff_eq(real, 1e-5));
+    }
+
     use crate::scene::avatar::AvatarLibrary;
 
     fn hover_world(seated: bool) -> World {

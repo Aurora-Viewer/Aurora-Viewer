@@ -9,6 +9,7 @@
 //! `profile`; what the photo shows is chosen by `isolate`; the window is
 //! `ui::snapshot`, the frames `app::snapshot`.
 
+pub mod capture_360;
 pub mod gallery;
 pub mod inventory;
 pub mod isolate;
@@ -266,6 +267,8 @@ pub struct Settings {
     /// The settings of Aurora's looks by id (`knobs`), kept when a look is
     /// taken out.
     pub look_settings: std::collections::BTreeMap<String, Vec<f32>>,
+    /// The 360° snapshot window's (`capture_360`).
+    pub capture_360: capture_360::Settings,
 }
 
 impl Default for Settings {
@@ -298,6 +301,7 @@ impl Default for Settings {
             viewfinder: Default::default(),
             looks: Vec::new(),
             look_settings: Default::default(),
+            capture_360: Default::default(),
         }
     }
 }
@@ -910,8 +914,9 @@ pub fn local_stamp() -> String {
     format!("{y:04}-{mo:02}-{d:02}_{h:02}{mi:02}{s:02}")
 }
 
+/// The local date and time: year, month, day, hour, minute, second.
 #[cfg(windows)]
-fn local_time() -> (u16, u16, u16, u16, u16, u16) {
+pub(crate) fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     use windows_sys::Win32::System::SystemInformation::GetLocalTime;
     // SAFETY: GetLocalTime only fills the structure it is given.
     let t = unsafe {
@@ -922,8 +927,9 @@ fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     (t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
 }
 
+/// The local date and time: year, month, day, hour, minute, second.
 #[cfg(not(windows))]
-fn local_time() -> (u16, u16, u16, u16, u16, u16) {
+pub(crate) fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     // the TZ variable, else the system zone (/etc/localtime)
     civil(&chrono::Local::now())
 }

@@ -14443,6 +14443,20 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+# La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
+capture-360-quality-preview = Aperçu (rapide)
+capture-360-quality-medium = Moyenne
+capture-360-quality-high = Élevée
+capture-360-quality-maximum = Maximale
+capture-360-hide-avatars = Masquer tous les avatars
+capture-360-capturing = Rendu de la face { $face } sur 6…
+capture-360-projecting = Assemblage de l'image 360°…
+capture-360-saving = Enregistrement de l'image 360°…
+capture-360-saved = Enregistré : { $name }
+capture-360-failed = L'image 360° n'a pas pu être créée.
+capture-360-save-failed = L'image 360° n'a pas pu être enregistrée : { $error }
+capture-360-save-dialog = Enregistrer l'image 360°
+
 # Parcel radio state and stream failures
 music-state-error = Lecture impossible : { $reason }
 music-error-web-page = Cette page web ne propose aucun flux radio
@@ -14526,6 +14540,23 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
 
+# Panorama viewer (ui/panorama.rs)
+panorama-reset = Réinitialiser la vue
+panorama-enlarge = Agrandir
+panorama-leave-full = Quitter la vue agrandie
+panorama-help = Glisser pour regarder autour, molette pour zoomer, double-clic pour réinitialiser. Cliquez dessus, puis les flèches pour regarder et + / - pour zoomer.
+
+# Texture preview: look into a 2:1 texture as a panorama
+resource-preview-360 = 360°
+
+# Photo window: the 360° format
+photo-format-360 = 360°
+photo-not-in-360 = Pas dans les images 360°.
+photo-360-inventory-size = Panorama : { $width } × { $height } (la plus grande texture)
+photo-360-output = Panorama : { $width } × { $height }
+photo-360-format = JPEG · 360°
+photo-360-placeholder = Appuyez sur le déclencheur : le panorama apparaît ici.
+photo-looks-not-in-360 = Pas appliqué à une image 360° : seuls les filtres de couleur le sont.
 
 vr-preferences-title = VR
 vr-preferences-about = Déplacement, confort et rendu du casque.

@@ -253,6 +253,31 @@ impl LookOp {
         matches!(self, LookOp::Linearize { .. } | LookOp::Posterize { .. })
     }
 
+    /// The result at a pixel depends on that pixel's colour alone: not on its
+    /// place in the frame, its neighbours, its depth, nor on the frame's
+    /// histogram. The six faces of a 360° snapshot are looked at one by one,
+    /// and only such an operation leaves them joining without a seam: a
+    /// vignette, a grain, a blur, a distortion, bars, a frame, a depth effect
+    /// or a histogram stretch would differ from one face to the next.
+    pub fn is_pointwise(&self) -> bool {
+        matches!(
+            self,
+            LookOp::Sepia
+                | LookOp::GrayScale
+                | LookOp::Saturate(_)
+                | LookOp::Rotate(_)
+                | LookOp::Gamma { .. }
+                | LookOp::Colorize { .. }
+                | LookOp::Contrast { .. }
+                | LookOp::Brightness { .. }
+                | LookOp::ColorTransform(_)
+                | LookOp::Selective { .. }
+                | LookOp::GradientMap(_)
+                | LookOp::Split { .. }
+                | LookOp::Lut
+        )
+    }
+
     /// The operation's numbers in the order of its fields, colours as
     /// three: what the interface's settings change (`param`, `set_param`).
     fn slots(&mut self) -> Vec<&mut f32> {
@@ -340,6 +365,13 @@ pub struct LookLayer {
     pub intensity: f32,
     /// The table of `LookOp::Lut`.
     pub lut: Option<Arc<Lut>>,
+}
+
+impl LookLayer {
+    /// All its operations are pointwise (`LookOp::is_pointwise`).
+    pub fn is_pointwise(&self) -> bool {
+        self.ops.iter().all(LookOp::is_pointwise)
+    }
 }
 
 /// The looks of the frame (`FrameParams::look`).

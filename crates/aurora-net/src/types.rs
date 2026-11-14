@@ -1522,6 +1522,26 @@ pub struct AttachRequest {
     pub desc: String,
 }
 
+/// What the simulator sends of its region (LLViewerRegion::setInterestListMode,
+/// indra/newview/llviewerregion.cpp, originally LGPL 2.1): the camera's
+/// view by default, everything while the 360° snapshot window is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterestListMode {
+    #[default]
+    Default,
+    Capture360,
+}
+
+impl InterestListMode {
+    /// The capability's `mode` (IL_MODE_DEFAULT, IL_MODE_360).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InterestListMode::Default => "default",
+            InterestListMode::Capture360 => "360",
+        }
+    }
+}
+
 /// LLToolGrab SurfaceInfo: llDetectedTouch* values in region coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TouchSurface {
@@ -1749,6 +1769,11 @@ pub enum NetCommand {
     /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
     /// and again at each arrival (LLViewerCamera::setView).
     SetFov(f32),
+    /// The interest list mode (LLAgent::changeInterestListMode): posted to
+    /// the InterestList capability of every region that has it, and again
+    /// to the agent's region when its capabilities arrive while the mode is
+    /// not the default (the 360° snapshot window).
+    SetInterestListMode(InterestListMode),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.

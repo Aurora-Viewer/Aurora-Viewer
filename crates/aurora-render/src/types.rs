@@ -1136,6 +1136,11 @@ pub struct SnapshotSpec {
     /// tiles of different sizes, at full and half resolution side by
     /// side, would differ along their border.
     pub photo: (u32, u32),
+    /// A face of a 360° capture: the capture camera's step
+    /// (`CAPTURE_CAMERAS`). The frame is copied into the capture's cube on
+    /// the GPU and answers nothing; the main thread does not wait for it, and
+    /// the faces share one set of render targets (equirect.rs).
+    pub cube: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

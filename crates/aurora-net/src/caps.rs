@@ -69,6 +69,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // rebake (LLAppearanceMgr::syncCofVersionAndRefresh, Firestorm's
     // buildCapabilityNames)
     "IncrementCOFVersion",
+    // the 360° snapshot's "send everything" mode
+    // (LLViewerRegion::setInterestListMode)
+    "InterestList",
     "InventoryAPIv3",
     "InventoryThumbnailUpload",
     // the scripts of a parcel (LLFloaterScriptLimits)
@@ -161,6 +164,11 @@ pub fn agent_language_body(language: &str, public: bool) -> Llsd {
 /// (LLViewerRegion::accessToShortString).
 pub fn maturity_preference_body(maturity: u8) -> Llsd {
     llsd_map! { "access_prefs" => llsd_map! { "max" => crate::search::access_short_string(maturity) } }
+}
+
+/// LLViewerRegion::setInterestListMode: the InterestList capability's body.
+pub fn interest_list_body(mode: crate::InterestListMode) -> Llsd {
+    llsd_map! { "mode" => mode.as_str() }
 }
 
 /// LLAgent::processMaturityPreferenceFromServer: the preference the server

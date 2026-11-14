@@ -351,6 +351,19 @@ pub fn search(query: &str, lut_names: &[String]) -> Vec<Entry> {
         .collect()
 }
 
+/// Whether a look can be applied to the faces of a 360° snapshot one by one
+/// (`LookOp::is_pointwise`): its operations depend on a pixel's colour alone.
+/// A table of the user's is a colour operation. An unknown look is not.
+pub fn is_pointwise(id: &str) -> bool {
+    if id.starts_with(LUT) {
+        return true;
+    }
+    if let Some(aurora) = id.strip_prefix(AURORA) {
+        return aurora_look(aurora).is_some_and(|look| look.ops.iter().all(LookOp::is_pointwise));
+    }
+    legacy_look(id).is_some_and(|ops| ops.iter().all(LookOp::is_pointwise))
+}
+
 /// What a look draws: its operations, and its table.
 #[derive(Clone)]
 pub struct Resolved {
@@ -439,6 +452,22 @@ pub fn frame_look(layers: &[(Resolved, u8)], place: Placement, compare: Option<f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The photo window's 360° format keeps the colour looks and greys the
+    /// others (the classification itself is tested for every look in
+    /// aurora-render's looks tests).
+    #[test]
+    fn colour_looks_are_kept_for_a_360_snapshot_and_the_others_are_not() {
+        assert!(is_pointwise("Sepia") && is_pointwise("BlackAndWhite") && is_pointwise("Intense"));
+        assert!(is_pointwise(&format!("{AURORA}keep-red")));
+        assert!(is_pointwise(&format!("{LUT}warm.cube")), "a table is a colour operation");
+        assert!(!is_pointwise("Spotlight") && !is_pointwise("Sharpen") && !is_pointwise("Posterize"));
+        assert!(!is_pointwise(&format!("{AURORA}fine-grain")) && !is_pointwise(&format!("{AURORA}fisheye")));
+        assert!(!is_pointwise("No such look"));
+        let all = legacy_list().into_iter().chain(aurora_list().into_iter().flat_map(|(_, e)| e));
+        let kept = all.filter(|e| is_pointwise(&e.id)).count();
+        assert!(kept > 5 && kept < 66, "{kept} of the 66 looks are colour looks");
+    }
 
     #[test]
     fn every_look_has_a_name() {

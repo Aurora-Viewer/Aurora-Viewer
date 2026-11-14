@@ -14440,6 +14440,20 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
+# 360° snapshots: a format of the photo window (LLFloater360Capture, app/capture_360.rs)
+capture-360-quality-preview = Preview (fast)
+capture-360-quality-medium = Medium
+capture-360-quality-high = High
+capture-360-quality-maximum = Maximum
+capture-360-hide-avatars = Hide all avatars
+capture-360-capturing = Drawing face { $face } of 6…
+capture-360-projecting = Building the 360° image…
+capture-360-saving = Saving the 360° image…
+capture-360-saved = Saved { $name }
+capture-360-failed = The 360° image could not be made.
+capture-360-save-failed = The 360° image could not be saved: { $error }
+capture-360-save-dialog = Save the 360° image
+
 # Parcel radio state and stream failures
 music-state-error = Can't play: { $reason }
 music-error-web-page = This web page offers no radio stream
@@ -14522,6 +14536,24 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
+
+# Panorama viewer (ui/panorama.rs)
+panorama-reset = Reset the view
+panorama-enlarge = Enlarge
+panorama-leave-full = Leave the enlarged view
+panorama-help = Drag to look around, wheel to zoom, double-click to reset. Click it, then arrows to look and + / - to zoom.
+
+# Texture preview: look into a 2:1 texture as a panorama
+resource-preview-360 = 360°
+
+# Photo window: the 360° format
+photo-format-360 = 360°
+photo-not-in-360 = Not in 360° pictures.
+photo-360-inventory-size = Panorama: { $width } × { $height } (the largest texture)
+photo-360-output = Panorama: { $width } × { $height }
+photo-360-format = JPEG · 360°
+photo-360-placeholder = Press the shutter: the panorama appears here.
+photo-looks-not-in-360 = Not drawn in a 360° picture: only the colour looks are.
 
 ui-options-camera-vr-view-first-person = First Person
 

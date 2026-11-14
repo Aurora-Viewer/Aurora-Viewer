@@ -111,7 +111,7 @@ pub const COMMANDS: &[Command] = commands![
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
-    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
+    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", true;
     "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;
 ];
 

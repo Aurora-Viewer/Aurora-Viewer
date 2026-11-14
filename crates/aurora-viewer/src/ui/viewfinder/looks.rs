@@ -51,6 +51,7 @@ impl Viewfinder {
                         list_height: room,
                         compare: true,
                         luts: &panel.lut_names,
+                        pano: panel.pano,
                     };
                     let mut state = std::mem::take(&mut panel.looks);
                     state.show(ui, p, s, opts, &mut actions);
