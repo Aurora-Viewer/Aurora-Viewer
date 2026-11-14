@@ -4,8 +4,10 @@ use super::*;
 pub(in crate::ik_edit::project) enum Management {
     Rename(String),
     Duplicate(String),
-    File,
-    Notecard,
+    /// The exports carry the full-permission animation items, filled in by
+    /// `library_tick` just before the job (`SharedAssets`).
+    File(animations::SharedAssets),
+    Notecard(animations::SharedAssets),
     Delete,
 }
 
@@ -17,12 +19,14 @@ pub(super) fn execute(
     default_name: String,
     default_profile: String,
 ) -> Result<Output, String> {
-    let source = document(root, current, id)?;
+    let mut source = document(root, current, id)?;
     let command = match action {
         Management::Rename(name) => Command::Rename(name),
         Management::Duplicate(name) => Command::Duplicate(name),
         Management::Delete => Command::Delete(id),
-        Management::File => {
+        Management::File(shared) => {
+            // A project saved by an older version may still name every asset.
+            source.name_assets(|item| shared.get(item));
             return export_file(source, || {
                 rfd::FileDialog::new()
                     .add_filter("Aurora IK", &["json"])
@@ -30,7 +34,10 @@ pub(super) fn execute(
                     .save_file()
             });
         }
-        Management::Notecard => return Ok(Output::LibraryNotecard(source.encode()?)),
+        Management::Notecard(shared) => {
+            source.name_assets(|item| shared.get(item));
+            return Ok(Output::LibraryNotecard(source.encode()?));
+        }
     };
     match super::execute(root, source, command, default_name, default_profile)? {
         Output::LibraryApplied(bytes) => Ok(Output::LibraryCreated(bytes)),

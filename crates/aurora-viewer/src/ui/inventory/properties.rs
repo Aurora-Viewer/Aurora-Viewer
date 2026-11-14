@@ -43,8 +43,8 @@ pub(super) fn show(
             item: it,
             edit,
             can_edit,
-            can_next_owner: can_edit,
-            can_describe: can_edit && it.owner_mask & rules::MODIFY != 0,
+            can_next_owner: can_edit && rules::next_owner_editable(it),
+            can_describe: can_edit && rules::held(inv, it) & rules::MODIFY != 0,
             can_thumbnail: can_edit,
             names: &facts.names,
             images,
@@ -58,10 +58,14 @@ pub(super) fn show(
         actions.push(InvAction::Profile(resident));
     }
     if let Some(edit) = response.edit {
-        let name = if edit.name == it.name {
+        // (a coded settings item's field shows its name without the code,
+        // which the rename keeps)
+        let name = if edit.name == super::shown_name(it) {
             it.name.clone()
         } else {
-            rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone())
+            rules::clean_name(&edit.name)
+                .map(|name| crate::weather::region::keep_code(&it.name, &name))
+                .unwrap_or_else(|_| it.name.clone())
         };
         let body = llsd_map! { "name" => name, "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
@@ -145,6 +149,8 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         images,
         wanted_images,
     } = data;
+    // what the agent may do with the item (object contents: the caller's mask)
+    let mine = inventory.map_or(it.owner_mask, |inv| rules::held(inv, it));
     // Follow simulator readback (including refused edits) without replacing a
     // text field's unfinished draft. Agent inventory disables edits in flight.
     if can_edit {
@@ -191,7 +197,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             edit.commit_name |= name.lost_focus();
             if can_describe && edit.commit_name && !ui.input(|input| input.pointer.any_down()) {
                 edit.commit_name = false;
-                if edit.name != it.name
+                if edit.name != super::shown_name(it)
                     && let Ok(name) = rules::clean_name(&edit.name)
                 {
                     edit.name = name.clone();
@@ -269,11 +275,11 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.label(aurora_i18n::tr!("ui-inventory-properties-you-can"));
         ui.horizontal(|ui| {
             for (mask, label) in rights() {
-                let mut on = it.owner_mask & mask != 0;
+                let mut on = mine & mask != 0;
                 ui.add_enabled_ui(false, |ui| crate::ui::widgets::checkbox(ui, p, &mut on, label));
             }
         });
-        let may_share = can_edit && it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER;
+        let may_share = can_edit && mine & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER;
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("ui-inventory-properties-anyone"));
             if check_mask(ui, p, may_share, &mut edit.everyone, rules::COPY, aurora_i18n::tr!("common-copy-2")) {
@@ -318,18 +324,14 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         let mut sale_changed = false;
         ui.horizontal(|ui| {
             if ui
-                .add_enabled_ui(can_edit && it.owner_mask & rules::TRANSFER != 0, |ui| {
+                .add_enabled_ui(can_edit && mine & rules::TRANSFER != 0, |ui| {
                     crate::ui::widgets::checkbox(ui, p, &mut for_sale, aurora_i18n::tr!("ui-inventory-properties-for-sale"))
                 })
                 .inner
                 .changed()
             {
                 sale_changed = true;
-                edit.sale_type = if for_sale {
-                    if it.owner_mask & rules::COPY != 0 { 2 } else { 1 }
-                } else {
-                    0
-                };
+                edit.sale_type = if for_sale { if mine & rules::COPY != 0 { 2 } else { 1 } } else { 0 };
             }
             ui.add_enabled_ui(for_sale && can_edit, |ui| {
                 egui::ComboBox::from_id_salt("sale_type")
@@ -338,7 +340,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                         for value in 1..=3 {
                             if ui
                                 .add_enabled(
-                                    value != 2 || it.owner_mask & rules::COPY != 0,
+                                    value != 2 || mine & rules::COPY != 0,
                                     egui::Button::selectable(edit.sale_type == value, sale_name(value)),
                                 )
                                 .clicked()

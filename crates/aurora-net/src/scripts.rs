@@ -10,9 +10,58 @@ pub mod experiences;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScriptOptions {
-    pub mono: bool,
+    pub compile: CompileTarget,
     pub running: bool,
     pub experience: Uuid,
+}
+
+/// The VM a script is compiled for: the upload body's `target`
+/// (LLScriptAssetUpload::getCompileTarget). `LslLuau` is LSL source run on
+/// the Luau VM; `Luau` is SLua source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileTarget {
+    Lsl2,
+    Mono,
+    Luau,
+    LslLuau,
+}
+
+impl CompileTarget {
+    pub fn name(self) -> &'static str {
+        match self {
+            CompileTarget::Lsl2 => "lsl2",
+            CompileTarget::Mono => "mono",
+            CompileTarget::Luau => "luau",
+            CompileTarget::LslLuau => "lsl-luau",
+        }
+    }
+
+    /// From ScriptRunningReply's `Mono`, `Luau` (Luau VM) and `LuauLanguage`
+    /// (SLua source) flags (LLLiveLSLEditor::processScriptRunningReply).
+    pub fn from_running(mono: bool, luau: bool, luau_language: bool) -> Self {
+        match (luau, luau_language, mono) {
+            (true, true, _) => CompileTarget::Luau,
+            (true, false, _) => CompileTarget::LslLuau,
+            (false, _, true) => CompileTarget::Mono,
+            (false, _, false) => CompileTarget::Lsl2,
+        }
+    }
+
+    /// The default for a script item: SLua items compile for Luau, LSL
+    /// items for Mono (LLLiveLSLEditor::loadAsset without runtime info).
+    pub fn for_item(flags: u32) -> Self {
+        if is_slua_item(flags) {
+            CompileTarget::Luau
+        } else {
+            CompileTarget::Mono
+        }
+    }
+}
+
+/// SST_LUA: the script subtype is the low byte of the item's flags
+/// (LLInventoryItem::getInventorySubType, llinventorytype.h ScriptSubtype_t).
+pub fn is_slua_item(flags: u32) -> bool {
+    flags & 0xff == 1
 }
 
 pub const MAX_SOURCE: usize = 1024 * 1024;
@@ -28,12 +77,28 @@ pub struct ScriptTarget {
 #[derive(Debug, Clone)]
 pub struct ScriptSaved {
     pub asset: Uuid,
+    /// No compile error. Also true when the grid did not compile it.
     pub compiled: bool,
+    /// The grid compiled it. OpenSim does not compile a script saved in
+    /// the agent's inventory: its reply (LLSDAssetUploadComplete,
+    /// UpdateItemAsset.cs) has no `compiled`, which is no failure.
+    pub checked: bool,
     pub errors: Vec<String>,
 }
 
-pub fn upload_body(target: ScriptTarget, mono: bool, running: bool, experience: Option<Uuid>) -> Llsd {
-    let mut body = llsd_map! { "item_id" => target.item, "target" => if mono { "mono" } else { "lsl2" } };
+/// A save's reply holds no compile failure: `compiled` is true, or absent
+/// with no `errors` (a grid that did not compile the script, see
+/// [`ScriptSaved::checked`]). A reply that lists errors is a failure even
+/// without `compiled`.
+pub fn compile_ok(ack: &Llsd) -> bool {
+    match &ack["compiled"] {
+        Llsd::Undef => ack["errors"].as_array().is_empty(),
+        _ => ack["compiled"].as_bool(),
+    }
+}
+
+pub fn upload_body(target: ScriptTarget, compile: CompileTarget, running: bool, experience: Option<Uuid>) -> Llsd {
+    let mut body = llsd_map! { "item_id" => target.item, "target" => compile.name() };
     if !target.object.is_nil() {
         body.insert("task_id", target.object);
         body.insert("is_script_running", i32::from(running));
@@ -49,7 +114,8 @@ fn saved_reply(ack: &Llsd) -> Result<ScriptSaved, String> {
     let errors = ack["errors"].as_array().iter().map(Llsd::to_string_value).collect();
     Ok(ScriptSaved {
         asset: ack["new_asset"].as_uuid(),
-        compiled: ack["compiled"].as_bool(),
+        compiled: compile_ok(ack),
+        checked: !matches!(ack["compiled"], Llsd::Undef),
         errors,
     })
 }
@@ -71,7 +137,7 @@ pub async fn save(
         let answer = crate::caps::post_llsd(
             http,
             cap,
-            &upload_body(target, options.mono, options.running, Some(options.experience)),
+            &upload_body(target, options.compile, options.running, Some(options.experience)),
         )
         .await
         .map_err(|_| aurora_i18n::tr!("script-save-failed").to_owned())?;
@@ -171,7 +237,7 @@ mod tests {
             &url,
             target,
             ScriptOptions {
-                mono: false,
+                compile: CompileTarget::Lsl2,
                 running: false,
                 experience,
             },
@@ -186,7 +252,7 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(
             aurora_llsd::from_xml(&requests[0].1).expect("LLSD"),
-            upload_body(target, false, false, Some(experience))
+            upload_body(target, CompileTarget::Lsl2, false, Some(experience))
         );
         assert!(requests[1].0.to_lowercase().contains("content-type: application/octet-stream"));
         assert_eq!(requests[1].1, source.as_bytes());
@@ -198,7 +264,7 @@ mod tests {
             object: Uuid::nil(),
             item: Uuid::from_u128(12),
         };
-        let body = upload_body(target, true, false, None);
+        let body = upload_body(target, CompileTarget::Mono, false, None);
         assert_eq!(body["item_id"].as_uuid(), target.item);
         assert_eq!(body["target"].as_str(), "mono");
         assert!(body.as_map().expect("upload map").get("task_id").is_none());
@@ -206,7 +272,7 @@ mod tests {
             object: Uuid::from_u128(13),
             ..target
         };
-        let body = upload_body(task, false, true, None);
+        let body = upload_body(task, CompileTarget::Lsl2, true, None);
         assert_eq!(body["task_id"].as_uuid(), task.object);
         assert_eq!(body["target"].as_str(), "lsl2");
         assert_eq!(body["is_script_running"].as_i32(), 1);
@@ -225,5 +291,41 @@ mod tests {
         assert!(!result.compiled);
         assert_eq!(result.errors, ["(4, 8) : ERROR : Syntax error"]);
         assert!(saved_reply(&llsd_map! { "state" => "complete", "compiled" => true }).is_err());
+        assert!(result.checked);
+    }
+
+    #[test]
+    fn an_inventory_save_the_grid_did_not_compile_is_no_failure() {
+        // OpenSim's reply to UpdateScriptAgent (LLSDAssetUploadComplete):
+        // no `compiled` and no `errors`
+        let asset = Uuid::from_u128(43);
+        let ack = llsd_map! { "state" => "complete", "new_asset" => asset, "new_inventory_item" => Uuid::from_u128(44) };
+        let result = saved_reply(&ack).expect("source saved");
+        assert_eq!(result.asset, asset);
+        assert!(result.compiled && !result.checked && result.errors.is_empty());
+        assert!(compile_ok(&ack));
+        assert!(!compile_ok(&llsd_map! { "compiled" => false }));
+        assert!(compile_ok(&llsd_map! { "compiled" => true }));
+        // errors without `compiled` stay a failure
+        assert!(!compile_ok(
+            &llsd_map! { "errors" => Llsd::Array(vec!["(4, 8) : ERROR : Syntax error".into()]) }
+        ));
+    }
+
+    #[test]
+    fn slua_targets_follow_the_running_reply_and_the_item_subtype() {
+        use CompileTarget::*;
+        assert_eq!(CompileTarget::from_running(false, true, true), Luau);
+        assert_eq!(CompileTarget::from_running(true, true, false), LslLuau);
+        assert_eq!(CompileTarget::from_running(true, false, false), Mono);
+        assert_eq!(CompileTarget::from_running(false, false, false), Lsl2);
+        assert_eq!(CompileTarget::for_item(0x0100_0001), Luau);
+        assert_eq!(CompileTarget::for_item(0x0100_0000), Mono);
+        let target = ScriptTarget {
+            object: Uuid::from_u128(13),
+            item: Uuid::from_u128(12),
+        };
+        assert_eq!(upload_body(target, Luau, true, None)["target"].as_str(), "luau");
+        assert_eq!(upload_body(target, LslLuau, true, None)["target"].as_str(), "lsl-luau");
     }
 }

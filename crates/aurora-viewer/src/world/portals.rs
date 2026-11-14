@@ -1,6 +1,7 @@
 //! Region-local, voluntary portal crossings. Invitations are immutable for
 //! their lifetime: replaying one never moves it or resets its proximity gate.
 use super::World;
+use super::land::BuildRight;
 use aurora_net::{
     NetCommand,
     bridge::{
@@ -27,6 +28,27 @@ const PER_RELAY: usize = 4;
 const PER_CREATOR: usize = 4;
 const CLEARANCE: f32 = 1.0;
 const SEND_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Why our portal was not opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Outside the region, expired, too long to share, or too many portals.
+    Invalid,
+    /// We may not build where it would stand.
+    NoBuild,
+    /// The parcel there is not known yet; it is asked for.
+    LandUnknown,
+}
+
+impl Refusal {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Invalid => aurora_i18n::tr!("portal-invalid"),
+            Self::NoBuild => aurora_i18n::tr!("portal-no-build"),
+            Self::LandUnknown => aurora_i18n::tr!("portal-land-checking"),
+        }
+    }
+}
 
 pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
     center.is_finite() && (WIDTH..=size[0] as f32 - WIDTH).contains(&center.x) && (WIDTH..=size[1] as f32 - WIDTH).contains(&center.y)
@@ -102,6 +124,9 @@ pub struct Entry {
     shared: bool,
     created: bool,
     return_pass: bool,
+    /// A return kept ours only because its land was not known yet: it is
+    /// announced once that land is known and open to us.
+    awaiting_land: bool,
 }
 
 impl Entry {
@@ -431,7 +456,15 @@ impl State {
         self.group_refresh.pop_front()
     }
 
-    pub fn create(&mut self, portal: Portal, position: Vec3, now: Instant, unix: u64) -> bool {
+    /// Open our portal. Placing one needs the right to build (rez) where
+    /// it stands, the land test of [`crate::world::land::agent_can_build`]:
+    /// an unknown parcel refuses too. A refusal keeps the portal already open.
+    pub fn create(&mut self, portal: Portal, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> Result<(), Refusal> {
+        match build {
+            BuildRight::Allowed => {}
+            BuildRight::Denied => return Err(Refusal::NoBuild),
+            BuildRight::Unknown => return Err(Refusal::LandUnknown),
+        }
         let private_fits = portal.access == Access::Everyone
             || Message::Details {
                 region: portal.region,
@@ -446,14 +479,14 @@ impl State {
             || !private_fits
             || Message::Open(portal.announcement()).encode().is_none()
         {
-            return false;
+            return Err(Refusal::Invalid);
         }
         if self.out.len() > LIMIT * 2 - 2 || self.entries.len() >= LIMIT && self.own().is_none() {
-            return false;
+            return Err(Refusal::Invalid);
         }
         self.close(unix);
         if self.entries.len() >= LIMIT {
-            return false;
+            return Err(Refusal::Invalid);
         }
         if let Access::Group(id) = portal.access
             && !self.group_refresh.contains(&id)
@@ -472,8 +505,9 @@ impl State {
             shared: true,
             created: true,
             return_pass: false,
+            awaiting_land: false,
         });
-        true
+        Ok(())
     }
 
     pub fn close(&mut self, unix: u64) {
@@ -497,7 +531,13 @@ impl State {
 
     /// A crossing grants this traveler a return, without making their friends
     /// friends of the original creator. Only the creator can grant Friends.
-    pub fn share_return(&mut self, portal: Portal, creator: Uuid, position: Vec3, now: Instant, unix: u64) -> bool {
+    /// It is announced only where the traveler may build (`build`, the land
+    /// test of [`create`](Self::create)); elsewhere, or while that land is
+    /// unknown, it stays the traveler's own: shown and crossable here,
+    /// announced to nobody.
+    pub fn share_return(&mut self, portal: Portal, creator: Uuid, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> bool {
+        let share = build == BuildRight::Allowed;
+        let unknown = build == BuildRight::Unknown;
         let mut announcement = portal.announcement();
         announcement.creator = Some(creator);
         if creator.is_nil()
@@ -522,7 +562,9 @@ impl State {
             entry.return_pass = true;
             entry.gate.clearance = CLEARANCE;
             entry.gate.ready_at = now;
-            entry.shared = true;
+            entry.shared |= share;
+            // never back from shared to private
+            entry.awaiting_land = unknown && !entry.shared;
             entry.portal.creator = Some(creator);
             announcement = entry.portal.clone();
         } else {
@@ -536,17 +578,59 @@ impl State {
                 gate: Gate::new(Vec3::from(portal.center), position, now),
                 expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
                 relays: Vec::new(),
-                shared: true,
+                shared: share,
                 created: false,
                 return_pass: true,
+                awaiting_land: unknown,
             });
         }
-        if let Access::Group(group) = portal.access
+        if !share {
+            return true;
+        }
+        self.announce(announcement, portal.access)
+    }
+
+    fn announce(&mut self, announcement: Announcement, access: Access) -> bool {
+        if let Access::Group(group) = access
             && !self.group_refresh.contains(&group)
         {
             self.group_refresh.push_back(group);
         }
         self.queue(Uuid::nil(), Message::Open(announcement))
+    }
+
+    /// Our returns waiting for their land to be known: (creator, id, center).
+    pub fn awaiting_land(&self) -> Vec<(Uuid, Uuid, Vec3)> {
+        self.entries
+            .iter()
+            .filter(|e| e.awaiting_land)
+            .map(|e| (e.owner, e.portal.id, Vec3::from(e.portal.center)))
+            .collect()
+    }
+
+    /// The land under a waiting return became known: open to us, it is
+    /// announced like any return; closed, it stays ours alone for good. A
+    /// return gone or expired meanwhile is not brought back.
+    pub fn land_known(&mut self, creator: Uuid, id: Uuid, build: BuildRight, unix: u64) {
+        if build == BuildRight::Unknown {
+            return;
+        }
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.awaiting_land && e.owner == creator && e.portal.id == id)
+        else {
+            return;
+        };
+        entry.awaiting_land = false;
+        if build != BuildRight::Allowed || !entry.portal.live(unix) {
+            return;
+        }
+        entry.shared = true;
+        let (announcement, access) = (entry.portal.clone(), entry.details.as_ref().map_or(Access::Everyone, |d| d.access));
+        if !self.announce(announcement, access) {
+            self.failed = true;
+        }
     }
 
     fn remember(&mut self, owner: Uuid, id: Uuid, unix: u64) {
@@ -644,6 +728,7 @@ impl State {
                     shared: false,
                     created: false,
                     return_pass: false,
+                    awaiting_land: false,
                 });
             }
             Message::Close { id, .. } => {
@@ -654,7 +739,7 @@ impl State {
                     }
                 }
                 self.entries
-                    .retain(|entry| entry.portal.id != id || entry.shared || !entry.relays.is_empty());
+                    .retain(|entry| entry.portal.id != id || entry.shared || entry.return_pass || !entry.relays.is_empty());
                 self.fetches.remove(&(owner, id));
                 self.out
                     .retain(|(target, message)| !(*target == owner && matches!(message, Message::Request { id: old, .. } if *old == id)));

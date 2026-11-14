@@ -140,6 +140,13 @@ fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
     return normalize(n);
 }
 
+// The terrain tangent: two snorm16 values in the first two unorm16 weights
+// (types.rs pack_terrain_frame).
+fn terrain_tangent(weights: vec4<f32>) -> vec3<f32> {
+    let w = vec2<u32>(round(weights.xy * 65535.0));
+    return terrain_direction(vec4<u32>(w.x & 0xffu, w.x >> 8u, w.y & 0xffu, w.y >> 8u));
+}
+
 fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
     if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
     return in.normal.xyz + lip_delta(rec, in)[1];
@@ -277,6 +284,19 @@ fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
     return placed_model(rec, in, frame.eye.xyz);
 }
 
+// Clip position of an eye view (`ep` relative to the eye) with the face's
+// layer rank (DrawRecord::set_layer_rank): a higher rank comes a few depth
+// steps nearer, about 2^-20 of the distance each (some micrometres), so a
+// worn layer lying exactly on the body wins on every face whatever the order
+// of the draw records. Rank 0 leaves the depth untouched. Every pass that
+// tests depth against another goes through it (prepasses and scene pass).
+fn eye_clip(rec: DrawRecord, ep: vec4<f32>) -> vec4<f32> {
+    let clip = frame.eye_view_proj * ep;
+    let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
+    // reverse Z: a greater depth is nearer
+    return vec4<f32>(clip.xy, clip.z * (1.0 + f32(rank) * LAYER_DEPTH_STEP), clip.w);
+}
+
 struct VsOut {
     @invariant @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
@@ -295,6 +315,11 @@ struct VsOut {
     // zero for the per-pixel one
     @location(9) tangent: vec3<f32>,
     @location(10) @interpolate(flat) tangent_sign: f32,
+    // Aurora Weather: how much snow is on the avatar wearing it (0..1),
+    // and how much this point faces up on the avatar standing (its rest
+    // pose: the snow stays where it built up as the avatar moves)
+    @location(11) @interpolate(flat) snow: f32,
+    @location(12) snow_up: f32,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -526,6 +551,8 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
 fn vs_land_overlay(in: VsIn) -> VsOut {
     let rec = records[in.instance];
     var out: VsOut;
+    out.snow = 0.0;
+    out.snow_up = 0.0;
     out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
     out.record = in.instance;
     if (rec.params.x > 0.5) {
@@ -544,9 +571,16 @@ fn vs_main(in: VsIn) -> VsOut {
     // (lighting, shadows and fog keep region coordinates)
     let wp = vec4<f32>(ep.xyz + frame.eye.xyz, ep.w);
     var out: VsOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
+    // snow on avatars, judged by the facing just found (before it, the
+    // normal was zero: its up a NaN, and no snow ever showed)
+    out.snow = avatar_snow(rec);
+    out.snow_up = 0.0;
+    if (out.snow > 0.0) {
+        out.snow_up = avatar_rest_up(rec, in, out.normal);
+    }
     var st = face_st(in, rec);
     let animated = has_tex_anim(rec);
     if (animated) {
@@ -653,7 +687,7 @@ fn vs_depth(in: VsIn) -> DepthOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.record = in.instance;
     return out;
@@ -685,7 +719,16 @@ struct DepthNormalOut {
     @location(0) normal: vec3<f32>,
     @location(1) motion_cur: vec4<f32>,
     @location(2) motion_prev: vec4<f32>,
+    @location(3) @interpolate(flat) composition: f32,
 };
+
+// What a face adds to the encoded normal's x (`NORMAL_COMPOSITION` or 0,
+// common.wgsl): a running texture animation moves the texture over a face
+// whose motion is still, which FSR's history cannot follow.
+fn normal_composition(rec: DrawRecord) -> f32 {
+    let animated = (rec.flags.x & FLAG_TEX_ANIM) != 0u && bitcast<f32>(rec.anim.w) != 0.0;
+    return select(0.0, NORMAL_COMPOSITION, animated);
+}
 
 @vertex
 fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
@@ -693,11 +736,12 @@ fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthNormalOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.normal = cofactor(model) * vertex_normal(rec, in);
     let motion = motion_clips(rec, in, ep);
     out.motion_cur = motion[0];
     out.motion_prev = motion[1];
+    out.composition = normal_composition(rec);
     return out;
 }
 
@@ -719,7 +763,7 @@ fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthMaskOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
     out.uv = diffuse_uv(face_st(in, rec), rec, frame.anim_clock.zw);
@@ -731,23 +775,24 @@ fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
 }
 
 // The world normal facing the side drawn (eval_material), octahedral as in
-// the G-buffer, then the pixel's motion.
-fn depth_normal(n: vec3<f32>, front: bool, motion_cur: vec4<f32>, motion_prev: vec4<f32>) -> vec4<f32> {
+// the G-buffer (plus `composition` on x), then the pixel's motion.
+fn depth_normal(n: vec3<f32>, front: bool, motion_cur: vec4<f32>, motion_prev: vec4<f32>, composition: f32) -> vec4<f32> {
     let m = normalize(select(-n, n, front));
-    return vec4<f32>(oct_encode(m), screen_motion(motion_cur, motion_prev));
+    return vec4<f32>(oct_encode(m) + vec2<f32>(composition, 0.0), screen_motion(motion_cur, motion_prev));
 }
 
 @fragment
 fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, in.composition);
 }
 
 // Only selected while an avatar intersects a portal. The ordinary normal
 // prepass keeps its compact vertex output without a record/position fetch.
 @fragment
 fn fs_depth_portal_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    portal_clip(records[in.record], in.world_pos);
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(rec));
 }
 
 // fs_depth_mask with the normal.
@@ -759,7 +804,7 @@ fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) ->
     if (a < rec.params.w) {
         discard;
     }
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(rec));
 }
 
 // Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
@@ -819,7 +864,7 @@ fn fs_depth_contact(in: VsOut, @builtin(front_facing) front: bool) {
 fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     depth_contact(in.record, in.uv, in.world_pos);
-    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev);
+    return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their
@@ -873,7 +918,78 @@ fn shadow_normal(m: Material) -> vec3<f32> {
     return m.geo_n;
 }
 
+// Aurora Weather: how much snow is on the avatar a record belongs to: in
+// its skeleton's palette (AVATAR_SNOW), a rigged mesh's from its base, a
+// worn prim's from its anchor's skeleton (palettes are PALETTE_STRIDE
+// apart); none for the rest.
+fn avatar_snow(rec: DrawRecord) -> f32 {
+    var entry = 0u;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        entry = rec.flags.y + AVATAR_SNOW;
+    } else if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        entry = rec.flags.y - rec.flags.y % PALETTE_STRIDE + AVATAR_SNOW;
+    } else {
+        return 0.0;
+    }
+    // only what the viewer wrote as snow (AVATAR_SNOW_MARK): the identity
+    // a palette starts with read as full snow (a car turned white)
+    let m = palettes[entry];
+    if (m[3][3] != AVATAR_SNOW_MARK) {
+        return 0.0;
+    }
+    return clamp(m[0][0], 0.0, 1.0);
+}
+
+// How much a point faces up on its avatar: its facing against the
+// skeleton's own up (the avatar turned, leaning, flying tilted or lying as
+// a whole does not move the snow; a limb moving does a little). Not a
+// rigged mesh's normal before the skinning: its axes are the mesh's own,
+// not always the avatar's (a head made facing up snowed its face).
+fn avatar_rest_up(rec: DrawRecord, in: VsIn, world_n: vec3<f32>) -> f32 {
+    var base = rec.flags.y;
+    if ((rec.flags.x & FLAG_SKINNED) == 0u) {
+        base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
+    }
+    let skel = palettes[base + SKELETON_ANCHOR];
+    let up = normalize(skel[2].xyz);
+    return dot(normalize(world_n), up);
+}
+
+// Snow on an avatar's material: on what faces up, in patches that follow
+// the face's texture (not the world: they stay put as it walks), the more
+// of it the more snow; a matte white, its shine and glow covered.
+fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
+    var m = m_in;
+    // on what faces up on the avatar standing; sliding off what now
+    // faces the ground (the avatar upside down)
+    let up = smoothstep(0.2, 0.75, in.snow_up) * smoothstep(-0.6, -0.1, m.n.z);
+    if (in.snow <= 0.001 || up <= 0.0 || hud_pass) { return m; }
+    let p = in.uv * 7.0;
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let h = vec4<f32>(
+        fract(sin(dot(i, vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(1.0, 0.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(0.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
+        fract(sin(dot(i + vec2<f32>(1.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453));
+    let patches = mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+    let cover = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
+    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9), cover), m.color.a);
+    m.roughness = mix(m.roughness, 0.85, cover);
+    m.metallic *= 1.0 - cover;
+    m.legacy_spec *= 1.0 - cover;
+    m.legacy_env *= 1.0 - cover;
+    m.unlit *= 1.0 - cover;
+    m.emissive *= 1.0 - cover;
+    return m;
+}
+
 fn eval_material(in: VsOut, front: bool) -> Material {
+    return avatar_snow_on(eval_material_base(in, front), in);
+}
+
+fn eval_material_base(in: VsOut, front: bool) -> Material {
     portal_clip(records[in.record], in.world_pos);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -967,7 +1083,77 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     let fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
     let gtdenom = 2.0 * nh;
     let gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
-    return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
+    return legacy_finite(lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl));
+}
+
+// AURORA_LEGACY_NAN=off|check (frame.light_mode.z): `off` lets a legacy
+// highlight or environment term that is not a number through, as before
+// (0.9.8); `check` paints magenta where one was caught.
+const LEGACY_NAN_OFF: u32 = 0x200000u;
+const LEGACY_NAN_CHECK: u32 = 0x400000u;
+// Whether this fragment caught one (the `check` mode). Reset by
+// shade_material.
+var<private> legacy_nan: bool = false;
+
+fn not_finite(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7f800000u) == 0x7f800000u;
+}
+
+// A legacy lighting term (a highlight, an environment sample) that is not a
+// finite number gives none. The highlight's divisions and powers can give
+// a NaN at grazing angles, and the min, max and clamp that follow are left
+// to the card: NVIDIA returns the other operand (no highlight), AMD keeps
+// the NaN, which `finite_hdr` turns black: black eyebrows, beards and eye
+// layers on mesh heads in 0.9.8, after #3389 had only taken its alpha
+// away. Tested on the bits, as legacy_glare_alpha: a driver may fold
+// `x != x` to false.
+fn legacy_finite(x: f32) -> f32 {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return x;
+    }
+    let bad = not_finite(x);
+    legacy_nan = legacy_nan || bad;
+    return select(x, 0.0, bad);
+}
+
+fn legacy_finite3(c: vec3<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & LEGACY_NAN_OFF) != 0u) {
+        return c;
+    }
+    let bad = not_finite(c.x) || not_finite(c.y) || not_finite(c.z);
+    legacy_nan = legacy_nan || bad;
+    return select(c, vec3<f32>(0.0), bad);
+}
+
+// The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
+// DIFFUSE_ALPHA_MODE_BLEND): the brightness of its sharp environment
+// reflection times the environment intensity, plus its local light
+// highlights. The face's alpha is max(texture alpha, glare) (shade_material),
+// so a transparent layer with a specular map shows its reflections only:
+// the "wet" and "shine" layers worn over mesh bodies (#1420). The sun's
+// highlight does not count, as there. Reset by shade_material, written by
+// legacy_light and legacy_local_spec.
+var<private> legacy_glare: f32 = 0.0;
+
+// AURORA_LEGACY_GLARE=0 (frame.light_mode.z): no glare, the blended legacy
+// faces take their texture alpha and leave early as before #3259, to tell
+// a glare fault from another on a card we cannot test (#3259 follow-up:
+// squares on blended leaves and streaks in hair on AMD cards).
+const LEGACY_GLARE_OFF: u32 = 0x100000u;
+
+fn legacy_glare_on() -> bool {
+    return (frame.light_mode.z & LEGACY_GLARE_OFF) == 0u;
+}
+
+// The alpha the glare gives a face of emissive mask `unlit`, as
+// materialF.glsl: glare *= 1 - emissive, then min(glare, 1). A glare that
+// is not a number (a degenerate normal or environment sample) gives none:
+// min and clamp of a NaN are left to the card, and one card's 1 drew
+// whole quads of empty texels. Tested on the bits: a driver may fold
+// `g != g` to false.
+fn legacy_glare_alpha(unlit: f32) -> f32 {
+    let g = legacy_glare * (1.0 - clamp(unlit, 0.0, 1.0));
+    return select(clamp(g, 0.0, 1.0), 0.0, not_finite(g) || !legacy_glare_on());
 }
 
 // Legacy material lighting applied to the sun + sky result `col`, as
@@ -999,12 +1185,12 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         );
         let g = both.a;
         if (g.w > 0.0) {
-            gloss_sky = g.rgb;
+            gloss_sky = g.rgb * probe_pass_radiance();
         }
         if (env > 0.0) {
             let e = both.b;
             if (e.w > 0.0) {
-                env_sky = e.rgb;
+                env_sky = e.rgb * probe_pass_radiance();
             }
         }
     }
@@ -1017,8 +1203,8 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     }
     // sampleReflectionProbesLegacy clamps both: a very bright sky does not
     // wash a shiny face out
-    gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
-    env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    gloss_sky = clamp(legacy_finite3(gloss_sky), vec3<f32>(0.0), vec3<f32>(10.0));
+    env_sky = clamp(legacy_finite3(env_sky), vec3<f32>(0.0), vec3<f32>(10.0));
     // with GTAO, the glossy reflection fades in creases as a PBR one
     // (specular_occlusion; its roughness from the glossiness, as the probe
     // level above); the sharp environment is a mirror's lobe, which that
@@ -1041,8 +1227,33 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         var fresnel = 1.0 - dot(v, n);
         fresnel = min(fresnel * fresnel + env, 1.0);
         col = mix(col, env_sky * env * fresnel * 0.5, env);
+        legacy_glare += clamp(max(max(env_sky.r, env_sky.g), env_sky.b), 0.0, 1.0) * env;
     }
     return col;
+}
+
+// Whether an empty texel of a blended face may still glare: a legacy
+// material with an environment, or a glossy one with a local light or a
+// projector over it (the sun's highlight never glares). A glossy hair far
+// from any local light keeps leaving before the lighting (fs_blend).
+fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u || !legacy_glare_on()) {
+        return false;
+    }
+    if (m.legacy_env > 0.0) {
+        return true;
+    }
+    if (m.legacy_spec.a <= 0.0) {
+        return false;
+    }
+    let lights = light_walk(world_pos, frag);
+    return any((lights.held | lights.projectors) != vec2<u32>(0u));
+}
+
+// calcPointLightOrSpotLight's glare (materialF.glsl) from the highlight of
+// one local light, as written there: the red first, then the brightest.
+fn add_light_glare(sc: vec3<f32>) {
+    legacy_glare = max(legacy_glare, sc.r) + max(max(sc.r, sc.g), sc.b);
 }
 
 // Local light highlights of legacy materials (multiPointLightF). Our light
@@ -1066,7 +1277,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             if (dist < radius) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
                 let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
-                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                col += sc;
+                add_light_glare(sc);
             }
         }
     }
@@ -1077,7 +1290,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
         if (spec.a > 0.0) {
             let s = ll_spec(n, v, at.l, spec.a) * at.atten;
-            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            let sc = clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            col += sc;
+            add_light_glare(sc);
         }
         if (env > 0.0) {
             // the view reflected to the plane the projector emits from
@@ -1237,7 +1452,7 @@ fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
 // base texture's slot points at the shared placeholder layer
 // (`textures::PLACEHOLDER`, slot 4) until its first texels arrive.
 fn rez_still_grey(rec: DrawRecord) -> bool {
-    return tex_loc[rec.tex.x] == tex_loc[4u];
+    return tex_loc.values[rec.tex.x] == tex_loc.values[4u];
 }
 
 // Height of the fragment within its object (0 bottom, 1 top), for the
@@ -1374,6 +1589,8 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // may be discarded between `eval_material` and this (fs_blend).
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
+    legacy_glare = 0.0;
+    legacy_nan = false;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1443,13 +1660,37 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
-    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), m.color.a);
+    // Studio isolation leaves the live avatar and attachments in this pass.
+    // Blend the final radiance, preserving material alpha/cutouts and never
+    // editing their records. HUDs use fs_hud and scenery carries its own bit.
+    let white = select(0.0, clamp(frame.studio_aurora[3].w, 0.0, 1.0),
+        frame.studio_aurora[3].w > 0.0 && (rec.flags.w & FLAG_STUDIO_STAGE) == 0u);
+    col = mix(col, vec3<f32>(1.0), white);
+    // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
+    // the vertex alpha being the face color's (a fullbright face takes the
+    // other branch and has no glare, as emissive_brightness 1 there)
+    var alpha = m.color.a;
+    if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
+        alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
+    }
+    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
+    if ((frame.light_mode.z & LEGACY_NAN_CHECK) != 0u) {
+        // magenta: a legacy term caught by legacy_finite; cyan: the colour
+        // is still not a number, from a source the guard does not cover
+        if (not_finite(col.x) || not_finite(col.y) || not_finite(col.z)) {
+            s.color = vec4<f32>(0.0, 4.0, 4.0, max(alpha, 0.5));
+        } else if (legacy_nan) {
+            s.color = vec4<f32>(4.0, 0.0, 4.0, max(alpha, 0.5));
+        }
+    }
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
         s.roughness = 1.0;
     }
+    s.roughness = mix(s.roughness, 1.0, white);
+    s.metallic *= 1.0 - white;
     return s;
 }
 
@@ -1536,7 +1777,7 @@ fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    // A mirrored view (water, mirror) flips the winding: the side facing
+    // A mirrored view (water, mirror, the faces of a probe) flips the winding: the side facing
     // its camera is the one rasterized as a back face. Single-sided faces
     // show that side only, as in the Legacy Viewer's culled reflection and
     // hero probe passes: a mirror's own surface, a few centimetres in front
@@ -1551,6 +1792,34 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
         discard;
     }
     return vec4<f32>(s.color.rgb, 1.0);
+}
+
+// The mirror's blended faces (lace, sheer cloth, hair strands, lashes,
+// appliers on a blended layer), drawn back to front over its solid image:
+// the Legacy Viewer's hero probe renders the whole scene, its alpha pools
+// included (LLHeroProbeManager::renderProbes -> display_cube_face ->
+// renderGeomPostDeferred). fs_blend's rules with fs_reflect's side and clip.
+@fragment
+fn fs_reflect_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let facing = front != mirrored_pass();
+    if ((!facing && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) || reflection_clip(in.world_pos)) {
+        discard;
+    }
+    let m = eval_material(in, facing);
+    if (m.color.a < 0.004 && !legacy_may_glare(rec, m, in.world_pos, in.clip.xy)) {
+        discard;
+    }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+        discard;
+    }
+    var c = shade_material(in, m).color;
+    c.a = c.a * rez_alpha(rec, in);
+    if (c.a < 0.004) {
+        discard;
+    }
+    // premultiplied alpha
+    return vec4<f32>(c.rgb * c.a, c.a);
 }
 
 // Blended faces: invisible fragments leave before the lighting, as in
@@ -1595,7 +1864,9 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         }
     }
     let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+    // a legacy material's empty texels may still glare (materialF.glsl has
+    // no early test): lit first, their alpha is known after shade_material
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004 && !legacy_may_glare(records[in.record], m, in.world_pos, in.clip.xy)) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
@@ -1613,6 +1884,923 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     return vec4<f32>(c.rgb * c.a, c.a);
 }
 
+// ------------------------------------------------------ exact blend order
+//
+// `RiggedBlendDepth::Exact` (blend_exact.rs): the blended faces composed in
+// their true order at every pixel, whatever order they are drawn in. The
+// colour of a pixel behind n blended fragments is
+//   background x T(all) + sum of colour_i x alpha_i x T(i),
+// T(i) being the share of light the fragments in front of i let through,
+// the product of their (1 - alpha). Each term stands alone: a fragment is
+// lit once, in any order, and the sum is made afterwards.
+// - one pass over the blended faces (`fs_blend_once`): each fragment is lit
+//   and files where it lies, its alpha and its light in the front of its
+//   pixel;
+// - one pass over the screen (`fs_blend_over`): the front of each pixel
+//   sorted, each of its fragments given its T, and the sum laid over what
+//   was drawn.
+// Faces that cross, the triangles of one face, the layers of a hair, rigged
+// faces against the others: every case is the same one. What a busy place
+// is made of decides the rest: most of its blended fragments are empty
+// texels, and most of the others are next to invisible. A blended face is
+// therefore drawn once and no more, and an empty texel leaves on its
+// texture's alpha alone.
+//
+// The front of a pixel is its strong fragments, two words each: where it
+// lies in the high 24 bits of the first (`blend_place`) and its alpha in
+// the low 8, its light in the second (`blend_pack`); and a byte for its
+// glow. Each takes the slot of its rank of arrival, which the count of the
+// pixel gives it as it adds itself: no fragment reads another, none is
+// ever moved. The first `BLEND_SLOTS` are the pixel's own; past them the
+// pixel takes pages of `BLEND_SLOTS` more from a pool the view shares
+// (`blend_page`), as many as it has fragments. The pass over the screen
+// then has every one of them (`blend_compose`). It composes the nearest
+// `BLEND_MOST` from the nearest to the farthest: the result is that of
+// their sort, whatever order they came in and however many of them the
+// device lit at the same time. Those past them, in a pixel that has more,
+// are its tail: one layer behind all the others in which they are mixed,
+// their light summed, each for what it stops, and what they stop in all.
+// Which fragments a pixel keeps is so read from all of them, one pixel at
+// a time: it does not change from a view to the next.
+//
+// A fragment fainter than `BLEND_FAINT` (or than the view asks for, where
+// it trades the order of its faintest layers for speed), with next to no
+// glow (`BLEND_FAINT_GLOW`), takes no slot: the texels a lossy texture leaves
+// in its empty areas, a mist, the far end of a soft edge, the rim of a
+// glowing face are many, each next to nothing. They are the haze of the
+// pixel, and write no word of the fronts: the blend of the pass sums their
+// light, each for what it stops, and their glow in one target, and in a
+// second what they stop in all, with the nearest of them and the farthest
+// (the greatest of their places, and of the reverse of them). The pass
+// over the screen composes the haze as one layer spread evenly between
+// those two: the fragments of the front are dimmed by the part of it
+// before them, and each part of it by the fragments of the front before
+// it. Sums, the same in any order; what they get wrong is an alpha of the
+// haze times another alpha. A strong fragment for which the pool has no
+// page left is of the haze too.
+//
+// The cut of a pixel is to its blended fragments what the depth is to the
+// opaque ones: the place under which nothing shows any more, the fragments
+// before it letting less than `BLEND_CULL` through. An opaque fragment
+// raises it as it comes. Between runs of faces, a pass over the screen
+// (`fs_blend_cut`) raises it to where the fragments filed so far let
+// nothing through, and writes it into the depth of the pass: what lies
+// under it in the next runs is left out by the depth test, before its
+// shader. The faces are drawn nearest first, so that most fragments come
+// behind those that hide them.
+//
+// A pixel is sixteen words in four planes of four, so that a fragment
+// reads and writes no more than it uses: its head, with the heads of all
+// the pixels (the count of its strong fragments under the glows of its
+// slots 4 and 5, its cut, the glows of its slots 0 to 3, a byte each, and
+// its pages); the places of its slots 0 to 3; slots 4 and 5, places and
+// lights; the lights of slots 0 to 3. The heads are emptied before each
+// view; the slots keep what the view before left, of which the count says
+// what is of this one. After the planes, the pool: a word that counts the
+// pages given out, emptied before each view too, and the pages, sixteen
+// words each: the places of its slots, their lights, two words of glows,
+// and the pages before it. The places and the glows of a page are emptied
+// by the fragment that takes it from the pool, before any other may see
+// it.
+
+struct BlendOrderInfo {
+    // the view, in pixels
+    width: u32,
+    height: u32,
+    // the word of the count of the pages given out, and the pages there are
+    pool: u32,
+    pages: u32,
+    // the most strong fragments of a pixel composed each in its place
+    // (`BLEND_MOST` at most)
+    most: u32,
+    // the places of the haze are kept without this many of their low bits,
+    // where the second target of the pass holds no more (`BlendOnce`)
+    shift: u32,
+    // an alpha of this many 255ths or less takes no slot (`BLEND_FAINT` or
+    // more: `blend_exact::Precision`)
+    faint: u32,
+};
+
+@group(3) @binding(8) var<uniform> blend_order: BlendOrderInfo;
+@group(3) @binding(9) var<storage, read_write> blend_front: array<atomic<u32>>;
+// the same as the pass over the screen reads it, four words at a time: the
+// planes of pixel p at p, pixels + p, 2 x pixels + p and 3 x pixels + p
+@group(3) @binding(10) var<storage, read> blend_front_r: array<vec4<u32>>;
+// the targets of `fs_blend_once`, as the pass over the screen reads them
+@group(3) @binding(11) var blend_haze: texture_2d<f32>;
+@group(3) @binding(12) var blend_range: texture_2d<f32>;
+
+// Slots of a pixel's own, and of a page (`blend_exact::SLOTS`); and the
+// most fragments of a pixel that are composed each in its place, those of
+// its own slots and of `BLEND_PAGES` pages (`blend_exact::PAGES`).
+const BLEND_SLOTS: u32 = 6u;
+const BLEND_PAGES: u32 = 6u;
+const BLEND_MOST: u32 = 42u;
+// Words of a pixel's head: the count of its strong fragments, in the low
+// half, under the glows of its slots 4 and 5; its cut; the glows of its
+// slots 0 to 3; its pages (`BLEND_LINK_BITS`).
+const BLEND_HEAD_COUNT: u32 = 0u;
+const BLEND_HEAD_CUT: u32 = 1u;
+const BLEND_HEAD_GLOWS: u32 = 2u;
+const BLEND_HEAD_PAGE: u32 = 3u;
+const BLEND_COUNT_MASK: u32 = 0xffffu;
+// Words of a page (`blend_exact::PAGE_WORDS` in all), after the places of
+// its slots: their lights, their glows, the pages before it.
+const BLEND_PAGE_WORDS: u32 = 16u;
+const BLEND_PAGE_LIGHTS: u32 = 6u;
+const BLEND_PAGE_GLOWS: u32 = 12u;
+const BLEND_PAGE_NEXT: u32 = 14u;
+// The pages of a pixel in a word (the head's, and in each page for those
+// before it): how many they are, over the newest of them, as its rank in
+// the pool plus one.
+const BLEND_LINK_BITS: u32 = 25u;
+const BLEND_LINK_MASK: u32 = 0x01ffffffu;
+// The most pages a pixel takes.
+const BLEND_CHAIN: u32 = 127u;
+// The times a fragment looks again for a page another is to add
+// (`blend_page`), and the turns it looks for its page in all.
+const BLEND_PAGE_WAITS: u32 = 8u;
+const BLEND_PAGE_STEPS: u32 = 32u;
+// Under this share of light a fragment is left out: 1/512, half a step of
+// an 8-bit colour for a surface as bright as white.
+const BLEND_CULL: f32 = 0.002;
+// An alpha of this many 255ths or less takes no slot, whatever the view
+// asks for (`BlendOrderInfo::faint`).
+const BLEND_FAINT: u32 = 8u;
+// Nor does, alone, a glow of this byte or less (`blend_glow_pack`: under a
+// hundredth of a whole glow).
+const BLEND_FAINT_GLOW: u32 = 16u;
+// What an opaque fragment stops, in nepers: it lets 1/4096 through, under
+// `BLEND_CULL`.
+const BLEND_OPAQUE: f32 = 8.3;
+
+// The pixel of `clip`.
+fn blend_pixel(clip: vec4<f32>) -> u32 {
+    let x = min(u32(clip.x), blend_order.width - 1u);
+    let y = min(u32(clip.y), blend_order.height - 1u);
+    return y * blend_order.width + x;
+}
+
+// The word of the place of slot `s` of `pixel`; the word of its light is
+// `blend_slot_light` words after it.
+fn blend_slot(pixel: u32, s: u32) -> u32 {
+    let pixels = blend_order.width * blend_order.height;
+    if (s < 4u) {
+        return (pixels + pixel) * 4u + s;
+    }
+    return (2u * pixels + pixel) * 4u + s - 4u;
+}
+
+fn blend_slot_light(s: u32) -> u32 {
+    if (s < 4u) {
+        return blend_order.width * blend_order.height * 8u;
+    }
+    return 2u;
+}
+
+// The first word of the page that `link` names: its rank in the pool plus
+// one (the words of the pool itself take the room of a page before them).
+fn blend_page_at(link: u32) -> u32 {
+    return blend_order.pool + link * BLEND_PAGE_WORDS;
+}
+
+// The page of rank `want` of a pixel (0: its first), taken from the pool
+// if the pixel has not that many yet: its first word, or 0 when the pool is
+// empty or the pixel has all the pages it may.
+//
+// The head of a pixel names its newest page and how many it has, and each
+// page says the same of those before it: a fragment mostly wants the
+// newest, one read away, whatever the pixel holds. A page is added by the
+// fragment that has its first slot (`opens`), once the pixel has the pages
+// before it; the others that want it look again until it is there. (Each
+// taking one from the pool, the pixel would keep one and the others be
+// lost to the view: where many small faces cover a pixel, most of the
+// pool.) One that waited in vain adds it all the same, and the pages
+// before it if they are still to come: every strong fragment has its slot,
+// however many the device lights at the same time.
+fn blend_page(head: u32, want: u32, opens: bool) -> u32 {
+    if (want >= BLEND_CHAIN) {
+        return 0u;
+    }
+    var spare = 0u;
+    var waits = 0u;
+    for (var step = 0u; step < BLEND_PAGE_STEPS; step++) {
+        let word = atomicLoad(&blend_front[head + BLEND_HEAD_PAGE]);
+        let have = word >> BLEND_LINK_BITS;
+        if (have > want) {
+            // (the newest, or one before it for a fragment that comes late)
+            var page = blend_page_at(word & BLEND_LINK_MASK);
+            for (var b = have - 1u; b > want; b--) {
+                page = blend_page_at(atomicLoad(&blend_front[page + BLEND_PAGE_NEXT]) & BLEND_LINK_MASK);
+            }
+            return page;
+        }
+        if (spare == 0u && atomicLoad(&blend_front[blend_order.pool]) >= blend_order.pages) {
+            return 0u;
+        }
+        if ((have < want || !opens) && waits < BLEND_PAGE_WAITS) {
+            waits++;
+            continue;
+        }
+        if (spare == 0u) {
+            let got = atomicAdd(&blend_front[blend_order.pool], 1u) + 1u;
+            if (got > blend_order.pages) {
+                return 0u;
+            }
+            // emptied before the pixel has it: it holds what another view
+            // left (the lights of its slots may keep it)
+            let fresh = blend_page_at(got);
+            for (var i = 0u; i < BLEND_SLOTS; i++) {
+                atomicStore(&blend_front[fresh + i], 0u);
+            }
+            atomicStore(&blend_front[fresh + BLEND_PAGE_GLOWS], 0u);
+            atomicStore(&blend_front[fresh + BLEND_PAGE_GLOWS + 1u], 0u);
+            spare = got;
+        }
+        // added if the pixel still has what was read; looked at again
+        // either way (all within the turn: the fragments the device runs
+        // with this one see the page in their next)
+        atomicStore(&blend_front[blend_page_at(spare) + BLEND_PAGE_NEXT], word);
+        let added = atomicCompareExchangeWeak(&blend_front[head + BLEND_HEAD_PAGE], word, ((have + 1u) << BLEND_LINK_BITS) | spare);
+        if (added.exchanged) {
+            spare = 0u;
+        }
+    }
+    return 0u;
+}
+
+// A glow in a byte: its square root, of 2 at most (twice the finer where
+// glows are faint, as most are).
+fn blend_glow_pack(glow: f32) -> u32 {
+    return u32(sqrt(clamp(glow * 0.5, 0.0, 1.0)) * 255.0 + 0.5);
+}
+
+fn blend_glow_unpack(byte: u32) -> f32 {
+    let root = f32(byte & 0xffu) / 255.0;
+    return root * root * 2.0;
+}
+
+// Whether `x` is not a number. Tested on its bits, as `not_finite`: a
+// driver may fold `x != x` to false, and what min, max and clamp make of a
+// NaN is left to the card.
+fn blend_nan(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7fffffffu) > 0x7f800000u;
+}
+
+// A light as the pass keeps it: no part of it under 0 nor over what a scene
+// target holds (an infinite one is as bright as that), and none at all when
+// a part of it is not a number. The lights of the haze are summed by the
+// blend of the pass and those of the front by the pass over the screen: one
+// that is not a number, or infinite ones of opposite signs, would take the
+// whole pixel, then the image through the passes after it (#1380).
+fn blend_finite(light: vec3<f32>) -> vec3<f32> {
+    let bad = blend_nan(light.x) || blend_nan(light.y) || blend_nan(light.z);
+    return select(clamp(light, vec3<f32>(0.0), vec3<f32>(HDR_MAX)), vec3<f32>(0.0), bad);
+}
+
+// The same for a glow, or any amount that is summed.
+fn blend_finite1(amount: f32) -> f32 {
+    return select(clamp(amount, 0.0, HDR_MAX), 0.0, blend_nan(amount));
+}
+
+// What a fragment that covers `cover` stops, in nepers.
+fn blend_stops(cover: f32) -> f32 {
+    return min(-log(max(1.0 - cover, 1.0e-6)), BLEND_OPAQUE);
+}
+
+// Where a fragment lies, in 24 bits, greater when nearer: its depth as 5
+// bits of exponent and 16 of mantissa (1/65536 of its distance: 0.03 mm at
+// 2 m, 0.3 mm at 20 m), then the layer rank of its face. The rank also
+// moved the depth (`eye_clip`), by less than one such step: worn layers
+// lying on one another keep their order, and two fragments of one rank
+// within a step lie on one another, neither in front (the same surface met
+// twice, a face its creator doubled): they share the light as one layer.
+fn blend_place(rec: DrawRecord, z: f32) -> u32 {
+    let bits = bitcast<u32>(clamp(z, 0.0, 1.0));
+    // exponent of z in [2^-31, 1]: 127 down to 96
+    let e = clamp(bits >> 23u, 96u, 127u) - 96u;
+    var m = (bits >> 7u) & 0xffffu;
+    if ((bits >> 23u) < 96u) {
+        m = 0u;
+    }
+    let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
+    return (e << 19u) | (m << 3u) | rank;
+}
+
+// A light in one word: 9 bits for each of its three parts and the 5 of the
+// exponent they share (as rgb9e5ufloat): 1/512 of its brightest part.
+fn blend_pack(light: vec3<f32>) -> u32 {
+    let v = clamp(light, vec3<f32>(0.0), vec3<f32>(65408.0));
+    let top = max(v.r, max(v.g, v.b));
+    var e = max(-16.0, floor(log2(max(top, 1.0e-12)))) + 16.0;
+    var scale = exp2(24.0 - e);
+    if (floor(top * scale + 0.5) >= 512.0) {
+        e += 1.0;
+        scale *= 0.5;
+    }
+    let s = vec3<u32>(floor(v * scale + 0.5));
+    return s.r | (s.g << 9u) | (s.b << 18u) | (u32(e) << 27u);
+}
+
+fn blend_unpack(word: u32) -> vec3<f32> {
+    let scale = exp2(f32(word >> 27u) - 24.0);
+    return vec3<f32>(f32(word & 0x1ffu), f32((word >> 9u) & 0x1ffu), f32((word >> 18u) & 0x1ffu)) * scale;
+}
+
+// `sample_tex` with the derivatives of `uv` given: the texture is read
+// after the fragments under the cut left, and a fragment that left gives
+// its neighbours no derivative.
+fn blend_sample(idx: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc.values[idx];
+    let bias = exp2(frame.tex_lod.x);
+    return textureSampleGrad(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, dx * bias, dy * bias);
+}
+
+// The glow of a blended fragment (`glow_amount`, which leaves where this
+// gives 0).
+fn blend_glow(in: VsOut, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+        let portal_aa = max(length(abs(dx) + abs(dy)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+        return max(portal_surface(rec, in.uv, portal_aa).glow, 0.0);
+    }
+    var a = 0.0;
+    if (rec.emissive.w > 0.0) {
+        if ((rec.flags.x & FLAG_PBR) != 0u) {
+            let e = rec.emissive.rgb * srgb_to_linear(sample_tex(rec.tex.w, in.uv_e).rgb);
+            a = max(e.r, max(e.g, e.b)) * rec.emissive.w;
+        } else {
+            a = blend_sample(rec.tex.x, in.uv, dx, dy).a * rec.emissive.w;
+        }
+    }
+    return max(max(a, rez_glow(rec, in)), 0.0);
+}
+
+// What the pass of the blended faces draws, of the fragments that take no
+// slot, the haze of each pixel: their light, summed, each for what it
+// stops (rgb), and their glow, summed (a); and what they stop, summed (a),
+// under the nearest and the farthest of them, the greatest of their places
+// and of the reverse of their places (r, g).
+struct BlendOnce {
+    @location(0) haze: vec4<f32>,
+    @location(1) range: vec4<f32>,
+};
+
+// The one pass of the blended faces. The depth test comes first (`force`):
+// only what the opaque scene leaves visible is lit and filed.
+@fragment
+@early_depth_test(force)
+fn fs_blend_once(in: VsOut, @builtin(front_facing) front: bool) -> BlendOnce {
+    // (a fragment that leaves says so and returns: `discard` alone lets the
+    // rest of the shader run, for nothing)
+    var out: BlendOnce;
+    out.haze = vec4<f32>(0.0);
+    out.range = vec4<f32>(0.0);
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    rez_fw = fwidth(in.world_pos);
+    let rec = records[in.record];
+    // (the batch mixes material sidedness)
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        discard;
+        return out;
+    }
+    // its material and its alpha, as fs_blend: an empty texel, which most
+    // are, leaves here unless it may glare or glow
+    let portal = (rec.flags.x & FLAG_PORTAL_EFFECT) != 0u;
+    var m: Material;
+    var a: f32;
+    var glare = false;
+    let rez = rez_alpha(rec, in);
+    if (portal) {
+        let portal_aa = max(length(abs(dx) + abs(dy)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+        a = portal_surface(rec, in.uv, portal_aa).alpha;
+    } else {
+        water_clip(in.world_pos);
+        m = eval_material(in, front);
+        if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+            discard;
+            return out;
+        }
+        a = m.color.a * rez;
+        glare = m.color.a < 0.004 && legacy_may_glare(rec, m, in.world_pos, in.clip.xy);
+    }
+    var a8 = u32(clamp(a, 0.0, 1.0) * 255.0 + 0.5);
+    let shows = (a >= 0.004 && a8 != 0u) || glare;
+    // its glow (LLDrawPoolAlpha's emissives): what is in front of it dims
+    // it, its own alpha does not
+    var glow = 0.0;
+    if (rec.emissive.w > 0.0 || (rec.rez.y & 0xffu) != 0u || portal) {
+        glow = blend_finite1(blend_glow(in, dx, dy));
+    }
+    let glow8 = blend_glow_pack(glow);
+    if (!shows) {
+        if (glow8 == 0u) {
+            discard;
+            return out;
+        }
+        // (a glow alone: it stops nothing)
+        a8 = 0u;
+    }
+    let pixel = blend_pixel(in.clip);
+    let head = pixel * 4u;
+    let place = blend_place(rec, in.clip.z);
+    let key = place << 8u;
+    if (key < atomicLoad(&blend_front[head + BLEND_HEAD_CUT])) {
+        // under the cut: nothing of it shows
+        discard;
+        return out;
+    }
+    // its light: its colour by the alpha its lighting gives it, which is
+    // what it covers too (the glare of a legacy material adds to it)
+    var light = vec3<f32>(0.0);
+    if (shows) {
+        if (portal) {
+            let portal_aa = max(length(abs(dx) + abs(dy)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
+            let surface = portal_surface(rec, in.uv, portal_aa);
+            light = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos) * surface.alpha;
+        } else {
+            let c = shade_material(in, m).color;
+            let lit = clamp(c.a * rez, 0.0, 1.0);
+            light = c.rgb * lit;
+            a8 = u32(lit * 255.0 + 0.5);
+        }
+    }
+    light = blend_finite(light);
+    let cover = f32(a8) / 255.0;
+    if (shows && 1.0 - cover < BLEND_CULL && atomicLoad(&blend_front[head + BLEND_HEAD_CUT]) < key) {
+        // opaque: it hides all that lies under it
+        atomicMax(&blend_front[head + BLEND_HEAD_CUT], key);
+    }
+    // of the front: one that shows enough or glows (a halo is a glow with
+    // next to no alpha). Its slot is that of its rank of arrival: one of
+    // the pixel's own, then of its pages.
+    if ((shows && a8 > max(blend_order.faint, BLEND_FAINT)) || glow8 > BLEND_FAINT_GLOW) {
+        let rank = atomicAdd(&blend_front[head + BLEND_HEAD_COUNT], 1u) & BLEND_COUNT_MASK;
+        // (a place of 0 is a slot of a page that no fragment took)
+        let filed = max(key | a8, 1u);
+        if (rank < BLEND_SLOTS) {
+            let at = blend_slot(pixel, rank);
+            if (glow8 != 0u) {
+                if (rank < 4u) {
+                    atomicOr(&blend_front[head + BLEND_HEAD_GLOWS], glow8 << (8u * rank));
+                } else {
+                    atomicOr(&blend_front[head + BLEND_HEAD_COUNT], glow8 << (8u * rank - 16u));
+                }
+            }
+            atomicStore(&blend_front[at + blend_slot_light(rank)], blend_pack(light));
+            atomicStore(&blend_front[at], filed);
+            discard;
+            return out;
+        }
+        let page = blend_page(head, rank / BLEND_SLOTS - 1u, rank % BLEND_SLOTS == 0u);
+        if (page != 0u) {
+            let slot = rank % BLEND_SLOTS;
+            if (glow8 != 0u) {
+                atomicOr(&blend_front[page + BLEND_PAGE_GLOWS + (slot >> 2u)], glow8 << (8u * (slot & 3u)));
+            }
+            atomicStore(&blend_front[page + BLEND_PAGE_LIGHTS + slot], blend_pack(light));
+            atomicStore(&blend_front[page + slot], filed);
+            discard;
+            return out;
+        }
+        // (no page was left for it: of the haze, as the faint ones)
+    }
+    // of the haze: its light for what it stops (the pass over the screen
+    // dims it by the front), its glow; what it stops, and where it lies
+    // and the reverse of it, of which the blend keeps the greatest
+    let stops = blend_stops(cover);
+    // (one that covers nothing adds its light as it is)
+    var share = 1.0;
+    if (a8 != 0u) {
+        share = stops / cover;
+    }
+    // (no more than the target holds: past it the sum would be infinite)
+    out.haze = vec4<f32>(min(light * share, vec3<f32>(HDR_MAX)), select(0.0, glow, glow8 != 0u));
+    out.range = vec4<f32>(f32(place >> blend_order.shift), f32((0x00ffffffu - place) >> blend_order.shift), 0.0, stops);
+    return out;
+}
+
+// The cut of a pixel with pages, raised from `cut` to where its fragments
+// let nothing through (`fs_blend_cut`): those of its own slots and of its
+// newest pages. (Of a pixel with more pages than that, some of its
+// fragments only: its cut is then no nearer than it should be.)
+fn blend_cut_deep(pixel: u32, head: u32, cut: u32) -> u32 {
+    // the places of its fragments, and what they let through together
+    var keys: array<u32, 42>;
+    var n = 0u;
+    var through = 1.0;
+    for (var i = 0u; i < BLEND_SLOTS; i++) {
+        let e = atomicLoad(&blend_front[blend_slot(pixel, i)]);
+        keys[n] = e;
+        n++;
+        through *= 1.0 - f32(e & 0xffu) / 255.0;
+    }
+    var word = atomicLoad(&blend_front[head + BLEND_HEAD_PAGE]);
+    let have = min(word >> BLEND_LINK_BITS, BLEND_PAGES);
+    for (var b = 0u; b < have; b++) {
+        let page = blend_page_at(word & BLEND_LINK_MASK);
+        for (var i = 0u; i < BLEND_SLOTS; i++) {
+            let e = atomicLoad(&blend_front[page + i]);
+            if (e != 0u) {
+                keys[n] = e;
+                n++;
+                through *= 1.0 - f32(e & 0xffu) / 255.0;
+            }
+        }
+        word = atomicLoad(&blend_front[page + BLEND_PAGE_NEXT]);
+    }
+    if (through >= BLEND_CULL) {
+        return cut;
+    }
+    var t = 1.0;
+    for (var step = 0u; step < n; step++) {
+        var best = 0u;
+        var at = 0u;
+        for (var i = 0u; i < n; i++) {
+            if (keys[i] > best) {
+                best = keys[i];
+                at = i;
+            }
+        }
+        keys[at] = 0u;
+        t *= 1.0 - f32(best & 0xffu) / 255.0;
+        if (t < BLEND_CULL) {
+            return max(cut, best & 0xffffff00u);
+        }
+    }
+    return cut;
+}
+
+// The cut of each pixel into the depth of the pass, between runs of blended
+// faces: raised to where the fragments filed so far let nothing through,
+// then written as a depth, so that the fragments of the next runs that lie
+// under it are left out by the depth test, before their shader. (A
+// fragment that leaves in its shader keeps its place among those the
+// device lights together; one the depth test leaves out gives it up.) No
+// fragment of a face is lit meanwhile: the slots of a pixel are all
+// written.
+@fragment
+fn fs_blend_cut(@builtin(position) clip: vec4<f32>) -> @builtin(frag_depth) f32 {
+    let pixel = blend_pixel(clip);
+    let head = pixel * 4u;
+    let was = atomicLoad(&blend_front[head + BLEND_HEAD_CUT]);
+    var cut = was;
+    let count = atomicLoad(&blend_front[head + BLEND_HEAD_COUNT]) & BLEND_COUNT_MASK;
+    if (count > BLEND_SLOTS) {
+        cut = blend_cut_deep(pixel, head, cut);
+    } else if (count > 1u) {
+        // the places of its fragments, and what they let through together
+        var keys: array<u32, 6>;
+        var through = 1.0;
+        for (var i = 0u; i < count; i++) {
+            let e = atomicLoad(&blend_front[blend_slot(pixel, i)]);
+            keys[i] = e;
+            through *= 1.0 - f32(e & 0xffu) / 255.0;
+        }
+        if (through < BLEND_CULL) {
+            // from the nearest, until they let nothing through: all that
+            // lies under the last of them is hidden
+            var t = 1.0;
+            for (var step = 0u; step < count; step++) {
+                var best = 0u;
+                var at = 0u;
+                for (var i = 0u; i < count; i++) {
+                    if (keys[i] > best) {
+                        best = keys[i];
+                        at = i;
+                    }
+                }
+                keys[at] = 0u;
+                t *= 1.0 - f32(best & 0xffu) / 255.0;
+                if (t < BLEND_CULL) {
+                    cut = max(cut, best & 0xffffff00u);
+                    break;
+                }
+            }
+        }
+    }
+    if (cut != was) {
+        atomicStore(&blend_front[head + BLEND_HEAD_CUT], cut);
+    }
+    cut = cut >> 8u;
+    if (cut == 0u) {
+        discard;
+        return 0.0;
+    }
+    // the far end of its place (`blend_place`)
+    return bitcast<f32>((((cut >> 19u) + 96u) << 23u) | (((cut >> 3u) & 0xffffu) << 7u));
+}
+
+// What a layer that stops `stops` in all lets out of the part of its depth
+// from `x0` to `x1` (of 0 to 1), for each neper it stops: the sum of
+// exp(-stops x) over it.
+fn blend_slab(stops: f32, x0: f32, x1: f32) -> f32 {
+    if (stops > 1.0e-4) {
+        return (exp(-stops * x0) - exp(-stops * x1)) / stops;
+    }
+    return x1 - x0;
+}
+
+// The blended fragments of a pixel, composed: the light of its front and
+// of its haze, each dimmed by what is before it; their glow, dimmed the
+// same; and what they let through together.
+struct BlendPixel {
+    light: vec3<f32>,
+    glow: f32,
+    through: f32,
+};
+
+// A word of the fronts.
+fn blend_word(at: u32) -> u32 {
+    return blend_front_r[at >> 2u][at & 3u];
+}
+
+// A fragment of a pixel by its code: the slot it has of the pixel's own
+// (under `BLEND_SLOTS`), or the word of its place in a page. Its place and
+// alpha, its light (`lit`), the byte of its glow.
+fn blend_kept(pixel: u32, code: u32, lit: bool) -> vec3<u32> {
+    var at = code;
+    var light_at = 0u;
+    var glow_at = 0u;
+    var shift = 0u;
+    if (code < BLEND_SLOTS) {
+        at = blend_slot(pixel, code);
+        light_at = at + blend_slot_light(code);
+        glow_at = pixel * 4u + BLEND_HEAD_GLOWS;
+        shift = 8u * code;
+        if (code >= 4u) {
+            glow_at = pixel * 4u + BLEND_HEAD_COUNT;
+            shift = 8u * code - 16u;
+        }
+    } else {
+        let slot = (code - blend_order.pool) & (BLEND_PAGE_WORDS - 1u);
+        let page = code - slot;
+        light_at = page + BLEND_PAGE_LIGHTS + slot;
+        glow_at = page + BLEND_PAGE_GLOWS + (slot >> 2u);
+        shift = 8u * (slot & 3u);
+    }
+    var packed = 0u;
+    if (lit) {
+        packed = blend_word(light_at);
+    }
+    return vec3<u32>(blend_word(at), packed, (blend_word(glow_at) >> shift) & 0xffu);
+}
+
+// The fragments of a pixel that has some, composed with its haze `mixed`
+// (`blend_compose`, with the `range` of the haze). The nearest of them, as
+// many as the view keeps
+// (`most`), each in its place; the others are the tail of the pixel, one
+// layer behind those and the haze in which they are mixed: their light,
+// each for what it stops, and what they stop in all. Which are kept is
+// read here, a pixel at a time, from all of them: the same whatever order
+// they came in. Every such pixel by the same steps, whatever it keeps: the
+// pixels the device runs together wait for one another, and pay for every
+// way any of them takes.
+fn blend_walk(pixel: u32, head: vec4<u32>, mixed: vec4<f32>, range: vec4<f32>, lit: bool) -> BlendPixel {
+    let pixels = blend_order.width * blend_order.height;
+    let most = clamp(blend_order.most, 1u, BLEND_MOST);
+    // the fragments kept, from the nearest to the farthest, a word each:
+    // its place over its rank in `codes`, which holds its code. Each is put
+    // in its place as it is read: the faces are drawn nearest first, their
+    // fragments come nearly sorted, and few move.
+    var sorted: array<u32, 42>;
+    var codes: array<u32, 42>;
+    var n = 0u;
+    var tail_light = vec3<f32>(0.0);
+    var tail_glow = 0.0;
+    var tail_stops = 0.0;
+    // the cut of the pixel: a fragment under it is hidden
+    let under = head.y >> 8u;
+    let own = min(head.x & BLEND_COUNT_MASK, BLEND_SLOTS);
+    let k = blend_front_r[pixels + pixel];
+    var l = vec4<u32>(0u);
+    if (lit) {
+        l = blend_front_r[3u * pixels + pixel];
+    }
+    var more = vec4<u32>(0u);
+    if (own > 4u) {
+        more = blend_front_r[2u * pixels + pixel];
+    }
+    // its own slots, then its pages from the newest
+    var link = head.w;
+    let have = link >> BLEND_LINK_BITS;
+    for (var g = 0u; g <= have; g++) {
+        var keys = array<u32, 6>(k.x, k.y, k.z, k.w, more.x, more.y);
+        var base = 0u;
+        var slots = own;
+        if (g != 0u) {
+            let page = blend_page_at(link & BLEND_LINK_MASK);
+            let p0 = blend_front_r[page >> 2u];
+            let p1 = blend_front_r[(page >> 2u) + 1u];
+            keys = array<u32, 6>(p0.x, p0.y, p0.z, p0.w, p1.x, p1.y);
+            base = page;
+            slots = BLEND_SLOTS;
+            link = blend_front_r[(page >> 2u) + 3u].z;
+        }
+        for (var i = 0u; i < slots; i++) {
+            let key = keys[i];
+            let place = key >> 8u;
+            // (a slot no fragment took has no place)
+            if (key == 0u || place < under) {
+                continue;
+            }
+            var j = n;
+            if (n == most) {
+                // one more than are kept: the farthest of them all is of
+                // the tail, this one or the last of those kept
+                var left = base + i;
+                j = 64u;
+                let farthest = sorted[n - 1u];
+                if (place > (farthest >> 6u)) {
+                    j = farthest & 63u;
+                    left = codes[j];
+                    n--;
+                }
+                let f = blend_kept(pixel, left, lit);
+                let cover = f32(f.x & 0xffu) / 255.0;
+                var share = 1.0;
+                if (cover > 0.0) {
+                    let stops = blend_stops(cover);
+                    tail_stops += stops;
+                    share = stops / cover;
+                }
+                tail_light += blend_unpack(f.y) * share;
+                tail_glow += blend_glow_unpack(f.z);
+                if (j == 64u) {
+                    continue;
+                }
+            }
+            codes[j] = base + i;
+            let word = (place << 6u) | j;
+            var at = n;
+            for (; at > 0u; at--) {
+                let above = sorted[at - 1u];
+                if (above >= word) {
+                    break;
+                }
+                sorted[at] = above;
+            }
+            sorted[at] = word;
+            n++;
+        }
+    }
+    // the haze: a layer from its nearest fragment to its farthest, in which
+    // its fragments are mixed; it lets light out of its depth x as exp(-x)
+    // (places: whole numbers under 2^24, which a float holds)
+    // (the range of a pixel without a haze is all of them: it stops
+    // nothing)
+    let stops = range.w;
+    let step = f32(1u << blend_order.shift);
+    let near = (range.x + 1.0) * step - 1.0;
+    let far = 16777216.0 - (range.y + 1.0) * step;
+    let width = max(near - far, 1.0);
+    var out: BlendPixel;
+    out.light = vec3<f32>(0.0);
+    out.glow = 0.0;
+    var t = 1.0;
+    // what the haze lets out of itself: the sum, over its depth x from 0
+    // to 1, of exp(-stops x) by what the front before x lets through
+    var shown = 0.0;
+    var done = 0.0;
+    // the fragments lying at one place, one or several on one another:
+    // together they let `tie_t` through, their alphas sum to `tie_a`; they
+    // share the light they stop together
+    var place = 0xfffffffeu;
+    var tie_t = 1.0;
+    var tie_a = 0.0;
+    var sum = vec3<f32>(0.0);
+    var glow = 0.0;
+    for (var i = 0u; i <= n; i++) {
+        // (past the last: no place)
+        var word = 0u;
+        var here = 0xffffffffu;
+        if (i < n) {
+            word = sorted[i];
+            here = word >> 6u;
+        }
+        if (here != place) {
+            if (i != 0u) {
+                // those of the place before: dimmed by the fragments before
+                // them and by the part of the haze before them
+                let upto = clamp((near - f32(place)) / width, 0.0, 1.0);
+                shown += t * blend_slab(stops, done, upto);
+                done = upto;
+                let before = t * exp(-stops * upto);
+                out.light += sum * (before * (1.0 - tie_t) / max(tie_a, 1.0e-6));
+                out.glow += glow * before;
+                t *= tie_t;
+                if (t < BLEND_CULL) {
+                    // (nothing shows of what lies under them: the cut)
+                    break;
+                }
+            }
+            if (here == 0xffffffffu) {
+                break;
+            }
+            place = here;
+            tie_t = 1.0;
+            tie_a = 0.0;
+            sum = vec3<f32>(0.0);
+            glow = 0.0;
+        }
+        // the fragment: its alpha, its light, its glow
+        let code = codes[word & 63u];
+        var key = 0u;
+        var packed = 0u;
+        var glow8 = 0u;
+        if (code < 4u) {
+            key = k[code];
+            packed = l[code];
+            glow8 = head.z >> (code * 8u);
+        } else if (code < BLEND_SLOTS) {
+            key = more[code - 4u];
+            packed = more[code - 2u];
+            glow8 = head.x >> (code * 8u - 16u);
+        } else {
+            let f = blend_kept(pixel, code, lit);
+            key = f.x;
+            packed = f.y;
+            glow8 = f.z;
+        }
+        let a = f32(key & 0xffu) / 255.0;
+        tie_t *= 1.0 - a;
+        tie_a += a;
+        sum += blend_unpack(packed);
+        glow += blend_glow_unpack(glow8);
+    }
+    shown += t * blend_slab(stops, done, 1.0);
+    out.light += mixed.rgb * shown;
+    // (the glows mixed with the haze: each dimmed by what is before it)
+    out.glow += mixed.a * shown;
+    // the tail: one layer behind all of them
+    let through = t * exp(-stops);
+    let tail_shown = through * blend_slab(tail_stops, 0.0, 1.0);
+    out.light += tail_light * tail_shown;
+    out.glow += tail_glow * tail_shown;
+    out.through = through * exp(-tail_stops);
+    return out;
+}
+
+// The blended fragments of the pixel of `clip`, composed. `lit`: with their
+// light (their glow alone otherwise).
+fn blend_compose(clip: vec4<f32>, lit: bool) -> BlendPixel {
+    let pixel = blend_pixel(clip);
+    let head = blend_front_r[pixel];
+    var out: BlendPixel;
+    out.light = vec3<f32>(0.0);
+    out.glow = 0.0;
+    out.through = 1.0;
+    // its haze: what it stops, between its nearest and its farthest
+    // fragment (a pixel has one or the other, never the place 0 and the
+    // nearest place at once)
+    let range = textureLoad(blend_range, vec2<i32>(clip.xy), 0);
+    let hazy = (range.x + range.y) != 0.0;
+    let count = head.x & BLEND_COUNT_MASK;
+    if (count == 0u && !hazy) {
+        // no fragment in its front nor in its haze
+        return out;
+    }
+    if (!lit && !hazy && (head.x >> 16u) == 0u && head.z == 0u && count <= BLEND_SLOTS) {
+        // (nothing of it glows)
+        return out;
+    }
+    // (the sums of many bright fragments may be more than their target
+    // holds: infinite, which times nothing is not a number)
+    var mixed = vec4<f32>(0.0);
+    if (hazy) {
+        let summed = textureLoad(blend_haze, vec2<i32>(clip.xy), 0);
+        mixed = vec4<f32>(blend_finite(summed.rgb), blend_finite1(summed.a));
+    }
+    out = blend_walk(pixel, head, mixed, vec4<f32>(range.xyz, blend_finite1(range.w)), lit);
+    out.light = blend_finite(out.light);
+    out.glow = blend_finite1(out.glow);
+    out.through = select(clamp(out.through, 0.0, 1.0), 1.0, blend_nan(out.through));
+    return out;
+}
+
+// The pass over the screen: the light of the blended fragments of a pixel
+// over what is drawn so far, colour and glow, scaled by what they let
+// through together (the pipeline's blend, from 1 - that in the alpha).
+@fragment
+fn fs_blend_over(@builtin(position) clip: vec4<f32>) -> @location(0) vec4<f32> {
+    let composed = blend_compose(clip, true);
+    if (composed.through >= 1.0 && all(composed.light <= vec3<f32>(0.0))) {
+        discard;
+    }
+    return vec4<f32>(composed.light, 1.0 - composed.through);
+}
+
+// The glow of the blended fragments, added to that of the scene.
+@fragment
+fn fs_blend_glow(@builtin(position) clip: vec4<f32>) -> @location(0) vec4<f32> {
+    let glow = blend_compose(clip, false).glow;
+    if (glow <= 0.0) {
+        discard;
+    }
+    return vec4<f32>(0.0, 0.0, 0.0, glow);
+}
+
 // Glow amount into the scene alpha (additive, alpha channel only), drawn
 // for faces with glow after the scene: emissiveF.glsl (texture alpha x TE
 // glow, the face alpha is ignored: invisible faces still glow) and
@@ -1622,11 +2810,15 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 // without being dimmed by it.
 @fragment
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, glow_amount(in, front));
+}
+
+fn glow_amount(in: VsOut, front: bool) -> f32 {
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.glow <= 0.0) { discard; }
-        return vec4<f32>(0.0, 0.0, 0.0, surface.glow);
+        return surface.glow;
     }
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
@@ -1650,7 +2842,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     if (a <= 0.0) {
         discard;
     }
-    return vec4<f32>(0.0, 0.0, 0.0, a);
+    return a;
 }
 
 // Debug overlays ("Show transparency", wireframe): one flat
@@ -1718,6 +2910,152 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }
 
+// The poser's hovered part on the subject's skinned faces (Aurora's own):
+// each vertex's share of skinning weight on the part's palette joints
+// (`frame.part_joints`), graded across the mesh where the weights turn from
+// one part to the next. The position is vs_main's, so the depth test
+// against the scene matches.
+struct PoserPartOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) part: f32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+};
+
+// The diffuse coordinates as vs_main gives them, texture animation included,
+// for the part's alpha test.
+fn poser_part_uv(rec: DrawRecord, in: VsIn) -> vec2<f32> {
+    var st = face_st(in, rec);
+    let animated = has_tex_anim(rec);
+    if (animated) {
+        st = tex_anim_st(st, rec, frame.anim_clock.zw);
+    }
+    if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
+        return vec2<f32>(st.x, 1.0 - st.y);
+    }
+    return te_uv(st, rec);
+}
+
+// What of a face the part shows and picks: an alpha-masked face as it is
+// cut out; a blended one where it can be seen (a hair card's or a fishnet's
+// clear texels are not the avatar); others whole.
+const POSER_PART_BLEND_ALPHA: f32 = 0.1;
+fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>, front: bool) -> bool {
+    // Match the colour/depth passes: only double-sided materials show backs.
+    if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) { return false; }
+    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+    let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
+    if (!masked && !blended) {
+        return true;
+    }
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (masked && rec.base_color.a >= 0.004 && alpha < rec.params.w) {
+        return false;
+    }
+    return !(blended && alpha < POSER_PART_BLEND_ALPHA);
+}
+
+fn in_poser_part(joint: u32) -> bool {
+    let word = frame.part_joints[(joint >> 7u) & 1u][(joint >> 5u) & 3u];
+    return joint < 256u && ((word >> (joint & 31u)) & 1u) != 0u;
+}
+
+@vertex
+fn vs_part_mask(in: VsIn) -> PoserPartOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPartOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.part = 0.0;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let w = in.weights;
+        var share = 0.0;
+        for (var k = 0u; k < 4u; k++) {
+            if (w[k] > 0.0 && in_poser_part(skin_binds[rec.flags.z + in.joints[k]].joint.x)) {
+                share += w[k];
+            }
+        }
+        out.part = share / max(w.x + w.y + w.z + w.w, 1e-4);
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_mask(in: PoserPartOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    // the part's share, eased so the tint fades where the weights pass to
+    // the next part (Overlay::new_part); green: the subject is here
+    return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
+}
+
+// The pick interpolates each part's summed skinning weights, as the mask
+// interpolates its share. A flat joint ID makes the first vertex decide
+// for the entire triangle and changes when a mesh reorders its indices.
+struct PoserPickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) parts_lo: vec4<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+    @location(4) parts_hi: vec4<f32>,
+};
+
+fn poser_pick_class(joint: u32) -> u32 {
+    if (joint >= 256u) { return 0u; }
+    let word = joint >> 3u;
+    return (frame.part_classes[word >> 2u][word & 3u] >> ((joint & 7u) * 4u)) & 15u;
+}
+
+@vertex
+fn vs_part_pick(in: VsIn) -> PoserPickOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPickOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = poser_part_uv(rec, in);
+    out.record = in.instance;
+    out.parts_lo = vec4<f32>(0.0);
+    out.parts_hi = vec4<f32>(0.0);
+    let total = dot(in.weights, vec4<f32>(1.0));
+    if ((rec.flags.x & FLAG_SKINNED) != 0u && total > 1e-4) {
+        for (var k = 0u; k < 4u; k++) {
+            if (in.weights[k] <= 0.0) { continue; }
+            let part_id = poser_pick_class(skin_binds[rec.flags.z + in.joints[k]].joint.x);
+            let part = select(0u, part_id, part_id <= 6u);
+            let weight = in.weights[k] / total;
+            // FXC cannot address a dynamic component of an output struct's
+            // vector. Whole-vector additions keep the same per-part sums.
+            out.parts_lo += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(0u, 1u, 2u, 3u));
+            out.parts_hi += select(vec4<f32>(0.0), vec4<f32>(weight), vec4<u32>(part) == vec4<u32>(4u, 5u, 6u, 7u));
+        }
+    } else {
+        // Unrigged accessories still win depth and occlude the body.
+        out.parts_lo.x = 1.0;
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_pick(in: PoserPickOut, @builtin(front_facing) front: bool) -> @location(0) vec4<u32> {
+    portal_clip(records[in.record], in.world_pos);
+    if (!poser_part_texel_shown(records[in.record], in.uv, front)) { discard; }
+    var best = 0u;
+    var weight = in.parts_lo.x;
+    for (var part = 1u; part <= 6u; part++) {
+        var share = 0.0;
+        if (part < 4u) { share = in.parts_lo[part]; }
+        else { share = in.parts_hi[part - 4u]; }
+        if (share > weight) { best = part; weight = share; }
+    }
+    return vec4<u32>(best, 0u, 0u, 0u);
+}
+
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment
@@ -1754,7 +3092,7 @@ fn vs_pick(in: VsIn) -> PickOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: PickOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     let st = face_st(in, rec);
     out.st = st;
     out.uv = diffuse_uv(st, rec, frame.anim_clock.zw);
@@ -1772,14 +3110,30 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
-// Record + 1, depth and surface coordinates: Mask keeps its displayed
-// cutout; Blend always intercepts the click, including zero-alpha texels.
+// LLToolPie::handleMouseDown's transparent pick includes object Mask holes.
+// System avatar alpha layers keep their displayed cutouts: their hidden
+// body triangles must not occlude a worn clicker.
+@fragment
+fn fs_pick_mask(in: PickOut) -> @location(0) vec4<u32> {
+    let rec = records[in.record];
+    if ((rec.flags.w & FLAG_OBJECT_MASK_PICK) == 0u) {
+        discard;
+    }
+    portal_clip(rec, in.world_pos);
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
+}
+
+// LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
+const PICK_ALPHA_CUTOFF: f32 = 32.0 / 255.0;
+
+// Mask keeps its displayed cutout. World Blend left picks use the legacy
+// texture threshold; worn objects and right clicks keep their alpha policy.
 @fragment
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     let world_left = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
-    if (world_left && sample_tex(rec.tex.x, in.uv).a <= 0.0) {
+    if (world_left && sample_tex(rec.tex.x, in.uv).a <= PICK_ALPHA_CUTOFF) {
         discard;
     }
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && !world_left) {
@@ -1804,9 +3158,7 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let world_blend = WORLD_LEFT_PICK && (rec.flags.w & FLAG_WORLD_BLEND_PICK) != 0u;
-    let cutoff = select(32.0 / 255.0, 0.0, world_blend);
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= cutoff;
+    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= PICK_ALPHA_CUTOFF;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
@@ -1828,6 +3180,8 @@ struct ShadowOut {
 struct ShadowParams {
     vp: mat4x4<f32>,
     anim_clock: vec4<u32>,  // the animation clocks, as Frame's
+    // x: 1 for the rain prototype's shelter map
+    kind: vec4<u32>,
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -1860,8 +3214,14 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
+    let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
+    // the rain's shelter map: any blended texel that is there at all keeps
+    // the rain off (glass); masked ones as they cast
+    if (shadow_params.kind.x == 1u && (rec.flags.x & FLAG_ALPHA_BLEND) != 0u) {
+        if (alpha < 0.02) { discard; }
+        return;
+    }
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
             if (alpha < rec.params.w) { discard; }
@@ -1882,6 +3242,7 @@ const PART_EMISSIVE: u32 = 1u;
 const PART_ADDITIVE: u32 = 2u;
 const PART_AXIS: u32 = 4u;
 const PART_FOLLOW_VELOCITY: u32 = 8u;
+const PART_LINE: u32 = 16u;
 
 struct PartIn {
     @location(0) pos: vec3<f32>,
@@ -1965,7 +3326,11 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
     // slot 0 is white: the default particle is a soft round dot
     let ts = sample_tex(in.texture, in.uv);
     var tex = vec4<f32>(srgb_to_linear(ts.rgb), ts.a);
-    if (in.texture == 0u) {
+    if ((in.flags & PART_LINE) != 0u) {
+        // a line's segment: soft across, even along (its neighbours carry on)
+        let a = clamp(1.0 - abs(in.uv.x * 2.0 - 1.0), 0.0, 1.0);
+        tex = vec4<f32>(1.0, 1.0, 1.0, a * a);
+    } else if (in.texture == 0u) {
         let d = length(in.uv * 2.0 - vec2<f32>(1.0));
         let a = clamp(1.0 - d, 0.0, 1.0);
         tex = vec4<f32>(1.0, 1.0, 1.0, a * a);

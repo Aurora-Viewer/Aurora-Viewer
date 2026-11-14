@@ -78,7 +78,7 @@ fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revok
     let mut state = portals::State::default();
     let unix = portals::unix_time();
     state.sync(&world, None, unix);
-    state.create(
+    let created = state.create(
         Portal {
             id: Uuid::from_u128(3),
             region: 256,
@@ -89,10 +89,12 @@ fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revok
             access: Access::Friends,
             expires: unix + LIFETIME,
         },
+        crate::world::land::BuildRight::Allowed,
         world.agent.position,
         std::time::Instant::now(),
         unix,
     );
+    assert!(created.is_ok());
     let entry = state.own().unwrap();
     for remaining in [LIFETIME, 1, 0] {
         let at = unix + LIFETIME - remaining;

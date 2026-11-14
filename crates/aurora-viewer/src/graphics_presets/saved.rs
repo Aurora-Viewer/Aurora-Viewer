@@ -47,6 +47,10 @@ quality_fields! {
     tonemap_mix: f32,
     dof: crate::dof::Settings,
     occlusion_culling: bool,
+    // FSR's mode and sharpening, with the anti-aliasing of `quality`: the
+    // levels never choose FSR, a saved profile can
+    fsr_quality: u8,
+    fsr_sharpness: u32,
 }
 
 impl Saved {
@@ -197,21 +201,76 @@ mod tests {
     #[test]
     fn graphics_saved_sanitizes_external_values_and_supports_older_entries() {
         let mut saved: Saved = serde_json::from_str("{}").expect("partial saved quality");
+        saved.quality.draw_distance = crate::settings::DRAW_DISTANCE_MAX;
+        let mut s = Settings::default();
+        saved.apply(&mut s);
+        assert_eq!(s.draw_distance, crate::settings::DRAW_DISTANCE_MAX);
         saved.quality.draw_distance = 99_999.0;
         saved.quality.shadow_quality = 255;
         saved.quality.antialiasing = 255;
         saved.dof.f_number = f32::NAN;
-        let mut s = Settings::default();
         saved.apply(&mut s);
-        assert!(s.draw_distance <= 512.0);
+        assert_eq!(s.draw_distance, crate::settings::DRAW_DISTANCE_MAX);
         assert!(s.shadow_quality <= 4);
-        assert!(s.antialiasing <= 6);
+        assert!(s.antialiasing <= 7);
         assert!(s.dof.f_number.is_finite());
         assert_eq!(s.graphics_saved.len(), 0);
         assert!(valid_name(" Photo / nuit 🌙 "));
         assert!(!valid_name("  "));
         assert!(!valid_name("two\nlines"));
         assert!(!valid_name(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn graphics_saved_keeps_the_fsr_mode_and_older_entries_take_the_defaults() {
+        let mut s = Settings {
+            antialiasing: 7,
+            fsr_quality: 3,
+            fsr_sharpness: 25,
+            ..Settings::default()
+        };
+        let saved = Saved::capture(&s);
+        let json = serde_json::to_value(&saved).expect("serialize the profile");
+        s.antialiasing = 6;
+        s.fsr_quality = 0;
+        s.fsr_sharpness = 100;
+        saved.apply(&mut s);
+        assert_eq!((s.antialiasing, s.fsr_quality, s.fsr_sharpness), (7, 3, 25));
+        let mut old = json;
+        let fields = old.as_object_mut().expect("profile object");
+        fields.remove("fsr_quality");
+        fields.remove("fsr_sharpness");
+        let old: Saved = serde_json::from_value(old).expect("profile saved before FSR");
+        old.apply(&mut s);
+        let d = Settings::default();
+        assert_eq!(
+            (s.antialiasing, s.fsr_quality, s.fsr_sharpness),
+            (7, d.fsr_quality, d.fsr_sharpness)
+        );
+        let mut bad: Saved = serde_json::from_str("{}").expect("partial profile");
+        bad.fsr_quality = 200;
+        bad.fsr_sharpness = 9_999;
+        bad.apply(&mut s);
+        assert!(s.fsr_quality <= 4 && s.fsr_sharpness <= 100);
+    }
+
+    /// LLPresetsManager saves RenderGlow with a graphics preset
+    /// (app_settings/graphic_preset_controls.xml) and loading it puts it back,
+    /// where a level leaves it alone (#2388).
+    #[test]
+    fn graphics_saved_restores_the_glow_it_was_saved_with() {
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.glow = false;
+        s.graphics_saved.insert("No glow".into(), Saved::capture(&s));
+        s.glow = true;
+        s.graphics_saved.insert("Glow".into(), Saved::capture(&s));
+        assert!(select(&mut s, "No glow"));
+        assert!(!s.glow);
+        Preset::Deluxe.apply(&mut s);
+        assert!(!s.glow, "a level after the profile keeps its glow");
+        assert!(select(&mut s, "Glow"));
+        assert!(s.glow);
     }
 
     #[test]

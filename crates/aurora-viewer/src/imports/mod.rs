@@ -622,6 +622,13 @@ impl Default for Imports {
         }
     }
 }
+/// The largest side of a material's maps: the Legacy Viewer material
+/// editor encodes each map with LLViewerTextureList::convertToUploadFile at
+/// its default, MAX_IMAGE_SIZE_DEFAULT (2048; llmaterialeditor.cpp). Given
+/// to every material row, when added and when a saved local preview is
+/// restored.
+pub(super) const MATERIAL_MAP_MAX: u32 = 2048;
+
 impl Imports {
     /// Stage a locally authored, already validated native file in the ordinary
     /// inspector. Upload/payment still follows the existing explicit action.
@@ -1121,6 +1128,9 @@ impl Imports {
                             };
                             entry.options.max_width = maximum;
                             entry.options.max_height = maximum;
+                        } else if matches!(&entry.source, Some(Source::Material { .. })) {
+                            entry.options.max_width = MATERIAL_MAP_MAX;
+                            entry.options.max_height = MATERIAL_MAP_MAX;
                         }
                         if let Some(source) = &entry.source {
                             entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {

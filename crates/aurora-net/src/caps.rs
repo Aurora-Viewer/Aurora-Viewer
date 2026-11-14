@@ -88,6 +88,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ObjectAnimation",
     "ObjectMedia",
     "ObjectMediaNavigate",
+    // Legacy Viewer: LLViewerRegionImpl::buildCapabilityNames (llviewerregion.cpp).
+    "ParcelPropertiesUpdate",
     "ParcelVoiceInfoRequest",
     "ProvisionVoiceAccountRequest",
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
@@ -101,6 +103,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the LSL and SLua keywords together, ahead of LSLSyntax (LLSyntaxDefCache)
+    "ScriptDefinitions",
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
@@ -175,6 +179,11 @@ mod language_tests {
     use super::*;
 
     #[test]
+    fn parcel_rename_requests_the_properties_update_capability() {
+        assert!(REQUESTED_CAPS.contains(&"ParcelPropertiesUpdate"));
+    }
+
+    #[test]
     fn maturity_preference_is_sent_and_read_as_short_strings() {
         assert!(REQUESTED_CAPS.contains(&"UpdateAgentInformation"));
         let body = maturity_preference_body(crate::search::SIM_ACCESS_MATURE);
@@ -228,6 +237,7 @@ mod language_tests {
     fn the_minor_simulator_capabilities_are_requested() {
         for cap in [
             "LSLSyntax",
+            "ScriptDefinitions",
             "SendPostcard",
             "ServerReleaseNotes",
             "SimConsoleAsync",

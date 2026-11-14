@@ -526,9 +526,13 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
         entry.local_assume_meters = prefs.local_assume_meters;
+        // Some loaders already know source dependencies that are not retained
+        // on decoded image data (notably glTF material map URIs). Keep those
+        // watches when the entry is made local.
+        let mut paths = entry.watch.take().map_or_else(|| vec![entry.path.clone()], |watch| watch.paths);
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
-            let mut paths = mesh_dependencies(&entry.path, &draft.scene);
+            paths.extend(mesh_dependencies(&entry.path, &draft.scene));
             for lod in &draft.lods {
                 if let Some(path) = &lod.path {
                     paths.extend(
@@ -546,10 +550,12 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
                         .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
                 );
             }
-            paths.sort();
-            paths.dedup();
-            entry.watch = Some(super::local::Watch::new(paths));
+        } else if let Some(Source::Material { images, .. }) = &entry.source {
+            paths.extend(images.iter().flatten().filter_map(|image| image.path.clone()));
         }
+        paths.sort();
+        paths.dedup();
+        entry.watch = Some(super::local::Watch::new(paths));
     }
 }
 
@@ -575,7 +581,7 @@ pub(super) fn encode(source: &Source, options: import_texture::Options, sound_op
             if bvh.is_some() {
                 import_animation::encode(animation)
             } else {
-                Ok(bytes.as_ref().clone())
+                aurora_assets::rewrite_animation_upload(bytes, animation)
             }
         }
         Source::Material { value, .. } => value.encode_asset(),
@@ -1127,6 +1133,37 @@ mod tests {
         );
     }
     #[test]
+    fn local_textures_and_materials_watch_their_source_files() {
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+
+        let entry = &entries[0];
+        assert!(entry.local);
+        assert!(entry.local_live);
+        let watch = entry.watch.as_ref().expect("local texture file watch");
+        assert_eq!(watch.paths.as_slice(), std::slice::from_ref(&path));
+        let before = watch.stamp.clone();
+
+        image::save_buffer(&path, &[180u8; 16 * 16 * 4], 16, 16, image::ColorType::Rgba8).expect("change source image");
+        assert_ne!(before, super::super::local::stamp(&watch.paths));
+
+        let material_path = files.0.join("material-demo.gltf");
+        let mut materials = files.load("material-demo.gltf", Choice::Local);
+        localize(&mut materials, &Preferences::default());
+        let entry = &materials[0];
+        assert!(matches!(entry.source, Some(Source::Material { .. })));
+        let watch = entry.watch.as_ref().expect("local material file watch");
+        assert!(watch.paths.contains(&material_path));
+        let map_path = files.0.join("texture-demo.png").canonicalize().expect("map path");
+        assert!(
+            watch.paths.contains(&map_path),
+            "watched paths: {:?}; expected map: {map_path:?}",
+            watch.paths
+        );
+    }
+    #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
         let files = Files::new();
         let mut wav = std::fs::read(files.0.join("sound-demo.wav")).expect("WAV fixture");
@@ -1190,6 +1227,30 @@ mod tests {
             encode(native.source.as_ref().expect("animation"), native.options, native.sound.options).expect("encode"),
             read(&native.path).expect("bytes")
         );
+        let Some(Source::Animation { bytes, animation, bvh }) = native.source.as_ref() else {
+            panic!("native animation")
+        };
+        let mut edited = animation.as_ref().clone();
+        edited.base_priority = 6;
+        edited.looping = false;
+        let edited_source = Source::Animation {
+            bytes: bytes.clone(),
+            animation: Arc::new(edited),
+            bvh: *bvh,
+        };
+        let uploaded = encode(&edited_source, native.options, native.sound.options).expect("encode edited animation");
+        let uploaded_animation = aurora_assets::parse_animation_upload(&uploaded).expect("parse edited upload");
+        assert_eq!(uploaded_animation.base_priority, 6);
+        assert!(!uploaded_animation.looping);
+        let mut motion = animation.joints.clone();
+        for (joint, priority) in motion
+            .iter_mut()
+            .zip(aurora_assets::native_joint_priorities(bytes, 6).expect("joint priorities"))
+        {
+            joint.priority = priority;
+        }
+        assert!(motion.iter().all(|joint| joint.priority == 6), "the joints follow the priority");
+        assert_eq!(uploaded_animation.joints, motion, "editing upload options preserves the motion");
         assert!(
             load(
                 &files.0.join("animation-demo.bvh"),

@@ -302,7 +302,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                             (*e, world.social.name_of(&e.id))
                         })
                         .collect();
-                    rows.sort_by_key(|r| r.1.to_lowercase());
+                    rows.sort_by_key(|r| crate::natural_order::key(&r.1));
                     egui::Frame::new().fill(p.field).show(ui, |ui| {
                         ui.set_width(half);
                         ui.set_min_height(list_h);

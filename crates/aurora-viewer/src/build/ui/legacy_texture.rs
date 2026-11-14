@@ -58,17 +58,9 @@ fn copy_actions(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
         p,
         "copy-filled",
         aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
-        !sel.is_empty() && sel.iter().all(|x| x.idx == sel[0].idx),
+        copy_allowed(tool, world, sel),
     ) {
-        tool.ui.face_clipboard = Some(
-            sel.iter()
-                .map(|x| FaceClip {
-                    face: x.te,
-                    legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
-                    gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
-                })
-                .collect(),
-        );
+        tool.ui.face_clipboard = Some(copy_faces(tool, env, world, sel));
     }
     if super::super::common::icon_button(
         ui,
@@ -77,7 +69,7 @@ fn copy_actions(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
         aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
         !sel.is_empty() && tool.ui.face_clipboard.is_some(),
     ) {
-        paste_faces(tool, world, sel);
+        paste_faces(tool, world, env, sel);
     }
 }
 
@@ -378,7 +370,7 @@ pub(super) fn pbr_surface(
             tool,
             world,
             env,
-            id,
+            id.filter(|_| editable),
             false,
             caption,
             PickTarget::PbrMap(channel),

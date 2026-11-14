@@ -71,13 +71,14 @@ fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
     if let Some((_, material)) = world.local_assets.get(&texture) {
         return !material;
     }
+    // init_texture_ctrl (indra/newview/llpaneleditwearable.cpp) sets both
+    // filter masks of the wearable swatches to PERM_NONE, so
+    // LLTextureCtrl::allowDrop takes any texture the agent has, whatever
+    // its Copy, Modify or Transfer rights: worn layers routinely use no-copy
+    // or no-transfer textures. The texture must still be an inventory
+    // texture or snapshot (never a typed id), and its asset id is only
+    // stored in the wearable, never shown.
     let kind = draft.edited.kind;
-    let required = crate::world::inventory::actions::COPY
-        | if draft.item.base_mask & crate::world::inventory::actions::TRANSFER != 0 {
-            crate::world::inventory::actions::TRANSFER
-        } else {
-            0
-        };
     texture == crate::world::inventory::wearable::default_texture(kind)
         || texture.is_nil() && matches!(kind, 1 | 13 | 14 | 16)
         || texture == crate::scene::avatar::IMG_INVISIBLE && kind == 13
@@ -85,7 +86,7 @@ fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
             .inventory
             .items
             .values()
-            .any(|item| matches!(item.asset_type, 0 | 15) && item.asset_id == texture && item.owner_mask & required == required)
+            .any(|item| matches!(item.asset_type, 0 | 15) && item.asset_id == texture)
 }
 
 /// The texture an inventory entry dragged onto a texture swatch carries: a
@@ -184,6 +185,10 @@ pub struct State {
     pub alpha_previous: HashMap<u32, Uuid>,
     local_textures: HashSet<Uuid>,
     pub preview: preview::Preview,
+    /// Import of an appearance XML into the draft.
+    pub xml: crate::shape_editor::xml_import::Import,
+    /// Export of the draft to an appearance XML.
+    pub xml_export: crate::shape_editor::xml_export::Export,
 }
 
 struct TextureSnapshot {
@@ -397,7 +402,7 @@ impl State {
             return false;
         }
         if !accepts_texture(world, draft, slot, texture) {
-            self.message = aurora_i18n::tr!("wearable-texture-permissions").into();
+            self.message = aurora_i18n::tr!("wearable-texture-inventory").into();
             return false;
         }
         draft.edited.textures.insert(slot, texture);
@@ -504,7 +509,7 @@ impl State {
             .iter()
             .any(|(slot, texture)| draft.original.textures.get(slot) != Some(texture) && !texture_allowed(world, draft, *texture))
         {
-            self.message = aurora_i18n::tr!("wearable-texture-permissions").into();
+            self.message = aurora_i18n::tr!("wearable-texture-inventory").into();
             return None;
         }
         let data = match draft.edited.encode(name.as_deref().unwrap_or(&current.name)) {

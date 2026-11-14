@@ -21,8 +21,8 @@
 //! and it alone uses the queue.
 
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, BIN_WATER_EXCLUSION, COUNT_PRE1, COUNT_PRE2,
-    CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
+    BIN_PROBE, BIN_PROBE_SHADOW, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, BIN_WATER_EXCLUSION, COUNT_PRE1,
+    COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
 };
 use crate::helpers::Helpers;
 use crate::light_tiles::{self, LightCulling, LightSets};
@@ -33,7 +33,7 @@ use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
 use crate::writes::TrackedSink;
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -131,8 +131,13 @@ struct FrameU {
     /// 1/w, 1/h; 0: `screen`), for the reflections that keep the main
     /// view's `screen` but draw smaller.
     sky_star_pass: [f32; 4],
+    studio_aurora: [[f32; 4]; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
+    /// The poser's hovered part: bit j for palette joint j (shaders'
+    /// `in_poser_part`).
+    part_joints: [[u32; 4]; 2],
+    part_classes: [[u32; 4]; 8],
     rez_gradient: [[f32; 4]; 3],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
@@ -159,10 +164,49 @@ struct FrameU {
     motion_vp: [[f32; 4]; 4],
     motion_prev_vp: [[f32; 4]; 4],
     motion_reproj: [[f32; 4]; 4],
+    /// Rain prototype: x how hard it rains (0..1).
+    rain: [f32; 4],
+    /// Rain prototype's wetness memory: its corner (xy) and size (z, 0:
+    /// none), w how hard it rained while it was wetted (the wet ground's
+    /// strength once it stopped).
+    rain_wet: [f32; 4],
+    /// The memory's last corner (xy), the time since its last update (z,
+    /// s; < 0: no history), w how soaked a place new to it is (the rain's
+    /// time so far, then drying).
+    rain_wet_step: [f32; 4],
+    /// Rain prototype's look: x puddles (0/1), y how far the wet ground is
+    /// drawn (m).
+    rain_look: [f32; 4],
+    /// Rain prototype's wind: xy how far it has carried the drops (m), zw
+    /// the wind now (m/s).
+    rain_wind: [f32; 4],
+    /// Snow cover: x how hard it snows (0..1), y how deep the snow lies on
+    /// a place new to the memory (0..1), z 1 while rain melts it, w the
+    /// detail texture's slot (0: none).
+    snow_cover: [f32; 4],
+    /// Snow footprints' map: its corner (xy), size (z, 0: none), w how many
+    /// `snow_stamps` this frame.
+    snow_trail: [f32; 4],
+    /// Its last corner (xy), the time since (z, s; < 0: none), w how hard
+    /// it snows (the prints fill in).
+    snow_trail_step: [f32; 4],
+    /// Feet set down this frame: x, y (m), the foot's heading (rad), its
+    /// half length (m).
+    snow_stamps: [[f32; 4]; crate::types::SNOW_STAMPS],
+    /// The lightning's glow in the sky: xy the way to it, z its height
+    /// (sine), w how bright.
+    lightning: [f32; 4],
+    /// The aurora (`RainLook::aurora`).
+    aurora: [f32; 4],
     /// The main view of a photo tile: its part of the photo
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
     /// at the photo's edges, not the tile's.
     photo: [f32; 4],
+    /// x: the material textures' mip bias (main view under FSR drawing the
+    /// world smaller, [`crate::fsr::mip_bias`]); 0 in every other pass.
+    tex_lod: [f32; 4],
+    /// The soles' heights of `snow_stamps` (m), four to a vec4.
+    snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -171,6 +215,8 @@ struct FrameU {
 struct ShadowU {
     vp: [[f32; 4]; 4],
     anim_clock: [u32; 4],
+    /// x: 1 for the rain prototype's shelter map (`fs_shadow`)
+    kind: [u32; 4],
 }
 
 #[repr(C)]
@@ -320,6 +366,7 @@ impl Smaa {
             samples: 1,
             format: Some(format),
             gbuf: false,
+            range: None,
             depth_format: None,
             depth_bias: Default::default(),
             constants: &[],
@@ -478,13 +525,56 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
-    std::array::from_fn(|k| {
+fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<usize>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+    let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
         let s = s.filter(|_| f.shadows)?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
-    })
+    });
+    // Aurora Weather: while it rains (or the ground is still wet, see
+    // `Backend::rain_shelter`), map `shelter` is the shelter map, the depth
+    // of what is overhead seen straight down: the first map past the
+    // projectors' (`projector_shadows::shelter_slot`), so that none of them
+    // loses its shadow; the last projector's only at the full budget. No
+    // light uses it (`RAIN_SHELTER_LIGHT` in the frame's spot lights).
+    if let Some(slot) = shelter.filter(|&k| k < SPOT_SHADOWS) {
+        views[slot] = Some((
+            SpotShadow {
+                light: u32::MAX,
+                fade: 0.0,
+            },
+            rain_shelter_matrix(f.camera_pos),
+        ));
+    }
+    views
+}
+
+/// With the shadows off, how long the shelter map drawn alone is kept while
+/// the camera stays in its metre (what is built or moved under a roof shows
+/// within it).
+const SHELTER_REFRESH: Duration = Duration::from_secs(1);
+
+/// The shelter map's entry in the frame's spot lights: not a light, and not
+/// -1 either (an empty slot's).
+const RAIN_SHELTER_LIGHT: i32 = -2;
+
+/// The shelter map: 80 m square around the camera, from 60 m above it to
+/// 60 m below, looking straight down; snapped to whole metres so that its
+/// texels do not crawl as the camera moves.
+fn rain_shelter_matrix(camera: Vec3) -> Mat4 {
+    // looking down -Z with +Y up, the view is a plain translation; the
+    // orthographic projection (right-handed, depth 0 at the top to 1 at
+    // the bottom, like the projectors' maps) then scales it
+    const HALF: f32 = 40.0;
+    const DEPTH: f32 = 120.0;
+    let (cx, cy, top) = (camera.x.round(), camera.y.round(), camera.z.round() + DEPTH * 0.5);
+    Mat4::from_cols(
+        Vec4::new(1.0 / HALF, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0 / HALF, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, -1.0 / DEPTH, 0.0),
+        Vec4::new(-cx / HALF, -cy / HALF, top / DEPTH, 1.0),
+    )
 }
 
 /// Screen-space glow as LLPipeline::generateGlow / combineGlow (originally LGPL 2.1,
@@ -536,14 +626,7 @@ impl Glow {
                 strength: Self::STRENGTH,
                 _pad: 0.0,
             };
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("glow params"),
-                    contents: bytemuck::bytes_of(&u),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            )
+            crate::gpu_alloc::buffer_init(device, "glow params", bytemuck::bytes_of(&u), wgpu::BufferUsages::UNIFORM)
         };
         let h = ubuf([Self::DELTA, 0.0]);
         let v = ubuf([0.0, Self::DELTA]);
@@ -582,6 +665,7 @@ impl Glow {
             samples: 1,
             format: Some(fmt),
             gbuf: false,
+            range: None,
             depth_format: None,
             depth_bias: Default::default(),
             constants: &[],
@@ -679,6 +763,9 @@ struct Taa {
     /// whichever one existed when they were made (`remake_taa` follows
     /// every rebuild of the targets).
     motion: Option<wgpu::TextureView>,
+    /// FSR 3.1 in the place of the TAA pass (`AURORA_FSR=1`, fsr.rs), with
+    /// the post bind group reading its image.
+    fsr: Option<(crate::fsr::Fsr, wgpu::BindGroup)>,
     parity: usize,
     reset: bool,
 }
@@ -696,6 +783,27 @@ fn motion_view<'a>(motion_now: bool, targets: &'a Targets, taa: Option<&'a Taa>)
         .as_ref()
         .map(|g| &g.normals)
         .or_else(|| taa.and_then(|t| t.motion.as_ref()))
+}
+
+/// The coverage from which a blended face gives FSR its own depth and
+/// motion (`fsr_blend_normal`): the glass faint enough to show what lies
+/// behind keeps its edges anti-aliased, the softest fringes (smoke, hair
+/// tips) leave the motion to what is behind them.
+const FSR_BLEND_ALPHA: f64 = 0.1;
+
+/// FSR's upscale ratio under `aa`, none without FSR.
+fn fsr_ratio(aa: AntiAliasing) -> Option<f32> {
+    match aa {
+        AntiAliasing::Fsr(q) => Some(q.ratio()),
+        _ => None,
+    }
+}
+
+/// `AURORA_FSR_BLEND_MOTION=0`: the blended faces give FSR no motion of
+/// their own (read once).
+fn fsr_blend_motion() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_FSR_BLEND_MOTION").map_or(true, |v| v.trim() != "0"))
 }
 
 /// The replay of a frame's write journal is logged over this (ms).
@@ -773,10 +881,11 @@ pub enum RenderError {
     DeviceLost,
 }
 
-/// A device lost while the backend is being made: the error, before the next
-/// `create_buffer_init`, whose mapping panics on a buffer that could not be
-/// made ("water effects" on Intel Iris Xe, #1892). Nothing fails before that:
-/// a lost device takes every other call without a word. As in `Backend`'s
+/// A device lost while the backend is being made: the error, at the points
+/// where wgpu's `create_buffer_init` used to panic on a buffer that could
+/// not be made ("water effects" on Intel Iris Xe, #1892;
+/// `gpu_alloc::buffer_init` no longer panics there). Nothing fails on its
+/// own: a lost device takes every call without a word. As in `Backend`'s
 /// `Drop` (#1650), the surface is left to the process.
 fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surface<'static>>) -> Result<(), RenderError> {
     if !lost.get() {
@@ -805,6 +914,9 @@ struct Targets {
     /// faces draw into, writing their depth as they go
     /// (`RiggedBlendDepth::Layered` and `Layers`, made on its first use).
     blend_layers: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// The lists of the blended fragments of each pixel
+    /// (`RiggedBlendDepth::Exact`, made on its first use).
+    blend_exact: Option<crate::blend_exact::Lists>,
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
@@ -902,6 +1014,19 @@ struct Pipelines {
     blend_depth_fringe: SidedPipelines,
     /// `Layers`: after each object's fringes, their depth from 1/255.
     blend_depth_fringe_depth: SidedPipelines,
+    /// `Exact`: every blended face once, lit and filed in the front of its
+    /// pixels (`fs_blend_once`), into the targets of the haze.
+    blend_once: SidedPipelines,
+    /// `Exact`, between runs of blended faces: the cut of each pixel into
+    /// the depth of the pass (`fs_blend_cut`).
+    blend_cut: wgpu::RenderPipeline,
+    /// `Exact`, over the screen: the light of the blended fragments over
+    /// what is drawn (`fs_blend_over`), then their glow (`fs_blend_glow`).
+    blend_over: wgpu::RenderPipeline,
+    blend_glow: wgpu::RenderPipeline,
+    /// The two in one draw (`fs_blend_both`), where the device blends from
+    /// two sources.
+    blend_both: Option<wgpu::RenderPipeline>,
     /// The blended faces under the water (`DrawLists::blend_under_water`),
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
@@ -909,6 +1034,22 @@ struct Pipelines {
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
+    /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
+    rain: wgpu::RenderPipeline,
+    /// Rain prototype's splashes (`vs_rain_splash`).
+    rain_splash: wgpu::RenderPipeline,
+    /// Deep snow's surface (`vs_snow_mesh`): writes the depth.
+    snow_mesh: wgpu::RenderPipeline,
+    /// Rain prototype's distant rain (`fs_rain_far`).
+    rain_far: wgpu::RenderPipeline,
+    /// Rain prototype's wetness memory update (`fs_rain_wet_update`).
+    rain_wet_update: wgpu::RenderPipeline,
+    /// Snow footprints' update (`fs_snow_trail_update`).
+    snow_trail_update: wgpu::RenderPipeline,
+    /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
+    rain_wet: wgpu::RenderPipeline,
+    /// The same with the screen-space reflections' G-buffer (`fs_rain_wet_g`).
+    rain_wet_g: Option<wgpu::RenderPipeline>,
     glow: wgpu::RenderPipeline,
     /// `glow` clipped to the camera's side of the water (blended faces).
     glow_water: wgpu::RenderPipeline,
@@ -929,6 +1070,10 @@ struct Pipelines {
     physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
+    /// The poser's hovered part on the subject's skinned faces.
+    part_mask: wgpu::RenderPipeline,
+    /// The visible part of the subject's faces (part_pick.rs).
+    part_pick: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
@@ -947,6 +1092,10 @@ struct Pipelines {
     pre_contact: SidedPipelines,
     /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
     pre_contact_normal: SidedPipelines,
+    /// FSR only (`AURORA_FSR=1`): the blended faces covered from
+    /// `FSR_BLEND_ALPHA`, with their motion, into the occlusion's depth
+    /// once the occlusion and the contact shadows have read it.
+    fsr_blend_normal: SidedPipelines,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): ordinary / portal-clipped, each one-sided and two-sided.
     pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
@@ -954,6 +1103,10 @@ struct Pipelines {
     refl_terrain: wgpu::RenderPipeline,
     refl_terrain_pbr: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
+    /// The mirror's blended faces (`fs_reflect_blend`): the rigged ones
+    /// writing depth, then the others reading it.
+    refl_blend_rigged: wgpu::RenderPipeline,
+    refl_blend: wgpu::RenderPipeline,
     /// Shadow casters with the alpha test of `fs_shadow`.
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
@@ -971,6 +1124,8 @@ struct Pipelines {
     pick_visible: wgpu::RenderPipeline,
     pick_left: wgpu::RenderPipeline,
     pick_left_2s: wgpu::RenderPipeline,
+    pick_mask: wgpu::RenderPipeline,
+    pick_mask_2s: wgpu::RenderPipeline,
     pick_left_visible: wgpu::RenderPipeline,
     pick_overlay: wgpu::RenderPipeline,
 }
@@ -1013,6 +1168,8 @@ struct GpuTimer {
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
     /// order.
     last_effects: Option<[f32; 4]>,
+    /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
+    last_weather: Option<[f32; 4]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1038,6 +1195,7 @@ const COMPARE_KEYS: [&str; 3 + GpuElement::ALL.len()] = [
     "objects",
     "water",
     "transparent",
+    "weather",
     "post",
     "depth",
     "depth_msaa",
@@ -1075,7 +1233,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 25;
+const GPU_MARKS: u32 = 32;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1114,12 +1272,13 @@ const MARK_SHADOW_C1_END: u32 = 19;
 /// What `GpuElement::ShadowsDepth` is made of (`ShadowStats::gpu_ms`): the
 /// GPU culling, the three cascades, then the depth prepass with the
 /// occlusion.
-const GPU_SHADOW_PARTS: [(u32, u32); 5] = [
-    (0, MARK_SHADOW_BEGIN),
-    (MARK_SHADOW_BEGIN, MARK_SHADOW_C0_END),
-    (MARK_SHADOW_C0_END, MARK_SHADOW_C1_END),
-    (MARK_SHADOW_C1_END, MARK_SHADOWS_END),
-    (MARK_SHADOWS_END, MARK_DEPTH_END),
+const GPU_SHADOW_PARTS: [&[(u32, u32)]; 5] = [
+    &[(0, MARK_SHADOW_BEGIN)],
+    &[(MARK_SHADOW_BEGIN, MARK_SHADOW_C0_END)],
+    &[(MARK_SHADOW_C0_END, MARK_SHADOW_C1_END)],
+    // the third cascade and the projectors' maps, without the shelter map
+    &[(MARK_SHADOW_C1_END, MARK_SHELTER_BEGIN), (MARK_SHELTER_END, MARK_SHADOWS_END)],
+    &[(MARK_SHADOWS_END, MARK_DEPTH_END)],
 ];
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
@@ -1137,29 +1296,60 @@ const MARK_CONTACT_END: u32 = 23;
 const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
+/// Rain prototype, inside scene pass B: before the wet ground (which ends
+/// at `MARK_SSR_END`), and around the drops.
+const MARK_WET_BEGIN: u32 = 27;
+const MARK_RAIN_BEGIN: u32 = 28;
+const MARK_RAIN_END: u32 = 29;
+/// Aurora Weather: around the shelter map (the last projector map, inside
+/// the shadow pass after the cascades; both written together when it is not
+/// drawn), and around the wetness and footprints memories (after scene pass
+/// A, before the scene copy).
+const MARK_SHELTER_BEGIN: u32 = 30;
+const MARK_SHELTER_END: u32 = 31;
+const MARK_WEATHER_MEMORY_BEGIN: u32 = 32;
+const MARK_WEATHER_MEMORY_END: u32 = 33;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
 /// filtering; the scene copy, with the cut-out pass and the submerged water
 /// particles before it; the SSR.
-const GPU_EFFECT_PARTS: [(u32, u32); 4] = [
-    (MARK_CONTACT_END, MARK_WATER_AIR_BEGIN),
-    (MARK_WATER_AIR_END, MARK_REFL_END),
-    (MARK_SCENE_A_END, MARK_COPY_END),
-    (MARK_COPY_END, MARK_SSR_END),
+const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
+    &[(MARK_CONTACT_END, MARK_WATER_AIR_BEGIN)],
+    &[(MARK_WATER_AIR_END, MARK_REFL_END)],
+    &[
+        (MARK_SCENE_A_END, MARK_WEATHER_MEMORY_BEGIN),
+        (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
+    ],
+    &[(MARK_COPY_END, MARK_WET_BEGIN)],
+];
+/// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
+/// shelter map, the wetness and footprints memories, the wet ground (with
+/// the snow lying), the drops and flakes with the distant layers.
+const GPU_WEATHER_PARTS: [(u32, u32); 4] = [
+    (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
+    (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
+    (MARK_WET_BEGIN, MARK_SSR_END),
+    (MARK_RAIN_BEGIN, MARK_RAIN_END),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
-    // shadows and depth
-    &[(0, MARK_SHADOWS_END), GPU_DEPTH[0], GPU_DEPTH[1]],
+    // shadows and depth (the shelter map is the weather's)
+    &[
+        (0, MARK_SHELTER_BEGIN),
+        (MARK_SHELTER_END, MARK_SHADOWS_END),
+        GPU_DEPTH[0],
+        GPU_DEPTH[1],
+    ],
     // effects: SSAO, planar reflections, probes, scene copy, SSR
     &[
         (MARK_DEPTH_END, MARK_SSAO_END),
         (MARK_SSAO_END, MARK_WATER_AIR_BEGIN),
         (MARK_WATER_AIR_END, MARK_REFL_END),
-        (MARK_SCENE_A_END, MARK_COPY_END),
-        (MARK_COPY_END, MARK_SSR_END),
+        (MARK_SCENE_A_END, MARK_WEATHER_MEMORY_BEGIN),
+        (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
+        (MARK_COPY_END, MARK_WET_BEGIN),
     ],
     // terrain and sky
     &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
@@ -1176,7 +1366,13 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_SSR_END, MARK_WATER_END),
     ],
     // blended faces and particles
-    &[(MARK_GLOW_END, MARK_BLEND_END), (MARK_BLEND_END, MARK_SCENE_END)],
+    &[
+        (MARK_GLOW_END, MARK_BLEND_END),
+        (MARK_BLEND_END, MARK_RAIN_BEGIN),
+        (MARK_RAIN_END, MARK_SCENE_END),
+    ],
+    // weather
+    &GPU_WEATHER_PARTS,
     // post: glow, TAA, tonemap, SMAA and screen-space HUDs
     &[(MARK_WATER_END, MARK_GLOW_END), (MARK_SCENE_END, 1)],
 ];
@@ -1199,7 +1395,7 @@ impl GpuTimer {
                 (
                     device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("timestamp readback"),
-                        size: GPU_TIMESTAMPS as u64 * 8,
+                        size: crate::readback::readback_size(GPU_TIMESTAMPS as u64 * 8),
                         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     }),
@@ -1227,6 +1423,7 @@ impl GpuTimer {
             last_contact: None,
             last_bloom: None,
             last_effects: None,
+            last_weather: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
         }
@@ -1237,11 +1434,8 @@ impl GpuTimer {
         for (slot, (buf, ready, pending)) in self.readback.iter_mut().enumerate() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let ts: &[u64] = bytemuck::cast_slice(&view[..GPU_TIMESTAMPS as usize * 8]);
-                    let ms = |a: u32, b: u32| {
-                        let (a, b) = (ts[a as usize], ts[b as usize]);
-                        (b.saturating_sub(a) as f64 * self.period_ns as f64 / 1e6) as f32
-                    };
+                    let ts = crate::readback::u64_array::<{ GPU_TIMESTAMPS as usize }>(&view[..GPU_TIMESTAMPS as usize * 8]);
+                    let ms = |a: u32, b: u32| crate::readback::elapsed_gpu_ms(&ts, a, b, self.period_ns);
                     if ts[1] > ts[0] {
                         self.last_ms = Some(ms(0, 1));
                         self.last_pixels = self.slot_pixels[slot].get();
@@ -1251,13 +1445,15 @@ impl GpuTimer {
                                 *t = ranges.iter().map(|&(a, b)| ms(a, b)).sum();
                             }
                             self.last_elements = Some(e);
-                            self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(|(a, b)| ms(a, b)));
+                            let sum = |ranges: &[(u32, u32)]| ranges.iter().map(|&(a, b)| ms(a, b)).sum::<f32>();
+                            self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(sum));
                             let d = GPU_DEPTH.map(|(a, b)| ms(a, b));
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
-                            self.last_effects = Some(GPU_EFFECT_PARTS.map(|(a, b)| ms(a, b)));
+                            self.last_effects = Some(GPU_EFFECT_PARTS.map(sum));
+                            self.last_weather = Some(GPU_WEATHER_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
                                 times[0] = ms(0, 1);
@@ -1576,12 +1772,37 @@ pub(crate) struct Backend {
     target_bytes: Option<(u64, u64)>,
     taa_bytes: u64,
     surface_srgb: bool,
-    egui: egui_wgpu::Renderer,
+    egui: EguiSlot,
     ui_blur: Option<crate::ui_blur::Blur>,
+    /// What a full video memory refused of the frame's targets, and when to
+    /// try again (gpu_alloc.rs).
+    oom: crate::gpu_alloc::Refusals,
+    /// What the renderer was made from, kept until its start is over: made,
+    /// then the user's settings applied by a frame, with nothing refused.
+    seed: Option<Box<BackendInit>>,
+    /// Video memory refused part of what the start makes outside the render
+    /// targets (the placeholders, probes, shadow atlases, culling and
+    /// particle buffers…, or the atlases the settings make again): the
+    /// frame's bind groups hold it, so no try of the targets could bring the
+    /// world back. The whole renderer is made again from `seed`, on the same
+    /// device and window, at the targets' next try (`remake_refused`).
+    remake: bool,
+    /// The installed set is the 1x1 one that frees a refused set, made just
+    /// before the next try (`rebuild_targets`): FSR's display-size part is
+    /// made at that size too.
+    targets_shrunk: bool,
+    /// When to try the interface's blur and glass again; it goes without
+    /// them until then.
+    ui_targets_backoff: crate::gpu_alloc::Backoff,
     ui_glass: Option<crate::ui_glass::Glass>,
     previews: crate::preview::Cache,
     selection: Option<crate::selection::Overlay>,
     hud_selection: Option<crate::selection::Overlay>,
+    /// The poser's hovered part (`part_faces`), as the selection's halo.
+    part: Option<crate::selection::Overlay>,
+    /// Seeded from post depth while hovering; part faces resolve their own
+    /// nearest surface here, including blended unrigged accessories.
+    part_depth: Option<wgpu::TextureView>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
     frame_layout: wgpu::BindGroupLayout,
@@ -1597,6 +1818,8 @@ pub(crate) struct Backend {
     water_effects: crate::water_effects::WaterGpu,
     /// The night sky's stars (stars.rs), made once.
     stars: wgpu::Buffer,
+    /// The Milky Way map (stars.rs milky_way_texels), made once.
+    milky_way: wgpu::TextureView,
     contact: crate::contact_shadows::ContactShadows,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -1635,10 +1858,23 @@ pub(crate) struct Backend {
     records_key: (u64, u64),
     /// Shadow atlas: one tile per cascade (see `make_shadow_atlas`).
     shadow_view: wgpu::TextureView,
+    /// The shadow map of the probe being captured, its matrix for the shaders
+    /// (drawn at the capture's first face, read by its six) and its group.
+    probe_shadow_view: wgpu::TextureView,
+    probe_shadow_vp: Mat4,
+    probe_shadow_buffer: wgpu::Buffer,
+    probe_shadow_group: wgpu::BindGroup,
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
     shadow_count: u8,
+    /// The projector map the rain's shelter takes while it is drawn
+    /// (`projector_shadows::shelter_slot`): past the projectors' maps.
+    shelter_slot: usize,
+    /// With the shadows off, the shelter map drawn alone: its matrix and
+    /// when (kept in the atlas, which nothing else draws then; drawn again
+    /// when the camera crosses a metre, or after `SHELTER_REFRESH`).
+    shelter_drawn: Option<(Mat4, Instant)>,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
     post_buffer: wgpu::Buffer,
@@ -1670,6 +1906,15 @@ pub(crate) struct Backend {
     depth_pick: crate::pick::DepthPick,
     /// Faces drawn under a clicked pixel (drawn_pick.rs).
     drawn_pick: crate::drawn_pick::DrawnPick,
+    /// The poser's part under the cursor (part_pick.rs), and this frame's
+    /// pixel to read; whether the part overlay draws this frame (a part is
+    /// lit: the subject's faces are also listed for the pick alone).
+    part_pick: crate::part_pick::PartPick,
+    part_pick_px: Option<([u32; 2], [u32; 2])>,
+    part_lit: bool,
+    /// Frames since a part was last lit: its overlay images go after
+    /// `PART_IDLE_FRAMES`.
+    part_idle: u32,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -1691,11 +1936,16 @@ pub(crate) struct Backend {
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// Rain prototype's wetness memory bookkeeping.
+    rain_wet: RainWet,
+    snow_trail: SnowTrail,
     vsync: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
     settings: RenderSettings,
     taa: Option<Taa>,
+    /// This frame's TAA jitter in pixels, y down: where it moved the image.
+    taa_jitter: glam::Vec2,
     prev_view_proj: Option<Mat4>,
     /// The last frame's projection and view, without the jitter, for the
     /// motion vectors.
@@ -1739,10 +1989,32 @@ impl Drop for Backend {
     }
 }
 
+/// egui's renderer, made once and moved from one backend to the next by
+/// `Backend::remake_refused`: egui-wgpu makes its buffers with
+/// `create_buffer_init`, which panics on a buffer a full video memory
+/// refused, and its textures (the fonts) are only sent once. Empty only
+/// inside `remake_refused`.
+struct EguiSlot(Option<egui_wgpu::Renderer>);
+
+impl std::ops::Deref for EguiSlot {
+    type Target = egui_wgpu::Renderer;
+
+    fn deref(&self) -> &egui_wgpu::Renderer {
+        self.0.as_ref().expect("egui renderer: only taken inside remake_refused")
+    }
+}
+
+impl std::ops::DerefMut for EguiSlot {
+    fn deref_mut(&mut self) -> &mut egui_wgpu::Renderer {
+        self.0.as_mut().expect("egui renderer: only taken inside remake_refused")
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
+    grading: Option<crate::vr_mirror::HeadsetGrade>,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -1785,7 +2057,7 @@ fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
             shader_location: 3,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Unorm8x4,
+            format: wgpu::VertexFormat::Unorm16x4,
             offset: 4,
             shader_location: 4,
         },
@@ -1873,6 +2145,31 @@ enum Vb {
     Mesh,
     Particle,
     Sprite,
+    /// Aurora Weather's footprints, one an instance (`vs_snow_print`).
+    Print,
+}
+
+/// The most footprints kept (32 bytes each).
+const MAX_SNOW_PRINTS: usize = 16384;
+
+fn print_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRS: [wgpu::VertexAttribute; 2] = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 16,
+            shader_location: 1,
+        },
+    ];
+    wgpu::VertexBufferLayout {
+        array_stride: 32,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &ATTRS,
+    }
 }
 
 fn sprite_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -1905,6 +2202,45 @@ fn sprite_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+/// The tint inside the poser's hovered part (the selection overlay's pulse,
+/// held): which part reads at once, its clothing still seen through it.
+const PART_TINT: f32 = 0.4;
+/// The part's halo against the selection's: a little wider, a soft glow
+/// around the body rather than a line (a game's hover outline on a
+/// character).
+const PART_HALO: f32 = 1.25;
+/// Frames without a lit part before its overlay images are freed (about
+/// 4 s at 60 fps).
+const PART_IDLE_FRAMES: u32 = 240;
+/// The part passes' depth test against the scene's (`post_depth`): with an
+/// upscaler, that depth is the nearest render pixel's at the display's size,
+/// a little in front of a slanted surface's own pixels, which would fail one
+/// in two (a hatched tint, holes in the pick); a bias that grows with the
+/// slope covers that gap, the constant one the selection's.
+const PART_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 1,
+    slope_scale: 2.0,
+    clamp: 0.0,
+};
+
+// Both passes resolve nearest subject coverage in a private copy of scene
+// depth. Keep these states shared: otherwise mask and pick can disagree.
+fn part_desc(base: PipeDesc<'_>, format: wgpu::TextureFormat, write_mask: wgpu::ColorWrites) -> PipeDesc<'_> {
+    PipeDesc {
+        cull: None, // the fragments retain each material's sidedness
+        samples: 1,
+        format: Some(format),
+        depth_write: true,
+        write_mask,
+        depth_bias: PART_DEPTH_BIAS,
+        ..base
+    }
+}
+
+#[cfg(test)]
+#[path = "part_tests.rs"]
+mod part_tests;
+
 #[derive(Clone, Copy)]
 struct PipeDesc<'a> {
     label: &'a str,
@@ -1922,6 +2258,9 @@ struct PipeDesc<'a> {
     format: Option<wgpu::TextureFormat>,
     /// Second color target (G-buffer for SSR).
     gbuf: bool,
+    /// Second color target of the passes of the exact blend order
+    /// (`blend_exact::Lists::range`): its blend, and what is written.
+    range: Option<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
     depth_format: Option<wgpu::TextureFormat>,
     depth_bias: wgpu::DepthBiasState,
     constants: &'a [(&'a str, f64)],
@@ -1929,6 +2268,31 @@ struct PipeDesc<'a> {
     polygon_line: bool,
     /// Preserve water geometry in front of the near plane.
     unclipped_depth: bool,
+}
+
+/// The main view's draws, in the order of their indirect arguments, each list
+/// with what the occlusion does to it. `shaders/occlusion.wgsl` reads its table
+/// by index against those arguments, so both are made from this one array. A
+/// cut-out photo leaves the ground and the water out of the view (cutout.rs);
+/// the reflections and the probes keep them, for the light they give.
+fn main_view_lists<'a>(lists: &'a DrawLists, cutout: bool) -> [(&'a [DrawCmd], u32); 13] {
+    use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};
+    let background = |list: &'a [DrawCmd]| -> &'a [DrawCmd] { if cutout { &[] } else { list } };
+    [
+        (background(&lists.terrain), KIND_NONE),
+        (background(&lists.terrain_pbr), KIND_NONE),
+        (background(&lists.terrain_mask), KIND_NONE),
+        (&lists.opaque, KIND_PREPASS),
+        (&lists.opaque_two_sided, KIND_PREPASS),
+        (&lists.mask, KIND_PREPASS),
+        (&lists.mask_two_sided, KIND_PREPASS),
+        (background(&lists.water), KIND_NONE),
+        (&lists.water_exclusion, KIND_NONE),
+        (&lists.blend, KIND_TESTED),
+        (&lists.glow, KIND_TESTED),
+        (&lists.glow_alpha, KIND_TESTED),
+        (&lists.blend_under_water, KIND_TESTED),
+    ]
 }
 
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
@@ -1939,6 +2303,20 @@ fn cull_to_view(view_proj: Mat4, list: &[ShadowCaster]) -> Vec<DrawCmd> {
         .filter(|c| crate::gpu_cull::sphere_in(&planes, c.center, c.radius))
         .map(|c| c.cmd)
         .collect()
+}
+
+/// The mirror's blended faces (`DrawLists::reflection_blend`) that its view
+/// of `view_proj` touches: the first `rigged` of `list` in their order, then
+/// the others back to front from the mirror's camera at `eye` (its own
+/// distances, not the main view's: what is near the main camera may be far in
+/// the mirror). Equal distances keep their order.
+fn mirror_blend_order(view_proj: Mat4, eye: Vec3, list: &[DrawCmd], rigged: usize) -> [Vec<DrawCmd>; 2] {
+    let rigged = rigged.min(list.len());
+    let first = cull_cmds_to_view(view_proj, &list[..rigged]);
+    let mut rest = cull_cmds_to_view(view_proj, &list[rigged..]);
+    let distance = |c: &DrawCmd| eye.distance_squared(Vec3::new(c.bounds[0], c.bounds[1], c.bounds[2]));
+    rest.sort_by(|a, b| distance(b).total_cmp(&distance(a)));
+    [first, rest]
 }
 
 /// Draws of `list` whose `bounds` touch the view (radius 0: always kept).
@@ -2010,10 +2388,207 @@ fn begin_scene_b_on<'a>(
     })
 }
 
+/// Rain prototype: the wetness memory's bookkeeping. The memory covers
+/// [`RAIN_WET_EXTENT`] m around the camera, its corner snapped to
+/// [`RAIN_WET_SNAP`] m (it moves only after the camera has; the update reads
+/// the last one at the same places). `soak`: how wet a place new to it is
+/// (it rises as the rain goes on, then dries); the ground is drawn wet
+/// while that is above [`RAIN_WET_DRY`]. `level`: how much water is
+/// standing about (the puddles' size and how soaked the ground looks). It
+/// fills toward the rain's strength the longer it rains, and drains slowly
+/// when the rain eases or stops, so turning the rain down does not shrink
+/// the puddles at once.
+#[derive(Default)]
+struct RainWet {
+    origin: Option<Vec2>,
+    last: Option<Instant>,
+    level: f32,
+    soak: f32,
+    /// How deep the snow lies in the open (0..1): it builds while it snows
+    /// and melts after, the faster in rain (the memory's places new to it
+    /// take it, as `soak`).
+    snow: f32,
+    uniform: [f32; 4],
+    step: [f32; 4],
+    snow_cover: [f32; 4],
+}
+
+const RAIN_WET_EXTENT: f32 = 128.0;
+const RAIN_WET_SNAP: f32 = 8.0;
+const RAIN_WET_DRY: f32 = 0.02;
+/// How fast a place soaks while it rains (s, at full rain), and dries
+/// after (s).
+const RAIN_SOAK_SECS: f32 = 8.0;
+const RAIN_DRY_SECS: f32 = 120.0;
+/// How fast the standing water fills (s, at full rain) and drains (s).
+const RAIN_FILL_SECS: f32 = 25.0;
+const RAIN_DRAIN_SECS: f32 = 150.0;
+/// How fast snow builds to a full cover (s, at full snow: a dusting in a
+/// few minutes, white in about ten; as fs_rain_wet_update), and melts after
+/// (s; in rain, faster).
+const SNOW_FILL_SECS: f32 = 600.0;
+const SNOW_MELT_SECS: f32 = 900.0;
+const SNOW_RAIN_MELT_SECS: f32 = 120.0;
+
+/// Snow footprints' bookkeeping: the trail map follows the camera, snapped
+/// to a metre (the update reads the last one at the same places).
+#[derive(Default)]
+struct SnowTrail {
+    origin: Option<Vec2>,
+    last: Option<Instant>,
+    uniform: [f32; 4],
+    step: [f32; 4],
+    /// The footprints' instances: the buffer, the generation it holds,
+    /// how many.
+    prints: Option<(wgpu::Buffer, u64, u32)>,
+}
+
+impl SnowTrail {
+    /// One frame, `on` while footprints are kept (snow lying, the setting
+    /// on).
+    fn advance(&mut self, on: bool, snowing: f32, at: Vec2, fallen: f32, extent: f32) {
+        if !on {
+            self.origin = None;
+            self.last = None;
+            return;
+        }
+        let now = Instant::now();
+        let mut dt = self.last.map_or(-1.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
+        // its corner snapped to 32 texels (an exact shift when it moves)
+        let snap = extent / crate::water_effects::SNOW_TRAIL_SIZE as f32 * 32.0;
+        let origin = ((at - Vec2::splat(extent * 0.5)) / snap).floor() * snap;
+        // resized: started again (the old texels are another size)
+        if self.uniform[2] != extent {
+            dt = -1.0;
+        }
+        let prev = self.origin.unwrap_or(origin);
+        self.uniform = [origin.x, origin.y, extent, fallen];
+        self.step = [prev.x, prev.y, dt, snowing];
+        self.origin = Some(origin);
+        self.last = Some(now);
+    }
+
+    fn active(&self) -> bool {
+        self.last.is_some()
+    }
+}
+
+impl RainWet {
+    fn active(&self) -> bool {
+        // a fresh start (`step.z` -1: every cell new) is drawn even while
+        // all is still dry: skipped, the next frame was no longer fresh and
+        // read the old memory back (cleaned up in rain, the snow returned)
+        (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY || self.step[2] < 0.0) && self.last.is_some()
+    }
+
+    /// One frame of a rain of `rain` and a snow of `snow` with the camera at
+    /// `at`; `ice`: puddles freeze in the snow.
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool) {
+        let now = Instant::now();
+        let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
+        let rain = rain.clamp(0.0, 1.0);
+        // frozen: the standing water stays (no drain), as ice
+        let frozen = ice && rain <= 0.0 && (snow > 0.0 || self.snow > 0.05);
+        if frozen {
+        } else if rain > self.level {
+            self.level += (rain - self.level) * (1.0 - (-dt * (0.5 + rain) / RAIN_FILL_SECS).exp());
+        } else {
+            self.level += (rain - self.level) * (1.0 - (-dt / RAIN_DRAIN_SECS).exp());
+        }
+        if rain > 0.0 {
+            self.level = self.level.max(1e-3);
+            self.soak += (1.0 - self.soak) * (1.0 - (-dt * (0.5 + rain) / RAIN_SOAK_SECS).exp());
+            self.soak = self.soak.max(1e-3);
+        } else if !frozen {
+            self.soak *= (-dt / RAIN_DRY_SECS).exp();
+        }
+        let snow = snow.clamp(0.0, 1.0);
+        // AURORA_SNOW_LYING=<0..1>: snow already lying that deep while it
+        // snows (demo captures, without waiting for it to build)
+        static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+        let lying = *LYING.get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse::<f32>().ok()));
+        if snow > 0.0
+            && let Some(v) = lying
+        {
+            self.snow = self.snow.max(v.clamp(0.0, 1.0));
+        }
+        if snow > 0.0 {
+            self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
+            self.snow = self.snow.max(1e-3);
+        } else {
+            let melt = if rain > 0.0 { SNOW_RAIN_MELT_SECS } else { SNOW_MELT_SECS };
+            self.snow *= (-dt / melt).exp();
+        }
+        let was = self.origin;
+        let active = rain > 0.0 || snow > 0.0 || self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY;
+        if !active {
+            *self = RainWet::default();
+            return;
+        }
+        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(RAIN_WET_EXTENT * 0.5);
+        self.origin = Some(origin);
+        let fresh = was.is_none() || self.last.is_none();
+        let prev = was.unwrap_or(origin);
+        self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
+        self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
+        // z: 1 while rain melts the snow, + 2 while puddles may freeze, + 4
+        // deep snow (parallax)
+        let flags = if rain > 0.0 { 1.0 } else { 0.0 } + if ice { 2.0 } else { 0.0 } + if deep { 4.0 } else { 0.0 };
+        self.snow_cover = [snow, self.snow, flags, 0.0];
+        self.last = Some(now);
+    }
+}
+
+impl Backend {
+    /// Rain prototype: the shelter map is drawn while it rains, and after,
+    /// while the ground is still wet (the wetness memory fills in places new
+    /// to it, where the camera goes, from it); with the shadows off too,
+    /// alone in the atlas (low settings keep the rain out of the houses).
+    fn rain_shelter(&self, f: &FrameParams) -> bool {
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+    }
+
+    /// The projector map the shelter is drawn into this frame, if it is.
+    fn rain_shelter_map(&self, f: &FrameParams) -> Option<usize> {
+        self.rain_shelter(f).then_some(self.shelter_slot)
+    }
+}
+
+/// Rain prototype: the drops drawn for a rain of `rain` (0..1); 1, a
+/// downpour, is 45,000 drops at the High weather quality.
+fn rain_drops(rain: f32, quality: u32) -> u32 {
+    (rain.clamp(0.0, 1.0) * 45_000.0 * rain_share(quality)) as u32
+}
+
+/// Rain prototype: the share of the drops and splashes drawn at a weather
+/// quality (0 low, 1 medium, 2 high).
+fn rain_share(quality: u32) -> f32 {
+    match quality {
+        0 => 0.45,
+        1 => 0.7,
+        _ => 1.0,
+    }
+}
+
+/// Rain prototype: `AURORA_RAIN_DEBUG=1`, the wet pass showing the wetness
+/// memory.
+fn rain_constants() -> &'static [(&'static str, f64)] {
+    static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
+    CONSTANTS.get_or_init(|| {
+        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") {
+            1.0
+        } else {
+            0.0
+        };
+        [("rain_debug", debug)]
+    })
+}
+
 fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, d: PipeDesc) -> wgpu::RenderPipeline {
     let mesh_bufs = [Some(vertex_layout()), Some(skin_layout())];
     let part_bufs = [Some(particle_layout())];
     let sprite_bufs = [Some(sprite_layout())];
+    let print_bufs = [Some(print_layout())];
     let mut targets = Vec::new();
     if let Some(f) = d.format {
         targets.push(Some(wgpu::ColorTargetState {
@@ -2027,6 +2602,13 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             format: GBUF_FORMAT,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
+        }));
+    }
+    if let Some((blend, write_mask)) = d.range {
+        targets.push(Some(wgpu::ColorTargetState {
+            format: crate::blend_exact::range_format(device.features()),
+            blend,
+            write_mask,
         }));
     }
     let options = wgpu::PipelineCompilationOptions {
@@ -2045,6 +2627,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
                 Vb::Mesh => &mesh_bufs,
                 Vb::Particle => &part_bufs,
                 Vb::Sprite => &sprite_bufs,
+                Vb::Print => &print_bufs,
             },
         },
         primitive: wgpu::PrimitiveState {
@@ -2141,7 +2724,7 @@ pub(crate) fn shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("shadow params"),
         entries: &[
-            uniform_entry(0, wgpu::ShaderStages::VERTEX),
+            uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -2172,6 +2755,66 @@ pub(crate) fn shadow_bind_group(
             },
         ],
     })
+}
+
+/// The outcome of a target made on first use (`refused`: the memory refused
+/// it, or `AURORA_GPU_OOM_FIRST_USE`), said in the log the first time: a
+/// required one stops the world as the render targets do, an extra is left
+/// out for a while (`gpu_alloc::Refusals`). Returns whether it was refused.
+/// A free function: the frame's encoding holds borrows of other fields.
+fn first_use(oom: &mut crate::gpu_alloc::Refusals, what: &str, required: bool, refused: bool) -> bool {
+    let refused = refused || crate::gpu_alloc::first_use_refused();
+    let now = Instant::now();
+    if required {
+        if oom.first_use(refused, now) {
+            log::warn!("{what}: out of video memory, the interface alone until it can be made");
+        }
+    } else if oom.extra(refused, now) {
+        log::warn!("{what}: out of video memory, drawn without it for now");
+    }
+    refused
+}
+
+/// An extra made on first use with `make`, checked: `None` while refused
+/// or waiting.
+fn extra<T>(
+    oom: &mut crate::gpu_alloc::Refusals,
+    device: &wgpu::Device,
+    lost: bool,
+    what: &str,
+    make: impl FnOnce(&wgpu::Device) -> T,
+) -> Option<T> {
+    if !oom.extras_ready(Instant::now()) {
+        return None;
+    }
+    let (made, refused) = crate::gpu_alloc::scoped(device, || make(device));
+    // (a lost device's refusals are the device-loss path's, `lost`)
+    (!first_use(oom, what, false, refused && !lost)).then_some(made)
+}
+
+/// The depth of field's targets for `size` are made, checked: false while
+/// refused or waiting (the frame goes without the effect).
+fn dof_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    dof: &mut Option<crate::dof::Dof>,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    let d = dof.get_or_insert_with(|| crate::dof::Dof::new(device, HDR_FORMAT));
+    if d.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "depth of field", false, refused && !lost) {
+        d.release();
+        return false;
+    }
+    true
 }
 
 pub(crate) fn make_view(
@@ -2465,6 +3108,7 @@ impl Impostors {
             samples,
             format: Some(HDR_FORMAT),
             gbuf,
+            range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -2649,11 +3293,14 @@ struct Ranges {
     physics_shapes: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
+    part_faces: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
     water_air_terrain: (u64, u32),
     water_air_terrain_pbr: (u64, u32),
     refl_mirror: (u64, u32),
+    /// The mirror's blended faces: the rigged, then the others back to front.
+    refl_mirror_blend: [(u64, u32); 2],
     refl_terrain_water: (u64, u32),
     refl_terrain_mirror: (u64, u32),
     refl_terrain_probe: (u64, u32),
@@ -2667,6 +3314,8 @@ struct Ranges {
     shadow_alpha: [(u64, u32); CASCADES],
     /// Terrain casters of each cascade drawn with the terrain's alpha test.
     shadow_terrain: [(u64, u32); CASCADES],
+    probe_shadow: (u64, u32),
+    probe_shadow_terrain: (u64, u32),
     /// Casters of the CPU lists in each projector shadow map.
     spot: [(u64, u32); SPOT_SHADOWS],
     spot_terrain: [(u64, u32); SPOT_SHADOWS],
@@ -2674,7 +3323,59 @@ struct Ranges {
 
 impl Backend {
     /// Surface configuration, pipelines, targets and per-frame buffers.
+    ///
+    /// Made in one error scope: a full video memory that refuses any of it
+    /// outside the render targets (those have their own scope and retry)
+    /// leaves the renderer showing the interface alone, with the "Video
+    /// memory full" notice, until `remake_refused` can make it whole.
     pub fn new(init: BackendInit) -> Result<Backend, RenderError> {
+        Self::new_with(init, false)
+    }
+
+    /// `egui_later`: made without egui's renderer, which the backend this
+    /// one replaces hands over once it has come through whole.
+    fn new_with(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
+        let seed = Box::new(init.clone());
+        let device = init.device.clone();
+        let lost = init.lost.clone();
+        let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui_later));
+        let mut backend = made?;
+        // (AURORA_GPU_OOM_START's own refusal is a usage error, which the
+        // scope does not read as memory)
+        let oom = oom || crate::gpu_alloc::start_refused();
+        backend.seed = Some(seed);
+        if crate::gpu_alloc::start_remade(oom, invalid, backend.oom.targets, lost.get()) {
+            backend.refused_at_start();
+        }
+        Ok(backend)
+    }
+
+    /// The interface alone, with the notice, until `remake_refused` makes
+    /// the renderer whole.
+    fn refused_at_start(&mut self) {
+        log::warn!("renderer: out of video memory while it was made, made again once memory is freed");
+        if !self.oom.targets {
+            self.oom.targets_failed(Instant::now());
+        }
+        self.remake = true;
+    }
+
+    /// The settings a frame asks for. Until the start is over, applied in
+    /// an error scope: the shadow atlas and the probes they make again
+    /// belong to the start, and a refused one is remade with the rest.
+    fn apply_frame_settings(&mut self, settings: RenderSettings) {
+        if self.seed.is_none() {
+            self.apply_settings(settings);
+            return;
+        }
+        let device = self.device.clone();
+        let ((), oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || self.apply_settings(settings));
+        if !self.remake && crate::gpu_alloc::start_remade(oom, invalid, self.oom.targets, self.lost.get()) {
+            self.refused_at_start();
+        }
+    }
+
+    fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let BackendInit {
@@ -2745,10 +3446,45 @@ impl Backend {
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
             entries: &[
+                // snow footprints: how deep the snow is pressed down
+                wgpu::BindGroupLayoutEntry {
+                    binding: 28,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // rain prototype: the wetness memory
+                wgpu::BindGroupLayoutEntry {
+                    binding: 27,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // rain prototype: the terrain's heights around the camera
+                wgpu::BindGroupLayoutEntry {
+                    binding: 26,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // the vertex stage too: the rain prototype's splashes
+                    // read where they land in the shelter map
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -2878,6 +3614,17 @@ impl Backend {
                     },
                     count: None,
                 },
+                // the Milky Way map (stars.rs milky_way_texels)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 25,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2979,7 +3726,8 @@ impl Backend {
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
         let shadow_size = 2048u32;
-        let shadow_view = Self::make_shadow_atlas(&device, shadow_size, 2);
+        let shadow_view = Self::make_shadow_atlas(&device, shadow_size, crate::projector_shadows::atlas_maps(2, 2));
+        let probe_shadow_view = Self::make_shadow_atlas(&device, crate::probes::SHADOW_SIZE, 0);
         let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &shadow_view, shadow_size, SHADOW_FORMAT);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow"),
@@ -3016,6 +3764,13 @@ impl Backend {
             .iter()
             .map(|b| shadow_bind_group(&device, &shadow_layout, b, &lin_clamp))
             .collect();
+        let probe_shadow_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("probe shadow vp"),
+            size: std::mem::size_of::<ShadowU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let probe_shadow_group = shadow_bind_group(&device, &shadow_layout, &probe_shadow_buffer, &lin_clamp);
         let records_bind_group = Self::make_records_bg(&device, &records_layout, &scene);
 
         let post_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -3032,7 +3787,9 @@ impl Backend {
         });
 
         let dummies = {
-            let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+            // AURORA_GPU_OOM_START: refused as by a full card (no usage)
+            let refuse = crate::gpu_alloc::start_refused();
+            let usage = crate::gpu_alloc::start_usage(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, refuse);
             let (wt, white) = make_view(&device, "dummy white", 1, 1, wgpu::TextureFormat::Rgba8Unorm, 1, usage);
             let (_, black) = make_view(&device, "dummy black", 1, 1, HDR_FORMAT, 1, usage);
             let (_, depth) = make_view(
@@ -3042,7 +3799,10 @@ impl Backend {
                 1,
                 DEPTH_FORMAT,
                 1,
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                crate::gpu_alloc::start_usage(
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    refuse,
+                ),
             );
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -3091,48 +3851,90 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            settings.ssr,
+            settings.gbuffer(),
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
-        let contact = crate::contact_shadows::ContactShadows::new(&device);
+        let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
-        let targets = Self::make_targets(
-            &device,
-            &post_layout,
-            &post_sampler,
-            &post_buffer,
-            &glow.views[1],
-            &gtao,
-            &contact,
-            config.width,
-            config.height,
-            msaa_samples,
-            &settings,
-        );
+        let refuse = crate::gpu_alloc::targets_refused();
+        let (targets, refused) = crate::gpu_alloc::scoped(&device, || {
+            Self::make_targets(
+                &device,
+                &post_layout,
+                &post_sampler,
+                &post_buffer,
+                &glow.views[1],
+                &gtao,
+                &contact,
+                config.width,
+                config.height,
+                msaa_samples,
+                &settings,
+                refuse,
+            )
+        });
+        let mut oom = crate::gpu_alloc::Refusals::default();
+        // (a device lost meanwhile ends the start at the next
+        // `lost_at_start`, not as video memory full)
+        if (refused && !lost.get()) || refuse {
+            log::warn!("render targets: out of video memory, the interface alone until they can be made");
+            oom.targets_failed(Instant::now());
+        }
         let mut exposure = crate::exposure::Exposure::new(&device);
         exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
         let mut histogram = crate::histogram::Histogram::new(&device);
         histogram.bind(&device, &targets.color);
         lost_at_start(&lost, &surface)?;
-        let stars = wgpu::util::DeviceExt::create_buffer_init(
+        let stars = crate::gpu_alloc::buffer_init(
             &device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("night sky stars"),
-                contents: &crate::stars::buffer_contents(),
-                usage: wgpu::BufferUsages::STORAGE,
-            },
+            "night sky stars",
+            &crate::stars::buffer_contents(),
+            wgpu::BufferUsages::STORAGE,
         );
+        let milky_way = {
+            use crate::stars::{MILKY_WAY_HEIGHT, MILKY_WAY_WIDTH};
+            let (texture, view) = make_view(
+                &device,
+                "milky way map",
+                MILKY_WAY_WIDTH,
+                MILKY_WAY_HEIGHT,
+                wgpu::TextureFormat::R32Uint,
+                1,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            );
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&crate::stars::milky_way_texels()),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(MILKY_WAY_WIDTH * 4),
+                    rows_per_image: Some(MILKY_WAY_HEIGHT),
+                },
+                wgpu::Extent3d {
+                    width: MILKY_WAY_WIDTH,
+                    height: MILKY_WAY_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+            view
+        };
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
             &frame_buffer,
             &refl_buffers,
             &shadow_view,
+            &probe_shadow_view,
             &shadow_sampler,
             &lin_clamp,
             &dummies,
@@ -3140,6 +3942,7 @@ impl Backend {
             &probes,
             &water_effects,
             &stars,
+            &milky_way,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -3149,20 +3952,28 @@ impl Backend {
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
         let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
+        let part_pick = crate::part_pick::PartPick::new(&device);
         let label_depth = crate::label_depth::LabelDepth::new(&device, format);
         lost_at_start(&lost, &surface)?;
         let occlusion = crate::occlusion::Occlusion::new(&device);
         let cull = GpuCull::new(&device);
         let motion_history = crate::motion_history::MotionHistory::new(&device);
         let motion_debug = crate::motion_debug::asked().then(|| crate::motion_debug::MotionDebug::new(&device, config.format));
-        let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
+        let impostors = Impostors::new(
+            &device,
+            &frame_layout,
+            &records_layout,
+            &tex_layout,
+            msaa_samples,
+            settings.gbuffer(),
+        );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
             size: 4096 * std::mem::size_of::<ParticleInstance>() as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let egui = egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
+        let egui = EguiSlot((!egui_later).then(|| egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())));
         let timer = timestamps.then(|| GpuTimer::new(&device, &queue));
 
         let mut r = Backend {
@@ -3187,11 +3998,18 @@ impl Backend {
             surface_srgb,
             egui,
             ui_blur: None,
+            oom,
+            seed: None,
+            remake: false,
+            targets_shrunk: false,
+            ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
             ui_glass: None,
             previews: Default::default(),
             selection: None,
             cutout: None,
             hud_selection: None,
+            part: None,
+            part_depth: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -3203,6 +4021,7 @@ impl Backend {
             gtao,
             water_effects,
             stars,
+            milky_way,
             contact,
             contact_now: false,
             gtao_normals_now: false,
@@ -3226,9 +4045,15 @@ impl Backend {
             records_key: scene.records_key,
             shadow_view,
             shadow_buffers,
+            probe_shadow_view,
+            probe_shadow_vp: Mat4::IDENTITY,
+            probe_shadow_buffer,
+            probe_shadow_group,
             shadow_bind_groups,
             shadow_size,
             shadow_count: 2,
+            shelter_slot: 2,
+            shelter_drawn: None,
             shadow_merge,
             post_buffer,
             post_sampler,
@@ -3251,6 +4076,10 @@ impl Backend {
             gpu_cull,
             depth_pick,
             drawn_pick,
+            part_pick,
+            part_pick_px: None,
+            part_lit: false,
+            part_idle: 0,
             label_depth,
             impostors,
             motion_history,
@@ -3263,10 +4092,13 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            rain_wet: RainWet::default(),
+            snow_trail: SnowTrail::default(),
             vsync,
             present_modes,
             settings,
             taa: None,
+            taa_jitter: glam::Vec2::ZERO,
             prev_view_proj: None,
             prev_motion_view: None,
             frame_index: 0,
@@ -3355,6 +4187,7 @@ impl Backend {
             crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
+        let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
             source: wgpu::ShaderSource::Wgsl(src.into()),
@@ -3387,6 +4220,7 @@ impl Backend {
             samples,
             format: Some(HDR_FORMAT),
             gbuf: false,
+            range: None,
             depth_format: Some(DEPTH_FORMAT),
             depth_bias: Default::default(),
             constants: &[],
@@ -3400,6 +4234,7 @@ impl Backend {
             format: Some(surface_format),
             samples: 1,
             gbuf: false,
+            range: None,
             cull: None,
             blend,
             depth_write,
@@ -3526,26 +4361,34 @@ impl Backend {
                 })
             })
         };
-        let blend_pipe = |label: &'static str, early: bool, depth_write: bool, clip: f64| {
+        let blend_pipe = |label: &'static str, early: bool, depth_write: bool, clip: f64, depth_compare| {
             sided_pipe(PipeDesc {
                 blend: Some(suppress),
                 write_mask: wgpu::ColorWrites::ALL,
                 depth_write,
-                depth_compare: wgpu::CompareFunction::Greater,
+                depth_compare,
                 constants: &[("BLEND_EARLY_DISCARD", if early { 1.0 } else { 0.0 }), ("WATER_CLIP", clip)],
                 ..base(label, "vs_main", "fs_blend")
             })
         };
-        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late, false, 1.0);
-        let blend_late = (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false, false, 1.0));
+        // The blended faces of static objects pass equal depths, as the
+        // Legacy Viewer's alpha pass (LLDrawPoolAlpha::renderAlpha,
+        // LLGLDepthTest's GL_LEQUAL): a blended face lying exactly on an
+        // opaque face of the same mesh (a dirt track over a road's grass
+        // base, a decal) shows over it (#3059). The same vertex shader
+        // (`@invariant` position) gives both the very same depth.
+        let static_compare = wgpu::CompareFunction::GreaterEqual;
+        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late, false, 1.0, static_compare);
+        let blend_late =
+            (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false, false, 1.0, static_compare));
         // LLDrawPoolAlpha::forwardRender(true): rigged alpha writes depth
         // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
-        let blend_depth = blend_pipe("blend rigged", true, true, 1.0);
+        let blend_depth = blend_pipe("blend rigged", true, true, 1.0, wgpu::CompareFunction::Greater);
         // POOL_ALPHA_PRE_WATER: the blended faces under the water, before it,
         // their part on the far side of the surface, writing depth from
         // 1/255 ("needed for accurate water fog", lldrawpoolalpha.cpp): the
         // water's refraction and fog then reach them, not the ground behind
-        let blend_under = blend_pipe("blend under water", true, true, 2.0);
+        let blend_under = blend_pipe("blend under water", true, true, 2.0, static_compare);
         // The rigged faces' depth only where at least half covered
         // (fs_depth_contact): a soft fringe no longer hides the glass behind
         // it (#556). Before their colour with `RiggedBlendDepth::HalfCovered`
@@ -3612,6 +4455,110 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
+        // `RiggedBlendDepth::Exact` (blend_exact.rs): the fronts of the
+        // blended fragments in group 3, written by the first pass and read
+        // by the second. Both pass equal depths and write none, as `blend`.
+        let order_layouts = crate::blend_exact::layouts(device);
+        let [vis_layout, exact_layout] = order_layouts.each_ref().map(|lists| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scene with the blend order fronts"),
+                bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(lists)],
+                immediate_size: 0,
+            })
+        });
+        let order_sided = |layout: &wgpu::PipelineLayout, desc: PipeDesc| -> SidedPipelines {
+            std::array::from_fn(|side| {
+                make_pipeline(
+                    device,
+                    &module,
+                    layout,
+                    PipeDesc {
+                        cull: blend_cull(side != 0),
+                        ..desc
+                    },
+                )
+            })
+        };
+        // a sum
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let haze_blend = crate::blend_exact::once_blend();
+        let blend_once = order_sided(
+            &vis_layout,
+            PipeDesc {
+                blend: Some(haze_blend),
+                write_mask: wgpu::ColorWrites::ALL,
+                format: Some(crate::blend_exact::HAZE_FORMAT),
+                range: Some((Some(crate::blend_exact::range_blend()), wgpu::ColorWrites::ALL)),
+                samples: 1,
+                depth_write: false,
+                depth_compare: static_compare,
+                constants: &[("WATER_CLIP", 1.0)],
+                ..base("blend once", "vs_main", "fs_blend_once")
+            },
+        );
+        let blend_cut = make_pipeline(
+            device,
+            &module,
+            &vis_layout,
+            PipeDesc {
+                vb: Vb::None,
+                cull: None,
+                blend: None,
+                write_mask: wgpu::ColorWrites::empty(),
+                format: Some(crate::blend_exact::HAZE_FORMAT),
+                range: Some((None, wgpu::ColorWrites::empty())),
+                samples: 1,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base("blend cut", "vs_sky", "fs_blend_cut")
+            },
+        );
+        // over the screen, whatever the depth
+        let screen = |label: &'static str, fs: &'static str, blend: wgpu::BlendState, write_mask: wgpu::ColorWrites| {
+            make_pipeline(
+                device,
+                &module,
+                &exact_layout,
+                PipeDesc {
+                    vb: Vb::None,
+                    cull: None,
+                    blend: Some(blend),
+                    write_mask,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    ..base(label, "vs_sky", fs)
+                },
+            )
+        };
+        // the light of the blended fragments over what is drawn so far,
+        // colour and glow, which they dim by what they stop (the alpha)
+        let over = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let blend_over = screen("blend over", "fs_blend_over", over, wgpu::ColorWrites::ALL);
+        let summed = wgpu::BlendState { color: add, alpha: add };
+        let blend_glow = screen("blend glow", "fs_blend_glow", summed, wgpu::ColorWrites::ALPHA);
+        let blend_both = device.features().contains(crate::blend_exact::TWO_SOURCES).then(|| {
+            screen(
+                "blend both",
+                "fs_blend_both",
+                crate::blend_exact::both_blend(),
+                wgpu::ColorWrites::ALL,
+            )
+        });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -3638,6 +4585,112 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("submerged water particles", "vs_water_particle", "fs_water_particle_under")
+        });
+        let rain = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            constants: rain_constants(),
+            ..base("rain", "vs_rain", "fs_rain")
+        });
+        let rain_splash = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("rain splashes", "vs_rain_splash", "fs_rain_splash")
+        });
+        let snow_mesh = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("deep snow", "vs_snow_mesh", "fs_snow_mesh")
+        });
+        let rain_wet_update = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::Rgba32Float),
+            depth_format: None,
+            ..base("rain wetness", "vs_rain_wet", "fs_rain_wet_update")
+        });
+        // the footprints, each its quad, the deepest kept where they meet
+        let deepest = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Max,
+        };
+        let snow_trail_update = pipe(PipeDesc {
+            vb: Vb::Print,
+            cull: None,
+            blend: Some(wgpu::BlendState {
+                color: deepest,
+                alpha: deepest,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::R16Float),
+            depth_format: None,
+            ..base("snow footprints", "vs_snow_print", "fs_snow_print")
+        });
+        let rain_far = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            ..base("distant rain", "vs_rain_wet", "fs_rain_far")
+        });
+        let rain_wet = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            constants: rain_constants(),
+            ..base("rain wet ground", "vs_rain_wet", "fs_rain_wet")
+        });
+        // the same reading the screen-space reflections' G-buffer (group 3),
+        // and the bindless textures (group 2: the lying snow's detail; the
+        // pipeline is invalid without them, and every frame that sets it
+        // fails)
+        let rain_wet_g = ssr.then(|| {
+            let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("rain wet ground (G-buffer)"),
+                bind_group_layouts: &[Some(frame_layout), None, Some(tex_layout), Some(gbuf_layout)],
+                immediate_size: 0,
+            });
+            make_pipeline(
+                device,
+                &module,
+                &pl,
+                PipeDesc {
+                    vb: Vb::None,
+                    cull: None,
+                    blend: Some(suppress),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    constants: rain_constants(),
+                    ..base("rain wet ground (G-buffer)", "vs_rain_wet", "fs_rain_wet_g")
+                },
+            )
         });
         // LLDrawPoolGlow: glow faces again, adding texture alpha x glow to
         // the scene alpha only (depth tested, pulled toward the camera)
@@ -3817,6 +4870,18 @@ impl Backend {
             },
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
+        // The poser's hovered part: the subject's skinned faces kept where
+        // their weights are the part's joints (`vs_part_mask`)
+        let part_mask = pipe(part_desc(
+            base("poser part coverage", "vs_part_mask", "fs_part_mask"),
+            wgpu::TextureFormat::Rg8Unorm,
+            wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN,
+        ));
+        let part_pick = pipe(part_desc(
+            base("poser part pick", "vs_part_pick", "fs_part_pick"),
+            crate::part_pick::FORMAT,
+            wgpu::ColorWrites::RED,
+        ));
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -3930,6 +4995,17 @@ impl Backend {
                 blend_cull(side != 0),
             )
         });
+        let fsr_blend_normal = std::array::from_fn(|side| {
+            pipe(PipeDesc {
+                cull: blend_cull(side != 0),
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("DEPTH_CONTACT_ALPHA", FSR_BLEND_ALPHA)],
+                ..base("fsr blended faces motion", "vs_depth_mask_normal", "fs_depth_contact_normal")
+            })
+        });
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
@@ -4014,7 +5090,30 @@ impl Backend {
             fs: Some("fs_pick_overlay"),
             ..pick_desc("transparency overlay pick", None)
         });
+        let pick_mask = pipe(PipeDesc {
+            fs: Some("fs_pick_mask"),
+            ..pick_desc("mask interaction pick", Some(wgpu::Face::Back))
+        });
+        let pick_mask_2s = pipe(PipeDesc {
+            fs: Some("fs_pick_mask"),
+            ..pick_desc("mask interaction pick 2s", None)
+        });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
+        // the mirror's blended faces, as the main view's with
+        // `RiggedBlendDepth::Write` (the Legacy Viewer's rule): the rigged
+        // write their depth from 1/255 as they are drawn, the others only
+        // read it; the reflection's alpha stays whole
+        let refl_blend_desc = |label: &'static str, depth_write: bool, depth_compare| PipeDesc {
+            vb: Vb::Mesh,
+            cull: None,
+            samples: 1,
+            blend: Some(premultiplied()),
+            depth_write,
+            depth_compare,
+            ..base(label, "vs_main", "fs_reflect_blend")
+        };
+        let refl_blend_rigged = pipe(refl_blend_desc("reflection blended rigged", true, wgpu::CompareFunction::Greater));
+        let refl_blend = pipe(refl_blend_desc("reflection blended", false, wgpu::CompareFunction::GreaterEqual));
         let shadow_desc = |label, fs| PipeDesc {
             label,
             vs: "vs_shadow",
@@ -4029,6 +5128,7 @@ impl Backend {
             samples: 1,
             format: None,
             gbuf: false,
+            range: None,
             depth_format: Some(SHADOW_FORMAT),
             depth_bias: wgpu::DepthBiasState {
                 constant: 2,
@@ -4081,6 +5181,7 @@ impl Backend {
                 samples: 1,
                 format: Some(surface_format),
                 gbuf: false,
+                range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
                 constants: &[],
@@ -4119,11 +5220,24 @@ impl Backend {
             blend_depth_solid,
             blend_depth_fringe,
             blend_depth_fringe_depth,
+            blend_once,
+            blend_cut,
+            blend_over,
+            blend_glow,
+            blend_both,
             blend_under,
             blend_under_depth_ss,
             particles,
             water_particles,
             water_particles_under,
+            rain,
+            rain_wet,
+            rain_wet_g,
+            rain_splash,
+            snow_mesh,
+            rain_far,
+            rain_wet_update,
+            snow_trail_update,
             glow,
             glow_water,
             glow_max,
@@ -4137,6 +5251,8 @@ impl Backend {
             select_root_wire,
             select_child_wire,
             selection_mask,
+            part_mask,
+            part_pick,
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
@@ -4148,11 +5264,14 @@ impl Backend {
             pre_normal_portal,
             pre_contact,
             pre_contact_normal,
+            fsr_blend_normal,
             pre_msaa,
             refl_sky,
             refl_terrain,
             refl_terrain_pbr,
             refl_obj,
+            refl_blend_rigged,
+            refl_blend,
             shadow,
             shadow_depth,
             shadow_terrain,
@@ -4164,6 +5283,8 @@ impl Backend {
             pick_visible,
             pick_left,
             pick_left_2s,
+            pick_mask,
+            pick_mask_2s,
             pick_left_visible,
             pick_overlay,
         }
@@ -4206,6 +5327,7 @@ impl Backend {
                     samples: 1,
                     format: Some(AO_FORMAT),
                     gbuf: false,
+                    range: None,
                     depth_format: None,
                     depth_bias: Default::default(),
                     constants: &[],
@@ -4241,11 +5363,18 @@ impl Backend {
         height: u32,
         samples: u32,
         s: &RenderSettings,
+        refuse: bool,
     ) -> Targets {
         let (w, h) = (width.max(1), height.max(1));
         let att = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let sampled = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
-        let (color_tex, color) = make_view(device, "hdr", w, h, HDR_FORMAT, 1, sampled | wgpu::TextureUsages::COPY_SRC);
+        // (AURORA_GPU_OOM_TARGETS)
+        let hdr_usage = if refuse {
+            wgpu::TextureUsages::empty()
+        } else {
+            sampled | wgpu::TextureUsages::COPY_SRC
+        };
+        let (color_tex, color) = make_view(device, "hdr", w, h, HDR_FORMAT, 1, hdr_usage);
         let color_msaa = (samples > 1).then(|| make_view(device, "hdr msaa", w, h, HDR_FORMAT, samples, att).1);
         let (depth_msaa_tex, depth_msaa) = match (samples > 1).then(|| {
             make_view(
@@ -4284,7 +5413,7 @@ impl Backend {
         );
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
-        let (gbuf_msaa, gbuf) = if s.ssr {
+        let (gbuf_msaa, gbuf) = if s.gbuffer() {
             (
                 (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
                 Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
@@ -4294,7 +5423,10 @@ impl Backend {
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
-        let ao_depth = (s.ssao > 0 && (legacy_ao || gtao_ao)).then(|| {
+        // FSR reads it too: the blended faces at least half covered drawn
+        // there, with their motion, keep their history instead of taking
+        // the motion of what lies behind them
+        let ao_depth = ((s.ssao > 0 && (legacy_ao || gtao_ao)) || matches!(s.aa, AntiAliasing::Fsr(_))).then(|| {
             // copied in turn for the contact shadows
             let copies = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
             make_view(device, "occlusion depth", w, h, DEPTH_FORMAT, 1, sampled | copies)
@@ -4365,6 +5497,7 @@ impl Backend {
             depth_msaa,
             depth_msaa_tex,
             blend_layers: None,
+            blend_exact: None,
             depth_ss,
             water_interface,
             water_mask,
@@ -4392,6 +5525,7 @@ impl Backend {
         frame_buffer: &wgpu::Buffer,
         refl_buffers: &[wgpu::Buffer; 9],
         shadow_view: &wgpu::TextureView,
+        probe_shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
         dummies: &Dummies,
@@ -4399,6 +5533,7 @@ impl Backend {
         probes: &crate::probes::Probes,
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
+        milky_way: &wgpu::TextureView,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -4424,12 +5559,35 @@ impl Backend {
                         resource: stars.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 25,
+                        resource: wgpu::BindingResource::TextureView(milky_way),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 26,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.rain_ground_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 27,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.rain_wet_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 28,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.snow_trail_view),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(shadow_view),
+                        // the captures of a probe read its own shadow map
+                        resource: wgpu::BindingResource::TextureView(
+                            if std::ptr::eq(buffer, &refl_buffers[2]) || std::ptr::eq(buffer, &refl_buffers[8]) {
+                                probe_shadow_view
+                            } else {
+                                shadow_view
+                            },
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -4729,6 +5887,7 @@ impl Backend {
                 &self.frame_buffer,
                 &self.refl_buffers,
                 &self.shadow_view,
+                &self.probe_shadow_view,
                 &self.shadow_sampler,
                 &self.lin_clamp,
                 &self.dummies,
@@ -4736,6 +5895,7 @@ impl Backend {
                 &self.probes,
                 &self.water_effects,
                 &self.stars,
+                &self.milky_way,
             );
         }
     }
@@ -4748,6 +5908,7 @@ impl Backend {
             &self.frame_buffer,
             &self.refl_buffers,
             &self.shadow_view,
+            &self.probe_shadow_view,
             &self.shadow_sampler,
             &self.lin_clamp,
             &self.dummies,
@@ -4755,6 +5916,7 @@ impl Backend {
             &self.probes,
             &self.water_effects,
             &self.stars,
+            &self.milky_way,
         );
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4796,6 +5958,15 @@ impl Backend {
         }
     }
 
+    /// `rebuild_bind_groups` outside the render targets' remake, checked: it
+    /// remakes the TAA history, which a full video memory can refuse; then
+    /// the interface alone until the next try makes every target again.
+    fn rebuild_bind_groups_checked(&mut self, what: &str) {
+        let device = self.device.clone();
+        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.rebuild_bind_groups());
+        first_use(&mut self.oom, what, true, refused && !self.lost.get());
+    }
+
     /// The bytes of the live textures and buffers (wgpu's counters).
     fn live_bytes(&self) -> u64 {
         let live = self.device.get_internal_counters().hal;
@@ -4814,7 +5985,77 @@ impl Backend {
         (self.targets.color_tex.width(), self.targets.color_tex.height())
     }
 
+    /// With FSR, its upscale ratio: the world drawn smaller than the
+    /// window, FSR drawing it at the window's size. None for a photo drawn
+    /// at its own size (at its full size) and under RLVa's reduced
+    /// resolution, which must stay coarse.
+    fn fsr_upscale(&self) -> Option<f32> {
+        match self.settings.aa {
+            AntiAliasing::Fsr(q) if self.snapshot_window.is_none() && self.rlva_resolution_divisor <= 1 => Some(q.ratio()),
+            _ => None,
+        }
+    }
+
+    /// The render targets for the current size. Refused, frames show the
+    /// interface alone and the targets are tried again later: what is
+    /// installed then is invalid and drawn with by nothing. A set is made
+    /// while the one it replaces still lives, so a refused set (most of its
+    /// textures made, one refused) gives way to a 1x1 one before the next
+    /// try: otherwise a card with room for one set but not two would refuse
+    /// every try.
     fn rebuild_targets(&mut self) {
+        // (a renderer waiting for its remake draws no world: its targets
+        // stay small and the notice stays, whatever asks for them)
+        if self.remake {
+            self.shed_world();
+            return;
+        }
+        let device = self.device.clone();
+        let refuse = crate::gpu_alloc::targets_refused();
+        if self.oom.targets {
+            // what a first use left refused (installed for the frame that
+            // found it) is made again on its next use
+            self.drop_first_use_targets();
+            let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
+        }
+        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
+        if self.memory_refused(refused) || refuse {
+            if self.oom.targets_failed(Instant::now()) {
+                log::warn!("render targets: out of video memory, the interface alone until they can be made");
+            }
+        } else {
+            // the world's return is said when a frame goes through
+            // (`Refusals::settle`): a required target may refuse first
+            self.oom.targets_made();
+        }
+    }
+
+    /// The targets made on first use, let go: each is made again, checked,
+    /// when next needed.
+    fn drop_first_use_targets(&mut self) {
+        self.targets.blend_layers = None;
+        self.targets.blend_exact = None;
+        self.rlva_spheres = None;
+        self.rlva_scaled = None;
+        self.selection = None;
+        self.hud_selection = None;
+        if let Some(dof) = &mut self.dof {
+            dof.release();
+        }
+        if let Some(looks) = &mut self.looks {
+            looks.release();
+        }
+    }
+
+    /// Whether a scope's refusal is the memory: a lost device leaves every
+    /// object invalid too, but that is the device-loss path's to report,
+    /// never "Video memory full".
+    fn memory_refused(&self, refused: bool) -> bool {
+        refused && !self.lost.get()
+    }
+
+    /// `size` forces a size: the 1x1 set that frees a refused one.
+    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
         self.occlusion.invalidate();
         self.depth_pick.scene_changed();
         let scale = if self.snapshot_window.is_some() {
@@ -4822,15 +6063,22 @@ impl Backend {
         } else {
             self.settings.render_scale_percent
         };
-        let size = crate::rlva::resolution::render_size((self.config.width, self.config.height), self.rlva_resolution_divisor, scale);
-        log::info!(
-            "world resolution: {}x{} (output {}x{}, scale {}%)",
-            size.0,
-            size.1,
-            self.config.width,
-            self.config.height,
-            scale
-        );
+        let window = (self.config.width, self.config.height);
+        let forced = size.is_some();
+        let size = size.unwrap_or_else(|| match self.fsr_upscale() {
+            Some(ratio) => crate::fsr::render_size(window, ratio),
+            None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
+        });
+        if !forced {
+            log::info!(
+                "world resolution: {}x{} (output {}x{}, scale {}%)",
+                size.0,
+                size.1,
+                self.config.width,
+                self.config.height,
+                scale
+            );
+        }
         // the new targets are made while the old ones live: the counters'
         // growth in between is what this size takes
         let before = self.live_bytes();
@@ -4846,6 +6094,7 @@ impl Backend {
             size.1,
             self.msaa_samples,
             &self.settings,
+            refuse,
         );
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa
@@ -4858,6 +6107,7 @@ impl Backend {
         self.exposure
             .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
         self.histogram.bind(&self.device, &self.targets.color);
+        self.targets_shrunk = forced;
         self.rebuild_bind_groups();
     }
 
@@ -4869,7 +6119,6 @@ impl Backend {
     pub fn can_capture(&self) -> bool {
         self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
     }
-
     /// Follow the window: size and vsync wanted for the frame being drawn.
     fn apply_surface(&mut self, s: SurfaceState) {
         self.set_vsync(s.vsync);
@@ -4895,6 +6144,13 @@ impl Backend {
         &self.msaa_supported
     }
 
+    /// Whether the device can draw the blended faces in the exact order of
+    /// their fragments (`RiggedBlendDepth::Exact`): it tests the depth
+    /// before the shader that files them.
+    pub fn blend_exact_supported(&self) -> bool {
+        self.device.features().contains(crate::blend_exact::EARLY_TEST)
+    }
+
     /// Apply quality settings (rebuilds pipelines / targets only when
     /// needed). The anisotropy belongs to the scene's texture table.
     pub fn apply_settings(&mut self, s: RenderSettings) {
@@ -4902,18 +6158,23 @@ impl Backend {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
         };
-        if (samples, s.ssr) == (self.msaa_samples, self.settings.ssr) {
+        if (samples, s.gbuffer()) == (self.msaa_samples, self.settings.gbuffer()) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
             return;
         }
-        if self.pipeline_build.as_ref().is_none_or(|b| (b.samples, b.ssr) != (samples, s.ssr)) {
+        if self
+            .pipeline_build
+            .as_ref()
+            .is_none_or(|b| (b.samples, b.ssr) != (samples, s.gbuffer()))
+        {
             log::info!(
-                "compiling the pipelines for {samples} sample(s), SSR {}",
-                if s.ssr { "on" } else { "off" }
+                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}",
+                if s.ssr { "on" } else { "off" },
+                if s.gbuffer() { "on" } else { "off" }
             );
-            self.pipeline_build = Some(self.start_pipeline_build(samples, s.ssr));
+            self.pipeline_build = Some(self.start_pipeline_build(samples, s.gbuffer()));
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -4933,6 +6194,7 @@ impl Backend {
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
+                    rain_surfaces: self.settings.rain_surfaces,
                     ..s
                 };
                 if now != self.settings {
@@ -4952,7 +6214,7 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    s.ssr,
+                    s.gbuffer(),
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -4961,7 +6223,7 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    s.ssr,
+                    s.gbuffer(),
                 );
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
@@ -5008,6 +6270,7 @@ impl Backend {
         let pipelines_dirty = rebuilt.is_some();
         let targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
+            || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
@@ -5022,7 +6285,7 @@ impl Backend {
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
         }
-        let slots = s.probe_slots.clamp(1, crate::probes::MAX_PROBES as u32);
+        let slots = crate::probes::Probes::fitted_slots(&self.device, s.probe_slots);
         let probes_dirty = slots != self.probes.slots;
         if probes_dirty {
             self.probes = crate::probes::Probes::new(&self.device, slots);
@@ -5032,15 +6295,22 @@ impl Backend {
             .shadow_resolution
             .clamp(512, 8192)
             .min(self.device.limits().max_texture_dimension_2d / 2);
-        let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, self.device.limits().max_texture_dimension_2d);
+        let max_dimension = self.device.limits().max_texture_dimension_2d;
+        let count = crate::projector_shadows::effective_limit(res, s.projector_shadow_limit, max_dimension);
         let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
         if shadows_dirty {
-            self.shadow_view = Self::make_shadow_atlas(&self.device, res, count);
+            // one more map for the rain's shelter where it fits: free up to
+            // three projectors (the fourth tile), a row at 4, 8 and 12
+            let shelter = crate::projector_shadows::shelter_slot(res, count, max_dimension);
+            let maps = crate::projector_shadows::atlas_maps(count, shelter);
+            self.shadow_view = Self::make_shadow_atlas(&self.device, res, maps);
             self.shadow_size = res;
             self.shadow_count = count;
-            let (width, height) = crate::projector_shadows::atlas_size(res, count);
+            self.shelter_slot = shelter;
+            self.shelter_drawn = None;
+            let (width, height) = crate::projector_shadows::atlas_size(res, maps);
             log::info!(
-                "projector shadow budget: requested {}, effective {count}, map {} px, atlas {width}x{height} ({} MiB)",
+                "projector shadow budget: requested {}, effective {count}, shelter map {shelter}, map {} px, atlas {width}x{height} ({} MiB)",
                 s.projector_shadow_limit,
                 res / 2,
                 u64::from(width) * u64::from(height) * 4 / (1024 * 1024)
@@ -5048,9 +6318,14 @@ impl Backend {
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
-        if s.aa == AntiAliasing::Taa {
-            if !taa_was {
-                self.remake_taa();
+        if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
+            // FSR in the place of the TAA pass, or the TAA pass again
+            if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
+                let device = self.device.clone();
+                let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
+                // (refused, the next try makes every target again, the TAA
+                // history with them)
+                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
             }
         } else {
             self.taa = None;
@@ -5060,7 +6335,7 @@ impl Backend {
         if targets_dirty {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
-            self.rebuild_bind_groups();
+            self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
     }
 
@@ -5109,6 +6384,7 @@ impl Backend {
                 samples: 1,
                 format: Some(HDR_FORMAT),
                 gbuf: false,
+                range: None,
                 depth_format: None,
                 depth_bias: Default::default(),
                 constants: &[],
@@ -5122,12 +6398,15 @@ impl Backend {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let with_fsr = matches!(self.settings.aa, AntiAliasing::Fsr(_));
+        // unread under FSR, whose own history replaces it
+        let history_size = if with_fsr { (1, 1) } else { self.scene_size() };
         let mk = || {
             make_view(
                 device,
                 "taa history",
-                self.scene_size().0,
-                self.scene_size().1,
+                history_size.0,
+                history_size.1,
                 HDR_FORMAT,
                 1,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -5210,6 +6489,31 @@ impl Backend {
             })
         };
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
+        let fsr = with_fsr.then(|| {
+            // (the 1x1 set that frees a refused one shrinks FSR's display
+            // size part too, rebuild_targets)
+            let display = if self.fsr_upscale().is_some() && !self.targets_shrunk {
+                (self.config.width, self.config.height)
+            } else {
+                self.scene_size()
+            };
+            let fsr = crate::fsr::Fsr::new(
+                device,
+                self.scene_size(),
+                display,
+                DEPTH_FORMAT,
+                &crate::fsr::Inputs {
+                    color: &self.targets.color,
+                    // the prepass and the blended faces at least half
+                    // covered, whose motion the same pass wrote
+                    depth: self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
+                    motion: motion_read,
+                    opaque: &self.targets.scene_copy,
+                },
+            );
+            let bg = post_bg(fsr.output());
+            (fsr, bg)
+        });
         Taa {
             pipeline,
             layout,
@@ -5218,6 +6522,7 @@ impl Backend {
             bind_groups,
             post_bgs,
             motion,
+            fsr,
             parity: 0,
             reset: true,
         }
@@ -5314,7 +6619,40 @@ impl Backend {
         let inv_view = view.inverse();
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
+        let area = self.water_effects.rain_area;
+        u.rain = [f.rain.clamp(0.0, 1.0), area[0], area[1], area[2]];
+        u.rain_wet = self.rain_wet.uniform;
+        u.rain_wet_step = self.rain_wet.step;
+        u.snow_cover = self.rain_wet.snow_cover;
+        u.snow_cover[3] = f.rain_look.snow_detail as f32;
+        u.snow_trail = self.snow_trail.uniform;
+        // my avatar: deep snow's grid centred on it, not on the camera (an
+        // orbiting camera would move it, and its cells resample what they
+        // cover: narrow strips spiking as it pans)
+        u.snow_trail_step = [f.rain_look.trail_centre[0], f.rain_look.trail_centre[1], 0.0, 0.0];
+        u.snow_stamps = f.rain_look.snow_stamps;
+        for (i, z) in f.rain_look.snow_stamp_z.iter().enumerate() {
+            u.snow_stamp_z[i / 4][i % 4] = *z;
+        }
+        u.lightning = f.rain_look.lightning;
+        u.aurora = f.rain_look.aurora;
+        u.rain_look = [
+            f32::from(u8::from(f.rain_look.puddles)),
+            f.rain_look.distance,
+            f.rain_look.quality.min(2) as f32,
+            if f.rain_look.snow > 0.0 {
+                f.rain_look.snow.clamp(0.5, 2.0)
+            } else {
+                0.0
+            },
+        ];
+        u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
+        u.part_joints = [
+            [f.part_joints[0], f.part_joints[1], f.part_joints[2], f.part_joints[3]],
+            [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
+        ];
+        u.part_classes = std::array::from_fn(|i| std::array::from_fn(|j| f.part_classes[i * 4 + j]));
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
@@ -5407,8 +6745,12 @@ impl Backend {
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
         u.sky_stars = s.stars.uniform();
         u.sky_star_pass = [0.0; 4];
+        u.studio_aurora = s.studio_aurora;
         // (common.wgsl FEATURE_NO_EMISSIVE)
         u.features[0] = if self.settings.hdr { 0 } else { 1 };
+        // Aurora Weather: the shelter map's slot + 1, 0 when it is not drawn
+        // (env.wgsl `rain_shelter_on`)
+        u.features[1] = self.rain_shelter_map(f).map_or(0, |k| k as u32 + 1);
         for (i, m) in cascades.iter().enumerate() {
             u.cascade_vp[i] = m.to_cols_array_2d();
         }
@@ -5429,17 +6771,85 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize)
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
         {
             u.spot_vp[k] = vp.to_cols_array_2d();
-            u.spot_lights[k / 4][k % 4] = spot.light as i32;
-            u.projectors[spot.light as usize].tex[1] = k as u32 + 1;
             u.spot_fade[k / 4][k % 4] = 1.0 - spot.fade.clamp(0.0, 1.0);
+            // the shelter map lights nothing (its light is no index)
+            if spot.light == u32::MAX {
+                u.spot_lights[k / 4][k % 4] = RAIN_SHELTER_LIGHT;
+                continue;
+            }
+            u.spot_lights[k / 4][k % 4] = spot.light as i32;
+            if let Some(p) = u.projectors.get_mut(spot.light as usize) {
+                p.tex[1] = k as u32 + 1;
+            }
         }
         u
+    }
+
+    /// A frame with no render targets: the interface over black, none of
+    /// the passes that need the targets, its glass and blur left out. Its
+    /// markers are taken out as the full frame takes them.
+    fn interface_alone(&mut self, target: &wgpu::Texture, ui: Option<crate::ui_frame::UiFrame>) -> Vec<wgpu::CommandBuffer> {
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("interface alone"),
+        });
+        let mut cmds = Vec::new();
+        let mut screen = None;
+        let mut ui = ui;
+        if let Some(ui) = &mut ui {
+            crate::ui_world::take_end(&mut ui.primitives);
+            crate::ui_blur::take_boundary(&mut ui.primitives);
+            crate::ui_glass::skip(&mut ui.primitives);
+            crate::label_depth::skip(&mut ui.primitives);
+            // the previews draw into targets of their own: they stay, and
+            // egui-wgpu gets meshes, not callbacks it does not know
+            self.previews.render(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                ui.pixels_per_point,
+            );
+            let sd = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [self.config.width, self.config.height],
+                pixels_per_point: ui.pixels_per_point,
+            };
+            cmds = self
+                .egui
+                .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);
+            screen = Some(sd);
+        }
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("interface alone"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            if let (Some(ui), Some(sd)) = (&ui, &screen) {
+                let uploaded = crate::ui_frame::meshes_uploaded(&ui.primitives);
+                let jobs = crate::ui_frame::paint_jobs(&ui.primitives, uploaded);
+                self.egui.render(&mut pass, &jobs, sd);
+            }
+        }
+        cmds.push(encoder.finish());
+        cmds
     }
 
     /// What a frame gives back: its statistics, the readbacks that have
@@ -5452,6 +6862,7 @@ impl Backend {
             hover: self.depth_pick.latest(),
             picks: self.depth_pick.take_click_answers(),
             drawn: self.drawn_pick.take_answers(),
+            part_pick: self.part_pick.take_answer(),
             cull: self.cull.last,
             captured,
             snapshot,
@@ -5512,6 +6923,7 @@ impl Backend {
         uploads.after_submit();
         // (nothing was drawn for the pixel this frame began to answer)
         self.drawn_pick.abandon();
+        self.part_pick.abandon();
         self.result(index, stats, None, spent)
     }
 
@@ -5529,7 +6941,15 @@ impl Backend {
                 return Err(Box::new(packet));
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
-                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
+                let session = crate::xr_frame::Session::new(
+                    runtime,
+                    *system,
+                    &self.device,
+                    &self.queue,
+                    self.config.format,
+                    packet.settings.vr_resolution,
+                )?;
+                self.vr.set_default_resolution(Some(session.default_resolution));
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;
@@ -5544,6 +6964,8 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
+                    grading: ([packet.settings.vr_gamma, packet.settings.vr_vibrancy] != [1.0; 2] && !session.grades_on_submission())
+                        .then(|| crate::vr_mirror::HeadsetGrade::new(&self.device, session.output_template())),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -5576,7 +6998,21 @@ impl Backend {
         if !self.vr.wanted() {
             world.session.request_stop();
         }
-        let eyes = match world.session.begin(&world.runtime, packet.params.view, packet.params.near) {
+        let frame = world.session.begin(
+            &world.runtime,
+            packet.params.view,
+            packet.params.near,
+            packet.params.vr_rig,
+            packet.params.vr_revision,
+        );
+        let focused = world.session.focused
+            && frame
+                .as_ref()
+                .is_ok_and(|eyes| eyes.as_ref().is_some_and(|e| e.head_rotation.is_some()));
+        if !focused {
+            self.vr.set_focused(false);
+        }
+        let eyes = match frame {
             Ok(Some(eyes)) => eyes,
             Ok(None) => {
                 self.xr_world = Some(world);
@@ -5590,6 +7026,19 @@ impl Backend {
                 return Err(Box::new(packet));
             }
         };
+        if let Some(rotation) = eyes.head_rotation {
+            self.vr.set_head_pose(crate::HeadPose {
+                rotation,
+                position: eyes.head_position,
+                rig_position: packet.params.view.inverse().w_axis.truncate(),
+                generation: self.vr.reference(eyes.reference_changed),
+                origin: packet.params.vr_origin,
+                revision: packet.params.vr_revision,
+                mode: packet.params.vr_rig,
+                sampled: std::time::Instant::now(),
+            });
+        }
+        self.vr.set_focused(focused);
         self.vr.started();
         // Keep the desktop egui texture atlas current, even though the headset has no UI.
         let mirror_ui = packet.ui.take().map(|mut ui| {
@@ -5627,9 +7076,23 @@ impl Backend {
             motion_cut: packet.motion_cut,
             input_at: None,
         };
+        let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
+        let grade = [
+            bounded(packet.settings.vr_gamma, 0.5, 2.5),
+            bounded(packet.settings.vr_vibrancy, 0.0, 2.0),
+        ];
+        if grade == [1.0; 2] || world.session.grades_on_submission() {
+            world.grading = None;
+        }
+        let grading = (grade != [1.0; 2] && !world.session.grades_on_submission()).then(|| {
+            world
+                .grading
+                .get_or_insert_with(|| crate::vr_mirror::HeadsetGrade::new(&self.device, &eyes.textures[0]))
+        });
+        let sources = grading.as_ref().map_or(&eyes.textures, |grading| &grading.sources);
         let apply = |p: &mut FramePacket, i: usize| {
             let eye = eyes.cameras[i];
-            p.output = Some(eyes.textures[i].clone());
+            p.output = Some(sources[i].clone());
             p.params.view = eye.view;
             p.params.proj = eye.projection;
             p.params.camera_pos = eye.position;
@@ -5654,16 +7117,19 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
+        if let Some(grading) = grading.as_ref() {
+            grading.encode(&self.device, &self.queue, &eyes.textures, grade);
+        }
         first.stats.presented = world.mirror.present(
             &self.device,
             &self.queue,
             &self.surface,
-            &eyes.textures[0],
+            &sources[0],
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
             mirror_ui.as_ref(),
         );
-        if let Err(e) = world.session.end() {
+        if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
             self.vr.finish(true);
             self.motion_cut = true;
@@ -5703,7 +7169,80 @@ impl Backend {
         self.render_view(packet)
     }
 
+    /// The renderer made again, whole, from what it was first made from:
+    /// once video memory lets all of it through, it takes this one's place
+    /// (egui's renderer moved over), the world comes back with no relog,
+    /// and the old one's memory is freed. Not a GPU loss: same device, same
+    /// window, nothing counted for the crash report, and it works with GPU
+    /// recovery turned off. Refused again, it is dropped and tried later on
+    /// the targets' backoff.
+    fn remake_refused(&mut self, scene: &SceneGpu, settings: RenderSettings) {
+        let Some(seed) = self.seed.as_ref() else {
+            return;
+        };
+        let mut init = (**seed).clone();
+        init.width = self.config.width;
+        init.height = self.config.height;
+        init.output_format = Some(self.config.format);
+        init.vsync = self.vsync;
+        init.scene = scene.clone();
+        // what this one holds for a world it no longer draws is let go
+        // first: a card with room for one renderer but not two would
+        // otherwise refuse every try
+        self.shed_world();
+        // (how long a try holds the frame: the render thread makes the
+        // whole renderer, its pipelines included)
+        let started = Instant::now();
+        let made = Backend::new_with(init, true).map(|mut fresh| {
+            // the settings the frame asks for, as part of the remake: the
+            // atlases they make again could still be refused
+            if !fresh.remake {
+                fresh.apply_frame_settings(settings);
+            }
+            fresh
+        });
+        let took = started.elapsed().as_millis();
+        match made {
+            Ok(mut fresh) if !fresh.remake => {
+                log::info!("renderer: made again, whole ({took} ms)");
+                fresh.egui.0 = self.egui.0.take();
+                *self = fresh;
+            }
+            Ok(_) => {
+                log::info!("renderer: try refused ({took} ms)");
+                self.oom.targets_failed(Instant::now());
+            }
+            // (a lost device, which ends the viewer: egui's renderer stays
+            // here, nothing is made on the lost device)
+            Err(e) => {
+                log::warn!("renderer: could not be made again: {e}");
+                self.oom.targets_failed(Instant::now());
+            }
+        }
+    }
+
+    /// Lets go of the largest of what a renderer waiting for its remake
+    /// holds for the world it no longer draws: the render targets, down to
+    /// 1x1, and the shadow atlas, down to its smallest. In a scope: what
+    /// binds the start's refused resources fails again, and is dropped with
+    /// this renderer.
+    fn shed_world(&mut self) {
+        let device = self.device.clone();
+        let _ = crate::gpu_alloc::scoped(&device, || {
+            // (the size the settings ask for stays recorded: no frame's
+            // settings make the full atlas again before the remake)
+            self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
+            self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
+            self.make_targets_now(false, Some((1, 1)));
+        });
+    }
+
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
+        // (here, not in `render`: the eyes' backends of VR are made, and
+        // can be refused, like the window's)
+        if self.remake && self.oom.targets_due(Instant::now()) {
+            self.remake_refused(&packet.scene, packet.settings);
+        }
         let FramePacket {
             output,
             index,
@@ -5734,6 +7273,7 @@ impl Backend {
         self.depth_pick.harvest();
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
+        self.part_pick.harvest();
         self.drawn_pick.ask(drawn);
         let previous_scene = self.scene_size();
         let picks = picks
@@ -5761,12 +7301,21 @@ impl Backend {
         }
         stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
-            self.apply_settings(settings);
+            self.apply_frame_settings(settings);
+        }
+        // the start is over: made, and its settings applied, with nothing
+        // refused
+        if !self.remake {
+            self.seed = None;
         }
         stats.settings = Some(self.settings);
+        stats.snow_lying = self.rain_wet.snow > RAIN_WET_DRY;
         // the tiled photo is done: its context goes with the targets that
         // bind it
         if params.photo_context == crate::types::PhotoContext::None && self.gtao.drop_context() {
+            self.rebuild_targets();
+        }
+        if self.oom.targets_due(Instant::now()) {
             self.rebuild_targets();
         }
         let snapshot = match wanted {
@@ -5781,6 +7330,19 @@ impl Backend {
             self.depth_pick.hover(x, y);
         }
         let world_size = self.scene_size();
+        // the image after the anti-aliasing: FSR's output size, larger than
+        // the world's when it upscales
+        let post_size = self
+            .taa
+            .as_ref()
+            .and_then(|t| t.fsr.as_ref())
+            .map_or(world_size, |(fsr, _)| fsr.display_size());
+        // the user's render scale, upscaled smoothly to the window (RLVa's
+        // divisor keeps nearest pixels, a photo renders at full size)
+        let spatial_upscale = post_size != (self.config.width, self.config.height)
+            && self.settings.render_scale_percent < 100
+            && self.rlva_resolution_divisor <= 1
+            && snapshot.is_none();
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &mut egui_frame {
@@ -5881,10 +7443,33 @@ impl Backend {
                 _ => None,
             }
         };
+        // (before the skip: a frame without a surface image, as in a resize,
+        // must not take the notice away)
+        stats.video_memory_full = self.oom.targets;
         let Some(surface_tex) = surface_tex else {
             let spent = Spent { writes, lists: draw_lists };
             return self.skip(index, stats, upload_cmds, frame_uploads, spent);
         };
+        if self.oom.targets {
+            let ui = egui_frame.map(EguiFrame::tessellate);
+            let mut cmds = self.interface_alone(surface_tex.texture(), ui);
+            // (a capture gets what the window shows)
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            let capture = (wanted == Some(Capture::Full))
+                .then(|| self.encode_capture(&mut encoder, surface_tex.texture(), false))
+                .flatten();
+            cmds.push(encoder.finish());
+            crate::device_lost::submit_tracked(&self.lost, &self.queue, index, upload_cmds.into_iter().chain(cmds));
+            if let FrameTarget::Surface(t) = surface_tex {
+                self.queue.present(t);
+                stats.presented = true;
+            }
+            let captured = capture.and_then(|capture| self.read_capture(capture, false));
+            let spent = Spent { writes, lists: draw_lists };
+            let mut result = self.skip(index, stats, None, frame_uploads, spent);
+            result.captured = captured;
+            return result;
+        }
         // CPU encode time excludes waiting for the swapchain (vsync).
         let t0 = Instant::now();
         let mut prof = Marks::start("acquire", t0);
@@ -5905,12 +7490,22 @@ impl Backend {
         if let Some(ui) = ui.as_ref().filter(|_| blur_boundary.is_some()) {
             let size = [self.config.width, self.config.height];
             if !self.ui_blur.as_ref().is_some_and(|blur| blur.matches(size, ui.pixels_per_point)) {
-                self.ui_blur = Some(crate::ui_blur::Blur::new(
-                    &self.device,
-                    self.config.format,
-                    size,
-                    ui.pixels_per_point,
-                ));
+                self.ui_blur = None;
+                let now = Instant::now();
+                if self.ui_targets_backoff.ready(now) {
+                    let format = self.config.format;
+                    let (blur, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                        crate::ui_blur::Blur::new(&self.device, format, size, ui.pixels_per_point)
+                    });
+                    if self.memory_refused(refused) || crate::gpu_alloc::ui_targets_refused(size) {
+                        log::warn!("interface blur: out of video memory, the windows go without it for now");
+                        self.ui_targets_backoff.failed(now);
+                    } else {
+                        // (the glass made later in the frame may still be refused)
+                        self.ui_targets_backoff.made();
+                        self.ui_blur = Some(blur);
+                    }
+                }
             }
         } else {
             self.ui_blur = None;
@@ -5920,18 +7515,92 @@ impl Backend {
         let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
 
         if !lists.select_faces.is_empty() {
-            let size = [world_size.0, world_size.1];
+            let size = [post_size.0, post_size.1];
             if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
-                self.selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
+                let format = self.config.format;
+                self.selection = extra(&mut self.oom, &self.device, self.lost.get(), "selection outline", |device| {
+                    crate::selection::Overlay::new(device, format, size)
+                });
             }
             if let Some(selection) = &self.selection {
                 selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
             }
         }
+        // the subject's faces serve the pick (Ctrl over it) and the overlay
+        // (a part lit): the overlay only when a joint is set
+        self.part_lit = !lists.part_faces.is_empty() && f.part_joints != [0; 8];
+        // the cursor, in window pixels, on the target drawn at `post_size`
+        // (a lower render scale, RLVa's divisor); none on a photo frame,
+        // whose `config` is the photo's (the hover is skipped there too)
+        let (window_w, window_h) = (self.config.width.max(1), self.config.height.max(1));
+        self.part_pick_px = f
+            .part_pick
+            .filter(|_| !lists.part_faces.is_empty() && snapshot.is_none())
+            .map(|px| {
+                let at = crate::part_pick::target_pixel(px, [window_w, window_h], [post_size.0, post_size.1]);
+                (at, px)
+            });
+        // its target under the video memory guard, freed once idle
+        let pick_size = [post_size.0, post_size.1];
+        if self.part_pick_px.is_some() {
+            if self.part_pick.needs_target(pick_size) {
+                let texture = extra(&mut self.oom, &self.device, self.lost.get(), "poser part pick", |device| {
+                    crate::part_pick::PartPick::make_target(device, pick_size)
+                });
+                self.part_pick.set_target(texture, pick_size);
+            }
+        } else {
+            self.part_pick.idle();
+        }
+        // the part's overlay images go the same way once no part is lit
+        self.part_idle = if self.part_lit { 0 } else { self.part_idle.saturating_add(1) };
+        if self.part_idle > PART_IDLE_FRAMES {
+            self.part = None;
+            if self.part_pick_px.is_none() {
+                self.part_depth = None;
+            }
+        }
+        if self.part_lit || self.part_pick_px.is_some() {
+            let size = [post_size.0, post_size.1];
+            if self
+                .part_depth
+                .as_ref()
+                .is_none_or(|depth| depth.texture().width() != size[0] || depth.texture().height() != size[1])
+            {
+                self.part_depth = extra(&mut self.oom, &self.device, self.lost.get(), "poser part depth", |device| {
+                    make_view(
+                        device,
+                        "poser part depth",
+                        size[0],
+                        size[1],
+                        DEPTH_FORMAT,
+                        1,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                    )
+                    .1
+                });
+            }
+        }
+        if self.part_lit {
+            let size = [post_size.0, post_size.1];
+            if self.part.as_ref().is_none_or(|part| part.size != size) {
+                let format = self.config.format;
+                self.part = extra(&mut self.oom, &self.device, self.lost.get(), "poser part outline", |device| {
+                    crate::selection::Overlay::new_part(device, format, size)
+                });
+            }
+            if let Some(part) = &self.part {
+                // a steady tint inside, a wide halo outside
+                part.update(&self.queue, f.part_color, PART_TINT, f.selection_scale * PART_HALO);
+            }
+        }
         if !lists.hud_select_faces.is_empty() {
             let size = [self.config.width, self.config.height];
             if self.hud_selection.as_ref().is_none_or(|selection| selection.size != size) {
-                self.hud_selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
+                let format = self.config.format;
+                self.hud_selection = extra(&mut self.oom, &self.device, self.lost.get(), "HUD selection outline", |device| {
+                    crate::selection::Overlay::new(device, format, size)
+                });
             }
             if let Some(selection) = &self.hud_selection {
                 selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
@@ -5955,8 +7624,14 @@ impl Backend {
         let jittered;
         // where the scene's depth has a pixel of the image, in pixels (y down)
         let mut depth_jitter = glam::Vec2::ZERO;
-        let fu: &FrameParams = if self.taa.is_some() {
-            let i = (self.frame_index % 16) + 1;
+        let fu: &FrameParams = if let Some(taa) = &self.taa {
+            // FSR's own number of phases (ffxFsr3UpscalerGetJitterOffset)
+            let period = match &taa.fsr {
+                Some(_) => u64::from(crate::fsr::jitter_phase_count(world_size.0, post_size.0)),
+                None => 16,
+            };
+            let i = (self.frame_index % period) + 1;
+            self.taa_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
             let jx = halton(i, 2) * 2.0 / world_size.0 as f32;
             let jy = halton(i, 3) * 2.0 / world_size.1 as f32;
             depth_jitter = glam::Vec2::new(
@@ -6008,10 +7683,59 @@ impl Backend {
         // nothing kept the matrices while nothing read the motion: the
         // first frame that reads it again starts the history again
         self.motion_cut |= self.motion_now && !self.motion_kept;
+        // rain prototype: the terrain heights (and where they are, for the
+        // uniforms below)
+        self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
+        // snow wets nothing (the ground dries as after rain), it lies
+        let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
+        // cleaned up (the Weather window): the memory starts again, every
+        // cell new, as dry and bare as the open is now (a region's snow so
+        // far, given below, is still the region's)
+        if f.rain_look.clean {
+            self.rain_wet = RainWet::default();
+        }
+        // filled with snow: started again with the open's snow whole, which
+        // every cell takes as new (its share of it in the lee)
+        if f.rain_look.fill {
+            self.rain_wet = RainWet::default();
+            self.rain_wet.snow = 1.0;
+        }
+        self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
+        self.rain_wet
+            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow);
+        // footprints while snow lies and they are wanted
+        let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
+        let trail_extent = f.rain_look.trail_extent.clamp(16.0, 128.0);
+        self.snow_trail
+            .advance(trail_on, snow, Vec2::from(f.rain_look.trail_centre), f.snow_fallen, trail_extent);
+        // the region's footprints, uploaded when they changed
+        if let Some(prints) = f.snow_prints.as_ref().filter(|_| trail_on) {
+            let stale = self.snow_trail.prints.as_ref().is_none_or(|p| p.1 != f.snow_prints_gen);
+            if stale {
+                let n = prints.len().min(MAX_SNOW_PRINTS);
+                let buffer = match self.snow_trail.prints.take() {
+                    Some((b, _, _)) => b,
+                    None => self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("snow footprints"),
+                        size: (MAX_SNOW_PRINTS * 32) as u64,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }),
+                };
+                if n > 0 {
+                    self.queue
+                        .write_buffer(&buffer, 0, bytemuck::cast_slice(&prints[prints.len() - n..]));
+                }
+                self.snow_trail.prints = Some((buffer, f.snow_prints_gen, n as u32));
+            }
+        }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
+        }
+        if self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
+            main.tex_lod[0] = crate::fsr::mip_bias(world_size.0, post_size.0);
         }
         {
             // after the scene moved as a whole, the last frame's camera is
@@ -6090,12 +7814,19 @@ impl Backend {
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
         let probe_walk = crate::probes::ProbeWalk::from_env();
+        // (the viewer asks for what the device holds, `fitted_probe_slots`:
+        // this is for the frames until a new number of slots is applied)
+        let probe_list: std::borrow::Cow<[crate::types::ProbeGpu]> = if f.probes.probes.iter().any(|p| p.slot[0] >= self.probes.slots) {
+            f.probes.probes.iter().filter(|p| p.slot[0] < self.probes.slots).copied().collect()
+        } else {
+            std::borrow::Cow::Borrowed(&f.probes.probes)
+        };
         let probe_sets = if f.probes.enabled && probe_walk.tiles(f.probe_walk_list) {
             let size = [world_size.0, world_size.1];
             let eye = Vec3::from_slice(&main.camera_pos[..3]);
-            crate::probes::tiles(fu.view, fu.proj, eye, size, &f.probes.probes)
+            crate::probes::tiles(fu.view, fu.proj, eye, size, &probe_list)
         } else {
-            LightSets::whole()
+            crate::probes::ProbeSets::whole()
         };
         main.light_sets.mode[3] = probe_walk.shader_mode(f.probe_walk_list, f.debug.check_probe_sets);
         // the view shown instead of the image (debug_view in common.wgsl):
@@ -6142,6 +7873,21 @@ impl Backend {
             .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
             .now(std::time::SystemTime::now());
         self.blend_ao_depth = blend_ao == BlendAo::New;
+        // AURORA_LEGACY_GLARE=0: the blended legacy faces without the glare
+        // of #3259 (object.wgsl LEGACY_GLARE_OFF)
+        static GLARE_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *GLARE_OFF.get_or_init(|| std::env::var("AURORA_LEGACY_GLARE").is_ok_and(|v| v.trim() == "0")) {
+            main.light_sets.mode[2] |= 0x100000;
+        }
+        // AURORA_LEGACY_NAN=off|check: the legacy highlights and
+        // environment unguarded against a NaN as in 0.9.8, or magenta where
+        // the guard caught one (object.wgsl LEGACY_NAN_OFF, LEGACY_NAN_CHECK)
+        static LEGACY_NAN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        main.light_sets.mode[2] |= *LEGACY_NAN.get_or_init(|| match std::env::var("AURORA_LEGACY_NAN").as_deref().map(str::trim) {
+            Ok("off") => 0x200000,
+            Ok("check") => 0x400000,
+            _ => 0,
+        });
         main.light_sets.mode[2] |= match blend_ao {
             BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
@@ -6231,18 +7977,29 @@ impl Backend {
                 self.hud_depth = Some((self.config.width, self.config.height, depth.create_view(&Default::default())));
             }
         }
-        let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32| {
+        // `lit`: the mirror, lit as the main view (the Legacy Viewer's hero
+        // probe is a cube snapshot of the deferred pipeline: the sun's
+        // shadows, gDeferredSunProbeProgram having hasShadows, and the
+        // reflection probes, mRadiancePass, LLHeroProbeManager::renderProbes).
+        // Its shadows are the main view's cascades (shadow_factor picks them
+        // from the real camera); without the probes its surfaces took the
+        // sky's light, pale skin and black latex turned blue (#3479)
+        let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32, lit: bool| {
             let m = reflection_matrix(n, d);
             let mut rf = f.clone();
-            rf.shadows = false;
+            rf.shadows = lit && f.shadows;
             let mut u = this.frame_uniforms(&rf, f.view * m, None, &cascades, &splits);
             // 2: a reflection pass whose view is mirrored (mirrored_pass, common.wgsl)
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = n.extend(d + keep_offset).to_array();
+            if lit {
+                u.light_sets.mode[2] |= crate::probes::capture_lighting::LIT;
+            }
             u
         };
         let mut water_vp = Mat4::IDENTITY;
         let mut mirror_vp = Mat4::IDENTITY;
+        let mut mirror_eye = Vec3::ZERO;
         // the reflections' own pixel size, for the stars' footprint
         let star_pass = |t: &Option<ReflTarget>| {
             t.as_ref().map_or([0.0; 4], |t| {
@@ -6251,34 +8008,65 @@ impl Backend {
             })
         };
         if do_water_refl {
-            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05);
+            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             u.sky_star_pass = star_pass(&self.targets.water_refl);
             water_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[0], 0, bytemuck::bytes_of(&u));
         }
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
-            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01);
+            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
+            mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
         // ---- reflection probes: list for the shaders, face capture uniforms
-        self.probes.upload(&self.queue, f.probes.enabled, &f.probes.probes, &probe_sets);
+        self.probes.upload(&self.queue, f.probes.enabled, &probe_list, &probe_sets);
         let capture = f.probes.capture;
         // skies with a probe ambiance light with the probes' irradiance
         // (shade_pbr), which gets a capture of its own
         let irr_capture = capture.is_some() && !f.sky.classic && !f.sky.no_post;
         let mut probe_vp = Mat4::IDENTITY;
+        let mut probe_shadow_now: Option<Mat4> = None;
         if let Some(c) = &capture {
             let mut cf = f.clone();
             cf.shadows = false;
-            cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, c.near.max(0.1));
+            // RenderReflectionProbeDrawDistance only culls: setup3DRender keeps
+            // the far clip at MAX_FAR_CLIP * 2, so the terrain goes on past it.
+            // The objects stop at the probe's reach (below)
+            let near = c.near.max(0.1);
+            cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, near);
             let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), None, &cascades, &splits);
             probe_vp = Mat4::from_cols_array_2d(&u.view_proj);
-            // reflection pass: no SSAO / SSR / mirrors / probes, no clip plane
-            u.misc = [0.0, 0.0, 0.0, 1.0];
+            // reflection pass: no SSAO / SSR / mirrors, no clip plane; the
+            // surfaces lit by the probes where the scene is. 2: the views of a
+            // cube's faces are mirrored (probes::face_view), so a surface facing
+            // the probe is rasterized as a back face
+            let (radiance_bits, irradiance_bits) = crate::probes::capture_lighting::bits(c.sky_only, irr_capture);
+            u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
+            u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
+            // the sun stops at the roofs (display_cube_face, generateSunShadow)
+            if !c.sky_only && irr_capture && f.shadows {
+                if c.face == 0 {
+                    let vp = crate::probes::shadow_matrix(c.origin, f.sun_dir);
+                    self.probe_shadow_vp = vp;
+                    probe_shadow_now = Some(vp);
+                    let shadow = ShadowU {
+                        vp: vp.to_cols_array_2d(),
+                        anim_clock: self.anim_now,
+                        // not the rain prototype's shelter map
+                        kind: [0; 4],
+                    };
+                    self.queue.write_buffer(&self.probe_shadow_buffer, 0, bytemuck::bytes_of(&shadow));
+                }
+                let range = crate::probes::SHADOW_RANGE;
+                let outside = Mat4::from_translation(Vec3::splat(1.0e6)).to_cols_array_2d();
+                u.cascade_vp = [self.probe_shadow_vp.to_cols_array_2d(), outside, outside];
+                u.cascade_splits = [range, range, range, 1.0];
+                u.params[2] = 1.0;
+            }
             let r = crate::probes::CAPTURE_RES as f32;
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[2], 0, bytemuck::bytes_of(&u));
@@ -6287,6 +8075,7 @@ impl Backend {
             }
             if irr_capture {
                 irradiance_pass_uniforms(&mut u, c.light_scale, f.lights.len().min(MAX_LIGHTS));
+                u.light_sets.mode[2] |= irradiance_bits;
                 let r = crate::probes::IRR_CAPTURE_RES as f32;
                 u.screen = [r, r, 1.0 / r, 1.0 / r];
                 self.queue.write_buffer(&self.refl_buffers[8], 0, bytemuck::bytes_of(&u));
@@ -6321,12 +8110,15 @@ impl Backend {
             );
         }
         // projector shadow maps of the frame (none without shadows)
-        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f, self.shadow_count as usize).map(|v| v.map(|(_, m)| m));
+        let shelter_map = self.rain_shelter_map(f);
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
+                kind: [u32::from(shelter_map.is_some_and(|k| i == CASCADES + k)), 0, 0, 0],
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
@@ -6345,7 +8137,7 @@ impl Backend {
             let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
             let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
             if keep && !debug_view {
-                self.bloom.ensure(&self.device, world_size);
+                self.bloom.ensure(&self.device, post_size);
             } else {
                 self.bloom.release();
             }
@@ -6356,6 +8148,10 @@ impl Backend {
         // gammaCorrect, which only encodes and clamps (legacyGamma kept on
         // skies without a probe ambiance, as no_post below)
         let hdr = self.settings.hdr;
+        // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
+        // faint sub-pixel pattern into a visible checkerboard
+        let cas = hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_));
+        let (post_sharpen, upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
         let post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
@@ -6374,7 +8170,7 @@ impl Backend {
                 }
             },
             fxaa: if self.settings.aa == AntiAliasing::Fxaa { 1.0 } else { 0.0 },
-            sharpen: if hdr { f.sharpen.clamp(0.0, 1.0) } else { 0.0 },
+            sharpen: post_sharpen,
             glow: if glow_on { 1.0 } else { 0.0 },
             debug_glow: {
                 static DEBUG_GLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -6550,37 +8346,68 @@ impl Backend {
             let Some(vp) = vp else { continue };
             let planes = crate::gpu_cull::view_planes(*vp).map(|p| p.to_array());
             let inside = |c: &&ShadowCaster| crate::gpu_cull::sphere_in(&planes, c.center, c.radius);
-            spot_lists[k].extend(lists.shadow_casters.iter().filter(inside).map(|c| c.cmd));
+            // the shelter map: what stands still, glass too (as the GPU's
+            // shelter bin), not the shadows' casters
+            let casters = if shelter_map == Some(k) {
+                &lists.shelter_casters
+            } else {
+                &lists.shadow_casters
+            };
+            spot_lists[k].extend(casters.iter().filter(inside).map(|c| c.cmd));
             spot_terrain_lists[k].extend(lists.terrain_shadow_casters.iter().filter(inside).map(|c| c.cmd));
         }
 
         // ---- indirect args
         self.indirect_cpu.clear();
+        // The CPU-built lists get the same index-range bound as cull.wgsl's
+        // write_args: wgpu's indirect validation is off (main_thread.rs).
+        let index_limit = (scene.indices.size() / 2).min(u64::from(u32::MAX)) as u32;
+        let cpu_clamped = std::cell::Cell::new(0u32);
         let push = |cpu: &mut Vec<DrawIndexedIndirect>, l: &[DrawCmd]| -> (u64, u32) {
             let start = cpu.len() as u64 * std::mem::size_of::<DrawIndexedIndirect>() as u64;
-            cpu.extend(l.iter().map(DrawIndexedIndirect::from));
+            cpu.extend(l.iter().map(|c| {
+                let mut d = DrawIndexedIndirect::from(c);
+                if crate::gpu_cull::bound_cpu_draw(&mut d, index_limit) {
+                    cpu_clamped.set(cpu_clamped.get() + 1);
+                }
+                d
+            }));
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
-        // a cut-out photo leaves the ground and the water out of the view
-        // (cutout.rs); the reflections and the probes keep them, for the
-        // light they give
-        let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
-        let mut rg = Ranges {
-            terrain: push(cpu, terrain),
-            terrain_pbr: push(cpu, if f.cutout { &[] } else { &lists.terrain_pbr }),
-            terrain_mask: push(cpu, if f.cutout { &[] } else { &lists.terrain_mask }),
-            opaque: push(cpu, &lists.opaque),
-            opaque_2s: push(cpu, &lists.opaque_two_sided),
-            mask: push(cpu, &lists.mask),
-            mask_2s: push(cpu, &lists.mask_two_sided),
-            water: push(cpu, water),
-            water_exclusion: push(cpu, &lists.water_exclusion),
-            blend: push(cpu, &lists.blend),
-            glow: push(cpu, &lists.glow),
-            glow_alpha: push(cpu, &lists.glow_alpha),
-            blend_under: push(cpu, &lists.blend_under_water),
-            ..Default::default()
+        let main_lists = main_view_lists(lists, f.cutout);
+        let mut rg = {
+            let [
+                terrain,
+                terrain_pbr,
+                terrain_mask,
+                opaque,
+                opaque_2s,
+                mask,
+                mask_2s,
+                water,
+                water_exclusion,
+                blend,
+                glow,
+                glow_alpha,
+                blend_under,
+            ] = main_lists.map(|(list, _)| push(cpu, list));
+            Ranges {
+                terrain,
+                terrain_pbr,
+                terrain_mask,
+                opaque,
+                opaque_2s,
+                mask,
+                mask_2s,
+                water,
+                water_exclusion,
+                blend,
+                glow,
+                glow_alpha,
+                blend_under,
+                ..Default::default()
+            }
         };
         let main_count = cpu.len();
         // GPU draw lists this frame (gpu_cull.rs)
@@ -6591,25 +8418,10 @@ impl Backend {
             && (main_count > 0 || gpu.is_some())
             && !*NO_OCCLUSION.get_or_init(|| std::env::var_os("AURORA_NO_OCCLUSION").is_some());
         if occl {
-            use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
+            use crate::occlusion::CullDraw;
             let mut cull = std::mem::take(&mut self.cull_cpu);
             cull.clear();
-            let lists_kinds: [(&[DrawCmd], u32); 13] = [
-                (&lists.terrain, KIND_NONE),
-                (&lists.terrain_pbr, KIND_NONE),
-                (&lists.terrain_mask, KIND_NONE),
-                (&lists.opaque, KIND_PREPASS),
-                (&lists.opaque_two_sided, KIND_PREPASS),
-                (&lists.mask, KIND_PREPASS),
-                (&lists.mask_two_sided, KIND_PREPASS),
-                (&lists.water, KIND_NONE),
-                (&lists.water_exclusion, KIND_NONE),
-                (&lists.blend, KIND_TESTED),
-                (&lists.glow, KIND_TESTED),
-                (&lists.glow_alpha, KIND_TESTED),
-                (&lists.blend_under_water, KIND_TESTED),
-            ];
-            for (l, kind) in lists_kinds {
+            for (l, kind) in main_lists {
                 cull.extend(l.iter().map(|c| CullDraw {
                     sphere: c.bounds,
                     kind,
@@ -6645,6 +8457,7 @@ impl Backend {
                 (profile(), frame_flags::SHADOW_STATS),
                 (!shadow_depth_only, frame_flags::SHADOW_ALPHA_ALL),
                 (crate::shadow_cull::blend_casts(), frame_flags::BLEND_CASTS),
+                (self.rain_shelter(f), frame_flags::SPOT_SHELTER),
             ] {
                 if on {
                     flags |= bit;
@@ -6657,14 +8470,20 @@ impl Backend {
                 merge_size,
                 [water_vp, mirror_vp, probe_vp],
                 spot_vp,
+                probe_shadow_now,
                 flags,
             );
+            frame.groups[3] = self.shelter_slot as u32;
+            if let Some(c) = &capture {
+                frame.probe_eye = c.origin.extend(c.reach).to_array();
+            }
             if do_water_air {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
             }
+            // the same limit as the CPU-built lists' bound (`push`)
             self.cull
-                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
+                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, index_limit, frame);
         }
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
@@ -6682,10 +8501,17 @@ impl Backend {
         rg.physics_shapes = push(cpu, &lists.physics_shapes);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
+        rg.part_faces = push(cpu, &lists.part_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
-        if capture.is_some() {
-            rg.probe = push(cpu, &cull_to_view(probe_vp, &lists.probe));
+        if let Some(c) = &capture {
+            let reached: Vec<ShadowCaster> = lists
+                .probe
+                .iter()
+                .filter(|o| o.center.distance(c.origin) - o.radius < c.reach)
+                .copied()
+                .collect();
+            rg.probe = push(cpu, &cull_to_view(probe_vp, &reached));
         }
         if do_water_refl {
             rg.refl_water = push(cpu, &cull_to_view(water_vp, &lists.reflection));
@@ -6697,6 +8523,8 @@ impl Backend {
         }
         if mirror.is_some() {
             rg.refl_mirror = push(cpu, &cull_to_view(mirror_vp, &lists.reflection));
+            let [rigged, rest] = mirror_blend_order(mirror_vp, mirror_eye, &lists.reflection_blend, lists.reflection_blend_rigged);
+            rg.refl_mirror_blend = [push(cpu, &rigged), push(cpu, &rest)];
         }
         // terrain of the reflection passes, each culled to its own frustum
         if capture.is_some() {
@@ -6716,11 +8544,25 @@ impl Backend {
             rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
             rg.shadow_terrain[i] = push(cpu, &shadow_terrain_lists[i]);
         }
+        if let Some(vp) = &probe_shadow_now {
+            let inside = |c: &&ShadowCaster| crate::gpu_cull::in_cascade(vp, c.center, c.radius);
+            let casters: Vec<DrawCmd> = lists.shadow_casters.iter().filter(inside).map(|c| c.cmd).collect();
+            let terrain: Vec<DrawCmd> = lists.terrain_shadow_casters.iter().filter(inside).map(|c| c.cmd).collect();
+            rg.probe_shadow = push(cpu, &casters);
+            rg.probe_shadow_terrain = push(cpu, &terrain);
+        }
         for (range, list) in rg.spot.iter_mut().zip(&spot_lists) {
             *range = push(cpu, list);
         }
         for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
+        }
+        // after every CPU-built list: main view, HUD, debug, selection,
+        // preview, shadows and probes
+        if cpu_clamped.get() > 0 {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            let n = cpu_clamped.get();
+            ONCE.call_once(|| log::warn!("indirect draws: {n} CPU-built draws had an index range past the index buffer and were skipped"));
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {
@@ -6771,8 +8613,8 @@ impl Backend {
             let c = self.cull.last;
             stats.draws += c.main_draws() + c.bins[BIN_WATER_EXCLUSION];
             stats.shadow_draws += c.shadow_draws();
-            for k in 0..CASCADES {
-                stats.shadow.draws[k] += c.cascade_draws(k);
+            for (k, draws) in stats.shadow.draws.iter_mut().enumerate() {
+                *draws += c.cascade_draws(k);
             }
             stats.shadow.triangles = c.shadow_triangles;
             stats.shadow.rigged_draws = c.shadow_rigged;
@@ -6795,7 +8637,7 @@ impl Backend {
             &lists.water_events,
             &lists.water_contacts,
         ) {
-            self.rebuild_bind_groups();
+            self.rebuild_bind_groups_checked("TAA history after a water effects change");
         }
         stats.particles += self.water_effects.particles;
         prof.mark("lists");
@@ -6941,7 +8783,25 @@ impl Backend {
             mark(&mut encoder, MARK_SHADOW_C0_END);
             mark(&mut encoder, MARK_SHADOW_C1_END);
         }
-        if f.shadows {
+        let shelter = self.rain_shelter(f);
+        let shelter_only = !f.shadows && shelter;
+        // shadows off: the shelter map alone, kept while it still holds this
+        // square (snapped to the metre) and what stands in it, not every
+        // frame (review of #2410: the users who turned the shadows off for
+        // speed paid for a full pass while the ground was wet)
+        let shelter_kept = shelter_only
+            && self
+                .shelter_drawn
+                .is_some_and(|(m, at)| m == rain_shelter_matrix(f.camera_pos) && at.elapsed() < SHELTER_REFRESH);
+        if f.shadows || !shelter {
+            self.shelter_drawn = None;
+        } else if shelter_only && !shelter_kept {
+            self.shelter_drawn = Some((rain_shelter_matrix(f.camera_pos), Instant::now()));
+        }
+        let shelter_only = shelter_only && !shelter_kept;
+        // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
+        let mut shelter_marked = false;
+        if f.shadows || shelter_only {
             // What the atlas passes draw, in order: each cascade in its
             // tile, then the projectors' maps. One pass, unless the
             // cascades are merged: the pass then ends after the opaque
@@ -6965,7 +8825,15 @@ impl Backend {
             ];
             let size = self.shadow_size;
             let half = size / 2;
-            let passes = if merges.is_some() { MERGED } else { ONE_PASS };
+            // (shadows off: the rain's shelter map alone)
+            const SHELTER_ONLY: &[&[Step]] = &[&[Spots]];
+            let passes = if shelter_only {
+                SHELTER_ONLY
+            } else if merges.is_some() {
+                MERGED
+            } else {
+                ONE_PASS
+            };
             for (i, steps) in passes.iter().enumerate() {
                 let ts = if i == 0 && take_first() { ts_begin(&self.timer) } else { None };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -7030,9 +8898,21 @@ impl Backend {
                             // projector shadow maps: the halves of the top
                             // row of the atlas's fourth tile, every caster
                             // with the alpha test
+                            let mut shelter_ended = false;
                             for (k, vp) in spot_vp.iter().enumerate() {
                                 if vp.is_none() {
                                     continue;
+                                }
+                                // the shelter map: timed from its own start
+                                // to the next map's (the maps after it are
+                                // the shadows' again)
+                                if shelter_marked && !shelter_ended {
+                                    pass_mark(&mut pass, MARK_SHELTER_END);
+                                    shelter_ended = true;
+                                }
+                                if shelter && k == self.shelter_slot {
+                                    pass_mark(&mut pass, MARK_SHELTER_BEGIN);
+                                    shelter_marked = true;
                                 }
                                 let (x, y) = crate::projector_shadows::map_origin(size, k);
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
@@ -7050,6 +8930,13 @@ impl Backend {
                                 }
                                 draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
                             }
+                            if !shelter_marked {
+                                pass_mark(&mut pass, MARK_SHELTER_BEGIN);
+                                shelter_marked = true;
+                            }
+                            if !shelter_ended {
+                                pass_mark(&mut pass, MARK_SHELTER_END);
+                            }
                         }
                     }
                 }
@@ -7063,6 +8950,10 @@ impl Backend {
             }
         }
 
+        if !shelter_marked {
+            mark(&mut encoder, MARK_SHELTER_BEGIN);
+            mark(&mut encoder, MARK_SHELTER_END);
+        }
         prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
         let (pre_opaque, pre_opaque_2s) = if draw_lists.portal_clipping {
@@ -7307,6 +9198,35 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        // ---- FSR: the blended faces drawn over what lies behind them, even
+        // faint glass, give their own depth and motion, so their edges keep
+        // their history (the occlusion and the contact shadows have read
+        // that depth; GTAO those normals)
+        if let (pipe, Some((_, view)), true, true) = (
+            &self.pipelines.fsr_blend_normal,
+            &self.targets.ao_depth,
+            normals.is_some() && n_blend > 0,
+            self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) && fsr_blend_motion(),
+        ) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fsr blended faces motion"),
+                color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, pipe, rg.blend, 0);
+            draw_under(&mut pass, pipe, rg.blend_under);
+        }
         self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
@@ -7318,6 +9238,7 @@ impl Backend {
                 rg.refl_water,
                 (rg.refl_terrain_water, rg.refl_terrain_pbr_water),
                 BIN_REFL_WATER,
+                [(0, 0); 2],
             ),
             (
                 mirror.is_some(),
@@ -7327,9 +9248,10 @@ impl Backend {
                 rg.refl_mirror,
                 (rg.refl_terrain_mirror, rg.refl_terrain_pbr_mirror),
                 BIN_REFL_MIRROR,
+                rg.refl_mirror_blend,
             ),
         ];
-        for (enabled, target, bg, label, objects, terrain, bin) in refl_passes {
+        for (enabled, target, bg, label, objects, terrain, bin, blended) in refl_passes {
             let (true, Some(t)) = (enabled, target) else {
                 continue;
             };
@@ -7364,6 +9286,8 @@ impl Backend {
             draw(&mut pass, &self.pipelines.refl_terrain_pbr, terrain.1);
             draw(&mut pass, &self.pipelines.refl_obj, objects);
             draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
+            draw(&mut pass, &self.pipelines.refl_blend_rigged, blended[0]);
+            draw(&mut pass, &self.pipelines.refl_blend, blended[1]);
         }
 
         mark(&mut encoder, MARK_WATER_AIR_BEGIN);
@@ -7405,6 +9329,40 @@ impl Backend {
         // ---- reflection probe: one cube face (LLReflectionMap::update ->
         // cubeSnapshot), then the radiance filtering after the sixth
         if let Some(c) = &capture {
+            if probe_shadow_now.is_some() {
+                let size = crate::probes::SHADOW_SIZE;
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("probe shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.probe_shadow_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_viewport(0.0, 0.0, size as f32, size as f32, 0.0, 1.0);
+                pass.set_scissor_rect(0, 0, size, size);
+                pass.set_bind_group(3, &self.probe_shadow_group, &[]);
+                pass.set_pipeline(&self.pipelines.shadow);
+                let (off, count) = rg.probe_shadow;
+                if count > 0 {
+                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
+                }
+                draw_bin(&mut pass, None, BIN_PROBE_SHADOW, BIN_PROBE_SHADOW);
+                draw(&mut pass, &self.pipelines.shadow_terrain, rg.probe_shadow_terrain);
+            }
             // the radiance face, then (a sky with a probe ambiance) the same
             // face of the irradiance capture
             let radiance = (
@@ -7692,7 +9650,7 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
-            if !f.cutout {
+            if !f.cutout && !f.hide_sky {
                 pass.set_pipeline(&self.pipelines.sky);
                 pass.draw(0..3, 0..1);
             }
@@ -7736,6 +9694,81 @@ impl Backend {
                 .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
+        let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain, f.rain_look.quality) };
+        // rain prototype: the wetness memory, from the last one and the
+        // shelter map, then copied where it is read
+        let rain_wet = !f.cutout && self.rain_wet.active();
+        mark(&mut encoder, MARK_WEATHER_MEMORY_BEGIN);
+        if rain_wet {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("rain wetness"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.water_effects.rain_wet_target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                pass.set_pipeline(&self.pipelines.rain_wet_update);
+                pass.draw(0..3, 0..1);
+            }
+            let size = wgpu::Extent3d {
+                width: crate::water_effects::RAIN_WET_SIZE,
+                height: crate::water_effects::RAIN_WET_SIZE,
+                depth_or_array_layers: 1,
+            };
+            encoder.copy_texture_to_texture(
+                self.water_effects.rain_wet_target.as_image_copy(),
+                self.water_effects.rain_wet.as_image_copy(),
+                size,
+            );
+        }
+        if self.snow_trail.active() {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("snow footprints"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.water_effects.snow_trail_target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if let Some((buffer, _, n)) = self.snow_trail.prints.as_ref().filter(|p| p.2 > 0) {
+                    bind_mesh(&mut pass, &self.groups.a);
+                    pass.set_pipeline(&self.pipelines.snow_trail_update);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, 0..*n);
+                }
+            }
+            let size = wgpu::Extent3d {
+                width: crate::water_effects::SNOW_TRAIL_SIZE,
+                height: crate::water_effects::SNOW_TRAIL_SIZE,
+                depth_or_array_layers: 1,
+            };
+            encoder.copy_texture_to_texture(
+                self.water_effects.snow_trail_target.as_image_copy(),
+                self.water_effects.snow_trail.as_image_copy(),
+                size,
+            );
+        }
+        mark(&mut encoder, MARK_WEATHER_MEMORY_END);
         if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);
@@ -7838,23 +9871,67 @@ impl Backend {
         mark(&mut encoder, MARK_COPY_END);
 
         // the copy of the depth `RiggedBlendDepth::Layered` and `Layers`
-        // draw into, made on its first use (the size and samples of the
-        // scene depth)
-        if matches!(lists.blend_depth_mode, RiggedBlendDepth::Layered | RiggedBlendDepth::Layers)
-            && lists.blend_depth > 0
-            && self.targets.blend_layers.is_none()
-        {
+        // draw into, and `Exact` writes its cut into, made on its first use
+        // (the size and samples of the scene depth)
+        let layers_wanted = match lists.blend_depth_mode {
+            RiggedBlendDepth::Layered | RiggedBlendDepth::Layers => lists.blend_depth > 0,
+            _ => false,
+        };
+        if layers_wanted && self.targets.blend_layers.is_none() {
             let size = self.targets.depth_ss_tex.size();
             let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-            self.targets.blend_layers = Some(make_view(
-                &self.device,
-                "rigged blend layers depth",
-                size.width,
-                size.height,
-                DEPTH_FORMAT,
-                samples,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
-            ));
+            let (layers, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                make_view(
+                    &self.device,
+                    "rigged blend layers depth",
+                    size.width,
+                    size.height,
+                    DEPTH_FORMAT,
+                    samples,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                )
+            });
+            self.targets.blend_layers = Some(layers);
+            // refused, this frame is lost; the next ones make every target
+            // again
+            first_use(&mut self.oom, "rigged blend layers depth", true, refused && !self.lost.get());
+        }
+        // the fronts of `RiggedBlendDepth::Exact`, made on their first use
+        // (the size of the scene depth)
+        let exact_mode = matches!(lists.blend_depth_mode, RiggedBlendDepth::Exact);
+        if exact_mode && rg.blend.1 > 0 && self.targets.blend_exact.is_none() {
+            let size = self.targets.depth_ss_tex.size();
+            let (order, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                crate::blend_exact::Lists::new(&self.device, (size.width, size.height), DEPTH_FORMAT)
+            });
+            self.targets.blend_exact = order;
+            first_use(&mut self.oom, "blend order fronts", true, refused && !self.lost.get());
+        }
+        // their pool follows what the views take of it: larger where many
+        // pixels have many layers, smaller again once they are gone. (The
+        // views until the larger one is there mix what found no page.)
+        let pool = self
+            .targets
+            .blend_exact
+            .as_ref()
+            .filter(|_| exact_mode)
+            .and_then(|order| Some((order.size(), order.pool_wanted(&self.device)?)));
+        if let Some((size, pages)) = pool {
+            let (order, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                crate::blend_exact::Lists::with_pool(&self.device, size, DEPTH_FORMAT, pages)
+            });
+            match order {
+                Some(order) if !refused => {
+                    log::info!("blend order: a pool of {pages} pages");
+                    self.targets.blend_exact = Some(order);
+                }
+                _ => {
+                    log::warn!("blend order: no memory for a pool of {pages} pages, the one there is kept");
+                    if let Some(order) = &self.targets.blend_exact {
+                        order.pool_refused();
+                    }
+                }
+            }
         }
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
@@ -7863,7 +9940,18 @@ impl Backend {
         let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
         let (b0, bn) = rg.blend;
         let n_depth = (lists.blend_depth as u32).min(bn);
-        let split = n_depth > 0;
+        // every blended face in the true order of its fragments
+        // (blend_exact.rs), in passes of their own like the rigged ones
+        // (not with MSAA yet: the pass of the blended faces has targets of
+        // its own, of one sample)
+        let exact = self
+            .targets
+            .blend_exact
+            .as_ref()
+            .filter(|_| exact_mode && bn > 0 && self.targets.depth_msaa.is_none());
+        let split = n_depth > 0 || exact.is_some();
+        // the first blended face the last part still draws over the others
+        let rest_from = if exact.is_some() { bn } else { n_depth };
         let blend_pipe = self
             .pipelines
             .blend_late
@@ -7888,8 +9976,10 @@ impl Backend {
         let rest = |pass: &mut wgpu::RenderPass| {
             // The local hologram leaves world depth and the SSR G-buffer
             // untouched; transparent world faces still cover it normally.
-            draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
-            blended(pass, blend_pipe, n_depth, bn);
+            if exact.is_none() {
+                draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
+            }
+            blended(pass, blend_pipe, rest_from, bn);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
@@ -7929,6 +10019,25 @@ impl Backend {
                 pass.set_pipeline(&self.pipelines.water_particles);
                 pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
             }
+            pass_mark(pass, MARK_RAIN_BEGIN);
+            if rain_drops > 0 {
+                pass.set_pipeline(&self.pipelines.rain);
+                pass.draw(0..6, 0..rain_drops);
+                // splashes: 6 droplets of 6 vertices; up to 9,000 places
+                // (none in snow)
+                // in snow: the flakes that land and melt
+                {
+                    pass.set_pipeline(&self.pipelines.rain_splash);
+                    // snow: one flake a place, as many as land (a 24 m square,
+                    // up to about two a square metre at once)
+                    let places = if f.rain_look.snow > 0.0 { 1_200.0 } else { 9_000.0 };
+                    pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * places * rain_share(f.rain_look.quality)) as u32);
+                }
+                // beyond the drops' box: the distant rain's layers
+                pass.set_pipeline(&self.pipelines.rain_far);
+                pass.draw(0..3, 0..1);
+            }
+            pass_mark(pass, MARK_RAIN_END);
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
                 pass.set_pipeline(&self.pipelines.particles);
@@ -7936,12 +10045,41 @@ impl Backend {
                 pass.draw(0..6, 0..n_particles);
             }
         };
+        let exact_glow = glow_on && glow_skip & 8 == 0;
         {
+            // deep snow: its surface, before the rest of pass B (what is
+            // drawn there, the wet pass and the blended faces, comes over
+            // it); it writes the depth, so the frame group without it
+            let snow_on = f.rain_look.snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY;
+            if f.rain_look.deep_snow && snow_on && !f.cutout && self.rain_shelter(f) {
+                let cells: u32 = match f.rain_look.quality {
+                    0 => 128,
+                    1 => 192,
+                    _ => 256,
+                };
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "deep snow", false, true);
+                bind_mesh(&mut pass, &self.groups.a);
+                pass.set_pipeline(&self.pipelines.snow_mesh);
+                pass.draw(0..cells * cells * 6, 0..1);
+            }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
             bind_mesh(&mut pass, &self.groups.b);
-            if let (Some(ssr), Some(gbg)) = (&self.pipelines.ssr, &self.gbuf_group) {
+            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
                 pass.set_bind_group(3, gbg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            // rain prototype: wet ground and puddles, under the transparent
+            // things drawn after
+            pass_mark(&mut pass, MARK_WET_BEGIN);
+            if rain_wet {
+                match (&self.pipelines.rain_wet_g, &self.gbuf_group) {
+                    (Some(pipe), Some(gbg)) => {
+                        pass.set_pipeline(pipe);
+                        pass.set_bind_group(3, gbg, &[]);
+                    }
+                    _ => pass.set_pipeline(&self.pipelines.rain_wet),
+                }
                 pass.draw(0..3, 0..1);
             }
             pass_mark(&mut pass, MARK_SSR_END);
@@ -7965,15 +10103,90 @@ impl Backend {
                 }
             }
             pass_mark(&mut pass, MARK_GLOW_END);
+            if exact.is_some() {
+                // before the blended faces, which dim it as they dim the
+                // rest of what is drawn
+                draw(&mut pass, &self.pipelines.creation_preview, rg.creation_preview);
+            }
             if !split {
                 rest(&mut pass);
             }
         }
-        if split {
+        // `Exact`: every blended face once, lit and filed pixel by pixel,
+        // into the targets of the haze, against the depth of the opaque
+        // scene
+        if let Some(order) = exact {
+            let t = &self.targets;
+            order.set_faint(&self.queue, lists.blend_precision.faint());
+            order.clear(&mut encoder);
+            encoder.copy_texture_to_texture(
+                t.depth_ss_tex.as_image_copy(),
+                order.depth_tex.as_image_copy(),
+                t.depth_ss_tex.size(),
+            );
+            {
+                let haze = |view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                };
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("scene b blend once"),
+                    color_attachments: &[haze(&order.haze), haze(&order.range)],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &order.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.b);
+                pass.set_bind_group(3, &order.write, &[]);
+                // the faces come nearest first: between runs of them, the cut
+                // of each pixel goes into the depth, and what lies under it
+                // in the next runs is left out before its shader
+                let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
+                let mut from = 0u32;
+                for to in crate::blend_exact::runs(bn) {
+                    if from > 0 {
+                        pass.set_pipeline(&self.pipelines.blend_cut);
+                        pass.draw(0..3, 0..1);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_sided(
+                        &mut pass,
+                        &self.pipelines.blend_once,
+                        (b0 + u64::from(from) * stride, to - from),
+                        from,
+                    );
+                    from = to;
+                }
+            }
+            order.count_pool(&mut encoder);
+            // the rigged faces in the scene depth where at least half
+            // covered, for the particles drawn after them (#556)
+            if n_depth > 0 {
+                let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
+                bind_mesh(&mut pass, &self.groups.a);
+                draw_sided(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth), 0);
+            }
+        } else if split {
             // (the frame group without the scene copy and the depth: the
             // depth is written here, and fs_blend reads neither)
             match lists.blend_depth_mode {
-                RiggedBlendDepth::Write => {
+                // the lists could not be made: as the Legacy Viewer
+                RiggedBlendDepth::Write | RiggedBlendDepth::Exact => {
                     let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
                     blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
@@ -8040,9 +10253,22 @@ impl Backend {
                                 continue;
                             }
                             let run = (b0 + from as u64 * stride, end - from);
-                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            if lists.blend_depth_quiet.binary_search(&end).is_ok() {
+                                // eyelashes and brows, drawn before the hair:
+                                // their depth where nearly opaque only (a
+                                // lash itself, in front of a strand), then
+                                // their colour, so that neither their
+                                // card's nearly empty part nor their lashes
+                                // blurred into a band by the mipmaps cut
+                                // the hair drawn after them in straight
+                                // edges (#2121)
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, run, from);
+                                blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                            } else {
+                                blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            }
                             from = end;
                         }
                     }
@@ -8074,8 +10300,28 @@ impl Backend {
                     }
                 }
             }
+        }
+        if split {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
+            if let Some(order) = exact {
+                // the fronts sorted and laid over what is drawn
+                pass.set_bind_group(3, &order.read, &[]);
+                if let Some(both) = self.pipelines.blend_both.as_ref().filter(|_| exact_glow) {
+                    pass.set_pipeline(both);
+                    pass.draw(0..3, 0..1);
+                    calls.set(calls.get() + 1);
+                } else {
+                    pass.set_pipeline(&self.pipelines.blend_over);
+                    pass.draw(0..3, 0..1);
+                    calls.set(calls.get() + 1);
+                    if exact_glow {
+                        pass.set_pipeline(&self.pipelines.blend_glow);
+                        pass.draw(0..3, 0..1);
+                        calls.set(calls.get() + 1);
+                    }
+                }
+            }
             rest(&mut pass);
         }
 
@@ -8091,6 +10337,7 @@ impl Backend {
                 _ => &self.pipelines.pick,
             };
             let left = drawn_px.is_some_and(|(_, _, mode)| matches!(mode, crate::DrawnMode::Left | crate::DrawnMode::LeftVisible));
+            let mask_interaction = drawn_px.is_some_and(|(_, _, mode)| mode == crate::DrawnMode::Left);
             let (solid_pick, solid_pick_2s) = if left {
                 (&self.pipelines.pick_left, &self.pipelines.pick_left_2s)
             } else {
@@ -8110,6 +10357,20 @@ impl Backend {
                     (blend_pick, rg.blend, None),
                     // under the water too: found by a click from above
                     (blend_pick, rg.blend_under, None),
+                    // LLToolPie's transparent pick reaches Mask cutouts too.
+                    // Keep the visible opaque answer underneath, so a passive
+                    // mask cannot hide a posed attachment's actionable face.
+                    // HUDs and camera/menu queries do not enter these ranges.
+                    (
+                        &self.pipelines.pick_mask,
+                        if mask_interaction { rg.mask } else { (0, 0) },
+                        mask_interaction.then_some(2),
+                    ),
+                    (
+                        &self.pipelines.pick_mask_2s,
+                        if mask_interaction { rg.mask_2s } else { (0, 0) },
+                        mask_interaction.then_some(3),
+                    ),
                     // LLViewerWindow::pickAsync / pickImmediate: debug alpha
                     // makes transparent surfaces pickable. Reuse the actual
                     // overlay lists, including hidden faces and only the
@@ -8171,61 +10432,109 @@ impl Backend {
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         let mut post_src = &self.targets.color;
+        // the scene's depth at the size of the image the passes below read
+        let mut post_depth = &self.targets.depth_ss;
+        // the history the TAA pass wrote; read below, once the passes are
+        // recorded, through a shared borrow
+        let mut taa_written = None;
         if let Some(taa) = &mut self.taa {
-            let w = taa.parity;
-            let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
-            let u = TaaU {
-                inv_view_proj: (fu.proj * fu.view).inverse().to_cols_array_2d(),
-                prev_view_proj: prev.to_cols_array_2d(),
-                params: [
-                    if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
-                    0.1,
-                    world_size.0 as f32,
-                    world_size.1 as f32,
-                ],
-                motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-            };
-            self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("taa"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &taa.history[w],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&taa.pipeline);
-                pass.set_bind_group(0, &taa.bind_groups[w], &[]);
-                pass.draw(0..3, 0..1);
+            if let Some((fsr, _)) = &mut taa.fsr {
+                // FSR 3.1 instead of the TAA pass, from the same inputs
+                fsr.encode(
+                    &self.queue,
+                    &mut encoder,
+                    &crate::fsr::FrameInputs {
+                        view_proj: fu.proj * fu.view,
+                        prev_view_proj: self.prev_view_proj.unwrap_or(unjittered_vp),
+                        proj: f.proj,
+                        jitter: self.taa_jitter,
+                        reset: taa.reset || self.prev_view_proj.is_none(),
+                        motion_on: taa_motion_now(),
+                        sharpness: self.settings.fsr_sharpness,
+                    },
+                );
+                taa.reset = false;
+            } else {
+                let w = taa.parity;
+                let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
+                let u = TaaU {
+                    inv_view_proj: (fu.proj * fu.view).inverse().to_cols_array_2d(),
+                    prev_view_proj: prev.to_cols_array_2d(),
+                    params: [
+                        if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
+                        0.1,
+                        world_size.0 as f32,
+                        world_size.1 as f32,
+                    ],
+                    motion: [if taa_motion_now() { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                };
+                self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("taa"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &taa.history[w],
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_pipeline(&taa.pipeline);
+                    pass.set_bind_group(0, &taa.bind_groups[w], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                let _ = &taa.layout;
+                taa.reset = false;
+                taa.parity = 1 - w;
+                taa_written = Some(w);
             }
-            let _ = &taa.layout;
-            taa.reset = false;
-            taa.parity = 1 - w;
-            post_bg = &taa.post_bgs[w];
-            post_src = &taa.history[w];
+        }
+        if let Some(taa) = &self.taa {
+            if let Some((fsr, fsr_post)) = &taa.fsr {
+                post_bg = fsr_post;
+                post_src = fsr.output();
+                if let Some(depth) = fsr.display_depth() {
+                    post_depth = depth;
+                }
+            } else if let Some(w) = taa_written {
+                post_bg = &taa.post_bgs[w];
+                post_src = &taa.history[w];
+            }
         }
         // ---- depth of field, on the resolved (and TAA-steady) image,
         // before the glow and the tone mapping (not in probe captures)
         match &f.dof {
-            Some(params) => {
-                let dof = self.dof.get_or_insert_with(|| crate::dof::Dof::new(&self.device, HDR_FORMAT));
+            Some(params)
+                if dof_targets(
+                    &mut self.oom,
+                    &mut self.dof,
+                    &self.device,
+                    &crate::dof::PostInputs {
+                        layout: &self.post_layout,
+                        sampler: &self.post_sampler,
+                        buffer: &self.post_buffer,
+                        glow: &self.glow.views[1],
+                    },
+                    post_size,
+                    self.lost.get(),
+                ) =>
+            {
+                let dof = self.dof.as_mut().expect("made by dof_targets");
                 post_bg = dof.encode(
                     &self.device,
                     &self.queue,
                     &mut encoder,
                     post_src,
-                    &self.targets.depth_ss,
+                    post_depth,
                     f.proj,
-                    world_size,
+                    post_size,
                     params,
                     HDR_FORMAT,
                     &crate::dof::PostInputs {
@@ -8237,6 +10546,8 @@ impl Backend {
                     f.cutout,
                 );
             }
+            // (refused by a full video memory: the frame goes without it)
+            Some(_) => {}
             None => {
                 if let Some(dof) = &mut self.dof {
                     dof.release();
@@ -8263,7 +10574,6 @@ impl Backend {
                 // without HDR there is none to keep)
                 hold: (snapshot.is_some() || f.exposure_lock || f.cutout) && self.settings.hdr,
                 glow: self.glow_drawn,
-                inv_view_proj: unjittered_vp.inverse(),
             },
             &self.post_buffer,
             POST_AUTO_EXPOSURE_OFFSET,
@@ -8287,28 +10597,43 @@ impl Backend {
         mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
-        if world_size != (self.config.width, self.config.height) {
-            let smooth = self.settings.render_scale_percent < 100 && self.rlva_resolution_divisor <= 1 && snapshot.is_none();
+        if post_size != (self.config.width, self.config.height) {
+            let smooth = spatial_upscale;
             if self
                 .rlva_scaled
                 .as_ref()
-                .is_none_or(|scaled| scaled.size() != world_size || scaled.smooth != smooth)
+                .is_none_or(|scaled| scaled.size() != post_size || scaled.smooth != smooth)
             {
-                self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(
-                    &self.device,
-                    self.config.format,
-                    world_size,
-                    smooth,
-                ));
+                let format = self.config.format;
+                let (scaled, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                    crate::rlva::resolution::Scaled::new(&self.device, format, post_size, smooth)
+                });
+                // refused, it stays for this frame, which fails as a whole:
+                // drawn without it, the frame would show the world at a
+                // resolution RLVa does not allow
+                self.rlva_scaled = Some(scaled);
+                first_use(&mut self.oom, "RLVa reduced scene", true, refused && !self.lost.get());
             }
         } else {
             self.rlva_scaled = None;
         }
         let composed_view = self.rlva_scaled.as_ref().map_or(&surface_view, |scaled| &scaled.view);
         let scene_target = if !f.rlva_spheres.is_empty() {
-            self.rlva_spheres
-                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, self.config.format))
-                .prepare(&self.device, world_size, self.config.format)
+            let format = self.config.format;
+            let spheres = self
+                .rlva_spheres
+                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, format));
+            if spheres.needs_targets(post_size) {
+                // refused, they stay for this frame, which fails as a
+                // whole: drawn without them, it would show what the
+                // spheres hide
+                let device = &self.device;
+                let (_, refused) = crate::gpu_alloc::scoped(device, || {
+                    spheres.prepare(device, post_size, format);
+                });
+                first_use(&mut self.oom, "RLVa vision spheres", true, refused && !self.lost.get());
+            }
+            spheres.prepare(&self.device, post_size, format)
         } else {
             self.rlva_spheres = None;
             composed_view
@@ -8317,18 +10642,36 @@ impl Backend {
         // and its passes into the frame
         let look = f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty()));
         if look.is_some() {
-            self.looks
-                .get_or_insert_with(|| crate::looks::Looks::new(&self.device))
-                .prepare(&self.device, self.config.format, world_size);
+            let format = self.config.format;
+            let looks = self.looks.get_or_insert_with(|| crate::looks::Looks::new(&self.device));
+            if !looks.needs_targets(format, post_size) {
+                looks.prepare(&self.device, format, post_size);
+            } else if self.oom.extras_ready(Instant::now()) {
+                let device = &self.device;
+                let (_, refused) = crate::gpu_alloc::scoped(device, || looks.prepare(device, format, post_size));
+                if first_use(&mut self.oom, "photo look", false, refused && !self.lost.get()) {
+                    // (no input: the frame is drawn without the look)
+                    looks.release();
+                }
+            } else {
+                // waiting: images of another size or format are not drawn
+                // through (no input: the frame goes without the look)
+                looks.release();
+            }
         } else if let Some(looks) = &mut self.looks {
             looks.idle();
         }
         let looks = look.and(self.looks.as_ref()).and_then(|looks| Some((looks, looks.input()?)));
         let post_target = looks.map_or(scene_target, |(_, input)| input);
+        // the selection outline is drawn only when its images exist (an
+        // outline refused by a full video memory is not): the frame's last
+        // timestamp goes to whichever pass really ends it
+        let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
+        let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && rg.select_faces.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -8367,7 +10710,7 @@ impl Backend {
             }
             if let (Some((looks, _)), Some(look)) = (looks, look) {
                 let depth = crate::looks::LookDepth {
-                    view: &self.targets.depth_ss,
+                    view: post_depth,
                     proj: f.proj,
                 };
                 let passes = looks.encode(&self.device, &self.queue, &mut encoder, look, scene_target, Some(depth));
@@ -8393,12 +10736,12 @@ impl Backend {
         if rg.select_faces.1 > 0
             && let Some(selection) = &self.selection
         {
-            let mut pass = selection.begin_mask(&mut encoder, &self.targets.depth_ss);
+            let mut pass = selection.begin_mask(&mut encoder, post_depth);
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_part => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -8409,21 +10752,90 @@ impl Backend {
             calls.set(calls.get() + 2);
         }
 
+        // Resolve subject coverage against private depth. Without depth
+        // writes the last visited face wins, including the body behind a
+        // visible unrigged Blend attachment. The scene depth stays intact.
+        let part_depth = self.part_depth.as_ref().filter(|_| draws_part || self.part_pick_px.is_some());
+        if let Some(depth) = part_depth {
+            encoder.copy_texture_to_texture(
+                post_depth.texture().as_image_copy(),
+                depth.texture().as_image_copy(),
+                depth.texture().size(),
+            );
+        }
+        if rg.part_faces.1 > 0
+            && let Some(depth) = part_depth
+            && let Some((px, tag)) = self.part_pick_px
+            && let Some(view) = self.part_pick.begin([post_size.0, post_size.1], px, tag)
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("poser part pick"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // the cursor's pixel alone is read: only it is rasterized
+            pass.set_scissor_rect(px[0], px[1], 1, 1);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.part_pick, rg.part_faces);
+            drop(pass);
+            self.part_pick.encode_copy(&mut encoder);
+            calls.set(calls.get() + 1);
+        }
+
+        if rg.part_faces.1 > 0
+            && self.part_lit
+            && let Some(depth) = part_depth
+            && let Some(part) = &self.part
+        {
+            let mut pass = part.begin_mask(&mut encoder, depth);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            part.encode(&mut encoder, scene_target, timestamps);
+            calls.set(calls.get() + 2);
+        }
+
         if let Some(effects) = &mut self.rlva_spheres {
             let passes = effects.encode(
                 &self.device,
                 &self.queue,
                 &mut encoder,
-                &self.targets.depth_ss,
+                post_depth,
                 unjittered_vp.inverse(),
-                world_size,
+                post_size,
                 &f.rlva_spheres,
                 composed_view,
             );
             calls.set(calls.get() + passes as u32);
         }
         if let Some(scaled) = &self.rlva_scaled {
-            scaled.encode(&mut encoder, &surface_view);
+            scaled.encode(&self.queue, &mut encoder, &surface_view, upscale_sharpen);
             calls.set(calls.get() + 1);
         }
 
@@ -8453,16 +10865,41 @@ impl Backend {
                     if let Some(old) = self.ui_glass.take() {
                         old.free(&mut self.egui);
                     }
-                    self.ui_glass = Some(crate::ui_glass::Glass::new(
-                        &self.device,
-                        &mut self.egui,
-                        self.config.format,
-                        size,
-                        scale,
-                    ));
+                    let now = Instant::now();
+                    if self.ui_targets_backoff.ready(now) {
+                        let format = self.config.format;
+                        let egui = &mut self.egui;
+                        let (glass, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                            crate::ui_glass::Glass::new(&self.device, egui, format, size, scale)
+                        });
+                        if self.memory_refused(refused) || crate::gpu_alloc::ui_targets_refused(size) {
+                            log::warn!("interface glass: out of video memory, the windows go without it for now");
+                            glass.free(&mut self.egui);
+                            self.ui_targets_backoff.failed(now);
+                        } else {
+                            // (the labels' copy below may still be refused)
+                            self.ui_targets_backoff.made();
+                            self.ui_glass = Some(glass);
+                        }
+                    }
                 }
             } else if let Some(old) = self.ui_glass.take() {
                 old.free(&mut self.egui);
+            }
+            // the labels' copy, made on its first use: checked that once,
+            // not on every frame that shows it
+            if label_glass.is_some()
+                && let Some(glass) = self.ui_glass.as_mut().filter(|glass| !glass.has_under())
+            {
+                let egui = &mut self.egui;
+                let (_, refused) = crate::gpu_alloc::scoped(&self.device, || glass.make_under(&self.device, egui));
+                if self.memory_refused(refused)
+                    && let Some(old) = self.ui_glass.take()
+                {
+                    log::warn!("interface glass: out of video memory, the labels go without it for now");
+                    old.free(&mut self.egui);
+                    self.ui_targets_backoff.failed(Instant::now());
+                }
             }
             match (label_glass, &mut self.ui_glass) {
                 (Some(area), Some(glass)) => {
@@ -8567,6 +11004,7 @@ impl Backend {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
         }
+        let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
         if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
@@ -8590,7 +11028,7 @@ impl Backend {
                     stencil_ops: None,
                 }),
                 timestamp_writes: match (&self.timer, timer_slot) {
-                    (Some(t), Some(_)) if hud_select_faces_range.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
+                    (Some(t), Some(_)) if !draws_hud_selection => Some(wgpu::RenderPassTimestampWrites {
                         query_set: &t.query_set,
                         beginning_of_pass_write_index: None,
                         end_of_pass_write_index: Some(1),
@@ -8711,34 +11149,7 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
-        let mut captured = None;
-        if let Some((buf, w, h, row)) = capture {
-            buf.map_async(wgpu::MapMode::Read, .., |_| {});
-            // (a device lost before: no image, the photo fails)
-            if self.lost.wait(&self.device)
-                && let Ok(view) = buf.get_mapped_range(..)
-            {
-                let bgra = matches!(
-                    self.config.format,
-                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-                );
-                // (a cut-out photo keeps its coverage, cutout.rs)
-                let opaque = if f.cutout { 0 } else { 255 };
-                let mut out = Vec::with_capacity((w * h * 4) as usize);
-                for y in 0..h {
-                    let r = &view[(y * row) as usize..(y * row + w * 4) as usize];
-                    for px in r.as_chunks::<4>().0 {
-                        let a = px[3] | opaque;
-                        if bgra {
-                            out.extend_from_slice(&[px[2], px[1], px[0], a]);
-                        } else {
-                            out.extend_from_slice(&[px[0], px[1], px[2], a]);
-                        }
-                    }
-                }
-                captured = Some((w, h, out));
-            }
-        }
+        let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
 
         if let (Some(t), Some(slot)) = (&mut self.timer, timer_slot) {
             let ready = t.readback[slot].1.clone();
@@ -8749,12 +11160,16 @@ impl Backend {
                 }
             });
         }
+        if let Some(order) = &self.targets.blend_exact {
+            order.after_submit();
+        }
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
         self.exposure.after_submit();
         self.histogram.after_submit();
         self.drawn_pick.after_submit();
+        self.part_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         if let FrameTarget::Surface(t) = surface_tex {
@@ -8766,6 +11181,7 @@ impl Backend {
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
+        self.part_pick.harvest();
         prof.mark("present");
         let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;
@@ -8802,6 +11218,7 @@ impl Backend {
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
+        stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {
@@ -8812,8 +11229,42 @@ impl Backend {
         stats.cpu_encode_ms = encode_ms;
         stats.water_reflection = do_water_refl;
         stats.mirror = mirror.is_some();
+        // a frame that went through: a try made earlier in it is settled
+        if self.oom.settle() {
+            log::info!("render targets: made again, the world is back");
+        }
+        self.ui_targets_backoff.settle();
         let spent = Spent { writes, lists: draw_lists };
         self.result(index, stats, captured, spent)
+    }
+
+    /// The image of a capture encoded in a frame just submitted.
+    fn read_capture(&self, (buf, w, h, row): (wgpu::Buffer, u32, u32, u32), cutout: bool) -> Option<(u32, u32, Vec<u8>)> {
+        buf.map_async(wgpu::MapMode::Read, .., |_| {});
+        // (a device lost before: no image, the photo fails)
+        if !self.lost.wait(&self.device) {
+            return None;
+        }
+        let view = buf.get_mapped_range(..).ok()?;
+        let bgra = matches!(
+            self.config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        // (a cut-out photo keeps its coverage, cutout.rs)
+        let opaque = if cutout { 0 } else { 255 };
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let r = &view[(y * row) as usize..(y * row + w * 4) as usize];
+            for px in r.as_chunks::<4>().0 {
+                let a = px[3] | opaque;
+                if bgra {
+                    out.extend_from_slice(&[px[2], px[1], px[0], a]);
+                } else {
+                    out.extend_from_slice(&[px[0], px[1], px[2], a]);
+                }
+            }
+        }
+        Some((w, h, out))
     }
 
     /// Copy the swapchain image to a readback buffer (frame captures).
@@ -8833,7 +11284,7 @@ impl Backend {
         let row = (w * 4).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("capture"),
-            size: (row * h) as u64,
+            size: crate::readback::readback_size((row * h) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -8926,6 +11377,171 @@ impl Backend {
 mod tests {
     use super::*;
 
+    /// The mirror's blended faces: those it does not see left out, the rigged
+    /// first in their own order, then the others back to front from the
+    /// mirror's camera (#3479).
+    #[test]
+    fn mirror_blend_order_culls_and_sorts_from_the_mirror_camera() {
+        let eye = Vec3::new(10.0, 0.0, 2.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+        let cmd = |record: u32, x: f32| {
+            DrawCmd {
+                index_count: 3,
+                first_index: 0,
+                base_vertex: 0,
+                record,
+                bounds: [0.0; 4],
+            }
+            .with_bounds(Vec3::new(10.0 + x, 0.0, 2.0), 0.5)
+        };
+        // rigged: a far one before a near one (their attachment order), one
+        // behind the camera; then the others, one behind the camera
+        let list = [
+            cmd(1, 6.0),
+            cmd(2, 2.0),
+            cmd(3, -4.0),
+            cmd(4, 2.0),
+            cmd(5, 8.0),
+            cmd(6, -3.0),
+            cmd(7, 4.0),
+        ];
+        let [rigged, rest] = mirror_blend_order(proj * view, eye, &list, 3);
+        let records = |l: &[DrawCmd]| l.iter().map(|c| c.record).collect::<Vec<_>>();
+        assert_eq!(records(&rigged), [1, 2]);
+        assert_eq!(records(&rest), [5, 7, 4]);
+        // more rigged than entries: all of them rigged, nothing left over
+        let [rigged, rest] = mirror_blend_order(proj * view, eye, &list[..2], 9);
+        assert_eq!((records(&rigged), rest.len()), (vec![1, 2], 0));
+    }
+
+    /// The frame's timestamps in the order the GPU writes them (every mark
+    /// is written each frame, empty spans included).
+    const MARK_ORDER: [u32; GPU_TIMESTAMPS as usize] = [
+        0,
+        MARK_SHADOW_BEGIN,
+        MARK_SHADOW_C0_END,
+        MARK_SHADOW_C1_END,
+        MARK_SHELTER_BEGIN,
+        MARK_SHELTER_END,
+        MARK_SHADOWS_END,
+        MARK_DEPTH_END,
+        MARK_SSAO_END,
+        MARK_CONTACT_END,
+        MARK_WATER_AIR_BEGIN,
+        MARK_WATER_AIR_END,
+        MARK_REFL_END,
+        MARK_SCENE_BEGIN,
+        MARK_WATER_INTERFACE_END,
+        MARK_DEPTH_MSAA_END,
+        MARK_SKY_END,
+        MARK_TERRAIN_END,
+        MARK_OBJECTS_END,
+        MARK_SCENE_A_END,
+        MARK_WEATHER_MEMORY_BEGIN,
+        MARK_WEATHER_MEMORY_END,
+        MARK_COPY_END,
+        MARK_WET_BEGIN,
+        MARK_SSR_END,
+        MARK_WATER_END,
+        MARK_GLOW_END,
+        MARK_BLEND_END,
+        MARK_RAIN_BEGIN,
+        MARK_RAIN_END,
+        MARK_SCENE_END,
+        MARK_BLOOM_BEGIN,
+        MARK_BLOOM_END,
+        1,
+    ];
+
+    /// The steps of `MARK_ORDER` a range covers.
+    fn steps(range: (u32, u32)) -> std::ops::Range<usize> {
+        let at = |m: u32| MARK_ORDER.iter().position(|&x| x == m).expect("a mark in MARK_ORDER");
+        let (a, b) = (at(range.0), at(range.1));
+        assert!(a < b, "range {range:?} runs backwards");
+        a..b
+    }
+
+    #[test]
+    fn gpu_elements_cover_the_frame_once_and_their_parts_stay_inside() {
+        let mut marks = MARK_ORDER.to_vec();
+        marks.sort();
+        marks.dedup();
+        assert_eq!(marks.len(), GPU_TIMESTAMPS as usize, "every timestamp once");
+        let mut covered = vec![0u32; MARK_ORDER.len() - 1];
+        let mut owner = vec![usize::MAX; MARK_ORDER.len() - 1];
+        for (e, ranges) in GPU_ELEMENTS.iter().enumerate() {
+            for &r in ranges.iter() {
+                for s in steps(r) {
+                    covered[s] += 1;
+                    owner[s] = e;
+                }
+            }
+        }
+        for (s, n) in covered.iter().enumerate() {
+            assert_eq!(*n, 1, "step {s} ({} to {}) counted {n} times", MARK_ORDER[s], MARK_ORDER[s + 1]);
+        }
+        let inside = |ranges: &[(u32, u32)], element: GpuElement| {
+            let e = GpuElement::ALL.iter().position(|&x| x == element).expect("an element");
+            for &r in ranges {
+                assert!(steps(r).all(|s| owner[s] == e), "{r:?} outside {element:?}");
+            }
+        };
+        for part in GPU_SHADOW_PARTS {
+            inside(part, GpuElement::ShadowsDepth);
+        }
+        inside(&GPU_DEPTH, GpuElement::ShadowsDepth);
+        inside(&GPU_WEATHER_PARTS, GpuElement::Weather);
+        for part in GPU_EFFECT_PARTS {
+            inside(part, GpuElement::Effects);
+        }
+        inside(&[(MARK_BLOOM_BEGIN, MARK_BLOOM_END)], GpuElement::Post);
+    }
+
+    /// The occlusion's table is read by index against the main view's
+    /// arguments: a cut-out photo leaves the ground and the water out of both,
+    /// and every other list keeps its place and its kind. Otherwise the table
+    /// is longer and shifted: draws tested with the bounds of others, a black
+    /// ground around the isolated avatar, and a panic where assertions are on.
+    #[test]
+    fn a_cut_out_leaves_the_ground_and_the_water_out_of_the_main_lists() {
+        use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};
+        let draws = |n| {
+            vec![
+                DrawCmd {
+                    index_count: 3,
+                    first_index: 0,
+                    base_vertex: 0,
+                    record: 0,
+                    bounds: [0.0; 4],
+                };
+                n
+            ]
+        };
+        let lists = DrawLists {
+            terrain: draws(1),
+            terrain_pbr: draws(2),
+            terrain_mask: draws(3),
+            opaque: draws(4),
+            water: draws(5),
+            water_exclusion: draws(6),
+            blend: draws(7),
+            ..Default::default()
+        };
+        let sizes = |cutout| main_view_lists(&lists, cutout).map(|(list, kind)| (list.len(), kind));
+        let (whole, cut) = (sizes(false), sizes(true));
+        assert_eq!(whole.iter().map(|(n, _)| n).sum::<usize>(), 28);
+        assert_eq!(cut.iter().map(|(n, _)| n).sum::<usize>(), 17);
+        for (i, (kept, left)) in whole.iter().zip(&cut).enumerate() {
+            let background = matches!(i, 0 | 1 | 2 | 7);
+            assert_eq!(left.0, if background { 0 } else { kept.0 }, "list {i}");
+            assert_eq!(left.1, kept.1, "list {i}");
+        }
+        assert_eq!(cut[3], (4, KIND_PREPASS));
+        assert_eq!(cut[8], (6, KIND_NONE));
+        assert_eq!(cut[9], (7, KIND_TESTED));
+    }
+
     #[test]
     fn taa_follows_the_motion_unless_switched_off_or_alternating() {
         assert!(taa_motion_applied(None, 0));
@@ -9001,7 +11617,7 @@ mod tests {
         encoder.copy_texture_to_texture(before.as_image_copy(), after.as_image_copy(), before.size());
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("impostor atlas test"),
-            size: 512,
+            size: crate::readback::readback_size(512),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -9354,9 +11970,9 @@ mod tests {
                 let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
                 let bump = 0.07 * ((u * 9.0).sin() + (v * 7.0).cos());
                 vertices.push(Vertex::new([u - 0.5, v - 0.5, bump], [0.0, 0.0, 1.0], [u, v]));
-                let a = (u * 255.0) as u8;
-                let b = ((1.0 - u) * v * 255.0) as u8;
-                let rest = 255 - a - b;
+                let a = (u * 65535.0) as u16;
+                let b = ((1.0 - u) * v * 65535.0) as u16;
+                let rest = u16::MAX - a - b;
                 skin.push(SkinVertex {
                     joints: [0, 1, 2, 3],
                     weights: [a, b, rest / 2, rest - rest / 2],
@@ -9624,7 +12240,7 @@ mod tests {
         }
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: (SIZE * SIZE * 4) as u64,
+            size: crate::readback::readback_size((SIZE * SIZE * 4) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

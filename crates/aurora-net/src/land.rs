@@ -1093,6 +1093,18 @@ mod tests {
     }
 
     #[test]
+    fn parcel_rename_sends_changed_name_and_requests_fresh_properties() {
+        let p = parse_parcel_properties(&props());
+        let mut update = ParcelUpdate::from_parcel(&p);
+        update.name = "New name".into();
+        let sd = aurora_llsd::from_xml(&aurora_llsd::to_xml(&update.to_llsd())).unwrap();
+        assert_eq!(sd["name"].as_str(), "New name");
+        assert_eq!(u32_of(&sd["flags"]), 1);
+        assert_eq!(sd["see_avs"].as_bool(), p.see_avatars);
+        assert_eq!(sd["obscure_moap"].as_bool(), p.media.obscure_moap);
+    }
+
+    #[test]
     fn access_lists_split_like_the_viewer() {
         let e = |n: u128| AccessEntry {
             id: Uuid::from_u128(n + 1),

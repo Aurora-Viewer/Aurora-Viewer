@@ -34,6 +34,15 @@ use uuid::Uuid;
 pub const ICON: &str = "stack-2-filled";
 pub const VERTICAL: &str = "texture_library_vertical";
 pub const HORIZONTAL: &str = "texture_library_horizontal";
+
+/// Saved local map IDs resolve through this viewer's persistent local registry.
+pub(crate) fn material_has_local_maps(material: &aurora_assets::PbrMaterial, world: &World) -> bool {
+    crate::imports::maps::ids(material)
+        .into_iter()
+        .flatten()
+        .any(|id| world.local_assets.contains_key(&id))
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Presentation {
     #[default]
@@ -287,8 +296,11 @@ impl LibraryUi {
                 }
                 let entries = self.filtered(prefs);
                 let empty = entries.is_empty();
+                let selected_index = entries
+                    .iter()
+                    .position(|index| Some(self.catalogue.entries[*index].id) == self.selected);
                 if horizontal {
-                    egui::ScrollArea::horizontal()
+                    widgets::search_scroll_to_column(ui, egui::ScrollArea::horizontal(), selected_index, 48.0)
                         .id_salt("library_strip")
                         .max_height(61.0)
                         .show_viewport(ui, |ui, viewport| {
@@ -324,32 +336,37 @@ impl LibraryUi {
                     // the cards in exactly the room the selection and the
                     // warnings leave
                     let (mut list, foot) = widgets::above_footer(ui);
-                    egui::ScrollArea::vertical()
-                        .id_salt("library_grid")
-                        .max_height(list.available_height())
-                        .show_rows(&mut list, row_height, rows, |ui, visible| {
-                            for row in visible {
-                                ui.horizontal(|ui| {
-                                    for index in entries.iter().skip(row * 2).take(2) {
-                                        let entry = self.catalogue.entries[*index].clone();
-                                        if let Some(action) = self.card(
-                                            ui,
-                                            p,
-                                            world,
-                                            scene,
-                                            images,
-                                            prefs,
-                                            &entry,
-                                            106.0,
-                                            true,
-                                            entries.first() == Some(index),
-                                        ) {
-                                            actions.push(action);
-                                        }
+                    widgets::search_scroll_to_row(
+                        &list,
+                        egui::ScrollArea::vertical(),
+                        selected_index.map(|index| index / 2),
+                        row_height,
+                    )
+                    .id_salt("library_grid")
+                    .max_height(list.available_height())
+                    .show_rows(&mut list, row_height, rows, |ui, visible| {
+                        for row in visible {
+                            ui.horizontal(|ui| {
+                                for index in entries.iter().skip(row * 2).take(2) {
+                                    let entry = self.catalogue.entries[*index].clone();
+                                    if let Some(action) = self.card(
+                                        ui,
+                                        p,
+                                        world,
+                                        scene,
+                                        images,
+                                        prefs,
+                                        &entry,
+                                        106.0,
+                                        true,
+                                        entries.first() == Some(index),
+                                    ) {
+                                        actions.push(action);
                                     }
-                                });
-                            }
-                        });
+                                }
+                            });
+                        }
+                    });
                     foot.show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if let Some(entry) = self
@@ -610,11 +627,11 @@ impl LibraryUi {
         if horizontal {
             ui.horizontal(|ui| {
                 row(self, ui);
-                widgets::search_field(ui, &mut self.search, aurora_i18n::tr!("common-search"), 160.0);
+                widgets::search_field(ui, p, &mut self.search, aurora_i18n::tr!("common-search"), 160.0);
                 self.filters(ui, p, prefs);
             });
         } else {
-            widgets::search_field(ui, &mut self.search, aurora_i18n::tr!("common-search"), ui.available_width());
+            widgets::search_field(ui, p, &mut self.search, aurora_i18n::tr!("common-search"), ui.available_width());
             ui.horizontal(|ui| row(self, ui));
             ui.horizontal(|ui| self.filters(ui, p, prefs));
         }

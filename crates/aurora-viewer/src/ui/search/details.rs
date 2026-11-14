@@ -339,7 +339,7 @@ fn person(
         if !pr.legacy {
             field(ui, p, aurora_i18n::tr!("ui-profile-groups"), |ui| {
                 let mut groups: Vec<&str> = pr.groups.iter().map(|g| g.name.as_str()).collect();
-                groups.sort_by_key(|g| g.to_lowercase());
+                groups.sort_by_key(|g| crate::natural_order::key(g));
                 let text = if groups.is_empty() {
                     aurora_i18n::tr!("common-none").to_owned()
                 } else {
@@ -456,15 +456,6 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
                     aurora_i18n::tr!("common-general")
                 },
             )
-        });
-        // members, titles and status need GroupMembersRequest
-        field(ui, p, aurora_i18n::tr!("search-col-members"), |ui| {
-            ui.label(
-                RichText::new(aurora_i18n::tr!("search-group-member-list-later"))
-                    .size(12.0)
-                    .color(p.muted_dim),
-            )
-            .on_hover_text(menu::not_yet());
         });
     });
     match clicked {

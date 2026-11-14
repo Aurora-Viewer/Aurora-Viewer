@@ -51,6 +51,7 @@ fn envelope(world: &World, message: &str) -> ChatMessage {
         owner_id: world.agent_id,
         source_type: ChatSourceType::Object,
         chat_type: ChatType::OwnerSay,
+        region: None,
         position: Vec3::ZERO,
         message: format!(
             "<auroraIKRelay>{SESSION}|{}|{RIDER}|{message}</auroraIKRelay>",
@@ -84,7 +85,11 @@ fn declaration_packets(command: &NetCommand, bundle: Uuid, revision: u32) -> Vec
     else {
         panic!("relay command")
     };
-    assert_eq!((*object_id, *channel), (BRIDGE, super::super::super::bridge::ik::CONTROL));
+    assert_eq!(
+        (*object_id, *channel),
+        (BRIDGE, super::super::super::bridge::private_channel(SESSION))
+    );
+    assert_ne!(*channel, -190018106, "never the fixed channel of bridges up to 1.40");
     let fields: Vec<_> = label.split('|').collect();
     assert_eq!(&fields[..3], &["auroraIKRelay", &SESSION.to_string(), "observe"]);
     assert_eq!(fields[4], RIDER.to_string());

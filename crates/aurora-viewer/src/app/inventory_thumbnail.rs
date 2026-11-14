@@ -26,9 +26,20 @@ pub(super) struct ImageJobs {
     rx: crossbeam_channel::Receiver<Reply>,
     requests: HashMap<Uuid, Uuid>,
     paste: VecDeque<Uuid>,
+    /// An item image copied inside the viewer only, with the system
+    /// clipboard's text at that moment (`pasted_image`).
+    copied: Option<(Uuid, String)>,
     pub capture: Option<Uuid>,
     pub capturing: Option<Uuid>,
     pub auto_capture_pending: bool,
+    /// An outfit's picture waiting for the photo pass, or drawn by it.
+    pub photo: Option<(Uuid, bool)>,
+    /// The request of the gallery's Take snapshot under way (#2716), drawn,
+    /// encoded or sent: a job of its own, that no image editor shows, so
+    /// one the user has open on another item is left as it is.
+    outfit: Option<Uuid>,
+    /// The outfit's paid HD picture (`outfit_hd`).
+    pub hd: super::outfit_hd::OutfitHd,
 }
 impl Default for ImageJobs {
     fn default() -> Self {
@@ -38,9 +49,13 @@ impl Default for ImageJobs {
             rx,
             requests: HashMap::new(),
             paste: VecDeque::new(),
+            copied: None,
             capture: None,
             capturing: None,
             auto_capture_pending: false,
+            photo: None,
+            outfit: None,
+            hd: Default::default(),
         }
     }
 }
@@ -162,12 +177,15 @@ impl App {
         } else {
             asset
         };
-        let matching: Vec<_> = inv.items.values().filter(|it| it.asset_type == 0 && it.asset_id == asset).collect();
-        if asset.is_nil() || (!matching.is_empty() && !matching.iter().any(|it| crate::ui::inventory::thumbnail::usable(inv, it))) {
-            self.finish_inventory_image(
-                request,
-                Some(aurora_i18n::tr!("app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer").into()),
-            );
+        let local = self.world.local_assets.contains_key(&asset);
+        if !crate::ui::inventory::thumbnail::image_source_allowed(inv, &asset, local, self.demo) {
+            let in_inventory = inv.items.values().any(|it| it.asset_type == 0 && it.asset_id == asset);
+            let notice = if asset.is_nil() || in_inventory {
+                aurora_i18n::tr!("app-inventory-thumbnail-this-texture-must-allow-copying-and-transfer")
+            } else {
+                aurora_i18n::tr!("app-inventory-thumbnail-this-texture-is-not-in-your-inventory")
+            };
+            self.finish_inventory_image(request, Some(notice.into()));
             return;
         }
         if self.demo {
@@ -193,6 +211,59 @@ impl App {
             let _ = tx.send(Reply { request, result });
         });
     }
+    /// The gallery's Take snapshot (#2716): the scene, square, saved as the
+    /// outfit's picture at once; the image editor's own steps, with no
+    /// window. Appearance says why one is refused or fails.
+    pub(super) fn outfit_snapshot(&mut self, outfit: Uuid) {
+        if self.inventory_images.outfit.is_some() {
+            self.appearance_ui.message = aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into();
+            return;
+        }
+        let request = Uuid::new_v4();
+        self.appearance_ui.message.clear();
+        self.inventory_images.outfit = Some(request);
+        self.inventory_images.requests.insert(request, outfit);
+        self.inventory_images.photo = Some((request, false));
+    }
+
+    /// The outfit's auto portrait, confirmed (`app::outfit_portrait`): its
+    /// pixels go the gallery snapshot's way, reduced to the free square
+    /// thumbnail. False when another is still on its way.
+    pub(super) fn outfit_photo_pixels(&mut self, outfit: Uuid, (w, h): (u32, u32), pixels: Vec<u8>) -> bool {
+        if self.inventory_images.outfit.is_some() {
+            self.appearance_ui.message = aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into();
+            return false;
+        }
+        let request = Uuid::new_v4();
+        self.appearance_ui.message.clear();
+        self.inventory_images.outfit = Some(request);
+        self.inventory_images.requests.insert(request, outfit);
+        self.prepare_inventory_photo(request, w, h, pixels);
+        true
+    }
+
+    /// An outfit's picture is still being drawn, encoded or sent.
+    pub(super) fn outfit_photo_busy(&self) -> bool {
+        self.inventory_images.outfit.is_some()
+    }
+
+    /// Every frame: the outfit's picture starts once no photo is being
+    /// drawn; a job that ended without its pixels says so.
+    pub(super) fn poll_outfit_photo(&mut self, renderer: &aurora_render::Renderer) {
+        let Some((request, started)) = self.inventory_images.photo else {
+            return;
+        };
+        if self.snapshots.drawing() {
+            return;
+        }
+        if started {
+            self.inventory_images.photo = None;
+            self.finish_inventory_image(request, Some(aurora_i18n::tr!("photo-draw-failed").into()));
+        } else {
+            self.inventory_images.photo = Some((request, true));
+            self.photo_job(super::snapshot::Purpose::Outfit(request), renderer);
+        }
+    }
     pub(super) fn prepare_inventory_photo(&mut self, request: Uuid, w: u32, h: u32, pixels: Vec<u8>) {
         let tx = self.inventory_images.tx.clone();
         std::thread::spawn(move || {
@@ -205,6 +276,14 @@ impl App {
     }
     pub(super) fn finish_inventory_image(&mut self, request: Uuid, error: Option<String>) {
         self.inventory_images.requests.remove(&request);
+        if self.inventory_images.outfit == Some(request) {
+            // the gallery's snapshot has no window: Appearance says why
+            self.inventory_images.outfit = None;
+            if let Some(error) = error {
+                self.appearance_ui.message = error;
+            }
+            return;
+        }
         if let Some(st) = panel(&mut self.inventory_ui, request) {
             st.pending = None;
             st.error = error.unwrap_or_default();
@@ -218,10 +297,21 @@ impl App {
             .finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
         self.finish_inventory_image(request, error);
     }
+    /// The item image window's Copy: an id the asset id rule allows went on
+    /// the system clipboard too; any other stays in the viewer, like the
+    /// Legacy Viewer's LLClipboard entry (AT_NONE), for Paste.
+    pub(super) fn thumbnail_copied(&mut self, asset: Uuid, clipboard: bool) {
+        self.inventory_images.copied = if clipboard {
+            None
+        } else {
+            let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
+            Some((asset, text))
+        };
+    }
     pub(super) fn poll_inventory_images(&mut self) {
         while let Some(request) = self.inventory_images.paste.pop_front() {
             let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
-            match Uuid::parse_str(text.trim()) {
+            match pasted_image(self.inventory_images.copied.as_ref(), &text) {
                 Ok(asset) => self.fetch_inventory_image(request, asset, false),
                 Err(_) => self.finish_inventory_image(
                     request,
@@ -233,7 +323,8 @@ impl App {
             let Some(item) = self.inventory_images.requests.get(&reply.request).copied() else {
                 continue;
             };
-            if panel(&mut self.inventory_ui, reply.request).is_none_or(|st| st.item != Some(item)) {
+            let outfit = self.inventory_images.outfit == Some(reply.request);
+            if !outfit && panel(&mut self.inventory_ui, reply.request).is_none_or(|st| st.item != Some(item)) {
                 self.finish_inventory_image(reply.request, None);
                 continue;
             }
@@ -245,6 +336,13 @@ impl App {
                         st.set_file_choices(&self.egui_ctx, pixels);
                     }
                     self.finish_inventory_image(reply.request, None);
+                }
+                // the gallery's snapshot is saved at once, with no preview
+                Ok(Some(Prepared::Photo(pixels))) if outfit => {
+                    self.inventory_images.requests.remove(&reply.request);
+                    let request = Uuid::new_v4();
+                    self.inventory_images.outfit = Some(request);
+                    self.inventory_image_action(request, item, ImageInput::Pixels(Arc::new(pixels)));
                 }
                 Ok(Some(Prepared::Photo(pixels))) => {
                     let texture = self.egui_ctx.load_texture(
@@ -457,6 +555,16 @@ fn file_choices(image: &image::RgbaImage) -> Result<FileChoices, String> {
     })
 }
 
+/// What the item image window's Paste takes: the copy kept in the viewer
+/// while the system clipboard still holds what it held at that copy, else
+/// an image id written on the system clipboard.
+fn pasted_image(copied: Option<&(Uuid, String)>, text: &str) -> Result<Uuid, uuid::Error> {
+    match copied {
+        Some((asset, at_copy)) if at_copy == text => Ok(*asset),
+        _ => Uuid::parse_str(text.trim()),
+    }
+}
+
 fn crop_at(image: &image::RgbaImage, [x, y]: [u32; 2]) -> Result<image::RgbaImage, String> {
     let edge = image.width().min(image.height());
     if edge == 0 || x > image.width() - edge || y > image.height() - edge {
@@ -469,6 +577,17 @@ fn crop_at(image: &image::RgbaImage, [x, y]: [u32; 2]) -> Result<image::RgbaImag
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_copy_kept_in_the_viewer_pastes_until_the_clipboard_changes() {
+        let kept = Uuid::from_u128(0xa1);
+        let other = Uuid::from_u128(0xa2);
+        let copied = (kept, "some text".to_string());
+        assert_eq!(pasted_image(Some(&copied), "some text").ok(), Some(kept));
+        assert_eq!(pasted_image(Some(&copied), &other.to_string()).ok(), Some(other), "copied after");
+        assert!(pasted_image(Some(&copied), "other text").is_err());
+        assert_eq!(pasted_image(None, &format!(" {other} ")).ok(), Some(other));
+        assert!(pasted_image(None, "").is_err());
+    }
     #[test]
     fn uploaded_pngs_become_valid_square_jpeg2000_with_alpha() {
         let path = std::env::temp_dir().join(format!("aurora-inventory-thumbnail-{}.png", Uuid::new_v4()));

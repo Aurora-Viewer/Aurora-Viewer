@@ -51,6 +51,7 @@ pub enum Action {
     CreateRoot,
     /// Inventory changes: a drop, the fixes of an audit, a new folder.
     Edit(Mutation),
+    Delete(Box<super::inventory::DeleteRequest>),
     Paste {
         change: Mutation,
         cut: bool,
@@ -107,20 +108,15 @@ impl Prompt {
 #[derive(Debug, Clone)]
 enum Confirm {
     /// A drop on a row of the window.
-    Drop {
-        dest: Uuid,
-        ids: Vec<Uuid>,
-        prompt: Prompt,
-    },
+    Drop { dest: Uuid, ids: Vec<Uuid>, prompt: Prompt },
     /// ConfirmMerchantUnlist: associating a listed listing.
-    Associate {
-        folder: Uuid,
-        id: i32,
-    },
+    Associate { folder: Uuid, id: i32 },
     Inventory {
         change: Mutation,
         cut: bool,
         prompt: Prompt,
+        // Dialog redraws clone Confirm; share the potentially large row order.
+        after_delete: Option<std::sync::Arc<super::inventory::DeleteSelection>>,
     },
     Paste {
         to: Uuid,
@@ -960,7 +956,18 @@ impl ListingsUi {
                             let source = self.data.listing_folder(id);
                             self.data.associate_listing(inv, folder, source, id);
                         }
-                        Confirm::Inventory { change, cut, .. } => actions.push(Action::Paste { change, cut }),
+                        Confirm::Inventory {
+                            change, cut, after_delete, ..
+                        } => {
+                            if let Some(selection) = after_delete {
+                                actions.push(Action::Delete(Box::new(super::inventory::DeleteRequest {
+                                    change,
+                                    selection: std::sync::Arc::unwrap_or_clone(selection),
+                                })));
+                            } else {
+                                actions.push(Action::Paste { change, cut });
+                            }
+                        }
                         Confirm::Paste { to, ids, copy, .. } => self.paste_inventory(inv, worn, protected, to, &ids, copy, true, actions),
                     }
                 }
@@ -1241,6 +1248,120 @@ mod tests {
         let change =
             crate::world::inventory::actions::patch(&inv, idle, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
         assert!(ui.guard_inventory_change(&inv, change, false, false).is_some());
+    }
+
+    #[test]
+    fn inventory_deletion_keeps_its_origin_through_marketplace_confirmation() {
+        fn frame(
+            ctx: &egui::Context,
+            inv: &Inventory,
+            listings: &mut ListingsUi,
+            events: Vec<egui::Event>,
+            time: f64,
+        ) -> (Vec<Action>, egui::FullOutput) {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                    events,
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |_| {
+                    listings.dialogs(
+                        ctx,
+                        &crate::theme::Theme::default().palette(),
+                        inv,
+                        &HashSet::new(),
+                        &HashSet::new(),
+                        &mut actions,
+                    )
+                },
+            );
+            output.textures_delta.clear();
+            (actions, output)
+        }
+        fn button(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(text) if text.galley.text().ends_with(label) => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|shape| button(shape, label)),
+                _ => None,
+            }
+        }
+        let inv = demo_inventory();
+        for approve in [true, false] {
+            let mut listings = merchant(&inv);
+            let item = Uuid::from_u128(8_400_102);
+            let mut origin = super::super::inventory::InventoryUi::default();
+            origin.show_original(&inv, item);
+            origin.ui_id = Uuid::from_u128(77);
+            let change = rules::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move from active listing");
+            let deletion = super::super::inventory::DeleteRequest::new(&inv, &origin, &[item], change);
+            let saved = deletion.selection.clone();
+            assert!(listings.guard_inventory_delete(&inv, deletion).is_none());
+            assert!(matches!(&listings.confirm, Some(Confirm::Inventory { after_delete: Some(selection), .. }) if **selection == saved));
+            let ctx = egui::Context::default();
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
+            frame(&ctx, &inv, &mut listings, Vec::new(), 0.0);
+            frame(&ctx, &inv, &mut listings, Vec::new(), 0.2);
+            let (_, output) = frame(&ctx, &inv, &mut listings, Vec::new(), 0.4);
+            let label = if approve {
+                aurora_i18n::tr!("common-ok")
+            } else {
+                aurora_i18n::tr!("common-cancel")
+            };
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| button(&shape.shape, label))
+                .expect("confirmation button");
+            let mut actions = Vec::new();
+            for (pressed, time) in [(true, 0.6), (false, 0.8)] {
+                actions.extend(
+                    frame(
+                        &ctx,
+                        &inv,
+                        &mut listings,
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        time,
+                    )
+                    .0,
+                );
+            }
+            assert!(listings.confirm.is_none());
+            if approve {
+                assert!(matches!(&actions[..], [Action::Delete(deletion)] if deletion.selection == saved));
+            } else {
+                assert!(actions.is_empty(), "cancel must not submit or retain a deletion");
+            }
+            assert_eq!(
+                origin.selection,
+                HashSet::from([item]),
+                "the question never speculates on selection"
+            );
+        }
+        let mut listings = merchant(&inv);
+        let mut actions = Vec::new();
+        let root = mp::root(&inv).expect("marketplace root");
+        listings.inventory_command(&inv, &HashSet::new(), root, demo::HOODIE, Command::Unlist, &mut actions);
+        let item = Uuid::from_u128(8_400_102);
+        let change = rules::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
+        let deletion = super::super::inventory::DeleteRequest::new(&inv, &Default::default(), &[item], change);
+        assert!(
+            listings.guard_inventory_delete(&inv, deletion).is_none(),
+            "updating listing refuses the edit"
+        );
+        assert!(listings.confirm.is_none(), "refusal must not leave a deletion for later approval");
     }
 
     #[test]

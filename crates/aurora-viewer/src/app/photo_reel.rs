@@ -169,23 +169,20 @@ impl ReelState {
     }
 
     /// A destination starts with a photo: the held reel photo sent again,
-    /// or a new one joining the reel. `rgba` is given when the photo is not
-    /// written to disk: its thumbnail and the reel's copy are made from it.
-    pub(super) fn start(&mut self, size: (u32, u32), rgba: Option<&[u8]>, cutout: bool) {
+    /// or a new one joining the reel, its thumbnail and the reel's copy made
+    /// from `rgba`, in the session's folder of the account `agent`.
+    pub(super) fn start(&mut self, size: (u32, u32), rgba: &[u8], cutout: bool, agent: &uuid::Uuid) {
         if let Some(id) = self.held.filter(|id| self.reel.get(*id).is_some()) {
             self.sending = Some(id);
             self.again = true;
             return;
         }
-        let (id, dropped) = self.reel.add(unix_now(), size, cutout, None, rgba.is_some(), Vec::new());
+        let (id, dropped) = self.reel.add(unix_now(), size, cutout, None, true, Vec::new());
         self.forget(dropped);
         self.sending = Some(id);
         self.again = false;
-        let Some(rgba) = rgba else {
-            return;
-        };
         if self.folder.is_none() {
-            match reel::Folder::open(&crate::settings::cache_dir().join("photo-reel")) {
+            match reel::Folder::open(&reel::account_root(&crate::settings::cache_dir(), agent)) {
                 Ok(folder) => self.folder = Some(folder),
                 Err(e) => log::warn!("photo reel: no folder for the copies: {e}"),
             }
@@ -226,9 +223,7 @@ impl ReelState {
         }
         match place {
             Some(place) => {
-                if let Some(freed) = self.reel.sent(id, place) {
-                    delete_files(vec![freed]);
-                }
+                self.reel.sent(id, place);
                 if !self.sent_again {
                     self.card = Some(id);
                 }
@@ -289,11 +284,14 @@ impl App {
                     if r.reel.get(id).is_some_and(|p| p.own_copy) {
                         r.reel.copied(id, path);
                     } else {
-                        // gone meanwhile, or saved to disk since
+                        // gone meanwhile
                         delete_files(vec![path]);
                     }
                 }
-                Done::Copied(id, Err(e)) => log::warn!("photo reel: copy of photo {id} not written: {e}"),
+                Done::Copied(id, Err(e)) => {
+                    log::warn!("photo reel: copy of photo {id} not written: {e}");
+                    r.reel.copy_failed(id);
+                }
                 Done::Full(id, result) => {
                     r.loading.remove(&id);
                     match result {

@@ -141,7 +141,7 @@ impl World {
 
     pub(crate) fn rlva_teleport_dnd(&mut self, sender: Uuid) {
         if self.status.dnd {
-            let text = self.status.cfg.dnd_text.clone();
+            let text = self.dnd_response_to(&sender);
             self.auto_im(sender, Uuid::nil(), &text);
         }
     }
@@ -168,6 +168,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.into(),
         }));

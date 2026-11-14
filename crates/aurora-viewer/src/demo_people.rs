@@ -17,7 +17,8 @@
 //! first one pinned and its sheet open, the market's chat blocked), `sets`
 //! (Family, Clubbing and Shop, a nickname and a non-friend, a row under the
 //! pointer), `recent` (four residents met lately) and `blocked` (a resident
-//! blocked in full, one for voice and text, an object for its sounds).
+//! blocked in full, one for voice and text, an object for its sounds;
+//! `blocked-empty`: nobody blocked, the server's "emptymutelist" answer).
 
 use super::{DEMO_LOUP, HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use crate::world::radar::{ANIM_AGENT_SIT_GROUND, ANIM_AGENT_TYPE};
@@ -60,7 +61,7 @@ pub fn mode() -> Option<Mode> {
             "groups" | "groupes" => Some(Mode::Groups),
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
-            "blocked" | "bloqué" => Some(Mode::Blocked),
+            "blocked" | "bloqué" | "blocked-empty" => Some(Mode::Blocked),
             _ => Some(Mode::Rows),
         }
     })
@@ -137,6 +138,12 @@ fn contacts_name(agent: &Uuid) -> Option<(&'static str, &'static str, &'static s
 /// The buddies of the demo's list the tabs leave out: they have their own.
 pub fn hides_buddy(id: &Uuid) -> bool {
     contacts_mode() && *id == ORION_EXAMPLE
+}
+
+/// AURORA_DEMO_PEOPLE=blocked-empty: the Blocked tab, the server answering
+/// the request with "emptymutelist" (a resident who blocks nobody).
+pub fn server_empty_mute_list() -> bool {
+    std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|value| value.split(':').next().is_some_and(|mode| mode.trim() == "blocked-empty"))
 }
 
 /// AURORA_DEMO_PEOPLE=blocked|groups: the block list (a set flag means "not
@@ -216,6 +223,8 @@ pub fn seed(world: &mut crate::world::World) {
                 minimap: true,
                 icon: Some(0),
                 size: PlateSize::Reduced,
+                marker: crate::world::contact_sets::MarkerScope::Region,
+                marker_fade: Some(10),
                 ..Default::default()
             },
         );
@@ -651,6 +660,38 @@ fn place(k: usize, range: f32) -> Vec3 {
     me
 }
 
+/// The k-th resident's avatar object, standing at `pos`.
+fn avatar(k: usize, r: &Resident, pos: Vec3) -> aurora_net::objects::ObjectUpdate {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut a = prim(
+        120_000 + k as u32,
+        pos,
+        Quat::from_rotation_z(k as f32 * 0.9),
+        Vec3::new(0.45, 0.6, 1.9),
+        boxp,
+        te([1.0; 4], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    a.pcode = LL_PCODE_LEGACY_AVATAR;
+    a.full_id = r.id;
+    a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", r.first, r.last);
+    a
+}
+
+/// The first far resident (coarse location only, with a height), and the
+/// update that draws it where its coarse location put it, as when the
+/// simulator finally sends a far avatar (AURORA_DEMO_CAMERA=zoom-unloaded).
+pub fn drawn_late() -> Option<(Uuid, Vec<NetEvent>)> {
+    let (k, r) = residents().iter().enumerate().find(|(_, r)| !r.drawn && r.range.is_some())?;
+    let pos = place(k, r.range?);
+    let events = vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![avatar(k, r, pos)],
+    }];
+    Some((r.id, events))
+}
+
 /// The residents: the drawn ones, then where everyone stands for the region
 /// (its coarse locations, which also give their status dots). The wolf of
 /// the plaza keeps his place, 4.7 m away.
@@ -658,7 +699,6 @@ pub fn events() -> Vec<NetEvent> {
     if mode().is_none() {
         return Vec::new();
     }
-    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let mut objects = Vec::new();
     let mut coarse = Vec::new();
     for (k, r) in residents().iter().enumerate() {
@@ -667,20 +707,7 @@ pub fn events() -> Vec<NetEvent> {
         if !r.drawn || r.id == DEMO_LOUP {
             continue;
         }
-        let mut a = prim(
-            120_000 + k as u32,
-            pos,
-            Quat::from_rotation_z(k as f32 * 0.9),
-            Vec3::new(0.45, 0.6, 1.9),
-            boxp,
-            te([1.0; 4], 0, false, 0.0),
-            ExtraParams::default(),
-            "",
-        );
-        a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = r.id;
-        a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", r.first, r.last);
-        objects.push(a);
+        objects.push(avatar(k, r, pos));
     }
     vec![
         NetEvent::ObjectUpdates { handle: HANDLE, objects },

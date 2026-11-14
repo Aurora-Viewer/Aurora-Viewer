@@ -285,6 +285,8 @@ mod tests {
         world.agent_id = avatar.full_id;
         world.main_region = Some(1);
         world.movement_complete = true;
+        // later in the session: the login restore is over
+        world.outfit = super::super::outfit::OutfitRestore::finished();
         world.ensure_region(1, (256, 256)).caps = Arc::new(
             ["FetchInventory2", "FetchInventoryDescendents2", "InventoryAPIv3"]
                 .into_iter()
@@ -695,6 +697,68 @@ mod tests {
         }
     }
 
+    /// #2714: an unrequested detach seen before the login restore has read
+    /// the COF leaves the link (LLAppearanceMgr::mAttachmentInvLinkEnabled);
+    /// the same detach later in the session removes it.
+    #[test]
+    fn a_detach_before_the_outfit_is_loaded_keeps_the_link() {
+        for loaded in [false, true] {
+            let (mut world, object, item) = fixture();
+            world.inventory.add_items(vec![item.clone()]);
+            world.inventory.apply(linked_reply(&world, &item).contents);
+            if !loaded {
+                world.outfit = Default::default();
+            }
+            let cof = appearance::cof(&world.inventory).expect("COF");
+            assert!(
+                appearance::folder_links(&world.inventory, cof)
+                    .iter()
+                    .any(|link| link.target == item.id)
+            );
+            world.apply(NetEvent::ObjectsKilled {
+                handle: 1,
+                local_ids: vec![object.local_id],
+            });
+            assert!(world.worn_attachment(&item.id).is_none());
+            let linked = appearance::folder_links(&world.inventory, cof)
+                .iter()
+                .any(|link| link.target == item.id);
+            let edits = world.take_inventory_edits();
+            if loaded {
+                assert!(!linked, "after the login, the detach removes the link");
+                assert!(matches!(&edits[..], [Mutation { operations, .. }]
+                    if matches!(&operations[..], [Operation::Delete { folder: false, .. }])));
+            } else {
+                assert!(linked, "the restore will wear it again");
+                assert!(edits.is_empty(), "nothing sent to the server");
+            }
+            assert!(world.inventory.items.contains_key(&item.id), "keep original");
+        }
+    }
+
+    /// A detach the viewer sent during the login (for the resident or RLVa)
+    /// still removes its link, as removeItemsFromAvatar does in the Legacy
+    /// Viewer whatever mAttachmentInvLinkEnabled says.
+    #[test]
+    fn a_requested_detach_before_the_outfit_is_loaded_removes_the_link() {
+        let (mut world, object, item) = fixture();
+        world.inventory.add_items(vec![item.clone()]);
+        world.inventory.apply(linked_reply(&world, &item).contents);
+        world.outfit = Default::default();
+        world.note_outfit_command(&NetCommand::DetachAttachments(vec![item.id]));
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![object.local_id],
+        });
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        assert!(
+            appearance::folder_links(&world.inventory, cof)
+                .iter()
+                .all(|link| link.target != item.id)
+        );
+        assert_eq!(world.take_inventory_edits().len(), 1);
+    }
+
     #[test]
     fn attachment_inventory_reads_back_before_retrying_an_uncertain_link_write() {
         let (mut world, _, item) = fixture();
@@ -759,6 +823,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@addattach=n".to_owned(),
         };
@@ -968,6 +1033,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.to_owned(),
         }));

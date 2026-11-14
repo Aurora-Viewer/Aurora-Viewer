@@ -33,7 +33,8 @@ impl Editor {
         let rig = &world.avatar_lib.rig;
         self.mirrors.initialize(rig);
         self.follow_selected_side(rig);
-        let (mut library, mut settings, mut undo, mut redo) = (false, false, false, false);
+        let (mut library, mut settings, mut undo, mut redo, mut switch) = (false, false, false, false, false);
+        let mut markers = false;
         self.poser.edited_total = self
             .poser
             .sessions
@@ -41,48 +42,57 @@ impl Editor {
             .map(|s| (0..rig.len()).filter(|b| s.edited(*b)).count())
             .sum();
         let mut open = self.open;
-        let mut floater = Floater::new("poser", aurora_i18n::tr!("poser-title"), egui::pos2(650.0, 70.0), DEFAULT_SIZE);
-        floater.min_size = MIN_SIZE;
-        floater.steady_size = true;
-        if self.over_viewfinder {
-            floater.order = egui::Order::Foreground;
+        if self.compact_mode() {
+            // undo and redo sit in the window's last row, with the reset;
+            // the gear opens the few options the window does not show
+            let actions = vec![
+                ("arrows-maximize", aurora_i18n::text("poser-full-mode"), &mut switch),
+                ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
+            ];
+            self.compact_window(ctx, p, world, frame, &mut open, actions);
+        } else {
+            // The settings' "Show joint markers and gizmos" switch, one click
+            // away while posing, as the Legacy Viewer's toggleVisualManipulators
+            // button (FSFloaterPoser::onToggleVisualManipulators,
+            // indra/newview/fsfloaterposer.cpp); the eye says what is on screen.
+            // The compact window has its own markers button in its last row.
+            let (markers_icon, markers_tip) = if self.poser.markers {
+                ("eye-filled", aurora_i18n::text("poser-markers-hide"))
+            } else {
+                ("eye-off", aurora_i18n::text("poser-markers"))
+            };
+            let actions = vec![
+                ("arrows-minimize", aurora_i18n::text("poser-compact-mode"), &mut switch),
+                ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
+                (markers_icon, markers_tip, &mut markers),
+                ("arrow-forward-up", aurora_i18n::text("poser-redo"), &mut redo),
+                ("arrow-back-up", aurora_i18n::text("poser-undo"), &mut undo),
+                ("book-filled", aurora_i18n::text("poser-library"), &mut library),
+            ];
+            self.full_window(ctx, p, world, frame, &mut open, actions);
         }
-        floater.actions = vec![
-            ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
-            ("arrow-forward-up", aurora_i18n::text("poser-redo"), &mut redo),
-            ("arrow-back-up", aurora_i18n::text("poser-undo"), &mut undo),
-            ("book-filled", aurora_i18n::text("poser-library"), &mut library),
-        ];
-        floater.show(ctx, p, &mut open, |ui| {
-            self.subject_strip(ui, p, world);
-            ui.add_space(2.0);
-            let previous_group = self.poser.group;
-            widgets::tabs(
-                ui,
-                p,
-                &mut self.poser.group,
-                &[
-                    (aurora_i18n::text("poser-body"), true),
-                    (aurora_i18n::text("poser-face"), true),
-                    (aurora_i18n::text("poser-hands"), true),
-                    (aurora_i18n::text("poser-misc"), true),
-                    (aurora_i18n::text("poser-physics"), true),
-                ],
-            );
-            if previous_group != self.poser.group {
-                self.poser.library_open = false;
-                self.select_pose_group(self.poser.group, rig, frame);
-            }
-            ui.add_space(4.0);
-            let (mut body, footer) = widgets::above_footer(ui);
-            self.pose_body_ui(&mut body, p, world, frame);
-            footer.show(ui, |ui| self.pose_footer_ui(ui, p, rig, frame));
-        });
+        if switch {
+            self.switch_window(ctx);
+        }
         if library {
             self.poser.library_open = !self.poser.library_open;
         }
         if settings {
-            self.poser.settings_open = !self.poser.settings_open;
+            if self.compact_mode() {
+                self.poser.options_open = !self.poser.options_open;
+            } else {
+                self.poser.settings_open = !self.poser.settings_open;
+            }
+        }
+        // after the gear's click, so that the click that closes it does not
+        // open it again
+        if self.compact_mode() && open {
+            self.compact_options(ctx, p);
+        } else {
+            self.poser.options_open = false;
+        }
+        if markers {
+            self.poser.markers = !self.poser.markers;
         }
         if let Some(history) = self.history_key(ctx) {
             undo |= history == EditHistory::Undo;
@@ -113,7 +123,14 @@ impl Editor {
                     .clicked()
                     {
                         self.poser.storage.overwrite = None;
-                        self.poser.storage.job = Some(storage::Job::Save(document, pose, bvh, unlock, false));
+                        self.poser.storage.job = Some(storage::Job::Save(storage::Save {
+                            document,
+                            pose,
+                            bvh,
+                            unlock,
+                            confirm: false,
+                            pick: false,
+                        }));
                     }
                 });
             });
@@ -123,6 +140,67 @@ impl Editor {
         }
         if self.poser.close_asked {
             self.close_confirm_ui(ctx, p);
+        }
+    }
+    /// The full window: the subject strip, the tabs, the joints column (or
+    /// the library), the joint and the file footer.
+    fn full_window(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &World,
+        frame: &Frame,
+        open: &mut bool,
+        actions: Vec<(&str, &str, &mut bool)>,
+    ) {
+        let rig = &world.avatar_lib.rig;
+        let mut floater = Floater::new(FULL_WINDOW, aurora_i18n::tr!("poser-title"), egui::pos2(650.0, 70.0), DEFAULT_SIZE);
+        floater.min_size = MIN_SIZE;
+        floater.steady_size = true;
+        if self.over_viewfinder {
+            floater.order = egui::Order::Foreground;
+        }
+        floater.actions = actions;
+        floater.show(ctx, p, open, |ui| {
+            self.subject_strip(ui, p, world);
+            ui.add_space(2.0);
+            let previous_group = self.poser.group;
+            widgets::tabs(
+                ui,
+                p,
+                &mut self.poser.group,
+                &[
+                    (aurora_i18n::text("poser-body"), true),
+                    (aurora_i18n::text("poser-face"), true),
+                    (aurora_i18n::text("poser-hands"), true),
+                    (aurora_i18n::text("poser-misc"), true),
+                    (aurora_i18n::text("poser-physics"), true),
+                ],
+            );
+            if previous_group != self.poser.group {
+                self.poser.library_open = false;
+                self.select_pose_group(self.poser.group, rig, frame);
+            }
+            ui.add_space(4.0);
+            let (mut body, footer) = widgets::above_footer(ui);
+            self.pose_body_ui(&mut body, p, world, frame);
+            footer.show(ui, |ui| self.pose_footer_ui(ui, p, rig, frame));
+        });
+    }
+    /// The title bar's mode button: the other window opens where this one
+    /// was, its top right corner kept, at the size it had last.
+    fn switch_window(&mut self, ctx: &egui::Context) {
+        let from = window_id(self.compact_mode());
+        let compact = !self.compact_mode();
+        self.poser.window_override = None;
+        self.poser.compact = compact;
+        let to = window_id(compact);
+        let size = ctx
+            .data_mut(|d| d.get_persisted::<egui::Vec2>(egui::Id::unique(to).with("expanded_size")))
+            .unwrap_or(if compact { compact::COMPACT_SIZE } else { DEFAULT_SIZE });
+        if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(from))) {
+            let pos = egui::pos2((rect.right() - size.x).max(0.0), rect.top());
+            widgets::place_floater(ctx, to, pos, size);
         }
     }
     /// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) as the title's arrows, the key
@@ -135,7 +213,7 @@ impl Editor {
             || ctx.egui_wants_keyboard_input()
             || egui::Popup::is_any_open(ctx)
             || ctx.memory(|m| m.top_modal_layer()).is_some()
-            || widgets::floater_above(ctx, crate::build::ui::INSPECTOR_ID, "poser")
+            || widgets::floater_above(ctx, crate::build::ui::INSPECTOR_ID, window_id(self.compact_mode()))
         {
             return None;
         }
@@ -203,7 +281,7 @@ impl Editor {
         }
         if minimize {
             self.poser.close_asked = false;
-            widgets::minimize_floater(ctx, "poser");
+            widgets::minimize_floater(ctx, window_id(self.compact_mode()));
         } else if close {
             self.close_poser();
         } else if response.should_close() {
@@ -295,11 +373,9 @@ impl Editor {
         } else {
             self.side_selector(&mut left, p, rig, frame);
             left.add_space(2.0);
-            left.add(
-                egui::TextEdit::singleline(&mut self.poser.filter)
-                    .hint_text(aurora_i18n::tr!("poser-search"))
-                    .desired_width(f32::INFINITY),
-            );
+            crate::ui::widgets::search_text_edit(&mut left, p, &mut self.poser.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("poser-search")).desired_width(f32::INFINITY)
+            });
             left.add_space(2.0);
             let height = left.available_height();
             egui::ScrollArea::vertical()
@@ -355,11 +431,16 @@ impl Editor {
                 .on_hover_text(aurora_i18n::text("poser-export-hint"))
                 .clicked()
                 {
-                    self.save_pose(rig, frame);
+                    self.save_pose(rig, frame, false);
                 }
                 let options = widgets::action_button(ui, p, "chevron-down", "", widgets::ActionKind::Primary, egui::vec2(26.0, 28.0))
                     .on_hover_text(aurora_i18n::text("poser-save-options"));
                 menu::dropdown(&options, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                    let can_save = !self.poser.storage.busy && !self.poser.name.trim().is_empty();
+                    if menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::text("poser-save-as"), can_save) {
+                        self.save_pose(rig, frame, true);
+                    }
+                    menu::separator(ui, p);
                     menu::toggle(
                         ui,
                         p,
@@ -390,6 +471,11 @@ impl Editor {
                 widgets::action_menu_button(ui, p, "folder-open-filled", aurora_i18n::text("poser-load-menu"), open, 28.0)
             });
             menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                if menu::item(ui, p, "book-filled", aurora_i18n::text("poser-library")) {
+                    self.poser.library_open = true;
+                    self.poser.storage.ready = false;
+                }
+                menu::separator(ui, p);
                 for (mode, key) in [
                     (LoadMode::All, "poser-load-all"),
                     (LoadMode::Rotations, "poser-load-rotations"),
@@ -440,7 +526,8 @@ impl Editor {
             .and_then(|i| self.poser.storage.entries.get(i))
             .map(|e| e.path.clone())
     }
-    fn save_pose(&mut self, rig: &Rig, frame: &Frame) {
+    /// `pick`: Save as…, the file is chosen in the system dialog.
+    pub(super) fn save_pose(&mut self, rig: &Rig, frame: &Frame, pick: bool) {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
         };
@@ -455,15 +542,16 @@ impl Editor {
             self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
-        self.poser.storage.job = Some(storage::Job::Save(
+        self.poser.storage.job = Some(storage::Job::Save(storage::Save {
             document,
-            Arc::new(authored),
-            self.poser.also_bvh,
-            self.poser.unlock_pelvis,
-            self.poser.confirm_overwrite,
-        ));
+            pose: Arc::new(authored),
+            bvh: self.poser.also_bvh,
+            unlock: self.poser.unlock_pelvis,
+            confirm: self.poser.confirm_overwrite,
+            pick,
+        }));
     }
-    fn import_pose(&mut self, rig: &Rig, frame: &Frame) {
+    pub(super) fn import_pose(&mut self, rig: &Rig, frame: &Frame) {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
         };
@@ -500,12 +588,12 @@ impl Editor {
                 }
             });
         });
-        ui.add(
-            egui::TextEdit::singleline(&mut self.poser.storage.filter)
-                .hint_text(aurora_i18n::tr!("poser-library-search"))
-                .desired_width(f32::INFINITY),
-        );
-        let filter = self.poser.storage.filter.to_lowercase();
+        crate::ui::widgets::search_text_edit(ui, p, &mut self.poser.storage.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("poser-library-search"))
+                .desired_width(f32::INFINITY)
+        });
+        let filter = self.poser.storage.filter.clone();
+        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected) || widgets::search_cleared(ui);
         let height = (ui.available_height() - 40.0).max(30.0);
         let mut load = None;
         egui::ScrollArea::vertical()
@@ -515,7 +603,7 @@ impl Editor {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, entry) in self.poser.storage.entries.iter().enumerate() {
-                    if !entry.name.to_lowercase().contains(&filter) {
+                    if !storage::filter_matches(&entry.name, &filter) {
                         continue;
                     }
                     let selected = self.poser.storage.selected == Some(i);
@@ -539,6 +627,9 @@ impl Editor {
                         egui::FontId::proportional(11.0),
                         p.muted,
                     );
+                    if selected && scroll_to {
+                        response.scroll_to_me_animation(Some(egui::Align::Center), egui::style::ScrollAnimation::none());
+                    }
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &entry.name));
                     if response.clicked() {
                         self.poser.storage.selected = Some(i);
@@ -577,13 +668,25 @@ impl Editor {
         ui.add_space(6.0);
         bones::caption(ui, p, aurora_i18n::text("poser-settings-handling"));
         widgets::switch_labeled(ui, p, &mut self.poser.markers, aurora_i18n::tr!("poser-markers"));
+        ui.add_enabled_ui(self.poser.markers, |ui| {
+            widgets::switch_labeled(ui, p, &mut self.poser.markers_hover, aurora_i18n::tr!("poser-markers-hover"));
+            widgets::switch_labeled(ui, p, &mut self.poser.part_hints, aurora_i18n::tr!("poser-part-hints"));
+            widgets::switch_labeled(ui, p, &mut self.poser.avatar_hints, aurora_i18n::tr!("poser-avatar-hints"));
+        });
+        widgets::switch_labeled(ui, p, &mut self.poser.gizmo, aurora_i18n::tr!("poser-show-gizmo"));
         if widgets::switch_labeled(ui, p, &mut self.poser.natural, aurora_i18n::tr!("poser-natural")).changed() {
             self.space = if self.poser.natural { Space::Local } else { Space::World };
             self.gizmo.cancel();
         }
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("poser-sensitivity"));
-            ui.add(egui::Slider::new(&mut self.poser.sensitivity, 0.05..=2.0));
+            if ui
+                .add(egui::Slider::new(&mut self.poser.sensitivity, 0.05..=2.0))
+                .on_hover_text(aurora_i18n::tr!("poser-sensitivity-hint"))
+                .changed()
+            {
+                self.set_poser_sensitivity(self.poser.sensitivity);
+            }
         });
         ui.add_space(6.0);
         bones::caption(ui, p, aurora_i18n::text("poser-settings-files"));
