@@ -375,6 +375,9 @@ fn history_events(key: egui::Key, modifiers: egui::Modifiers) -> Vec<egui::Event
 fn input_history_is_separate_for_local_private_group_and_conference_in_every_style() {
     for style in ALL {
         let mut h = H::new(style);
+        // the settings' default: the nearby field keeps the keyboard after
+        // Enter, as the chat bar does
+        h.st.keep_focus = true;
         let conversations = [None, Some(JANE), Some(BOB), Some(GROUP), Some(MEETING)];
         for (n, conversation) in conversations.into_iter().enumerate() {
             h.open(conversation);
@@ -1029,6 +1032,130 @@ fn paragraph_editor_wraps_scrolls_and_collapses_in_every_style() {
             (rect(&h).height() - before.height()).abs() < 0.5,
             "{style:?}: collapses after sending"
         );
+    }
+}
+
+/// Enter on an empty conversation field keeps the keyboard, like the Legacy
+/// Viewer's nearby chat window, unless "Enter toggles typing in
+/// conversations" gives it back to the world, in every conversation. The
+/// field that takes the keyboard becomes the last one used.
+#[test]
+fn enter_on_an_empty_conversation_field_returns_to_the_world_by_its_rule() {
+    for style in ALL {
+        for (conversation, toggles, leaves) in [
+            (None, false, false),
+            (None, true, true),
+            (Some(JANE), false, false),
+            (Some(JANE), true, true),
+            (Some(GROUP), false, false),
+            (Some(GROUP), true, true),
+        ] {
+            let mut h = H::new(style);
+            h.st.keep_focus = true;
+            h.st.enter_toggles = toggles;
+            h.open(conversation);
+            let field = egui::Id::unique(("conv_input", conversation));
+            assert!(
+                h.frames.ctx.memory(|m| m.has_focus(field)),
+                "{style:?} {conversation:?}: opened with the keyboard"
+            );
+            assert_eq!(
+                h.st.last_field,
+                super::ChatField::Conversation(conversation),
+                "{style:?}: the field used"
+            );
+            h.enter(egui::Modifiers::NONE);
+            assert_eq!(
+                !h.frames.ctx.memory(|m| m.has_focus(field)),
+                leaves,
+                "{style:?} {conversation:?} toggles {toggles}"
+            );
+            assert!(h.take().is_empty(), "an empty Enter sends nothing");
+        }
+    }
+}
+
+/// "Conversations window only" (#2696): the nearby field takes the chat
+/// bar's rule in every style. An empty Enter and Escape give the keyboard
+/// back to the world; after a message it follows "Keep the chat bar active
+/// after sending". The IMs keep their own rule.
+#[test]
+fn the_nearby_field_takes_the_chat_bars_rule_in_conversations_window_only() {
+    let escape = || {
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    };
+    for style in ALL {
+        let field = egui::Id::unique(("conv_input", None::<Uuid>));
+        let focused = |h: &H| h.frames.ctx.memory(|m| m.has_focus(field));
+        let fresh = |keep: bool| {
+            let mut h = H::new(style);
+            h.st.bar_mode = crate::settings::ChatBar::ConversationsOnly;
+            h.st.keep_focus = keep;
+            h.open(None);
+            assert!(focused(&h), "{style:?}: opened with the keyboard");
+            h
+        };
+        // an empty Enter: back to the world, nothing sent
+        let mut h = fresh(true);
+        h.enter(egui::Modifiers::NONE);
+        assert!(!focused(&h), "{style:?}: an empty Enter gives the keyboard back");
+        assert!(h.take().is_empty());
+        // a message: kept, or let go, as the setting says
+        for keep in [true, false] {
+            let mut h = fresh(keep);
+            h.type_text("hello");
+            h.enter(egui::Modifiers::NONE);
+            assert!(!h.take().is_empty(), "{style:?}: sent");
+            assert_eq!(focused(&h), keep, "{style:?} keep {keep}");
+        }
+        // Escape: back to the world, the draft kept
+        let mut h = fresh(true);
+        h.type_text("draft");
+        h.frame(escape());
+        h.settle();
+        assert!(!focused(&h), "{style:?}: Escape gives the keyboard back");
+        assert!(!h.frames.ctx.text_edit_focused(), "{style:?}: no field holds the keyboard");
+        assert_eq!(h.st.draft_mut(None).as_str(), "draft");
+        // an IM is not the chat bar: its empty Enter keeps the keyboard
+        let mut h = H::new(style);
+        h.st.bar_mode = crate::settings::ChatBar::ConversationsOnly;
+        h.open(Some(JANE));
+        h.enter(egui::Modifiers::NONE);
+        let im = egui::Id::unique(("conv_input", Some(JANE)));
+        assert!(h.frames.ctx.memory(|m| m.has_focus(im)), "{style:?}: the IM keeps it");
+    }
+}
+
+/// The Enter that asked for the keyboard (Enter from the world, "Enter
+/// returns to the last chat field used") is not taken as an empty Enter in
+/// the field it focused: the field keeps the keyboard and sends nothing.
+#[test]
+fn the_enter_that_focuses_a_conversation_is_not_typed_in_it() {
+    for style in ALL {
+        for conversation in [None, Some(JANE)] {
+            let mut h = H::new(style);
+            h.st.enter_toggles = true;
+            h.open(conversation);
+            h.enter(egui::Modifiers::NONE);
+            let field = egui::Id::unique(("conv_input", conversation));
+            assert!(
+                !h.frames.ctx.memory(|m| m.has_focus(field)),
+                "{style:?} {conversation:?}: given back"
+            );
+            h.st.conv_focus_request = true;
+            h.enter(egui::Modifiers::NONE);
+            assert!(
+                h.frames.ctx.memory(|m| m.has_focus(field)),
+                "{style:?} {conversation:?}: focused again"
+            );
+            assert!(h.take().is_empty());
+        }
     }
 }
 
@@ -1835,7 +1962,7 @@ fn typing_for_another_channel_is_not_typing_aloud() {
 fn an_autohidden_bar_stays_while_its_channel_menu_is_open() {
     let mut h = H::new(ChatStyle::Aurora);
     h.st.show_channel = true;
-    h.st.autohide = true;
+    h.st.bar_mode = crate::settings::ChatBar::WhenTyping;
     h.st.focus_request = true;
     h.bar_frame(Vec::new());
     let chip = h.shown(super::bar_channel_id()).expect("the nearby chat bar shows the selector");
@@ -2366,6 +2493,9 @@ fn ooc_shortcut_always_uses_normal_volume() {
         for volume in [Volume::Whisper, Volume::Say, Volume::Shout] {
             for detached in [false, true] {
                 let mut h = H::new(style);
+                // the settings' default: the nearby field keeps the keyboard
+                // after a message, for the second line
+                h.st.keep_focus = true;
                 h.open(None);
                 if detached {
                     h.st.pop_out(None);

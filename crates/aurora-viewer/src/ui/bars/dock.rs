@@ -208,7 +208,7 @@ pub fn bottom(
         }
     }
     chat.bar_hovered = false;
-    let docked = chat.autohide && buttons.iter().any(|b| b.command == "conversations");
+    let docked = chat.bar_mode.hides() && buttons.iter().any(|b| b.command == "conversations");
     let out = if shown {
         area(&ctx, p, "chat", geo.chat, |ui| {
             let out = chat_island(
@@ -575,7 +575,7 @@ fn open_conversations(ctx: &egui::Context, panels: &mut Panels, chat: &mut crate
 /// chat island's button opens the conversations and counts their unread
 /// lines. Only the default dock leaves it out: a saved dock that holds it
 /// keeps it, and the toolbar's catalogue still offers it. With the chat bar
-/// autohidden (`autohide`, #1009) the island goes away with its button: the
+/// hidden (`ChatBar::hides`, #1009, #2696) the island goes away with its button: the
 /// default dock keeps the skin's Conversations button. Kept from one frame
 /// to the next, built again when the skin's toolbar changes.
 #[derive(Default)]
@@ -1047,7 +1047,7 @@ mod tests {
         let hint = aurora_i18n::tr!("common-nearby-chat");
         let escape = || vec![key(egui::Key::Escape, true, egui::Modifiers::NONE)];
         let mut bench = Bench::new();
-        bench.chat.autohide = true;
+        bench.chat.bar_mode = crate::settings::ChatBar::WhenTyping;
         bench.frame(vec![]);
         bench.frame(vec![]);
         assert!(bench.text_rect(hint).is_none(), "out of use: no field");
@@ -1083,7 +1083,7 @@ mod tests {
 
         // a saved dock without Conversations: the island's button alone
         let mut bench = Bench::new();
-        bench.chat.autohide = true;
+        bench.chat.bar_mode = crate::settings::ChatBar::WhenTyping;
         bench.buttons = Some(DockLayout::default().of(&crate::ui::skin::Layout::default(), false).toolbar.clone());
         bench.frame(vec![]);
         bench.frame(vec![]);

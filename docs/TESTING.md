@@ -5869,7 +5869,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat bar autohide / Conversations window only; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
@@ -8734,11 +8734,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   hidden: struck-through screen; with `AURORA_DEMO_HUDS=1` the demo HUDs
   go; nothing saved).
   The chat bar: `autohide` (shown only while it is used, as with
-  Preferences › Chat › "Hide the chat bar when not in use", with either
+  Preferences › Chat › "Chat bar" on "Shown when typing", with either
   bars: with the islands the chat island goes and the dock gets its
   Conversations button back; with `legacy` the toolbar takes the whole
   bar), `chatstart` (autohidden, Enter pressed at frame 300 on the draft
-  "Hello!": the island back, without its button, the keyboard in it).
+  "Hello!": the island back, without its button, the keyboard in it),
+  `window` (Preferences › Chat › Chat bar on "Conversations window only":
+  no chat island nor Legacy chat field, the dock keeps its Conversations
+  button, Enter opens the Conversations window on Nearby chat),
+  `windowenter` (the same, the nearby chat docked back in the window
+  whatever the profile saved, as for the next two, Enter pressed at
+  frame 300 with the window closed: from frame 300 it shows Nearby chat with the keyboard in its
+  field), `windowmin` (opened at frame 100 on Contacts, minimized at 200:
+  at 300 it expands on Nearby chat), `windowreopen` (opened at frame 100
+  on Contacts at 380, 140, 520 × 360, closed at 200: at 300 it comes back
+  at that place and size, on Nearby chat).
   Capture at
   `AURORA_WINDOW_SIZE` 1280, 1536 and 1920 wide with `AURORA_FPS_LIMIT=60`
   at frame 780: at 1280 the place shows the parcel and the region, at

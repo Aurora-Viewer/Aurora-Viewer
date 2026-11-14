@@ -231,15 +231,22 @@ pub(super) fn show(
             let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
             let chat_type = st.volume.chat_type();
             super::gif_picker::popup(ui.ctx(), p, icons, st, anchor, 8.0, conv_input, chat_type, actions);
-            if st.conv_focus_request {
-                st.conv_focus_request = false;
+            // the Enter that asked for the keyboard (start_chat) is not one
+            // typed in the field: taken as Enter on an empty field, it would
+            // hand the keyboard straight back to the world
+            let focusing = std::mem::take(&mut st.conv_focus_request);
+            if focusing {
                 resp.request_focus();
                 super::cursor_to_end(ui.ctx(), conv_input, &draft);
+            }
+            // clicked into, or given the keyboard: the field last used
+            if resp.gained_focus() {
+                st.used_conversation(st.selected);
             }
             let mut sent = false;
             let send = if send_clicked {
                 Some(SendKey::Normal)
-            } else if resp.has_focus() || resp.lost_focus() {
+            } else if !focusing && (resp.has_focus() || resp.lost_focus()) {
                 ui.input(send_enter)
             } else {
                 None
@@ -264,9 +271,14 @@ pub(super) fn show(
                         }
                         Some(to) => actions.push(ConvAction::Im { to, text }),
                     }
+                    st.used_conversation(st.selected);
                 }
                 draft.clear();
-                resp.request_focus();
+                if returns_to_world(local, st.enter_toggles_in(local), st.keep_focus, sent, send_clicked) {
+                    resp.surrender_focus();
+                } else {
+                    resp.request_focus();
+                }
             }
             st.typing_field = Some(typing::Field {
                 to: st
@@ -287,6 +299,24 @@ pub(super) fn show(
             }
         });
     });
+}
+
+/// Enter in a conversation's field gives the keyboard back to the world.
+/// After a message, the nearby chat lets go without "Keep the chat bar
+/// active after sending", like FSFloaterNearbyChat::sendChat
+/// (CloseChatOnReturn, FSUnfocusChatHistoryOnReturn); on an empty field it
+/// keeps the keyboard, as there (onChatBoxCommit sends nothing and keeps
+/// it). "Enter toggles typing in conversations" (Aurora's) gives every
+/// conversation the chat bar's rule: an empty Enter returns to the world,
+/// and a message follows "Keep the chat bar active". The Send button always
+/// keeps the keyboard.
+pub(super) fn returns_to_world(local: bool, enter_toggles: bool, keep_focus: bool, sent: bool, send_clicked: bool) -> bool {
+    !send_clicked
+        && if sent {
+            (local || enter_toggles) && !keep_focus
+        } else {
+            enter_toggles
+        }
 }
 
 /// "Nova is typing…" with the names in the ink, semi-bold, cut at `width`.
