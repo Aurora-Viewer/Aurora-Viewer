@@ -439,6 +439,11 @@ pub enum CtxAction {
         id: Uuid,
         name: String,
     },
+    /// Block the resident or group owning a remote object, never toggle it.
+    BlockObjectOwner {
+        owner: Uuid,
+        group_owned: bool,
+    },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
     /// "Inspect": the window of the object's prims (Floater.Show "inspect").
@@ -1771,6 +1776,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: "@shownames=n".into(),
         }));

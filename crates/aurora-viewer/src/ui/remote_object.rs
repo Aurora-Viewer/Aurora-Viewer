@@ -1,7 +1,7 @@
 //! The inspector of an object known only by its `objectim` link (an
 //! object's IM, a script's message): its name, its owner (resident or
-//! group, a link to the profile), where it is (a teleport link), and Map /
-//! Block / Close. Port of LLInspectRemoteObject
+//! group, a link to the profile), where it is (a teleport link), and actions
+//! to show its location or block the object or its owner. Port of LLInspectRemoteObject
 //! (indra/newview/llinspectremoteobject.cpp, inspect_remote_object.xml,
 //! originally LGPL 2.1), in a small window instead of a hover inspector.
 
@@ -26,14 +26,19 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     let mut open = true;
     let mut close = false;
     let place = place(&o).filter(|place| !world.rlva_private_region(&place.location.region));
-    let title = if o.name.is_empty() { o.id.to_string() } else { o.name.clone() };
-    Floater::new(
+    let name = if o.name.is_empty() {
+        aurora_i18n::tr!("status-unknown").to_owned()
+    } else {
+        world.rlva_filter_text(&o.name).into_owned()
+    };
+    let mut floater = Floater::new(
         "remote_object",
-        world.rlva_filter_text(&title).into_owned(),
-        egui::pos2(screen.center().x - 160.0, screen.center().y - 90.0),
-        Vec2::new(320.0, 150.0),
-    )
-    .show(ctx, p, &mut open, |ui| {
+        aurora_i18n::tr!("ui-remote-object-title"),
+        egui::pos2(screen.center().x - 320.0, screen.center().y - 95.0),
+        Vec2::new(640.0, 190.0),
+    );
+    floater.min_size = Vec2::new(360.0, 190.0);
+    floater.show(ctx, p, &mut open, |ui| {
         let k = super::colors::get();
         let link_color = super::colors::text(k.chat_slurl);
         let row = |ui: &mut egui::Ui, label: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
@@ -45,16 +50,27 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 add(ui);
             });
         };
+        row(ui, aurora_i18n::tr!("common-object"), &mut |ui| {
+            ui.add(egui::Label::new(RichText::new(&name).size(12.0).color(p.ink)).wrap());
+        });
+        if !o.group_owned && !o.owner.is_nil() {
+            // Resolve the canonical mute name even under @shownames, without
+            // exposing it in the inspector or storing an anonymous alias.
+            world.social.avatar_names.want(&o.owner);
+        }
         // the owner: a group's or a resident's profile, "(unknown)" without one
         row(ui, aurora_i18n::tr!("ui-remote-object-owner"), &mut |ui| {
             if o.owner.is_nil() {
                 ui.label(RichText::new(aurora_i18n::tr!("status-unknown")).size(12.0).color(p.ink));
                 return;
             }
+            if let Some(anonymous) = hidden_owner(world, &o) {
+                ui.label(RichText::new(anonymous).size(12.0).color(p.ink));
+                return;
+            }
             let name = if o.group_owned {
                 super::chat::app_link_group_name(world, o.owner)
             } else {
-                world.social.avatar_names.want(&o.owner);
                 world.social.name_of(&o.owner)
             };
             if ui.add(egui::Link::new(RichText::new(name).size(12.0).color(link_color))).clicked() {
@@ -77,13 +93,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
             });
         }
         ui.add_space(10.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let size = Vec2::new(0.0, 26.0);
             if action_button_if(
                 ui,
                 p,
                 "map",
-                aurora_i18n::tr!("common-map"),
+                aurora_i18n::tr!("ui-remote-object-show-on-map"),
                 ActionKind::Flat,
                 size,
                 place.is_some(),
@@ -100,10 +116,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 ui,
                 p,
                 "ban",
-                aurora_i18n::tr!("common-block"),
+                aurora_i18n::tr!("ui-remote-object-block-object"),
                 ActionKind::FlatDanger,
                 size,
-                !blocked,
+                !o.id.is_nil() && !blocked,
             )
             .clicked()
             {
@@ -116,6 +132,29 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 );
                 close = true;
             }
+            if !o.owner.is_nil() && o.owner != world.agent_id {
+                let enabled = world.object_owner_block(o.owner, o.group_owned).is_some();
+                if action_button_if(
+                    ui,
+                    p,
+                    "ban",
+                    aurora_i18n::tr!("ui-remote-object-block-owner"),
+                    ActionKind::FlatDanger,
+                    size,
+                    enabled,
+                )
+                .clicked()
+                {
+                    request(
+                        ui.ctx(),
+                        CtxAction::BlockObjectOwner {
+                            owner: o.owner,
+                            group_owned: o.group_owned,
+                        },
+                    );
+                    close = true;
+                }
+            }
             if action_button_if(ui, p, "x", aurora_i18n::tr!("common-close"), ActionKind::Flat, size, true).clicked() {
                 close = true;
             }
@@ -124,4 +163,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     if !open || close {
         *shown = None;
     }
+}
+
+#[cfg(test)]
+mod tests;
+
+/// The owner's name in its place under RLVa `@shownames`: a resident owner
+/// is shown anonymous, with no profile link (the Legacy Viewer's objectim
+/// link carries `rlv_shownames` and LLInspectRemoteObject shows
+/// `rlvanonym`). A group owner stays named, as there. Stricter than the
+/// Legacy Viewer, which hides only an owner who is nearby.
+pub(crate) fn hidden_owner(world: &World, o: &crate::slapp::RemoteObject) -> Option<String> {
+    (!o.owner.is_nil() && !o.group_owned && !world.rlva_can_name(o.owner))
+        .then(|| crate::world::rlva::privacy::anonymous(o.owner).display_name.clone())
 }

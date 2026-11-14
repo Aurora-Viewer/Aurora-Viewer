@@ -330,6 +330,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::CreateLandmark => "CreateLandmark",
         CtxAction::ReportAbuse(..) => "ReportAbuse",
         CtxAction::ToggleBlockObject { .. } => "ToggleBlockObject",
+        CtxAction::BlockObjectOwner { .. } => "BlockObjectOwner",
         CtxAction::Edit(..) => "Edit",
         CtxAction::Inspect(..) => "Inspect",
         CtxAction::InspectAvatar(..) => "InspectAvatar",
