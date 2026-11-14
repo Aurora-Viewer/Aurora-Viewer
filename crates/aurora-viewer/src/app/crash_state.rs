@@ -653,10 +653,19 @@ mod tests {
         }
     }
 
+    /// `elements`: every GPU element but the weather's (which these cases
+    /// leave at 0), in `GpuElement::ALL`'s order.
     fn stats(gpu_ms: f32, elements: [f32; 7]) -> aurora_render::RenderStats {
+        let mut all = [0.0; aurora_render::GpuElement::ALL.len()];
+        let mut given = elements.into_iter();
+        for (slot, element) in all.iter_mut().zip(aurora_render::GpuElement::ALL) {
+            if element != aurora_render::GpuElement::Weather {
+                *slot = given.next().unwrap_or(0.0);
+            }
+        }
         aurora_render::RenderStats {
             gpu_ms: Some(gpu_ms),
-            gpu_elements: Some(elements),
+            gpu_elements: Some(all),
             ..Default::default()
         }
     }

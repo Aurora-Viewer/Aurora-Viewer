@@ -1122,6 +1122,12 @@ impl Renderer {
         self.settings = s;
     }
 
+    /// Rain prototype: keep the G-buffer while it rains (pipelines and
+    /// targets follow with a later frame, as with any setting).
+    pub fn set_rain_surfaces(&mut self, on: bool) {
+        self.settings.rain_surfaces = on;
+    }
+
     pub fn set_vsync(&mut self, vsync: bool) {
         self.vsync = vsync;
     }
@@ -1134,6 +1140,13 @@ impl Renderer {
     /// reported it with the last frame it finished (None before the first).
     pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
         self.last_stats.present_mode
+    }
+
+    /// Aurora Weather: snow lay on the ground in the last frame the backend
+    /// finished. The app's footprints and snow work wait for it, or for snow
+    /// falling.
+    pub fn snow_lying(&self) -> bool {
+        self.last_stats.snow_lying
     }
 
     /// The last frame the backend finished was drawn with the settings last
@@ -1558,6 +1571,7 @@ impl Renderer {
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
+                gpu_weather: self.last_stats.gpu_weather,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,

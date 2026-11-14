@@ -525,12 +525,14 @@ impl App {
             self.build.deselect_all(&self.world);
             self.flush_build();
         }
-        // A poser handle or a shown HUD under the pointer keeps the press
+        // A poser handle, IK manipulator or shown HUD under the pointer keeps the press
         // (#1389): the Legacy Viewer's snapshot floater takes no scene
         // clicks, so a HUD's poses and the poser stay usable while framing.
         // The world's press path then decides between the two, as outside
         // the viewfinder.
-        if poser_owns || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some()) {
+        if (self.ik_editor.open && self.ik_editor.manipulator_owns_pointer())
+            || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some())
+        {
             return false;
         }
         let Some(mut gfx) = self.gfx.take() else {

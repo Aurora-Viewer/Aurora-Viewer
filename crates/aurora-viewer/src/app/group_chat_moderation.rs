@@ -1,7 +1,8 @@
 //! The confirmation of a group chat moderator's ejection or ban
 //! (`ui::chat::moderation`), then the action: LLGroupActions::callbackEject,
 //! which asks canEjectFromGroup again, and banMemberById
-//! (indra/newview/llgroupactions.cpp, llgroupmgr.cpp).
+//! (indra/newview/llgroupactions.cpp, llgroupmgr.cpp); and of a ban in all
+//! our groups (callbackBanFromAllGroups, `world::group_ban_all`).
 
 use super::*;
 use crate::ui::chat::moderation::{self, Confirm};
@@ -33,14 +34,18 @@ impl App {
         }
     }
 
-    /// `AURORA_DEMO_CONV_MODERATE=eject|ban|banned|error`, on the builder
-    /// shown as "Tess" in Aurora Builders (docs/TESTING.md).
+    /// `AURORA_DEMO_CONV_MODERATE=eject|ban|banned|error|ban-all|unban-all|
+    /// ban-all-run`, on the builder shown as "Tess" in Aurora Builders
+    /// (docs/TESTING.md).
     fn group_chat_moderation_demo(&mut self) {
         let (group, agent) = (crate::demo::DEMO_GROUP1, crate::demo::DEMO_NOVA);
         match moderation::demo_mode() {
             Some("eject") => self.group_chat_confirm = Some(Confirm::Eject { group, agent }),
             Some("ban") => self.group_chat_confirm = Some(Confirm::Ban { group, agent }),
             Some("banned") => self.apply_group_chat_moderation(Confirm::Ban { group, agent }),
+            Some("ban-all") => self.group_chat_confirm = Some(Confirm::BanAll { agent, ban: true }),
+            Some("unban-all") => self.group_chat_confirm = Some(Confirm::BanAll { agent, ban: false }),
+            Some("ban-all-run") => self.world.ban_in_all_groups(agent, true),
             Some("error") => self.on_ctx_action(ui::context::CtxAction::ModerateGroupText {
                 session: group,
                 agent,
@@ -63,6 +68,7 @@ impl App {
                 self.world.group_data.eject(group, vec![agent], me);
             }
             Confirm::Ban { group, agent } => self.world.group_data.ban_member(group, agent, me),
+            Confirm::BanAll { agent, ban } => self.world.ban_in_all_groups(agent, ban),
         }
     }
 }

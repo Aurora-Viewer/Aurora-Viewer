@@ -588,8 +588,7 @@ impl Session<'_> {
                 item: item.id,
             };
             let options = crate::scripts::ScriptOptions {
-                mono: true,
-                luau: crate::scripts::Luau::Off,
+                compile: crate::scripts::CompileTarget::for_item(item.flags),
                 running: false,
                 experience: Uuid::nil(),
             };

@@ -13,6 +13,7 @@ pub mod calling_cards;
 
 mod arrival_wait;
 pub mod beacons;
+pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
@@ -39,6 +40,7 @@ pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;
+pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -163,6 +165,8 @@ pub struct Region {
     pub avatar_hover_height: bool,
     /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
     pub lsl_syntax_id: Option<Uuid>,
+    /// SimulatorFeatures' LuaScriptsEnabled: the region runs SLua scripts.
+    pub lua_scripts: bool,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -180,6 +184,9 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
+    /// post links in chat applies here, so the role editor shows it.
+    pub group_chat_post_links: bool,
     pub max_link_children: Option<u32>,
     pub animated_object_max_tris: u32,
 }
@@ -471,6 +478,8 @@ pub struct World {
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
+    /// Selection and give beams, ours and the others' (`beams`).
+    pub beams: beams::Beams,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
@@ -619,6 +628,9 @@ pub struct World {
     pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// Local dressing-room visibility; independent of photo choices.
     pub avatar_studio: bool,
+    /// Avatar Studio's display-only hover height (metres) that our avatar's
+    /// entry of `avatar_poses` carries, as the scene last posed it.
+    pub avatar_studio_lift: f32,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -699,6 +711,8 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// A ban (or its lifting) on its way to all our groups.
+    pub ban_all: group_ban_all::BanAll,
     /// The group title worn by region, and every group's titles for the
     /// Group titles window (FSGroupTitleRegionMgr).
     pub region_titles: region_titles::RegionTitles,
@@ -881,6 +895,7 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
+            beams: beams::Beams::default(),
             object_im_filter: object_im_filter::Settings::default(),
             anti_spam: Default::default(),
             appearance_counter: 1,
@@ -963,6 +978,7 @@ impl World {
             parcel_visibility: Default::default(),
             photo_isolation: Default::default(),
             avatar_studio: false,
+            avatar_studio_lift: 0.0,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -988,6 +1004,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            ban_all: Default::default(),
             region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
@@ -1153,6 +1170,8 @@ impl World {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.beams
+            .forget(std::time::Instant::now(), |id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -2192,6 +2211,7 @@ impl World {
             voice_server: String::new(),
             avatar_hover_height: false,
             lsl_syntax_id: None,
+            lua_scripts: false,
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
@@ -2201,6 +2221,7 @@ impl World {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -2642,7 +2663,7 @@ impl World {
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
-                self.chat_log.login(l.agent_id);
+                self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 if self.chat_log.cfg.import_at_login
                     && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
                 {
@@ -2757,21 +2778,25 @@ impl World {
                 materials_rate,
                 materials_max,
                 lsl_syntax_id,
+                lua_scripts,
                 grid_status_feed,
                 grid_status_page,
                 currency_base_uri,
                 opensim,
                 currency_symbol,
                 export_supported,
+                group_chat_post_links,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
+                r.lua_scripts = lua_scripts;
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.opensim = opensim;
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
+                r.group_chat_post_links = group_chat_post_links;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -2811,8 +2836,8 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
-            NetEvent::LslSyntax { id, keywords } => {
-                self.on_lsl_syntax(id, keywords);
+            NetEvent::LslSyntax { id, keywords, lua } => {
+                self.on_lsl_syntax(id, keywords, lua);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {
@@ -3375,6 +3400,10 @@ impl World {
                 }
                 None
             }
+            NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
+                log::info!("alert muted during a ban in all groups: {message}");
+                None
+            }
             NetEvent::Alert { message } => {
                 self.map.on_alert(&message);
                 let restart = message.to_lowercase().contains("restart");
@@ -3405,11 +3434,14 @@ impl World {
                 self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
                 None
             }
-            // process_script_question drops only the questions of a blocked
-            // object (LLMuteList::isMuted(taskid)): not those of a blocked
-            // owner, nor on any other condition (no click needed, object out
-            // of view or unknown, another region, Do Not Disturb)
-            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
+            // A permission question follows the same block rule as script
+            // dialogs and URLs (`object_blocked`): a blocked object, by id or
+            // by name, or the blocked owner of an object in the scene.
+            // process_script_question checks the object id alone
+            // (LLMuteList::isMuted(taskid)); the owner and name checks are
+            // stricter. No other condition drops it (no click needed, object
+            // out of view or unknown, another region, Do Not Disturb).
+            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
@@ -4039,6 +4071,10 @@ impl World {
                 self.search.events.insert(e.id, *e);
                 None
             }
+            NetEvent::GroupBanInGroup { group, agent, ban, ok } => {
+                self.on_group_ban_in_group(group, agent, ban, ok);
+                None
+            }
             ev @ (NetEvent::GroupMembers(_)
             | NetEvent::GroupRoles(_)
             | NetEvent::GroupRoleMembers(_)
@@ -4352,6 +4388,25 @@ impl World {
                     .is_some_and(|o| o.is_avatar());
                 if source != self.agent_id && known {
                     self.point_at.receive(effect, source, target, offset, kind);
+                }
+                None
+            }
+            NetEvent::Beam {
+                effect,
+                source,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                // LLHUDEffectSpiral::unpackData: its source and its target
+                // object must be in the world; ours are drawn on their own
+                if source != self.agent_id {
+                    let objects = &self.objects;
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
                 }
                 None
             }
@@ -5557,6 +5612,12 @@ impl World {
     /// (LFSimFeatureHandler::simSupportsExport).
     pub fn export_supported(&self) -> bool {
         self.main().is_some_and(|r| r.export_supported)
+    }
+
+    /// The region we are in applies the ability to post links in group
+    /// chat (LLViewerRegion::groupChatPostLinksEnabled for gAgent's region).
+    pub fn group_chat_post_links(&self) -> bool {
+        self.main().is_some_and(|r| r.group_chat_post_links)
     }
 
     /// The status feed and page the agent's region names for its OpenSim
@@ -8837,12 +8898,14 @@ mod motion_tests {
                 materials_rate: None,
                 materials_max: None,
                 lsl_syntax_id: Uuid::nil(),
+                lua_scripts: false,
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());
