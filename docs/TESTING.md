@@ -4511,6 +4511,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow already lying this deep while it snows |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
+| `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
 | `AURORA_DEMO_SNOW_ROOF=1` | Three canopies in the snow: plain, open at the top, glass |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
@@ -4528,7 +4529,7 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_RAIN`), and `AURORA_SNOW_LYING=<0..1>` starts it with that much
   snow on the ground (it builds over minutes otherwise: a dusting, then a
   white cover on what faces up, none on walls or steep roofs).
-  `AURORA_SNOW_DEEP` and `AURORA_WEATHER_QUALITY` set deep snow and the
+  `AURORA_SNOW_DEEP`, `AURORA_SNOW_DEEP_REACH` (metres) and `AURORA_WEATHER_QUALITY` set deep snow, its reach and the
   quality the same way, to measure each with `AURORA_PROFILE`. The wind,
   the puddles and the thunder come from the settings.
   `AURORA_DEMO_SNOW_ROOF=1` (with `AURORA_SNOW` and `AURORA_SNOW_LYING`)

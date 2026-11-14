@@ -4749,7 +4749,10 @@ impl Scene {
                     record: c.record,
                     bounds: [0.0; 4],
                 };
-                if shadows {
+                // with the shadows off too: the rain's shelter map takes the
+                // terrain (deep snow stands on what it holds, and found no
+                // ground on bare land; only it draws them then)
+                {
                     self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
                         center,

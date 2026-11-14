@@ -326,7 +326,10 @@ impl WeatherSettings {
                 .snow_distance
                 .clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end())
                 .max(self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end())),
-            deep_reach: self.snow_deep_reach.clamp(*DEEP_SNOW_REACH.start(), *DEEP_SNOW_REACH.end()),
+            deep_reach: env_snow_deep_reach()
+                .filter(|_| !self.touched)
+                .unwrap_or(self.snow_deep_reach)
+                .clamp(*DEEP_SNOW_REACH.start(), *DEEP_SNOW_REACH.end()),
             footprints: self.snow_footprints && self.snow_settles,
             trail_extent: self.snow_footprints_reach.clamp(32.0, 64.0),
             // the app centres it on my avatar
@@ -464,6 +467,13 @@ fn env_quality() -> Option<WeatherQuality> {
 fn env_snow_deep() -> Option<bool> {
     static DEEP: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
     *DEEP.get_or_init(|| std::env::var("AURORA_SNOW_DEEP").ok().map(|v| v.trim() == "1"))
+}
+
+/// `AURORA_SNOW_DEEP_REACH=<m>`: deep snow's reach until the menu is used
+/// (demo captures: the terrain past the plaza's floor).
+fn env_snow_deep_reach() -> Option<f32> {
+    static REACH: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *REACH.get_or_init(|| std::env::var("AURORA_SNOW_DEEP_REACH").ok().and_then(|v| v.trim().parse().ok()))
 }
 
 /// `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]`: the northern lights

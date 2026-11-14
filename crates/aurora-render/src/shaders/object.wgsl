@@ -3418,8 +3418,11 @@ fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
     // that faces up keeps the rain and snow off. A ceiling whose roof is
     // fully transparent (a skybox's painted sky, its top not drawn at all)
     // lets the snow fall through it, as people asked; a visible roof, glass
-    // too, still keeps it off (its top faces up)
-    if (shadow_params.kind.x == 1u && !shelter_faces_up(front)) { discard; }
+    // too, still keeps it off (its top faces up). Not alpha-masked cutouts:
+    // a tree's leaves are one-sided cards, half of them facing down, and
+    // without them the cover under a tree broke into bare texels
+    let cutout = (rec.flags.x & FLAG_ALPHA_MASK) != 0u && (rec.flags.x & FLAG_ALPHA_BLEND) == 0u;
+    if (shadow_params.kind.x == 1u && !cutout && !shelter_faces_up(front)) { discard; }
     let tex_alpha = sample_tex_unbiased(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     // the rain's shelter map: any blended texel that is there at all keeps
