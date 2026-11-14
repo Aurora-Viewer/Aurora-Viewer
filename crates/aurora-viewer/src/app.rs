@@ -9946,6 +9946,11 @@ impl App {
         self.world.events_this_frame = 0;
         self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
+        // FSMarkObjects, before the frame's events: the first lines after
+        // the login are marked too (AURORA_DEMO_OBJECT_CHAT=…:spoof: on for
+        // the run)
+        self.world.mark_unnamed_objects =
+            self.settings.mark_unnamed_objects || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.spoof));
         self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
         self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
         self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
@@ -10102,9 +10107,6 @@ impl App {
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
             self.world.show_back_slurl = self.settings.show_back_slurl;
-            // FSMarkObjects (AURORA_DEMO_OBJECT_CHAT=…:spoof: on for the run)
-            self.world.mark_unnamed_objects =
-                self.settings.mark_unnamed_objects || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.spoof));
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
