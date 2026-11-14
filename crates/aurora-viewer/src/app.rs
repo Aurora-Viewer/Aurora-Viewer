@@ -20499,6 +20499,7 @@ impl ApplicationHandler for App {
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }
+            crate::demo::tags::apply_distance_preferences(&mut self.settings);
             // AURORA_DEMO_TAGS: residents whose name plates show every
             // state, at the three distance levels
             if crate::demo::tags::mode().is_some() {
