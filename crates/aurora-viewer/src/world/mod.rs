@@ -744,6 +744,10 @@ pub struct World {
     /// "Teleport completed from <SLURL>" in nearby chat after a teleport to
     /// another region (FSShowBackSLURL, from the settings).
     pub show_back_slurl: bool,
+    /// The residents drawn otherwise than by the complexity rules: 1 never
+    /// fully, 2 always fully (Settings::render_exceptions), copied from the
+    /// settings each frame for the menus of the people lists.
+    pub render_exceptions: std::collections::HashMap<Uuid, u8>,
     /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
     /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
     /// there) and said on its arrival.
@@ -1036,6 +1040,7 @@ impl World {
             collisions: Default::default(),
             fly_after_teleport: false,
             show_back_slurl: true,
+            render_exceptions: Default::default(),
             tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),

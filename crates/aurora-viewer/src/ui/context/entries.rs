@@ -775,15 +775,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         })
         .unwrap_or_else(|| aurora_i18n::tr!("ui-context-display-options").into());
     ui.submenu("gauge-filled", &display, true, |ui| {
-        for (mode, icon, label) in [
-            (2u8, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
-            (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
-            (
-                0,
-                "adjustments-filled",
-                aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
-            ),
-        ] {
+        for (mode, icon, label) in super::render_choices() {
             ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
         }
         ui.separator();
