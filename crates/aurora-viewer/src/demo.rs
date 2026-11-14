@@ -4412,6 +4412,7 @@ fn caps() -> std::collections::HashMap<String, String> {
         .into_iter()
         .chain(sim_extras::caps())
         .chain(crate::build::demo_sim::caps())
+        .chain(region::open_settings_caps())
         .collect();
     if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
         for (name, url) in [
@@ -4483,6 +4484,7 @@ pub fn events() -> Vec<NetEvent> {
         })),
     ];
     ev.extend(group::simulator_features());
+    ev.extend(region::open_settings_event(HANDLE));
     // parcel overlay (mini-map property lines): four parcels split at
     // x = y = 128 m and a for-sale lot in the south-east corner
     let mut cells = vec![1u8; 64 * 64];
