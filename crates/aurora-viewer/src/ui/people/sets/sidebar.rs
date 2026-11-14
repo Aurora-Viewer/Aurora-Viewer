@@ -86,9 +86,18 @@ pub(super) fn column(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &st
     ui.spacing_mut().item_spacing.y = 2.0;
     header(ui, c);
     ui.add_space(4.0);
+    // the hint rests at the column's bottom; the lists scroll above it
+    let mut job = egui::text::LayoutJob::single_section(
+        aurora_i18n::tr!("people-sets-priority-hint").to_owned(),
+        egui::TextFormat::simple(FontId::proportional(11.0), p.muted),
+    );
+    job.wrap.max_width = (ui.available_width() - 4.0).max(1.0);
+    let hint = ui.painter().layout_job(job);
+    let hint_h = hint.size().y;
     egui::ScrollArea::vertical()
         .id_salt("people-sets-side-rows")
         .auto_shrink([false, false])
+        .max_height((ui.available_height() - hint_h - 12.0).max(0.0))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             set_rows(ui, c, st, set, SET_ROW_H);
@@ -103,16 +112,10 @@ pub(super) fn column(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &st
             for (id, icon, _) in smart_lists() {
                 smart_row(ui, c, st, set, id, icon);
             }
-            ui.add_space(12.0);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(aurora_i18n::tr!("people-sets-priority-hint"))
-                        .size(11.0)
-                        .color(p.muted),
-                )
-                .wrap(),
-            );
         });
+    let bottom = ui.max_rect().bottom();
+    ui.painter()
+        .galley(Pos2::new(ui.max_rect().left() + 2.0, bottom - hint_h), hint, p.muted);
 }
 
 /// The picker of a narrow window: the set shown, and once clicked the
