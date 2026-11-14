@@ -414,6 +414,7 @@ mod tests {
             header,
             bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(bytes)),
             skin: None,
+            skin_bad: false,
         }
     }
 

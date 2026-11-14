@@ -2275,6 +2275,7 @@ mod tests {
                     },
                     bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),
                     skin: None,
+                    skin_bad: false,
                 }),
                 rigid: Some(Mat4::IDENTITY),
             }],

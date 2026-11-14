@@ -9462,6 +9462,7 @@ ui-context-sit-stand = 座る／立つ
 ui-context-save-backup = バックアップ
 ui-context-save-collada = Collada
 ui-context-save-obj = OBJ
+ui-context-save-gltf = glTF
 ui-context-remove-from-display-exceptions = 表示の例外から削除する
 ui-context-script-info = スクリプト情報
 
@@ -14009,6 +14010,9 @@ object-export-collada = Collada（.dae）
 object-export-obj = Wavefront OBJ（.obj）
 object-export-collada-files = Colladaファイル
 object-export-obj-files = Wavefront OBJファイル
+object-export-gltf = glTFバイナリ（.glb）
+object-export-gltf-files = glTFバイナリファイル
+object-export-gltf-png = glTFファイルはテクスチャをPNGとして内部に保存します。
 object-export-object-info = オブジェクト情報
 object-export-prims = エクスポート可能なプリム数：全{ $total }個中{ $count }個
 object-export-textures = エクスポート可能なテクスチャ数：全{ $total }枚中{ $count }枚

@@ -1,10 +1,10 @@
-//! Object › Save as › Collada / OBJ: the export window
+//! Object › Save as › Collada / OBJ / glTF: the export window
 //! (ColladaExportFloater, floater_export_collada.xml,
 //! indra/newview/daeexport.cpp, Latif Khalifa and Cinder Biscuits, LGPL
 //! 2.1) in the Aurora skin. The object's name and how many of its prims and
 //! textures may be written, the options, the textures that will be saved,
-//! then Save as. The format (Collada or OBJ) is chosen here too: the Legacy
-//! Viewer has Collada only. The work is `app/object_export.rs`.
+//! then Save as. The format (Collada, OBJ or glTF) is chosen here too: the
+//! Legacy Viewer has Collada only. The work is `app/object_export.rs`.
 
 use super::common::{self, combo, label, section};
 use crate::build::export::{Format, ImageFormat, Settings};
@@ -119,6 +119,8 @@ impl ExportWindow {
                         );
                         ui.add_space(12.0);
                         widgets::radio_value(ui, p, &mut settings.format, Format::Obj, aurora_i18n::tr!("object-export-obj"));
+                        ui.add_space(12.0);
+                        widgets::radio_value(ui, p, &mut settings.format, Format::Gltf, aurora_i18n::tr!("object-export-gltf"));
                     });
                     ui.add_space(8.0);
                     section(ui, p, aurora_i18n::tr!("object-export-object-info"));
@@ -156,20 +158,26 @@ impl ExportWindow {
                         widgets::checkbox(ui, p, &mut settings.single_uv_map, aurora_i18n::tr!("object-export-single-uv"))
                             .on_hover_text(aurora_i18n::tr!("object-export-single-uv-tip"));
                     });
-                    ui.horizontal(|ui| {
+                    // a glTF file holds its textures as PNG
+                    let gltf = settings.format == Format::Gltf;
+                    let row = ui.horizontal(|ui| {
                         label(ui, p, aurora_i18n::tr!("object-export-texture-format"));
                         let formats: Vec<_> = ImageFormat::ALL.iter().map(|f| (f.label(), *f)).collect();
+                        let shown = if gltf { ImageFormat::Png } else { settings.texture_format };
                         if let Some(f) = combo(
                             ui,
                             "object_export_image_format",
-                            Some(settings.texture_format),
+                            Some(shown),
                             &formats,
                             120.0,
-                            textures && settings.textures,
+                            textures && settings.textures && !gltf,
                         ) {
                             settings.texture_format = f;
                         }
                     });
+                    if gltf {
+                        row.response.on_hover_text(aurora_i18n::tr!("object-export-gltf-png"));
+                    }
                     if textures && settings.textures {
                         ui.add_space(8.0);
                         section(ui, p, aurora_i18n::tr!("object-export-texture-list"));
