@@ -2553,6 +2553,16 @@ impl World {
             .login
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
+        // LLStartUp reads initial-outfit[0].folder_name and gender
+        // (llstartup.cpp). A missing key is an empty string.
+        let (initial_folder, initial_gender) = self
+            .login
+            .as_ref()
+            .map(|l| {
+                let row = l.raw["initial-outfit"].at(0);
+                (row["folder_name"].as_str().to_owned(), row["gender"].as_str().to_owned())
+            })
+            .unwrap_or_default();
         let inputs = outfit::OutfitInputs {
             worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
@@ -2561,6 +2571,8 @@ impl World {
             ready,
             first_login,
             second_life,
+            initial_folder: &initial_folder,
+            initial_gender: &initial_gender,
         };
         self.outfit.update(inputs, now);
     }

@@ -5993,6 +5993,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
+| `AURORA_DEMO_INITIAL_OUTFIT=1\|Name\|Name,male\|Name,female` | A fake first login that wears the named My Outfits folder (#3411) |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_SHAPE_XML_EXPORT=<file>` | With `AURORA_DEMO_SHAPE`: exports the shape draft to an appearance XML |
@@ -9935,6 +9936,19 @@ objects, <m> prims asked again, <k> failed meshes retried` (`other`: 2 worn
 objects, 3 prims), with the bake, texture and skeleton lines of each step.
 The demo has no bakes nor streamed textures, so the counts of downloads
 are 0; the downloads themselves need a grid test.
+
+**`AURORA_DEMO_INITIAL_OUTFIT=1|Name|Name,male|Name,female`** — a fake first
+login, like the Legacy Viewer's `FakeInitialOutfitName` (`llstartup.cpp`).
+`1` names the folder "Starter Outfit" and female; a name uses that folder
+and female; `Name,male` or `Name,female` sets the gender (a comma in the
+name stays in the name). The demo login reply says `ever_logged_in` is N
+and carries `initial-outfit`. My Outfits gains that folder with one shirt,
+and a Current Outfit folder is added. After login the shirt is linked from
+Current Outfit (inventory, or Appearance › Worn). The gender of a named
+outfit is that outfit's own shape; this demo shirt has no shape, so
+`,male` only changes the login field. The no-folder path (standard
+wearables, male shape param 80) is covered by unit tests, not this switch.
+A real brand-new Second Life account is a grid check the human registers.
 
 **`AURORA_DEMO_OUTFIT_RESTORE=warm|cold`** — the login restore of the
 outfit's attachments (`world/outfit.rs`) against a demo region that behaves
