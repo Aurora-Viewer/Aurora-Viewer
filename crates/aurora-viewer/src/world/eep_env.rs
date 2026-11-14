@@ -784,6 +784,47 @@ impl EnvSelector {
         self.drop_preset();
     }
 
+    /// Drop one list's local override ("Based on day cycle" / day "Nothing").
+    /// If nothing authored remains, clears the whole local environment.
+    pub fn clear_local_kind(&mut self, kind: SettingsKind) {
+        if self.rlva_locked {
+            return;
+        }
+        self.photo_yield(kind);
+        let Some(l) = self.local.as_mut() else {
+            return;
+        };
+        match kind {
+            SettingsKind::Sky => {
+                l.sky = None;
+                // the weather came with a sky or a day: the day's, if one stays
+                l.weather = l.day.as_ref().and_then(|(asset, _)| self.asset_weather.get(asset).cloned());
+                self.drop_preset();
+            }
+            SettingsKind::Water => l.water = None,
+            SettingsKind::Day => {
+                l.day = None;
+                l.weather = match l.sky.as_ref().map(|(o, _)| o) {
+                    Some(LocalOrigin::Item(asset)) => self.asset_weather.get(asset).cloned(),
+                    _ => None,
+                };
+            }
+        }
+        let empty = self.local.as_ref().is_none_or(|l| {
+            l.day.is_none()
+                && !matches!(
+                    l.sky.as_ref().map(|(o, _)| o),
+                    Some(LocalOrigin::Item(_) | LocalOrigin::Preset(_) | LocalOrigin::Personal(_))
+                )
+                && !matches!(l.water.as_ref().map(|(o, _)| o), Some(LocalOrigin::Item(_)))
+        });
+        if empty {
+            self.clear_local();
+        } else {
+            self.local_dirty = true;
+        }
+    }
+
     /// The applied sky's or day's Aurora Weather, kept with the local
     /// environment (an editor's "Apply only to myself").
     pub fn set_local_weather(&mut self, weather: Option<crate::weather::region::RegionDay>) {
@@ -1823,6 +1864,10 @@ mod tests {
                 day: ListShown::DayBased,
             }
         );
+        sel.clear_local_kind(SettingsKind::Sky);
+        assert_eq!(sel.local_view(), LocalView::SHARED, "clearing the only override returns to Shared");
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
         // then a water on top: the sky stays
         sel.request_local(WATER, SettingsKind::Water);
         sel.on_settings(WATER, Some(water_asset(9.0)));
@@ -1864,6 +1909,25 @@ mod tests {
         sel.request_local(plain, SettingsKind::Sky);
         sel.on_settings(plain, Some(sky_asset(1.2)));
         sel.frame(&input(3.0));
+        assert!(sel.local_weather().is_none());
+    }
+
+    #[test]
+    fn clearing_a_coded_sky_drops_its_weather_and_keeps_the_waters_override() {
+        use crate::weather::region::{RegionDay, SkyWeather};
+        let mut sel = region_selector();
+        sel.note_asset_weather(SKY, Some(RegionDay::fixed(SkyWeather::CLEAR)));
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        sel.frame(&input(1.0));
+        assert!(sel.local_weather().is_some());
+        // "Based on day cycle" for the sky: the water stays, the sky's
+        // weather goes with it
+        sel.clear_local_kind(SettingsKind::Sky);
+        sel.frame(&input(2.0));
+        assert!(sel.has_local(), "the water override stays");
         assert!(sel.local_weather().is_none());
     }
 

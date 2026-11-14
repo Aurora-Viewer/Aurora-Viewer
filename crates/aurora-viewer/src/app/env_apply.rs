@@ -222,6 +222,12 @@ impl App {
                     self.world.eep.clear_local();
                     self.panels.time_of_day = 0;
                 }
+                EnvAction::Clear(kind) => {
+                    self.world.eep.clear_local_kind(kind);
+                    if kind == crate::world::env_select::SettingsKind::Sky {
+                        self.panels.time_of_day = 0;
+                    }
+                }
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
             }
         }

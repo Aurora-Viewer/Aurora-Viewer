@@ -1216,8 +1216,17 @@ fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Phot
             // the two arrows and the restore button after the list
             let gap = ui.spacing().item_spacing.x;
             let width = (ui.available_width() - 3.0 * (20.0 + gap) - 12.0).max(60.0);
-            if let Some(id) = super::environment::settings_list(ui, p, env.catalog, kind, shown, ("photo_env_list", kind as u8), width) {
-                l.env.pick(kind, Some(id));
+            if let Some(pick) = super::environment::settings_list(ui, p, env.catalog, kind, shown, ("photo_env_list", kind as u8), width) {
+                match pick {
+                    super::environment::SettingsPick::Item(id) => l.env.pick(kind, Some(id)),
+                    // Shared / DayBased / Nothing: the photo's own again
+                    super::environment::SettingsPick::Shared | super::environment::SettingsPick::DayBased => {
+                        if kind == SettingsKind::Sky {
+                            l.env.set_time(None);
+                        }
+                        l.env.pick(kind, None);
+                    }
+                }
             }
             let own = l.env.of(kind).is_some() || (kind == SettingsKind::Sky && l.env.time.is_some());
             if widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("photo-light-own"), own) {
