@@ -3960,6 +3960,13 @@ impl Session<'_> {
                             max_children,
                         },
                     );
+                    emit(
+                        self.sh,
+                        NetEvent::OpenRegionSettings {
+                            handle: sim.handle,
+                            settings: Box::new(crate::open_region::OpenRegionSettings::from_llsd(b)),
+                        },
+                    );
                 }
             }
             "EnableSimulator" => {
