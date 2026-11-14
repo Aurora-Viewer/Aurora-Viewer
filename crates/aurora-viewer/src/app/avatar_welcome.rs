@@ -18,29 +18,40 @@
 //! The page sends the body (`wear_folder`) then the clothing (`add_folder`)
 //! two and a half seconds later: the commands run one after the other, in
 //! the order sent, so that a slow copy of the body never replaces the
-//! clothing worn after it. A folder not found, a copy refused or not done
-//! within a minute leaves the outfit as it is, with a line in the log, as
-//! the Legacy Viewer does.
+//! clothing worn after it. A folder not found, or a copy that never made its
+//! folder, leaves the outfit as it is, with a line in the log. A copy that
+//! ends in error once its folder exists wears what arrived
+//! (LLWearCategoryAfterCopy wears whatever the category holds); a command not
+//! done within a minute is dropped, and its late copy is finished but never
+//! worn. At most eight commands wait.
 
 use super::*;
 use crate::slapp::{FolderAction, FolderCommand};
-use crate::world::appearance::WearMode;
+use crate::world::appearance::{FT_CLOTHING, WearMode};
 use crate::world::inventory::{FetchState, Inventory, actions as rules};
-use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
+use aurora_net::inventory::operations::{CopyItem, Mutation, Operation, Reply};
 use aurora_net::outfits::OutfitLink;
 use std::collections::VecDeque;
 use uuid::Uuid;
 
-/// The Clothing system folder: the copies go under it.
-const FT_CLOTHING: i32 = 5;
 /// A command waits this long for its folder, its copy and the outfit
 /// window, then gives up.
 const TIMEOUT: Duration = Duration::from_secs(60);
+/// Once the copy is on its way, the network layer's own batch timer (also a
+/// minute, started a little later) gets to end it first, so that what did
+/// arrive is worn.
+const COPY_GRACE: Duration = Duration::from_secs(10);
+/// The page sends two commands a choice: eight is four choices in a row.
+const QUEUE_CAP: usize = 8;
 
 #[derive(Default)]
 pub(super) struct WelcomeWears {
     queue: VecDeque<FolderCommand>,
     job: Option<Job>,
+    /// Copies whose job timed out: `(request, folder)`. Their late reply is
+    /// still applied and finished, like ContentsCopies' `timed_out`, so that
+    /// the folder is not left empty; they never wear anything.
+    late: Vec<(Uuid, Uuid)>,
 }
 
 struct Job {
@@ -53,21 +64,31 @@ enum Stage {
     /// Finding the folder, and loading a Library one before its copy.
     Find,
     /// The copy on its way: `root` is the new folder (the asked id, then the
-    /// server's), `count` the items it will hold.
-    Copy { request: Uuid, root: Uuid, count: usize },
-    /// Waiting for `count` items in `folder`, then for the outfit window.
-    Wear { folder: Uuid, count: usize },
+    /// server's once `created`).
+    Copy { request: Uuid, root: Uuid, created: bool },
+    /// Waiting for the folder's links to resolve, then for the outfit window.
+    Wear { folder: Uuid },
 }
 
 impl WelcomeWears {
+    /// Queues the commands, at most `QUEUE_CAP` in all. The queue is not
+    /// emptied when the window closes: that would lose a body's `add_folder`.
     pub fn push(&mut self, commands: Vec<FolderCommand>) {
-        self.queue.extend(commands);
+        for command in commands {
+            if self.queue.len() >= QUEUE_CAP {
+                log::warn!("avatar welcome pack: too many folder commands queued, {:?} dropped", command.name);
+                continue;
+            }
+            self.queue.push_back(command);
+        }
     }
 
     pub fn owns(&self, request: Uuid) -> bool {
-        self.job
-            .as_ref()
-            .is_some_and(|job| matches!(job.stage, Stage::Copy { request: r, .. } if r == request))
+        self.late.iter().any(|(r, _)| *r == request)
+            || self
+                .job
+                .as_ref()
+                .is_some_and(|job| matches!(job.stage, Stage::Copy { request: r, .. } if r == request))
     }
 }
 
@@ -104,8 +125,8 @@ pub(super) fn folder_of(inv: &Inventory, command: &FolderCommand) -> Option<Uuid
 /// The copy of a loaded Library folder into `to`: a folder of the same
 /// name, the folder's own items copied into it (its subfolders are not:
 /// CopyLibraryCategory's copy_subfolders=false), a link linked again.
-/// Returns the new folder's asked id, the change and the items it holds.
-pub(super) fn copy_plan(inv: &Inventory, folder: Uuid, to: Uuid) -> Result<(Uuid, Mutation, usize), String> {
+/// Returns the new folder's asked id and the change.
+pub(super) fn copy_plan(inv: &Inventory, folder: Uuid, to: Uuid) -> Result<(Uuid, Mutation), String> {
     let f = inv.folders.get(&folder).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
     if f.state != FetchState::Fetched {
         return Err(aurora_i18n::tr!("world-appearance-this-outfit-s-inventory-is-still-loading").into());
@@ -140,11 +161,10 @@ pub(super) fn copy_plan(inv: &Inventory, folder: Uuid, to: Uuid) -> Result<(Uuid
             });
         }
     }
-    let count = change.copies.len() + links.len();
     if !links.is_empty() {
         change.operations.push(Operation::Links { parent: root, links });
     }
-    Ok((root, change, count))
+    Ok((root, change))
 }
 
 /// What a step of a command asks the app to do.
@@ -158,27 +178,11 @@ enum Step {
 impl App {
     /// One step of the current folder command, once per frame.
     pub(super) fn welcome_wear_tick(&mut self, now: Instant) {
-        let mut job = match self.welcome_wears.job.take() {
-            Some(job) => job,
-            None => {
-                let Some(command) = self.welcome_wears.queue.pop_front() else {
-                    return;
-                };
-                log::info!("avatar welcome pack: {:?} {:?} {:?}", command.action, command.name, command.id);
-                Job {
-                    command,
-                    since: now,
-                    stage: Stage::Find,
-                }
-            }
-        };
-        if now.saturating_duration_since(job.since) > TIMEOUT {
-            log::warn!(
-                "avatar welcome pack: {:?} not done within a minute, outfit unchanged",
-                job.command.name
-            );
+        expire(&mut self.welcome_wears, now);
+        start_next(&mut self.welcome_wears, now);
+        let Some(mut job) = self.welcome_wears.job.take() else {
             return;
-        }
+        };
         // one outfit change at a time: a wear sent meanwhile would be dropped
         let busy = self.appearance_ui.pending.is_some();
         // fetch the subtree and the link targets until the job can go on
@@ -204,34 +208,136 @@ impl App {
 
     /// The copy's answers: the folders first, then (with items to copy) the
     /// items once the server confirmed them all.
-    pub(super) fn welcome_wear_result(&mut self, request: Uuid, result: Result<aurora_net::inventory::operations::Reply, String>) {
-        let Some(mut job) = self.welcome_wears.job.take() else {
-            return;
-        };
-        let Stage::Copy { root, count, .. } = job.stage else {
-            self.welcome_wears.job = Some(job);
-            return;
-        };
+    pub(super) fn welcome_wear_result(&mut self, request: Uuid, result: Result<Reply, String>) {
+        if let Some(command) = copy_reply(&mut self.welcome_wears, &mut self.world.inventory, request, result, Instant::now()) {
+            self.send(command);
+        }
+    }
+}
+
+/// The next queued command becomes the job, when there is none.
+fn start_next(wears: &mut WelcomeWears, now: Instant) {
+    if wears.job.is_some() {
+        return;
+    }
+    let Some(command) = wears.queue.pop_front() else {
+        return;
+    };
+    log::info!("avatar welcome pack: {:?} {:?} {:?}", command.action, command.name, command.id);
+    wears.job = Some(Job {
+        command,
+        since: now,
+        stage: Stage::Find,
+    });
+}
+
+/// Ends the job that waited too long. A copy still on its way is kept in
+/// `late`, so that its reply is finished (the folder is not left empty) but
+/// never worn.
+fn expire(wears: &mut WelcomeWears, now: Instant) {
+    let Some(job) = wears.job.as_ref() else {
+        return;
+    };
+    let limit = match job.stage {
+        Stage::Copy { created: true, .. } => TIMEOUT + COPY_GRACE,
+        _ => TIMEOUT,
+    };
+    if now.saturating_duration_since(job.since) <= limit {
+        return;
+    }
+    log::warn!(
+        "avatar welcome pack: {:?} not done within a minute, outfit unchanged",
+        job.command.name
+    );
+    if let Some(Job {
+        stage: Stage::Copy { request, root, .. },
+        ..
+    }) = wears.job.take()
+    {
+        if wears.late.len() >= QUEUE_CAP {
+            wears.late.remove(0);
+        }
+        wears.late.push((request, root));
+    }
+}
+
+/// Applies a reply of the copy to the inventory and returns the folder the
+/// server made for `root`.
+fn apply_reply(inv: &mut Inventory, reply: &Reply, root: Uuid) -> Uuid {
+    inv.remove(&reply.removed);
+    inv.apply(reply.contents.clone());
+    inv.created_folders(reply.folders.clone());
+    reply.created.get(&root).copied().unwrap_or(root)
+}
+
+/// One answer of the copy: returns the command to send, if any. Like the
+/// Legacy Viewer's LLWearCategoryAfterCopy (indra/newview/llappearancemgr.cpp),
+/// a copy that ends in error after its folder exists wears what the folder
+/// holds; one with no folder, or one that timed out, wears nothing.
+fn copy_reply(
+    wears: &mut WelcomeWears,
+    inv: &mut Inventory,
+    request: Uuid,
+    result: Result<Reply, String>,
+    now: Instant,
+) -> Option<NetCommand> {
+    if let Some(at) = wears.late.iter().position(|(r, _)| *r == request) {
+        let root = wears.late[at].1;
         match result {
             Ok(reply) => {
-                self.world.inventory.remove(&reply.removed);
-                self.world.inventory.apply(reply.contents.clone());
-                self.world.inventory.created_folders(reply.folders.clone());
-                let folder = reply.created.get(&root).copied().unwrap_or(root);
+                let folder = apply_reply(inv, &reply, root);
                 if reply.copies.is_empty() {
-                    job.stage = Stage::Wear { folder, count };
-                    self.welcome_wears.job = Some(job);
-                } else {
-                    job.stage = Stage::Copy {
-                        request,
-                        root: folder,
-                        count,
-                    };
-                    self.welcome_wears.job = Some(job);
-                    self.send(NetCommand::FinishInventoryCopies { request, reply });
+                    wears.late.remove(at);
+                    return None;
                 }
+                wears.late[at].1 = folder;
+                return Some(NetCommand::FinishInventoryCopies { request, reply });
             }
-            Err(reason) => log::warn!("avatar welcome pack: copy failed: {reason}"),
+            Err(reason) => {
+                log::warn!("avatar welcome pack: late copy failed: {reason}");
+                wears.late.remove(at);
+                return None;
+            }
+        }
+    }
+    let job = wears.job.as_mut()?;
+    let Stage::Copy {
+        request: asked,
+        root,
+        created,
+    } = job.stage
+    else {
+        return None;
+    };
+    if asked != request {
+        return None;
+    }
+    match result {
+        Ok(reply) => {
+            let folder = apply_reply(inv, &reply, root);
+            job.since = now;
+            if reply.copies.is_empty() {
+                job.stage = Stage::Wear { folder };
+                None
+            } else {
+                job.stage = Stage::Copy {
+                    request,
+                    root: folder,
+                    created: true,
+                };
+                Some(NetCommand::FinishInventoryCopies { request, reply })
+            }
+        }
+        Err(reason) if created => {
+            log::warn!("avatar welcome pack: copy incomplete ({reason}), wearing what arrived");
+            job.stage = Stage::Wear { folder: root };
+            job.since = now;
+            None
+        }
+        Err(reason) => {
+            log::warn!("avatar welcome pack: copy failed: {reason}");
+            wears.job = None;
+            None
         }
     }
 }
@@ -241,7 +347,7 @@ impl App {
 fn job_folder(inv: &Inventory, job: &Job) -> Option<Uuid> {
     match job.stage {
         Stage::Find if job.command.action == FolderAction::Remove => folder_of(inv, &job.command),
-        Stage::Wear { folder, .. } => Some(folder),
+        Stage::Wear { folder } => Some(folder),
         _ => None,
     }
 }
@@ -270,7 +376,7 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
                 };
             }
             if !rules::library(inv, folder) {
-                job.stage = Stage::Wear { folder, count: 0 };
+                job.stage = Stage::Wear { folder };
                 return Step::Keep;
             }
             if inv.folders.get(&folder).is_some_and(|f| f.state != FetchState::Fetched) {
@@ -279,9 +385,13 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
             }
             let to = rules::system(inv, FT_CLOTHING).unwrap_or(inv.root);
             match copy_plan(inv, folder, to) {
-                Ok((root, change, count)) => {
+                Ok((root, change)) => {
                     let request = Uuid::new_v4();
-                    job.stage = Stage::Copy { request, root, count };
+                    job.stage = Stage::Copy {
+                        request,
+                        root,
+                        created: false,
+                    };
                     Step::Send(NetCommand::EditInventory { request, change })
                 }
                 Err(reason) => {
@@ -291,22 +401,26 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
             }
         }
         Stage::Copy { .. } => Step::Keep,
-        Stage::Wear { folder, count } => {
-            let arrived = inv.folders.get(&folder).map_or(0, |f| f.items.len());
+        Stage::Wear { folder } => {
             // recursive: sub-folders and the originals of their links, not
             // only the root folder (LLWearFolderHandler waits for the whole
             // category's descendants)
-            let complete = crate::world::appearance::wearable_contents(inv, folder).is_ok();
-            if arrived >= count && complete && !busy {
-                let mode = match job.command.action {
-                    FolderAction::Add => WearMode::Append,
-                    _ => WearMode::ReplaceOutfit,
-                };
-                log::info!("avatar welcome pack: wearing the folder ({mode:?})");
-                Step::Appearance(crate::world::appearance::Action::WearContents { folder, mode })
-            } else {
-                Step::Keep
+            let Ok(links) = crate::world::appearance::wearable_contents(inv, folder) else {
+                return Step::Keep;
+            };
+            if links.is_empty() {
+                log::warn!("avatar welcome pack: the folder holds nothing wearable, outfit unchanged");
+                return Step::Done;
             }
+            if busy {
+                return Step::Keep;
+            }
+            let mode = match job.command.action {
+                FolderAction::Add => WearMode::Append,
+                _ => WearMode::ReplaceOutfit,
+            };
+            log::info!("avatar welcome pack: wearing the folder ({mode:?})");
+            Step::Appearance(crate::world::appearance::Action::WearContents { folder, mode })
         }
     }
 }
@@ -403,8 +517,7 @@ mod tests {
     #[test]
     fn a_library_folder_is_copied_without_its_subfolders() {
         let inv = inventory();
-        let (root, change, count) = copy_plan(&inv, id(12), id(2)).expect("copy");
-        assert_eq!(count, 2);
+        let (root, change) = copy_plan(&inv, id(12), id(2)).expect("copy");
         assert!(
             matches!(&change.operations[0], Operation::Folder { id: folder, parent, name, type_default: -1 }
             if *folder == root && *parent == id(2) && name == "Female body - A")
@@ -464,17 +577,200 @@ mod tests {
         assert!(matches!(welcome_step(&mut inv, &mut job, false), Step::Appearance(_)));
     }
 
-    #[test]
-    fn commands_run_one_after_the_other() {
-        let mut wears = WelcomeWears::default();
-        let command = |action| FolderCommand {
+    fn command(action: FolderAction) -> FolderCommand {
+        FolderCommand {
             action,
             name: Some("x".into()),
             id: None,
-        };
+        }
+    }
+
+    /// A reply that creates the copy's folder (asked 100, made 101).
+    fn created_reply(copies: Vec<CopyItem>) -> Reply {
+        Reply {
+            contents: Vec::new(),
+            folders: vec![InvFolder {
+                id: id(101),
+                parent: id(2),
+                name: "Female body - A".into(),
+                type_default: -1,
+                version: 1,
+                ..Default::default()
+            }],
+            moves_queued: false,
+            refresh: Vec::new(),
+            copies,
+            removed: Vec::new(),
+            created: std::collections::HashMap::from([(id(100), id(101))]),
+        }
+    }
+
+    fn one_copy() -> Vec<CopyItem> {
+        vec![CopyItem {
+            item: id(20),
+            owner: id(99),
+            parent: id(101),
+            name: String::new(),
+        }]
+    }
+
+    fn empty_reply() -> Reply {
+        Reply {
+            folders: Vec::new(),
+            created: Default::default(),
+            ..created_reply(Vec::new())
+        }
+    }
+
+    /// A job copying folder 100, sent at `since`.
+    fn copying(request: Uuid, since: Instant) -> WelcomeWears {
+        WelcomeWears {
+            job: Some(Job {
+                command: command(FolderAction::Wear),
+                since,
+                stage: Stage::Copy {
+                    request,
+                    root: id(100),
+                    created: false,
+                },
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// A shape (60) worn through a link (61) in the copied folder 101.
+    fn arrive(inv: &mut Inventory) {
+        inv.folders.get_mut(&id(101)).expect("copy").state = FetchState::Fetched;
+        inv.add_items(vec![
+            InvItem {
+                id: id(60),
+                parent: id(2),
+                owner: id(1),
+                name: "Shape".into(),
+                asset_type: 13,
+                inv_type: 18,
+                ..Default::default()
+            },
+            InvItem {
+                id: id(61),
+                parent: id(101),
+                name: "Shape link".into(),
+                asset_type: 24,
+                asset_id: id(60),
+                inv_type: 18,
+                ..Default::default()
+            },
+        ]);
+        inv.folders.get_mut(&id(101)).expect("copy").items = vec![id(61)];
+    }
+
+    fn wearing(wears: &mut WelcomeWears, inv: &mut Inventory) -> bool {
+        let job = wears.job.as_mut().expect("job");
+        matches!(
+            welcome_step(inv, job, false),
+            Step::Appearance(crate::world::appearance::Action::WearContents { folder, .. }) if folder == id(101)
+        )
+    }
+
+    #[test]
+    fn a_copy_is_finished_then_worn_once_its_items_are_in() {
+        let mut inv = inventory();
+        let request = Uuid::new_v4();
+        let mut wears = copying(request, Instant::now());
+        let sent = copy_reply(&mut wears, &mut inv, request, Ok(created_reply(one_copy())), Instant::now());
+        assert!(matches!(sent, Some(NetCommand::FinishInventoryCopies { request: r, .. }) if r == request));
+        assert!(matches!(wears.job.as_ref().map(|j| &j.stage), Some(Stage::Copy { root, created: true, .. }) if *root == id(101)));
+        assert!(wears.owns(request));
+        // the items are confirmed: the empty reply ends the copy
+        assert!(copy_reply(&mut wears, &mut inv, request, Ok(empty_reply()), Instant::now()).is_none());
+        assert!(matches!(wears.job.as_ref().map(|j| &j.stage), Some(Stage::Wear { folder }) if *folder == id(101)));
+        assert!(!wears.owns(request));
+        arrive(&mut inv);
+        assert!(wearing(&mut wears, &mut inv));
+    }
+
+    #[test]
+    fn a_copy_that_timed_out_is_still_finished_but_never_worn() {
+        let mut inv = inventory();
+        let request = Uuid::new_v4();
+        let since = Instant::now();
+        let mut wears = copying(request, since);
+        expire(&mut wears, since + TIMEOUT + Duration::from_secs(1));
+        assert!(wears.job.is_none());
+        assert!(wears.owns(request), "its late reply is still ours");
+        let sent = copy_reply(&mut wears, &mut inv, request, Ok(created_reply(one_copy())), Instant::now());
+        assert!(matches!(sent, Some(NetCommand::FinishInventoryCopies { .. })));
+        assert!(wears.job.is_none(), "nothing is worn");
+        assert!(wears.owns(request), "the items' reply is still to come");
+        assert!(copy_reply(&mut wears, &mut inv, request, Ok(empty_reply()), Instant::now()).is_none());
+        assert!(!wears.owns(request) && wears.job.is_none());
+        // an error drops the entry too
+        let mut wears = copying(request, since);
+        expire(&mut wears, since + TIMEOUT + Duration::from_secs(1));
+        assert!(copy_reply(&mut wears, &mut inv, request, Err("no".into()), Instant::now()).is_none());
+        assert!(!wears.owns(request));
+    }
+
+    #[test]
+    fn a_copy_that_made_no_folder_wears_nothing() {
+        let mut inv = inventory();
+        let request = Uuid::new_v4();
+        let mut wears = copying(request, Instant::now());
+        assert!(copy_reply(&mut wears, &mut inv, request, Err("refused".into()), Instant::now()).is_none());
+        assert!(wears.job.is_none() && !wears.owns(request));
+    }
+
+    #[test]
+    fn what_arrived_of_a_failed_copy_is_worn() {
+        let mut inv = inventory();
+        let request = Uuid::new_v4();
+        let mut wears = copying(request, Instant::now());
+        copy_reply(&mut wears, &mut inv, request, Ok(created_reply(one_copy())), Instant::now());
+        // the network layer reports the items it did get, then the failure
+        arrive(&mut inv);
+        let later = Instant::now() + Duration::from_secs(50);
+        assert!(copy_reply(&mut wears, &mut inv, request, Err("unconfirmed".into()), later).is_none());
+        assert!(wears.job.as_ref().is_some_and(|j| j.since == later), "the stage's timer restarts");
+        assert!(wearing(&mut wears, &mut inv));
+        // nothing wearable arrived: nothing is worn
+        let mut inv = inventory();
+        let mut wears = copying(request, Instant::now());
+        copy_reply(&mut wears, &mut inv, request, Ok(created_reply(one_copy())), Instant::now());
+        inv.folders.get_mut(&id(101)).expect("copy").state = FetchState::Fetched;
+        copy_reply(&mut wears, &mut inv, request, Err("unconfirmed".into()), Instant::now());
+        let job = wears.job.as_mut().expect("job");
+        assert!(matches!(welcome_step(&mut inv, job, false), Step::Done));
+    }
+
+    #[test]
+    fn commands_run_one_after_the_other() {
+        let mut wears = WelcomeWears::default();
         wears.push(vec![command(FolderAction::Wear), command(FolderAction::Add)]);
-        assert_eq!(wears.queue.pop_front().map(|c| c.action), Some(FolderAction::Wear));
-        assert_eq!(wears.queue.pop_front().map(|c| c.action), Some(FolderAction::Add));
+        let now = Instant::now();
+        start_next(&mut wears, now);
+        assert_eq!(wears.job.as_ref().map(|j| j.command.action), Some(FolderAction::Wear));
+        start_next(&mut wears, now);
+        assert_eq!(
+            wears.job.as_ref().map(|j| j.command.action),
+            Some(FolderAction::Wear),
+            "the second waits"
+        );
+        wears.job = None;
+        start_next(&mut wears, now);
+        assert_eq!(wears.job.as_ref().map(|j| j.command.action), Some(FolderAction::Add));
         assert!(!wears.owns(Uuid::new_v4()));
+    }
+
+    #[test]
+    fn the_queue_holds_eight_commands() {
+        let mut wears = WelcomeWears::default();
+        wears.push((0..6).map(|_| command(FolderAction::Wear)).collect());
+        wears.push((0..6).map(|_| command(FolderAction::Add)).collect());
+        assert_eq!(wears.queue.len(), QUEUE_CAP);
+        assert_eq!(
+            wears.queue.iter().filter(|c| c.action == FolderAction::Add).count(),
+            2,
+            "the excess is dropped"
+        );
     }
 }
