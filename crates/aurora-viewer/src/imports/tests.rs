@@ -178,6 +178,44 @@ fn a_failed_paid_map_still_stops_the_batch() {
 }
 
 #[test]
+fn a_free_map_that_cannot_be_encoded_only_fails_the_materials_that_use_it() {
+    let (mut imports, _, dependent_id, independent_id) = failed_map_batch(0);
+
+    assert!(imports.encoded(Err("the image could not be encoded".into())).is_none());
+    assert!(imports.current.is_none());
+    assert!(matches!(&imports.entries[0].status, Status::Error(reason) if reason == "the image could not be encoded"));
+    assert!(matches!(imports.entries[1].status, Status::Preparing));
+    assert!(!imports.queue.iter().any(|step| step.entry == Some(dependent_id)));
+    assert_eq!(
+        imports.queue.iter().map(|step| step.entry).collect::<Vec<_>>(),
+        vec![Some(independent_id)]
+    );
+}
+
+#[test]
+fn a_paid_map_that_cannot_be_encoded_still_stops_the_batch() {
+    let (mut imports, _, _, _) = failed_map_batch(10);
+
+    assert!(imports.encoded(Err("the image could not be encoded".into())).is_none());
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+    assert!(imports.queue.is_empty());
+}
+
+#[test]
+fn an_encoded_map_is_sent_with_its_request() {
+    let (mut imports, request, _, _) = failed_map_batch(0);
+
+    let command = imports.encoded(Ok(vec![1, 2, 3]));
+    assert!(matches!(
+        command,
+        Some(aurora_net::NetCommand::UploadAsset { request: sent, upload }) if sent == request && upload.data == [1, 2, 3] && upload.kind == Kind::Texture
+    ));
+    assert!(imports.current.is_some(), "the step waits for its upload result");
+    assert_eq!(imports.queue.len(), 2);
+}
+
+#[test]
 fn protected_upload_defaults_survive_loading_locking_and_queueing_every_asset_type() {
     use crate::world::inventory::actions;
     use aurora_net::inventory::{InvFolder, mesh_upload::Quote};

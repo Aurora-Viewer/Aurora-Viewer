@@ -1019,19 +1019,9 @@ impl Imports {
                     self.cost_overrides
                         .insert((step.kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024), cost);
                 }
-                // do_bulk_upload (llviewermenufile.cpp) saves each material on its own,
-                // so a free material or free map that fails only fails the materials
-                // that need it. A paid step with an uncertain outcome, and a price
-                // change (the user confirms the new price), still stop the batch.
-                let material_map = step.kind == Kind::Texture && step.entry.is_none();
-                let continues = step.cost == 0 && !matches!(error, Error::PriceChanged(_)) && (step.kind == Kind::Material || material_map);
-                let reason = ui::error(error);
-                if material_map || continues {
-                    self.fail_material_batch_step(&step, reason.clone());
-                }
-                if !continues {
-                    self.fail(step.entry, reason);
-                }
+                // A price change stops the batch: the user confirms the new price.
+                let price_changed = matches!(error, Error::PriceChanged(_));
+                self.step_failed(&step, ui::error(error), price_changed);
                 None
             }
         }
@@ -1054,6 +1044,50 @@ impl Imports {
         }
         self.message = reason;
         self.cancel_remaining();
+    }
+    /// A step that could not be encoded or uploaded. do_bulk_upload
+    /// (llviewermenufile.cpp) saves each material on its own, so a free
+    /// material or free map that fails only fails the materials that need it;
+    /// a paid step, or one that `stops_batch`, stops the batch.
+    fn step_failed(&mut self, step: &Step, reason: String, stops_batch: bool) {
+        let material_map = step.kind == Kind::Texture && step.entry.is_none();
+        let continues = !stops_batch && step.cost == 0 && (step.kind == Kind::Material || material_map);
+        if material_map || continues {
+            self.fail_material_batch_step(step, reason.clone());
+        }
+        if !continues {
+            self.fail(step.entry, reason);
+        }
+    }
+    /// The current step's encoded asset: its upload command, or the step fails
+    /// like an upload refusal (a free map or material fails alone).
+    fn encoded(&mut self, result: Result<Vec<u8>, String>) -> Option<aurora_net::NetCommand> {
+        match result {
+            Ok(data) => {
+                let (request, step) = self.current.as_ref()?;
+                if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
+                    entry.status = Status::Uploading;
+                }
+                Some(aurora_net::NetCommand::UploadAsset {
+                    request: *request,
+                    upload: Request {
+                        kind: step.kind,
+                        folder: step.folder,
+                        name: step.name.clone(),
+                        description: step.description.clone(),
+                        expected_cost: step.cost,
+                        permissions: step.permissions,
+                        data,
+                    },
+                })
+            }
+            Err(error) => {
+                let (_, step) = self.current.take()?;
+                log::warn!("import: {} could not be encoded: {error}", step.name);
+                self.step_failed(&step, error, false);
+                None
+            }
+        }
     }
     fn fail_material_batch_step(&mut self, step: &Step, reason: String) {
         let failed: HashSet<Uuid> = if let Some(entry) = step.entry {
@@ -1196,30 +1230,9 @@ impl Imports {
                         }
                     }
                 }
-                Worker::Encoded(request, result) if self.current.as_ref().is_some_and(|(id, _)| *id == request) => match result {
-                    Ok(data) => {
-                        let step = &self.current.as_ref().expect("matched request").1;
-                        if let Some(entry) = step.entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-                            entry.status = Status::Uploading;
-                        }
-                        commands.push(aurora_net::NetCommand::UploadAsset {
-                            request,
-                            upload: Request {
-                                kind: step.kind,
-                                folder: step.folder,
-                                name: step.name.clone(),
-                                description: step.description.clone(),
-                                expected_cost: step.cost,
-                                permissions: step.permissions,
-                                data,
-                            },
-                        });
-                    }
-                    Err(error) => {
-                        let step = self.current.take().expect("matched request").1;
-                        self.fail(step.entry, error);
-                    }
-                },
+                Worker::Encoded(request, result) if self.current.as_ref().is_some_and(|(id, _)| *id == request) => {
+                    commands.extend(self.encoded(result));
+                }
                 Worker::Preview(id, generation, pixels) => {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
