@@ -10242,7 +10242,6 @@ search-group-invite-only = Sur invitation
 search-group-fee = Frais d'adhésion :
 search-none-fee = Aucun
 search-content = Contenu :
-search-group-member-list-later = Liste des membres, titres et statuts : à venir
 search-classified-info = Infos sur l'annonce
 search-classified-creator = Annonceur :
 search-event-show-on-map = Aff. sur la carte

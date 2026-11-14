@@ -5960,7 +5960,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic]` | Group profile window, as a member, officer, owner or guest, in either look |
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
@@ -9117,7 +9117,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -9180,6 +9180,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   as soon as the window opens): "Sandbox doors", General, owned by the
   group, land-scope; "Profile ›" opens the experience profile, whose
   Allow / Forget / Block log `demo group: experience permission …`.
+  `:classic` last (for example `owner:admin:classic`) shows the classic
+  window (Preferences › Aurora › Profiles, not saved), scrolled to the
+  section of the tab asked for and opened: with `owner:members:classic`,
+  "Members and roles" manages the members in the Legacy panel's narrow
+  layout (name, status and donation columns, Eject and Ban under the
+  list, the roles card below it); with `owner:admin:classic` or
+  `owner:identity:classic`, the "Administration" section shows its parts
+  as pills (Roles, Group identity, Abilities, Banned residents,
+  Invitations), the role list above the role being edited. A plain member
+  (`member:members:classic`) keeps the read-only list and has no
+  Administration section; an officer (`officer:admin:classic`) sees only
+  the parts their abilities allow.
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the

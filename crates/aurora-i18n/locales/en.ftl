@@ -10246,7 +10246,6 @@ search-group-invite-only = By invitation
 search-group-fee = Membership fee:
 search-none-fee = None
 search-content = Content:
-search-group-member-list-later = Member list, titles and status: coming
 search-classified-info = Classified info
 search-classified-creator = Listed by:
 search-event-show-on-map = Show on Map

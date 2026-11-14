@@ -10188,7 +10188,6 @@ search-group-invite-only = 招待制
 search-group-fee = 入会費：
 search-none-fee = なし
 search-content = 内容：
-search-group-member-list-later = メンバーリスト、タイトル、状況：近日対応
 search-classified-info = クラシファイド広告情報
 search-classified-creator = 掲載者：
 search-event-show-on-map = マップに表示

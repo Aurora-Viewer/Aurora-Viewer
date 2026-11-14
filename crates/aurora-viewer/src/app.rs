@@ -19415,7 +19415,8 @@ impl App {
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
                     avatar_pics: &self.avatar_pics,
-                    classic: self.settings.classic_profiles || (self.demo && crate::demo::group::create_classic()),
+                    classic: self.settings.classic_profiles
+                        || (self.demo && (crate::demo::group::create_classic() || crate::demo::group::profile_classic())),
                     now: ctx.input(|i| i.time),
                     group_calls: self.settings.audio.voice_enabled,
                 };
