@@ -55,6 +55,9 @@ pub mod asset_server;
 pub mod attention;
 #[path = "demo_auto_hover.rs"]
 pub mod auto_hover;
+/// Face nearest avatar and the Compass (AURORA_DEMO_AVATAR_ALIGN).
+#[path = "demo_avatar_align.rs"]
+pub mod avatar_align;
 /// Blended panes standing in the sun, for their shadows
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]

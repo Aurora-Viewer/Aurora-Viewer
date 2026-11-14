@@ -452,7 +452,7 @@ fn region_gap(me: glam::Vec2, main: glam::Vec2, offset: glam::Vec2, size: glam::
 
 /// Resolve the complete parent chain, as LLWorld::getAvatars excludes orphaned
 /// avatars. A seat-relative position is never a usable region position.
-fn native_position<'a>(world: &'a World, mut object: &'a super::objects::Object) -> Option<Vec3> {
+pub(crate) fn native_position<'a>(world: &'a World, mut object: &'a super::objects::Object) -> Option<Vec3> {
     let mut position = object.position;
     for _ in 0..64 {
         if !position.is_finite() {

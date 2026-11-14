@@ -1028,6 +1028,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_FIDGET=1` | The stock stand signalled, so the standing avatar's variants start |
 | `AURORA_DEMO_URL_FLOATER=1` | The simulator asks for a web window (llOpenFloater) |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
+| `AURORA_DEMO_AVATAR_ALIGN=nearest\|full\|mini` | Face nearest avatar and the Compass window turn the avatar (see Details) |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
@@ -1044,6 +1045,18 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
+- **`AURORA_DEMO_AVATAR_ALIGN=nearest|full|mini`**: every turn logs
+  `avatar align: bearing <before>° -> <after>°` (bearings from north,
+  clockwise); the steps come after the loading fade. `nearest`: the avatar
+  faces east at frame 650, then the toolbar's Face nearest avatar runs at
+  frame 800 (capture at 750 for the before, 1000 for the after): it turns,
+  at once and without a turn animation, to the nearest demo avatar within
+  20 m. `full` (or `1`): the Compass opens at frame 650, then turns east by
+  its ring (750), 45° to the left (810, bearing 45°), to the nearest
+  cardinal (870, unchanged) and to the nearest avatar by its button (930);
+  the yellow needle and the bearing under the compass follow. `mini`: the
+  compact Compass (its layout saved as its Mini button would) opens at
+  frame 650 and turns 1° to the right at 750.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:

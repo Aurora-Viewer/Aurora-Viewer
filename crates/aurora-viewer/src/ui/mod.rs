@@ -7,6 +7,7 @@ pub mod appearance;
 pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
+pub mod avatar_align;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
 pub mod backdrop;
@@ -212,6 +213,10 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The Compass (toolbar `avatar_align`, Me › Avatar alignment), in its
+    /// compact layout while `avatar_align_mini` (kept in the settings).
+    pub avatar_align: bool,
+    pub avatar_align_mini: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
@@ -283,6 +288,8 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            avatar_align: false,
+            avatar_align_mini: settings.avatar_align_mini,
             web_browser: false,
             destinations: false,
             quick_prefs: false,

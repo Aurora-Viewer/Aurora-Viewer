@@ -1753,6 +1753,11 @@ pub enum NetCommand {
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
     AgentControls(AgentControls),
+    /// Send the controls of this frame now, even if nothing moved past the
+    /// thresholds (`send_agent_update(true, …)`, force_send): a turn the
+    /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
+    /// then send_agent_update in FSAvatarAlignBase::applyRotation).
+    ForceAgentUpdate,
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).

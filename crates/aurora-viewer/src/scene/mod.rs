@@ -2706,6 +2706,17 @@ impl Scene {
             }
             (p, r)
         };
+        // a seated avatar turned on purpose keeps that turn until the
+        // simulator reports its rotation
+        if o.parent_id != 0
+            && held.is_none()
+            && o.is_avatar()
+            && let Some(snap) = world.seat_snaps.get(&o.full_id)
+            && snap.parent_id == o.parent_id
+            && snap.reported == o.rotation
+        {
+            r = snap.local;
+        }
         // a standing avatar is drawn turned toward where it goes
         if o.parent_id == 0
             && o.is_avatar()

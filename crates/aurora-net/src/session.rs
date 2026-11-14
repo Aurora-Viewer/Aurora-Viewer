@@ -3087,6 +3087,12 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
+            NetCommand::ForceAgentUpdate => {
+                self.agent_update.force();
+                if self.agent_moved && self.logout_started.is_none() {
+                    self.maybe_send_agent_update(Instant::now());
+                }
+            }
             NetCommand::ClearObjectCache => self.object_cache.clear(),
             NetCommand::Build(b) => self.on_build(b),
             // handled by on_social_command

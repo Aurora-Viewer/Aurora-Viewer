@@ -479,6 +479,9 @@ pub struct World {
     pub water_float: crate::movement::water_float::Follower,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
     pub bodies: HashMap<Uuid, body::Body>,
+    /// The seated avatars turned on purpose, drawn so until the simulator
+    /// reports their rotation (Compass, Face nearest avatar).
+    pub seat_snaps: HashMap<Uuid, body::SeatSnap>,
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
@@ -898,6 +901,7 @@ impl World {
             animesh_fixups: HashMap::new(),
             water_float: Default::default(),
             bodies: HashMap::new(),
+            seat_snaps: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
             beams: beams::Beams::default(),
@@ -5922,6 +5926,16 @@ impl World {
             }
         }
         self.bodies.retain(|id, _| seen.contains(id));
+        // a seat snap lasts while the avatar sits on that seat with the
+        // rotation it was reported with: standing up, another seat or a new
+        // report ends it, so a later sit on the same seat starts afresh
+        let objects = &self.objects;
+        self.seat_snaps.retain(|id, snap| {
+            objects
+                .index_of_uuid(id)
+                .and_then(|i| objects.get(i))
+                .is_some_and(|o| o.parent_id == snap.parent_id && o.rotation == snap.reported)
+        });
         own_turn
     }
 
