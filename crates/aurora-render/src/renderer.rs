@@ -3157,6 +3157,10 @@ impl Impostors {
             crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
+        // object.wgsl carries `@early_depth_test(force)` on `fs_blend_once`: as for
+        // the scene, leave it out where the device does not know it (Metal), or the
+        // whole module fails validation.
+        let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
             source: wgpu::ShaderSource::Wgsl(src.into()),
