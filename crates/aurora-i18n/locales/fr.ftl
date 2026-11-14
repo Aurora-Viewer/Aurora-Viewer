@@ -7892,6 +7892,7 @@ session-land-no-attachment-resources = La région ne fournit pas la capability A
 ui-options-theme-json-layout-json-icons-reloaded-automatically = theme.json · layout.json · icons/  — rechargés à chaud
 login-too-many-redirects = too many redirects
 login-next-server-refused = Le serveur de connexion a demandé de continuer votre connexion sans chiffrement ou à une adresse invalide : la connexion a été arrêtée.
+login-server-error = Le serveur de connexion n'a pas pu terminer la connexion (HTTP { $status }). Le problème vient en général de la grille : réessayez dans quelques minutes et consultez la page d'état de la grille pour voir si un incident est connu. Si cela continue, vérifiez votre réseau et votre pare-feu.
 build-ui-floaters-transfer = transférer
 fetch-transport-error = transport error
 ui-debug-overlay-too-small = trop petit
