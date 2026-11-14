@@ -1025,6 +1025,8 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (5 | 13, _) => wearable_icon(asset_type, flags),
         (6, _) => "Inv_Object",
         (7, _) => "Inv_Notecard",
+        // LLInventoryIcon::getIconName: SST_LUA scripts get Inv_Script_Luau
+        (10, _) if aurora_net::scripts::is_slua_item(flags) => "Inv_Script_Luau",
         (10, _) => "Inv_Script",
         (20, _) => "Inv_Animation",
         (21, _) => "Inv_Gesture",
@@ -3498,6 +3500,7 @@ mod tests {
         // A snapshot is a texture whatever its asset type says.
         assert_eq!(item_icon_color(0, 15, &p), p.indigo_light);
         assert_eq!(item_icon_color(24, 24, &p), p.muted);
+        assert_eq!(item_icon_color(10, 10, &p), p.teal);
     }
 
     #[test]

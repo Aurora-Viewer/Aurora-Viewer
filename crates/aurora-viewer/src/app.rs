@@ -1362,6 +1362,27 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
     settings.interface_colors.clone()
 }
 
+/// The see-through windows and bars: the preferences', or in demo mode
+/// `AURORA_DEMO_OPACITY` over them (a capture's, never saved).
+fn wanted_opacity(settings: &Settings) -> ui::surface_opacity::Opacity {
+    let opacity = ui::surface_opacity::Opacity {
+        active: settings.window_opacity_active,
+        inactive: settings.window_opacity_inactive,
+        conversations: settings.conversations_opacity,
+        conversations_active_override: settings.conversations_active_opacity_override,
+        bars: settings.bar_opacity,
+        menus: settings.menu_opacity,
+        console: settings.console_opacity,
+        name_tags: settings.chat_bubble_opacity,
+        minimap: settings.minimap_opacity,
+        pie: settings.pie_opacity_override.then_some(settings.pie_opacity),
+    };
+    if std::env::var_os("AURORA_DEMO").is_some() {
+        return ui::surface_opacity::demo_override(opacity);
+    }
+    opacity
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -1401,8 +1422,14 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_MAX_AVATARS").ok().and_then(|v| v.parse().ok()) {
         settings.max_avatars = v;
     }
+    if let Some(v) = std::env::var("AURORA_LOCAL_LIGHTS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.local_light_count = v.min(crate::scene::lights::MAX_LIGHTS as u32);
+    }
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
+    }
+    if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.blend_order = v.min(4);
     }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
@@ -1557,6 +1584,7 @@ impl App {
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::interface_colors::set(wanted_interface_colors(&settings));
+        ui::surface_opacity::set(wanted_opacity(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", text_scale(&settings));
         apply_chat_text_scale(&egui_ctx, &settings);
         crate::crash::update(&skin.theme, &settings);
@@ -3021,6 +3049,8 @@ impl App {
         if log.identity().is_none() {
             log.set_folder(chat_log_root(&s.chat_log_location));
         }
+        // no file moves: a no-op once applied
+        log.set_legacy_layout(s.log_legacy_layout);
     }
 
     // ------------------------------------------------------------------ login
@@ -3067,6 +3097,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || mode == "server-error"
             {
                 if mode == "terms" {
                     log::info!(
@@ -3884,18 +3915,16 @@ impl App {
                 object_id,
                 item_id,
                 running,
-                mono,
-                luau,
+                compile,
             } => {
-                self.build.contents.running.insert((object_id, item_id), (running, mono));
+                self.build.contents.running.insert((object_id, item_id), (running, compile));
                 self.script_editors.running(
                     aurora_net::scripts::ScriptTarget {
                         object: object_id,
                         item: item_id,
                     },
                     running,
-                    mono,
-                    luau,
+                    compile,
                 );
             }
             NetEvent::PhysicsProperties(list) => {
@@ -10611,6 +10640,13 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        // the order of the blended faces: the user's, the exact one only
+        // where the renderer draws it (not under MSAA, scene/blend_order.rs)
+        let msaa = match self.settings.antialiasing {
+            aa @ 2..=4 => gfx.renderer.msaa_supported().iter().any(|&m| m <= 1 << (aa - 1)),
+            _ => false,
+        };
+        crate::scene::blend_order::set_user(self.settings.blend_order, gfx.renderer.blend_exact_supported() && !msaa);
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
@@ -11616,6 +11652,7 @@ impl App {
                     gfx.renderer.max_texture_dimension(),
                 ),
                 others_attached_lights: self.settings.others_attached_lights,
+                max_lights: self.settings.local_light_count as usize,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
@@ -12510,6 +12547,7 @@ impl App {
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
+            ui::surface_opacity::set(wanted_opacity(&self.settings));
             self.skin.theme.apply(&self.egui_ctx, text_scale(&self.settings));
             apply_chat_text_scale(&self.egui_ctx, &self.settings);
             ui::colors::set(&self.settings.colors);
@@ -14774,7 +14812,10 @@ impl App {
             }
             // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
             // `runs` (#966) one second in three
-            if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
+            if matches!(
+                crate::scene::blend_order::mode(),
+                crate::scene::blend_order::Mode::Alternate | crate::scene::blend_order::Mode::ExactAlternate
+            ) {
                 let old = self.sync_alt.is_multiple_of(3);
                 crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
@@ -16392,6 +16433,7 @@ impl App {
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
+        self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
         self.poll_settings_backup();
         if let Some(done) = self.world.chat_log.take_relocated() {
@@ -16741,6 +16783,22 @@ impl App {
                         next_server: Some("login.other-grid.example".into()),
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server fails on its side (an HTTP 500
+                    // to the login request, LoginError::Server)
+                    log::info!("demo login: the login server answers HTTP 500");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: aurora_net::login::LoginError::Server(500).to_string(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
                 {
                     self.demo_mfa_challenge = None;
@@ -16941,6 +16999,16 @@ impl App {
                         self.camera.position,
                         &self.look_at_settings(),
                         &mut self.look_at_fades,
+                    );
+                    ui::beams::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        &self.scene,
+                        projector,
+                        self.camera.position,
+                        &self.settings.beams,
+                        self.settings.lookat.show_names,
                     );
                     self.draw_walk_mark(&ctx, &p, projector);
                 }
@@ -19944,6 +20012,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "server-error"
                         | "add"
                         | "password"
                         | "connecting"
@@ -19953,7 +20022,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -20000,7 +20069,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -20010,7 +20079,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -20174,6 +20243,9 @@ impl ApplicationHandler for App {
                 } else if v == "monitor-scene-objects" {
                     ui::perf::set_full(&self.egui_ctx, true);
                     self.monitor.show_scene_objects();
+                } else if v == "monitor-scene-worn" || v == "monitor-scene-huds" {
+                    ui::perf::set_full(&self.egui_ctx, true);
+                    self.monitor.show_scene_worn(v.ends_with("huds"));
                 } else if let Some(tab) = v.strip_prefix("monitor-").and_then(ui::monitor::Tab::from_key) {
                     ui::perf::set_full(&self.egui_ctx, true);
                     ui::monitor::demo_tab(&self.egui_ctx, tab);
@@ -21166,7 +21238,7 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore | Mode::Shared { .. })
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
@@ -21190,6 +21262,39 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Shared { on } => {
+                        // the synthetic Legacy Viewer folder, chosen for this
+                        // run only: never saved in the demo's settings, which
+                        // every worktree shares. The option itself is saved
+                        // like any setting; without a chosen folder it does
+                        // nothing.
+                        let account = self.world.login.as_ref().map(|l| crate::legacy_profile::Account {
+                            first: l.first_name.clone(),
+                            last: l.last_name.clone(),
+                            grid: "demo".into(),
+                        });
+                        let place = self
+                            .world
+                            .chat_log
+                            .dir()
+                            .map(chatlog::legacy_root)
+                            .zip(account.and_then(|a| a.chat_folder()));
+                        if let Some((root, folder)) = place {
+                            if let Err(e) = chatlog::seed_shared(&root, &folder, &self.world.own_name()) {
+                                log::warn!("demo Legacy Viewer transcripts not written: {e}");
+                            }
+                            if on {
+                                self.settings.log_legacy_layout = true;
+                                self.world.chat_log.set_legacy_layout(true);
+                            }
+                            self.world.chat_log.relocate(Some(root));
+                        }
+                        // the history read from the Legacy Viewer's file,
+                        // then a new message added to it
+                        self.world.apply(chatlog::new_message(me));
+                        self.panels.settings = true;
+                        self.options_ui.open(ui::options::Page::Chat, 3);
+                    }
                     Mode::Import(stage) => {
                         use chatlog::ImportStage;
                         let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);
@@ -22346,7 +22451,8 @@ impl ApplicationHandler for App {
                 }
                 self.settings.show_huds = mode != "hidden";
                 self.panels.inventory = false;
-                self.panels.perf = false;
+                // (kept with AURORA_DEMO_PERF: its Scene › HUDs lists these)
+                self.panels.perf &= std::env::var_os("AURORA_DEMO_PERF").is_some();
                 self.panels.chat = false;
                 self.panels.appearance = false;
                 self.panels.settings = false;
