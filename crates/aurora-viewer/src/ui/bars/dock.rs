@@ -194,10 +194,12 @@ pub fn bottom(
     chat.thumbnails.reserve(geo.thumbs, thumb(geo.button), true);
 
     // Autohidden (#1009), the island shows while the chat is used, without
-    // its button when the dock holds Conversations; out of use it goes
-    // away, or keeps its button alone when the dock has none (a saved dock
+    // its button when any toolbar holds Conversations (#2993); out of use it
+    // goes away, or keeps its button alone when none does (a saved dock
     // without Conversations keeps a way to the conversations). The geometry
-    // stays: nothing moves when the field comes and goes.
+    // stays: nothing moves when the field comes and goes. With the bar always
+    // shown, the same rule hides the island's button so a side toolbar cannot
+    // resurrect the "Nearby chat and Conversations" control.
     let shown = chat.bar_shown();
     if shown {
         let slot = geo.button - 4.0;
@@ -208,7 +210,7 @@ pub fn bottom(
         }
     }
     chat.bar_hovered = false;
-    let docked = chat.autohide && buttons.iter().any(|b| b.command == "conversations");
+    let docked = toolbar_settings.location("conversations", layout).is_some();
     let out = if shown {
         area(&ctx, p, "chat", geo.chat, |ui| {
             let out = chat_island(
@@ -739,8 +741,10 @@ mod tests {
         flash: f32,
         /// What the last frame painted.
         shapes: Vec<egui::epaint::ClippedShape>,
-        /// A saved dock (None: the skin's).
+        /// A saved dock (None: the skin's, through DockLayout like the app).
         buttons: Option<Vec<crate::ui::skin::ToolButton>>,
+        left: Vec<crate::ui::skin::ToolButton>,
+        right: Vec<crate::ui::skin::ToolButton>,
     }
 
     impl Bench {
@@ -758,6 +762,8 @@ mod tests {
                 flash: 0.0,
                 shapes: Vec::new(),
                 buttons: None,
+                left: Vec::new(),
+                right: Vec::new(),
             }
         }
 
@@ -771,9 +777,14 @@ mod tests {
 
         fn frame(&mut self, events: Vec<egui::Event>) -> (Option<crate::ui::chat::OutgoingChat>, f32, bool) {
             let p = crate::theme::Theme::default().palette();
-            let layout = crate::ui::skin::Layout::default();
+            let skin = crate::ui::skin::Layout::default();
+            // Same as app.rs: the default dock leaves Conversations to the
+            // island unless the chat bar is autohidden.
+            let layout = DockLayout::default().of(&skin, self.chat.autohide).clone();
             let settings = crate::ui::toolbar::ToolbarSettings {
                 buttons: self.buttons.clone(),
+                left: self.left.clone(),
+                right: self.right.clone(),
                 ..Default::default()
             };
             let view = super::super::favorites::View::default();
@@ -1094,6 +1105,49 @@ mod tests {
             .expect("the button alone")
             .rect;
         assert!(button.right() < 2.0 * MARGIN + 2.0 * PAD + 40.0, "in the corner: {button:?}");
+    }
+
+    /// #2993: Conversations on a side toolbar keeps the island's
+    /// "Nearby chat and Conversations" button away, autohidden or not.
+    #[test]
+    fn conversations_on_a_side_toolbar_hides_the_island_button() {
+        let conv = crate::ui::skin::Layout::default()
+            .toolbar
+            .into_iter()
+            .find(|b| b.command == "conversations")
+            .expect("skin Conversations");
+        let without = DockLayout::default().of(&crate::ui::skin::Layout::default(), false).toolbar.clone();
+        for (side, autohide) in [
+            (crate::ui::toolbar::Bar::Left, true),
+            (crate::ui::toolbar::Bar::Right, true),
+            (crate::ui::toolbar::Bar::Left, false),
+            (crate::ui::toolbar::Bar::Right, false),
+        ] {
+            let mut bench = Bench::new();
+            bench.chat.autohide = autohide;
+            bench.buttons = Some(without.clone());
+            match side {
+                crate::ui::toolbar::Bar::Left => bench.left = vec![conv.clone()],
+                crate::ui::toolbar::Bar::Right => bench.right = vec![conv.clone()],
+                crate::ui::toolbar::Bar::Bottom => unreachable!(),
+            }
+            if !autohide {
+                // Always-shown island: focus so the field is there to check.
+                bench.chat.focus_request = true;
+            }
+            bench.frame(vec![]);
+            bench.frame(vec![]);
+            assert!(
+                bench.ctx.read_response(Id::unique("chat_island_open")).is_none(),
+                "Conversations on {side:?}, autohide={autohide}: no island button"
+            );
+            if !autohide {
+                assert!(
+                    bench.text_rect(aurora_i18n::tr!("common-nearby-chat")).is_some(),
+                    "the nearby chat field stays"
+                );
+            }
+        }
     }
 
     /// The default dock keeps the skin's Conversations button while the
