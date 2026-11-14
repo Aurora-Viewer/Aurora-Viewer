@@ -3642,8 +3642,8 @@ struct SnowMeshOut {
     // the height of the surface under the snow (a triangle across a jump
     // of it is dropped; one down a footprint's or an edge's slope is not)
     @location(3) base: f32,
-    // the facing of the ground under it (its triangle's, flat on it): the
-    // snow lies by it as the flat snow does on that ground
+    // the facing of the ground under it (at each vertex, the same for every
+    // triangle that shares it): the snow lies by it as the flat snow does
     @location(4) ground: vec3<f32>,
 };
 
@@ -3705,14 +3705,31 @@ fn snow_mesh_surface(xy: vec2<f32>, near_z: f32) -> f32 {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// How level the ground deep snow stands on is at `xy` (its facing's z, 1
-// level): from the surface 30 cm around it, as the grid's triangles judge it.
-fn snow_mesh_ground_z(xy: vec2<f32>) -> f32 {
-    let c = snow_mesh_surface(xy, frame.camera_pos.z);
-    let ex = snow_mesh_surface(xy + vec2<f32>(0.3, 0.0), frame.camera_pos.z);
-    let ey = snow_mesh_surface(xy + vec2<f32>(0.0, 0.3), frame.camera_pos.z);
-    if (c < -1e8 || ex < -1e8 || ey < -1e8) { return 1.0; }
-    return normalize(vec3<f32>(c - ex, c - ey, 0.3)).z;
+// The facing of the ground deep snow stands on at `xy` (level where it is
+// not known): from the surface 30 cm to either side, a jump (a kerb, a
+// ledge) left out, as the flat snow sees the ground's own facing there.
+fn snow_mesh_ground(xy: vec2<f32>) -> vec3<f32> {
+    let z = frame.camera_pos.z;
+    let c = snow_mesh_surface(xy, z);
+    let e = snow_mesh_surface(xy + vec2<f32>(0.3, 0.0), z);
+    let w = snow_mesh_surface(xy - vec2<f32>(0.3, 0.0), z);
+    let n = snow_mesh_surface(xy + vec2<f32>(0.0, 0.3), z);
+    let s = snow_mesh_surface(xy - vec2<f32>(0.0, 0.3), z);
+    if (c < -1e8) { return vec3<f32>(0.0, 0.0, 1.0); }
+    // each side's slope, the one nearer to level where the other jumps
+    let sx = snow_mesh_side(c - w, e - c, w < -1e8, e < -1e8);
+    let sy = snow_mesh_side(c - s, n - c, s < -1e8, n < -1e8);
+    return normalize(vec3<f32>(-sx, -sy, 0.3));
+}
+
+// The rise over 30 cm along one axis from its two sides' rises: their mean
+// on a smooth slope, the gentler where one side is a jump or unknown.
+fn snow_mesh_side(back: f32, ahead: f32, back_none: bool, ahead_none: bool) -> f32 {
+    if (back_none && ahead_none) { return 0.0; }
+    if (back_none) { return ahead; }
+    if (ahead_none) { return back; }
+    if (abs(back - ahead) > 0.1) { return select(ahead, back, abs(back) < abs(ahead)); }
+    return 0.5 * (back + ahead);
 }
 
 // How deep the snow lies at `xy` in the memory (0..1, no gating: the grid
@@ -3817,7 +3834,12 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let gv = origin + vec2<f32>(cell_ij + corners[vertex % 6u]);
     let xy = snow_mesh_morph(gv, s, half, me, last);
     // thinning to nothing toward the reach: no step at its edge
-    let fade = 1.0 - smoothstep(0.85, 0.98, max(abs(xy.x - me.x), abs(xy.y - me.y)) / reach);
+    let edge = 1.0 - smoothstep(0.85, 0.98, max(abs(xy.x - me.x), abs(xy.y - me.y)) / reach);
+    // and as the flat snow, thinning on a slope, gone past about 55°: it
+    // sinks into the ground there, its height with it, rather than end in
+    // a slab cut along its triangles (teeth, and slivers along their edges)
+    let ground = snow_mesh_ground(xy);
+    let fade = edge * smoothstep(0.55, 0.85, ground.z);
     let cell = s;
     let c = snow_mesh_top_soft(xy, fade, cell);
     // the triangle's three corners, where they are drawn (the same for each
@@ -3846,16 +3868,18 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
         across = across && mid > -1e8 && abs(mid - 0.5 * (hb[k] + hb[j])) <= 0.1;
     }
     out.base = c.x;
-    // the ground's facing over the triangle: the snow thins on a slope and
-    // is gone past about 55° exactly as `snow_cover_lit` lays the flat snow
-    // there. Judged on level ground, the deep snow stood whole on a slope
-    // the flat snow only dusted (two layouts of the same snow)
-    if (across) {
-        var gn = cross(vec3<f32>(at[1] - at[0], hb[1] - hb[0]), vec3<f32>(at[2] - at[0], hb[2] - hb[0]));
-        if (gn.z < 0.0) { gn = -gn; }
-        out.ground = normalize(gn);
+    // judged on level ground, the deep snow stood whole on a slope the
+    // flat snow only dusted (two layouts of the same snow)
+    out.ground = ground;
+    // drawn where the snow lies whole at all three corners (the same for
+    // each of its vertices: one that differed drew a sliver of the
+    // triangle along its other edge, spikes)
+    var whole = across;
+    for (var k = 0u; k < 3u; k++) {
+        let e = 1.0 - smoothstep(0.85, 0.98, max(abs(at[k].x - me.x), abs(at[k].y - me.y)) / reach);
+        let lies = snow_memory_depth(at[k]) * e * smoothstep(0.55, 0.85, snow_mesh_ground(at[k]).z);
+        whole = whole && lies > SNOW_MESH_SOLID;
     }
-    let lies = c.z * smoothstep(0.55, 0.85, out.ground.z);
     if (c.x < -1e8) {
         out.world = vec3<f32>(xy, cam.z);
         out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
@@ -3897,7 +3921,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     out.world = vec3<f32>(xy, top + 0.008);
     out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
     out.n = nrm;
-    out.valid = select(0.0, 1.0, across && lies > SNOW_MESH_SOLID);
+    out.valid = select(0.0, 1.0, whole);
     return out;
 }
 
@@ -3926,7 +3950,7 @@ fn on_deep_snow(world: vec3<f32>) -> bool {
     if (surface < -1e8) { return false; }
     // 8 mm at least: the surface's lift over what it lies on
     let up = world.z - surface;
-    return up > 0.005 && up < SNOW_DEEP_TOP + 0.02 && snow_memory_depth(world.xy) * smoothstep(0.55, 0.85, snow_mesh_ground_z(world.xy)) > SNOW_MESH_SOLID;
+    return up > 0.005 && up < SNOW_DEEP_TOP + 0.02 && snow_memory_depth(world.xy) * smoothstep(0.55, 0.85, snow_mesh_ground(world.xy).z) > SNOW_MESH_SOLID;
 }
 
 @fragment
