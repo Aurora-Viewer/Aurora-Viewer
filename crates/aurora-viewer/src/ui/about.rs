@@ -417,27 +417,36 @@ fn licences(ui: &mut egui::Ui, p: &Palette, to_end: bool) {
         });
 }
 
-/// The Libraries tab: THIRD-PARTY-LICENSES.md as it is written, in a card,
-/// only the lines in view laid out.
+/// The Libraries tab: THIRD-PARTY-LICENSES.md as it is written, in one card
+/// that scrolls with the tab (as the Licences tab's cards), its lines folded
+/// to the card's width and only those in view laid out.
 fn library_licences(ui: &mut egui::Ui, p: &Palette, to_end: bool) {
-    let lines = libraries::lines();
     let font = egui::FontId::monospace(11.0);
-    let row_h = ui.fonts_mut(|f| f.row_height(&font));
-    let mut card = sheet::card_begin(ui);
-    let c = &mut card.child;
-    let mut scroll = egui::ScrollArea::vertical()
-        .id_salt("about_libraries")
-        .auto_shrink([false, false]);
-    if to_end {
-        scroll = scroll.vertical_scroll_offset(f32::MAX);
-    }
-    scroll.show_rows(c, row_h, lines.len(), |ui, rows| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for line in &lines[rows] {
-            ui.add(egui::Label::new(RichText::new(*line).font(font.clone()).color(p.ink)).extend());
+    let (row_h, char_w) = ui.fonts_mut(|f| (f.row_height(&font), f.glyph_width(&font, '0')));
+    // the card's padding on each side and the scroll bar
+    let text_w = ui.available_width() - 24.0 - ui.spacing().scroll.allocated_width();
+    let lines = libraries::lines((text_w / char_w.max(1.0)) as usize);
+    let scroll = egui::ScrollArea::vertical().id_salt("about_libraries").auto_shrink([false, false]);
+    scroll.show_viewport(ui, |ui, viewport| {
+        let mut card = sheet::card_begin(ui);
+        let c = &mut card.child;
+        // the card's top padding is above the first row
+        let count = lines.len() as f32;
+        let first = ((viewport.min.y - 10.0) / row_h).floor().clamp(0.0, count) as usize;
+        let last = (((viewport.max.y - 10.0) / row_h).ceil() + 1.0).clamp(0.0, count) as usize;
+        let first = first.min(last);
+        c.add_space(first as f32 * row_h);
+        for line in &lines[first..last] {
+            let (rect, _) = c.allocate_exact_size(Vec2::new(text_w, row_h), Sense::hover());
+            c.painter()
+                .text(rect.left_top(), egui::Align2::LEFT_TOP, *line, font.clone(), p.ink);
+        }
+        c.add_space((lines.len() - last) as f32 * row_h);
+        sheet::card_end(ui, p, card);
+        if to_end {
+            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
         }
     });
-    sheet::card_end(ui, p, card);
 }
 
 /// The GNU GPL version 3, Aurora's licence.
@@ -458,6 +467,28 @@ fn heading_icon(title: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Libraries tab's text is close to a megabyte: the window keeps
+    /// its size whatever the zoom and text size, and the tab stays in it.
+    #[test]
+    fn the_libraries_tab_keeps_the_window_steady() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(600.0, 720.0), Vec2::new(440.0, 420.0)],
+            aurora_i18n::tr!("about-tab-libraries"),
+            || AboutUi {
+                tab: Tab::Libraries,
+                ..Default::default()
+            },
+            |about, ctx, p| {
+                let view = AboutView {
+                    sections: Vec::new(),
+                    logo: None,
+                };
+                about.show(ctx, p, &view, &mut true);
+            },
+        );
+    }
 
     #[test]
     fn release_notes_only_for_a_published_version() {

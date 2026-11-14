@@ -8,14 +8,22 @@
 /// THIRD-PARTY-LICENSES.md at the repository root.
 const TEXT: &str = include_str!("../../../../../THIRD-PARTY-LICENSES.md");
 
-/// Lines longer than this are folded at a space, so that every row has the
-/// same height and the list can skip the hidden ones.
-const WIDTH: usize = 96;
-
-/// The file's lines, the long ones folded, read once.
-pub fn lines() -> &'static [&'static str] {
-    static LINES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
-    LINES.get_or_init(|| fold(TEXT, WIDTH))
+/// The file's lines, those longer than `width` characters folded at a space
+/// so that every row has the same height and the list can skip the hidden
+/// ones. Folded again only when the width changes (the window resized).
+pub fn lines(width: usize) -> std::sync::Arc<Vec<&'static str>> {
+    type Folded = Option<(usize, std::sync::Arc<Vec<&'static str>>)>;
+    static LINES: std::sync::Mutex<Folded> = std::sync::Mutex::new(None);
+    let width = width.max(20);
+    let mut cached = LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    match &*cached {
+        Some((w, lines)) if *w == width => lines.clone(),
+        _ => {
+            let lines = std::sync::Arc::new(fold(TEXT, width));
+            *cached = Some((width, lines.clone()));
+            lines
+        }
+    }
 }
 
 /// Split `text` in lines of at most `width` characters, cutting a longer
