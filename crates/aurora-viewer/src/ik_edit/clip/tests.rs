@@ -500,6 +500,12 @@ fn animation_timeline_shortcuts_match_the_documented_commands() {
     );
     assert_eq!(timeline::timeline_shortcut(egui::Key::ArrowRight, none), Some(Shortcut::NextFrame));
     assert_eq!(timeline::timeline_shortcut(egui::Key::K, none), Some(Shortcut::KeyBone));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::A, ctrl), Some(Shortcut::SelectAllKeys));
+    assert_eq!(
+        timeline::timeline_shortcut(egui::Key::Escape, none),
+        Some(Shortcut::ClearKeySelection)
+    );
+    assert_eq!(timeline::timeline_shortcut(egui::Key::A, none), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl_alt), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::V, none), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::K, ctrl), None);
@@ -3351,4 +3357,158 @@ fn studio_hover_height_stays_out_of_the_frame_the_editors_read() {
     document.record(rig, &hovering, 10, &[pelvis], &[pelvis]).unwrap();
     let keys = &document.tracks[0].motion.pos_keys;
     assert!(keys.iter().all(|key| key.position.abs_diff_eq(Vec3::ZERO, 1e-4)), "{keys:?}");
+}
+
+#[test]
+fn a_click_picks_one_key_ctrl_toggles_and_shift_adds() {
+    let mut picked = BTreeSet::new();
+    let none = egui::Modifiers::NONE;
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    timeline::pick_key(&mut picked, (1, 10), none, false);
+    timeline::pick_key(&mut picked, (2, 20), shift, false);
+    timeline::pick_key(&mut picked, (3, 30), ctrl, false);
+    assert_eq!(picked, BTreeSet::from([(1, 10), (2, 20), (3, 30)]));
+    timeline::pick_key(&mut picked, (2, 20), ctrl, false);
+    assert_eq!(picked, BTreeSet::from([(1, 10), (3, 30)]), "Ctrl+click takes a picked key out");
+    // grabbing a picked key keeps the others, to drag them along
+    timeline::pick_key(&mut picked, (3, 30), none, true);
+    assert_eq!(picked, BTreeSet::from([(1, 10), (3, 30)]));
+    // grabbing another key, or a plain click, picks it alone
+    timeline::pick_key(&mut picked, (4, 40), none, true);
+    assert_eq!(picked, BTreeSet::from([(4, 40)]));
+    timeline::pick_key(&mut picked, (4, 50), shift, false);
+    timeline::pick_key(&mut picked, (4, 40), none, false);
+    assert_eq!(picked, BTreeSet::from([(4, 40)]));
+}
+
+#[test]
+fn a_box_over_the_lanes_takes_the_keys_it_touches() {
+    let lane = egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(314.0, 22.0));
+    // frames 0..=30, ten points apart past the lane's padding
+    let scale = timeline::FrameScale::new(lane, 0, 30);
+    let x = |frame: f64| scale.x(frame);
+    let keys = [0, 10, 12, 20, 30];
+    let area = egui::Rect::from_min_max(egui::pos2(x(9.0), 0.0), egui::pos2(x(13.0), 60.0));
+    assert_eq!(timeline::keys_in_box(&keys, &scale, lane, area), vec![10, 12]);
+    let touching = egui::Rect::from_min_max(egui::pos2(x(20.0) + 4.0, 55.0), egui::pos2(x(25.0), 56.0));
+    assert_eq!(
+        timeline::keys_in_box(&keys, &scale, lane, touching),
+        vec![20],
+        "a diamond the box touches"
+    );
+    let above = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 40.0));
+    assert!(
+        timeline::keys_in_box(&keys, &scale, lane, above).is_empty(),
+        "a lane the box misses"
+    );
+}
+
+#[test]
+fn dragging_one_of_several_picked_keys_moves_them_all() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for (at, angle) in [(0, 0.0), (10, 0.2), (30, 0.4)] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(angle) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 0), (head, 10)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let shapes = frames.shapes(Vec::new(), &mut draw);
+    let baseline = shapes
+        .iter()
+        .filter_map(|shape| {
+            let egui::Shape::LineSegment { points, .. } = shape else {
+                return None;
+            };
+            ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(*points)
+        })
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("timeline track baseline");
+    let at = |frame: f32| egui::pos2(baseline[0].x + (baseline[1].x - baseline[0].x) * frame / 30.0, baseline[0].y);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frames.run(vec![egui::Event::PointerMoved(at(10.0)), button(at(10.0), true)], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(at(10.0) + egui::vec2(7.0, 0.0))], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(at(15.0))], &mut draw);
+    frames.run(vec![button(at(15.0), false)], &mut draw);
+    frames.run(Vec::new(), &mut draw);
+
+    let document = editor.clip.document.as_ref().unwrap();
+    assert_eq!(document.frames(Some(head)), vec![5, 15, 30], "both picked keys moved five frames");
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, 5), (head, 15)]),
+        "and stay picked"
+    );
+    assert_eq!(editor.clip.undo.len(), 1, "one step of the undo history");
+}
+
+#[test]
+fn delete_removes_every_picked_key_in_one_undo_step() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, egui::Modifiers::NONE));
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 30]);
+    assert!(editor.clip.selected_keys.is_empty());
+    assert_eq!(editor.clip.undo.len(), 1);
+    // with nothing picked and no bone selected, Delete is left to the viewer
+    assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, egui::Modifiers::NONE));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::A, egui::Modifiers::COMMAND));
+    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 0), (head, 30)]));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
+    assert!(editor.clip.selected_keys.is_empty());
+    assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
 }

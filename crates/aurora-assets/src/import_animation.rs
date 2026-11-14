@@ -1,6 +1,7 @@
 //! BVH import, based on LLBVHLoader::loadBVHFile / makeTranslation /
-//! serialize (Firestorm indra/llcharacter, originally LGPL 2.1). Bounds and
-//! parsing are independent of the viewer and run on its background workers.
+//! serialize (Firestorm indra/llcharacter, originally LGPL 2.1), and the BVH
+//! export that writes back what the import reads. Bounds, parsing and writing
+//! are independent of the viewer and run on its background workers.
 
 use crate::{
     Animation, AssetError, JointMotion, Skeleton,
@@ -387,6 +388,160 @@ fn reduce<T>(keys: Vec<T>, error: impl Fn(&T, &T, &T) -> f32) -> Vec<T> {
     keys.into_iter().zip(keep).filter_map(|(key, keep)| keep.then_some(key)).collect()
 }
 
+/// Write an animation as a BVH file that `parse_bvh_for_edit` reads back to
+/// the same motion, and that Blender and the other BVH tools open on the
+/// avatar's rest skeleton. The inverse of the import above:
+///
+/// - the hierarchy is every bone of `skeleton` (no collision volume), its
+///   OFFSETs the rest positions in inches, Y up;
+/// - frame 0 is the rest pose, the reference frame the import measures the
+///   pelvis from; the motion starts at frame 1, one frame per `1 / fps`,
+///   retimed so that the last frame falls on the animation's duration;
+/// - the pelvis carries position channels, and so does any bone the
+///   animation moves; its positions are written over its rest offset,
+///   as the other BVH exporters do, so the hips keep their height in
+///   Blender;
+/// - rotations are written in Zrotation Xrotation Yrotation order, the
+///   one the Legacy Viewer's sample BVH files use.
+///
+/// What a BVH file cannot hold (priorities, loop points, ease, hand pose,
+/// expression) is left out: the format has no place for it.
+pub fn encode_bvh(animation: &Animation, skeleton: &Skeleton, fps: u32) -> Result<String, AssetError> {
+    use std::fmt::Write as _;
+    if !animation.duration.is_finite() || !(0.0..=60.0).contains(&animation.duration) || fps == 0 || fps > 240 {
+        return Err(AssetError::invalid("BVH export parameters"));
+    }
+    let pelvis = skeleton
+        .joints
+        .iter()
+        .position(|joint| joint.name == "mPelvis" && !joint.is_collision_volume)
+        .ok_or_else(|| AssetError::invalid("skeleton has no pelvis"))?;
+    let bones: Vec<usize> = (0..skeleton.joints.len())
+        .filter(|&index| !skeleton.joints[index].is_collision_volume && is_under(skeleton, index, pelvis))
+        .collect();
+    let mut motions: Vec<Option<&JointMotion>> = vec![None; skeleton.joints.len()];
+    for motion in &animation.joints {
+        // a track the rig does not know cannot be placed in the hierarchy
+        let index = skeleton
+            .find(&motion.joint_name)
+            .filter(|index| bones.contains(index))
+            .ok_or_else(|| AssetError::invalid("animation joint unknown to the avatar skeleton"))?;
+        motions[index] = Some(motion);
+    }
+    let spans = ((animation.duration * fps as f32).round() as usize).max(1);
+    let frame_time = if animation.duration > 0.0 {
+        animation.duration / spans as f32
+    } else {
+        1.0 / fps as f32
+    };
+    // SL Z-up metres -> BVH Y-up inches, the inverse of the import's basis
+    let basis = Quat::from_mat3(&Mat3::from_cols(Vec3::Y, Vec3::Z, Vec3::X));
+    let to_bvh = basis.inverse();
+    let inches = |metres: Vec3| to_bvh * metres / 0.0254;
+    let moves = |index: usize| index == pelvis || motions[index].is_some_and(|motion| !motion.pos_keys.is_empty());
+    let mut text = String::from("HIERARCHY\n");
+    write_bvh_joint(&mut text, skeleton, &bones, pelvis, 0, &inches, &moves);
+    let _ = write!(text, "MOTION\nFrames: {}\nFrame Time: {frame_time:.6}\n", spans + 2);
+    let mut previous: Vec<Vec3> = vec![Vec3::ZERO; skeleton.joints.len()];
+    for frame in 0..spans + 2 {
+        // frame 0 is the rest pose; frame n is the animation at n - 1
+        let time = frame.checked_sub(1).map(|step| (step as f32 * frame_time).min(animation.duration));
+        let mut values = Vec::new();
+        for &index in &bones {
+            let joint = &skeleton.joints[index];
+            let motion = time.and(motions[index]);
+            if moves(index) {
+                let rest = inches(joint.pos);
+                let position = motion.and_then(|motion| motion.position_at(time.unwrap_or(0.0)));
+                let position = match position {
+                    Some(offset) if index == pelvis => rest + inches(offset),
+                    Some(position) => inches(position),
+                    None => rest,
+                };
+                values.extend([position.x, position.y, position.z]);
+            }
+            let rotation = motion
+                .and_then(|motion| motion.rotation_at(time.unwrap_or(0.0)))
+                .unwrap_or(Quat::IDENTITY);
+            let (y, x, z) = (to_bvh * rotation * basis).normalize().to_euler(glam::EulerRot::YXZ);
+            let angles = Vec3::new(z, x, y).map(f32::to_degrees);
+            let angles = if frame > 1 { euler_filter(angles, previous[index]) } else { angles };
+            previous[index] = angles;
+            values.extend([angles.x, angles.y, angles.z]);
+        }
+        let line: Vec<String> = values.iter().map(|value| format!("{value:.4}")).collect();
+        text.push_str(&line.join(" "));
+        text.push('\n');
+    }
+    Ok(text)
+}
+
+/// The angles (Z, X, Y, in degrees, applied Y X Z) of the same rotation
+/// closest to the frame before: each angle within half a turn of the one
+/// before, and the other set of angles of that rotation taken when it is
+/// closer. A tool that interpolates between frames then never spins a bone
+/// the long way round (Blender's Euler filter does the same).
+fn euler_filter(angles: Vec3, previous: Vec3) -> Vec3 {
+    let near = |angles: Vec3| angles + ((previous - angles) / 360.0).round() * 360.0;
+    let direct = near(angles);
+    let flipped = near(Vec3::new(angles.x + 180.0, 180.0 - angles.y, angles.z + 180.0));
+    let distance = |a: Vec3| (a - previous).abs().element_sum();
+    if distance(flipped) < distance(direct) { flipped } else { direct }
+}
+
+fn is_under(skeleton: &Skeleton, mut index: usize, ancestor: usize) -> bool {
+    loop {
+        if index == ancestor {
+            return true;
+        }
+        match skeleton.joints[index].parent {
+            Some(parent) => index = parent,
+            None => return false,
+        }
+    }
+}
+
+fn write_bvh_joint(
+    text: &mut String,
+    skeleton: &Skeleton,
+    bones: &[usize],
+    index: usize,
+    depth: usize,
+    inches: &impl Fn(Vec3) -> Vec3,
+    moves: &impl Fn(usize) -> bool,
+) {
+    use std::fmt::Write as _;
+    let joint = &skeleton.joints[index];
+    let indent = "\t".repeat(depth);
+    let offset = inches(joint.pos);
+    let _ = writeln!(text, "{indent}{} {}", if depth == 0 { "ROOT" } else { "JOINT" }, joint.name);
+    let _ = writeln!(text, "{indent}{{");
+    let _ = writeln!(text, "{indent}\tOFFSET {:.4} {:.4} {:.4}", offset.x, offset.y, offset.z);
+    if moves(index) {
+        let _ = writeln!(
+            text,
+            "{indent}\tCHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation"
+        );
+    } else {
+        let _ = writeln!(text, "{indent}\tCHANNELS 3 Zrotation Xrotation Yrotation");
+    }
+    let children: Vec<usize> = bones
+        .iter()
+        .copied()
+        .filter(|&child| skeleton.joints[child].parent == Some(index))
+        .collect();
+    if children.is_empty() {
+        let end = inches(joint.end);
+        let _ = writeln!(text, "{indent}\tEnd Site\n{indent}\t{{");
+        let _ = writeln!(text, "{indent}\t\tOFFSET {:.4} {:.4} {:.4}", end.x, end.y, end.z);
+        let _ = writeln!(text, "{indent}\t}}");
+    }
+    for child in children {
+        write_bvh_joint(text, skeleton, bones, child, depth + 1, inches, moves);
+    }
+    let _ = writeln!(text, "{indent}}}");
+}
+
 pub fn encode(animation: &Animation) -> Result<Vec<u8>, AssetError> {
     if !animation.duration.is_finite()
         || !(0.0..=60.0).contains(&animation.duration)
@@ -567,6 +722,161 @@ mod tests {
         ];
         for case in cases {
             assert!(parse_bvh(case.as_bytes(), &skeleton()).is_err(), "{case}");
+        }
+    }
+    fn avatar_skeleton() -> Skeleton {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../aurora-viewer/assets/character/avatar_skeleton.xml");
+        Skeleton::parse(&std::fs::read(path).expect("avatar skeleton")).expect("skeleton")
+    }
+
+    fn wave() -> Animation {
+        let turn = |degrees: f32| Quat::from_rotation_z(degrees.to_radians()) * Quat::from_rotation_x((degrees / 3.0).to_radians());
+        Animation {
+            base_priority: 3,
+            duration: 1.0,
+            emote_name: String::new(),
+            loop_in: 0.0,
+            loop_out: 1.0,
+            looping: true,
+            ends_after: None,
+            ease_in: 0.3,
+            ease_out: 0.3,
+            hand_pose: 0,
+            joints: vec![
+                JointMotion {
+                    joint_name: "mPelvis".into(),
+                    priority: 3,
+                    rot_keys: vec![
+                        RotKey {
+                            time: 0.0,
+                            rotation: Quat::IDENTITY,
+                        },
+                        RotKey {
+                            time: 1.0,
+                            rotation: Quat::from_rotation_z(0.5),
+                        },
+                    ],
+                    pos_keys: vec![
+                        PosKey {
+                            time: 0.0,
+                            position: Vec3::ZERO,
+                        },
+                        PosKey {
+                            time: 0.5,
+                            position: Vec3::new(0.1, -0.05, 0.2),
+                        },
+                        PosKey {
+                            time: 1.0,
+                            position: Vec3::ZERO,
+                        },
+                    ],
+                },
+                JointMotion {
+                    joint_name: "mShoulderRight".into(),
+                    priority: 3,
+                    rot_keys: vec![
+                        RotKey {
+                            time: 0.0,
+                            rotation: turn(0.0),
+                        },
+                        RotKey {
+                            time: 0.5,
+                            rotation: turn(80.0),
+                        },
+                        RotKey {
+                            time: 1.0,
+                            rotation: turn(-40.0),
+                        },
+                    ],
+                    pos_keys: Vec::new(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn an_exported_bvh_imports_back_to_the_same_motion() {
+        let skeleton = avatar_skeleton();
+        let source = wave();
+        let text = encode_bvh(&source, &skeleton, 30).expect("export");
+        let back = parse_bvh_for_edit(text.as_bytes(), &skeleton).expect("import").animation;
+        assert!((back.duration - source.duration).abs() < 1e-4);
+        for joint in &source.joints {
+            let read = back.joints.iter().find(|j| j.joint_name == joint.joint_name).expect("track kept");
+            for step in 0..=20 {
+                let t = step as f32 / 20.0;
+                let (a, b) = (joint.rotation_at(t).expect("source"), read.rotation_at(t).expect("read"));
+                assert!(a.angle_between(b) < 0.02, "{} rotation at {t}: {a} vs {b}", joint.joint_name);
+                if let Some(a) = joint.position_at(t) {
+                    let b = read.position_at(t).expect("position read");
+                    assert!((a - b).length() < 0.002, "{} position at {t}: {a} vs {b}", joint.joint_name);
+                }
+            }
+        }
+        // bones the animation leaves alone stay out of the imported tracks
+        assert_eq!(back.joints.len(), source.joints.len());
+    }
+
+    #[test]
+    fn an_exported_bvh_has_the_rest_skeleton_and_a_rest_reference_frame() {
+        let skeleton = avatar_skeleton();
+        let text = encode_bvh(&wave(), &skeleton, 30).expect("export");
+        assert!(text.starts_with("HIERARCHY\nROOT mPelvis\n"));
+        let joints = text.lines().filter(|line| line.trim_start().starts_with("JOINT ")).count();
+        assert_eq!(joints + 1, skeleton.bone_count());
+        assert!(
+            !skeleton
+                .joints
+                .iter()
+                .filter(|j| j.is_collision_volume)
+                .any(|j| text.contains(&format!("JOINT {}\n", j.name)))
+        );
+        assert!(text.contains("Frames: 32\nFrame Time: 0.033333\n"));
+        let motion = text.split("Frame Time: 0.033333\n").nth(1).expect("motion");
+        let rest: Vec<f32> = motion
+            .lines()
+            .next()
+            .expect("frame 0")
+            .split(' ')
+            .map(|v| v.parse().expect("number"))
+            .collect();
+        // the pelvis at its rest offset, every rotation at zero
+        let pelvis = skeleton.joints[skeleton.find("mPelvis").expect("pelvis")].pos;
+        assert!((rest[1] - pelvis.z / 0.0254).abs() < 0.01);
+        assert!(rest[3..].iter().all(|v| v.abs() < 1e-3));
+        assert_eq!(motion.lines().count(), 32);
+    }
+
+    #[test]
+    fn a_track_the_skeleton_does_not_know_is_refused() {
+        let mut animation = wave();
+        animation.joints[1].joint_name = "mTail9".into();
+        assert!(encode_bvh(&animation, &avatar_skeleton(), 30).is_err());
+        assert!(encode_bvh(&wave(), &avatar_skeleton(), 0).is_err());
+    }
+
+    #[test]
+    fn exported_angles_do_not_jump_a_full_turn_between_frames() {
+        let mut animation = wave();
+        animation.joints[1].rot_keys = (0..=10)
+            .map(|step| RotKey {
+                time: step as f32 / 10.0,
+                rotation: Quat::from_rotation_y((step as f32 * 40.0).to_radians()),
+            })
+            .collect();
+        let text = encode_bvh(&animation, &avatar_skeleton(), 30).expect("export");
+        let motion: Vec<Vec<f32>> = text
+            .split("Frame Time: ")
+            .nth(1)
+            .expect("motion")
+            .lines()
+            .skip(1)
+            .map(|line| line.split(' ').map(|v| v.parse().expect("number")).collect())
+            .collect();
+        for pair in motion.windows(2) {
+            for (a, b) in pair[0].iter().zip(&pair[1]) {
+                assert!((a - b).abs() < 180.0, "{a} -> {b}");
+            }
         }
     }
 }
