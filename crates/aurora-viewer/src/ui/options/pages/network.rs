@@ -185,6 +185,14 @@ pub fn page(cx: &mut Cx) {
                 .changed()
             },
         );
+        // Network & Files › Enable Javascript (panel_preferences_setup.xml,
+        // BrowserJavascriptEnabled); the help says what the Legacy Viewer's
+        // DisableJavascriptBreaksSearch warns of
+        cx.toggle(
+            tr!("ui-options-browser-javascript"),
+            tr!("ui-options-browser-javascript-help"),
+            &field!(media.javascript),
+        );
     });
     cx.group(tr!("ui-options-logs-and-tools"), |cx| {
         cx.row(
