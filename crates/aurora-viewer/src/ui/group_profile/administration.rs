@@ -461,7 +461,7 @@ fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &
                     role_name(&r.name)
                 };
                 widgets::paint_elided(
-                    &l,
+                    l,
                     &name,
                     Pos2::new(rect.left() + 8.0, rect.center().y - 8.0),
                     rect.width() - 16.0,
@@ -474,7 +474,7 @@ fn roles(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &
                     shown = aurora_i18n::integer(i64::from(members))
                 );
                 widgets::paint_elided(
-                    &l,
+                    l,
                     &sub,
                     Pos2::new(rect.left() + 8.0, rect.center().y + 9.0),
                     rect.width() - 16.0,
