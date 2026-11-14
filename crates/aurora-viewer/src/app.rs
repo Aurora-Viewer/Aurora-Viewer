@@ -4250,8 +4250,11 @@ impl App {
                     // login nor a teleport inside the region (TELEPORT_LOCAL)
                     if arrived_before && !local {
                         let unmuted = audio_mute::unmute_after_teleport(&mut self.settings.audio);
-                        if !unmuted.is_empty() {
+                        // (AURORA_DEMO_AUTO_UNMUTE's run saves nothing)
+                        if !unmuted.is_empty() && !(self.demo && std::env::var_os("AURORA_DEMO_AUTO_UNMUTE").is_some()) {
                             self.settings.save();
+                        }
+                        if !unmuted.is_empty() {
                             let names = crate::settings::audio_channels();
                             for i in unmuted {
                                 self.world
