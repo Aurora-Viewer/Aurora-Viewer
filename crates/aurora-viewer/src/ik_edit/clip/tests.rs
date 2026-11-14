@@ -3512,3 +3512,120 @@ fn delete_removes_every_picked_key_in_one_undo_step() {
     assert!(editor.clip.selected_keys.is_empty());
     assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
 }
+
+#[test]
+fn shift_and_a_drag_from_a_key_boxes_keys_instead_of_moving_it() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let baseline = frames
+        .shapes(Vec::new(), &mut draw)
+        .into_iter()
+        .filter_map(|shape| {
+            let egui::Shape::LineSegment { points, .. } = shape else {
+                return None;
+            };
+            ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(points)
+        })
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("timeline track baseline");
+    let at = |frame: f32| egui::pos2(baseline[0].x + (baseline[1].x - baseline[0].x) * frame / 30.0, baseline[0].y);
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: shift,
+    };
+    let end = at(21.0) + egui::vec2(0.0, 8.0);
+    // pressed right on the key of frame 10, then dragged past frame 20
+    frames.run(
+        vec![
+            egui::Event::ModifiersChanged(shift),
+            egui::Event::PointerMoved(at(10.0)),
+            button(at(10.0), true),
+        ],
+        &mut draw,
+    );
+    frames.run(vec![egui::Event::PointerMoved(at(14.0) + egui::vec2(0.0, 6.0))], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(end)], &mut draw);
+    frames.run(vec![button(end, false)], &mut draw);
+    frames.run(vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], &mut draw);
+
+    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
+    assert!(editor.clip.key_box.is_none());
+    let document = editor.clip.document.as_ref().unwrap();
+    assert_eq!(document.frames(Some(head)), vec![0, 10, 20, 30], "no key moved");
+    assert!(editor.clip.undo.is_empty());
+}
+
+#[test]
+fn ctrl_c_with_several_picked_keys_copies_them_and_ctrl_v_pastes_them_at_the_playhead() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 60);
+    for at in [0, 10, 20] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::C, egui::Modifiers::COMMAND));
+    assert!(editor.clip.clipboard.is_empty(), "the keys, not the pose");
+    editor.clip.frame = 40;
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::V, egui::Modifiers::COMMAND));
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 10, 20, 40, 50]);
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, 40), (head, 50)]),
+        "the pasted keys are picked"
+    );
+    // one picked key (a plain click) still copies the frame's pose
+    editor.clip.selected_keys = BTreeSet::from([(head, 10)]);
+    editor.clip.frame = 10;
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::C, egui::Modifiers::COMMAND));
+    assert!(!editor.clip.clipboard.is_empty());
+    assert!(editor.clip.key_clipboard.is_empty());
+}

@@ -87,6 +87,12 @@ pub(super) struct State {
     undo: Vec<Arc<Document>>,
     redo: Vec<Arc<Document>>,
     clipboard: Vec<document::Keyframe>,
+    /// Keys copied from the timeline with their spacing. Only one of the two
+    /// clipboards holds something: the last copy wins.
+    key_clipboard: Vec<document::CopiedKey>,
+    /// The press of a box: Shift or Ctrl went down over the lanes. The box
+    /// starts once that press becomes a drag, wherever it began.
+    key_box_armed: bool,
     drag_key: Option<(usize, u32, u32)>,
     /// The keys picked in the timeline, as (bone, frame): a drag of one of
     /// them moves them all, Delete removes them all.
@@ -149,6 +155,8 @@ impl Default for State {
             undo: Vec::new(),
             redo: Vec::new(),
             clipboard: Vec::new(),
+            key_clipboard: Vec::new(),
+            key_box_armed: false,
             drag_key: None,
             selected_keys: BTreeSet::new(),
             key_box: None,
@@ -623,19 +631,38 @@ impl Editor {
         }
     }
 
+    /// Copy the picked keys when several are picked, else the pose of the
+    /// frame, as before multi-key selection: a single picked key is the one
+    /// a click on the lanes leaves, and Copy pose must keep working there.
     pub(super) fn studio_copy_clip_keyframe(&mut self) {
         if let Some(document) = &self.clip.document {
-            self.clip.clipboard = document.copy_keyframe(self.clip.frame);
+            if self.clip.selected_keys.len() > 1 {
+                self.clip.key_clipboard = document.copy_keys(&self.clip.selected_keys);
+                self.clip.clipboard.clear();
+            } else {
+                self.clip.clipboard = document.copy_keyframe(self.clip.frame);
+                self.clip.key_clipboard.clear();
+            }
         }
     }
 
+    pub(super) fn has_clip_clipboard(&self) -> bool {
+        !self.clip.clipboard.is_empty() || !self.clip.key_clipboard.is_empty()
+    }
+
+    /// Paste at the playhead what was copied last: keys keep their spacing
+    /// from there and are picked once pasted.
     pub(super) fn studio_paste_clip_keyframe(&mut self) {
-        if self.clip.clipboard.is_empty() {
+        if !self.has_clip_clipboard() {
             return;
         }
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
-            Arc::make_mut(document).paste_keyframe(self.clip.frame, &self.clip.clipboard);
+            if self.clip.key_clipboard.is_empty() {
+                Arc::make_mut(document).paste_keyframe(self.clip.frame, &self.clip.clipboard);
+            } else {
+                self.clip.selected_keys = Arc::make_mut(document).paste_keys(self.clip.frame, &self.clip.key_clipboard);
+            }
             self.clip.changed();
         }
     }

@@ -49,14 +49,14 @@ anim-timeline-track-enabled = Inclure cet os dans l’animation
 anim-timeline-empty = Aucun os n’a encore de clé : sélectionnez un os, posez-le, puis appuyez sur Clé (K).
 anim-timeline-keys-selected = { $count ->
     [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime
-   *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Suppr les supprime, Échap les désélectionne
+   *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, Échap les désélectionne
     }
 anim-edit-shortcut-play = Lire ou mettre en pause (Espace)
 anim-edit-shortcut-rewind = Revenir au début (Origine)
 anim-edit-shortcut-undo = Annuler (Ctrl+Z)
 anim-edit-shortcut-redo = Rétablir (Ctrl+Y ou Ctrl+Maj+Z)
-anim-edit-shortcut-copy = Copier la pose (Ctrl+C)
-anim-edit-shortcut-paste = Coller la pose (Ctrl+V)
+anim-edit-shortcut-copy = Copier les clés choisies, ou la pose (Ctrl+C)
+anim-edit-shortcut-paste = Coller à la tête de lecture (Ctrl+V)
 anim-edit-shortcut-delete = Supprimer les clés choisies, ou la clé de l’os sélectionné (Suppr)
 anim-edit-shortcut-save = Enregistrer le projet (Ctrl+S)
 anim-edit-interpolation-smooth = Fluide

@@ -511,7 +511,7 @@ impl Editor {
                 self.studio_clip_redo();
                 true
             }
-            TimelineShortcut::PastePose if !self.clip.clipboard.is_empty() => {
+            TimelineShortcut::PastePose if self.has_clip_clipboard() => {
                 self.studio_paste_clip_keyframe();
                 true
             }
@@ -624,6 +624,42 @@ impl Editor {
         true
     }
 
+    /// Shift or Ctrl pressed over the lanes arms a box; once the press turns
+    /// into a drag the box starts from where it was pressed, on a key, between
+    /// two rows or under the last one alike, so that a dense lane can still be
+    /// boxed. A click without a drag stays a click on the key under it.
+    fn arm_key_box(&mut self, ui: &egui::Ui, lanes_area: egui::Rect) {
+        let (pressed, modifiers, origin, dragging, latest) = ui.input(|input| {
+            (
+                input.pointer.primary_pressed(),
+                input.modifiers,
+                input.pointer.press_origin(),
+                input.pointer.is_decidedly_dragging() && input.pointer.primary_down(),
+                input.pointer.latest_pos(),
+            )
+        });
+        let over_timeline = origin.is_some_and(|origin| ui.ctx().layer_id_at(origin) == Some(ui.layer_id()));
+        if pressed
+            && (modifiers.shift || modifiers.ctrl || modifiers.command)
+            && over_timeline
+            && origin.is_some_and(|origin| lanes_area.contains(origin))
+        {
+            self.clip.key_box_armed = true;
+        }
+        if self.clip.key_box_armed
+            && dragging
+            && self.clip.key_box.is_none()
+            && let Some(origin) = origin
+        {
+            self.clip.drag_key = None;
+            self.clip.key_box = Some(KeyBox {
+                origin,
+                current: latest.unwrap_or(origin),
+                hits: Vec::new(),
+            });
+        }
+    }
+
     /// The shift a drag of picked keys gives them all, and the frame it
     /// started from: `None` unless several keys are picked and the grabbed
     /// key is one of them.
@@ -701,6 +737,8 @@ impl Editor {
         if !self.clip.active || !self.open || self.clip.waiting_source() || !self.clip.timeline_open {
             // a key drag ends with the lanes that showed it
             self.clip.drag_key = None;
+            self.clip.key_box = None;
+            self.clip.key_box_armed = false;
             return;
         }
         let Some((start, end)) = self.clip.document.as_ref().map(|document| (document.start, document.end)) else {
@@ -987,7 +1025,7 @@ impl Editor {
         {
             self.studio_copy_clip_keyframe();
         }
-        if tool_button(ui, palette, "clipboard-text-filled", !self.clip.clipboard.is_empty())
+        if tool_button(ui, palette, "clipboard-text-filled", self.has_clip_clipboard())
             .on_hover_text(aurora_i18n::tr!("anim-edit-shortcut-paste"))
             .clicked()
         {
@@ -1177,6 +1215,8 @@ impl Editor {
             start,
             end,
         );
+        let lanes_area = egui::Rect::from_min_max(egui::pos2(ruler.left(), ruler.bottom()), egui::pos2(ruler.right(), list_bottom));
+        self.arm_key_box(ui, lanes_area);
         let (view_start, view_end) = timeline_view(start, end, self.clip.timeline_zoom, self.clip.timeline_start);
         self.clip.timeline_start = view_start;
         let scale = FrameScale::new(ruler, view_start, view_end);
@@ -1226,11 +1266,14 @@ impl Editor {
         };
         let pointer_down = ui.input(|input| input.pointer.any_down());
         self.finish_timeline_key_drag(pointer_down);
+        if !pointer_down {
+            self.clip.key_box_armed = false;
+        }
         if let Some(key_box) = &self.clip.key_box {
             let area = key_box.area();
-            ui.painter()
-                .rect_filled(area, ui.visuals().window_corner_radius, palette.violet.gamma_multiply(0.12));
-            ui.painter().rect_stroke(
+            let painter = ui.painter_at(lanes_area);
+            painter.rect_filled(area, ui.visuals().window_corner_radius, palette.violet.gamma_multiply(0.12));
+            painter.rect_stroke(
                 area,
                 ui.visuals().window_corner_radius,
                 egui::Stroke::new(1.0, palette.violet),
@@ -1331,8 +1374,8 @@ impl Editor {
     /// dragging a key moves it (and every other picked key with it), a click
     /// or a drag elsewhere moves the playhead. Clicking or grabbing a key
     /// picks it (`pick_key`) and selects its bone, so that Delete and the
-    /// toolbar act on the keys just picked. Shift or Ctrl and a drag from an
-    /// empty spot draws a box that picks the keys inside it.
+    /// toolbar act on the keys just picked. Shift or Ctrl and a drag anywhere
+    /// over the lanes draws a box instead (`arm_key_box`).
     #[allow(clippy::too_many_arguments)]
     fn timeline_lane(
         &mut self,
@@ -1357,7 +1400,7 @@ impl Editor {
             response.hover_pos().and_then(|pointer| key_under(&track.keys, &scale, pointer.x))
         };
         let modifiers = ui.input(|input| input.modifiers);
-        if response.drag_started() {
+        if response.drag_started() && !self.clip.key_box_armed {
             // the key under the press, not under the pointer once the drag
             // threshold is passed
             let origin = ui.input(|input| input.pointer.press_origin()).or(response.interact_pointer_pos());
@@ -1369,14 +1412,6 @@ impl Editor {
                 if let Some(frame) = frame {
                     self.select(bone, rig, frame);
                 }
-            } else if (modifiers.shift || modifiers.ctrl || modifiers.command)
-                && let Some(origin) = origin
-            {
-                self.clip.key_box = Some(KeyBox {
-                    origin,
-                    current: origin,
-                    hits: Vec::new(),
-                });
             }
         }
         if let Some(key_box) = self.clip.key_box.as_mut() {

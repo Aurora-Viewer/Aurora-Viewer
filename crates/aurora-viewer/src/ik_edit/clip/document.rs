@@ -161,6 +161,16 @@ pub struct Keyframe {
     pub position: Option<Vec3>,
 }
 
+/// A key copied from the timeline, at its offset in frames from the first
+/// copied key, so that a paste keeps the keys' spacing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CopiedKey {
+    pub bone: usize,
+    pub offset: u32,
+    pub rotation: Option<Quat>,
+    pub position: Option<Vec3>,
+}
+
 fn eased(mode: Interpolation, curve: Curve, amount: f32) -> f32 {
     let amount = amount.clamp(0.0, 1.0);
     match mode {
@@ -843,6 +853,70 @@ impl Document {
             self.range(self.start.min(first), self.end.max(last));
         }
         delta
+    }
+    /// The listed keys as they are stored, each at its offset from the first
+    /// of them: the keys themselves, not a sample of the curve between them.
+    pub fn copy_keys(&self, keys: &std::collections::BTreeSet<(usize, u32)>) -> Vec<CopiedKey> {
+        let Some(first) = keys.iter().map(|(_, frame)| *frame).min() else {
+            return Vec::new();
+        };
+        let fps = self.fps;
+        keys.iter()
+            .filter_map(|&(bone, frame)| {
+                let track = self.tracks.iter().find(|track| track.bone == bone)?;
+                let rotation = track
+                    .motion
+                    .rot_keys
+                    .iter()
+                    .rfind(|key| key_on_frame(key.time, frame, fps))
+                    .map(|key| key.rotation);
+                let position = track
+                    .motion
+                    .pos_keys
+                    .iter()
+                    .rfind(|key| key_on_frame(key.time, frame, fps))
+                    .map(|key| key.position);
+                (rotation.is_some() || position.is_some()).then_some(CopiedKey {
+                    bone,
+                    offset: frame - first,
+                    rotation,
+                    position,
+                })
+            })
+            .collect()
+    }
+    /// Paste copied keys from frame `at` on, keeping their spacing; a key
+    /// already on one of those frames is replaced. Keys past the length
+    /// limit are left out. Returns the (bone, frame) of the pasted keys.
+    pub fn paste_keys(&mut self, at: u32, keys: &[CopiedKey]) -> std::collections::BTreeSet<(usize, u32)> {
+        let max_frame = self.max_frame();
+        let fps = self.fps;
+        let mut pasted = std::collections::BTreeSet::new();
+        for key in keys {
+            let Some(frame) = at.checked_add(key.offset).filter(|frame| *frame <= max_frame) else {
+                continue;
+            };
+            let Some(track) = self.tracks.iter_mut().find(|track| track.bone == key.bone) else {
+                continue;
+            };
+            let time = frame_time(frame, fps);
+            if let Some(rotation) = key.rotation {
+                upsert_key(&mut track.motion.rot_keys, frame, fps, RotKey { time, rotation });
+            }
+            if let Some(position) = key.position {
+                upsert_key(&mut track.motion.pos_keys, frame, fps, PosKey { time, position });
+            }
+            track.authored = true;
+            pasted.insert((key.bone, frame));
+        }
+        if let (Some(first), Some(last)) = (
+            pasted.iter().map(|(_, frame)| *frame).min(),
+            pasted.iter().map(|(_, frame)| *frame).max(),
+        ) && (first < self.start || last > self.end)
+        {
+            self.range(self.start.min(first), self.end.max(last));
+        }
+        pasted
     }
     /// Delete the listed keys of the tracks the user authored. The hidden
     /// rest keys of a fresh draft stay, as with `remove_keyframe`.
