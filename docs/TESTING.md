@@ -1799,6 +1799,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
+| `AURORA_DEMO_CONTENTS_CAP=0` | The region without CreateTaskInventoryItem: New script by RezScript, New notecard disabled |
 | `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
 | `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
@@ -3001,6 +3002,13 @@ choice belongs to this construction window, independently of inventory: Mine
 by default, Next owner, Both or Hidden. Switching it changes only the displayed
 suffix, never item permissions or simulator commands. `contents+next-owner`
 still selects Both for captures.
+With `AURORA_DEMO_BUILD=contents-new,object:118` and `AURORA_DEMO_BUILD_TAB=contents`,
+the Contents tab presses New notecard then New script at frame 260: the demo
+region answers CreateTaskInventoryItem like a Second Life region, and the list
+gains a "New notecard" (empty, opens in the notecard editor) and a running
+"New script". New notecard opens the second row, under New script.
+`AURORA_DEMO_CONTENTS_CAP=0` withdraws the capability: New notecard is
+disabled and New script falls back to RezScript, as on a region without it.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
 `AURORA_DEMO_BUILD_TAB=contents+permissions`, check the eleven icon filters,
 All/Clear, Group/Anyone/Next owner columns and OK/Apply/Cancel. No-copy forces
@@ -3366,7 +3374,7 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, Shift-click, move, edit |
-| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures; `background` for the floating text options |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, derender of a linked part, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
@@ -3380,6 +3388,11 @@ letters sit on the ticks; test different UI text sizes and fonts.
 `world` instead adds a purple cube with three centered text rows near the
 default demo start. Last-baseline placement is shared, and interline spacing
 follows the selected font's ascent plus descent minus one, without line gap.
+`background` shows the same cube and a dark text farther away, with
+Preferences › Layout › World tooltips › Floating text set to a background on all objects and a
+fade distance of 16 m: a black card behind the white rows, a white one behind
+the dark text, both faded with their text. Hover the far cube with Highlight
+on hover on: its text turns opaque and comes in front of the scene.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a
@@ -6066,7 +6079,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, or at its narrowest |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -9439,7 +9452,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `unknown`: a region for which nobody answers (error after 10 s);
   `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow]`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow,utc,local]`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months. In Aurora's look (Preferences › Aurora ›
   Places), `:wide` opens the window at 1040 × 640 (the rail of sources and
@@ -9453,7 +9466,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and at any interface scale (#2641).
   `:narrow` opens the window 260 points wide (its least width at text
   size 1): with `:classic` and `AURORA_TEXT_SIZE=2`, the window widens to
-  the three buttons, each whole.- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
+  the three buttons, each whole.
+  `:utc` / `:local`: the teleport history's days and hours in UTC or local
+  time for the run, instead of SLT (FSTPHistoryTZ; not saved, until a
+  zone is chosen in the menu): the day sections start at that zone's
+  midnight, and Aurora's "Today, 21:40" labels follow it.
+- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
   gives it its notes and moves it to the chosen folder, Cancel deletes it.
