@@ -184,14 +184,34 @@ impl ToolbarUi {
                 let actions_width = if dirty { 150.0 + spacing } else { 0.0 } + if personal { 130.0 + spacing } else { 0.0 };
                 let name_width = (ui.available_width() - actions_width).max(0.0);
                 let (name_rect, name_response) = ui.allocate_exact_size(Vec2::new(name_width, 30.0), egui::Sense::hover());
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let badge = dirty.then(|| {
+                    ui.painter()
+                        .layout_no_wrap(aurora_i18n::tr!("toolbar-preset-unsaved").to_owned(), font.clone(), p.violet_light)
+                });
+                let caption_limit = (name_rect.width() - badge.as_ref().map_or(0.0, |badge| badge.size().x + spacing)).max(0.0);
+                let caption_width = ui
+                    .painter()
+                    .layout_no_wrap(caption.clone(), font.clone(), p.ink)
+                    .size()
+                    .x
+                    .min(caption_limit);
                 widgets::paint_elided(
                     ui,
                     caption.as_str(),
                     egui::pos2(name_rect.left(), name_rect.center().y),
-                    name_rect.width(),
-                    egui::TextStyle::Body.resolve(ui.style()),
+                    caption_width,
+                    font,
                     p.ink,
                 );
+                if let Some(badge) = badge {
+                    widgets::paint_ink_left(
+                        ui.painter(),
+                        badge,
+                        egui::pos2(name_rect.left() + caption_width + spacing, name_rect.center().y),
+                        p.violet_light,
+                    );
+                }
                 name_response.on_hover_text(caption);
                 if dirty
                     && ui
@@ -231,9 +251,6 @@ impl ToolbarUi {
                     }
                 }
             });
-            if dirty {
-                ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-preset-unsaved")).color(p.violet_light));
-            }
             ui.add_space(4.0);
             // Keep the command controls and one catalogue row reachable on short windows.
             let preset_height = (ui.available_height() - 290.0).max(48.0);
