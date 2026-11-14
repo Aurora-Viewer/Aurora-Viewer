@@ -17158,6 +17158,23 @@ impl App {
                 } else {
                     self.beacon_hit = None;
                 }
+                // FSMouselookCombatFeatures (AURORA_DEMO_MOUSELOOK_COMBAT=1
+                // turns it on for the run)
+                let combat =
+                    self.settings.camera.mouselook_combat || (self.demo && std::env::var_os("AURORA_DEMO_MOUSELOOK_COMBAT").is_some());
+                if self.camera.mouselook() && !held && combat {
+                    let mut camera = self.settings.camera.clone();
+                    camera.mouselook_iff |= self.demo && std::env::var_os("AURORA_DEMO_MOUSELOOK_COMBAT").is_some();
+                    ui::mouselook_combat::draw(
+                        &ctx,
+                        &p,
+                        &self.world,
+                        projector,
+                        self.camera.position,
+                        self.camera.forward(),
+                        &camera,
+                    );
+                }
                 // the hover tips of what the pointer rested on (none in
                 // mouselook nor over a held photo)
                 if let Some(action) = self.draw_hover_tips(&ctx, &p, !self.camera.mouselook() && !held) {

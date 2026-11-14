@@ -2228,6 +2228,9 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Controls
 
+- 🟡 Mouselook combat aids (task `mouselook-combat`; no issue): FSMouselookCombatFeatures (off), ExodusMouselookIFF (off) and ExodusMouselookIFFRange (380 m) in Preferences › Camera › Mouselook, after LLViewerWindow::draw's Exodus block: the first avatar in the Legacy box ahead of the camera (0.75 m aside, 1.5 m up or down) gets `Name, 12.34 m` 150 px under the crosshair in its minimap colour, hidden by RLVa @shownames; target markers are edge arrows toward the avatars in range out of view (LLTracker::drawMarker with is_iff), the tracking beacon's arrow. `AURORA_DEMO_MOUSELOOK_COMBAT=1` with `AURORA_DEMO_CAMERA=ml`. Unit test: the target box.
+  - ⬜ QA (Agni): mouselook with both on in a busy place: arrows toward the avatars behind, a name and distance when one stands ahead; none of it with the option off.
+
 - 🟡 Advanced › Release keys, like the Legacy Viewer (parity list 2026-11-11; task `release-keys`; no issue; [PR #3326](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/3326)): the last entry of Advanced sends ForceScriptControlRelease (LLAgent::forceReleaseControls) when a broken vehicle, weapon or HUD keeps the controls (llTakeControls). Greyed while no script holds a control (anyControlGrabbed) or while RLVa locks an attachment against removal (hasLockedAttachmentPoint(RLV_LOCK_REMOVE)); no shortcut, as in the Legacy Viewer. Demo: `AURORA_DEMO_RELEASE_KEYS=1`.
   - ⬜ QA on the grid: sit on a vehicle (or wear a HUD) that takes the controls and stops the arrow keys moving the avatar; Advanced (Ctrl+Alt+D) › Release keys is enabled; choose it: the arrow keys move the avatar (or the camera) again and the entry is greyed. With nothing grabbing the controls (stand up, take the HUD off), the entry is greyed. With RLVa on and a worn object locked (`@detach=n`), the entry is greyed even while the controls are taken.
 

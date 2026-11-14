@@ -398,6 +398,13 @@ pub struct CameraSettings {
     pub mouselook_alt_right_menu: bool,
     /// FSShowMouselookInstructions: "Press Esc to return to world view".
     pub show_mouselook_instructions: bool,
+    /// FSMouselookCombatFeatures (off): the name and distance of the avatar
+    /// ahead under the crosshair; ExodusMouselookIFF (off): arrows toward
+    /// the avatars out of view within ExodusMouselookIFFRange (380 m)
+    /// (`ui::mouselook_combat`).
+    pub mouselook_combat: bool,
+    pub mouselook_iff: bool,
+    pub mouselook_iff_range: f32,
     /// FSShowInterfaceInMouselook (FIRE-8868, off): the bars stay in
     /// mouselook; otherwise they go (LLAgent::changeCameraToMouselook) and
     /// the chat bar only shows with text in it.
@@ -484,6 +491,9 @@ impl Default for CameraSettings {
             mouselook_zoom_fov: None,
             mouselook_alt_right_menu: false,
             show_mouselook_instructions: true,
+            mouselook_combat: false,
+            mouselook_iff: false,
+            mouselook_iff_range: 380.0,
             show_interface_in_mouselook: false,
             vr_at_start: false,
             vr: VrSettings::default(),
@@ -625,6 +635,7 @@ impl CameraSettings {
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
+        self.mouselook_iff_range = fix(self.mouselook_iff_range, 0.0, 500.0, d.mouselook_iff_range);
         self
     }
 }

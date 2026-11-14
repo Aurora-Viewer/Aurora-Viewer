@@ -1450,7 +1450,7 @@ pub(super) fn beacon_segment(a: glam::Vec4, b: glam::Vec4, proj: &super::hud::Pr
     (lo <= hi).then(|| [beacon_screen(a.lerp(b, lo), proj), beacon_screen(a.lerp(b, hi), proj)])
 }
 
-fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
+pub(super) fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
     if !clip.is_finite() || !inner.is_positive() {
         return None;
     }

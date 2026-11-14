@@ -1010,6 +1010,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
+| `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_CAM=alt\|alt-off` | The camera on a point before the demo teleport, "Return after a teleport in the region" on or off |
@@ -1070,6 +1071,13 @@ when unfocused") is ignored during a screenshot.
   default 16 px). The preferences' preview shows the same mark over a dark
   and a bright patch: `AURORA_DEMO_OPTIONS=camera/2:crosshair` opens the
   group and scrolls down to its last row, the image.
+- **`AURORA_DEMO_MOUSELOOK_COMBAT=1`**: Preferences › Camera › Mouselook ›
+  Combat aids and Target markers on for the session, nothing saved. With
+  `AURORA_DEMO_CAMERA=ml` and a capture at frame 624: the name and distance
+  of the demo avatar ahead show 150 px under the crosshair while it stands in
+  the narrow box ahead; arrows on the edges of the window point toward the
+  avatars in range out of view, in their minimap colours (the demo's avatars
+  all stand in view, so none shows there).
 - **`AURORA_DEMO_AVATAR_TRAVEL=<mode>`**: at frame 600, `menu` opens
   the violet wolf's avatar menu; the other modes dispatch Go to or Follow. `go`
   keeps the initial destination and ends within 2 m; `follow` keeps the
