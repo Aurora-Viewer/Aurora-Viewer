@@ -612,6 +612,7 @@ keybinds-show-huds = ＨＵＤの表示／非表示
 keybinds-reset-camera-angles = カメラアングルをリセット
 keybinds-focus-selection = 選択範囲にフォーカス
 keybinds-zoom-selection = 選択範囲にズーム
+keybinds-look-at-last-chatter = 最後に発言した人を見る
 keybinds-mute-all-sound = すべてのサウンドのミュート／解除
 keybinds-double-click-teleport = ダブルクリックテレポートのオン／オフ
 keybinds-selection-outlines = 選択範囲の輪郭の表示／非表示
