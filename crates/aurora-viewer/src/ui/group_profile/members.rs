@@ -336,7 +336,13 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         ui.spacing_mut().item_spacing.x = 5.0;
         // room for the pills, Invite and Export
         let w = (ui.available_width() - 350.0).max(120.0);
-        widgets::search_field(ui, &mut st.members.filter, aurora_i18n::tr!("ui-group-profile-filter-members"), w);
+        widgets::search_field(
+            ui,
+            p,
+            &mut st.members.filter,
+            aurora_i18n::tr!("ui-group-profile-filter-members"),
+            w,
+        );
         if pill(ui, p, aurora_i18n::tr!("common-all"), st.members.show == Show::All).clicked() {
             st.members.show = Show::All;
         }
@@ -538,7 +544,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     let today = today();
     let count = st.members.rows.len();
     let mut open_profile = None;
-    egui::ScrollArea::vertical()
+    let target = st.members.selected.or_else(|| st.members.checked.first().copied());
+    let selected_row = st.members.rows.iter().position(|(id, _)| Some(*id) == target);
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, ROW_H)
         .id_salt("group_members_rows")
         .max_height(list_h)
         .auto_shrink([false, false])
@@ -928,7 +936,7 @@ fn abilities_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &V
         return;
     }
     let (some, all) = admin_members::powers_of(d, &targets, &st.members.staged);
-    let catalogue = super::abilities::catalogue();
+    let catalogue = super::abilities::catalogue(v.post_links);
     let total: usize = catalogue.iter().map(|s| admin_members::set_count(s, some).0).sum();
     let title = aurora_i18n::tr!(
         "ui-group-admin-can-do",
@@ -1000,6 +1008,7 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
     let p = c.p;
     widgets::search_field(
         ui,
+        p,
         &mut st.members.filter,
         aurora_i18n::tr!("ui-group-profile-filter-members"),
         ui.available_width(),

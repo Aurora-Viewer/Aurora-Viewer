@@ -153,12 +153,28 @@ impl AltCursor {
 }
 
 impl App {
+    pub(super) fn mouselook_capture_enabled(&self) -> bool {
+        if self.vr_camera.is_some() {
+            self.settings.camera.vr.mouse_look
+                && matches!(
+                    self.vr_mode,
+                    Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Avatar)
+                )
+        } else {
+            self.camera.mouselook()
+        }
+    }
+
     /// Once a frame, before mouselook takes a cursor it does not hold: Alt
     /// frees it or gives it back to the gun.
     pub(super) fn mouselook_alt_cursor(&mut self) {
         // (AURORA_DEMO_CAMERA scripts the keys: the window needs no focus)
         let focused = self.focused || self.demo && std::env::var_os("AURORA_DEMO_CAMERA").is_some();
-        let mouselook = self.camera.mouselook() && focused && !self.exit_prompt.open;
+        let capture = self.mouselook_capture_enabled();
+        if !capture && self.cursor_hold.kind == Some(HoldKind::Mouselook) {
+            self.release_cursor(false);
+        }
+        let mouselook = capture && focused && !self.exit_prompt.open;
         match self.alt_cursor.update(mouselook, self.alt && !self.alt_gr_alone()) {
             Some(AltSwitch::Free) => self.release_cursor(false),
             Some(AltSwitch::Take) => self.set_mouselook_grab(true),
@@ -204,7 +220,7 @@ impl App {
             // take the real cursor of someone using the PC
             return;
         }
-        let mouselook = self.camera.mouselook();
+        let mouselook = self.mouselook_capture_enabled();
         let Some(kind) = self.cursor_hold.take(mouselook, focus, origin) else {
             return;
         };

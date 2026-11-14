@@ -576,6 +576,7 @@ impl App {
                 owner_id: self.world.agent_id,
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
                 position: Vec3::ZERO,
                 message: "@jump=n,version=123".into(),
             }));
@@ -617,6 +618,7 @@ impl App {
             owner_id: self.world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message,
         }));
@@ -746,7 +748,7 @@ impl App {
                         "getdebug_restrainedlovenosetenv" => u8::from(!self.settings.rlva.allow_environment_locks).to_string(),
                         _ => String::new(),
                     };
-                    self.world.rlva.reply(channel, text);
+                    self.world.rlva.reply(channel, &c.behaviour, text);
                 }
                 continue;
             }
@@ -759,7 +761,7 @@ impl App {
                 {
                     self.world
                         .rlva
-                        .reply(channel, format!("{:.2}", self.world.hover_height.value() * 100.0));
+                        .reply(channel, &c.behaviour, format!("{:.2}", self.world.hover_height.value() * 100.0));
                 }
                 continue;
             }
@@ -780,7 +782,7 @@ impl App {
                     .rlva
                     .camera_reply(&c, self.camera.position.distance(self.world.agent.position), fov)
                 {
-                    self.world.rlva.reply(channel, reply);
+                    self.world.rlva.reply(channel, &c.behaviour, reply);
                 }
                 continue;
             }

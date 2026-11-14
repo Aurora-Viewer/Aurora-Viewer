@@ -676,6 +676,7 @@ impl App {
                         .collect();
                     self.imports.clear_appearance_targets(&mut self.world.objects, &targets, Some(id));
                     self.build.forget_local_picker_asset(id);
+                    self.texture_library.forget_local_asset(id);
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
                         let mut entry = self.imports.entries.remove(index);
                         if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -795,6 +796,9 @@ impl App {
         }
         self.imports.save_local_registry(false);
         self.show_local_appearance_status(ctx, palette);
+        if self.avatar_studio.active && self.avatar_studio.animation_editor && !self.imports.any_window_open() {
+            self.ik_editor.resume_after_upload(&self.world);
+        }
     }
 
     fn show_local_appearance_status(&mut self, ctx: &egui::Context, palette: &Palette) {
@@ -819,6 +823,17 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_LOCAL_APPEARANCES") else {
             return;
         };
+        if mode == "deleted"
+            && self.frame_count == 700
+            && let Some(index) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
+            && let Some(object) = self.world.objects.get(index)
+        {
+            let event = aurora_net::NetEvent::ObjectsKilled {
+                handle: object.key.region,
+                local_ids: vec![object.key.local_id],
+            };
+            self.world.apply(event);
+        }
         if self.frame_count == 600 {
             self.imports.open = false;
             self.panels.people = false;
@@ -832,8 +847,8 @@ impl App {
             }
         }
         let (key, start) = match self.frame_count {
-            650..=651 if !matches!(mode.as_str(), "1" | "reveal") => ("local_appearance_warning_rect", 650),
-            680..=681 if mode == "reveal" => ("local_appearance_reveal_rect", 680),
+            650..=651 if !matches!(mode.as_str(), "1" | "reveal" | "deleted") => ("local_appearance_warning_rect", 650),
+            680..=681 if matches!(mode.as_str(), "reveal" | "deleted") => ("local_appearance_reveal_rect", 680),
             850..=851 if mode == "reveal" => ("local_appearance_reveal_rect", 850),
             680..=681 if matches!(mode.as_str(), "confirm" | "remove" | "cancel") => ("local_appearance_remove_rect", 680),
             710..=711 if mode == "remove" => ("local_appearance_confirm_rect", 710),
@@ -1154,6 +1169,7 @@ impl App {
     }
 
     pub(super) fn sync_local_picker_bindings(&mut self) {
+        self.imports.sync_local_duplicate_bindings(&mut self.world.objects);
         self.imports
             .sync_local_appearance_changes(self.build.local_appearance_changes.drain(..));
     }

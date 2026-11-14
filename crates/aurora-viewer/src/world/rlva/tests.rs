@@ -655,6 +655,7 @@ fn chat(text: &str) -> ChatMessage {
         owner_id: TARGET,
         source_type: ChatSourceType::Object,
         chat_type: ChatType::OwnerSay,
+        region: None,
         position: glam::Vec3::ZERO,
         message: text.to_owned(),
     }
@@ -1441,7 +1442,7 @@ fn rlva_editing_and_permissions_are_enforced_on_linksets_and_wire_commands() {
     assert!(!crate::build::selectable(&w, child));
     let edit = NetCommand::Build(BuildCmd::SetName {
         handle: key.region,
-        local_id: key.local_id,
+        local_ids: vec![key.local_id],
         name: "new".into(),
     });
     assert!(!w.rlva_allows_command(&edit, Uuid::nil()));

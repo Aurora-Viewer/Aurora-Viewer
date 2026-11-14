@@ -89,8 +89,9 @@ How to read a copy:
   and attachment point of each listed one that never came. Before the
   avatars, `network this session:` gives the ObjectUpdate blocks the viewer
   could not read (their objects never show; the session log warns once per
-  region and size), the packets skipped and those that came late, and the
-  reliable packets given up. Read them together (issue #2747): nothing
+  region and size), provisional packet holes, recoveries before their
+  deadline, confirmed losses (after the ping-dependent grace of 1.6 to
+  5 s), and reliable packets given up. Read them together (issue #2747): nothing
   listed means the simulator itself announces nothing worn; listed but
   missing, with blocks not read, points at the reader; listed but missing,
   with neither, points at what the simulator sent.

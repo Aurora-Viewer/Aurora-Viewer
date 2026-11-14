@@ -1,7 +1,7 @@
 //! The build floater (LLFloaterTools, floater_tools.xml, Firestorm) in the
 //! Aurora skin: five editing sections and five tools in one navigation
 //! rail. General holds object information and ownership permissions.
-//! The active section supplies the title; edit selection/actions belong
+//! The five object sections share a Build title; edit selection/actions belong
 //! to the main panel. The title bar folds it away (FSToolboxExpanded).
 //! Also the build keyboard shortcuts
 //! (menu_viewer.xml) and the secondary floaters (grid options, weights,
@@ -27,6 +27,7 @@ mod mesh;
 mod object;
 pub(crate) mod particles;
 mod replace;
+mod shape_preview;
 pub(in crate::build) mod texture;
 mod texture_preview;
 mod tools;
@@ -36,7 +37,7 @@ use super::{BuildSettings, BuildTool, EditMode, Tool};
 use crate::media::entry::ObjectMediaData;
 use crate::theme::Palette;
 use crate::ui::texture_picker::TexturePicker;
-use crate::ui::widgets::Floater;
+use crate::ui::widgets::{self, Floater};
 use crate::world::World;
 use crate::world::objects::ObjKey;
 use egui::Vec2;
@@ -79,8 +80,8 @@ pub enum Request {
     BuyLand,
     Profile(Uuid),
     GroupProfile(Uuid),
-    /// "p" of the Object tab: read the system clipboard for this vector
-    /// (0 position, 1 size, 2 rotation) and call BuildTool::paste_vector.
+    /// Read a transform vector from the system clipboard (0 position, 1 size,
+    /// 2 rotation); shared by Aurora's actions and the Legacy "p" button.
     PasteVector(usize),
     CopyKeys,
     Script {
@@ -164,6 +165,8 @@ pub enum Confirm {
 pub struct FloaterState {
     /// Active presentation, mirrored before input routing (not a preference).
     legacy_window: bool,
+    transform_height: Option<f32>,
+    status_notice: Option<(String, f64)>,
     pub layout: layout::State,
     pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
@@ -188,7 +191,10 @@ pub struct FloaterState {
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
     /// Independent from every personal/folder inventory window.
-    pub contents_show_next_owner: bool,
+    pub contents_rights: crate::ui::inventory::permissions::Rights,
+    /// The language picked for "New script"; None follows the region (Lua
+    /// where SLua runs, as LLPanelContents::getState resets it).
+    pub new_script_lua: Option<bool>,
     pub contents_selection: contents_selection::Selection,
     /// Whether the inventory held over the Contents tab may go in.
     pub contents_drop: crate::build::contents_drop::PlanCheck,
@@ -234,9 +240,56 @@ pub struct FloaterState {
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 
+/// LLButton::handleMouseDown (indra/llui/llbutton.cpp) takes the keyboard
+/// focus on the press, so a field of the build window commits its typed
+/// text to the selection it was typed for before the next part or face,
+/// the edit mode or Edit linked act on the release. egui lets the focus go
+/// only after the click's pass (ui/click_away_focus.rs), once the selection
+/// has already changed. Only a press on the build window itself, outside
+/// the focused field: a field's menu and the other windows keep that rule.
+/// The world press is app.rs's (`press_while_typing`).
+fn press_takes_build_field_focus(ctx: &egui::Context) {
+    let Some(pos) = ctx.input(|i| i.pointer.press_origin().filter(|_| i.pointer.any_pressed())) else {
+        return;
+    };
+    if !ctx.text_edit_focused() {
+        return;
+    }
+    let Some(focused) = ctx.memory(|m| m.focused()) else {
+        return;
+    };
+    let Some(field) = ctx.read_response(focused) else {
+        return;
+    };
+    let window = egui::Id::unique(INSPECTOR_ID);
+    if field.layer_id.id != window || ctx.layer_id_at(pos).map(|layer| layer.id) != Some(window) || field.interact_rect.contains(pos) {
+        return;
+    }
+    ctx.memory_mut(|m| m.surrender_focus(focused));
+}
+
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    // egui drops a text field's focus on Escape before this pass starts, so
+    // remember whether one had the keyboard on the previous pass: that
+    // Escape is the field's (LLLineEditor reverts the typed text), not the
+    // build tool's. Taking it here would hide it from the field, which then
+    // commits its text as if focus had moved away.
+    // Only the pass just before counts: this runs only while no web page or
+    // media face has the keyboard, and an older mark would take an Escape.
+    let typing_id = egui::Id::unique("build_shortcuts_typing");
+    let pass = ctx.cumulative_pass_nr();
+    let typing_before = ctx.data(|d| d.get_temp::<u64>(typing_id)).is_some_and(|typed| typed + 1 == pass);
+    // Only a text entry: a focused button or list row leaves Escape to the
+    // shortcuts, so Organize mode still closes on the first press.
+    // (read before data_mut: egui's context lock is not reentrant)
+    if ctx.text_edit_focused() {
+        ctx.data_mut(|d| d.insert_temp(typing_id, pass));
+    }
+    if typing_before && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        return;
+    }
     if tool.ui.link_error.is_some() {
         return;
     }
@@ -310,6 +363,8 @@ pub fn show(
     floaters::link_error(ctx, p, tool);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
+        tool.ui.status_notice = None;
+        tool.status.clear();
         tool.dismiss_texture_picker();
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
@@ -318,6 +373,7 @@ pub fn show(
         tool.ui.layout.drag = None;
         return false;
     }
+    press_takes_build_field_focus(ctx);
     let before = s.clone();
     let property_lines_before = *env.property_lines;
     // drafts belong to the selection they were typed for
@@ -361,11 +417,29 @@ pub fn show(
             s.transform_expanded = false;
         }
     }
+    let demo_notice = egui::Id::unique("build-demo-notice");
+    if env.demo
+        && let Some(item) = ctx.data(|data| data.get_temp::<crate::build::layout::Item>(egui::Id::unique("build-demo-layout-drag")))
+    {
+        tool.ui.layout.open = true;
+        tool.ui.layout.organizing = true;
+        if ctx.cumulative_frame_nr() >= 700 {
+            tool.ui.layout.drag = Some(item);
+        }
+    }
+    if env.demo && ctx.cumulative_frame_nr() >= 700 && ctx.data(|data| data.get_temp::<bool>(demo_notice)) == Some(false) {
+        ctx.data_mut(|data| data.insert_temp(demo_notice, true));
+        tool.status = aurora_i18n::tr!("build-link-pending").into();
+    }
     let width = egui::AreaState::load(ctx, egui::Id::unique(INSPECTOR_ID))
         .and_then(|state| state.size)
         .unwrap_or(workspace::DEFAULT_SIZE)
         .x;
     s.layout.normalize();
+    if !s.legacy_window {
+        // Aurora uses the floater's standard minimize/restore button.
+        s.expanded = true;
+    }
     if s.legacy_window && tool.tab == 1 {
         tool.tab = 5;
     }
@@ -389,10 +463,11 @@ pub fn show(
     }
     tool.ui.layout.targets.clear();
     tool.ui.layout.zones.clear();
+    tool.ui.layout.footer_cells.clear();
     let mut open = true;
-    let mut toggle_sections = false;
     let mut legacy_toggle_sections = false;
     let mut copy_uuid = false;
+    let mut summary_clicked = false;
     let mut toggle_settings = false;
     if s.legacy_window {
         tool.ui.layout.organizing = false;
@@ -414,11 +489,7 @@ pub fn show(
         .steady_size()
         .silent();
     if !s.legacy_window {
-        floater = floater.framed_header(title_icon).action(
-            if s.expanded { "caret-up-filled" } else { "caret-down-filled" },
-            aurora_i18n::tr!("build-compact-collapse"),
-            &mut toggle_sections,
-        );
+        floater = floater.framed_header(title_icon);
         floater.header_status = compact::object_status(tool, world, p);
         floater.header_status_action = Some((
             "clipboard-text-filled",
@@ -426,6 +497,12 @@ pub fn show(
             aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
             &mut copy_uuid,
         ));
+        if tool.tool == Tool::Edit {
+            floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
+            if !tool.selection.is_empty() {
+                floater.header_summary_action = Some(&mut summary_clicked);
+            }
+        }
     }
     if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
@@ -449,6 +526,9 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if summary_clicked {
+        tool.ui.weights_open = !tool.ui.weights_open;
+    }
     if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
         match tool.admit_item(world, item, &texture_preview::admit_targets(target, &sel)) {
@@ -456,7 +536,6 @@ pub fn show(
             Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
         }
     }
-    toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));
     }
@@ -475,7 +554,7 @@ pub fn show(
     layout::finish(ctx, p, tool, s);
     notecards::show(ctx, p, tool, world, s);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
-    if toggle_sections {
+    if legacy_toggle_sections {
         let size_id = egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size");
         if s.expanded {
             if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID))) {
@@ -507,7 +586,40 @@ pub fn show(
         tool.dismiss_texture_picker();
         tool.close(world, s);
     }
+    status_notice(ctx, p, tool);
     *s != before || *env.property_lines != property_lines_before
+}
+
+fn status_notice(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool) {
+    let now = ctx.input(|input| input.time);
+    if !tool.status.is_empty() {
+        tool.ui.status_notice = Some((std::mem::take(&mut tool.status), now + 6.0));
+    }
+    if !tool.open || tool.ui.status_notice.as_ref().is_some_and(|(_, until)| now >= *until) {
+        tool.ui.status_notice = None;
+    }
+    let Some((text, until)) = &tool.ui.status_notice else { return };
+    let Some(anchor) = ctx.memory(|memory| memory.area_rect(egui::Id::unique(INSPECTOR_ID))) else {
+        return;
+    };
+    // An opaque themed surface keeps text legible over emissive objects and
+    // bright skies without changing the editor's measured content height.
+    let opaque = Palette {
+        panel_alpha: u8::MAX,
+        ..*p
+    };
+    egui::Area::new(egui::Id::unique("construction-status-notice"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(anchor.left_bottom() + egui::vec2(0.0, 6.0))
+        .constrain_to(ctx.content_rect().shrink(6.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.set_width(anchor.width().max(120.0));
+            widgets::overlay(ui, &opaque, egui::Margin::same(8), |ui| {
+                common::text(ui, &opaque, text);
+            });
+        });
+    ctx.request_repaint_after(std::time::Duration::from_secs_f64((*until - now).max(0.0)));
 }
 
 impl BuildTool {

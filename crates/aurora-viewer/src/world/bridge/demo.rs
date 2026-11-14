@@ -370,7 +370,7 @@ impl Demo {
                     object_id: *object_id,
                     item_id: *item_id,
                     running: self.installed,
-                    mono: Some(true),
+                    compile: Some(aurora_net::scripts::CompileTarget::Mono),
                 }])
             }
             _ => None,
@@ -422,6 +422,7 @@ impl Demo {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: world.main_region,
             position: glam::Vec3::ZERO,
             message: format!(
                 "<auroraBridge>{VERSION}|{}|https://{host}:12043/cap/11111111-1111-4111-8111-111111111111|{}</auroraBridge>",
