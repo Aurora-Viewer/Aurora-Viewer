@@ -1107,6 +1107,9 @@ pub struct Settings {
     pub rlva: crate::world::rlva::preferences::Preferences,
     pub pose_requests: crate::world::poser_consent::Preferences,
     pub poser: crate::ik_edit::poser::Config,
+    /// The pose stand's lock and last pose (FSPoseStandLock,
+    /// FSPoseStandLastSelectedPose).
+    pub pose_stand: crate::pose_stand::Settings,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -2323,6 +2326,7 @@ impl Default for Settings {
             rlva: Default::default(),
             pose_requests: Default::default(),
             poser: Default::default(),
+            pose_stand: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),

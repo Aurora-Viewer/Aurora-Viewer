@@ -6036,6 +6036,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 | `AURORA_DEMO_GRID_STATUS=open\|new\|none\|error` | Help › Grid status: the grid's incidents, and its toolbar button's flash |
+| `AURORA_DEMO_POSE_STAND=open\|cycle` | The toolbar's pose stand: its window and the poses it plays |
 
 ### Details
 
@@ -9554,6 +9555,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   where the incident is first and marked "New". `none`: a grid without a
   feed ("This grid does not publish its status."); `error`: a feed that
   cannot be read ("The grid status could not be loaded." and the reason).
+- **`AURORA_DEMO_POSE_STAND=open|cycle`** (`1` is `open`): the Pose stand
+  button at the end of the bottom toolbar, for this run only, and the stand
+  opened at frame 600 (the button lit). The demo simulator answers its
+  AgentAnimation requests as the grid does. Only two poses have a stand-in
+  offline, the default "Arms down, Legs together" (arms held down) and the
+  T-pose (arms out); the others are grid assets the demo cannot fetch, so
+  the avatar keeps its stand on them and the log says so. `open` chooses the
+  T-pose at frame 680 and keeps the stand open (capture at frame 760: the
+  window shows "T-Pose", the avatar has its arms out). `cycle` chooses each
+  pose of the list in turn, every 40 frames from frame 640, then closes the
+  stand at frame 1080; the log has each `pose stand: start` / `stop`, then
+  `pose stand: closed`.
 
 **`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,

@@ -22,6 +22,8 @@ pub mod beams;
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
 pub mod pointing;
+#[path = "demo_pose_stand.rs"]
+pub mod pose_stand;
 #[path = "demo_poser.rs"]
 pub mod poser;
 
@@ -2947,6 +2949,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         return events;
     }
     if let Some(events) = social_menu::reply(cmd) {
+        return events;
+    }
+    if let Some(events) = pose_stand::reply(cmd) {
         return events;
     }
     match cmd {

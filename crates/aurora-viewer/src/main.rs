@@ -82,6 +82,7 @@ mod open_path;
 mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
+mod pose_stand;
 mod raw_mouse;
 mod report_abuse;
 mod scene;

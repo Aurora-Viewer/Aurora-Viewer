@@ -106,6 +106,7 @@ pub mod place_card;
 pub mod place_details;
 pub mod places;
 pub mod portals;
+pub mod pose_stand;
 pub mod presence;
 pub mod profile;
 pub mod quick_prefs;
@@ -226,6 +227,8 @@ pub struct Panels {
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
+    /// The pose stand (toolbar `pose_stand`).
+    pub pose_stand: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -295,6 +298,7 @@ impl Panels {
             destinations: false,
             quick_prefs: false,
             voice_controls: false,
+            pose_stand: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,
