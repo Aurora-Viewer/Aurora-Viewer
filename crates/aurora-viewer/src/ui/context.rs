@@ -706,30 +706,6 @@ pub fn show(
     *prefs != saved_before
 }
 
-/// Whether a world click should pass through the open radial menu. List menus
-/// and the pie's visible controls keep ownership.
-pub(crate) fn click_outside_pie_reaches_world(
-    ctx: &egui::Context,
-    menu: &ContextMenu,
-    facts: &Facts,
-    use_pie: bool,
-    customization: &Customization,
-    pointer: egui::Pos2,
-) -> bool {
-    if !use_pie || customization.force_list() {
-        return false;
-    }
-    let screen = ctx.content_rect();
-    let voice_panel = match &menu.target {
-        Target::Avatar { id, own: false, .. } if menu.pie_path.is_empty() && facts.voice_volume.is_some() => {
-            let (center, radius) = pie::geometry(screen, menu.pos);
-            Some(pie::voice_panel_rect(screen, center, radius))
-        }
-        _ => None,
-    };
-    pie::click_outside_pie_reaches_world(screen, menu.pos, pointer, voice_panel)
-}
-
 /// Where an avatar menu of a list is opened: each place has its own
 /// Firestorm menu, with the same entries in a different order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

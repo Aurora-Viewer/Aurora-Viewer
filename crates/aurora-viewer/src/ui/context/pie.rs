@@ -171,20 +171,13 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
     paginate(root)
 }
 
-pub(super) fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
+fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
     let radius = OUTER.min((screen.width().min(screen.height()) * 0.5 - 8.0).max(0.0));
     let center = egui::pos2(
         pos.x.clamp(screen.left() + radius, screen.right() - radius),
         pos.y.clamp(screen.top() + radius, screen.bottom() - radius),
     );
     (center, radius)
-}
-
-/// A world click beyond the visible pie passes through its full-screen input
-/// area. Right-click opens a fresh world menu; left-click performs its action.
-pub(super) fn click_outside_pie_reaches_world(screen: Rect, pos: Pos2, pointer: Pos2, voice_panel: Option<Rect>) -> bool {
-    let (center, radius) = geometry(screen, pos);
-    pointer.distance(center) > radius && !voice_panel.is_some_and(|panel| panel.contains(pointer))
 }
 
 fn sector(offset: Vec2, inner: f32, outer: f32) -> Option<usize> {
@@ -227,9 +220,10 @@ fn paint_icon(painter: &egui::Painter, icon: &str, center: Pos2, size: f32, colo
 /// The voice row of an avatar in our voice channel, in a panel under the
 /// disc (above it when the screen ends there), the pie having no rows;
 /// returns the panel's rectangle, where clicks leave the pie open.
-pub(super) fn voice_panel_rect(screen: Rect, center: Pos2, radius: f32) -> Rect {
+fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: uuid::Uuid, voice: crate::ui::menu::VoiceVolume) -> Rect {
     const WIDTH: f32 = 250.0;
     const HEIGHT: f32 = 38.0;
+    let screen = ctx.content_rect();
     let below = center.y + radius + 8.0;
     let y = if below + HEIGHT <= screen.bottom() {
         below
@@ -237,16 +231,9 @@ pub(super) fn voice_panel_rect(screen: Rect, center: Pos2, radius: f32) -> Rect 
         center.y - radius - 8.0 - HEIGHT
     };
     let x = (center.x - WIDTH * 0.5).clamp(screen.left(), (screen.right() - WIDTH).max(screen.left()));
-    Rect::from_min_size(egui::pos2(x, y), egui::vec2(WIDTH, HEIGHT))
-}
-
-fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: uuid::Uuid, voice: crate::ui::menu::VoiceVolume) -> Rect {
-    const WIDTH: f32 = 250.0;
-    let screen = ctx.content_rect();
-    let rect = voice_panel_rect(screen, center, radius);
     egui::Area::new(egui::Id::unique("world_pie_voice"))
         .order(egui::Order::Foreground)
-        .fixed_pos(rect.min)
+        .fixed_pos(egui::pos2(x, y))
         .movable(false)
         .fade_in(false)
         .show(ctx, |ui| {
@@ -300,20 +287,25 @@ pub(super) fn show(
     let mut primary_released = false;
     let mut secondary_released = false;
     let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+    // The pie takes the pointer on its square only, transparent corners
+    // included, like the PieMenu view's rect (indra/newview/piemenu.cpp).
+    // A press elsewhere goes to what lies under it, a floater or the world
+    // (a right-click there opens a fresh menu at the new target), and its
+    // release closes the pie: LLMenuHolderGL::handleMouseDown and
+    // handleRightMouseDown (indra/llui/llmenugl.cpp) hide the menus without
+    // handling the click.
+    let square = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
     egui::Area::new(egui::Id::unique("world_pie_menu"))
         .order(egui::Order::Foreground)
-        .fixed_pos(screen.min)
+        .fixed_pos(square.min)
         .movable(false)
         .show(ctx, |ui| {
-            // A modal input surface prevents clicks or drags reaching the world
-            // or another floater, including the menu's transparent corners.
-            let response = ui.allocate_rect(screen, Sense::click_and_drag());
+            let response = ui.allocate_rect(square, Sense::click_and_drag());
             ui.ctx().move_to_top(ui.layer_id());
             let painter = ui.painter();
             if p.panel_alpha < 255 {
                 // a square with fully rounded corners is the disc
-                let disc = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
-                painter.add(aurora_render::glass_panel(disc, radius, Color32::TRANSPARENT));
+                painter.add(aurora_render::glass_panel(square, radius, Color32::TRANSPARENT));
             }
             for index in 0..SLICES {
                 ring_segment(
@@ -506,29 +498,26 @@ mod tests {
     }
 
     #[test]
-    fn clicks_outside_the_pie_reach_the_world_but_not_the_menu_or_voice_panel() {
+    fn the_pie_takes_the_pointer_on_its_square_only() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Ground);
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
         let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0));
-        let menu_pos = egui::pos2(400.0, 400.0);
-        let panel = Rect::from_min_size(egui::pos2(700.0, 700.0), egui::vec2(250.0, 38.0));
-
-        assert!(!click_outside_pie_reaches_world(
-            screen,
-            menu_pos,
-            egui::pos2(500.0, 400.0),
-            Some(panel)
-        ));
-        assert!(!click_outside_pie_reaches_world(
-            screen,
-            menu_pos,
-            egui::pos2(800.0, 710.0),
-            Some(panel)
-        ));
-        assert!(click_outside_pie_reaches_world(
-            screen,
-            menu_pos,
-            egui::pos2(900.0, 400.0),
-            Some(panel)
-        ));
+        let (center, radius) = geometry(screen, egui::pos2(400.0, 400.0));
+        let on_pie = |pos: Pos2| ctx.layer_id_at(pos).is_some_and(|layer| layer.order == egui::Order::Foreground);
+        // a slice, the center and a transparent corner of the square
+        assert!(on_pie(center + egui::vec2(radius * 0.6, 0.0)));
+        assert!(on_pie(center));
+        assert!(on_pie(center - egui::Vec2::splat(radius - 2.0)));
+        // beyond the square: a floater or the world under it gets the press
+        assert!(!on_pie(center + egui::vec2(radius + 20.0, 0.0)));
+        assert!(!on_pie(egui::pos2(1200.0, 850.0)));
+        // its release still closes the pie
+        click(&ctx, &mut menu, &facts, egui::pos2(1200.0, 850.0), egui::PointerButton::Primary);
+        assert!(menu.is_none());
+        assert!(super::super::take_requests(&ctx).is_empty());
     }
 
     #[test]
