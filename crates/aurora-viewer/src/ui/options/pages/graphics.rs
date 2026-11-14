@@ -1049,6 +1049,22 @@ fn image(cx: &mut Cx) {
             &field!(specular_aa),
         );
     });
+    // the order of the blended faces (scene/blend_order.rs), beyond the
+    // Legacy Viewer's sort
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        cx.combo(
+            tr!("ui-options-blend-order"),
+            tr!("ui-options-blend-order-help"),
+            &field!(blend_order),
+            &[
+                (0, tr!("ui-options-blend-order-standard")),
+                (1, tr!("ui-options-blend-order-fast")),
+                (2, tr!("ui-options-blend-order-balanced")),
+                (3, tr!("ui-options-blend-order-high")),
+                (4, tr!("ui-options-blend-order-full")),
+            ],
+        );
+    });
     // FSR's own settings (aurora_render fsr.rs), greyed under another
     // anti-aliasing
     cx.group(tr!("ui-options-fsr"), |cx| {
