@@ -8641,6 +8641,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
+- **`AURORA_DEMO_PEOPLE=sets[:width]`** and its scenes: People › Contact sets with three demo sets, each with a badge and a look (Family tinted and bordered, Clubbing tinted, Shop bordered), so that their tiles show the cases; Nova sits in two sets (her chips). From 470 points wide the sets have a column (try `sets:560`), narrower (`sets:380`) or beside a sheet they are a picker above the members. `sets-select` chooses two members (the selection bar); `sets-editor` opens Family's editor on Look, `sets-editor-badges` with the badge grid unfolded, `sets-editor-marker` scrolled to the marker's choices, `sets-editor-thin` in a window 560 wide (narrower than 700 the preview is a strip on top), `sets-editor-behaviour`, `sets-editor-replies` and `sets-editor-members` on those tabs; `sets-sort` opens Quick sort on the friends in no set; `sets-options` the options shared by every set. What to look for: the tiles follow each set's Nameplate background (tint) and Nameplate border switches; dragging a set in the column carries its card under the pointer while the others slide out of the way, and releasing it reorders the priority; the preview follows every switch at once, and the marker's preview shows while the marker is on.
 - **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview, and its marker's. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
 
   For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.
@@ -8822,10 +8823,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'
   global online notices (toast and nearby chat) are off for the run.
-  `config` opens the set's settings window on its switches
-  ("Show notifications"); `config-responses` scrolls it down to the three
-  custom responses, below the appearance options; `config-bottom` to "All
-  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  `config` opens the set's editor on its Behaviour tab
+  ("Show notifications"); `config-responses` on its Auto-replies tab (the
+  three custom responses); `config-bottom` opens the options of all contact
+  sets beside it (the two choices of the sets' notices). `chat` opens Conversations on
   nearby chat: at frames 300 and 360 Nova and another demo friend go
   offline and online, and only Nova gets the two lines; at 400 do not
   disturb comes on, at 420 Nova writes, and the log line `demo set

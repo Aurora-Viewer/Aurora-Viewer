@@ -9,7 +9,10 @@ pub(crate) fn person_source(response: &egui::Response, id: Uuid) {
     }
 }
 
-pub(crate) fn set_target(response: &egui::Response, set: &str) {
+/// A contact set that takes the residents dropped on it; in a list whose
+/// rows can be chosen together, a resident dropped while chosen brings the
+/// others chosen with them.
+pub(crate) fn set_target_with(response: &egui::Response, set: &str, chosen: &[Uuid]) {
     // Asking egui to release the wrong payload type would consume an
     // inventory item dragged through the same UI. Check before taking it.
     if ContactSets::is_internal(set) || !egui::DragAndDrop::has_payload_of_type::<PersonDrag>(&response.ctx) {
@@ -25,10 +28,16 @@ pub(crate) fn set_target(response: &egui::Response, set: &str) {
             &response.ctx,
             CtxAction::ContactSet(SetEdit::Add {
                 set: set.to_owned(),
-                ids: vec![person.0],
+                ids: dropped(person.0, chosen),
             }),
         );
     }
+}
+
+/// The residents a drop of `person` adds: the ones chosen with them when
+/// they are among them, else them alone.
+fn dropped(person: Uuid, chosen: &[Uuid]) -> Vec<Uuid> {
+    if chosen.contains(&person) { chosen.to_vec() } else { vec![person] }
 }
 
 #[cfg(test)]
@@ -53,7 +62,7 @@ mod tests {
             },
             |ui| {
                 let response = ui.allocate_response(Vec2::new(120.0, 40.0), Sense::hover());
-                set_target(&response, set);
+                set_target_with(&response, set, &[]);
                 result = (
                     response.rect,
                     egui::DragAndDrop::has_payload_of_type::<crate::ui::inventory::InvDrag>(ctx),
@@ -63,6 +72,14 @@ mod tests {
         // This headless interaction test does not render font-atlas uploads.
         output.textures_delta.clear();
         result
+    }
+
+    #[test]
+    fn a_resident_dropped_while_chosen_brings_the_others_chosen() {
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        assert_eq!(dropped(a, &[a, b]), [a, b]);
+        assert_eq!(dropped(c, &[a, b]), [c]);
+        assert_eq!(dropped(a, &[]), [a]);
     }
 
     #[test]
