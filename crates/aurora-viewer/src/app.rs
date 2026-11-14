@@ -13607,6 +13607,7 @@ impl App {
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         self.demo_admin_status();
+        self.demo_sysinfo();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -15127,7 +15128,16 @@ impl App {
         for id in a.gestures {
             self.gesture_play(id, None);
         }
+        for to in a.sysinfo {
+            self.ask_sysinfo(to, true);
+        }
         for (to, mut text) in a.ims {
+            // FSFloaterIM::sendMsg: "/sysinfo" in a 1:1 conversation sends
+            // the system information instead of the line
+            if text.starts_with("/sysinfo") && !self.world.is_group_session(&to) {
+                self.ask_sysinfo(to, false);
+                continue;
+            }
             // the OOC close and ":" as "/me" in the conversations too
             // (FSFloaterIM::sendMsg)
             self.line_rewrite().apply(&mut text);
@@ -18315,6 +18325,7 @@ impl App {
                         }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
+                        ui::chat::ConvAction::SendSysinfo(to) => a.sysinfo.push(to),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
@@ -19580,6 +19591,7 @@ impl App {
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
                 self.about_window(&ctx, &p, renderer);
+                self.sysinfo_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
@@ -19808,6 +19820,8 @@ struct UiActions {
     font_changed: bool,
     cancel_loading: bool,
     ims: Vec<(uuid::Uuid, String)>,
+    /// "Send system information" asked in these residents' conversations.
+    sysinfo: Vec<uuid::Uuid>,
     offer_tp: Vec<uuid::Uuid>,
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,
@@ -19848,6 +19862,7 @@ impl UiActions {
         self.font_changed |= later.font_changed;
         self.cancel_loading |= later.cancel_loading;
         self.ims.extend(later.ims);
+        self.sysinfo.extend(later.sysinfo);
         self.offer_tp.extend(later.offer_tp);
         first(&mut self.landmark, later.landmark);
         first(&mut self.audio, later.audio);
