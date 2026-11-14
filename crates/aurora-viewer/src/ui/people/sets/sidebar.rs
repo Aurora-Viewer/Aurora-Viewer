@@ -12,9 +12,9 @@ use crate::ui::{context, menu, widgets};
 use crate::world::contact_sets;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
-/// The button of the options shared by every set and the import: "more"
-/// (no filled version in Tabler); inside, the options keep the cog.
-const MORE_ICON: &str = "dots-circle-horizontal";
+/// The button of the options shared by every set and the import: the
+/// app's "more" dots; inside, the options keep the cog.
+const MORE_ICON: &str = "dots-filled";
 
 /// A set's row in the column, in the picker's list, a smart list's row.
 const SET_ROW_H: f32 = 42.0;
@@ -41,16 +41,14 @@ pub(super) fn label(choice: &str) -> String {
         .map_or_else(|| choice.to_owned(), |(_, _, key)| aurora_i18n::text(key).to_owned())
 }
 
-/// "YOUR SETS", the options' gear and "New".
+/// "YOUR SETS", "New" and the options' "more" button.
 fn header(ui: &mut egui::Ui, c: &mut Ctx) {
     let p = c.p;
     let line = Vec2::new(ui.available_width(), 26.0);
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        if widgets::icon_button(ui, p, "plus", aurora_i18n::tr!("ui-contacts-add-a-new-contact-set"), true) {
-            c.contacts.ask_new_set();
-        }
-        // the options of all sets and their import, behind "more"
+        // the options of all sets and their import, behind "more", at the
+        // right edge with "New" to its left
         // flat like "+": a face only under the pointer or while its menu is open
         let (cell, gear) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
         let gear = gear.on_hover_text(aurora_i18n::tr!("people-sets-gear"));
@@ -78,6 +76,9 @@ fn header(ui: &mut egui::Ui, c: &mut Ctx) {
                 contacts.import_contact_sets(ui.ctx(), world.agent_id);
             }
         });
+        if widgets::icon_button(ui, p, "plus", aurora_i18n::tr!("ui-contacts-add-a-new-contact-set"), true) {
+            c.contacts.ask_new_set();
+        }
         let rest = ui.available_rect_before_wrap();
         caption(ui, p, aurora_i18n::tr!("people-sets-your-sets"), rest.left() + 8.0, rest.center().y);
     });
