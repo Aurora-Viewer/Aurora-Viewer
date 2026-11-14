@@ -131,6 +131,8 @@ mod god_mode_tests;
 #[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
+mod last_speaker_tests;
+#[cfg(test)]
 mod toasts_tests;
 
 use crate::agent::AgentState;
@@ -314,6 +316,15 @@ pub struct ChatLine {
     pub origin: Origin,
 }
 
+/// Whether a nearby line makes its speaker the last one heard: a resident
+/// other than us or an object, outside do not disturb (process_chat_from_simulator
+/// calls LLAgent::heardChat for an audible line of anyone not muted, unless
+/// do not disturb is on; heardChat skips our own id). The blocked never get
+/// this far.
+fn heard_from(kind: ChatKind, dnd: bool) -> bool {
+    !dnd && matches!(kind, ChatKind::Local(_) | ChatKind::Object(_))
+}
+
 /// Drawn speed (m/s) under which our walk stops after a release, with
 /// Aurora's movement (`World::update_own_locomotion`).
 const GLIDE_WALKING: f32 = 0.5;
@@ -399,6 +410,10 @@ pub struct World {
     /// A resident said something in nearby chat since the app last looked:
     /// it may flash the Conversations button (FSNotifyNearbyChatFlash).
     pub nearby_news: bool,
+    /// The last resident or object heard in nearby chat, ourselves and the
+    /// blocked left out, nothing recorded in do not disturb (LLAgent::heardChat
+    /// from process_chat_from_simulator): what Look at Last Chatter frames.
+    pub last_speaker: Option<Uuid>,
     /// What the nearby chat's entry counts as unread: `chat_unread`, or only
     /// the people's lines while `quiet_automated_chat` is on.
     pub chat_badge: usize,
@@ -876,6 +891,7 @@ impl World {
             chat_clock: Default::default(),
             chat_unread: 0,
             nearby_news: false,
+            last_speaker: None,
             chat_badge: 0,
             quiet_automated_chat: false,
             announce_incoming_im: false,
@@ -4610,6 +4626,9 @@ impl World {
         // a resident's line, not ours nor an object's: the Conversations
         // button may flash (the blocked never got this far)
         self.nearby_news |= matches!(kind, ChatKind::Local(_));
+        if heard_from(kind, self.status.dnd) {
+            self.last_speaker = Some(c.source_id);
+        }
         // the bubble above the speaker's head: residents only, ourselves
         // included, never while we are in do not disturb
         // (process_chat_from_simulator, LLVOAvatar::addChat)

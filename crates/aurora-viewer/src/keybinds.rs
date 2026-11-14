@@ -351,6 +351,10 @@ pub enum Action {
     /// (handle_look_at_selection, H and Shift+H).
     FocusSelection,
     ZoomSelection,
+    /// Advanced › Shortcuts › Look at Last Chatter (View.LookAtLastChatter,
+    /// menu_viewer.xml, `shortcut="control|\"`): the camera over our
+    /// shoulder, on the last resident or object heard.
+    LookAtLastChatter,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -560,6 +564,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ResetCameraAngles, aurora_i18n::tr!("keybinds-reset-camera-angles")),
                     (Action::FocusSelection, aurora_i18n::tr!("keybinds-focus-selection")),
                     (Action::ZoomSelection, aurora_i18n::tr!("keybinds-zoom-selection")),
+                    (Action::LookAtLastChatter, aurora_i18n::tr!("keybinds-look-at-last-chatter")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
@@ -795,6 +800,8 @@ impl KeyBindings {
             // menu_viewer.xml: Focus on / Zoom to Selection, H and shift|H
             (Action::FocusSelection, [k(K::KeyH), None]),
             (Action::ZoomSelection, [kmod(K::KeyH, false, true), None]),
+            // menu_viewer.xml: Look at Last Chatter, shortcut="control|\"
+            (Action::LookAtLastChatter, [kmod(K::Backslash, true, false), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
@@ -1789,6 +1796,7 @@ mod tests {
             (KeyCode::Escape, m(false, true, false), Action::ResetCameraAngles),
             (KeyCode::KeyH, m(false, false, false), Action::FocusSelection),
             (KeyCode::KeyH, m(false, true, false), Action::ZoomSelection),
+            (KeyCode::Backslash, m(true, false, false), Action::LookAtLastChatter),
         ] {
             assert_eq!(kb.triggered(&Input::key(code), mods), Some(action), "{code:?} {mods:?}");
             assert_eq!(

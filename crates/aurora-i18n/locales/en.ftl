@@ -612,6 +612,7 @@ keybinds-show-huds = Show / hide HUDs
 keybinds-reset-camera-angles = Reset camera angles
 keybinds-focus-selection = Focus on selection
 keybinds-zoom-selection = Zoom to selection
+keybinds-look-at-last-chatter = Look at last speaker
 keybinds-mute-all-sound = Mute / unmute all sound
 keybinds-double-click-teleport = Double-click teleport on / off
 keybinds-selection-outlines = Show / hide selection outlines

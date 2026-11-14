@@ -105,6 +105,99 @@ impl App {
             &self.settings.camera,
         );
     }
+
+    /// Advanced › Shortcuts › Look at Last Chatter (Ctrl+\). Port of
+    /// LLAgentCamera::lookAtLastChat (indra/newview/llagentcamera.cpp,
+    /// originally LGPL 2.1): in third person only, the avatar stops and the
+    /// camera goes just behind our head, a little aside and above, looking
+    /// at the last speaker's head (an object: its position). Nothing when
+    /// the speaker is not in view any more.
+    pub(super) fn look_at_last_chatter(&mut self) {
+        if !self.camera.third_person() {
+            return;
+        }
+        let Some(id) = self.world.last_speaker else {
+            return;
+        };
+        let Some(idx) = self.world.objects.index_of_uuid(&id) else {
+            return;
+        };
+        let now = Instant::now();
+        let avatar = self.world.objects.get(idx).is_some_and(|o| o.is_avatar());
+        let target = if avatar {
+            self.scene.head_world(&self.world, &id, now)
+        } else {
+            crate::scene::Scene::object_transform(&self.world, idx, now, 0).map(|(p, _, _)| p)
+        };
+        let me = self.world.agent_id;
+        let head = self.scene.head_world(&self.world, &me, now).unwrap_or(self.world.agent.position);
+        let Some((target, camera)) = target.and_then(|t| last_chat_view(head, t).map(|c| (t, c))) else {
+            return;
+        };
+        // gAgent.setControlFlags(AGENT_CONTROL_STOP), with the next update
+        self.autopilot_stop_pending = true;
+        let object = crate::camera::pick_focus_object(&self.world, idx, now);
+        self.camera
+            .set_script_focus(camera, target, object, &mut self.world.agent, &self.settings.camera);
+    }
+
+    /// AURORA_DEMO_LAST_CHATTER=1: at frame 500 the nearest resident says a
+    /// line in nearby chat; at frame 540 Ctrl+\ is pressed through the
+    /// bindings, as a key would be, and the camera looks at that resident.
+    pub(super) fn demo_look_at_last_chatter(&mut self) {
+        if !self.demo || !matches!(self.frame_count, 500 | 540) || std::env::var_os("AURORA_DEMO_LAST_CHATTER").is_none() {
+            return;
+        }
+        if self.frame_count == 500 {
+            let me = self.world.agent.position;
+            let nearest = self
+                .world
+                .objects
+                .iter()
+                .filter(|(_, o)| o.is_avatar() && o.parent_id == 0 && o.full_id != self.world.agent_id)
+                .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
+                .map(|(_, o)| (o.full_id, o.position));
+            let Some((id, position)) = nearest else {
+                log::warn!("demo last chatter: no resident in view");
+                return;
+            };
+            self.world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: aurora_i18n::tr!("demo-nova-example").into(),
+                source_id: id,
+                owner_id: id,
+                source_type: aurora_net::ChatSourceType::Agent,
+                chat_type: aurora_net::ChatType::Normal,
+                region: Some(crate::demo::HANDLE),
+                position,
+                message: aurora_i18n::tr!("demo-bubbles-local-1").into(),
+            }));
+            return;
+        }
+        use crate::keybinds::Input;
+        use winit::keyboard::KeyCode;
+        self.demo_release_keyboard();
+        let modifiers = (self.ctrl, self.alt, self.shift);
+        (self.ctrl, self.alt, self.shift) = (true, false, false);
+        self.on_input(Input::key(KeyCode::Backslash), true);
+        self.on_input(Input::key(KeyCode::Backslash), false);
+        (self.ctrl, self.alt, self.shift) = modifiers;
+        log::info!(
+            "demo last chatter: speaker {:?}, third person {}",
+            self.world.last_speaker,
+            self.camera.third_person()
+        );
+    }
+}
+
+/// Where lookAtLastChat puts the camera: from our head, 0.4 m back from the
+/// speaker, 0.3 m along `direction × up` and 0.2 m up the frame those make,
+/// as the source writes it. None when the speaker is at our head.
+fn last_chat_view(head: glam::Vec3, speaker: glam::Vec3) -> Option<glam::Vec3> {
+    use glam::Vec3;
+    let delta = (speaker - head).try_normalize()?;
+    let left = delta.cross(Vec3::Z).try_normalize()?;
+    let up = left.cross(delta).normalize_or(Vec3::Z);
+    Some(head - delta * 0.4 + left * 0.3 + up * 0.2)
 }
 
 /// The tab People shows for the one asked: the classic layout has no Contact
@@ -143,7 +236,7 @@ fn reset_rear_offsets(s: &mut crate::camera::CameraSettings) {
 
 #[cfg(test)]
 mod tests {
-    use super::{double_click_teleport_toggled, people_tab_shown, reset_rear_offsets};
+    use super::{double_click_teleport_toggled, last_chat_view, people_tab_shown, reset_rear_offsets};
     use crate::autopilot::DoubleClick;
     use crate::camera::{CameraPreset, CameraSettings};
     use crate::ui::people::{TAB_FRIENDS, TAB_GROUPS, TAB_SETS};
@@ -188,5 +281,23 @@ mod tests {
         assert_eq!(double_click_teleport_toggled(DoubleClick::Nothing), DoubleClick::Teleport);
         assert_eq!(double_click_teleport_toggled(DoubleClick::Walk), DoubleClick::Teleport);
         assert_eq!(double_click_teleport_toggled(DoubleClick::Teleport), DoubleClick::Nothing);
+    }
+
+    /// lookAtLastChat's camera: behind our head on the speaker's line, to
+    /// one side and above, and nothing for a speaker at our head or straight
+    /// above it (no side to take).
+    #[test]
+    fn the_last_chat_view_sits_behind_our_head() {
+        let head = glam::Vec3::new(10.0, 10.0, 21.0);
+        // a speaker 5 m east, at our height: 0.4 m west, 0.3 m south
+        // (east x up), 0.2 m up
+        let cam = last_chat_view(head, head + glam::Vec3::X * 5.0).expect("a view");
+        assert!((cam - glam::Vec3::new(9.6, 9.7, 21.2)).length() < 1e-5, "{cam}");
+        // closer to us than the speaker, whatever the speaker's distance
+        let far = head + glam::Vec3::new(30.0, -40.0, 3.0);
+        let cam = last_chat_view(head, far).expect("a view");
+        assert!(cam.distance(head) < 0.6 && cam.distance(far) > far.distance(head));
+        assert_eq!(last_chat_view(head, head), None);
+        assert_eq!(last_chat_view(head, head + glam::Vec3::Z * 3.0), None);
     }
 }

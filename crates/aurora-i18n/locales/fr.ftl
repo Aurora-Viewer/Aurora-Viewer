@@ -612,6 +612,7 @@ keybinds-show-huds = Afficher / masquer les HUDs
 keybinds-reset-camera-angles = Réinitialiser les angles de la caméra
 keybinds-focus-selection = Centrer sur la sélection
 keybinds-zoom-selection = Zoomer sur la sélection
+keybinds-look-at-last-chatter = Regarder le dernier à avoir parlé
 keybinds-mute-all-sound = Couper / rétablir tout le son
 keybinds-double-click-teleport = Activer / désactiver la téléportation par double-clic
 keybinds-selection-outlines = Afficher / masquer les contours de sélection

@@ -1020,6 +1020,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
+| `AURORA_DEMO_LAST_CHATTER=1` | The nearest resident speaks, then Ctrl+\ looks at them |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
 | `AURORA_DEMO_STAND_FLY=ground\|object\|fly\|stand\|land\|locked\|fly-rlva` | Sits or flies for the floating Stand / Stop flying panel, then presses it |
@@ -1469,6 +1470,11 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
+- **`AURORA_DEMO_LAST_CHATTER=1`**: at frame 500 the nearest resident says
+  a line in nearby chat; at frame 540 Ctrl+\ (Look at Last Chatter) is
+  pressed through the bindings: the camera goes just behind our head, a
+  little aside and above, looking at that resident's head (capture after
+  frame 600). The log line `demo last chatter` gives the speaker kept.
 - **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle|crash][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
