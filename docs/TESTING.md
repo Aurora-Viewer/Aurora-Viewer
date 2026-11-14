@@ -6029,6 +6029,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
+| `AURORA_DEMO_AVATAR_WELCOME=<page>\|sl` | Avatar Welcome Pack window open at start on this page (`sl`: the Second Life page) |
 | `AURORA_DEMO_DESTINATIONS=compact\|wide\|legacy\|empty\|<page>\|sl` | Destinations window open at start: Aurora's window on a made-up guide, the Legacy web window, or a web page (`sl`: the Second Life guide) |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
@@ -9450,6 +9451,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the status line and load bar under the page. An http(s) link clicked in
   a page opens in the same window; a SLURL acts in the viewer; a link that
   asks for a new window (`target="_blank"`) does nothing.
+- **`AURORA_DEMO_AVATAR_WELCOME=<page>|sl`**: the Avatar Welcome Pack
+  (toolbar `avatar`, Me › Avatar Welcome Pack… after Experiences,
+  LLFloaterAvatarWelcomePack) stands for this page in demo and opens at
+  start; `sl` gives the Second Life page's address
+  (`https://lecs-viewer-web-components.s3.amazonaws.com/v3.0/agni/vawp/index.html`,
+  written to the log as `avatar welcome pack: <address>`), which shows the
+  six bodies with a network and the browser's error page without one.
+  Check: the window (530 x 438, not resizable, no address bar, like the
+  Legacy window) shows the page, the button is lit while it is open and
+  closes it, the menu entry shows. Without the variable the demo is a grid
+  without the page: the button is dimmed with "This grid has no avatar
+  welcome pack." in its tooltip and the menu entry is hidden. A body or an
+  outfit clicked on the page sends `wear_folder` / `add_folder` with a
+  Library folder's name (the log says `avatar welcome pack: Wear
+  Some("Female body - A") None`); the demo Library has no such folder, so
+  the log then says it could not find it and the outfit stays. Wearing
+  is checked on the grid: the body, then the clothing chosen, are copied
+  from the Library into Clothing and worn.
 - **`AURORA_DEMO_DESTINATIONS=compact|wide|legacy|empty`**: Aurora's
   Destinations window (Preferences › Aurora › Destinations, the default)
   opens at start on a guide made up offline (`demo_destinations.rs`: 11

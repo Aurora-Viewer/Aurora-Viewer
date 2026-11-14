@@ -302,6 +302,9 @@ pub struct StatusInfo<'a> {
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// The grid has an Avatar Welcome Pack (Me › Avatar Welcome Pack… is
+    /// shown only then, GridFeatureCheck avatar_picker).
+    pub avatar_welcome: bool,
     /// The grid has a Destination Guide (World › Destinations is shown only
     /// then, GridFeatureCheck destination_guide).
     pub destinations: bool,
@@ -915,6 +918,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::experiences::WINDOW,
             &mut panels.experiences,
         );
+        // menu_viewer.xml: Avatar Welcome Pack… (Floater.Toggle
+        // avatar_welcome_pack), after the attachments, which this menu does
+        // not hold; on a grid with the page
+        if st.avatar_welcome && menu::item(ui, p, "user-circle", aurora_i18n::tr!("ui-bars-avatar-welcome-pack")) {
+            super::widgets::toggle_floater(ui.ctx(), super::avatar_welcome::WINDOW, &mut panels.avatar_welcome);
+        }
         menu::separator(ui, p);
         if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
             *action = BarAction::TeleportHome;
@@ -2407,6 +2416,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         // ToggleWebBrowser: the browser window on the home page, or closed
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
+        // Floater.Toggle avatar_welcome_pack: the grid's ready-made avatars
+        "avatar" => toggle(super::avatar_welcome::WINDOW, &mut panels.avatar_welcome),
         // Floater.Toggle destinations: the grid's Destination Guide
         "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
@@ -2519,6 +2530,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "gridstatus" => panels.grid_status,
         "avatar_align" => panels.avatar_align,
         "webbrowser" => panels.web_browser,
+        "avatar" => panels.avatar_welcome,
         "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
@@ -3267,9 +3279,10 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        // and the Destination Guide's on a grid without one (GridFeatureCheck)
+        // and the Avatar Welcome Pack's and the Destination Guide's on a grid without one (GridFeatureCheck)
+        let no_pack = b.command == "avatar" && !toolbar.avatar_welcome;
         let no_guide = b.command == "destinations" && !toolbar.destinations;
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_guide;
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_pack && !no_guide;
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3299,6 +3312,8 @@ pub(crate) fn toolbar_row(
             .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if no_pack {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("avatar-welcome-unavailable"))
         } else if no_guide {
             format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("destinations-unavailable"))
         } else if !usable {
@@ -4090,6 +4105,7 @@ mod tests {
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
+            ("avatar", super::super::avatar_welcome::WINDOW, |p| p.avatar_welcome),
             ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),

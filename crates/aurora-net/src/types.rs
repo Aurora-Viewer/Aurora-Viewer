@@ -381,6 +381,12 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "avatar-picker-url": the grid's Avatar Welcome Pack page
+    /// (LFSimFeatureHandler::avatarPickerURL). `None` when the region does
+    /// not name the key: only then does the login response's page count; a
+    /// key given empty means "no welcome pack" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub avatar_picker_url: Option<String>,
     /// "destination-guide-url": the grid's Destination Guide page
     /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
     /// does not name the key: only then does the login response's page
@@ -429,6 +435,9 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            avatar_picker_url: extras
+                .has("avatar-picker-url")
+                .then(|| extras["avatar-picker-url"].to_string_value().trim().to_owned()),
             destination_guide_url: extras
                 .has("destination-guide-url")
                 .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
@@ -2568,6 +2577,7 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("avatar-picker-url", " https://avatars.example/[GRID_LOWERCASE]/ "),
                 ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
@@ -2578,6 +2588,15 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(read.avatar_picker_url.as_deref(), Some("https://avatars.example/[GRID_LOWERCASE]/"));
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("avatar-picker-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).avatar_picker_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).avatar_picker_url, None);
         assert_eq!(
             read.destination_guide_url.as_deref(),
             Some("https://guide.example/[GRID_LOWERCASE]/")
