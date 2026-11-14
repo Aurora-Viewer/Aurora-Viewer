@@ -675,6 +675,8 @@ pub fn ungroup(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &Hash
 
 pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result<aurora_net::inventory::operations::Reply, String> {
     let mut created = std::collections::HashMap::new();
+    // the folders made, as AIS acknowledges them in its reply
+    let mut made = Vec::new();
     let mut removed = change.removed;
     for op in change.operations {
         match op {
@@ -684,17 +686,19 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                 name,
                 type_default,
             } => {
+                let info = aurora_net::inventory::InvFolder {
+                    id,
+                    parent,
+                    name,
+                    type_default,
+                    version: 1,
+                    ..Default::default()
+                };
+                made.push(info.clone());
                 inv.folders.insert(
                     id,
                     super::Folder {
-                        info: aurora_net::inventory::InvFolder {
-                            id,
-                            parent,
-                            name,
-                            type_default,
-                            version: 1,
-                            ..Default::default()
-                        },
+                        info,
                         children: Vec::new(),
                         items: Vec::new(),
                         state: FetchState::Fetched,
@@ -823,7 +827,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
         .collect();
     Ok(aurora_net::inventory::operations::Reply {
         contents,
-        folders: Vec::new(),
+        folders: made,
         moves_queued: false,
         refresh: change.refresh,
         copies: change.copies,

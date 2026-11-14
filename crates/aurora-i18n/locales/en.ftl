@@ -14132,6 +14132,8 @@ inventory-favorites-show-parent-folders = Show parent folders in Favorites
 inventory-favorites-show-parent-folders-help = Show favorites in their original folder tree. Off by default: favorites appear directly in the list; a favorite folder keeps its contents.
 inventory-folder-colors = Folder colors
 inventory-folder-colors-help = Add "Folder color…" to a folder's menu, to give its icon a color of your choice. The colors are kept in this viewer only: nobody else sees them.
+inventory-folder-colors-inherit = New folders take their parent's color
+inventory-folder-colors-inherit-help = A folder you create inside a colored folder gets the same color.
 inventory-folder-color = Folder color…
 inventory-folder-color-title = Folder color
 inventory-folder-color-custom = Custom color
@@ -14139,6 +14141,7 @@ inventory-folder-color-restore = Restore default
 inventory-folder-color-private = Only you see these colors.
 inventory-folder-color-many = { $count } folders
 inventory-folder-color-none = Select a folder to color it.
+inventory-folder-color-subfolders = Also color its subfolders ({ $count })
 
 area-search-group = Group
 area-search-last-owner = Last owner

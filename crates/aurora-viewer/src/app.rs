@@ -3623,6 +3623,12 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            // folders it created inside colored ones take their color, whoever made them
+            if let Ok(reply) = &result
+                && ui::inventory::folder_colors_inherit(&mut self.settings.inventory, &reply.folders)
+            {
+                self.inventory_ui.preferences_dirty = true;
+            }
             if self.world.attachment_inventory.owns(request) {
                 self.world.attachment_inventory_result(request, result);
                 if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
@@ -12121,7 +12127,15 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
-            ui::inventory::folder_colors_demo_frame(&ctx, &mut self.inventory_ui, &self.settings.inventory, self.frame_count);
+            if let Some(action) = ui::inventory::folder_colors_demo_frame(
+                &ctx,
+                &self.world.inventory,
+                &mut self.inventory_ui,
+                &mut self.settings.inventory,
+                self.frame_count,
+            ) {
+                self.apply_inventory_action(action);
+            }
             ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
@@ -21585,6 +21599,8 @@ impl ApplicationHandler for App {
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
                         | "aurora-folder-colors-follow"
+                        | "aurora-folder-colors-subfolders"
+                        | "aurora-folder-colors-inherit"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(

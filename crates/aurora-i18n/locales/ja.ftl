@@ -14056,6 +14056,8 @@ inventory-favorites-show-parent-folders = お気に入りに親フォルダを�
 inventory-favorites-show-parent-folders-help = お気に入りを元のフォルダ階層で表示します。既定ではオフです。オフの場合、お気に入りを一覧に直接表示し、お気に入りのフォルダ内の内容は引き続き表示できます。
 inventory-folder-colors = フォルダの色
 inventory-folder-colors-help = フォルダのメニューに「フォルダの色…」を追加し、アイコンを好きな色にできるようにします。色はこのビューアにだけ保存され、ほかの人には表示されません。
+inventory-folder-colors-inherit = 新しいフォルダに親フォルダの色を付ける
+inventory-folder-colors-inherit-help = 色の付いたフォルダ内に作成したフォルダに、同じ色が付きます。
 inventory-folder-color = フォルダの色…
 inventory-folder-color-title = フォルダの色
 inventory-folder-color-custom = カスタムカラー
@@ -14063,6 +14065,7 @@ inventory-folder-color-restore = デフォルトに戻す
 inventory-folder-color-private = この色はあなたにだけ表示されます。
 inventory-folder-color-many = { $count }個のフォルダ
 inventory-folder-color-none = 色を付けるフォルダを選択してください。
+inventory-folder-color-subfolders = サブフォルダにも色を付ける（{ $count }）
 
 area-search-group = グループ
 area-search-last-owner = 前のオーナー

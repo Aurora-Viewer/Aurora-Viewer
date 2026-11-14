@@ -6687,6 +6687,13 @@ failure. Grid validation and any paid upload are performed by the human.
   in front). `aurora-folder-colors-follow`: the palette follows the selection;
   Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
   pink outlined) and 830 ("Select a folder to color it.", palette greyed).
+  `aurora-folder-colors-subfolders`: the tree open, "Also color its subfolders"
+  ticked at 700 and purple picked at 720: capture 690 (unticked, its count 3)
+  and 780 (A — Personal folder and its three subfolders purple).
+  `aurora-folder-colors-inherit`: "New folders take their parent's color" on, a
+  New Folder made in the green A — Personal folder at 700 through the menu's own
+  change (the demo's reply lists the folders it made, as AIS's does): capture
+  820, the new folder green.
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory
