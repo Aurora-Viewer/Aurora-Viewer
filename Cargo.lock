@@ -665,6 +665,7 @@ dependencies = [
  "parking_lot 0.13.0",
  "pollster 1.0.1",
  "rayon",
+ "spirv",
  "thiserror 2.0.21",
  "uuid",
  "wgpu",

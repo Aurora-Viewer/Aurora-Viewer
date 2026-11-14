@@ -266,8 +266,9 @@ fn plate_content(
     too_complex: bool,
     settings: &crate::settings::Settings,
     own_typing: bool,
+    agent_distance: f32,
 ) -> super::nameplate::Content {
-    use super::nameplate::{Content, Detail, Presence, Role};
+    use super::nameplate::{Content, Detail, Distance, Presence, Role};
     use super::presence::Status;
     let id = o.full_id;
     let own = id == world.agent_id;
@@ -334,6 +335,7 @@ fn plate_content(
         render_never: !own && too_complex && settings.render_exception(&id) == 1,
         blocked,
         mark: crate::world::staff::mark_named(&id, &legacy),
+        distance: Distance::of(agent_distance, own, settings.tag_distance, settings.tag_distance_colors),
     }
 }
 
@@ -438,10 +440,10 @@ pub fn draw(
                 continue;
             };
             let d = pos.distance(eye);
-            if !world
-                .rlva
-                .nametag_visible(o.full_id, world.agent_id, pos.distance(world.agent.position))
-            {
+            // from us, not from the camera: the RLVa limits and the tags'
+            // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
+            let agent_distance = pos.distance(world.agent.position);
+            if !world.rlva.nametag_visible(o.full_id, world.agent_id, agent_distance) {
                 continue;
             }
             // a resident with a bubble shows it under their name whatever
@@ -503,6 +505,7 @@ pub fn draw(
                         too,
                         settings,
                         own_typing,
+                        agent_distance,
                     ),
                     voice: in_voice.filter(|_| audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false)),
                     loading: loading.and_then(|l| l.get(&id).copied()),
@@ -552,7 +555,14 @@ pub fn draw(
                     (legacy.clone(), None, false, legacy)
                 }
             };
-            let col = super::colors::tag_color(world, &o.full_id, &legacy, custom);
+            let own = o.full_id == world.agent_id;
+            let distance = super::nameplate::Distance::of(agent_distance, own, settings.tag_distance, settings.tag_distance_colors);
+            let band = distance.map(|d| super::colors::range_color(p, Some(d.meters)));
+            let col = match band {
+                // FSTagShowDistanceColors, unless the name has its relation's color
+                Some(band) if settings.tag_distance_colors && !super::colors::relation_tag(world, &o.full_id, &legacy) => band,
+                _ => super::colors::tag_color(world, &o.full_id, &legacy, custom),
+            };
             lines.push((name, col, 13.0));
             if let Some(u) = username {
                 let dim = |v: u8| (v as f32 * 0.83) as u8;
@@ -561,6 +571,11 @@ pub fn draw(
                     Color32::from_rgba_unmultiplied(dim(col.r()), dim(col.g()), dim(col.b()), col.a()),
                     11.0,
                 ));
+            }
+            // FSTagShowDistance: its own small line under the names, in the
+            // color of its band, before the complexity
+            if let (Some(d), Some(band)) = (distance.filter(|d| d.shown), band) {
+                lines.push((d.text(), band, 11.0));
             }
             // complexity under the name (Firestorm FSTagShowARW): red as it
             // nears the limit, green fading past it; grey for ourselves or
@@ -806,7 +821,7 @@ mod tests {
         for mode in [0, 1, 2, 1, 0] {
             settings.set_render_exception(avatar.full_id, mode);
             for silhouette in [false, true] {
-                let content = plate_content(&world, idx, avatar, false, None, silhouette, &settings, false);
+                let content = plate_content(&world, idx, avatar, false, None, silhouette, &settings, false, 5.0);
                 let expected = if mode == 1 { Badge::RenderNever } else { Badge::TooComplex };
                 for level in [Level::Full, Level::Compact] {
                     let shown: Vec<_> = badges(level, &content)
@@ -824,7 +839,7 @@ mod tests {
             .find(|(_, o)| o.full_id == world.agent_id)
             .expect("our demo avatar");
         settings.set_render_exception(avatar.full_id, 1);
-        let own = plate_content(&world, idx, avatar, false, None, true, &settings, false);
+        let own = plate_content(&world, idx, avatar, false, None, true, &settings, false, 0.0);
         assert!(!own.too_complex && !own.render_never, "our own avatar has no rendering-limit badge");
     }
 

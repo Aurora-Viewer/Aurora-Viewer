@@ -38,6 +38,9 @@ pub struct RenderState {
     /// Client-only local mesh preview; server volume/scale remain authoritative.
     pub local_volume: Option<Box<VolumeParams>>,
     pub local_scale: Option<Vec3>,
+    /// Natural dimensions of a centered static assembly fitted uniformly to
+    /// this prim. Re-evaluated against damped size, never sent to the simulator.
+    pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
     /// Temporary material-inspector display mode; no simulator state changes.
@@ -236,12 +239,19 @@ impl Object {
     }
     #[inline]
     pub fn visual_scale(&self) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| self.damped_scale())
+        self.local_preview_scale(self.damped_scale())
     }
     /// Sample position and size at the same scene/picking instant. The
     /// cached value in visual_scale is for frame scheduling and coarse bounds.
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
-        self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
+        self.local_preview_scale(self.damped_scale_at(now))
+    }
+    pub(crate) fn local_preview_scale(&self, anchor: Vec3) -> Vec3 {
+        if let Some(size) = self.render.local_fit {
+            size * (anchor / size).min_element()
+        } else {
+            self.render.local_scale.unwrap_or(anchor)
+        }
     }
     /// Whether the volume has the flexible path, as LLVOVolume::isFlexible
     /// (indra/newview/llvovolume.cpp) and isFlexibleFast classify it. This is
@@ -341,6 +351,7 @@ impl Object {
         if !u.full_id.is_nil() && self.full_id != u.full_id {
             self.render.local_volume = None;
             self.render.local_scale = None;
+            self.render.local_fit = None;
             self.render.local_appearance.clear();
             self.render.blinn_phong_preview = false;
             self.foot_plane = None;
@@ -1670,6 +1681,7 @@ impl ObjectStore {
         obj.render = RenderState {
             local_volume: obj.render.local_volume.take(),
             local_scale: obj.render.local_scale,
+            local_fit: obj.render.local_fit,
             needs_records: true,
             ..Default::default()
         };
@@ -1738,6 +1750,45 @@ impl ObjectStore {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn local_assembly_fits_nonuniform_anchor_sizes_without_changing_the_server_shape() {
+        let mut object = Object::from_update(1, update(5, PRIM, ""));
+        let volume = object.volume;
+        object.render.local_fit = Some(Vec3::new(10.0, 4.0, 2.0));
+        for anchor in [Vec3::ONE, Vec3::new(3.0, 8.0, 1.0), Vec3::new(12.0, 2.0, 7.0)] {
+            object.scale = anchor;
+            let drawn = object.visual_scale();
+            assert!(drawn.cmple(anchor + Vec3::splat(1e-5)).all());
+            let ratios = drawn / object.render.local_fit.expect("assembly size");
+            assert!((ratios.max_element() - ratios.min_element()).abs() < 1e-6);
+            assert!((drawn - anchor).abs().min_element() < 1e-5, "fills at least one axis");
+            assert_eq!(object.visual_scale_at(Instant::now()), drawn);
+            assert_eq!(object.scale, anchor);
+            assert_eq!(object.volume, volume);
+        }
+        object.render.local_fit = None;
+        assert_eq!(object.visual_scale(), object.scale);
+    }
+
+    #[test]
+    fn local_assembly_follows_damped_anchor_resizing_and_does_not_leak_to_a_new_identity() {
+        let now = Instant::now();
+        let mut objects = ObjectStore::default();
+        let mut update = update(5, PRIM, "");
+        let index = objects.upsert_at(1, update.clone(), Some(now));
+        let size = Vec3::new(10.0, 4.0, 2.0);
+        objects.get_mut(index).expect("anchor").render.local_fit = Some(size);
+        update.scale *= 2.0;
+        objects.upsert_at(1, update.clone(), Some(now));
+        let half = now + Duration::from_millis(60);
+        let object = objects.get(index).expect("anchor");
+        assert!(object.visual_scale_at(half).abs_diff_eq(size * 0.15, 1e-5));
+        assert_eq!(object.scale, Vec3::splat(2.0));
+        update.full_id = Uuid::new_v4();
+        objects.upsert_at(1, update, Some(half));
+        assert!(objects.get(index).expect("new object").render.local_fit.is_none());
+    }
 
     fn anim(mode: u8, rate: f32) -> TextureAnim {
         TextureAnim {
