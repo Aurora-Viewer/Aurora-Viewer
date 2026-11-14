@@ -170,7 +170,7 @@ struct PendingScriptCreation {
     known_script_ids: HashSet<Uuid>,
     script_name: String,
     source_code: String,
-    mono: bool,
+    compile: aurora_net::scripts::CompileTarget,
     running: bool,
     started_at: Instant,
     last_requested: Instant,
@@ -582,11 +582,7 @@ impl App {
                     target,
                     handle: creation.handle,
                     options: ScriptOptions {
-                        compile: if creation.mono {
-                            aurora_net::scripts::CompileTarget::Mono
-                        } else {
-                            aurora_net::scripts::CompileTarget::Lsl2
-                        },
+                        compile: creation.compile,
                         running: creation.running,
                         experience: Uuid::nil(),
                     },
@@ -1596,6 +1592,7 @@ impl App {
                 script_name,
                 source_code,
                 mono,
+                compile_target,
                 running,
             } => {
                 self.handle_mcp_lsl_write(
@@ -1604,6 +1601,7 @@ impl App {
                     script_name,
                     source_code,
                     mono,
+                    compile_target,
                     running,
                     reply_tx,
                 );
@@ -3192,9 +3190,30 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         script_name: String,
         source_code: String,
         mono: bool,
+        compile_target: Option<String>,
         running: bool,
         reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
     ) {
+        let compile = match compile_target.as_deref().map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            None | Some("") => {
+                if mono {
+                    aurora_net::scripts::CompileTarget::Mono
+                } else {
+                    aurora_net::scripts::CompileTarget::Lsl2
+                }
+            }
+            Some("lsl2") => aurora_net::scripts::CompileTarget::Lsl2,
+            Some("mono") => aurora_net::scripts::CompileTarget::Mono,
+            Some("luau" | "slua") => aurora_net::scripts::CompileTarget::Luau,
+            Some("lsl_luau" | "lslluau") => aurora_net::scripts::CompileTarget::LslLuau,
+            Some(other) => {
+                let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                    "Unknown compile_target '{other}'. Expected 'lsl2', 'mono', 'luau', or 'lsl_luau'."
+                ))));
+                return;
+            }
+        };
+        let is_lua = matches!(compile, aurora_net::scripts::CompileTarget::Luau);
         if self.world.rlva.has("viewscript") {
             let _ = reply_tx.send(Err(McpError::PermissionDenied(
                 "RLVa @viewscript restriction forbids editing LSL scripts".into(),
@@ -3270,11 +3289,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 if let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, template, running) {
                     self.send(NetCommand::Build(drop.command));
                 } else {
-                    self.build.new_script(&self.world, idx, false);
+                    self.build.new_script(&self.world, idx, is_lua);
                     self.flush_build();
                 }
             } else {
-                self.build.new_script(&self.world, idx, false);
+                self.build.new_script(&self.world, idx, is_lua);
                 self.flush_build();
             }
             self.build.request_contents(&self.world, idx, true);
@@ -3304,7 +3323,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         known_script_ids,
                         script_name,
                         source_code,
-                        mono,
+                        compile,
                         running,
                         started_at: Instant::now(),
                         last_requested: Instant::now(),
@@ -3336,11 +3355,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             target,
             handle,
             options: ScriptOptions {
-                compile: if mono {
-                    aurora_net::scripts::CompileTarget::Mono
-                } else {
-                    aurora_net::scripts::CompileTarget::Lsl2
-                },
+                compile,
                 running,
                 experience: Uuid::nil(),
             },
@@ -4764,6 +4779,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 "New Particle Script".to_string(),
                 clear_lsl,
                 true,
+                None,
                 true,
                 reply_tx,
             );
@@ -4849,6 +4865,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             "New Particle Script".to_string(),
             script_source,
             true,
+            None,
             true,
             reply_tx,
         );

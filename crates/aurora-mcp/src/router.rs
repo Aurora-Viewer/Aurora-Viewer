@@ -1325,6 +1325,10 @@ impl McpRouter {
                     .to_owned();
                 let source_code = req_str(args, "source_code")?;
                 let mono = args.get("mono").and_then(Value::as_bool).unwrap_or(true);
+                let compile_target = args
+                    .get("compile_target")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
                 let running = args.get("running").and_then(Value::as_bool).unwrap_or(true);
                 let resp = self
                     .send_to_viewer(
@@ -1335,6 +1339,7 @@ impl McpRouter {
                             script_name,
                             source_code,
                             mono,
+                            compile_target,
                             running,
                         },
                         15_000,
@@ -3474,7 +3479,7 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "lsl_write_and_compile".into(),
-            description: "Write and compile LSL source into a prim task script and return compiler diagnostics or success.".into(),
+            description: "Write and compile LSL or SLua (Luau) source into a prim task script and return compiler diagnostics or success.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3482,7 +3487,12 @@ fn all_tool_definitions() -> Vec<ToolDefinition> {
                     "script_item_id": { "type": "string" },
                     "script_name": { "type": "string", "default": "New Script" },
                     "source_code": { "type": "string" },
-                    "mono": { "type": "boolean", "default": true },
+                    "mono": { "type": "boolean", "default": true, "description": "Legacy LSL Mono flag (ignored if compile_target is set)" },
+                    "compile_target": {
+                        "type": "string",
+                        "enum": ["lsl2", "mono", "luau", "lsl_luau"],
+                        "description": "Compiler target: 'mono' (LSL Mono, default), 'lsl2' (legacy LSL), 'luau' (SLua/Luau source), or 'lsl_luau' (LSL source on Luau VM)"
+                    },
                     "running": { "type": "boolean", "default": true }
                 },
                 "required": ["object_local_id", "source_code"]

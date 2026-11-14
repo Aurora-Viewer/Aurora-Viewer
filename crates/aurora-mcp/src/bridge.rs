@@ -340,6 +340,7 @@ pub enum ViewerRequest {
         script_name: String,
         source_code: String,
         mono: bool,
+        compile_target: Option<String>,
         running: bool,
     },
     LslListenScriptOutput {
