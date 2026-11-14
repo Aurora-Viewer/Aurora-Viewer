@@ -220,6 +220,8 @@ pub enum BarAction {
     /// particles are hidden (their own switch, World › Show more).
     RenderTypes(crate::scene::render_types::Hidden, bool),
     OwnedLand,
+    /// World › My Linden Home (LLWorldLindenHome).
+    LindenHome,
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -302,6 +304,8 @@ pub struct StatusInfo<'a> {
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// World › My Linden Home is shown (GridCheck "secondlife").
+    pub linden_home: bool,
     /// The grid has a Destination Guide (World › Destinations is shown only
     /// then, GridFeatureCheck destination_guide).
     pub destinations: bool,
@@ -1170,6 +1174,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
             *action = BarAction::OwnedLand;
+        }
+        // menu_viewer.xml: My Linden Home after Show Owned Land, Second
+        // Life grids only
+        if st.linden_home && menu::item(ui, p, "home-2-filled", aurora_i18n::tr!("linden-home-menu")) {
+            *action = BarAction::LindenHome;
         }
         menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
             flip_window(

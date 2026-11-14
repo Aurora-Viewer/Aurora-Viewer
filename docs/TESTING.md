@@ -1012,6 +1012,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
+| `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
 | `AURORA_DEMO_TP_CAM=alt\|alt-off` | The camera on a point before the demo teleport, "Return after a teleport in the region" on or off |
@@ -1073,6 +1074,13 @@ when unfocused") is ignored during a screenshot.
   default 16 px). The preferences' preview shows the same mark over a dark
   and a bright patch: `AURORA_DEMO_OPTIONS=camera/2:crosshair` opens the
   group and scrolls down to its last row, the image.
+- **`AURORA_DEMO_MOUSELOOK_COMBAT=1`**: Preferences › Camera › Mouselook ›
+  Combat aids and Target markers on for the session, nothing saved. With
+  `AURORA_DEMO_CAMERA=ml` and a capture at frame 624: the name and distance
+  of the demo avatar ahead show 150 px under the crosshair while it stands in
+  the narrow box ahead; arrows on the edges of the window point toward the
+  avatars in range out of view, in their minimap colours (the demo's avatars
+  all stand in view, so none shows there).
 - **`AURORA_DEMO_AVATAR_TRAVEL=<mode>`**: at frame 600, `menu` opens
   the violet wolf's avatar menu; the other modes dispatch Go to or Follow. `go`
   keeps the initial destination and ends within 2 m; `follow` keeps the
@@ -5995,7 +6003,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
-| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
+| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -8330,7 +8338,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
   by frame.
 
-- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect]`**
+- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect][:unnamed|spoof]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
   llRegionSayTo with a link, then two notices (a friend online, a
@@ -8360,6 +8368,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   open, yet lists it. The tip jar's script error is not ours: shown nowhere.
   With Preferences › Chat › Script errors › "Show script errors in the
   nearby chat" off, the error leaves the chat and the window opens.
+  `:unnamed` adds, at the end, an object whose name is only spaces and whose
+  line reads "Nova Example: …", like a resident's line (a spoof); `:spoof`
+  adds the same line with Preferences › Chat › "Mark objects with (no name)
+  when they speak" on for the run (FSMarkObjects, nothing saved): the line
+  then shows under "(no name)" in the object's colour. Without the mark the
+  object has no name at all, as in the Legacy Viewer.
   `AURORA_DEMO_OPTIONS=chat:script-errors` opens that section: the switch
   on, "Also say them on a chat channel" off, its channel (1) among its
   sub-settings.
@@ -9109,7 +9123,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions][:pending][:ask-…|:top-…|:pick-…][:telehub|:raw|:pbr][:classic]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions|:open-settings][:pending][:ask-…|:top-…|:pick-…][:telehub|:raw|:pbr][:classic]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -9195,6 +9209,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   notecard dropped from the inventory asks the same. The demo simulator
   keeps the covenant it is sent and answers the next EstateCovenantRequest
   with it (the notecard's text, or "This estate has no covenant").
+  `open-settings` makes the demo region an Aurora-Sim one: it offers
+  DispatchOpenRegionSettings and sends OpenRegionInfo on arrival (draw
+  distance 256 m, prims 64 m and 32 m physical, 255 links and 32
+  physical, no limit on items given, name tags briefly, 60 groups), and
+  Manage scrolls to its "Region settings" (the classic window's tab of
+  that name, after Region). With `pending`, the draw distance turns to
+  512 m and the minimap off, "2 changes not sent yet"; the demo
+  simulator answers Apply with the values sent. Without `open-settings`
+  the section and the tab are not there, as on Second Life and OpenSim.
   `telehub` opens the region rules' Advanced fold, the window taller:
   the demo region's telehub "Arrival point" with two spawn points; the
   demo simulator applies Connect and Add the selection (a prim selected

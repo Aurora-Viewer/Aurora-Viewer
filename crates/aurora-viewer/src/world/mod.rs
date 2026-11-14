@@ -133,6 +133,8 @@ mod group_notice_tests;
 #[cfg(test)]
 mod last_speaker_tests;
 #[cfg(test)]
+mod object_name_tests;
+#[cfg(test)]
 mod toasts_tests;
 
 use crate::agent::AgentState;
@@ -190,6 +192,9 @@ pub struct Region {
     /// post links in chat applies here, so the role editor shows it.
     pub group_chat_post_links: bool,
     pub max_link_children: Option<u32>,
+    /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
+    /// window's "Region settings".
+    pub open_settings: Option<aurora_net::open_region::OpenRegionSettings>,
     pub animated_object_max_tris: u32,
 }
 
@@ -314,6 +319,19 @@ pub struct ChatLine {
     pub kind: ChatKind,
     pub source: Uuid,
     pub origin: Origin,
+}
+
+/// The name an object speaks under in the nearby chat. A name of nothing but
+/// spaces is an empty one, and with `mark` (FSMarkObjects) it becomes "(no
+/// name)": a script that clears its name can no longer write a line that
+/// reads like a resident's. process_chat_from_simulator
+/// (indra/newview/llviewermessage.cpp, FIRE-2434).
+pub fn object_speaker_name(name: String, mark: bool) -> String {
+    match name.trim().is_empty() {
+        false => name,
+        true if mark => aurora_i18n::tr!("world-chat-unnamed-object").to_owned(),
+        true => String::new(),
+    }
 }
 
 /// Whether a nearby line makes its speaker the last one heard: a resident
@@ -759,6 +777,9 @@ pub struct World {
     /// "Teleport completed from <SLURL>" in nearby chat after a teleport to
     /// another region (FSShowBackSLURL, from the settings).
     pub show_back_slurl: bool,
+    /// An object with an empty name speaks as "(no name)" (FSMarkObjects,
+    /// from the settings; `object_speaker_name`).
+    pub mark_unnamed_objects: bool,
     /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
     /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
     /// there) and said on its arrival.
@@ -1052,6 +1073,7 @@ impl World {
             collisions: Default::default(),
             fly_after_teleport: false,
             show_back_slurl: true,
+            mark_unnamed_objects: false,
             tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),
@@ -2304,6 +2326,7 @@ impl World {
             grid_status: Default::default(),
             currency_base_uri: String::new(),
             max_link_children: None,
+            open_settings: None,
             animated_object_max_tris: 0,
             opensim: Default::default(),
             currency_symbol: String::new(),
@@ -2855,6 +2878,10 @@ impl World {
             }
             NetEvent::RegionLinkLimit { handle, max_children } => {
                 self.ensure_region(handle, (256, 256)).max_link_children = max_children;
+                None
+            }
+            NetEvent::OpenRegionSettings { handle, settings } => {
+                self.ensure_region(handle, (256, 256)).open_settings = Some(*settings);
                 None
             }
             NetEvent::SimulatorFeatures {
@@ -4638,6 +4665,7 @@ impl World {
         // IDEVO: avatars by their complete name ("Jane Doe (janedoe)")
         let from = match c.source_type {
             ChatSourceType::Agent => self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name),
+            ChatSourceType::Object => object_speaker_name(c.from_name, self.mark_unnamed_objects),
             _ => c.from_name,
         };
         // a resident's line that mentions the agent
