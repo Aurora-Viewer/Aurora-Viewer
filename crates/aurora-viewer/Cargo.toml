@@ -89,7 +89,7 @@ ron = "0.12.2"
 flate2 = "1.1.10"
 zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2"] }
 tokio = { version = "1", default-features = false, features = ["rt"] }
-sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
 serde_path_to_error = "0.1.20"
 # MikkTSpace tangents of the meshes' normal maps (scene/tangents.rs): safe
 # Rust, no dependency, byte-identical to the reference C code; MIT /
