@@ -845,6 +845,28 @@ mod tests {
     }
 
     #[test]
+    fn a_hand_that_wobbles_a_little_still_opens_the_sheet() {
+        let mut h = PressHarness::new();
+        let at = h.rects[0].center();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(30);
+        // a few points away, past egui's own still-press drag time
+        h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(4.0, 2.0))]);
+        h.wait(40);
+        assert_eq!(h.sheets, 1, "a wobble within the slop keeps the hold");
+        assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx), "and it is not a drag");
+        h.button(at, egui::PointerButton::Primary, false);
+        // just past the slop it is a drag
+        let mut h = PressHarness::new();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(30);
+        h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(HOLD_SLOP + 1.0, 0.0))]);
+        h.wait(40);
+        assert_eq!(h.sheets, 0, "past the slop the hold is cancelled");
+        h.button(at, egui::PointerButton::Primary, false);
+    }
+
+    #[test]
     fn contact_hold_preserves_modified_selection() {
         let mut h = PressHarness::new();
         h.sel = vec![Uuid::from_u128(1)];
