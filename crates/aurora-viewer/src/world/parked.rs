@@ -29,9 +29,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Farther than this from the agent's region, nothing of a region can be
-/// drawn: the draw distance stops at 512 m, and what a region holds stays
-/// within a few tens of metres of its borders.
-pub const OUT_OF_REACH: f64 = 1024.0;
+/// drawn: the camera may stand as far from the avatar as the draw distance
+/// (`Camera::calc_camera_target`), and it draws that far again,
+/// so the reach is twice the largest draw distance.
+pub const OUT_OF_REACH: f64 = 2.0 * crate::settings::DRAW_DISTANCE_MAX as f64;
 
 /// Metres between two regions, from their handles and sizes (0 when they
 /// touch or overlap).
@@ -242,10 +243,14 @@ mod tests {
         assert_eq!(region_gap(main, at(1002, 1000)), 256.0);
         assert_eq!(region_gap(at(1002, 1000), main), 256.0);
         assert_eq!(region_gap(main, at(997, 996)), 512.0f64.hypot(768.0));
-        // what a draw distance of 512 m can show is in reach, a teleport
-        // across the map is not
+        // what a camera 1024 m from the avatar can show at a draw distance
+        // of 1024 m is in reach (four regions away diagonally, about
+        // 1086 m), a teleport across the map is not
+        assert_eq!(OUT_OF_REACH, 2048.0);
         assert!(region_gap(main, at(1003, 1003)) < OUT_OF_REACH);
-        assert!(region_gap(main, at(1006, 1000)) > OUT_OF_REACH);
+        assert!(region_gap(main, at(1005, 1004)) > 1024.0);
+        assert!(region_gap(main, at(1005, 1004)) < OUT_OF_REACH);
+        assert!(region_gap(main, at(1010, 1000)) > OUT_OF_REACH);
         assert!(region_gap(main, at(677, 1082)) > OUT_OF_REACH);
         // a large region reaches its far neighbours
         let wide = (aurora_net::origin_to_handle(1000 * 256, 1000 * 256), (1024, 1024));

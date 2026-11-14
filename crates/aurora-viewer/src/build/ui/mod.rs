@@ -14,6 +14,7 @@ mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
+pub(crate) mod export;
 mod features;
 mod floaters;
 pub(crate) mod general;

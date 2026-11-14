@@ -1,0 +1,27 @@
+# Third-party licences
+
+The Rust crates built into Aurora Viewer, their licences and the notices
+their authors ask to keep. This file is generated from `Cargo.lock` by
+`scripts/third-party-licenses.ps1` (cargo-about): do not edit it by hand.
+The other components (ported code, native libraries, assets) are in
+[NOTICE.md](NOTICE.md).
+
+## Crates
+
+| Crate | Licence |
+|---|---|
+{{#each crates}}
+| {{package.name}} {{package.version}} | {{{license}}} |
+{{/each}}
+
+## Licence texts
+{{#each licenses}}
+
+### {{{name}}}
+
+Used by: {{#each used_by}}{{#if @index}}, {{/if}}{{crate.name}} {{crate.version}}{{/each}}
+
+````text
+{{{text}}}
+````
+{{/each}}

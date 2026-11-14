@@ -223,7 +223,10 @@ impl DayEditorUi {
 
     /// "Save As" confirmed by the app: the name prompt.
     pub fn ask_save_as(&mut self) {
-        self.save_as = Some(crate::text_validation::generated_name(&self.name, 63));
+        // without its Aurora Weather code (put back on at Save, as a
+        // rename keeps it): shown, it was easily deleted or retyped away
+        let readable = crate::weather::region::strip_code(&self.name);
+        self.save_as = Some(crate::text_validation::generated_name(readable, 63));
     }
 
     /// Import over the current day (loadSettingFromFile: no item, the
@@ -1084,7 +1087,10 @@ impl DayEditorUi {
                     let size = Vec2::new(0.0, 26.0);
                     let enter = widgets::enter_pressed(ui);
                     if widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size).clicked() || enter {
-                        out.push(DayAction::SaveAs(env_edit::correct_item_name(&name)));
+                        out.push(DayAction::SaveAs(crate::weather::region::keep_code(
+                            &self.name,
+                            &env_edit::correct_item_name(&name),
+                        )));
                         close = true;
                     }
                     if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {

@@ -5,7 +5,9 @@
 //! a third region a group left since ("Boreal Photographers", listed as
 //! ignored). The demo server answers the titles of every group, keeps the
 //! title chosen in each (GroupTitleUpdate) and names the active group with
-//! it (ActivateGroup → AgentDataUpdate), as the grid does.
+//! it (ActivateGroup → AgentDataUpdate), as the grid does. "Aurora
+//! Builders" also offers a role whose title is blank: the Group titles
+//! window lists it as "<Blank title>" and it is not worn at the start.
 //!
 //! `1`: the window opens at frame 600; at frame 900 the avatar arrives in
 //! "Boreal Lagoon" (a teleport: the Officer title and the group are sent),
@@ -27,6 +29,8 @@ const WOLF_OWNERS: Uuid = Uuid::from_u128(0x6E41_0000_0000_0000_0000_0000_0000_0
 const MARKET_OFFICERS: Uuid = Uuid::from_u128(0x6E42_0000_0000_0000_0000_0000_0000_0002);
 /// The role of "Aurora Builders" the demo wears (demo_group.rs).
 const BUILDERS: Uuid = Uuid::from_u128(0x6E40_0000_0000_0000_0000_0000_0000_0003);
+/// A role of "Aurora Builders" whose title is blank. Listed, not worn.
+const BUILDERS_BLANK: Uuid = Uuid::from_u128(0x6E40_0000_0000_0000_0000_0000_0000_0004);
 
 /// The region the scripted teleport reaches, out of reach of the demo
 /// region like AURORA_DEMO_TP_AWAY's.
@@ -86,7 +90,11 @@ pub fn rules() -> Saved {
 fn titles(group: &Uuid) -> Option<Vec<(String, Uuid)>> {
     let member = aurora_i18n::tr!("demo-group-member").to_owned();
     Some(match *group {
-        DEMO_GROUP1 => vec![(member, Uuid::nil()), (aurora_i18n::tr!("demo-builder").to_owned(), BUILDERS)],
+        DEMO_GROUP1 => vec![
+            (member, Uuid::nil()),
+            (aurora_i18n::tr!("demo-builder").to_owned(), BUILDERS),
+            (String::new(), BUILDERS_BLANK),
+        ],
         DEMO_GROUP2 => vec![
             (member, Uuid::nil()),
             (aurora_i18n::tr!("demo-group-officer").to_owned(), WOLF_OFFICERS),

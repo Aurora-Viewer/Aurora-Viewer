@@ -289,6 +289,7 @@ fn rlva_restrict(w: &mut World, source: Uuid, message: &str) {
         owner_id: w.agent_id,
         source_type: aurora_net::ChatSourceType::Object,
         chat_type: aurora_net::ChatType::OwnerSay,
+        region: None,
         position: glam::Vec3::ZERO,
         message: message.to_owned(),
     }));

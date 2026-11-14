@@ -3115,6 +3115,12 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
+            NetCommand::ForceAgentUpdate => {
+                self.agent_update.force();
+                if self.agent_moved && self.logout_started.is_none() {
+                    self.maybe_send_agent_update(Instant::now());
+                }
+            }
             NetCommand::ClearObjectCache => self.object_cache.clear(),
             NetCommand::Build(b) => self.on_build(b),
             // handled by on_social_command
@@ -4863,6 +4869,7 @@ impl Session<'_> {
                             _ => ChatSourceType::Object,
                         },
                         chat_type: ChatType::from_u8(c.chat_type),
+                        region: self.sims.get(&from).map(|sim| sim.handle),
                         position: c.position,
                         message: field_str(&c.message),
                     }),
@@ -6516,6 +6523,60 @@ mod event_queue_tests {
         let before = packets();
         session.on_command(NetCommand::SetAlwaysRun(true));
         assert_eq!(packets() - before, 1, "arrival resynchronizes unchanged run preference");
+    }
+
+    /// ChatFromSimulator.Position is region-local (message_template.msg).
+    /// Keep the circuit's handle with the queued event: the agent can cross
+    /// into another region before the viewer consumes the message.
+    #[tokio::test]
+    async fn nearby_chat_keeps_its_sending_circuit_and_region_local_position() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main: SocketAddr = "127.0.0.1:13001".parse().unwrap();
+        let neighbour: SocketAddr = "127.0.0.1:13002".parse().unwrap();
+        let unknown: SocketAddr = "127.0.0.1:13003".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, neighbour);
+        session.sims.get_mut(&main).unwrap().handle = 0;
+        let mut message = ChatFromSimulator::default();
+        message.chat_data.source_id = Uuid::from_u128(2009);
+        message.chat_data.owner_id = Uuid::from_u128(2010);
+        message.chat_data.source_type = 2;
+        message.chat_data.audible = 1;
+        message.chat_data.position = Vec3::new(14.0, 40.0, 22.0);
+        message.chat_data.message = str_field("hello");
+        for chat_type in [ChatType::Whisper, ChatType::Normal, ChatType::Shout] {
+            message.chat_data.chat_type = chat_type.to_u8();
+            let mut bytes = Vec::new();
+            aurora_msg::build_packet(&message, 1, true, false, &[], &mut bytes);
+            let packet = parse_packet(&bytes).expect("chat packet");
+            for source in [main, neighbour, unknown] {
+                session.dispatch(source, &packet).expect("dispatch");
+            }
+        }
+        session.main = Some(neighbour);
+        let chats: Vec<_> = received
+            .try_iter()
+            .filter_map(|(_, event)| match event {
+                NetEvent::Chat(chat) => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chats.len(), 9);
+        for (group, chat_type) in chats
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip([ChatType::Whisper, ChatType::Normal, ChatType::Shout])
+        {
+            for (chat, region) in group.iter().zip([Some(0), Some(20), None]) {
+                assert_eq!(chat.region, region);
+                assert_eq!(chat.chat_type, chat_type);
+                assert_eq!(chat.position, message.chat_data.position);
+                assert_eq!(chat.source_id, message.chat_data.source_id);
+                assert_eq!(chat.owner_id, message.chat_data.owner_id);
+            }
+        }
     }
 
     /// #3347: an object in a neighbouring region (camera shopping) offers
