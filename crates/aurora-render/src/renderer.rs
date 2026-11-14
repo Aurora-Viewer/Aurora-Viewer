@@ -2498,6 +2498,31 @@ struct RainWet {
     snow_cover: [f32; 4],
 }
 
+/// Deep snow's grid (env.wgsl `vs_snow_mesh`) at a weather quality and a
+/// reach set (m at High): the cells a side of each of its nested squares,
+/// and how many squares, each twice as coarse as the one inside it, from
+/// the finest (`SNOW_MESH_FIRST`, 5.12 m across) out to cover the reach
+/// (each quality its share of it, as `snow_mesh_grid`), whichever cell the
+/// outermost is snapped to.
+fn deep_snow_mesh(quality: u32, reach: f32) -> (u32, u32) {
+    const FIRST: f32 = 5.12;
+    let (cells, share) = match quality {
+        0 => (64u32, 10.0 / 15.0),
+        1 => (96, 13.0 / 15.0),
+        _ => (128, 1.0),
+    };
+    let reach = reach.clamp(1.0, 60.0) * share;
+    let mut levels = 1u32;
+    loop {
+        let s = FIRST / cells as f32 * (1u32 << (levels - 1)) as f32;
+        let half = cells as f32 * 0.5 * s;
+        if half - 2.0 * s >= reach || levels >= 8 {
+            return (cells, levels);
+        }
+        levels += 1;
+    }
+}
+
 /// The wetness memory's square (m) for the weather drawn `reach` metres
 /// away (`RainLook::memory_reach`): 128 m by default, 256 m or 512 m for
 /// farther puddles or snow, always 4 texels a metre (512 to 2048 a side:
@@ -7004,11 +7029,12 @@ impl Backend {
         // orbiting camera would move it, and its cells resample what they
         // cover: narrow strips spiking as it pans)
         // z: deep snow's reach (m, env.wgsl `snow_mesh_grid`)
+        // w: deep snow's levels (`deep_snow_mesh`)
         u.snow_trail_step = [
             f.rain_look.trail_centre[0],
             f.rain_look.trail_centre[1],
             f.rain_look.deep_reach,
-            0.0,
+            deep_snow_mesh(f.rain_look.quality, f.rain_look.deep_reach).1 as f32,
         ];
         u.snow_stamps = f.rain_look.snow_stamps;
         for (i, z) in f.rain_look.snow_stamp_z.iter().enumerate() {
@@ -10518,15 +10544,11 @@ impl Backend {
             // it); it writes the depth, so the frame group without it
             let snow_on = f.rain_look.snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY;
             if f.rain_look.deep_snow && snow_on && !f.cutout && self.rain_shelter(f) {
-                let cells: u32 = match f.rain_look.quality {
-                    0 => 128,
-                    1 => 192,
-                    _ => 256,
-                };
+                let (cells, levels) = deep_snow_mesh(f.rain_look.quality, f.rain_look.deep_reach);
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "deep snow", false, true);
                 bind_mesh(&mut pass, &self.groups.a);
                 pass.set_pipeline(&self.pipelines.snow_mesh);
-                pass.draw(0..cells * cells * 6, 0..1);
+                pass.draw(0..levels * cells * cells * 6, 0..1);
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -11944,6 +11966,28 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_snow_has_enough_levels_for_its_reach() {
+        // High at the default 15 m: four squares (the finest 5.12 m across,
+        // the fourth 41 m), as many cells as the one warped grid had
+        assert_eq!(deep_snow_mesh(2, 15.0), (128, 4));
+        assert_eq!(4 * 128 * 128, 256 * 256);
+        // 40 m: six (five reach 40.96 m, 39.7 m less their snap)
+        assert_eq!(deep_snow_mesh(2, 40.0), (128, 6));
+        // the outermost square reaches past the reach, whatever its snap,
+        // and a morph ends before each square's edge (10 % of a half side
+        // is at least two cells)
+        for q in 0..3u32 {
+            for reach in [10.0f32, 15.0, 25.0, 40.0] {
+                let (cells, levels) = deep_snow_mesh(q, reach);
+                let s = 5.12 / cells as f32 * (1u32 << (levels - 1)) as f32;
+                let share = [10.0 / 15.0, 13.0 / 15.0, 1.0][q as usize];
+                assert!(cells as f32 * 0.5 * s - 2.0 * s >= reach * share, "{q} {reach}");
+                assert!(0.1 * cells as f32 * 0.5 >= 2.0);
+            }
+        }
+    }
 
     #[test]
     fn the_shelter_map_keeps_its_texels_on_the_ground() {

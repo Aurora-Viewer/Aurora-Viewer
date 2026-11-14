@@ -3636,27 +3636,40 @@ struct SnowMeshOut {
     @location(3) base: f32,
 };
 
-// The grid at this Weather quality: x cells a side, y how far it reaches
-// from the camera (m). Its cells are fine near the camera (a few
-// centimetres: footprints) and grow outward (`snow_mesh_warp`).
+// The grid at this Weather quality: x cells a side of each of its levels,
+// y how far it reaches from my avatar (m). Its levels are nested squares
+// (`vs_snow_mesh`): the finest SNOW_MESH_FIRST m across, a few centimetres
+// a cell (footprints), each next one twice as coarse.
 fn snow_mesh_grid() -> vec2<f32> {
     let q = rain_quality();
     // the reach set (frame.snow_trail_step.z, m at High), each quality
-    // its share: as many cells, so farther it is coarser where it is far
+    // its share
     let reach = select(15.0, frame.snow_trail_step.z, frame.snow_trail_step.z > 0.0) / 15.0;
-    if (q <= 0) { return vec2<f32>(128.0, 10.0 * reach); }
-    if (q == 1) { return vec2<f32>(192.0, 13.0 * reach); }
-    return vec2<f32>(256.0, 15.0 * reach);
+    if (q <= 0) { return vec2<f32>(64.0, 10.0 * reach); }
+    if (q == 1) { return vec2<f32>(96.0, 13.0 * reach); }
+    return vec2<f32>(128.0, 15.0 * reach);
 }
 
-// How much of the grid's spacing is even (the rest grows with the cube):
-// cells a quarter as wide at the centre as on average, two and a half
-// times at the edge.
-const SNOW_MESH_EVEN: f32 = 0.25;
+// The finest level's side (m): 4 cm cells at High (renderer.rs
+// `deep_snow_mesh` counts the levels from it).
+const SNOW_MESH_FIRST: f32 = 5.12;
 
-// A grid line (-1..1) to its place (-1..1).
-fn snow_mesh_warp(u: vec2<f32>) -> vec2<f32> {
-    return SNOW_MESH_EVEN * u + (1.0 - SNOW_MESH_EVEN) * u * u * u;
+// How much of a level, from my avatar out, keeps its own vertices: past it
+// they slide onto the next level's (every other one), whole by its outer
+// part (`snow_mesh_morph`).
+const SNOW_MESH_MORPH_FROM: f32 = 0.7;
+const SNOW_MESH_MORPH_TO: f32 = 0.9;
+
+// A vertex of a level (`g`: on the world's grid of its cells `s` m wide),
+// as drawn: its odd lines slid toward the even ones (the next level's),
+// the farther from `me` the more, wholly on them by its outer part. The
+// last level slides onto nothing.
+fn snow_mesh_morph(g: vec2<f32>, s: f32, half: f32, me: vec2<f32>, last: bool) -> vec2<f32> {
+    if (last) { return g * s; }
+    let d = abs(g * s - me);
+    let k = smoothstep(SNOW_MESH_MORPH_FROM, SNOW_MESH_MORPH_TO, max(d.x, d.y) / half);
+    let odd = g - 2.0 * floor(g * 0.5);
+    return (g - odd * k) * s;
 }
 
 // How deep the snow lies at `xy` in the memory (0..1, no gating: the grid
@@ -3715,43 +3728,68 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     let g = snow_mesh_grid();
     let n = u32(g.x);
     let reach = g.y;
+    let levels = max(u32(frame.snow_trail_step.w + 0.5), 1u);
     let corners = array<vec2<u32>, 6>(
         vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
         vec2<u32>(0u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u));
     let quad = vertex / 6u;
-    let cell_ij = vec2<u32>(quad % n, quad / n);
-    let ij = cell_ij + corners[vertex % 6u];
-    let u = vec2<f32>(ij) / f32(n) * 2.0 - vec2<f32>(1.0);
-    // centred on my avatar (not the camera: orbiting it leaves the grid
-    // still), snapped to the finest cell: it does not swim as I walk
-    // (farther, its big cells move a fine cell at a time)
+    let level = min(quad / (n * n), levels - 1u);
+    let local = quad % (n * n);
+    let cell_ij = vec2<u32>(local % n, local / n);
+    // Nested squares around my avatar (not the camera: orbiting leaves
+    // them still), each `n` cells a side, each level's cells twice its
+    // finer one's. Each is centred on me snapped to twice its own cell, so
+    // its vertices lie on the world's grid of its cells and the finer
+    // square inside it covers whole cells of it: as I walk, a vertex never
+    // slides over the ground (one warped grid moved its coarse cells a fine
+    // cell at a time, and they changed shape: the snow's outline popped)
     let cam = frame.camera_pos.xyz;
-    let fine = reach * SNOW_MESH_EVEN * 2.0 / f32(n);
     var me = frame.snow_trail_step.xy;
     if (all(me == vec2<f32>(0.0))) { me = cam.xy; }
-    let centre = floor(me / fine) * fine;
-    let xy = centre + snow_mesh_warp(u) * reach;
-    // its spacing here (for the facing)
-    let cell = max(reach * (SNOW_MESH_EVEN + 3.0 * (1.0 - SNOW_MESH_EVEN) * max(u.x * u.x, u.y * u.y)) * 2.0 / f32(n), fine);
-    // thinning to nothing over its outer part: no step at its edge
-    let fade = 1.0 - smoothstep(0.85, 0.98, max(abs(u.x), abs(u.y)));
+    let s = SNOW_MESH_FIRST / f32(n) * f32(1u << level);
+    let half = f32(n / 2u) * s;
+    let origin = floor(me / (2.0 * s)) * 2.0 - vec2<f32>(f32(n / 2u));
+    let last = level + 1u == levels;
+    var out: SnowMeshOut;
+    out.valid = 0.0;
+    out.n = vec3<f32>(0.0, 0.0, 1.0);
+    out.base = -1e9;
+    // the finer square's cells (drawn by it), and the cells past the
+    // reach: nothing (a triangle of one point)
+    let lo = (origin + vec2<f32>(cell_ij)) * s;
+    var skip = max(abs(lo.x + 0.5 * s - me.x), abs(lo.y + 0.5 * s - me.y)) - 0.5 * s > reach;
+    if (level > 0u) {
+        let fine = 0.5 * s;
+        let hole = floor(me / (2.0 * fine)) * 2.0 * fine - vec2<f32>(f32(n / 2u)) * fine;
+        let inside = lo - hole;
+        let span = f32(n) * fine;
+        skip = skip || (all(inside >= vec2<f32>(-0.001)) && all(inside + vec2<f32>(s) <= vec2<f32>(span + 0.001)));
+    }
+    if (skip) {
+        out.world = cam;
+        out.clip = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return out;
+    }
+    let gv = origin + vec2<f32>(cell_ij + corners[vertex % 6u]);
+    let xy = snow_mesh_morph(gv, s, half, me, last);
+    // thinning to nothing toward the reach: no step at its edge
+    let fade = 1.0 - smoothstep(0.85, 0.98, max(abs(xy.x - me.x), abs(xy.y - me.y)) / reach);
+    let cell = s;
     let c = snow_mesh_top_soft(xy, fade, cell);
-    // the triangle's three corners (the same for each of its vertices,
-    // whatever the camera): dropped where the surface under it jumps more
-    // than 10 cm across it (a ledge, a roof's edge), not drawn up as a wall
+    // the triangle's three corners, where they are drawn (the same for each
+    // of its vertices, whatever the camera): dropped where the surface under
+    // it jumps more than 10 cm across it (a ledge, a roof's edge), not drawn
+    // up as a wall
     let first = (vertex % 6u) / 3u * 3u;
     var lowest = 1e9;
     var highest = -1e9;
     for (var k = 0u; k < 3u; k++) {
-        let cu = vec2<f32>(cell_ij + corners[first + k]) / f32(n) * 2.0 - vec2<f32>(1.0);
-        let b = rain_surface_height(centre + snow_mesh_warp(cu) * reach, cam.z);
+        let corner = snow_mesh_morph(origin + vec2<f32>(cell_ij + corners[first + k]), s, half, me, last);
+        let b = rain_surface_height(corner, cam.z);
         lowest = min(lowest, b);
         highest = max(highest, b);
     }
     let across = lowest > -1e8 && highest - lowest < 0.1;
-    var out: SnowMeshOut;
-    out.valid = 0.0;
-    out.n = vec3<f32>(0.0, 0.0, 1.0);
     out.base = c.x;
     if (c.x < -1e8) {
         out.world = vec3<f32>(xy, cam.z);
