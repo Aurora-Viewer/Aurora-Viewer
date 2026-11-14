@@ -8,7 +8,6 @@ use uuid::Uuid;
 
 pub(super) const BRAND: &str = "#Aurora";
 pub(super) const FOLDER: &str = "Aurora Interfaces";
-pub(super) const PATH: &str = "#Aurora/Aurora Interfaces";
 
 pub(super) enum Path {
     Ready(Uuid),
@@ -109,6 +108,8 @@ pub(super) struct Entry {
     pub id: Uuid,
     pub name: String,
     pub available: bool,
+    pub writable: bool,
+    pub asset: Uuid,
 }
 
 #[derive(Default)]
@@ -116,6 +117,8 @@ pub(super) struct Catalog {
     pub entries: Vec<Entry>,
     pub loading: bool,
     pub can_preview: bool,
+    pub owner: Uuid,
+    pub can_save: bool,
     generation: Option<u64>,
     folder: Option<Uuid>,
 }
@@ -123,7 +126,9 @@ pub(super) struct Catalog {
 impl Catalog {
     pub fn sync(&mut self, inv: &mut Inventory) {
         let path = resolve(inv);
+        self.owner = inv.owner;
         self.can_preview = inv.can_preview(7);
+        self.can_save = matches!(path, Ok(Path::Ready(_) | Path::Missing { .. }));
         self.loading = matches!(path, Ok(Path::Loading));
         let folder = match path {
             Ok(Path::Ready(folder)) => Some(folder),
@@ -144,8 +149,43 @@ impl Catalog {
                 id: item.id,
                 name: item.name.clone(),
                 available: super::context_notecards::available(inv, item.id).is_some(),
+                writable: replaceable(inv, item.id, item.parent, item.asset_id),
+                asset: item.asset_id,
             })
             .collect();
         self.entries.sort_by_cached_key(|entry| (entry.name.to_lowercase(), entry.id));
+    }
+}
+
+// LLPreview::canModify and LLPreviewNotecard::saveIfNeeded (indra/newview/
+// llpreview.cpp, llpreviewnotecard.cpp). Reuse COPY/MODIFY and Library checks;
+// no elevated god permissions, and only a live item in the dedicated folder.
+pub(super) fn replaceable(inv: &Inventory, item: Uuid, parent: Uuid, asset: Uuid) -> bool {
+    super::context_notecards::available(inv, item).is_some_and(|item| item.parent == parent && item.asset_id == asset)
+        && crate::world::inventory::preview::can_edit(inv, item, 0)
+}
+
+impl Catalog {
+    pub fn target(&self, name: &str, selected: Option<Uuid>) -> Result<Option<&Entry>, String> {
+        let name = name.trim();
+        let invalid = || aurora_i18n::tr!("toolbar-preset-save-unavailable").to_owned();
+        if name.is_empty() || name.chars().count() > 63 || name.chars().any(char::is_control) || !self.can_save || self.loading {
+            return Err(invalid());
+        }
+        let selected = selected.and_then(|id| self.entries.iter().find(|entry| entry.id == id && entry.name == name));
+        let target = if selected.is_some() {
+            selected
+        } else {
+            let mut matches = self.entries.iter().filter(|entry| entry.name == name);
+            let first = matches.next();
+            if matches.next().is_some() {
+                return Err(invalid());
+            }
+            first
+        };
+        if target.is_some_and(|entry| !entry.writable) {
+            return Err(invalid());
+        }
+        Ok(target)
     }
 }

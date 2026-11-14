@@ -136,11 +136,26 @@ fn tile(ui: &mut egui::Ui, p: &Palette, rect: Rect, button: &ToolButton, display
 }
 
 impl ToolbarUi {
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, layout: &Layout, settings: &ToolbarSettings) {
+    pub(crate) fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        layout: &Layout,
+        settings: &ToolbarSettings,
+        selected_preset: Option<&super::selection::Selection>,
+    ) {
         if let Some(request) = super::native_context::take(ctx) {
             self.open = true;
             self.selected = request.command.filter(|command| settings.location(command, layout).is_some());
         }
+        self.preset_view.refresh(settings, layout, self.islands);
+        let source = self.preset_view.source(selected_preset);
+        if selected_preset.is_none()
+            && let Some(super::selection::Source::Builtin(preset)) = source.as_ref()
+        {
+            self.inferred_preset = Some(*preset);
+        }
+        let dirty = self.preset_view.dirty(selected_preset);
         let screen = ctx.content_rect();
         let w = width(screen);
         let islands = self.islands;
@@ -168,6 +183,15 @@ impl ToolbarUi {
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     widgets::section_header(ui, p, "layout-grid-filled", aurora_i18n::tr!("toolbar-presets"));
+                    ui.horizontal_wrapped(|ui| {
+                        let name = source.as_ref().map_or(aurora_i18n::tr!("toolbar-preset-custom"), |source| {
+                            self.notecards.preset_label(source)
+                        });
+                        ui.label(aurora_i18n::tr!("toolbar-current-preset", name = name));
+                        if dirty {
+                            ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-preset-unsaved")).color(p.violet_light));
+                        }
+                    });
                     ui.add_enabled_ui(!settings.locked, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             for preset in super::presets::Preset::ALL {
@@ -176,7 +200,11 @@ impl ToolbarUi {
                                     p,
                                     preset.icon(),
                                     preset.label(),
-                                    widgets::ActionKind::Flat,
+                                    if source == Some(super::selection::Source::Builtin(preset)) {
+                                        widgets::ActionKind::Primary
+                                    } else {
+                                        widgets::ActionKind::Flat
+                                    },
                                     Vec2::new(190.0, 30.0),
                                 )
                                 .clicked()
@@ -186,41 +214,24 @@ impl ToolbarUi {
                             }
                         });
                     });
-                    self.notecards.presets(ui, p, settings.locked);
+                    self.notecards.presets(ui, p, settings.locked, source.as_ref());
                 });
-            ui.horizontal_wrapped(|ui| {
-                for (mode, icon, key) in [
-                    (
-                        crate::ui::inventory::context_notecards::Mode::Export,
+            if ui
+                .add_enabled_ui(!self.notecards.busy(), |ui| {
+                    widgets::action_button(
+                        ui,
+                        p,
                         "device-floppy-filled",
-                        "toolbar-notecard-save",
-                    ),
-                    (
-                        crate::ui::inventory::context_notecards::Mode::Load,
-                        "folder-open-filled",
-                        "toolbar-notecard-load",
-                    ),
-                ] {
-                    let enabled =
-                        !self.notecards.busy() && (mode != crate::ui::inventory::context_notecards::Mode::Load || !settings.locked);
-                    if ui
-                        .add_enabled_ui(enabled, |ui| {
-                            widgets::action_button(
-                                ui,
-                                p,
-                                icon,
-                                aurora_i18n::text(key),
-                                widgets::ActionKind::Flat,
-                                Vec2::new(250.0, 30.0),
-                            )
-                        })
-                        .inner
-                        .clicked()
-                    {
-                        self.notecards.open(mode);
-                    }
-                }
-            });
+                        aurora_i18n::tr!("common-save"),
+                        widgets::ActionKind::Flat,
+                        Vec2::new(180.0, 30.0),
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                self.notecards.open_save(source.as_ref());
+            }
             done = super::edit_mode::header(ui, p, settings);
             // Structural tools stay outside the searchable command catalogue.
             let command = catalogue::find(super::structure::DIVIDER).expect("built-in divider");

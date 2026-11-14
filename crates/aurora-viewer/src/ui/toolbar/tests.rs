@@ -1284,7 +1284,7 @@ impl Bench {
                     self.islands,
                     [true, true],
                 );
-                self.state.show(ui.ctx(), &p, &layout, &self.settings);
+                self.state.show(ui.ctx(), &p, &layout, &self.settings, None);
                 if self.state.commit(&layout, &mut self.settings) {
                     self.saves += 1;
                 }

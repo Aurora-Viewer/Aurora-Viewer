@@ -759,17 +759,24 @@ fn photographer_controls_render_and_personal_lighting_uses_the_native_handler() 
 }
 
 #[test]
-fn notecard_buttons_queue_save_and_load_and_honor_toolbar_locks() {
+fn editor_save_opens_the_selector_and_replaces_notecard_actions_in_both_styles() {
     for classic in [false, true] {
         for locked in [false, true] {
-            for (key, allowed) in [("toolbar-notecard-save", true), ("toolbar-notecard-load", !locked)] {
-                let mut bench = block_controls_fixture(Bar::Bottom, classic, locked);
-                assert!(!bench.state.notecards.active());
-                let point = menu_point(&bench, aurora_i18n::text(key));
-                bench.pointer(point, Some(true));
-                bench.pointer(point, Some(false));
-                assert_eq!(bench.state.notecards.active(), allowed, "{key}, locked={locked}, classic={classic}");
+            let mut bench = block_controls_fixture(Bar::Bottom, classic, locked);
+            assert!(!bench.state.notecards.active());
+            for key in ["toolbar-notecard-save", "toolbar-notecard-load"] {
+                assert!(
+                    !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+                    "old action removed: {key}"
+                );
             }
+            let point = menu_point(&bench, aurora_i18n::tr!("common-save"));
+            bench.pointer(point, Some(true));
+            bench.pointer(point, Some(false));
+            assert!(
+                bench.state.notecards.active(),
+                "saving remains available for a locked layout, classic={classic}"
+            );
         }
     }
 }
@@ -2248,7 +2255,7 @@ impl Bench {
                     &ctx,
                     Rect::from_min_max(egui::pos2(52.0, 52.0), self.screen.to_pos2() - Vec2::new(52.0, 56.0)),
                 );
-                self.state.show(&ctx, &p, &layout, &self.settings);
+                self.state.show(&ctx, &p, &layout, &self.settings, None);
                 self.state.commit(&layout, &mut self.settings);
             },
         );

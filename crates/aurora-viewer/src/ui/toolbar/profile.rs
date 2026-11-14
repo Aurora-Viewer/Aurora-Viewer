@@ -53,7 +53,7 @@ impl Base {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Profile {
     pub base: Base,
     pub toolbar: ToolbarSettings,
@@ -223,7 +223,7 @@ fn valid(toolbar: &ToolbarSettings) -> bool {
 }
 
 /// Materialize the source skin and bar defaults, retaining the bars' base.
-pub(crate) fn write(settings: &ToolbarSettings, layout: &Layout, islands: bool) -> Result<String, String> {
+pub(crate) fn snapshot(settings: &ToolbarSettings, layout: &Layout, islands: bool) -> Profile {
     let mut toolbar = settings.clone();
     toolbar.compose_top();
     toolbar.compose_chat(layout);
@@ -244,11 +244,19 @@ pub(crate) fn write(settings: &ToolbarSettings, layout: &Layout, islands: bool) 
             sizing: Some(resolved.sizing),
         };
     }
+    Profile {
+        base: Base::from_islands(islands),
+        toolbar,
+    }
+}
+
+pub(crate) fn write(settings: &ToolbarSettings, layout: &Layout, islands: bool) -> Result<String, String> {
+    let profile = snapshot(settings, layout, islands);
     let text = serde_json::to_string_pretty(&Document {
         format: FORMAT.into(),
         version: 2,
-        base: Base::from_islands(islands),
-        toolbar,
+        base: profile.base,
+        toolbar: profile.toolbar,
     })
     .map_err(|_| invalid())?;
     if text.len() > aurora_net::inventory::notecard::MAX_TEXT_BYTES {

@@ -14671,3 +14671,12 @@ toolbar-saved-interfaces = Saved interfaces
 toolbar-saved-interfaces-empty = No saved interfaces yet.
 toolbar-notecard-destination = Folder: { $path }
 toolbar-notecard-folder-error = The interfaces folder could not be loaded or created. Please try again.
+
+toolbar-current-preset = Current preset: { $name }
+toolbar-preset-custom = Custom interface
+toolbar-preset-unsaved = Unsaved changes
+toolbar-preset-save-title = Save interface
+toolbar-preset-save-name = Preset name
+toolbar-preset-save-new = New personal preset
+toolbar-preset-save-replace = Replace this personal preset
+toolbar-preset-save-unavailable = This preset cannot be saved here. Choose another name or an available, editable personal preset.

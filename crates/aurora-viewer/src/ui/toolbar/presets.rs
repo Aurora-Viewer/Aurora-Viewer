@@ -22,7 +22,8 @@ fn bundled(text: &str) -> ToolbarSettings {
         .toolbar
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Preset {
     Light,
     OldSchool,
@@ -146,6 +147,7 @@ impl Preset {
             },
         );
         settings.toolbar = Some(self.layout(skin));
+        settings.toolbar_selection = Some(super::selection::Selection::builtin(self, skin));
         settings.show_bug_report = true;
         settings.chat_thumbnails = crate::settings::ChatThumbnails::TopRight;
         true

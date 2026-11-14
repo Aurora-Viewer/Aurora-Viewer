@@ -1,7 +1,10 @@
 //! Native transfers follow LLPreviewNotecard::loadAsset/saveIfNeeded
 //! (indra/newview/llpreviewnotecard.cpp). Reuse the shared COPY-aware picker
 //! and recheck rights, the asset and the current layout when a download returns.
-use super::{ToolbarSettings, profile};
+use super::{
+    ToolbarSettings, profile,
+    selection::{Selection, Source},
+};
 use crate::{
     theme::Palette,
     ui::{
@@ -22,14 +25,27 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 mod library;
+mod save_picker;
 
 struct Prepared {
     name: String,
     data: Vec<u8>,
+    snapshot: profile::Profile,
+    target: Option<(Uuid, Uuid)>,
+    epoch: u64,
+    owner: Uuid,
     root: Uuid,
     request: Option<Uuid>,
     attempted: bool,
     since: Instant,
+}
+
+struct Saving {
+    request: Uuid,
+    item: Option<Uuid>,
+    snapshot: profile::Profile,
+    epoch: u64,
+    owner: Uuid,
 }
 
 struct Loading {
@@ -46,7 +62,9 @@ pub(crate) struct State {
     filter: String,
     selected: Option<Uuid>,
     picker: Picker,
-    saving: Option<Uuid>,
+    saving: Option<Saving>,
+    completed_selection: Option<Selection>,
+    selection_epoch: u64,
     last_saved: Option<Uuid>,
     loading: Option<Loading>,
     message: Option<String>,
@@ -80,6 +98,38 @@ impl State {
         log::debug!("toolbar notecard dialog opened: {mode:?}");
     }
 
+    pub(crate) fn selection_changed(&mut self) {
+        self.selection_epoch = self.selection_epoch.wrapping_add(1);
+        self.loading = None;
+        self.completed_selection = None;
+    }
+
+    pub(crate) fn take_selection(&mut self) -> Option<Selection> {
+        self.completed_selection.take()
+    }
+
+    pub(crate) fn open_save(&mut self, source: Option<&Source>) {
+        if self.busy() {
+            return;
+        }
+        self.open(Mode::Export);
+        if let Some(source) = source {
+            self.name = source.label().chars().take(63).collect();
+            self.selected = source.personal(self.catalog.owner);
+            if let Some(entry) = self.catalog.entries.iter().find(|entry| Some(entry.id) == self.selected) {
+                self.name.clone_from(&entry.name);
+            }
+        }
+    }
+
+    pub(super) fn preset_label<'a>(&'a self, source: &'a Source) -> &'a str {
+        self.catalog
+            .entries
+            .iter()
+            .find(|entry| source.personal(self.catalog.owner) == Some(entry.id))
+            .map_or(source.label(), |entry| &entry.name)
+    }
+
     fn save(
         &mut self,
         inv: &mut Inventory,
@@ -90,7 +140,18 @@ impl State {
         if self.busy() || self.name.trim().is_empty() {
             return Err(aurora_i18n::tr!("toolbar-notecard-unavailable").into());
         }
+        library::retry(inv);
+        self.catalog.sync(inv);
+        let target = if self.catalog.loading && self.selected.is_none() {
+            if self.name.chars().count() > 63 || self.name.chars().any(char::is_control) {
+                return Err(aurora_i18n::tr!("toolbar-preset-save-unavailable").into());
+            }
+            None
+        } else {
+            self.catalog.target(&self.name, self.selected)?.map(|entry| (entry.id, entry.asset))
+        };
         let text = profile::write(toolbar, layout, islands)?;
+        let snapshot = profile::read(&text)?;
         let data = Notecard::default().encode(&text)?;
         if inv.root.is_nil() {
             return Err(aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into());
@@ -101,6 +162,10 @@ impl State {
         self.prepared = Some(Prepared {
             name: self.name.trim().chars().take(63).collect(),
             data,
+            snapshot,
+            target,
+            epoch: self.selection_epoch,
+            owner: inv.owner,
             root: inv.root,
             request: None,
             attempted: false,
@@ -141,15 +206,45 @@ impl State {
                 }))
             }
             library::Path::Ready(parent) => {
+                let available = if let Some((item, asset)) = pending.target {
+                    library::replaceable(inv, item, parent, asset)
+                } else {
+                    !inv.folders
+                        .get(&parent)
+                        .into_iter()
+                        .flat_map(|folder| &folder.items)
+                        .filter_map(|id| inv.items.get(id))
+                        .any(|item| item.parent == parent && item.asset_type == 7 && item.name == pending.name)
+                };
+                if !available {
+                    self.prepared = None;
+                    return Err(aurora_i18n::tr!("toolbar-preset-save-unavailable").into());
+                }
                 let Some(pending) = self.prepared.take() else { return Ok(None) };
                 let request = Uuid::new_v4();
-                self.saving = Some(request);
-                Ok(Some(NetCommand::CreateNotecardItem {
+                self.saving = Some(Saving {
                     request,
-                    parent,
-                    name: pending.name,
-                    data: pending.data,
-                    permissions: None,
+                    item: pending.target.map(|(id, _)| id),
+                    snapshot: pending.snapshot,
+                    epoch: pending.epoch,
+                    owner: pending.owner,
+                });
+                Ok(Some(if let Some((item, _)) = pending.target {
+                    NetCommand::SaveInventoryContent {
+                        request,
+                        item,
+                        asset_type: 7,
+                        lua: false,
+                        data: pending.data,
+                    }
+                } else {
+                    NetCommand::CreateNotecardItem {
+                        request,
+                        parent,
+                        name: pending.name,
+                        data: pending.data,
+                        permissions: None,
+                    }
                 }))
             }
         }
@@ -173,7 +268,7 @@ impl State {
         self.catalog.sync(inv);
     }
 
-    pub(super) fn presets(&mut self, ui: &mut egui::Ui, p: &Palette, locked: bool) {
+    pub(super) fn presets(&mut self, ui: &mut egui::Ui, p: &Palette, locked: bool, active: Option<&Source>) {
         widgets::section_header(ui, p, "folder-filled", aurora_i18n::tr!("toolbar-saved-interfaces"));
         if self.catalog.loading {
             ui.label(aurora_i18n::tr!("common-loading"));
@@ -195,7 +290,11 @@ impl State {
                                             p,
                                             "file-text-filled",
                                             &entry.name,
-                                            widgets::ActionKind::Flat,
+                                            if active.and_then(|source| source.personal(self.catalog.owner)) == Some(entry.id) {
+                                                widgets::ActionKind::Primary
+                                            } else {
+                                                widgets::ActionKind::Flat
+                                            },
                                             egui::vec2(190.0, 30.0),
                                         )
                                     })
@@ -234,18 +333,29 @@ impl State {
     }
 
     pub(crate) fn saved(&mut self, request: Uuid, result: &Result<InvItem, String>) -> bool {
-        if self.saving != Some(request) {
+        if !self.saving.as_ref().is_some_and(|saving| saving.request == request) {
             return false;
         }
-        self.saving = None;
-        self.last_saved = result.as_ref().ok().map(|item| item.id);
+        let Some(saving) = self.saving.take() else { return false };
         self.dismissed = false;
-        self.message = Some(
-            result
-                .as_ref()
-                .map(|_| aurora_i18n::tr!("toolbar-notecard-saved").into())
-                .unwrap_or_else(Clone::clone),
-        );
+        match result {
+            Ok(item) if item.asset_type == 7 && saving.item.is_none_or(|expected| item.id == expected) => {
+                self.last_saved = Some(item.id);
+                if saving.epoch == self.selection_epoch {
+                    self.completed_selection = Some(Selection {
+                        source: Source::Personal {
+                            item: item.id,
+                            name: item.name.clone(),
+                            owner: saving.owner,
+                        },
+                        baseline: saving.snapshot,
+                    });
+                }
+                self.message = None;
+            }
+            Ok(_) => self.message = Some(aurora_i18n::tr!("toolbar-preset-save-unavailable").into()),
+            Err(reason) => self.message = Some(reason.clone()),
+        }
         true
     }
 
@@ -326,6 +436,17 @@ impl State {
         };
         match decoded {
             Ok(profile) => {
+                self.selection_changed();
+                if let Some(item) = inv.items.get(&item) {
+                    self.completed_selection = Some(Selection {
+                        source: Source::Personal {
+                            item: item.id,
+                            name: item.name.clone(),
+                            owner: inv.owner,
+                        },
+                        baseline: profile.clone(),
+                    });
+                }
                 self.message = None;
                 Some(profile)
             }
@@ -345,6 +466,7 @@ impl State {
         layout: &Layout,
         islands: bool,
     ) -> Option<NetCommand> {
+        self.catalog.sync(inv);
         let mut command = match self.advance(inv) {
             Ok(command) => command,
             Err(reason) => {
@@ -374,32 +496,7 @@ impl State {
                 self.mode = None;
             }
         } else if self.mode == Some(Mode::Export) {
-            let mut close = false;
-            let mut save = false;
-            let modal = widgets::Modal::new(egui::Id::unique("toolbar_notecard_save")).show(ctx, |ui| {
-                ui.set_width(400.0);
-                ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-notecard-save")).color(p.violet_light));
-                ui.label(aurora_i18n::tr!("toolbar-notecard-help"));
-                ui.label(aurora_i18n::tr!("toolbar-notecard-destination", path = library::PATH));
-                ui.label(aurora_i18n::tr!("common-name-2"));
-                let name = ui.add(
-                    egui::TextEdit::singleline(&mut self.name)
-                        .char_limit(63)
-                        .desired_width(ui.available_width()),
-                );
-                #[cfg(test)]
-                ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_note_name"), name.rect));
-                let _ = name;
-                ui.horizontal(|ui| {
-                    close = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
-                    let button = widgets::default_button(
-                        ui.add_enabled(!self.name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save"))),
-                    );
-                    #[cfg(test)]
-                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_note_save"), button.rect));
-                    save = button.clicked();
-                });
-            });
+            let (mut close, save) = save_picker::show(ctx, p, &self.catalog, &mut self.name, &mut self.selected);
             if save {
                 match self.save(inv, toolbar, layout, islands) {
                     Ok(value) => command = value,
@@ -407,9 +504,7 @@ impl State {
                 }
                 close = true;
             }
-            let dismiss = modal.should_close();
-            if close || dismiss {
-                log::debug!("toolbar notecard save dialog closed: action={close}, backdrop_or_escape={dismiss}");
+            if close {
                 self.mode = None;
             }
         }
@@ -660,7 +755,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        state.presets(ui, &p, locked);
+                        state.presets(ui, &p, locked, None);
                         command = state.show(ui.ctx(), &p, &mut inv, &toolbar, &Layout::default(), true);
                     },
                 );
@@ -817,5 +912,155 @@ mod tests {
         assert!(
             matches!(ui_frame(&ctx, &mut state, &mut inv, &toolbar, click_events(load, false)), Some(NetCommand::PreviewInventoryItem(selected)) if selected.id == item.id)
         );
+    }
+    fn personal_card(inv: &mut Inventory, mut item: InvItem) -> InvItem {
+        let library::Path::Ready(parent) = library::resolve(inv).expect("ready path") else {
+            panic!("ready path")
+        };
+        item.parent = parent;
+        item.name = "My tools".into();
+        inv.add_items(vec![item.clone()]);
+        item
+    }
+
+    #[test]
+    fn toolbar_personal_save_selector_replaces_the_selected_item_without_a_duplicate() {
+        let (mut inv, item) = inventory();
+        let item = personal_card(&mut inv, item);
+        let toolbar = Preset::OldSchool.layout(&Layout::default());
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut state = State::default();
+        state.open_save(None);
+        for _ in 0..4 {
+            ui_frame(&ctx, &mut state, &mut inv, &toolbar, Vec::new());
+        }
+        let row = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("toolbar_save_preset", item.id))))
+            .expect("personal row")
+            .center();
+        for pressed in [true, false] {
+            ui_frame(&ctx, &mut state, &mut inv, &toolbar, click_events(row, pressed));
+        }
+        assert_eq!(state.selected, Some(item.id));
+        assert_eq!(state.name, item.name);
+        let save = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("toolbar_note_save")))
+            .expect("save button")
+            .center();
+        ui_frame(&ctx, &mut state, &mut inv, &toolbar, click_events(save, true));
+        let command = ui_frame(&ctx, &mut state, &mut inv, &toolbar, click_events(save, false)).expect("save command");
+        let NetCommand::SaveInventoryContent {
+            request,
+            item: target,
+            asset_type: 7,
+            data,
+            ..
+        } = command
+        else {
+            panic!("update existing card")
+        };
+        assert_eq!(target, item.id);
+        let baseline = profile::read(&Notecard::decode(&data).expect("notecard").text).expect("profile");
+        assert!(state.take_selection().is_none(), "a request is not a confirmed save");
+        assert!(!state.saved(Uuid::new_v4(), &Ok(item.clone())));
+        assert!(state.saved(request, &Ok(item.clone())));
+        let selected = state.take_selection().expect("confirmed selection");
+        assert_eq!(selected.source.personal(inv.owner), Some(item.id));
+        assert_eq!(selected.baseline, baseline);
+        assert!(state.message.is_none());
+    }
+
+    #[test]
+    fn toolbar_personal_save_failure_wrong_item_and_preset_switch_do_not_mark_it_saved() {
+        for outcome in 0..3 {
+            let (mut inv, item) = inventory();
+            let item = personal_card(&mut inv, item);
+            let mut state = State::default();
+            state.open_save(None);
+            state.name = item.name.clone();
+            let Some(NetCommand::SaveInventoryContent { request, .. }) = state
+                .save(&mut inv, &ToolbarSettings::default(), &Layout::default(), true)
+                .expect("save")
+            else {
+                panic!("update")
+            };
+            let mut result = Ok(item.clone());
+            if outcome == 0 {
+                result = Err("upload failed".into());
+            }
+            if outcome == 1 {
+                result.as_mut().expect("item").id = Uuid::new_v4();
+            }
+            if outcome == 2 {
+                state.selection_changed();
+            }
+            assert!(state.saved(request, &result));
+            assert!(state.take_selection().is_none());
+        }
+    }
+
+    #[test]
+    fn toolbar_personal_save_rechecks_rights_and_asset_before_upload() {
+        let (mut inv, item) = inventory();
+        let item = personal_card(&mut inv, item);
+        let mut state = State::default();
+        state.catalog.sync(&mut inv);
+        state.name = item.name.clone();
+        state.selected = Some(item.id);
+        let library::Path::Ready(folder) = library::resolve(&mut inv).expect("path") else {
+            panic!("folder")
+        };
+        for missing in [actions::COPY, actions::MODIFY] {
+            inv.items.get_mut(&item.id).expect("item").owner_mask = item.owner_mask & !missing;
+            assert!(!library::replaceable(&inv, item.id, folder, item.asset_id));
+            assert!(state.save(&mut inv, &ToolbarSettings::default(), &Layout::default(), true).is_err());
+            assert!(!state.busy());
+        }
+        inv.items.insert(item.id, item.clone());
+        assert!(!library::replaceable(&inv, item.id, folder, Uuid::new_v4()));
+        assert!(library::replaceable(&inv, item.id, folder, item.asset_id));
+        assert!(state.catalog.target("New tools", None).expect("new name").is_none());
+        assert_eq!(
+            state.catalog.target(&item.name, None).expect("same name").expect("target").id,
+            item.id
+        );
+    }
+    #[test]
+    fn toolbar_preset_switch_cancels_an_older_download_even_for_identical_layouts() {
+        let (inv, item) = inventory();
+        let toolbar = Preset::OldSchool.layout(&Layout::default());
+        let data = Notecard::default()
+            .encode(&profile::write(&toolbar, &Layout::default(), true).expect("profile"))
+            .expect("card");
+        let mut state = State::default();
+        assert!(state.load(&inv, &toolbar, true, item.id).is_some());
+        state.selection_changed();
+        assert!(!state.loading(item.id));
+        assert!(state.loaded(&inv, &toolbar, true, item.id, item.asset_id, &Ok(data)).is_none());
+        assert!(state.take_selection().is_none());
+    }
+
+    #[test]
+    fn toolbar_duplicate_personal_names_require_an_explicit_target() {
+        let (mut inv, item) = inventory();
+        let item = personal_card(&mut inv, item);
+        let mut duplicate = item.clone();
+        duplicate.id = Uuid::new_v4();
+        inv.add_items(vec![duplicate.clone()]);
+        let mut state = State::default();
+        state.sync_library(&mut inv);
+        assert!(state.catalog.target(&item.name, None).is_err());
+        for id in [item.id, duplicate.id] {
+            assert_eq!(
+                state
+                    .catalog
+                    .target(&item.name, Some(id))
+                    .expect("explicit target")
+                    .expect("existing")
+                    .id,
+                id
+            );
+        }
     }
 }

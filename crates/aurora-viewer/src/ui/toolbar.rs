@@ -23,6 +23,7 @@ pub(crate) mod native_context;
 pub(crate) mod notecards;
 pub(crate) mod presets;
 pub(crate) mod profile;
+pub(crate) mod selection;
 pub(crate) mod structure;
 mod surface_drop;
 
@@ -577,7 +578,9 @@ impl Shown {
 #[derive(Default)]
 pub struct ToolbarUi {
     pub open: bool,
+    preset_view: selection::View,
     pub preset_request: Option<presets::Preset>,
+    pub(crate) inferred_preset: Option<presets::Preset>,
     pub(crate) notecards: notecards::State,
     pub ao_quick: super::ao::quick::Quick,
     pub voice_options: bool,
@@ -644,6 +647,7 @@ impl ToolbarUi {
         self.pending = None;
         self.confirm = None;
         self.preset_request = None;
+        self.inferred_preset = None;
         self.selected = None;
         self.drawer_editor = None;
         self.drawer_action = None;

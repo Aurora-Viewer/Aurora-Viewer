@@ -5734,6 +5734,15 @@ non-interface settings, honor layout locks and survive restart. Clicking a
 selected toolbar control must not add an action strip or move the search/catalogue.
 The redundant Add block spacing entry is absent; split before/after still works.
 `notecard-save|notecard-load|notecard-roundtrip|notecard-roundtrip-legacy|notecard-invalid|notecard-readable|notecard-library|notecard-library-load` use the actual interface notecard controls and synthetic inventory only. The roundtrip creates and acknowledges a new native notecard, switches to the opposite Aurora/Legacy bar base and changes the toolbar, then loads that saved item through the normal preview callback. `notecard-roundtrip` restores Aurora bars from Legacy; `notecard-roundtrip-legacy` restores Legacy bars from Aurora. Neither displays a load-success message. `notecard-readable` opens the actual newly saved card in the native notecard editor: technical JSON must have indentation and line breaks, with no added prose or comments. `notecard-library` creates the missing dedicated folder path and saves a card whose inventory name appears below the built-in presets. `notecard-library-load` switches layouts after saving so a real click on that saved entry must restore the original arrangement. Confirm no duplicate folders, refresh after rename/move/removal, disabled no-copy entries and locked layouts. The version-2 JSON requires `base: aurora` or `base: legacy`; old cards are unsupported. Invalid data must retain the current layout. On the grid, the human saves a named layout, changes buttons/drawers/icons/separator settings and switches the bar base, then selects its notecard and confirms that the saved base and all bar presentation return while other preferences remain unchanged. Test no-copy cards, locks, errors and changes during a pending download. Documents are versioned and limited to the native 65,536-byte text limit; loading never executes their commands.
+`notecard-preset-clean|notecard-preset-dirty|notecard-preset-personal|notecard-preset-selector`
+exercise preset identity, unsaved changes, a confirmed personal preset and its Save
+selector with synthetic inventory. The editor shows the active name, highlights its
+preset and exposes Save; no Load from a notecard button remains. Save accepts a new
+name or an existing personal preset and updates that item without a duplicate.
+On the grid, the human verifies creation, replacement, restart, reverting edits,
+no-copy/no-modify and Library refusal, upload errors, edits during saving and switching
+to a different preset before an upload completes. A failed or unrelated reply must
+never clear unsaved changes.
 `contexts-microphone|contexts-edit-microphone` verify that display modes and voice
 options remain, while Change icon and the appearance editor's icon grid are absent.
 `chat-top|chat-bottom|chat-left|chat-right` moves the nearby-chat field to that edge;

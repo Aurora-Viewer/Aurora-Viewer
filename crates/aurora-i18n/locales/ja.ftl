@@ -14589,3 +14589,12 @@ toolbar-saved-interfaces = 保存したインターフェース
 toolbar-saved-interfaces-empty = 保存したインターフェースはありません。
 toolbar-notecard-destination = フォルダー：{ $path }
 toolbar-notecard-folder-error = インターフェースのフォルダーを読み込むか作成できませんでした。もう一度お試しください。
+
+toolbar-current-preset = 現在のプリセット: { $name }
+toolbar-preset-custom = カスタムインターフェース
+toolbar-preset-unsaved = 未保存の変更
+toolbar-preset-save-title = インターフェースを保存
+toolbar-preset-save-name = プリセット名
+toolbar-preset-save-new = 新しい個人プリセット
+toolbar-preset-save-replace = この個人プリセットを上書き
+toolbar-preset-save-unavailable = ここには保存できません。別の名前か、使用可能で編集可能な個人プリセットを選択してください。

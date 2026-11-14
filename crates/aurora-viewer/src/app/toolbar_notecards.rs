@@ -49,6 +49,15 @@ impl App {
         );
         if let Some(profile) = profile {
             ui::toolbar::profile::apply(profile, &mut self.settings);
+            if let Some(mut selection) = self.toolbar_ui.notecards.take_selection() {
+                let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar);
+                selection.baseline = ui::toolbar::profile::snapshot(
+                    self.settings.toolbar.as_ref().unwrap_or(&default),
+                    layout,
+                    !self.settings.classic_bars,
+                );
+                self.settings.toolbar_selection = Some(selection);
+            }
             self.toolbar_ui.profile_applied(&self.egui_ctx);
             self.settings.save();
         }
@@ -77,12 +86,12 @@ impl App {
         if self.frame_count == 300 {
             crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
             self.world.inventory.owner = self.world.agent_id;
-            self.settings.classic_bars = mode == "notecard-roundtrip-legacy";
-            self.settings.toolbar = Some(if self.settings.classic_bars {
-                Preset::Legacy.layout(&self.skin.layout)
+            let preset = if mode == "notecard-roundtrip-legacy" {
+                Preset::Legacy
             } else {
-                Preset::OldSchool.layout(&self.skin.layout)
-            });
+                Preset::OldSchool
+            };
+            preset.apply(&mut self.settings, &self.skin.layout);
             self.toolbar_ui.open = true;
             let Ok(text) = ui::toolbar::profile::write(&Preset::Photographer.layout(&self.skin.layout), &self.skin.layout, true) else {
                 return;
@@ -118,7 +127,7 @@ impl App {
             }
         }
         // Let the editor finish opening before its resource chooser takes focus.
-        if self.frame_count == 310 {
+        if self.frame_count == 310 && !mode.starts_with("notecard-preset-") {
             self.toolbar_ui.notecards.open(
                 if matches!(mode.as_str(), "notecard-save" | "notecard-readable")
                     || mode.starts_with("notecard-roundtrip")
@@ -129,6 +138,35 @@ impl App {
                     ui::inventory::context_notecards::Mode::Load
                 },
             );
+        }
+        if self.frame_count == 340 && mode.starts_with("notecard-preset-") {
+            if mode == "notecard-preset-dirty" {
+                if let Some(toolbar) = &mut self.settings.toolbar {
+                    toolbar.address_visible = Some(false);
+                }
+            } else if matches!(mode.as_str(), "notecard-preset-selector" | "notecard-preset-personal") {
+                self.toolbar_ui
+                    .notecards
+                    .open_save(self.settings.toolbar_selection.as_ref().map(|selection| &selection.source));
+                if let Some(toolbar) = self.settings.toolbar.as_ref()
+                    && let Some(command) = self.toolbar_ui.notecards.demo_save(
+                        &mut self.world.inventory,
+                        toolbar,
+                        &self.skin.layout,
+                        !self.settings.classic_bars,
+                    )
+                {
+                    self.send(command);
+                }
+            }
+        }
+        if self.frame_count == 360 && mode == "notecard-preset-selector" && self.toolbar_ui.notecards.demo_saved_item().is_some() {
+            if let Some(toolbar) = &mut self.settings.toolbar {
+                toolbar.address_visible = Some(false);
+            }
+            self.toolbar_ui
+                .notecards
+                .open_save(self.settings.toolbar_selection.as_ref().map(|selection| &selection.source));
         }
         if self.frame_count == 340
             && (mode.starts_with("notecard-roundtrip") || mode == "notecard-readable" || mode.starts_with("notecard-library"))

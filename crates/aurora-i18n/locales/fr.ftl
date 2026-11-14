@@ -14672,3 +14672,12 @@ toolbar-saved-interfaces = Interfaces enregistrées
 toolbar-saved-interfaces-empty = Aucune interface enregistrée pour le moment.
 toolbar-notecard-destination = Dossier : { $path }
 toolbar-notecard-folder-error = Le dossier des interfaces n’a pas pu être chargé ou créé. Réessayez.
+
+toolbar-current-preset = Preset actuel : { $name }
+toolbar-preset-custom = Interface personnalisée
+toolbar-preset-unsaved = Modifications non enregistrées
+toolbar-preset-save-title = Enregistrer l’interface
+toolbar-preset-save-name = Nom du preset
+toolbar-preset-save-new = Nouveau preset personnel
+toolbar-preset-save-replace = Remplacer ce preset personnel
+toolbar-preset-save-unavailable = Ce preset ne peut pas être enregistré ici. Choisissez un autre nom ou un preset personnel disponible et modifiable.

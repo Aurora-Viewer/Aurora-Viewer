@@ -3598,6 +3598,10 @@ impl App {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
                 }
+                if let Some(selection) = self.toolbar_ui.notecards.take_selection() {
+                    self.settings.toolbar_selection = Some(selection);
+                    self.settings.save();
+                }
                 return;
             }
             if self.context_customization.notecards.saved(request, &result) {
@@ -17891,7 +17895,8 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
-                self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
+                self.toolbar_ui
+                    .show(ui.ctx(), &p, bar_layout, toolbar_settings, self.settings.toolbar_selection.as_ref());
                 let conversation_slot =
                     |settings: &ui::toolbar::ToolbarSettings| settings.command_placement("bar_conversations", bar_layout);
                 let previous_conversations = conversation_slot(toolbar_settings);
@@ -19922,11 +19927,19 @@ impl App {
         if let Some(preset) = self.toolbar_ui.preset_request.take() {
             let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar).clone();
             if preset.apply(&mut self.settings, &layout) {
+                self.toolbar_ui.notecards.selection_changed();
                 self.toolbar_ui.selected = None;
                 egui::Popup::close_all(&ctx);
                 self.settings.save();
                 a.settings_changed = true;
             }
+        }
+        if let Some(preset) = self.toolbar_ui.inferred_preset.take()
+            && self.settings.toolbar_selection.is_none()
+        {
+            let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar);
+            self.settings.toolbar_selection = Some(ui::toolbar::selection::Selection::builtin(preset, layout));
+            self.settings.save();
         }
         self.ui_parts.lap(Part::UiRest, t);
         a
