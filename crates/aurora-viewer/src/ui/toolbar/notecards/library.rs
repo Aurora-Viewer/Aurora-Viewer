@@ -109,6 +109,7 @@ pub(super) struct Entry {
     pub name: String,
     pub available: bool,
     pub writable: bool,
+    pub removable: bool,
     pub asset: Uuid,
 }
 
@@ -150,6 +151,7 @@ impl Catalog {
                 name: item.name.clone(),
                 available: super::context_notecards::available(inv, item.id).is_some(),
                 writable: replaceable(inv, item.id, item.parent, item.asset_id),
+                removable: actions::removable(inv, item.id, &std::collections::HashSet::new()),
                 asset: item.asset_id,
             })
             .collect();

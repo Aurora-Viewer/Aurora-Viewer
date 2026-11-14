@@ -14673,11 +14673,15 @@ toolbar-saved-interfaces-empty = Aucune interface enregistrée pour le moment.
 toolbar-notecard-destination = Dossier : { $path }
 toolbar-notecard-folder-error = Le dossier des interfaces n’a pas pu être chargé ou créé. Réessayez.
 
-toolbar-current-preset = Preset actuel : { $name }
+toolbar-current-preset = Interface sélectionnée : { $name }
 toolbar-preset-custom = Interface personnalisée
 toolbar-preset-unsaved = Modifications non enregistrées
 toolbar-preset-save-title = Enregistrer l’interface
-toolbar-preset-save-name = Nom du preset
-toolbar-preset-save-new = Nouveau preset personnel
-toolbar-preset-save-replace = Remplacer ce preset personnel
-toolbar-preset-save-unavailable = Ce preset ne peut pas être enregistré ici. Choisissez un autre nom ou un preset personnel disponible et modifiable.
+toolbar-preset-save-name = Nom de l’interface
+toolbar-preset-save-new = Nouvelle interface personnelle
+toolbar-preset-save-replace = Remplacer cette interface personnelle
+toolbar-preset-save-unavailable = Cette interface ne peut pas être enregistrée ici. Choisissez un autre nom ou une interface personnelle disponible et modifiable.
+
+toolbar-interface-delete-unavailable = Cette interface personnelle ne peut pas être supprimée.
+
+toolbar-interface-delete-confirm = Placer l’interface personnelle « { $name } » dans la corbeille ?

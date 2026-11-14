@@ -52,24 +52,35 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, catalog: &Catalog, name: &m
                 });
         }
         let target = catalog.target(name, *selected);
-        match &target {
-            Ok(Some(_)) => {
-                ui.label(aurora_i18n::tr!("toolbar-preset-save-replace"));
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            match &target {
+                Ok(Some(_)) => {
+                    ui.label(aurora_i18n::tr!("toolbar-preset-save-replace"));
+                }
+                Ok(None) => {
+                    ui.label(aurora_i18n::tr!("toolbar-preset-save-new"));
+                }
+                Err(reason) if !name.trim().is_empty() && !catalog.loading => {
+                    ui.label(egui::RichText::new(reason).color(p.muted));
+                }
+                _ => {}
             }
-            Ok(None) => {
-                ui.label(aurora_i18n::tr!("toolbar-preset-save-new"));
-            }
-            Err(reason) if !name.trim().is_empty() && !catalog.loading => {
-                ui.label(egui::RichText::new(reason).color(p.muted));
-            }
-            _ => {}
-        }
-        ui.horizontal(|ui| {
-            close = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
-            let button = widgets::default_button(ui.add_enabled(target.is_ok(), egui::Button::new(aurora_i18n::tr!("common-save"))));
-            #[cfg(test)]
-            ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_note_save"), button.rect));
-            save = button.clicked();
+            let row = egui::vec2(240.0 + ui.spacing().item_spacing.x, 30.0);
+            ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                close = ui
+                    .add_sized(egui::vec2(120.0, 30.0), egui::Button::new(aurora_i18n::tr!("common-cancel")))
+                    .clicked();
+                let button = widgets::default_button(
+                    ui.add_enabled_ui(target.is_ok(), |ui| {
+                        ui.add_sized(egui::vec2(120.0, 30.0), egui::Button::new(aurora_i18n::tr!("common-save")))
+                    })
+                    .inner,
+                );
+                #[cfg(test)]
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_note_save"), button.rect));
+                save = button.clicked();
+            });
         });
     });
     (close || modal.should_close(), save)

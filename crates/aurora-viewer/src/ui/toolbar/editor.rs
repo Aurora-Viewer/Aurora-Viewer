@@ -175,6 +175,54 @@ impl ToolbarUi {
         window.show(ctx, p, &mut open, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.horizontal_wrapped(|ui| {
+                let name = source.as_ref().map_or(aurora_i18n::tr!("toolbar-preset-custom"), |source| {
+                    self.notecards.preset_label(source)
+                });
+                ui.label(aurora_i18n::tr!("toolbar-current-preset", name = name));
+                if dirty {
+                    ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-preset-unsaved")).color(p.violet_light));
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled_ui(!self.notecards.busy(), |ui| {
+                        widgets::action_button(
+                            ui,
+                            p,
+                            "device-floppy-filled",
+                            aurora_i18n::tr!("common-save"),
+                            widgets::ActionKind::Flat,
+                            Vec2::new(150.0, 30.0),
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    self.notecards.open_save(source.as_ref());
+                }
+                if let Some(source @ super::selection::Source::Personal { .. }) = source.as_ref() {
+                    let enabled = !self.notecards.busy() && self.notecards.can_remove(source);
+                    let response = ui
+                        .add_enabled_ui(enabled, |ui| {
+                            widgets::action_button(
+                                ui,
+                                p,
+                                "trash-filled",
+                                aurora_i18n::tr!("common-delete"),
+                                widgets::ActionKind::SoftDanger,
+                                Vec2::new(130.0, 30.0),
+                            )
+                        })
+                        .inner;
+                    #[cfg(test)]
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("toolbar_interface_delete"), response.rect));
+                    if response.clicked() {
+                        self.notecards.remove(source);
+                    }
+                }
+            });
+            ui.add_space(4.0);
             // Keep the command controls and one catalogue row reachable on short windows.
             let preset_height = (ui.available_height() - 290.0).max(48.0);
             egui::ScrollArea::vertical()
@@ -183,15 +231,6 @@ impl ToolbarUi {
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     widgets::section_header(ui, p, "layout-grid-filled", aurora_i18n::tr!("toolbar-presets"));
-                    ui.horizontal_wrapped(|ui| {
-                        let name = source.as_ref().map_or(aurora_i18n::tr!("toolbar-preset-custom"), |source| {
-                            self.notecards.preset_label(source)
-                        });
-                        ui.label(aurora_i18n::tr!("toolbar-current-preset", name = name));
-                        if dirty {
-                            ui.label(egui::RichText::new(aurora_i18n::tr!("toolbar-preset-unsaved")).color(p.violet_light));
-                        }
-                    });
                     ui.add_enabled_ui(!settings.locked, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             for preset in super::presets::Preset::ALL {
@@ -216,22 +255,6 @@ impl ToolbarUi {
                     });
                     self.notecards.presets(ui, p, settings.locked, source.as_ref());
                 });
-            if ui
-                .add_enabled_ui(!self.notecards.busy(), |ui| {
-                    widgets::action_button(
-                        ui,
-                        p,
-                        "device-floppy-filled",
-                        aurora_i18n::tr!("common-save"),
-                        widgets::ActionKind::Flat,
-                        Vec2::new(180.0, 30.0),
-                    )
-                })
-                .inner
-                .clicked()
-            {
-                self.notecards.open_save(source.as_ref());
-            }
             done = super::edit_mode::header(ui, p, settings);
             // Structural tools stay outside the searchable command catalogue.
             let command = catalogue::find(super::structure::DIVIDER).expect("built-in divider");

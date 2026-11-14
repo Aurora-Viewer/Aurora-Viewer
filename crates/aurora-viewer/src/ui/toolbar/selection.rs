@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Source {
+    Custom,
     Builtin(Preset),
     Personal { item: Uuid, name: String, owner: Uuid },
 }
@@ -14,6 +15,7 @@ pub(crate) enum Source {
 impl Source {
     pub fn label(&self) -> &str {
         match self {
+            Self::Custom => aurora_i18n::tr!("toolbar-preset-custom"),
             Self::Builtin(preset) => preset.label(),
             Self::Personal { name, .. } => name,
         }
@@ -34,6 +36,14 @@ pub(crate) struct Selection {
 }
 
 impl Selection {
+    pub fn removed(&mut self, owner: Uuid, item: Uuid) -> bool {
+        if self.source.personal(owner) != Some(item) {
+            return false;
+        }
+        self.source = Source::Custom;
+        true
+    }
+
     pub fn builtin(preset: Preset, layout: &Layout) -> Self {
         Self {
             source: Source::Builtin(preset),
@@ -76,7 +86,7 @@ impl View {
 
     pub fn dirty(&self, selected: Option<&Selection>) -> bool {
         match selected {
-            Some(selection) => self.snapshot.as_ref() != Some(&selection.baseline),
+            Some(selection) => selection.source == Source::Custom || self.snapshot.as_ref() != Some(&selection.baseline),
             None => self.inferred.is_none(),
         }
     }
@@ -166,5 +176,29 @@ mod tests {
             Some(selected.source.clone()),
             "same layout does not replace a personal identity with the built-in"
         );
+    }
+    #[test]
+    fn toolbar_deleted_personal_identity_becomes_unsaved_without_changing_its_layout() {
+        let layout = Layout::default();
+        let mut selection = Selection::builtin(Preset::Build, &layout);
+        let owner = Uuid::new_v4();
+        let item = Uuid::new_v4();
+        selection.source = Source::Personal {
+            owner,
+            item,
+            name: "Tools".into(),
+        };
+        let baseline = selection.baseline.clone();
+        assert!(!selection.removed(owner, Uuid::new_v4()));
+        assert!(selection.removed(owner, item));
+        assert_eq!(selection.source, Source::Custom);
+        assert_eq!(selection.baseline, baseline);
+        let mut view = View::default();
+        view.refresh(&baseline.toolbar, &layout, true);
+        assert!(
+            view.dirty(Some(&selection)),
+            "a deleted personal interface is no longer saved, even if it matches a built-in"
+        );
+        assert_eq!(view.source(Some(&selection)), Some(Source::Custom));
     }
 }

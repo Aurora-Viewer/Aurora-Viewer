@@ -16,6 +16,13 @@ impl App {
         if self.toolbar_ui.open || self.toolbar_ui.notecards.active() {
             self.toolbar_ui.notecards.sync_library(&mut self.world.inventory);
         }
+        if let Some(command) = self.toolbar_ui.notecards.removal_command(
+            &mut self.world.inventory,
+            &self.settings.inventory.protected,
+            self.settings.inventory.confirm_delete,
+        ) {
+            self.send(command);
+        }
         if !self.toolbar_ui.notecards.active() {
             return;
         }
@@ -144,7 +151,10 @@ impl App {
                 if let Some(toolbar) = &mut self.settings.toolbar {
                     toolbar.address_visible = Some(false);
                 }
-            } else if matches!(mode.as_str(), "notecard-preset-selector" | "notecard-preset-personal") {
+            } else if matches!(
+                mode.as_str(),
+                "notecard-preset-selector" | "notecard-preset-personal" | "notecard-preset-delete"
+            ) {
                 self.toolbar_ui
                     .notecards
                     .open_save(self.settings.toolbar_selection.as_ref().map(|selection| &selection.source));
@@ -167,6 +177,12 @@ impl App {
             self.toolbar_ui
                 .notecards
                 .open_save(self.settings.toolbar_selection.as_ref().map(|selection| &selection.source));
+        }
+        if self.frame_count == 360 && mode == "notecard-preset-delete" {
+            self.toolbar_ui.notecards.sync_library(&mut self.world.inventory);
+            if let Some(selection) = self.settings.toolbar_selection.as_ref() {
+                self.toolbar_ui.notecards.demo_remove(&selection.source);
+            }
         }
         if self.frame_count == 340
             && (mode.starts_with("notecard-roundtrip") || mode == "notecard-readable" || mode.starts_with("notecard-library"))

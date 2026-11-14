@@ -3670,6 +3670,20 @@ impl App {
             return;
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
+            if self.toolbar_ui.notecards.removed(request, &result) {
+                if let Ok(reply) = result {
+                    self.world.inventory.remove(&reply.removed);
+                    self.world.inventory.apply(reply.contents);
+                    self.world.inventory.created_folders(reply.folders);
+                }
+                if let Some((owner, item)) = self.toolbar_ui.notecards.take_removed()
+                    && let Some(selection) = self.settings.toolbar_selection.as_mut()
+                    && selection.removed(owner, item)
+                {
+                    self.settings.save();
+                }
+                return;
+            }
             if self.toolbar_ui.notecards.folders_created(request, &result) {
                 if let Ok(reply) = result {
                     self.world.inventory.remove(&reply.removed);

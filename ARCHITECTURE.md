@@ -109,8 +109,13 @@ normalized presentation, highlights that identity and reports unsaved edits unti
 matching successful upload; reverting restores the clean state. Uploads retain their
 original snapshot, so edits made during saving stay dirty and switching presets does
 not let an older reply replace the new selection. `notecards/save_picker.rs` presents
-one Save selector with an editable name and personal presets for replacement; existing
+one Save selector with an editable name and personal interfaces for replacement; existing
 cards reuse the shared COPY/MODIFY preview rule and native content-update command.
+The selected-interface header and Save/Delete actions stay above the preset section.
+`notecards/removal.rs` moves only a selected personal notecard to Trash through the
+shared inventory mutation rules, including protected entries and the existing delete-confirmation preference. Only its matching
+successful acknowledgement clears that selected identity; the displayed layout stays
+as a custom unsaved interface. A later selection is never cleared by an older reply.
 
 Toolbar notecards use ui/toolbar/profile.rs for the bounded versioned layout document (indented technical JSON, schema version 2 with a required Aurora/Legacy bar base), ui/toolbar/notecards.rs for the COPY-aware picker/transfer state, and app/toolbar_notecards.rs for native inventory callbacks. `ui/toolbar/notecards/library.rs` resolves the dedicated #Aurora/Aurora Interfaces path from fetched parents and caches its notecard list by inventory generation. Save snapshots its name/content before loading or creating folders; dependent uploads wait for a matching mutation acknowledgement, including remapped folder IDs. Saved-preset clicks retain live lock and COPY checks. The editor bounds and scrolls its preset area on short windows so command controls and a catalogue row remain reachable. The snapshot materializes source-skin bar defaults and restores classic_bars from its explicit base, leaving other preferences and window geometry unchanged. Successful loading is silent; unsupported older schemas are rejected. Only a fully validated, matching download with unchanged rights, base and layout is applied; save success requires its matching upload acknowledgement. An internal demo-only import picker retains its distinct owner ID; the editor loads personal presets directly from its saved list.
 Default composition anchors newly added nearby chat at the start of its block.

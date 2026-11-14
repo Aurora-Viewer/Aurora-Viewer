@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 mod library;
+mod removal;
 mod save_picker;
 
 struct Prepared {
@@ -72,15 +73,71 @@ pub(crate) struct State {
     prepared: Option<Prepared>,
     catalog: library::Catalog,
     selected_profile: Option<Uuid>,
+    removal: removal::State,
 }
 
 impl State {
     pub(super) fn busy(&self) -> bool {
-        self.saving.is_some() || self.loading.is_some() || self.prepared.is_some()
+        self.saving.is_some() || self.loading.is_some() || self.prepared.is_some() || self.removal.active()
     }
 
     pub(crate) fn active(&self) -> bool {
-        self.mode.is_some() || self.busy() || self.selected_profile.is_some() || self.message.is_some() && !self.dismissed
+        self.mode.is_some()
+            || self.busy()
+            || self.removal.active()
+            || self.selected_profile.is_some()
+            || self.message.is_some() && !self.dismissed
+    }
+
+    pub(super) fn can_remove(&self, source: &Source) -> bool {
+        source
+            .personal(self.catalog.owner)
+            .is_some_and(|id| self.catalog.entries.iter().any(|entry| entry.id == id && entry.removable))
+    }
+
+    pub(crate) fn remove(&mut self, source: &Source) {
+        if !self.busy()
+            && self.can_remove(source)
+            && let Some(item) = source.personal(self.catalog.owner)
+        {
+            self.message = None;
+            self.dismissed = false;
+            self.removal.queue(self.catalog.owner, item);
+        }
+    }
+
+    pub(crate) fn removal_command(
+        &mut self,
+        inv: &mut Inventory,
+        protected: &std::collections::HashSet<Uuid>,
+        confirm: bool,
+    ) -> Option<NetCommand> {
+        match self.removal.command(inv, protected, self.selection_epoch, confirm) {
+            Ok(command) => command,
+            Err(reason) => {
+                self.message = Some(reason);
+                self.dismissed = false;
+                None
+            }
+        }
+    }
+
+    pub(crate) fn removed(&mut self, request: Uuid, result: &Result<aurora_net::inventory::operations::Reply, String>) -> bool {
+        if !self.removal.finished(request, result, self.selection_epoch) {
+            return false;
+        }
+        self.message = result.as_ref().err().cloned();
+        self.dismissed = false;
+        true
+    }
+
+    pub(crate) fn take_removed(&mut self) -> Option<(Uuid, Uuid)> {
+        self.removal.take_removed()
+    }
+
+    pub(crate) fn demo_remove(&mut self, source: &Source) {
+        self.remove(source);
+        self.removal.approve();
     }
 
     pub(crate) fn open(&mut self, mode: Mode) {
@@ -508,7 +565,8 @@ impl State {
                 self.mode = None;
             }
         }
-        if self.mode.is_none() && !self.dismissed && (self.message.is_some() || self.busy()) {
+        self.removal.show(ctx, p);
+        if self.mode.is_none() && !self.dismissed && !self.removal.confirming() && (self.message.is_some() || self.busy()) {
             let mut close = false;
             let pending = self.busy();
             let modal = widgets::Modal::new(egui::Id::unique("toolbar_notecard_result")).show(ctx, |ui| {
@@ -1061,6 +1119,108 @@ mod tests {
                     .id,
                 id
             );
+        }
+    }
+    fn removable_interface() -> (Inventory, InvItem, Source, State) {
+        let (mut inv, item) = inventory();
+        let item = personal_card(&mut inv, item);
+        let source = Source::Personal {
+            item: item.id,
+            name: item.name.clone(),
+            owner: inv.owner,
+        };
+        let mut state = State::default();
+        state.sync_library(&mut inv);
+        (inv, item, source, state)
+    }
+
+    #[test]
+    fn toolbar_personal_interface_removal_moves_to_trash_after_its_matching_reply() {
+        let (mut inv, item, source, mut state) = removable_interface();
+        state.remove(&source);
+        let NetCommand::EditInventory { request, change } =
+            state.removal_command(&mut inv, &Default::default(), false).expect("trash mutation")
+        else {
+            panic!("inventory mutation")
+        };
+        assert!(
+            change
+                .operations
+                .iter()
+                .all(|operation| !matches!(operation, aurora_net::inventory::operations::Operation::Delete { .. })),
+            "never purge a personal interface"
+        );
+        assert!(state.busy());
+        assert!(state.take_removed().is_none());
+        let result = actions::demo_mutate(&mut inv, item.owner, change);
+        assert!(!state.removed(Uuid::new_v4(), &result));
+        assert!(state.removed(request, &result));
+        assert_eq!(state.take_removed(), Some((inv.owner, item.id)));
+        assert!(actions::in_type(&inv, item.id, 14));
+        state.sync_library(&mut inv);
+        assert!(!state.catalog.entries.iter().any(|entry| entry.id == item.id));
+    }
+
+    #[test]
+    fn toolbar_interface_removal_honors_confirmation_cancel_and_rechecks_protection() {
+        let (mut inv, item, source, mut state) = removable_interface();
+        let toolbar = Preset::OldSchool.layout(&Layout::default());
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        state.remove(&source);
+        assert!(state.removal_command(&mut inv, &Default::default(), true).is_none());
+        for _ in 0..4 {
+            ui_frame(&ctx, &mut state, &mut inv, &toolbar, Vec::new());
+        }
+        let cancel = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("toolbar_interface_delete_cancel")))
+            .expect("confirmation cancel")
+            .center();
+        for pressed in [true, false] {
+            ui_frame(&ctx, &mut state, &mut inv, &toolbar, click_events(cancel, pressed));
+        }
+        assert!(!state.removal.active());
+        assert_eq!(inv.items[&item.id].parent, item.parent);
+        state.remove(&source);
+        assert!(state.removal_command(&mut inv, &Default::default(), true).is_none());
+        for _ in 0..4 {
+            ui_frame(&ctx, &mut state, &mut inv, &toolbar, Vec::new());
+        }
+        let confirm = ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("toolbar_interface_delete_confirm")))
+            .expect("confirmation action")
+            .center();
+        for pressed in [true, false] {
+            ui_frame(&ctx, &mut state, &mut inv, &toolbar, click_events(confirm, pressed));
+        }
+        assert!(
+            state
+                .removal_command(&mut inv, &std::collections::HashSet::from([item.id]), true)
+                .is_none()
+        );
+        assert!(state.message.is_some() && !state.removal.active());
+        assert_eq!(inv.items[&item.id].parent, item.parent);
+    }
+
+    #[test]
+    fn toolbar_interface_removal_failures_and_later_selection_do_not_clear_identity() {
+        for failed in [true, false] {
+            let (mut inv, item, source, mut state) = removable_interface();
+            state.remove(&source);
+            let NetCommand::EditInventory { request, change } =
+                state.removal_command(&mut inv, &Default::default(), false).expect("trash mutation")
+            else {
+                panic!("mutation")
+            };
+            let result = if failed {
+                Err("refused".into())
+            } else {
+                state.selection_changed();
+                actions::demo_mutate(&mut inv, item.owner, change)
+            };
+            assert!(state.removed(request, &result));
+            assert!(state.take_removed().is_none());
+            assert_eq!(state.message.is_some(), failed);
         }
     }
 }
