@@ -236,11 +236,7 @@ fn main() -> anyhow::Result<()> {
     // they are named in the log when they arrive
     overlay_hooks::start();
 
-    let result = if cli::get().headless {
-        run_headless()
-    } else {
-        run_viewer()
-    };
+    let result = if cli::get().headless { run_headless() } else { run_viewer() };
     if let Err(error) = &result {
         crash::failure(&format!("Viewer startup / event loop error: {error:#}"));
     }

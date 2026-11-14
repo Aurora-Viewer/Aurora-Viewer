@@ -6146,7 +6146,9 @@ impl Backend {
         }
         self.config.width = width;
         self.config.height = height;
-        if !self.external && let Some(surface) = &self.surface {
+        if !self.external
+            && let Some(surface) = &self.surface
+        {
             crate::present::configure(surface, &self.device, &self.config);
         }
         self.rebuild_targets();
@@ -6558,7 +6560,9 @@ impl Backend {
             return;
         }
         self.config.present_mode = mode;
-        if !self.external && let Some(surface) = &self.surface {
+        if !self.external
+            && let Some(surface) = &self.surface
+        {
             crate::present::configure(surface, &self.device, &self.config);
         }
     }

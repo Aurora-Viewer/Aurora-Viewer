@@ -3,7 +3,7 @@
 //! Bridges standard `stdio` MCP hosts (Antigravity, Claude Desktop, Cursor) to
 //! the running Aurora Viewer HTTP MCP endpoint (`http://127.0.0.1:3847/mcp`).
 
-use aurora_mcp::DEFAULT_MCP_PORT;
+use aurora_mcp::{DEFAULT_MCP_PORT, MCP_PROTOCOL_VERSION, McpProfile, list_tools_for_profile};
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -42,6 +42,9 @@ fn main() {
         };
 
         let id = parsed.get("id").cloned();
+        let method = parsed.get("method").and_then(Value::as_str).unwrap_or("");
+        let params = parsed.get("params").cloned().unwrap_or_else(|| json!({}));
+
         match forward_http(addr, trimmed.as_bytes()) {
             Ok(Some(reply_body)) if !reply_body.trim().is_empty() => {
                 let _ = writeln!(stdout, "{}", reply_body.trim());
@@ -49,20 +52,77 @@ fn main() {
             }
             Ok(_) => {}
             Err(e) => {
-                if let Some(req_id) = id {
-                    let err = json!({
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "error": {
-                            "code": -32000,
-                            "message": format!("Aurora Viewer MCP endpoint (127.0.0.1:{port}) unreachable: {e}")
-                        }
-                    });
-                    let _ = writeln!(stdout, "{err}");
-                    let _ = stdout.flush();
+                if id.is_none() || method.starts_with("notifications/") {
+                    continue;
                 }
+                let req_id = id.unwrap_or(Value::Null);
+                let reply = handle_offline_request(req_id, method, &params, port, &e);
+                let _ = writeln!(stdout, "{reply}");
+                let _ = stdout.flush();
             }
         }
+    }
+}
+
+fn handle_offline_request(req_id: Value, method: &str, params: &Value, port: u16, err: &std::io::Error) -> Value {
+    let result = match method {
+        "initialize" => {
+            let client_version = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(MCP_PROTOCOL_VERSION);
+            Some(json!({
+                "protocolVersion": client_version,
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                    "resources": { "subscribe": false, "listChanged": false },
+                    "prompts": { "listChanged": false }
+                },
+                "serverInfo": {
+                    "name": "aurora-mcp",
+                    "version": env!("CARGO_PKG_VERSION")
+                },
+                "instructions": "Control Aurora Viewer through its native Rust runtime MCP bridge. Start with connection_status and control_acquire (or viewer_control_acquire), then pass the returned lease_id to all mutating tools (including viewer_login, viewer_shutdown, prim_*, economy_*, and nav_*). Release your lease with control_release when finished so temporary camera and setting overrides roll back cleanly."
+            }))
+        }
+        "ping" => Some(json!({})),
+        "tools/list" => Some(json!({ "tools": list_tools_for_profile(McpProfile::from_env()) })),
+        "resources/list" => Some(json!({ "resources": [] })),
+        "resources/templates/list" => Some(json!({ "resourceTemplates": [] })),
+        "prompts/list" => Some(json!({ "prompts": [] })),
+        "tools/call" if params.get("name").and_then(Value::as_str) == Some("connection_status") => {
+            let payload = json!({
+                "connected": false,
+                "logged_in": false,
+                "status": "viewer_offline",
+                "port": port,
+                "message": "Aurora Viewer is not running or MCP port is closed."
+            });
+            Some(json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+                }],
+                "isError": false
+            }))
+        }
+        _ => None,
+    };
+
+    match result {
+        Some(res) => json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": res
+        }),
+        None => json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {
+                "code": -32000,
+                "message": format!("Aurora Viewer MCP endpoint (127.0.0.1:{port}) unreachable: {err}")
+            }
+        }),
     }
 }
 

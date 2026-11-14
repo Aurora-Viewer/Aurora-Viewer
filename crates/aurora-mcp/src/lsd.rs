@@ -151,9 +151,7 @@ impl LinksetDataStore {
         limit: usize,
     ) -> Result<Value, McpError> {
         let re = match filter_regex.filter(|s| !s.is_empty()) {
-            Some(pattern) => {
-                Some(Regex::new(pattern).map_err(|e| McpError::InvalidParams(e.to_string()))?)
-            }
+            Some(pattern) => Some(Regex::new(pattern).map_err(|e| McpError::InvalidParams(e.to_string()))?),
             None => None,
         };
         let pass_hash = passphrase.filter(|p| !p.is_empty()).map(hash_passphrase);
@@ -206,11 +204,7 @@ impl LinksetDataStore {
         let mut results = Vec::with_capacity(ops.len());
         for op in ops {
             match op {
-                LsdOperation::Write {
-                    key,
-                    value,
-                    passphrase,
-                } => {
+                LsdOperation::Write { key, value, passphrase } => {
                     let rc = self.write(key, value, passphrase.as_deref());
                     results.push(json!({
                         "op": "write",
@@ -236,10 +230,7 @@ impl LinksetDataStore {
                         "ok": true,
                     }));
                 }
-                LsdOperation::ImportJson {
-                    entries,
-                    passphrase,
-                } => {
+                LsdOperation::ImportJson { entries, passphrase } => {
                     let mut written = 0usize;
                     let mut failed = 0usize;
                     for (k, v) in entries {
@@ -280,11 +271,7 @@ fn hash_passphrase(pass: &str) -> String {
 /// Validates whether a proposed JSON object or KV table fits within Second Life's
 /// 128 KiB LSD ceiling and checks individual keys/values against LSL Mono's
 /// string heap constraints.
-pub fn stress_test_payload(
-    payload: &Value,
-    protected_keys: bool,
-    filter_regex: Option<&str>,
-) -> Result<Value, McpError> {
+pub fn stress_test_payload(payload: &Value, protected_keys: bool, filter_regex: Option<&str>) -> Result<Value, McpError> {
     let mut store = LinksetDataStore::new();
     let mut oversized_values = Vec::new();
     let mut rejected_keys = Vec::new();
@@ -360,10 +347,7 @@ mod tests {
 
         // Protected key cannot be read or overwritten without the passphrase.
         assert_eq!(store.read("secret", None), Err(LINKSETDATA_EPROTECTED));
-        assert_eq!(
-            store.read("secret", Some("pin123")),
-            Ok(Some("token-xyz".to_owned()))
-        );
+        assert_eq!(store.read("secret", Some("pin123")), Ok(Some("token-xyz".to_owned())));
         assert_eq!(store.write("secret", "hacked", None), LINKSETDATA_EPROTECTED);
 
         // Overflowing 131,072 bytes returns LINKSETDATA_EMEMORY.

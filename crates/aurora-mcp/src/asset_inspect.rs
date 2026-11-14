@@ -11,32 +11,22 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 const MAX_INSPECT_ASSET_BYTES: u64 = 64 * 1024 * 1024;
-const ALLOWED_ASSET_EXTENSIONS: &[&str] = &[
-    "gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif",
-];
+const ALLOWED_ASSET_EXTENSIONS: &[&str] = &["gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif"];
 
 /// Validates that `raw_path` points to a regular file with an allowed extension
 /// inside an approved local root (current working directory, `aurora-mcp-captures`,
 /// `aurora-live-mesh`, or `AURORA_MCP_ASSET_ROOTS`) and within `max_bytes`.
-pub fn validate_local_file_path(
-    raw_path: &str,
-    allowed_exts: &[&str],
-    max_bytes: Option<u64>,
-) -> Result<PathBuf, McpError> {
+pub fn validate_local_file_path(raw_path: &str, allowed_exts: &[&str], max_bytes: Option<u64>) -> Result<PathBuf, McpError> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
         return Err(McpError::InvalidParams("file_path cannot be empty".into()));
     }
-    let canonical = std::fs::canonicalize(Path::new(trimmed))
-        .map_err(|e| McpError::InvalidParams(format!("cannot resolve '{trimmed}': {e}")))?;
+    let canonical =
+        std::fs::canonicalize(Path::new(trimmed)).map_err(|e| McpError::InvalidParams(format!("cannot resolve '{trimmed}': {e}")))?;
 
-    let meta = std::fs::metadata(&canonical)
-        .map_err(|e| McpError::InvalidParams(format!("cannot stat '{}': {e}", canonical.display())))?;
+    let meta = std::fs::metadata(&canonical).map_err(|e| McpError::InvalidParams(format!("cannot stat '{}': {e}", canonical.display())))?;
     if !meta.is_file() {
-        return Err(McpError::InvalidParams(format!(
-            "'{}' is not a regular file",
-            canonical.display()
-        )));
+        return Err(McpError::InvalidParams(format!("'{}' is not a regular file", canonical.display())));
     }
     if let Some(limit) = max_bytes
         && meta.len() > limit
@@ -48,11 +38,7 @@ pub fn validate_local_file_path(
         )));
     }
 
-    let ext = canonical
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let ext = canonical.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     if !allowed_exts.iter().any(|allowed| *allowed == ext) {
         return Err(McpError::PermissionDenied(format!(
             "file extension '.{ext}' is not permitted; allowed: {}",
@@ -91,31 +77,20 @@ pub fn validate_local_file_path(
 }
 
 pub fn inspect_local_asset(file_path: &str) -> Result<Value, McpError> {
-    let path = validate_local_file_path(
-        file_path,
-        ALLOWED_ASSET_EXTENSIONS,
-        Some(MAX_INSPECT_ASSET_BYTES),
-    )?;
-    let bytes = std::fs::read(&path)
-        .map_err(|e| McpError::InvalidParams(format!("cannot read '{}': {e}", path.display())))?;
+    let path = validate_local_file_path(file_path, ALLOWED_ASSET_EXTENSIONS, Some(MAX_INSPECT_ASSET_BYTES))?;
+    let bytes = std::fs::read(&path).map_err(|e| McpError::InvalidParams(format!("cannot read '{}': {e}", path.display())))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let sha256: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
 
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
 
     match ext.as_str() {
         "gltf" => inspect_gltf_json(&bytes, &path, &sha256, "gltf"),
         "glb" => inspect_glb(&bytes, &path, &sha256),
         "dae" => inspect_collada(&bytes, &path, &sha256),
-        "png" | "jpg" | "jpeg" | "tga" | "bmp" | "webp" | "gif" => {
-            inspect_texture(&bytes, &path, &sha256, &ext)
-        }
+        "png" | "jpg" | "jpeg" | "tga" | "bmp" | "webp" | "gif" => inspect_texture(&bytes, &path, &sha256, &ext),
         _ => Ok(json!({
             "filename": path.display().to_string(),
             "format": ext,
@@ -138,20 +113,10 @@ fn inspect_glb(bytes: &[u8], path: &Path, sha256: &str) -> Result<Value, McpErro
     inspect_gltf_json(&bytes[20..20 + chunk_len], path, sha256, "glb")
 }
 
-fn inspect_gltf_json(
-    json_bytes: &[u8],
-    path: &Path,
-    sha256: &str,
-    format: &str,
-) -> Result<Value, McpError> {
-    let doc: Value = serde_json::from_slice(json_bytes)
-        .map_err(|e| McpError::InvalidParams(format!("invalid glTF JSON: {e}")))?;
+fn inspect_gltf_json(json_bytes: &[u8], path: &Path, sha256: &str, format: &str) -> Result<Value, McpError> {
+    let doc: Value = serde_json::from_slice(json_bytes).map_err(|e| McpError::InvalidParams(format!("invalid glTF JSON: {e}")))?;
 
-    let accessors = doc
-        .get("accessors")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let accessors = doc.get("accessors").and_then(Value::as_array).cloned().unwrap_or_default();
     let materials: Vec<String> = doc
         .get("materials")
         .and_then(Value::as_array)
@@ -177,16 +142,8 @@ fn inspect_gltf_json(
 
     if let Some(meshes) = doc.get("meshes").and_then(Value::as_array) {
         for (mi, mesh) in meshes.iter().enumerate() {
-            let name = mesh
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("Mesh")
-                .to_owned();
-            let primitives = mesh
-                .get("primitives")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let name = mesh.get("name").and_then(Value::as_str).unwrap_or("Mesh").to_owned();
+            let primitives = mesh.get("primitives").and_then(Value::as_array).cloned().unwrap_or_default();
             if primitives.len() > 8 {
                 warnings.push(format!(
                     "mesh '{name}' (#{mi}) has {} primitives/material faces; Second Life supports at most 8 faces per prim",
@@ -196,23 +153,16 @@ fn inspect_gltf_json(
             let mut mesh_verts = 0u64;
             let mut mesh_tris = 0u64;
             for prim in &primitives {
-                if let Some(pos_idx) = prim
-                    .get("attributes")
-                    .and_then(|a| a.get("POSITION"))
-                    .and_then(Value::as_u64)
+                if let Some(pos_idx) = prim.get("attributes").and_then(|a| a.get("POSITION")).and_then(Value::as_u64)
                     && let Some(acc) = accessors.get(pos_idx as usize)
                 {
                     let vcount = acc.get("count").and_then(Value::as_u64).unwrap_or(0);
                     mesh_verts += vcount;
                     if vcount > 65_536 {
-                        warnings.push(format!(
-                            "mesh '{name}' primitive exceeds 65,536 vertices ({vcount})"
-                        ));
+                        warnings.push(format!("mesh '{name}' primitive exceeds 65,536 vertices ({vcount})"));
                     }
-                    if let (Some(min), Some(max)) = (
-                        acc.get("min").and_then(Value::as_array),
-                        acc.get("max").and_then(Value::as_array),
-                    ) && min.len() == 3
+                    if let (Some(min), Some(max)) = (acc.get("min").and_then(Value::as_array), acc.get("max").and_then(Value::as_array))
+                        && min.len() == 3
                         && max.len() == 3
                     {
                         for axis in 0..3 {
@@ -225,11 +175,7 @@ fn inspect_gltf_json(
                         }
                     }
                 }
-                if let Some(idx_acc) = prim
-                    .get("indices")
-                    .and_then(Value::as_u64)
-                    .and_then(|i| accessors.get(i as usize))
-                {
+                if let Some(idx_acc) = prim.get("indices").and_then(Value::as_u64).and_then(|i| accessors.get(i as usize)) {
                     let icount = idx_acc.get("count").and_then(Value::as_u64).unwrap_or(0);
                     mesh_tris += icount / 3;
                 }
@@ -270,10 +216,8 @@ fn inspect_gltf_json(
 }
 
 fn inspect_collada(bytes: &[u8], path: &Path, sha256: &str) -> Result<Value, McpError> {
-    let xml = std::str::from_utf8(bytes)
-        .map_err(|e| McpError::InvalidParams(format!("COLLADA file is not UTF-8: {e}")))?;
-    let doc = roxmltree::Document::parse(xml)
-        .map_err(|e| McpError::InvalidParams(format!("invalid COLLADA XML: {e}")))?;
+    let xml = std::str::from_utf8(bytes).map_err(|e| McpError::InvalidParams(format!("COLLADA file is not UTF-8: {e}")))?;
+    let doc = roxmltree::Document::parse(xml).map_err(|e| McpError::InvalidParams(format!("invalid COLLADA XML: {e}")))?;
 
     let mut geometries = Vec::new();
     let mut materials = Vec::new();
@@ -283,10 +227,7 @@ fn inspect_collada(bytes: &[u8], path: &Path, sha256: &str) -> Result<Value, Mcp
     for node in doc.descendants() {
         match node.tag_name().name() {
             "material" => {
-                let name = node
-                    .attribute("name")
-                    .or_else(|| node.attribute("id"))
-                    .unwrap_or("Material");
+                let name = node.attribute("name").or_else(|| node.attribute("id")).unwrap_or("Material");
                 materials.push(name.to_owned());
             }
             "geometry" => {
@@ -300,10 +241,7 @@ fn inspect_collada(bytes: &[u8], path: &Path, sha256: &str) -> Result<Value, Mcp
                 for child in node.descendants() {
                     if matches!(child.tag_name().name(), "triangles" | "polylist" | "polygons") {
                         faces += 1;
-                        let count = child
-                            .attribute("count")
-                            .and_then(|c| c.parse::<u64>().ok())
-                            .unwrap_or(0);
+                        let count = child.attribute("count").and_then(|c| c.parse::<u64>().ok()).unwrap_or(0);
                         tris += count;
                     }
                 }
@@ -336,14 +274,8 @@ fn inspect_collada(bytes: &[u8], path: &Path, sha256: &str) -> Result<Value, Mcp
     }))
 }
 
-fn inspect_texture(
-    bytes: &[u8],
-    path: &Path,
-    sha256: &str,
-    ext: &str,
-) -> Result<Value, McpError> {
-    let img = image::load_from_memory(bytes)
-        .map_err(|e| McpError::InvalidParams(format!("cannot decode image: {e}")))?;
+fn inspect_texture(bytes: &[u8], path: &Path, sha256: &str, ext: &str) -> Result<Value, McpError> {
+    let img = image::load_from_memory(bytes).map_err(|e| McpError::InvalidParams(format!("cannot decode image: {e}")))?;
     let width = img.width();
     let height = img.height();
     let is_pot = width.is_power_of_two() && height.is_power_of_two();
@@ -390,8 +322,7 @@ mod tests {
                 "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }]
             }]
         }"#;
-        let res = inspect_gltf_json(gltf, Path::new("crate.gltf"), "deadbeef", "gltf")
-            .expect("inspect gltf");
+        let res = inspect_gltf_json(gltf, Path::new("crate.gltf"), "deadbeef", "gltf").expect("inspect gltf");
         assert_eq!(res["total_vertices"], 24);
         assert_eq!(res["total_triangles"], 12);
         assert_eq!(res["bounding_box_dimensions"], json!([1.0, 1.0, 2.0]));

@@ -730,11 +730,7 @@ impl Renderer {
             Some(w) => w,
             None => Arc::new(()),
         };
-        let host = Host::new(
-            backend,
-            keep,
-            thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()),
-        );
+        let host = Host::new(backend, keep, thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()));
         log::info!(
             "renderer: {}",
             if host.threaded() {

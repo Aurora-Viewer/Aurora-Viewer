@@ -75,16 +75,9 @@ pub async fn handle_jsonrpc_message(router: &McpRouter, msg: Value) -> Option<Va
         }
         "tools/call" => {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
-                return Some(jsonrpc_error(
-                    req_id,
-                    -32602,
-                    "missing tool 'name' in tools/call params",
-                ));
+                return Some(jsonrpc_error(req_id, -32602, "missing tool 'name' in tools/call params"));
             };
-            let args = params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
+            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
             Ok(router.call_tool(name, args).await)
         }
         "resources/list" => Ok(json!({ "resources": [] })),
@@ -127,8 +120,7 @@ pub fn spawn_server(
             .unwrap_or(DEFAULT_MCP_PORT)
     });
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let std_listener = std::net::TcpListener::bind(addr)
-        .map_err(|e| format!("failed to bind MCP HTTP server on {addr}: {e}"))?;
+    let std_listener = std::net::TcpListener::bind(addr).map_err(|e| format!("failed to bind MCP HTTP server on {addr}: {e}"))?;
     std_listener
         .set_nonblocking(true)
         .map_err(|e| format!("failed to set nonblocking listener: {e}"))?;
@@ -178,17 +170,13 @@ pub fn spawn_server(
     })
 }
 
-async fn handle_http_connection(
-    stream: TcpStream,
-    router: Arc<McpRouter>,
-    sse_tx: broadcast::Sender<String>,
-) -> std::io::Result<()> {
+async fn handle_http_connection(stream: TcpStream, router: Arc<McpRouter>, sse_tx: broadcast::Sender<String>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).await? == 0 {
         return Ok(());
     }
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 2 {
         return Ok(());
     }
@@ -228,13 +216,7 @@ async fn handle_http_connection(
 
     if !is_allowed_host(host_header.as_deref()) {
         let mut stream = reader.into_inner();
-        write_http_response(
-            &mut stream,
-            "403 Forbidden",
-            "application/json",
-            b"{\"error\":\"forbidden host\"}",
-        )
-        .await?;
+        write_http_response(&mut stream, "403 Forbidden", "application/json", b"{\"error\":\"forbidden host\"}").await?;
         return Ok(());
     }
 
@@ -275,13 +257,7 @@ async fn handle_http_connection(
         .filter(|s| !s.is_empty());
     if !is_authorized(auth_header.as_deref(), expected_token.as_deref()) {
         let mut stream = reader.into_inner();
-        write_http_response(
-            &mut stream,
-            "401 Unauthorized",
-            "application/json",
-            b"{\"error\":\"unauthorized\"}",
-        )
-        .await?;
+        write_http_response(&mut stream, "401 Unauthorized", "application/json", b"{\"error\":\"unauthorized\"}").await?;
         return Ok(());
     }
 
@@ -289,9 +265,7 @@ async fn handle_http_connection(
         let mut stream = reader.into_inner();
         let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
         stream.write_all(headers.as_bytes()).await?;
-        stream
-            .write_all(b"event: endpoint\ndata: /message\n\n")
-            .await?;
+        stream.write_all(b"event: endpoint\ndata: /message\n\n").await?;
         stream.flush().await?;
 
         let mut rx = sse_tx.subscribe();
@@ -319,8 +293,7 @@ async fn handle_http_connection(
         }
         let mut body = vec![0u8; content_length];
         if content_length > 0 {
-            let read_res =
-                tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_exact(&mut body)).await;
+            let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_exact(&mut body)).await;
             if !matches!(read_res, Ok(Ok(_))) {
                 return Ok(());
             }
@@ -330,14 +303,8 @@ async fn handle_http_connection(
         let parsed: Value = match serde_json::from_slice(&body) {
             Ok(v) => v,
             Err(e) => {
-                let err_body = serde_json::to_vec(&jsonrpc_error(
-                    Value::Null,
-                    -32700,
-                    &format!("parse error: {e}"),
-                ))
-                .unwrap_or_default();
-                write_http_response(&mut stream, "400 Bad Request", "application/json", &err_body)
-                    .await?;
+                let err_body = serde_json::to_vec(&jsonrpc_error(Value::Null, -32700, &format!("parse error: {e}"))).unwrap_or_default();
+                write_http_response(&mut stream, "400 Bad Request", "application/json", &err_body).await?;
                 return Ok(());
             }
         };
@@ -367,13 +334,7 @@ async fn handle_http_connection(
     }
 
     let mut stream = reader.into_inner();
-    write_http_response(
-        &mut stream,
-        "404 Not Found",
-        "application/json",
-        b"{\"error\":\"not found\"}",
-    )
-    .await
+    write_http_response(&mut stream, "404 Not Found", "application/json", b"{\"error\":\"not found\"}").await
 }
 
 fn is_allowed_host(host: Option<&str>) -> bool {
@@ -394,9 +355,7 @@ fn is_allowed_origin(origin: Option<&str>) -> bool {
         return true;
     };
     let o = raw.trim().to_ascii_lowercase();
-    o.starts_with("http://127.0.0.1")
-        || o.starts_with("http://localhost")
-        || o.starts_with("http://[::1]")
+    o.starts_with("http://127.0.0.1") || o.starts_with("http://localhost") || o.starts_with("http://[::1]")
 }
 
 fn is_authorized(auth_header: Option<&str>, expected_token: Option<&str>) -> bool {
@@ -406,8 +365,7 @@ fn is_authorized(auth_header: Option<&str>, expected_token: Option<&str>) -> boo
     let Some(header) = auth_header else {
         return false;
     };
-    let Some(provided) = header.strip_prefix("Bearer ").or_else(|| header.strip_prefix("bearer "))
-    else {
+    let Some(provided) = header.strip_prefix("Bearer ").or_else(|| header.strip_prefix("bearer ")) else {
         return false;
     };
     // Constant-length XOR comparison to avoid trivial timing leaks.
@@ -423,12 +381,7 @@ fn is_authorized(auth_header: Option<&str>, expected_token: Option<&str>) -> boo
     diff == 0
 }
 
-async fn write_http_response(
-    stream: &mut TcpStream,
-    status: &str,
-    content_type: &str,
-    body: &[u8],
-) -> std::io::Result<()> {
+async fn write_http_response(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]) -> std::io::Result<()> {
     let header = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -467,8 +420,7 @@ mod tests {
             }
         });
 
-        let handle =
-            spawn_server(&tokio::runtime::Handle::current(), tx, Some(0)).expect("spawn server");
+        let handle = spawn_server(&tokio::runtime::Handle::current(), tx, Some(0)).expect("spawn server");
         let addr = handle.bind_addr;
 
         // 1. Test `initialize`
@@ -514,9 +466,7 @@ mod tests {
             }),
         )
         .await;
-        let text = status_reply["result"]["content"][0]["text"]
-            .as_str()
-            .expect("status text");
+        let text = status_reply["result"]["content"][0]["text"].as_str().expect("status text");
         assert!(text.contains("Aurora Plaza"));
         assert!(text.contains("test-suite"));
     }

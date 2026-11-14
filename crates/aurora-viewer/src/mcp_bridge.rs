@@ -6,13 +6,12 @@
 
 use super::*;
 use aurora_mcp::{
-    AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind,
-    FRAME_BUDGET_MICROS, LinksetDataStore, LsdOperation, McpError, McpRequestEnvelope,
-    McpServerHandle, PrimTransformSpec, RawCapturedFrame, RollbackAction, ViewerRequest,
-    ViewerResponse, create_bridge_channels, spawn_server,
+    AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, FRAME_BUDGET_MICROS, LinksetDataStore, LsdOperation,
+    McpError, McpRequestEnvelope, McpServerHandle, PrimTransformSpec, RawCapturedFrame, RollbackAction, ViewerRequest, ViewerResponse,
+    create_bridge_channels, spawn_server,
 };
 use aurora_net::build::{BuildCmd, NewPrim, TransformUpdate, perm};
-use aurora_net::land::{AccessEntry, LandCommand, ParcelUpdate, AL_ACCESS, AL_BAN};
+use aurora_net::land::{AL_ACCESS, AL_BAN, AccessEntry, LandCommand, ParcelUpdate};
 use aurora_net::scripts::{ScriptOptions, ScriptTarget};
 use glam::{EulerRot, Quat, Vec3};
 use serde_json::{Value, json};
@@ -49,15 +48,8 @@ pub struct CofMutationQueue {
 }
 
 impl CofMutationQueue {
-    pub fn enqueue(
-        &mut self,
-        operation: AppearanceOperation,
-        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
-    ) {
-        self.queue.push_back(QueuedCofMutation {
-            operation,
-            reply_tx,
-        });
+    pub fn enqueue(&mut self, operation: AppearanceOperation, reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>) {
+        self.queue.push_back(QueuedCofMutation { operation, reply_tx });
     }
 
     pub fn is_busy(&self) -> bool {
@@ -202,10 +194,7 @@ pub struct McpBridge {
 
 impl McpBridge {
     /// Applies any active MCP poser bone overrides on top of the scene's pose map.
-    pub fn apply_poses(
-        &self,
-        poser_map: &mut HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
-    ) {
+    pub fn apply_poses(&self, poser_map: &mut HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>) {
         for (subject_id, pose) in &self.mcp_poses {
             poser_map.insert(*subject_id, Arc::clone(pose));
         }
@@ -214,17 +203,11 @@ impl McpBridge {
     /// Pushes a viewer event into the bounded subscription ring buffer if its
     /// source category is currently subscribed.
     pub fn push_event(&mut self, source: &str, event_type: &str, payload: Value) {
-        if !self.subscribed_sources.contains("*")
-            && !self.subscribed_sources.contains("all")
-            && !self.subscribed_sources.contains(source)
-        {
+        if !self.subscribed_sources.contains("*") && !self.subscribed_sources.contains("all") && !self.subscribed_sources.contains(source) {
             return;
         }
         self.next_event_seq += 1;
-        let ts_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let ts_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let event_json = json!({
             "seq": self.next_event_seq,
             "timestamp_ms": ts_ms,
@@ -324,11 +307,7 @@ impl App {
                     }),
                 );
             }
-            NetEvent::ScriptLoaded {
-                request,
-                target,
-                result,
-            } => {
+            NetEvent::ScriptLoaded { request, target, result } => {
                 let pending = self
                     .mcp_bridge
                     .pending_script_reads
@@ -351,11 +330,7 @@ impl App {
                     let _ = pending.reply_tx.send(resp);
                 }
             }
-            NetEvent::ScriptSaved {
-                request,
-                target,
-                result,
-            } => {
+            NetEvent::ScriptSaved { request, target, result } => {
                 let pending = self
                     .mcp_bridge
                     .pending_script_compiles
@@ -393,31 +368,21 @@ impl App {
         if let Some(front) = self.mcp_bridge.pending_captures.front()
             && front.dispatched_to_renderer
             && renderer.captured.is_some()
+            && let Some((width, height, rgba_bytes)) = renderer.captured.take()
+            && let Some(pending) = self.mcp_bridge.pending_captures.pop_front()
         {
-            if let Some((width, height, rgba_bytes)) = renderer.captured.take()
-                && let Some(pending) = self.mcp_bridge.pending_captures.pop_front()
-            {
-                let frame = RawCapturedFrame {
-                    width,
-                    height,
-                    buffer_type: CaptureBufferType::ColorRgb,
-                    rgba_bytes,
-                    near_clip: self.camera.near,
-                    far_clip: self.settings.draw_distance,
-                    camera_position: [
-                        self.camera.position.x,
-                        self.camera.position.y,
-                        self.camera.position.z,
-                    ],
-                    camera_focus: [
-                        self.camera.target.x,
-                        self.camera.target.y,
-                        self.camera.target.z,
-                    ],
-                    in_demo_mode: self.demo,
-                };
-                let _ = pending.reply_tx.send(Ok(ViewerResponse::FrameCaptured(frame)));
-            }
+            let frame = RawCapturedFrame {
+                width,
+                height,
+                buffer_type: CaptureBufferType::ColorRgb,
+                rgba_bytes,
+                near_clip: self.camera.near,
+                far_clip: self.settings.draw_distance,
+                camera_position: [self.camera.position.x, self.camera.position.y, self.camera.position.z],
+                camera_focus: [self.camera.target.x, self.camera.target.y, self.camera.target.z],
+                in_demo_mode: self.demo,
+            };
+            let _ = pending.reply_tx.send(Ok(ViewerResponse::FrameCaptured(frame)));
         }
     }
 
@@ -444,10 +409,7 @@ impl App {
     }
 
     fn progress_mcp_captures(&mut self, renderer: &mut Renderer) {
-        if renderer.capture_request
-            || renderer.capture_scene
-            || renderer.captured.is_some()
-        {
+        if renderer.capture_request || renderer.capture_scene || renderer.captured.is_some() {
             return;
         }
 
@@ -473,22 +435,11 @@ impl App {
                 .objects
                 .iter()
                 .filter(|(_, o)| !o.is_avatar() && o.parent_id == 0)
-                .map(|(_, o)| {
-                    (
-                        o.key.local_id,
-                        o.full_id,
-                        [o.position.x, o.position.y, o.position.z],
-                        o.key,
-                    )
-                })
+                .map(|(_, o)| (o.key.local_id, o.full_id, [o.position.x, o.position.y, o.position.z], o.key))
                 .collect();
 
             for (local_id, object_uuid, pos, key) in candidates {
-                if let Some((name, reply_tx)) = self
-                    .mcp_bridge
-                    .build_tx_mgr
-                    .try_match_candidate(local_id, object_uuid, pos)
-                {
+                if let Some((name, reply_tx)) = self.mcp_bridge.build_tx_mgr.try_match_candidate(local_id, object_uuid, pos) {
                     let assigned_name = name
                         .as_deref()
                         .map(str::trim)
@@ -554,10 +505,7 @@ impl App {
                 .and_then(|inv| {
                     inv.items
                         .iter()
-                        .rfind(|it| {
-                            (it.asset_type == 10 || it.inv_type == 10)
-                                && !creation.known_script_ids.contains(&it.item_id)
-                        })
+                        .rfind(|it| (it.asset_type == 10 || it.inv_type == 10) && !creation.known_script_ids.contains(&it.item_id))
                         .map(|it| it.item_id)
                 });
             if let Some(item_id) = new_item_id {
@@ -604,31 +552,27 @@ impl App {
         self.mcp_bridge.pending_script_creations = remaining_creations;
 
         // 3. Expire timed-out script reads / compiles
-        self.mcp_bridge.pending_script_reads.retain(|_, pending| {
-            now.duration_since(pending.started_at) <= Duration::from_secs(5)
-        });
+        self.mcp_bridge
+            .pending_script_reads
+            .retain(|_, pending| now.duration_since(pending.started_at) <= Duration::from_secs(5));
         self.mcp_bridge
             .pending_script_compiles
-            .retain(|_, pending| {
-                now.duration_since(pending.started_at) <= Duration::from_secs(5)
-            });
+            .retain(|_, pending| now.duration_since(pending.started_at) <= Duration::from_secs(5));
 
         // 4. Progress serialized COF mutation queue
-        let cof_ready = self.world.outfit.is_done()
-            && self.appearance_ui.pending.is_none()
-            && !self.world.rlva_detach_in_flight(now);
+        let cof_ready = self.world.outfit.is_done() && self.appearance_ui.pending.is_none() && !self.world.rlva_detach_in_flight(now);
 
-        if let Some(active) = &self.mcp_bridge.cof_queue.active {
-            if cof_ready || now.duration_since(active.started_at) > Duration::from_secs(5) {
-                let completed = self.mcp_bridge.cof_queue.active.take().unwrap();
-                let worn = self.collect_worn_appearance();
-                let _ = completed.reply_tx.send(Ok(ViewerResponse::Json(json!({
-                    "status": "settled",
-                    "operation": format!("{:?}", completed.operation),
-                    "message": self.appearance_ui.message,
-                    "worn": worn,
-                }))));
-            }
+        if let Some(active) = &self.mcp_bridge.cof_queue.active
+            && (cof_ready || now.duration_since(active.started_at) > Duration::from_secs(5))
+        {
+            let completed = self.mcp_bridge.cof_queue.active.take().unwrap();
+            let worn = self.collect_worn_appearance();
+            let _ = completed.reply_tx.send(Ok(ViewerResponse::Json(json!({
+                "status": "settled",
+                "operation": format!("{:?}", completed.operation),
+                "message": self.appearance_ui.message,
+                "worn": worn,
+            }))));
         }
 
         if self.mcp_bridge.cof_queue.active.is_none()
@@ -662,12 +606,7 @@ impl App {
         if self.mcp_bridge.sse_tx.is_some() && self.voice.connected {
             let levels = self.voice.levels(self.world.agent_id);
             for (id, &(level, speaking)) in &levels {
-                let was_speaking = self
-                    .mcp_bridge
-                    .last_voice_speaking
-                    .get(id)
-                    .copied()
-                    .unwrap_or(false);
+                let was_speaking = self.mcp_bridge.last_voice_speaking.get(id).copied().unwrap_or(false);
                 if was_speaking != speaking {
                     self.mcp_bridge.last_voice_speaking.insert(*id, speaking);
                     self.mcp_bridge.push_event(
@@ -702,11 +641,9 @@ impl App {
                     .main_region
                     .and_then(|h| self.world.regions.get(&h))
                     .and_then(|r| r.info.as_ref());
-                let is_estate_manager = region_info
-                    .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
-                    || self.world.god_level > 0;
-                let is_region_owner = region_info
-                    .is_some_and(|i| i.owner == self.world.agent_id);
+                let is_estate_manager =
+                    region_info.is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id) || self.world.god_level > 0;
+                let is_region_owner = region_info.is_some_and(|i| i.owner == self.world.agent_id);
                 let region_owner_id = region_info.map(|i| i.owner.to_string());
                 let pos = self.world.agent.position;
                 let rot = self.world.agent.body_rotation();
@@ -755,22 +692,13 @@ impl App {
                     "region": region_name,
                 }))));
             }
-            ViewerRequest::ViewerCall {
-                api,
-                operation,
-                arguments,
-            } => {
+            ViewerRequest::ViewerCall { api, operation, arguments } => {
                 let resp = self.handle_legacy_viewer_call(&api, &operation, &arguments);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::EventsSubscribe { source } => {
                 self.mcp_bridge.subscribed_sources.insert(source);
-                let active: Vec<String> = self
-                    .mcp_bridge
-                    .subscribed_sources
-                    .iter()
-                    .cloned()
-                    .collect();
+                let active: Vec<String> = self.mcp_bridge.subscribed_sources.iter().cloned().collect();
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
                     "subscribed": active,
                 }))));
@@ -781,12 +709,7 @@ impl App {
                 } else {
                     self.mcp_bridge.subscribed_sources.remove(&source);
                 }
-                let active: Vec<String> = self
-                    .mcp_bridge
-                    .subscribed_sources
-                    .iter()
-                    .cloned()
-                    .collect();
+                let active: Vec<String> = self.mcp_bridge.subscribed_sources.iter().cloned().collect();
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
                     "subscribed": active,
                 }))));
@@ -806,10 +729,7 @@ impl App {
                     "events": events,
                 }))));
             }
-            ViewerRequest::RadarScanAvatars {
-                max_radius_m,
-                limit,
-            } => {
+            ViewerRequest::RadarScanAvatars { max_radius_m, limit } => {
                 let me = self.world.agent.position;
                 let mut rows: Vec<(f32, Value)> = self
                     .world
@@ -857,10 +777,7 @@ impl App {
                 limit,
             } => {
                 let me = self.world.agent.position;
-                let needle = name_filter
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
+                let needle = name_filter.as_deref().unwrap_or_default().to_ascii_lowercase();
                 let mut rows: Vec<(f32, Value)> = self
                     .world
                     .objects
@@ -887,9 +804,7 @@ impl App {
                         if !needle.is_empty() && !obj_name.to_ascii_lowercase().contains(&needle) {
                             return None;
                         }
-                        let desc = props
-                            .map(|p| p.description.clone())
-                            .unwrap_or_default();
+                        let desc = props.map(|p| p.description.clone()).unwrap_or_default();
                         let owner_id = if !o.owner_id.is_nil() {
                             o.owner_id
                         } else {
@@ -932,13 +847,8 @@ impl App {
                     "objects": objects,
                 }))));
             }
-            ViewerRequest::CommsReadHistory {
-                channel_filter,
-                limit,
-            } => {
-                let filter = channel_filter
-                    .unwrap_or_else(|| "all".to_string())
-                    .to_ascii_lowercase();
+            ViewerRequest::CommsReadHistory { channel_filter, limit } => {
+                let filter = channel_filter.unwrap_or_else(|| "all".to_string()).to_ascii_lowercase();
                 let mut entries = Vec::new();
                 if filter == "all" || filter == "local" || filter == "script" || filter == "nearby" {
                     for line in self.world.chat.iter().rev() {
@@ -949,10 +859,7 @@ impl App {
                             crate::world::ChatKind::System => "system",
                             _ => "other",
                         };
-                        if filter != "all"
-                            && !(filter == "nearby" && kind_str == "local")
-                            && filter != kind_str
-                        {
+                        if filter != "all" && !(filter == "nearby" && kind_str == "local") && filter != kind_str {
                             continue;
                         }
                         entries.push(json!({
@@ -1067,11 +974,7 @@ impl App {
                 let (moving, target, dist) = match &self.autopilot {
                     Some(ap) => {
                         let d = Vec3::new(ap.target.x - pos.x, ap.target.y - pos.y, 0.0).length();
-                        (
-                            !ap.reached(pos),
-                            Some([ap.target.x, ap.target.y, ap.target.z]),
-                            Some(d),
-                        )
+                        (!ap.reached(pos), Some([ap.target.x, ap.target.y, ap.target.z]), Some(d))
                     }
                     None => (false, None, None),
                 };
@@ -1115,9 +1018,7 @@ impl App {
                     }))));
                 } else {
                     self.world.agent.ground_sit = true;
-                    self.send(NetCommand::OneShotControl(
-                        aurora_net::control::SIT_ON_GROUND,
-                    ));
+                    self.send(NetCommand::OneShotControl(aurora_net::control::SIT_ON_GROUND));
                     let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
                         "status": "ground_sitting",
                     }))));
@@ -1130,10 +1031,7 @@ impl App {
                     "status": "standing",
                 }))));
             }
-            ViewerRequest::NavTeleport {
-                region_name,
-                position,
-            } => {
+            ViewerRequest::NavTeleport { region_name, position } => {
                 let dest = Vec3::from_array(position);
                 let current_name = self.world.region_name();
                 let target_region = region_name.unwrap_or_else(|| current_name.clone());
@@ -1199,11 +1097,7 @@ impl App {
                 let defaults = crate::settings::registry::defaults();
                 let entries = crate::settings::registry::entries(&self.settings, &defaults);
                 let found = entries.into_iter().find(|e| {
-                    e.key.eq_ignore_ascii_case(&key)
-                        || e.key
-                            .rsplit('.')
-                            .next()
-                            .is_some_and(|leaf| leaf.eq_ignore_ascii_case(&key))
+                    e.key.eq_ignore_ascii_case(&key) || e.key.rsplit('.').next().is_some_and(|leaf| leaf.eq_ignore_ascii_case(&key))
                 });
                 match found {
                     Some(e) => {
@@ -1220,56 +1114,35 @@ impl App {
                         }))));
                     }
                     None => {
-                        let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
-                            "Unknown viewer setting '{key}'"
-                        ))));
+                        let _ = reply_tx.send(Err(McpError::InvalidParams(format!("Unknown viewer setting '{key}'"))));
                     }
                 }
             }
-            ViewerRequest::SettingSet {
-                group: _,
-                key,
-                value,
-            } => {
+            ViewerRequest::SettingSet { group: _, key, value } => {
                 let defaults = crate::settings::registry::defaults();
                 let previous = crate::settings::registry::entries(&self.settings, &defaults)
                     .into_iter()
                     .find(|e| {
-                        e.key.eq_ignore_ascii_case(&key)
-                            || e.key
-                                .rsplit('.')
-                                .next()
-                                .is_some_and(|leaf| leaf.eq_ignore_ascii_case(&key))
+                        e.key.eq_ignore_ascii_case(&key) || e.key.rsplit('.').next().is_some_and(|leaf| leaf.eq_ignore_ascii_case(&key))
                     })
                     .map(|e| (e.key, e.value));
                 let Some((canonical_key, prev_val)) = previous else {
-                    let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
-                        "Unknown viewer setting '{key}'"
-                    ))));
+                    let _ = reply_tx.send(Err(McpError::InvalidParams(format!("Unknown viewer setting '{key}'"))));
                     return;
                 };
-                let leaf = canonical_key
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(&canonical_key)
-                    .to_ascii_lowercase();
-                if matches!(
-                    leaf.as_str(),
-                    "rlva_enabled" | "login_uri" | "username" | "password" | "mfa_token"
-                ) || matches!(
-                    canonical_key.to_ascii_lowercase().as_str(),
-                    "rlva.enabled" | "account.login_uri" | "account.username"
-                ) {
+                let leaf = canonical_key.rsplit('.').next().unwrap_or(&canonical_key).to_ascii_lowercase();
+                if matches!(leaf.as_str(), "rlva_enabled" | "login_uri" | "username" | "password" | "mfa_token")
+                    || matches!(
+                        canonical_key.to_ascii_lowercase().as_str(),
+                        "rlva.enabled" | "account.login_uri" | "account.username"
+                    )
+                {
                     let _ = reply_tx.send(Err(McpError::PermissionDenied(format!(
                         "Setting '{canonical_key}' is security-sensitive and cannot be mutated via MCP"
                     ))));
                     return;
                 }
-                match crate::settings::registry::set(
-                    &mut self.settings,
-                    &canonical_key,
-                    value.clone(),
-                ) {
+                match crate::settings::registry::set(&mut self.settings, &canonical_key, value.clone()) {
                     Ok(()) => {
                         let _ = reply_tx.send(Ok(ViewerResponse::SettingMutated {
                             key: canonical_key,
@@ -1278,31 +1151,20 @@ impl App {
                         }));
                     }
                     Err(err) => {
-                        let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
-                            "Failed to set '{canonical_key}': {err}"
-                        ))));
+                        let _ = reply_tx.send(Err(McpError::InvalidParams(format!("Failed to set '{canonical_key}': {err}"))));
                     }
                 }
             }
             ViewerRequest::CameraControl { command } => {
                 let prev_action = RollbackAction::RestoreCamera {
                     mode: format!("{:?}", self.camera.mode),
-                    position: [
-                        self.camera.position.x,
-                        self.camera.position.y,
-                        self.camera.position.z,
-                    ],
-                    focus: [
-                        self.camera.target.x,
-                        self.camera.target.y,
-                        self.camera.target.z,
-                    ],
+                    position: [self.camera.position.x, self.camera.position.y, self.camera.position.z],
+                    focus: [self.camera.target.x, self.camera.target.y, self.camera.target.z],
                     fov: self.settings.camera.fov,
                 };
                 match command {
                     CameraCommand::FollowAvatar | CameraCommand::Release => {
-                        self.camera
-                            .handle_reset_view(&mut self.world.agent, &self.settings.camera);
+                        self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
                     }
                     CameraCommand::FocusObject {
                         object_id,
@@ -1312,10 +1174,7 @@ impl App {
                     } => {
                         let focus = self
                             .resolve_prim_index(&object_id)
-                            .and_then(|idx| {
-                                crate::build::replace::region_transform(&self.world, idx)
-                                    .map(|(p, _)| p)
-                            })
+                            .and_then(|idx| crate::build::replace::region_transform(&self.world, idx).map(|(p, _)| p))
                             .unwrap_or(self.world.agent.position);
                         let pitch = pitch_deg.to_radians();
                         let yaw = yaw_deg.to_radians();
@@ -1323,18 +1182,9 @@ impl App {
                         let horiz = dist * pitch.cos();
                         let dz = dist * pitch.sin();
                         let eye = focus + Vec3::new(horiz * yaw.cos(), horiz * yaw.sin(), dz);
-                        self.camera.set_view(
-                            eye,
-                            focus,
-                            &mut self.world.agent,
-                            &self.settings.camera,
-                        );
+                        self.camera.set_view(eye, focus, &mut self.world.agent, &self.settings.camera);
                     }
-                    CameraCommand::ManualTransform {
-                        position,
-                        focus,
-                        fov_deg,
-                    } => {
+                    CameraCommand::ManualTransform { position, focus, fov_deg } => {
                         self.camera.set_view(
                             Vec3::from_array(position),
                             Vec3::from_array(focus),
@@ -1352,8 +1202,7 @@ impl App {
                         delta_pitch_deg,
                         zoom_delta,
                     } => {
-                        let current_dist =
-                            (self.camera.position - self.camera.target).length().max(0.5);
+                        let current_dist = (self.camera.position - self.camera.target).length().max(0.5);
                         let new_dist = (current_dist + zoom_delta).max(0.5);
                         self.camera.demo_orbit(
                             delta_yaw_deg.to_radians(),
@@ -1374,12 +1223,7 @@ impl App {
                         let horiz = dist * pitch.cos();
                         let dz = dist * pitch.sin();
                         let eye = focus + Vec3::new(horiz * yaw.cos(), horiz * yaw.sin(), dz);
-                        self.camera.set_view(
-                            eye,
-                            focus,
-                            &mut self.world.agent,
-                            &self.settings.camera,
-                        );
+                        self.camera.set_view(eye, focus, &mut self.world.agent, &self.settings.camera);
                     }
                 }
                 let state = json!({
@@ -1398,10 +1242,7 @@ impl App {
                 let resp = self.handle_mcp_poser_inspect(subject_id);
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::PoserSetBones {
-                subject,
-                transforms,
-            } => {
+            ViewerRequest::PoserSetBones { subject, transforms } => {
                 let subject_id = subject.unwrap_or(self.world.agent_id);
                 let resp = self.handle_mcp_poser_set_bones(subject_id, transforms);
                 let _ = reply_tx.send(resp);
@@ -1434,11 +1275,7 @@ impl App {
                 max_dimensions,
             } => match buffer_type {
                 CaptureBufferType::DepthNormalized => {
-                    let frame = self.compute_normalized_depth_frame(
-                        max_dimensions.0,
-                        max_dimensions.1,
-                        renderer.as_deref(),
-                    );
+                    let frame = self.compute_normalized_depth_frame(max_dimensions.0, max_dimensions.1, renderer.as_deref());
                     let _ = reply_tx.send(Ok(ViewerResponse::FrameCaptured(frame)));
                 }
                 CaptureBufferType::ColorRgb => {
@@ -1472,13 +1309,7 @@ impl App {
                 limit,
             } => {
                 let folder_uuid = folder_id.as_deref().and_then(|s| Uuid::parse_str(s.trim()).ok());
-                let resp = self.handle_mcp_inventory_browse(
-                    folder_uuid,
-                    Some(query),
-                    asset_type,
-                    worn_only,
-                    limit,
-                );
+                let resp = self.handle_mcp_inventory_browse(folder_uuid, Some(query), asset_type, worn_only, limit);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::AppearanceGetWorn => {
@@ -1504,31 +1335,18 @@ impl App {
                     let _ = reply_tx.send(Err(McpError::NotInWorld));
                     return;
                 };
-                let known_local_ids: HashSet<u32> = self
-                    .world
-                    .objects
-                    .iter()
-                    .map(|(_, o)| o.key.local_id)
-                    .collect();
+                let known_local_ids: HashSet<u32> = self.world.objects.iter().map(|(_, o)| o.key.local_id).collect();
                 let pos_vec = Vec3::from_array(position);
                 let rot_quat = Quat::from_array(rotation_quat);
                 let scale_vec = Vec3::from_array(scale);
                 let shape = crate::build::shapes::shapes()[0].raw();
 
-                self.mcp_bridge
-                    .build_tx_mgr
-                    .register_rez(position, name, known_local_ids, reply_tx);
+                self.mcp_bridge.build_tx_mgr.register_rez(position, name, known_local_ids, reply_tx);
 
                 let prim = NewPrim {
                     handle,
-                    group_id: self
-                        .world
-                        .group_for_rez(self.settings.build.rez_under_land_group),
-                    pcode: if pcode == 0 {
-                        aurora_prim::params::LL_PCODE_VOLUME
-                    } else {
-                        pcode
-                    },
+                    group_id: self.world.group_for_rez(self.settings.build.rez_under_land_group),
+                    pcode: if pcode == 0 { aurora_prim::params::LL_PCODE_VOLUME } else { pcode },
                     material: 3, // Wood default
                     add_flags: 0x02,
                     shape,
@@ -1558,15 +1376,7 @@ impl App {
                 color,
                 texture_id,
             } => {
-                let resp = self.handle_mcp_prim_set_shape(
-                    local_id,
-                    path_cut,
-                    profile_cut,
-                    hollow,
-                    twist,
-                    color,
-                    texture_id,
-                );
+                let resp = self.handle_mcp_prim_set_shape(local_id, path_cut, profile_cut, hollow, twist, color, texture_id);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::PrimLink { local_ids, delink } => {
@@ -1621,13 +1431,7 @@ impl App {
                 passphrase,
                 limit,
             } => {
-                let resp = self.handle_mcp_lsd_inspect(
-                    object_local_id,
-                    filter_regex,
-                    include_protected,
-                    passphrase,
-                    limit,
-                );
+                let resp = self.handle_mcp_lsd_inspect(object_local_id, filter_regex, include_protected, passphrase, limit);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::LsdMutate {
@@ -1677,13 +1481,7 @@ impl App {
                 for action in actions {
                     match action {
                         RollbackAction::RestoreSetting { key, value } => {
-                            if crate::settings::registry::set(
-                                &mut self.settings,
-                                &key,
-                                value,
-                            )
-                            .is_ok()
-                            {
+                            if crate::settings::registry::set(&mut self.settings, &key, value).is_ok() {
                                 restored += 1;
                             }
                         }
@@ -1734,15 +1532,10 @@ impl App {
                 choice,
                 include_textures,
             } => {
-                let resp =
-                    self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures);
+                let resp = self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures);
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::InventoryRezObject {
-                item_id,
-                position,
-                select,
-            } => {
+            ViewerRequest::InventoryRezObject { item_id, position, select } => {
                 self.handle_mcp_inventory_rez_object(item_id, position, select, reply_tx, renderer);
             }
             ViewerRequest::ObjectTakeOrDerez {
@@ -1801,10 +1594,7 @@ impl App {
                 let dialogs = self.handle_mcp_native_file_dialogs();
                 let _ = reply_tx.send(Ok(ViewerResponse::Json(dialogs)));
             }
-            ViewerRequest::NativeFileChoose {
-                dialog_id,
-                filename,
-            } => {
+            ViewerRequest::NativeFileChoose { dialog_id, filename } => {
                 let resp = self.handle_mcp_native_file_choose(dialog_id, &filename);
                 let _ = reply_tx.send(resp);
             }
@@ -1822,16 +1612,7 @@ impl App {
                 offset,
                 limit,
             } => {
-                let resp = self.handle_mcp_ui_find(
-                    &query,
-                    &under,
-                    &search_in,
-                    &match_mode,
-                    max_depth,
-                    include_info,
-                    offset,
-                    limit,
-                );
+                let resp = self.handle_mcp_ui_find(&query, &under, &search_in, &match_mode, max_depth, include_info, offset, limit);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::UiClick {
@@ -1840,12 +1621,7 @@ impl App {
                 floater,
                 observe_path,
             } => {
-                let resp = self.handle_mcp_ui_click(
-                    &path,
-                    &button,
-                    floater.as_deref(),
-                    observe_path.as_deref(),
-                );
+                let resp = self.handle_mcp_ui_click(&path, &button, floater.as_deref(), observe_path.as_deref());
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::UiGetValue { path } => {
@@ -1866,12 +1642,7 @@ impl App {
                 modifiers,
                 observe_path,
             } => {
-                let resp = self.handle_mcp_ui_press_key(
-                    &path,
-                    &keysym,
-                    &modifiers,
-                    observe_path.as_deref(),
-                );
+                let resp = self.handle_mcp_ui_press_key(&path, &keysym, &modifiers, observe_path.as_deref());
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::UiListMenus { query } => {
@@ -1899,14 +1670,10 @@ impl App {
                 target_uuid,
                 offset,
             } => {
-                let resp =
-                    self.handle_mcp_avatar_sit(&action, target_local_id, target_uuid, offset);
+                let resp = self.handle_mcp_avatar_sit(&action, target_local_id, target_uuid, offset);
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::NotecardRead {
-                item_id,
-                object_local_id,
-            } => {
+            ViewerRequest::NotecardRead { item_id, object_local_id } => {
                 let resp = self.handle_mcp_notecard_read(item_id, object_local_id);
                 let _ = reply_tx.send(resp);
             }
@@ -1916,12 +1683,7 @@ impl App {
                 name,
                 body,
             } => {
-                let resp = self.handle_mcp_notecard_write(
-                    item_id,
-                    object_local_id,
-                    name.as_deref(),
-                    &body,
-                );
+                let resp = self.handle_mcp_notecard_write(item_id, object_local_id, name.as_deref(), &body);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::PrimSetParticles {
@@ -1980,12 +1742,8 @@ impl App {
                 location,
                 mfa_token,
             } => {
-                let resp = self.handle_mcp_viewer_login(
-                    username.as_deref(),
-                    password.as_deref(),
-                    location.as_deref(),
-                    mfa_token.as_deref(),
-                );
+                let resp =
+                    self.handle_mcp_viewer_login(username.as_deref(), password.as_deref(), location.as_deref(), mfa_token.as_deref());
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::ViewerShutdown => {
@@ -2033,10 +1791,7 @@ impl App {
                 let resp = self.handle_mcp_prim_set_metadata(local_id, name.as_deref(), description.as_deref());
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::AvatarAnimationPlay {
-                animation,
-                loop_anim,
-            } => {
+            ViewerRequest::AvatarAnimationPlay { animation, loop_anim } => {
                 let resp = self.handle_mcp_avatar_animation_play(&animation, loop_anim.unwrap_or(true));
                 let _ = reply_tx.send(resp);
             }
@@ -2061,19 +1816,11 @@ impl App {
                 let resp = self.handle_mcp_parcel_set_music(&music_url);
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::ParcelSetProperties {
-                name,
-                description,
-                flags,
-            } => {
+            ViewerRequest::ParcelSetProperties { name, description, flags } => {
                 let resp = self.handle_mcp_parcel_set_properties(name.as_deref(), description.as_deref(), flags);
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::ParcelAccessListModify {
-                action,
-                list,
-                avatar_uuid,
-            } => {
+            ViewerRequest::ParcelAccessListModify { action, list, avatar_uuid } => {
                 let resp = self.handle_mcp_parcel_access_list_modify(&action, &list, &avatar_uuid);
                 let _ = reply_tx.send(resp);
             }
@@ -2117,12 +1864,12 @@ impl App {
                 let resp = self.handle_mcp_environment_set_time(preset.as_deref(), time_of_day);
                 let _ = reply_tx.send(resp);
             }
-            ViewerRequest::EnvironmentApplyPreset { preset, sky_uuid, water_uuid } => {
-                let resp = self.handle_mcp_environment_apply_preset(
-                    preset.as_deref(),
-                    sky_uuid.as_deref(),
-                    water_uuid.as_deref(),
-                );
+            ViewerRequest::EnvironmentApplyPreset {
+                preset,
+                sky_uuid,
+                water_uuid,
+            } => {
+                let resp = self.handle_mcp_environment_apply_preset(preset.as_deref(), sky_uuid.as_deref(), water_uuid.as_deref());
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::VoiceStatus => {
@@ -2148,12 +1895,7 @@ impl App {
         }
     }
 
-    fn handle_legacy_viewer_call(
-        &mut self,
-        api: &str,
-        operation: &str,
-        arguments: &Value,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_legacy_viewer_call(&mut self, api: &str, operation: &str, arguments: &Value) -> Result<ViewerResponse, McpError> {
         let op = operation.to_ascii_lowercase();
         match (api, op.as_str()) {
             (_, "get_agent_status" | "connection_status" | "getstatus" | "getposition") => {
@@ -2168,14 +1910,8 @@ impl App {
                 "floaters": self.collect_floater_list(),
             }))),
             (_, "floater_open" | "open") => {
-                let name = arguments
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("inventory");
-                let open = arguments
-                    .get("open")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let name = arguments.get("name").and_then(|v| v.as_str()).unwrap_or("inventory");
+                let open = arguments.get("open").and_then(|v| v.as_bool()).unwrap_or(true);
                 self.set_floater_open(name, open)
             }
             _ => Err(McpError::InvalidParams(format!(
@@ -2184,30 +1920,23 @@ impl App {
         }
     }
 
-    fn handle_mcp_rlva_execute(
-        &mut self,
-        commands: Vec<String>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_rlva_execute(&mut self, commands: Vec<String>) -> Result<ViewerResponse, McpError> {
         if !self.settings.rlva_enabled {
             return Err(McpError::PermissionDenied(
-                "RLVa is disabled in viewer settings; enable RLVa manually before using rlva_execute"
-                    .into(),
+                "RLVa is disabled in viewer settings; enable RLVa manually before using rlva_execute".into(),
             ));
         }
         let source_id = Uuid::from_u128(0x726c7661);
         let mut executed = Vec::new();
         for cmd_str in commands {
-            let normalized = if cmd_str.starts_with('@') {
-                cmd_str
-            } else {
-                format!("@{cmd_str}")
-            };
+            let normalized = if cmd_str.starts_with('@') { cmd_str } else { format!("@{cmd_str}") };
             self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
                 from_name: "MCP RLVa Controller".to_owned(),
                 source_id,
                 owner_id: self.world.agent_id,
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
                 position: self.world.agent.position,
                 message: normalized.clone(),
             }));
@@ -2264,9 +1993,7 @@ impl App {
         } else {
             crate::ik_edit::Frame::subject(&self.world, subject_id)
                 .and_then(|frame| crate::ik_edit::poser::SubjectPose::capture(rig, &frame))
-                .ok_or_else(|| {
-                    McpError::InvalidParams("Subject skeleton not available".into())
-                })?
+                .ok_or_else(|| McpError::InvalidParams("Subject skeleton not available".into()))?
         };
 
         let mut pairs: Vec<(&String, &usize)> = rig.names.iter().collect();
@@ -2294,11 +2021,7 @@ impl App {
         })))
     }
 
-    fn handle_mcp_poser_set_bones(
-        &mut self,
-        subject_id: Uuid,
-        transforms: Vec<BoneTransform>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_poser_set_bones(&mut self, subject_id: Uuid, transforms: Vec<BoneTransform>) -> Result<ViewerResponse, McpError> {
         let rig = &self.world.avatar_lib.rig;
         let mut pose = if let Some(existing) = self.mcp_bridge.mcp_poses.get(&subject_id) {
             (**existing).clone()
@@ -2307,9 +2030,7 @@ impl App {
         } else {
             crate::ik_edit::Frame::subject(&self.world, subject_id)
                 .and_then(|frame| crate::ik_edit::poser::SubjectPose::capture(rig, &frame))
-                .ok_or_else(|| {
-                    McpError::InvalidParams("Subject skeleton not available".into())
-                })?
+                .ok_or_else(|| McpError::InvalidParams("Subject skeleton not available".into()))?
         };
 
         let mut modified_bones = Vec::new();
@@ -2349,9 +2070,7 @@ impl App {
             modified_bones.push(transform.bone_name);
         }
 
-        self.mcp_bridge
-            .mcp_poses
-            .insert(subject_id, Arc::new(pose));
+        self.mcp_bridge.mcp_poses.insert(subject_id, Arc::new(pose));
 
         Ok(ViewerResponse::PoserMutated {
             state: json!({
@@ -2361,12 +2080,7 @@ impl App {
         })
     }
 
-    fn compute_normalized_depth_frame(
-        &self,
-        width: u32,
-        height: u32,
-        renderer: Option<&Renderer>,
-    ) -> RawCapturedFrame {
+    fn compute_normalized_depth_frame(&self, width: u32, height: u32, renderer: Option<&Renderer>) -> RawCapturedFrame {
         let w = width.clamp(32, 1024);
         let h = height.clamp(32, 1024);
         let (win_w, win_h) = renderer.map_or((1280, 720), |r| r.size());
@@ -2444,51 +2158,47 @@ impl App {
             near_clip: near,
             far_clip: far,
             camera_position: [cam_pos.x, cam_pos.y, cam_pos.z],
-            camera_focus: [
-                self.camera.target.x,
-                self.camera.target.y,
-                self.camera.target.z,
-            ],
+            camera_focus: [self.camera.target.x, self.camera.target.y, self.camera.target.z],
             in_demo_mode: self.demo,
         }
     }
 
-fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
-    match inv_type {
-        10 => "script",
-        6 => "object",
-        7 => "notecard",
-        0 => "texture",
-        1 => "sound",
-        2 => "calling_card",
-        3 => "landmark",
-        18 => "wearable",
-        19 => "animation",
-        20 => "gesture",
-        22 => "mesh",
-        25 => "settings",
-        26 => "material",
-        _ => match asset_type {
-            0 | 12 => "texture",
-            1 | 17 => "sound",
-            2 => "calling_card",
-            3 => "landmark",
-            4 | 10 | 11 => "script",
-            5 => "clothing",
+    fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
+        match inv_type {
+            10 => "script",
             6 => "object",
             7 => "notecard",
-            13 => "bodypart",
-            20 => "animation",
-            21 => "gesture",
-            24 => "link",
-            25 => "link_folder",
-            49 => "mesh",
-            56 => "settings",
-            57 => "material",
-            _ => "unknown",
-        },
+            0 => "texture",
+            1 => "sound",
+            2 => "calling_card",
+            3 => "landmark",
+            18 => "wearable",
+            19 => "animation",
+            20 => "gesture",
+            22 => "mesh",
+            25 => "settings",
+            26 => "material",
+            _ => match asset_type {
+                0 | 12 => "texture",
+                1 | 17 => "sound",
+                2 => "calling_card",
+                3 => "landmark",
+                4 | 10 | 11 => "script",
+                5 => "clothing",
+                6 => "object",
+                7 => "notecard",
+                13 => "bodypart",
+                20 => "animation",
+                21 => "gesture",
+                24 => "link",
+                25 => "link_folder",
+                49 => "mesh",
+                56 => "settings",
+                57 => "material",
+                _ => "unknown",
+            },
+        }
     }
-}
 
     fn handle_mcp_inventory_browse(
         &self,
@@ -2550,10 +2260,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 if !matches_type(item.asset_type) {
                     continue;
                 }
-                if query.is_empty()
-                    || item.name.to_ascii_lowercase().contains(&query)
-                    || item.desc.to_ascii_lowercase().contains(&query)
-                {
+                if query.is_empty() || item.name.to_ascii_lowercase().contains(&query) || item.desc.to_ascii_lowercase().contains(&query) {
                     items_out.push(self.serialize_inventory_item(item));
                     if items_out.len() >= limit {
                         break;
@@ -2600,8 +2307,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
 
     fn serialize_inventory_item(&self, item: &aurora_net::inventory::InvItem) -> Value {
         // Enforce AGENTS.md §2 Creator Permissions before exposing asset_id
-        let show_asset_uuid =
-            crate::world::inventory::actions::asset_uuid_shown(&self.world.inventory, item.asset_id);
+        let show_asset_uuid = crate::world::inventory::actions::asset_uuid_shown(&self.world.inventory, item.asset_id);
         let mask = crate::world::inventory::actions::agent_mask(item, self.world.agent_id);
         let can_copy = (mask & perm::COPY) != 0;
         let can_modify = (mask & perm::MODIFY) != 0;
@@ -2639,10 +2345,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
 
     fn collect_worn_appearance(&self) -> Value {
         let inv = &self.world.inventory;
-        let cof_id = crate::world::inventory::actions::system(
-            inv,
-            crate::world::outfit::FT_CURRENT_OUTFIT,
-        );
+        let cof_id = crate::world::inventory::actions::system(inv, crate::world::outfit::FT_CURRENT_OUTFIT);
         let mut cof_links = Vec::new();
         if let Some(cof) = cof_id.and_then(|id| inv.folders.get(&id)) {
             for item_id in &cof.items {
@@ -2670,12 +2373,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     .get(&pt)
                     .cloned()
                     .unwrap_or_else(|| format!("Point {pt}"));
-                let obj_name = self
-                    .build
-                    .props
-                    .get(&obj.full_id)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_default();
+                let obj_name = self.build.props.get(&obj.full_id).map(|p| p.name.clone()).unwrap_or_default();
                 attachments.push(json!({
                     "object_uuid": obj.full_id.to_string(),
                     "local_id": obj.key.local_id,
@@ -2702,9 +2400,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 replace_existing,
             } => {
                 if !self.world.inventory.items.contains_key(item_id) {
-                    return Err(McpError::InvalidParams(format!(
-                        "Inventory item '{item_id}' not found"
-                    )));
+                    return Err(McpError::InvalidParams(format!("Inventory item '{item_id}' not found")));
                 }
                 let action = crate::world::appearance::Action::WearItem {
                     item: *item_id,
@@ -2720,9 +2416,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             }
             AppearanceOperation::WearFolder { folder_id, append } => {
                 if !self.world.inventory.folders.contains_key(folder_id) {
-                    return Err(McpError::InvalidParams(format!(
-                        "Outfit folder '{folder_id}' not found"
-                    )));
+                    return Err(McpError::InvalidParams(format!("Outfit folder '{folder_id}' not found")));
                 }
                 let action = crate::world::appearance::Action::WearOutfits {
                     folders: vec![*folder_id],
@@ -2733,9 +2427,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             }
             AppearanceOperation::RemoveFolder { folder_id } => {
                 let Some(folder) = self.world.inventory.folders.get(folder_id) else {
-                    return Err(McpError::InvalidParams(format!(
-                        "Folder '{folder_id}' not found"
-                    )));
+                    return Err(McpError::InvalidParams(format!("Folder '{folder_id}' not found")));
                 };
                 let items: Vec<Uuid> = folder.items.clone();
                 self.apply_appearance_action(crate::world::appearance::Action::RemoveItems(items));
@@ -2751,10 +2443,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             return self
                 .world
                 .objects
-                .index_of(&crate::world::objects::ObjKey {
-                    region: handle,
-                    local_id,
-                });
+                .index_of(&crate::world::objects::ObjKey { region: handle, local_id });
         }
         if let Ok(uuid) = Uuid::parse_str(id_str.trim()) {
             return self.world.objects.index_of_uuid(&uuid);
@@ -2769,10 +2458,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let Some(idx) = self
             .world
             .objects
-            .index_of(&crate::world::objects::ObjKey {
-                region: handle,
-                local_id,
-            })
+            .index_of(&crate::world::objects::ObjKey { region: handle, local_id })
         else {
             return Err(McpError::InvalidParams(format!(
                 "Object with local_id {local_id} not found in region"
@@ -2790,12 +2476,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 })
                 .unwrap_or(idx)
         };
-        let root_uuid = self
-            .world
-            .objects
-            .get(root_idx)
-            .map(|r| r.full_id)
-            .unwrap_or(obj.full_id);
+        let root_uuid = self.world.objects.get(root_idx).map(|r| r.full_id).unwrap_or(obj.full_id);
         Ok((idx, root_uuid))
     }
 
@@ -2810,25 +2491,18 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 ));
             }
             if obj.owner_id != self.world.agent_id {
-                return Err(McpError::PermissionDenied(
-                    "you do not have Modify rights on this object".into(),
-                ));
+                return Err(McpError::PermissionDenied("you do not have Modify rights on this object".into()));
             }
             if let Some(props) = self.build.props.get(&obj.full_id)
                 && (props.owner_mask & perm::MODIFY) == 0
             {
-                return Err(McpError::PermissionDenied(
-                    "object lacks Modify permission".into(),
-                ));
+                return Err(McpError::PermissionDenied("object lacks Modify permission".into()));
             }
         }
         Ok(())
     }
 
-    fn handle_mcp_prim_transform(
-        &mut self,
-        transforms: Vec<PrimTransformSpec>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_prim_transform(&mut self, transforms: Vec<PrimTransformSpec>) -> Result<ViewerResponse, McpError> {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
@@ -2840,14 +2514,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             let new_rot = if let Some(q) = spec.rotation_quat {
                 Some(Quat::from_array(q).normalize())
             } else {
-                spec.rotation_euler_deg.map(|r| {
-                    Quat::from_euler(
-                        EulerRot::XYZ,
-                        r[0].to_radians(),
-                        r[1].to_radians(),
-                        r[2].to_radians(),
-                    )
-                })
+                spec.rotation_euler_deg
+                    .map(|r| Quat::from_euler(EulerRot::XYZ, r[0].to_radians(), r[1].to_radians(), r[2].to_radians()))
             };
             let new_scale = spec.scale.map(Vec3::from_array);
             if new_pos.is_some() || new_rot.is_some() || new_scale.is_some() {
@@ -2901,7 +2569,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         self.check_object_modify_permission(idx)?;
 
         if path_cut.is_some() || profile_cut.is_some() || hollow.is_some() || twist.is_some() {
-            let mut vol = self.world.objects.get(idx).unwrap().volume.clone();
+            let mut vol = self.world.objects.get(idx).unwrap().volume;
             if let Some([begin, end]) = path_cut {
                 vol.path.begin = begin.clamp(0.0, 0.95);
                 vol.path.end = end.clamp(vol.path.begin + 0.05, 1.0);
@@ -2953,11 +2621,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_prim_link(
-        &mut self,
-        local_ids: Vec<u32>,
-        delink: bool,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_prim_link(&mut self, local_ids: Vec<u32>, delink: bool) -> Result<ViewerResponse, McpError> {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
@@ -3007,11 +2671,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_lsl_inspect(
-        &mut self,
-        object_local_id: u32,
-        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
-    ) {
+    fn handle_mcp_lsl_inspect(&mut self, object_local_id: u32, reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>) {
         let (idx, _) = match self.resolve_prim_by_local_id(object_local_id) {
             Ok(v) => v,
             Err(e) => {
@@ -3023,31 +2683,20 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         self.build.request_contents(&self.world, idx, true);
         self.flush_build();
 
-        let loaded = self
-            .build
-            .contents
-            .objects
-            .get(&object_uuid)
-            .is_some_and(|inv| !inv.loading);
+        let loaded = self.build.contents.objects.get(&object_uuid).is_some_and(|inv| !inv.loading);
         if loaded {
             let _ = reply_tx.send(self.build_script_inspect_json(object_local_id, object_uuid));
         } else {
-            self.mcp_bridge
-                .pending_script_inspects
-                .push_back(PendingScriptInspect {
-                    local_id: object_local_id,
-                    object_uuid,
-                    started_at: Instant::now(),
-                    reply_tx,
-                });
+            self.mcp_bridge.pending_script_inspects.push_back(PendingScriptInspect {
+                local_id: object_local_id,
+                object_uuid,
+                started_at: Instant::now(),
+                reply_tx,
+            });
         }
     }
 
-    fn build_script_inspect_json(
-        &self,
-        local_id: u32,
-        object_uuid: Uuid,
-    ) -> Result<ViewerResponse, McpError> {
+    fn build_script_inspect_json(&self, local_id: u32, object_uuid: Uuid) -> Result<ViewerResponse, McpError> {
         let scripts: Vec<Value> = self
             .build
             .contents
@@ -3058,10 +2707,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     .iter()
                     .filter(|it| it.asset_type == 10 || it.inv_type == 10)
                     .map(|it| {
-                        let mask = crate::world::inventory::actions::task_agent_mask(
-                            it,
-                            self.world.agent_id,
-                        );
+                        let mask = crate::world::inventory::actions::task_agent_mask(it, self.world.agent_id);
                         let (running, compile_target) = self
                             .build
                             .contents
@@ -3075,10 +2721,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                             aurora_net::scripts::CompileTarget::Luau => "luau",
                             aurora_net::scripts::CompileTarget::LslLuau => "lsl_luau",
                         });
-                        let is_mono = matches!(
-                            compile_target,
-                            Some(aurora_net::scripts::CompileTarget::Mono) | None
-                        );
+                        let is_mono = matches!(compile_target, Some(aurora_net::scripts::CompileTarget::Mono) | None);
                         json!({
                             "item_id": it.item_id.to_string(),
                             "name": it.name,
@@ -3147,9 +2790,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
 
         // Enforce AGENTS.md §2 Creator Permissions (requires both MODIFY and COPY to read source)
         let mask = crate::world::inventory::actions::task_agent_mask(&item, self.world.agent_id);
-        if (mask & (perm::MODIFY | perm::COPY)) != (perm::MODIFY | perm::COPY)
-            && self.world.god_level == 0
-        {
+        if (mask & (perm::MODIFY | perm::COPY)) != (perm::MODIFY | perm::COPY) && self.world.god_level == 0 {
             let _ = reply_tx.send(Err(McpError::PermissionDenied(format!(
                 "reading LSL script '{}' requires both Copy and Modify permissions",
                 item.name
@@ -3239,20 +2880,12 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         self.build.request_contents(&self.world, idx, false);
         self.flush_build();
 
-        let existing = self
-            .build
-            .contents
-            .objects
-            .get(&object_uuid)
-            .and_then(|inv| {
-                inv.items
-                    .iter()
-                    .find(|it| {
-                        script_item_id.is_some_and(|id| it.item_id == id)
-                            || it.name.eq_ignore_ascii_case(&script_name)
-                    })
-                    .cloned()
-            });
+        let existing = self.build.contents.objects.get(&object_uuid).and_then(|inv| {
+            inv.items
+                .iter()
+                .find(|it| script_item_id.is_some_and(|id| it.item_id == id) || it.name.eq_ignore_ascii_case(&script_name))
+                .cloned()
+        });
 
         let known_script_ids: HashSet<Uuid> = self
             .build
@@ -3269,21 +2902,16 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             .unwrap_or_default();
 
         let resolved_item_id = if let Some(item) = existing {
-            let mask =
-                crate::world::inventory::actions::task_agent_mask(&item, self.world.agent_id);
+            let mask = crate::world::inventory::actions::task_agent_mask(&item, self.world.agent_id);
             if (mask & perm::MODIFY) == 0 && self.world.god_level == 0 {
-                let _ = reply_tx.send(Err(McpError::PermissionDenied(format!(
-                    "script '{}' is no-modify",
-                    item.name
-                ))));
+                let _ = reply_tx.send(Err(McpError::PermissionDenied(format!("script '{}' is no-modify", item.name))));
                 return;
             }
             item.item_id
         } else {
             let template_script = self.world.inventory.items.values().find(|it| {
                 let mask = crate::world::inventory::actions::agent_mask(it, self.world.agent_id);
-                (it.asset_type == 10 || it.inv_type == 10)
-                    && (mask & (perm::COPY | perm::MODIFY)) == (perm::COPY | perm::MODIFY)
+                (it.asset_type == 10 || it.inv_type == 10) && (mask & (perm::COPY | perm::MODIFY)) == (perm::COPY | perm::MODIFY)
             });
             if let Some(template) = template_script {
                 if let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, template, running) {
@@ -3307,28 +2935,23 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 .and_then(|inv| {
                     inv.items
                         .iter()
-                        .rfind(|it| {
-                            (it.asset_type == 10 || it.inv_type == 10)
-                                && !known_script_ids.contains(&it.item_id)
-                        })
+                        .rfind(|it| (it.asset_type == 10 || it.inv_type == 10) && !known_script_ids.contains(&it.item_id))
                         .map(|it| it.item_id)
                 });
             let Some(new_id) = immediate_new else {
-                self.mcp_bridge
-                    .pending_script_creations
-                    .push_back(PendingScriptCreation {
-                        handle,
-                        local_id: object_local_id,
-                        object_uuid,
-                        known_script_ids,
-                        script_name,
-                        source_code,
-                        compile,
-                        running,
-                        started_at: Instant::now(),
-                        last_requested: Instant::now(),
-                        reply_tx,
-                    });
+                self.mcp_bridge.pending_script_creations.push_back(PendingScriptCreation {
+                    handle,
+                    local_id: object_local_id,
+                    object_uuid,
+                    known_script_ids,
+                    script_name,
+                    source_code,
+                    compile,
+                    running,
+                    started_at: Instant::now(),
+                    last_requested: Instant::now(),
+                    reply_tx,
+                });
                 return;
             };
             new_id
@@ -3363,11 +2986,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         });
     }
 
-    fn handle_mcp_lsl_listen_output(
-        &self,
-        object_id: Option<Uuid>,
-        local_id: Option<u32>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_lsl_listen_output(&self, object_id: Option<Uuid>, local_id: Option<u32>) -> Result<ViewerResponse, McpError> {
         let resolved_object_id = if object_id.is_some() {
             object_id
         } else if let Some(lid) = local_id {
@@ -3394,10 +3013,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             }
         }
         for line in self.world.chat.iter().rev() {
-            if !matches!(
-                line.kind,
-                crate::world::ChatKind::Object(_) | crate::world::ChatKind::ObjectIm
-            ) {
+            if !matches!(line.kind, crate::world::ChatKind::Object(_) | crate::world::ChatKind::ObjectIm) {
                 continue;
             }
             if let Some(filter_id) = resolved_object_id
@@ -3432,12 +3048,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let (idx, root_uuid) = self.resolve_prim_by_local_id(object_local_id)?;
         self.check_object_modify_permission(idx)?;
         let store = self.mcp_bridge.lsd_stores.entry(root_uuid).or_default();
-        let mut val = store.inspect(
-            filter_regex.as_deref(),
-            include_protected,
-            passphrase.as_deref(),
-            limit,
-        )?;
+        let mut val = store.inspect(filter_regex.as_deref(), include_protected, passphrase.as_deref(), limit)?;
         if let Some(obj) = val.as_object_mut() {
             obj.insert("local_id".into(), json!(object_local_id));
             obj.insert("root_uuid".into(), json!(root_uuid.to_string()));
@@ -3445,11 +3056,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         Ok(ViewerResponse::Json(val))
     }
 
-    fn handle_mcp_lsd_mutate(
-        &mut self,
-        object_local_id: u32,
-        operations: Vec<LsdOperation>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_lsd_mutate(&mut self, object_local_id: u32, operations: Vec<LsdOperation>) -> Result<ViewerResponse, McpError> {
         let (idx, root_uuid) = self.resolve_prim_by_local_id(object_local_id)?;
         self.check_object_modify_permission(idx)?;
         let store = self.mcp_bridge.lsd_stores.entry(root_uuid).or_default();
@@ -3457,11 +3064,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
 
         for op in operations {
             match op {
-                LsdOperation::Write {
-                    key,
-                    value,
-                    passphrase,
-                } => {
+                LsdOperation::Write { key, value, passphrase } => {
                     let code = store.write(&key, &value, passphrase.as_deref());
                     results.push(json!({
                         "op": "write",
@@ -3487,19 +3090,12 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         "status_name": aurora_mcp::lsd::lsd_status_name(aurora_mcp::lsd::LINKSETDATA_OK),
                     }));
                 }
-                LsdOperation::ImportJson {
-                    entries,
-                    passphrase,
-                } => {
+                LsdOperation::ImportJson { entries, passphrase } => {
                     let mut written = 0usize;
                     let mut last_code = aurora_mcp::lsd::LINKSETDATA_OK;
                     for (k, v) in entries {
                         let code = store.write(&k, &v, passphrase.as_deref());
-                        if matches!(
-                            code,
-                            aurora_mcp::lsd::LINKSETDATA_OK
-                                | aurora_mcp::lsd::LINKSETDATA_NOUPDATE
-                        ) {
+                        if matches!(code, aurora_mcp::lsd::LINKSETDATA_OK | aurora_mcp::lsd::LINKSETDATA_NOUPDATE) {
                             written += 1;
                         } else {
                             last_code = code;
@@ -3604,11 +3200,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
 
     // ---- Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials ----
 
-    fn handle_mcp_livemesh_control(
-        &mut self,
-        action: &str,
-        source_id: Option<Uuid>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_livemesh_control(&mut self, action: &str, source_id: Option<Uuid>) -> Result<ViewerResponse, McpError> {
         let act = action.trim().to_ascii_lowercase();
         match act.as_str() {
             "start" => {
@@ -3623,8 +3215,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 if let Some(snapshot) = &self.blender_live.snapshot {
                     let ids: Vec<Uuid> = snapshot.sources.iter().map(|s| s.id).collect();
                     for id in ids {
-                        self.blender_live
-                            .set_state(id, crate::blender_live::SourceState::Removed);
+                        self.blender_live.set_state(id, crate::blender_live::SourceState::Removed);
                     }
                 }
                 self.clear_blender_preview();
@@ -3707,9 +3298,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         .to_ascii_lowercase();
                     match ext.as_str() {
                         "dae" | "glb" | "gltf" => crate::imports::Choice::Mesh,
-                        "png" | "jpg" | "jpeg" | "tga" | "bmp" | "j2c" | "jp2" => {
-                            crate::imports::Choice::Texture
-                        }
+                        "png" | "jpg" | "jpeg" | "tga" | "bmp" | "j2c" | "jp2" => crate::imports::Choice::Texture,
                         "wav" => crate::imports::Choice::Sound,
                         "bvh" | "anim" => crate::imports::Choice::Animation,
                         _ => crate::imports::Choice::Bulk,
@@ -3725,14 +3314,10 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         "Provide at least one file path in 'paths' or 'path'".into(),
                     ));
                 }
-                let path_bufs: Vec<std::path::PathBuf> =
-                    paths.iter().map(std::path::PathBuf::from).collect();
+                let path_bufs: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
                 for p in &path_bufs {
                     if !p.exists() {
-                        return Err(McpError::InvalidParams(format!(
-                            "File does not exist: {}",
-                            p.display()
-                        )));
+                        return Err(McpError::InvalidParams(format!("File does not exist: {}", p.display())));
                     }
                 }
                 let choice = parse_choice(choice_str, paths.first().map(String::as_str));
@@ -3757,19 +3342,10 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         ids.push(entry.id);
                     }
                 }
-                let rights = self
-                    .settings
-                    .imports
-                    .permissions_for(aurora_net::inventory::upload::Kind::Mesh);
+                let rights = self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh);
                 for id in ids {
-                    self.imports.quote_mesh(
-                        id,
-                        &self.egui_ctx,
-                        &self.scene.jobs,
-                        &self.world,
-                        &self.settings.inventory,
-                        rights,
-                    );
+                    self.imports
+                        .quote_mesh(id, &self.egui_ctx, &self.scene.jobs, &self.world, &self.settings.inventory, rights);
                 }
             }
             "upload" | "start" => {
@@ -3795,12 +3371,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                         .unwrap_or_default()
                 }
                 .with_fallback(self.world.upload_cost);
-                self.imports.start_confirmed(
-                    &self.world,
-                    &self.settings.inventory,
-                    &self.settings.imports,
-                    &prices,
-                );
+                self.imports
+                    .start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
             }
             "status" => {}
             other => {
@@ -3826,9 +3398,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             return;
         };
         let Some(item) = self.world.inventory.items.get(&item_id).cloned() else {
-            let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
-                "Inventory item {item_id} not found"
-            ))));
+            let _ = reply_tx.send(Err(McpError::InvalidParams(format!("Inventory item {item_id} not found"))));
             return;
         };
         if item.asset_type != 6 && item.inv_type != 6 {
@@ -3839,12 +3409,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             ))));
             return;
         }
-        let known_local_ids: HashSet<u32> = self
-            .world
-            .objects
-            .iter()
-            .map(|(_, o)| o.key.local_id)
-            .collect();
+        let known_local_ids: HashSet<u32> = self.world.objects.iter().map(|(_, o)| o.key.local_id).collect();
         let pos_vec = Vec3::from_array(position);
         let item_name = item.name.clone();
         let remove = (item.owner_mask & crate::world::inventory::actions::COPY) == 0;
@@ -3856,19 +3421,14 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             item.parent
         };
 
-        self.mcp_bridge.build_tx_mgr.register_rez(
-            position,
-            Some(item_name),
-            known_local_ids,
-            reply_tx,
-        );
+        self.mcp_bridge
+            .build_tx_mgr
+            .register_rez(position, Some(item_name), known_local_ids, reply_tx);
 
         self.send(NetCommand::Build(BuildCmd::RezInventory(Box::new(
             aurora_net::inventory::rez::RezInventory {
                 handle,
-                group: self
-                    .world
-                    .group_for_rez(self.settings.build.rez_under_land_group),
+                group: self.world.group_for_rez(self.settings.build.rez_under_land_group),
                 item,
                 ray_start: pos_vec,
                 ray_end: pos_vec,
@@ -3923,9 +3483,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     .unwrap_or(self.world.inventory.root)
             }
         });
-        let group_id = self
-            .world
-            .group_for_rez(self.settings.build.rez_under_land_group);
+        let group_id = self.world.group_for_rez(self.settings.build.rez_under_land_group);
         self.send(NetCommand::Build(BuildCmd::DeRez {
             handle,
             local_ids: vec![local_id],
@@ -4112,11 +3670,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })
     }
 
-    fn handle_mcp_native_file_choose(
-        &mut self,
-        dialog_id: i64,
-        filename: &str,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_native_file_choose(&mut self, dialog_id: i64, filename: &str) -> Result<ViewerResponse, McpError> {
         let path = aurora_mcp::asset_inspect::validate_local_file_path(
             filename,
             &["gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif"],
@@ -4142,30 +3696,22 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
     }
 
     fn collect_virtual_ui_nodes(&self) -> Vec<(String, String, bool, bool, Value)> {
-        let mut nodes = vec![(
-            "/main_view".to_string(),
-            "main_view".to_string(),
-            true,
-            true,
-            Value::Null,
-        )];
+        let mut nodes = vec![("/main_view".to_string(), "main_view".to_string(), true, true, Value::Null)];
         for f in self.collect_floater_list() {
             let name = f["name"].as_str().unwrap_or("");
             let open = f["open"].as_bool().unwrap_or(false);
-            nodes.push((
-                format!("/main_view/floaters/{name}"),
-                name.to_string(),
-                open,
-                true,
-                json!(open),
-            ));
+            nodes.push((format!("/main_view/floaters/{name}"), name.to_string(), open, true, json!(open)));
         }
         // Blender Live controls
         let bl_open = self.blender_live.open;
         for (ctrl, enabled, val) in [
             ("start", !self.blender_live.running(), json!(self.blender_live.running())),
             ("stop", self.blender_live.running(), json!(self.blender_live.running())),
-            ("remove_meshes", !self.blender_live.objects.is_empty(), json!(self.blender_live.objects.len())),
+            (
+                "remove_meshes",
+                !self.blender_live.objects.is_empty(),
+                json!(self.blender_live.objects.len()),
+            ),
             ("import", self.blender_live.snapshot.is_some(), json!(self.blender_live.triangles)),
         ] {
             nodes.push((
@@ -4199,16 +3745,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let norm = path.trim().trim_end_matches('/');
         let target = if norm.is_empty() { "/main_view" } else { norm };
         let nodes = self.collect_virtual_ui_nodes();
-        if let Some((p, name, visible, enabled, val)) =
-            nodes.iter().find(|(p, ..)| p.eq_ignore_ascii_case(target))
-        {
+        if let Some((p, name, visible, enabled, val)) = nodes.iter().find(|(p, ..)| p.eq_ignore_ascii_case(target)) {
             let children: Vec<String> = nodes
                 .iter()
                 .filter(|(cp, ..)| {
-                    cp.len() > p.len()
-                        && cp.starts_with(p.as_str())
-                        && cp[p.len()..].starts_with('/')
-                        && !cp[p.len() + 1..].contains('/')
+                    cp.len() > p.len() && cp.starts_with(p.as_str()) && cp[p.len()..].starts_with('/') && !cp[p.len() + 1..].contains('/')
                 })
                 .map(|(cp, ..)| cp.clone())
                 .collect();
@@ -4323,12 +3864,10 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             let _ = self.set_floater_open(floater_name, true)?;
         }
 
-        let observed = observe_path
-            .and_then(|op| self.handle_mcp_ui_inspect(op).ok())
-            .map(|r| match r {
-                ViewerResponse::Json(v) => v,
-                _ => Value::Null,
-            });
+        let observed = observe_path.and_then(|op| self.handle_mcp_ui_inspect(op).ok()).map(|r| match r {
+            ViewerResponse::Json(v) => v,
+            _ => Value::Null,
+        });
         Ok(ViewerResponse::Json(json!({
             "ok": true,
             "clicked": path,
@@ -4373,12 +3912,10 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         modifiers: &[String],
         observe_path: Option<&str>,
     ) -> Result<ViewerResponse, McpError> {
-        let observed = observe_path
-            .and_then(|op| self.handle_mcp_ui_inspect(op).ok())
-            .map(|r| match r {
-                ViewerResponse::Json(v) => v,
-                _ => Value::Null,
-            });
+        let observed = observe_path.and_then(|op| self.handle_mcp_ui_inspect(op).ok()).map(|r| match r {
+            ViewerResponse::Json(v) => v,
+            _ => Value::Null,
+        });
         Ok(ViewerResponse::Json(json!({
             "ok": true,
             "path": path,
@@ -4412,10 +3949,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             "avatar.appearance",
             "avatar.reset_skeleton",
         ];
-        let matched: Vec<&str> = all_menus
-            .into_iter()
-            .filter(|m| q.is_empty() || m.contains(&q))
-            .collect();
+        let matched: Vec<&str> = all_menus.into_iter().filter(|m| q.is_empty() || m.contains(&q)).collect();
         Ok(ViewerResponse::Json(json!({
             "count": matched.len(),
             "menus": matched,
@@ -4517,11 +4051,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             offset: Vec3::ZERO,
             surface,
         });
-        self.send(NetCommand::ObjectRelease {
-            handle,
-            local_id,
-            surface,
-        });
+        self.send(NetCommand::ObjectRelease { handle, local_id, surface });
         Ok(ViewerResponse::Json(json!({
             "ok": true,
             "local_id": local_id,
@@ -4575,11 +4105,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_notecard_read(
-        &mut self,
-        item_id: Uuid,
-        object_local_id: Option<u32>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_notecard_read(&mut self, item_id: Uuid, object_local_id: Option<u32>) -> Result<ViewerResponse, McpError> {
         if self.world.rlva.has("viewnote") {
             return Err(McpError::PermissionDenied(
                 "RLVa @viewnote restriction prevents reading notecards".into(),
@@ -4593,8 +4119,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     "Task notecard {item_id} not found on object {lid}"
                 )));
             };
-            let mask =
-                crate::world::inventory::actions::agent_mask(&meta, self.world.agent_id);
+            let mask = crate::world::inventory::actions::agent_mask(&meta, self.world.agent_id);
             if (mask & crate::world::inventory::actions::COPY) == 0 && self.world.god_level == 0 {
                 return Err(McpError::PermissionDenied(
                     "Creator permissions forbid reading this task notecard (no Copy)".into(),
@@ -4618,9 +4143,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         }
 
         let Some(item) = self.world.inventory.items.get(&item_id) else {
-            return Err(McpError::InvalidParams(format!(
-                "Inventory notecard {item_id} not found"
-            )));
+            return Err(McpError::InvalidParams(format!("Inventory notecard {item_id} not found")));
         };
         let item_mask = crate::world::inventory::actions::agent_mask(item, self.world.agent_id);
         if (item_mask & crate::world::inventory::actions::COPY) == 0 && self.world.god_level == 0 {
@@ -4666,17 +4189,14 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             self.check_object_modify_permission(idx)?;
             let obj_uuid = self.world.objects.get(idx).unwrap().full_id;
             let Some(item_uuid) = item_id else {
-                return Err(McpError::InvalidParams(
-                    "item_id is required when updating a task notecard".into(),
-                ));
+                return Err(McpError::InvalidParams("item_id is required when updating a task notecard".into()));
             };
             let Some(meta) = self.task_notecard_item(obj_uuid, item_uuid) else {
                 return Err(McpError::InvalidParams(format!(
                     "Task notecard {item_uuid} not found on object {lid}"
                 )));
             };
-            let req_mask =
-                crate::world::inventory::actions::COPY | crate::world::inventory::actions::MODIFY;
+            let req_mask = crate::world::inventory::actions::COPY | crate::world::inventory::actions::MODIFY;
             if (meta.owner_mask & req_mask) != req_mask {
                 return Err(McpError::PermissionDenied(
                     "Task notecard requires both Copy and Modify permissions to edit".into(),
@@ -4703,14 +4223,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                 "Provide 'item_id' of an existing modifiable notecard".into(),
             ));
         };
-        if !crate::world::inventory::preview::can_edit(
-            &self.world.inventory,
-            item_uuid,
-            self.world.god_level,
-        ) {
-            return Err(McpError::PermissionDenied(
-                "Notecard is not modifiable or is in the Library".into(),
-            ));
+        if !crate::world::inventory::preview::can_edit(&self.world.inventory, item_uuid, self.world.god_level) {
+            return Err(McpError::PermissionDenied("Notecard is not modifiable or is in the Library".into()));
         }
         let request = Uuid::new_v4();
         self.send(NetCommand::SaveInventoryContent {
@@ -4857,7 +4371,6 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             params.set(aurora_prim::particles::LL_PART_RIBBON_MASK, v);
         }
 
-
         let script_source = params.script(obj_uuid, false);
         self.handle_mcp_lsl_write(
             local_id,
@@ -4959,9 +4472,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             return Err(McpError::NotInWorld);
         };
         let (idx, _uuid) = self.resolve_prim_by_local_id(local_id)?;
-        let obj = self.world.objects.get(idx).ok_or_else(|| {
-            McpError::InvalidParams(format!("prim with local_id {local_id} not found"))
-        })?;
+        let obj = self
+            .world
+            .objects
+            .get(idx)
+            .ok_or_else(|| McpError::InvalidParams(format!("prim with local_id {local_id} not found")))?;
 
         let f = obj.update_flags;
         let phys_flag = physics.unwrap_or(f & crate::build::edits::FLAGS_USE_PHYSICS != 0);
@@ -4989,11 +4504,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             obj_mut.update_flags = updated_flags;
         }
 
-        let has_physics_params = shape_type.is_some()
-            || density.is_some()
-            || friction.is_some()
-            || restitution.is_some()
-            || gravity_multiplier.is_some();
+        let has_physics_params =
+            shape_type.is_some() || density.is_some() || friction.is_some() || restitution.is_some() || gravity_multiplier.is_some();
 
         let shape_type_u8 = if let Some(st) = shape_type {
             match st.to_ascii_lowercase().as_str() {
@@ -5103,15 +4615,13 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             "cry" => Ok(uuid::uuid!("9204271c-a002-d60f-4bfb-6ecde737e29f")),
             "kiss" => Ok(uuid::uuid!("1e8d9095-a24e-44d3-ab14-46accd63cb17")),
             "type" | "typing" => Ok(uuid::uuid!("c541c4db-7e65-ced4-00c7-ff204e8f7d63")),
-            other => Err(McpError::InvalidParams(format!("unknown animation name or invalid UUID: '{other}'"))),
+            other => Err(McpError::InvalidParams(format!(
+                "unknown animation name or invalid UUID: '{other}'"
+            ))),
         }
     }
 
-    fn handle_mcp_avatar_animation_play(
-        &mut self,
-        animation: &str,
-        _loop_anim: bool,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_avatar_animation_play(&mut self, animation: &str, _loop_anim: bool) -> Result<ViewerResponse, McpError> {
         let anim_uuid = self.resolve_animation_uuid(animation)?;
         self.own_animation(anim_uuid, true);
         Ok(ViewerResponse::Json(json!({
@@ -5122,10 +4632,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_avatar_animation_stop(
-        &mut self,
-        animation: &str,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_avatar_animation_stop(&mut self, animation: &str) -> Result<ViewerResponse, McpError> {
         let anim_uuid = self.resolve_animation_uuid(animation)?;
         self.own_animation(anim_uuid, false);
         Ok(ViewerResponse::Json(json!({
@@ -5170,9 +4677,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
     // ---- Phase 8: Land, Parcel & Estate Suite ----
 
     fn handle_mcp_parcel_info(&self) -> Result<ViewerResponse, McpError> {
-        let parcel_opt = self.world.parcel.as_ref().or_else(|| {
-            self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
-        });
+        let parcel_opt = self
+            .world
+            .parcel
+            .as_ref()
+            .or_else(|| self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()));
         let Some(p) = parcel_opt else {
             return Err(McpError::NotInWorld);
         };
@@ -5182,11 +4691,9 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
             .main_region
             .and_then(|h| self.world.regions.get(&h))
             .and_then(|r| r.info.as_ref());
-        let is_estate_manager = region_info
-            .is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id)
-            || self.world.god_level > 0;
-        let is_region_owner = region_info
-            .is_some_and(|i| i.owner == self.world.agent_id);
+        let is_estate_manager =
+            region_info.is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id) || self.world.god_level > 0;
+        let is_region_owner = region_info.is_some_and(|i| i.owner == self.world.agent_id);
         let is_parcel_owner = p.owner_id == self.world.agent_id;
         let is_parcel_group_member = (p.group_id != Uuid::nil()) && (self.world.groups.active == p.group_id);
 
@@ -5245,9 +4752,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
-        let parcel_opt = self.world.parcel.as_ref().or_else(|| {
-            self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
-        });
+        let parcel_opt = self
+            .world
+            .parcel
+            .as_ref()
+            .or_else(|| self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()));
         let Some(p) = parcel_opt else {
             return Err(McpError::NotInWorld);
         };
@@ -5281,9 +4790,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
-        let parcel_opt = self.world.parcel.as_ref().or_else(|| {
-            self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref())
-        });
+        let parcel_opt = self
+            .world
+            .parcel
+            .as_ref()
+            .or_else(|| self.world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()));
         let Some(p) = parcel_opt else {
             return Err(McpError::NotInWorld);
         };
@@ -5334,8 +4845,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
-        let target = Uuid::parse_str(avatar_uuid_str.trim())
-            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+        let target = Uuid::parse_str(avatar_uuid_str.trim()).map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
 
         let local_id = self.world.parcel.as_ref().map(|p| p.local_id).unwrap_or(1);
         let flags = if list.eq_ignore_ascii_case("ban") || list.eq_ignore_ascii_case("blacklist") {
@@ -5345,7 +4855,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         };
 
         let entries = if action.eq_ignore_ascii_case("add") {
-            vec![AccessEntry { id: target, time: 0, flags: 0 }]
+            vec![AccessEntry {
+                id: target,
+                time: 0,
+                flags: 0,
+            }]
         } else {
             Vec::new()
         };
@@ -5365,16 +4879,11 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_parcel_eject(
-        &mut self,
-        target_uuid_str: &str,
-        ban: Option<bool>,
-    ) -> Result<ViewerResponse, McpError> {
+    fn handle_mcp_parcel_eject(&mut self, target_uuid_str: &str, ban: Option<bool>) -> Result<ViewerResponse, McpError> {
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
-        let target = Uuid::parse_str(target_uuid_str.trim())
-            .map_err(|e| McpError::InvalidParams(format!("invalid resident UUID: {e}")))?;
+        let target = Uuid::parse_str(target_uuid_str.trim()).map_err(|e| McpError::InvalidParams(format!("invalid resident UUID: {e}")))?;
 
         let ban_flag = ban.unwrap_or(false);
         self.send(NetCommand::Land(LandCommand::EjectUser {
@@ -5437,8 +4946,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         message: Option<String>,
     ) -> Result<ViewerResponse, McpError> {
         let balance = self.check_and_record_economy_spend(amount)?;
-        let target = Uuid::parse_str(target_uuid_str.trim())
-            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+        let target = Uuid::parse_str(target_uuid_str.trim()).map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
 
         let msg = message.unwrap_or_default();
         self.send(NetCommand::PayResident {
@@ -5522,13 +5030,10 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
     }
 
     fn handle_mcp_groups_activate(&mut self, group_uuid_str: &str) -> Result<ViewerResponse, McpError> {
-        let group_id = Uuid::parse_str(group_uuid_str.trim())
-            .map_err(|e| McpError::InvalidParams(format!("invalid group UUID: {e}")))?;
+        let group_id = Uuid::parse_str(group_uuid_str.trim()).map_err(|e| McpError::InvalidParams(format!("invalid group UUID: {e}")))?;
 
         if group_id != Uuid::nil() && !self.world.groups.groups.iter().any(|g| g.id == group_id) {
-            return Err(McpError::InvalidParams(format!(
-                "avatar is not a member of group '{group_id}'"
-            )));
+            return Err(McpError::InvalidParams(format!("avatar is not a member of group '{group_id}'")));
         }
 
         self.send(NetCommand::ActivateGroup(group_id));
@@ -5602,9 +5107,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         time_of_day_val: Option<f32>,
     ) -> Result<ViewerResponse, McpError> {
         if self.world.eep.rlva_locked {
-            return Err(McpError::InvalidParams(
-                "Environment is locked by RLVa @setenv".into(),
-            ));
+            return Err(McpError::InvalidParams("Environment is locked by RLVa @setenv".into()));
         }
 
         let target_preset: u8 = if let Some(p) = preset_str {
@@ -5681,9 +5184,7 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         use crate::world::env_select::SettingsKind;
 
         if self.world.eep.rlva_locked {
-            return Err(McpError::InvalidParams(
-                "Environment is locked by RLVa @setenv".into(),
-            ));
+            return Err(McpError::InvalidParams("Environment is locked by RLVa @setenv".into()));
         }
 
         let previous_time_of_day = self.panels.time_of_day;
@@ -5721,22 +5222,18 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
                     self.settings.time_of_day = 5;
                 }
                 other => {
-                    return Err(McpError::InvalidParams(format!(
-                        "unknown environment preset '{other}'"
-                    )));
+                    return Err(McpError::InvalidParams(format!("unknown environment preset '{other}'")));
                 }
             }
         }
 
         if let Some(sky_uuid) = sky_uuid_str {
-            let sky_id = Uuid::parse_str(sky_uuid.trim())
-                .map_err(|e| McpError::InvalidParams(format!("invalid sky UUID: {e}")))?;
+            let sky_id = Uuid::parse_str(sky_uuid.trim()).map_err(|e| McpError::InvalidParams(format!("invalid sky UUID: {e}")))?;
             self.world.eep.request_local(sky_id, SettingsKind::Sky);
         }
 
         if let Some(water_uuid) = water_uuid_str {
-            let water_id = Uuid::parse_str(water_uuid.trim())
-                .map_err(|e| McpError::InvalidParams(format!("invalid water UUID: {e}")))?;
+            let water_id = Uuid::parse_str(water_uuid.trim()).map_err(|e| McpError::InvalidParams(format!("invalid water UUID: {e}")))?;
             self.world.eep.request_local(water_id, SettingsKind::Water);
         }
 
@@ -5823,13 +5320,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_voice_set_user_volume(
-        &mut self,
-        avatar_uuid_str: &str,
-        volume: f32,
-    ) -> Result<ViewerResponse, McpError> {
-        let id = Uuid::parse_str(avatar_uuid_str.trim())
-            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+    fn handle_mcp_voice_set_user_volume(&mut self, avatar_uuid_str: &str, volume: f32) -> Result<ViewerResponse, McpError> {
+        let id = Uuid::parse_str(avatar_uuid_str.trim()).map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
 
         self.voice.set_user_volume(id, volume);
 
@@ -5841,13 +5333,8 @@ fn inventory_item_type_str(asset_type: i32, inv_type: i32) -> &'static str {
         })))
     }
 
-    fn handle_mcp_voice_set_user_mute(
-        &mut self,
-        avatar_uuid_str: &str,
-        mute: bool,
-    ) -> Result<ViewerResponse, McpError> {
-        let id = Uuid::parse_str(avatar_uuid_str.trim())
-            .map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
+    fn handle_mcp_voice_set_user_mute(&mut self, avatar_uuid_str: &str, mute: bool) -> Result<ViewerResponse, McpError> {
+        let id = Uuid::parse_str(avatar_uuid_str.trim()).map_err(|e| McpError::InvalidParams(format!("invalid avatar UUID: {e}")))?;
 
         self.voice.set_user_mute(id, mute);
 
@@ -5948,10 +5435,7 @@ fn decode_parcel_flags(flags: u32) -> Vec<&'static str> {
         (pf::USE_ESTATE_VOICE_CHAN, "use_estate_voice_chan"),
         (pf::DENY_AGEUNVERIFIED, "deny_age_unverified"),
     ];
-    TABLE
-        .iter()
-        .filter_map(|&(bit, name)| (flags & bit != 0).then_some(name))
-        .collect()
+    TABLE.iter().filter_map(|&(bit, name)| (flags & bit != 0).then_some(name)).collect()
 }
 
 fn landing_type_name(landing_type: i32) -> &'static str {
@@ -5998,23 +5482,12 @@ mod tests {
         let mut known = HashSet::new();
         known.insert(10);
 
-        mgr.register_rez(
-            [128.0, 128.0, 25.0],
-            Some("MCP Cube".into()),
-            known,
-            tx,
-        );
+        mgr.register_rez([128.0, 128.0, 25.0], Some("MCP Cube".into()), known, tx);
 
         // Known local_id 10 should not match even at the exact position
-        assert!(
-            mgr.try_match_candidate(10, Uuid::new_v4(), [128.0, 128.0, 25.0])
-                .is_none()
-        );
+        assert!(mgr.try_match_candidate(10, Uuid::new_v4(), [128.0, 128.0, 25.0]).is_none());
         // Far away new prim should not match
-        assert!(
-            mgr.try_match_candidate(11, Uuid::new_v4(), [135.0, 128.0, 25.0])
-                .is_none()
-        );
+        assert!(mgr.try_match_candidate(11, Uuid::new_v4(), [135.0, 128.0, 25.0]).is_none());
         // Nearby new prim within 0.5m should match
         let matched = mgr.try_match_candidate(12, Uuid::new_v4(), [128.1, 127.9, 25.0]);
         assert!(matched.is_some());

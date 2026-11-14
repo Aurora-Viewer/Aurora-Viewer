@@ -46,8 +46,6 @@ mod alt_graph;
 mod avatar_health;
 mod avatar_reload;
 mod blender_live;
-#[path = "mcp_bridge.rs"]
-pub(crate) mod mcp_bridge;
 mod blender_shape;
 mod buy_currency;
 mod buy_land;
@@ -66,6 +64,8 @@ mod describe;
 mod dev_toolbox;
 mod folders;
 mod hover_pick;
+#[path = "mcp_bridge.rs"]
+pub(crate) mod mcp_bridge;
 mod texture_picker;
 use folders::chat_log_root;
 mod admin_status;
@@ -10680,7 +10680,9 @@ impl App {
                         );
                     }
                 }
-                if mode == "build-before" && let Some(el) = event_loop {
+                if mode == "build-before"
+                    && let Some(el) = event_loop
+                {
                     for _ in 0..2 {
                         self.handle_actions(
                             UiActions {
@@ -11380,10 +11382,9 @@ impl App {
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
-            self.scene
-                .build_huds(&self.world, [hud_w, hud_h], huds_shown, |id| {
-                    gfx.renderer.records.get(id).map(|r| Mat4::from_cols_array_2d(&r.model))
-                });
+            self.scene.build_huds(&self.world, [hud_w, hud_h], huds_shown, |id| {
+                gfx.renderer.records.get(id).map(|r| Mat4::from_cols_array_2d(&r.model))
+            });
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
@@ -12053,10 +12054,7 @@ impl App {
         } else {
             let (rw, rh) = gfx.renderer.size();
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(rw as f32, rh as f32),
-                )),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(rw as f32, rh as f32))),
                 ..Default::default()
             }
         };

@@ -25,10 +25,7 @@ pub enum McpError {
     #[error("control lease required: call control_acquire or viewer_control_acquire first")]
     NoActiveLease,
     #[error("control lease held by '{holder}' (expires in {remaining_secs}s)")]
-    LeaseConflict {
-        holder: String,
-        remaining_secs: u64,
-    },
+    LeaseConflict { holder: String, remaining_secs: u64 },
     #[error("viewer main loop is disconnected or shutting down")]
     ViewerDisconnected,
     #[error("operation timed out after {0}ms")]
@@ -689,8 +686,7 @@ impl ViewerRequest {
             | ViewerRequest::VoiceStatus
             | ViewerRequest::VoiceParticipantsList => false,
 
-            ViewerRequest::LiveMeshControl { action, .. }
-            | ViewerRequest::AssetUpload { action, .. } => {
+            ViewerRequest::LiveMeshControl { action, .. } | ViewerRequest::AssetUpload { action, .. } => {
                 !action.eq_ignore_ascii_case("status")
             }
 
@@ -770,9 +766,6 @@ fn is_readonly_viewer_call(api: &str, operation: &str) -> bool {
 }
 
 /// Creates a bounded channel pair connecting the Tokio MCP server to the viewer main thread.
-pub fn create_bridge_channels() -> (
-    mpsc::Sender<McpRequestEnvelope>,
-    mpsc::Receiver<McpRequestEnvelope>,
-) {
+pub fn create_bridge_channels() -> (mpsc::Sender<McpRequestEnvelope>, mpsc::Receiver<McpRequestEnvelope>) {
     mpsc::channel(BRIDGE_CHANNEL_CAPACITY)
 }

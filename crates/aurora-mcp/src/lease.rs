@@ -122,8 +122,7 @@ impl LeaseManager {
         }
 
         if let Some(active) = guard.as_mut() {
-            let same_holder = existing_lease_id.is_some_and(|id| id == active.lease_id)
-                || active.owner == owner;
+            let same_holder = existing_lease_id.is_some_and(|id| id == active.lease_id) || active.owner == owner;
             if !same_holder {
                 let remaining = active.expires_at.saturating_duration_since(now).as_secs();
                 return Err(McpError::LeaseConflict {
@@ -152,18 +151,13 @@ impl LeaseManager {
 
     /// Release the active control lease and return its rollback stack in LIFO
     /// restoration order.
-    pub fn release(
-        &self,
-        lease_id: Option<&str>,
-    ) -> Result<(Option<LeaseSnapshot>, Vec<RollbackAction>), McpError> {
+    pub fn release(&self, lease_id: Option<&str>) -> Result<(Option<LeaseSnapshot>, Vec<RollbackAction>), McpError> {
         let mut guard = self.inner.lock();
         let now = Instant::now();
         let Some(active) = guard.as_ref() else {
             return Ok((None, Vec::new()));
         };
-        if !active.is_expired(now)
-            && !lease_id.is_some_and(|id| !id.is_empty() && id == active.lease_id)
-        {
+        if !active.is_expired(now) && !lease_id.is_some_and(|id| !id.is_empty() && id == active.lease_id) {
             return Err(McpError::LeaseConflict {
                 holder: active.owner.clone(),
                 remaining_secs: active.expires_at.saturating_duration_since(now).as_secs(),
@@ -180,10 +174,7 @@ impl LeaseManager {
     pub fn status(&self) -> Option<LeaseSnapshot> {
         let guard = self.inner.lock();
         let now = Instant::now();
-        guard
-            .as_ref()
-            .filter(|l| !l.is_expired(now))
-            .map(|l| l.snapshot(now))
+        guard.as_ref().filter(|l| !l.is_expired(now)).map(|l| l.snapshot(now))
     }
 
     /// Verify that a mutating operation is permitted under the active lease (or
@@ -232,10 +223,7 @@ impl LeaseManager {
             return;
         };
         let already_recorded = active.rollbacks.iter().any(|existing| match (existing, &action) {
-            (
-                RollbackAction::RestoreSetting { key: k1, .. },
-                RollbackAction::RestoreSetting { key: k2, .. },
-            ) => k1 == k2,
+            (RollbackAction::RestoreSetting { key: k1, .. }, RollbackAction::RestoreSetting { key: k2, .. }) => k1 == k2,
             (RollbackAction::RestoreCamera { .. }, RollbackAction::RestoreCamera { .. }) => true,
             (RollbackAction::ResetPoser, RollbackAction::ResetPoser) => true,
             _ => false,
@@ -256,9 +244,7 @@ mod tests {
         let mgr = LeaseManager::new(false);
         assert!(mgr.verify_for_mutation(None).is_err());
 
-        let (snap, expired) = mgr
-            .acquire("agent-alpha", 120, None)
-            .expect("acquire lease");
+        let (snap, expired) = mgr.acquire("agent-alpha", 120, None).expect("acquire lease");
         assert!(expired.is_empty());
         assert_eq!(snap.owner, "agent-alpha");
 
@@ -267,23 +253,12 @@ mod tests {
         assert!(matches!(conflict, Err(McpError::LeaseConflict { .. })));
 
         // Omitting lease_id cannot hijack or release an active lease.
-        assert!(matches!(
-            mgr.verify_for_mutation(None),
-            Err(McpError::LeaseConflict { .. })
-        ));
-        assert!(matches!(
-            mgr.verify_for_mutation(Some("")),
-            Err(McpError::LeaseConflict { .. })
-        ));
-        assert!(matches!(
-            mgr.release(None),
-            Err(McpError::LeaseConflict { .. })
-        ));
+        assert!(matches!(mgr.verify_for_mutation(None), Err(McpError::LeaseConflict { .. })));
+        assert!(matches!(mgr.verify_for_mutation(Some("")), Err(McpError::LeaseConflict { .. })));
+        assert!(matches!(mgr.release(None), Err(McpError::LeaseConflict { .. })));
 
         // Same owner can renew.
-        let (renewed, _) = mgr
-            .acquire("agent-alpha", 300, Some(&snap.lease_id))
-            .expect("renew lease");
+        let (renewed, _) = mgr.acquire("agent-alpha", 300, Some(&snap.lease_id)).expect("renew lease");
         assert_eq!(renewed.lease_id, snap.lease_id);
         assert_eq!(renewed.ttl_seconds, 300);
 
@@ -303,9 +278,7 @@ mod tests {
             fov: 1.047,
         });
 
-        let (released, rollbacks) = mgr
-            .release(Some(&snap.lease_id))
-            .expect("release lease");
+        let (released, rollbacks) = mgr.release(Some(&snap.lease_id)).expect("release lease");
         assert!(released.is_some());
         assert_eq!(rollbacks.len(), 2);
         // LIFO order: camera restored first, then setting.

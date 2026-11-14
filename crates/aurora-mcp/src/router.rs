@@ -2,9 +2,8 @@
 
 use crate::asset_inspect;
 use crate::bridge::{
-    AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, LsdOperation,
-    MAX_BOUNDED_ITEMS, McpError, McpRequestEnvelope, PrimTransformSpec, RollbackAction,
-    ViewerRequest, ViewerResponse,
+    AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, LsdOperation, MAX_BOUNDED_ITEMS, McpError,
+    McpRequestEnvelope, PrimTransformSpec, RollbackAction, ViewerRequest, ViewerResponse,
 };
 use crate::lease::{DEFAULT_LEASE_SECONDS, LeaseManager};
 use crate::lsd;
@@ -66,19 +65,10 @@ impl McpRouter {
     }
 
     pub fn list_tools(&self) -> Vec<ToolDefinition> {
-        let all = all_tool_definitions();
-        match self.profile {
-            McpProfile::All => all,
-            McpProfile::Compact => all.into_iter().filter(|t| t.in_compact_profile).collect(),
-        }
+        list_tools_for_profile(self.profile)
     }
 
-    async fn send_to_viewer(
-        &self,
-        lease_id: Option<String>,
-        request: ViewerRequest,
-        timeout_ms: u64,
-    ) -> Result<ViewerResponse, McpError> {
+    async fn send_to_viewer(&self, lease_id: Option<String>, request: ViewerRequest, timeout_ms: u64) -> Result<ViewerResponse, McpError> {
         // Flush any expired lease rollbacks first.
         if let Some((_, expired_actions)) = self.leases.take_expired_rollbacks()
             && !expired_actions.is_empty()
@@ -86,9 +76,7 @@ impl McpRouter {
             let (rtx, _rrx) = oneshot::channel();
             let _ = self.tx.try_send(McpRequestEnvelope {
                 lease_id: None,
-                request: ViewerRequest::ApplyRollbacks {
-                    actions: expired_actions,
-                },
+                request: ViewerRequest::ApplyRollbacks { actions: expired_actions },
                 reply_tx: rtx,
             });
         }
@@ -137,10 +125,7 @@ impl McpRouter {
     }
 
     async fn dispatch_tool(&self, name: &str, args: &Value) -> Result<Vec<Value>, McpError> {
-        let lease_id = args
-            .get("lease_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let lease_id = args.get("lease_id").and_then(Value::as_str).map(str::to_owned);
 
         match name {
             // ---- Phase 0: Control Leases, Status & Dynamic API Inspection ----
@@ -155,8 +140,7 @@ impl McpRouter {
                     .or_else(|| args.get("seconds"))
                     .and_then(Value::as_u64)
                     .unwrap_or(DEFAULT_LEASE_SECONDS);
-                let (snap, expired_rollbacks) =
-                    self.leases.acquire(owner, ttl, lease_id.as_deref())?;
+                let (snap, expired_rollbacks) = self.leases.acquire(owner, ttl, lease_id.as_deref())?;
                 if !expired_rollbacks.is_empty() {
                     let _ = self
                         .send_to_viewer(
@@ -179,11 +163,7 @@ impl McpRouter {
                 let restored_count = rollbacks.len();
                 if !rollbacks.is_empty() {
                     let _ = self
-                        .send_to_viewer(
-                            None,
-                            ViewerRequest::ApplyRollbacks { actions: rollbacks },
-                            5000,
-                        )
+                        .send_to_viewer(None, ViewerRequest::ApplyRollbacks { actions: rollbacks }, 5000)
                         .await;
                 }
                 Ok(text_block(json!({
@@ -194,9 +174,7 @@ impl McpRouter {
             }
 
             "connection_status" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::ConnectionStatus, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::ConnectionStatus, 5000).await?;
                 let mut payload = into_json(resp);
                 if let Value::Object(map) = &mut payload {
                     map.insert(
@@ -215,18 +193,12 @@ impl McpRouter {
             }
 
             "capabilities_refresh" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::CapabilitiesRefresh, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::CapabilitiesRefresh, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "viewer_api_inspect" => {
-                let api = args
-                    .get("api")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim();
+                let api = args.get("api").and_then(Value::as_str).unwrap_or("").trim();
                 let operation = args.get("operation").and_then(Value::as_str);
                 Ok(text_block(inspect_viewer_api(api, operation)))
             }
@@ -235,11 +207,7 @@ impl McpRouter {
                 let api = req_str(args, "api")?;
                 let operation = req_str(args, "operation")?;
                 let call_args = args.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                let timeout_s = args
-                    .get("timeout")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(15)
-                    .clamp(1, 60);
+                let timeout_s = args.get("timeout").and_then(Value::as_u64).unwrap_or(15).clamp(1, 60);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -256,33 +224,25 @@ impl McpRouter {
 
             "events_subscribe" => {
                 let source = req_str(args, "source")?;
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::EventsSubscribe { source }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::EventsSubscribe { source }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "events_unsubscribe" => {
                 let source = req_str(args, "source")?;
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::EventsUnsubscribe { source }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::EventsUnsubscribe { source }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "events_read" => {
                 let after = args.get("after").and_then(Value::as_u64).unwrap_or(0);
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::EventsRead { after }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::EventsRead { after }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             // ---- Phase 1: Agent Status, Radar, Comms, Navigation & RLVa ----
             "get_agent_status" | "avatar_position" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::GetAgentStatus, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::GetAgentStatus, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -298,14 +258,7 @@ impl McpRouter {
                     .unwrap_or(32)
                     .clamp(1, MAX_BOUNDED_ITEMS as u64) as usize;
                 let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::RadarScanAvatars {
-                            max_radius_m,
-                            limit,
-                        },
-                        5000,
-                    )
+                    .send_to_viewer(None, ViewerRequest::RadarScanAvatars { max_radius_m, limit }, 5000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -316,14 +269,8 @@ impl McpRouter {
                     .or_else(|| args.get("distance"))
                     .and_then(Value::as_f64)
                     .unwrap_or(32.0) as f32;
-                let root_only = args
-                    .get("root_only")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-                let name_filter = args
-                    .get("name_filter")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let root_only = args.get("root_only").and_then(Value::as_bool).unwrap_or(true);
+                let name_filter = args.get("name_filter").and_then(Value::as_str).map(str::to_owned);
                 let limit = args
                     .get("limit")
                     .and_then(Value::as_u64)
@@ -345,24 +292,10 @@ impl McpRouter {
             }
 
             "comms_read_history" => {
-                let channel_filter = args
-                    .get("channel_filter")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let limit = args
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(50)
-                    .clamp(1, 200) as usize;
+                let channel_filter = args.get("channel_filter").and_then(Value::as_str).map(str::to_owned);
+                let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200) as usize;
                 let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::CommsReadHistory {
-                            channel_filter,
-                            limit,
-                        },
-                        5000,
-                    )
+                    .send_to_viewer(None, ViewerRequest::CommsReadHistory { channel_filter, limit }, 5000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -398,16 +331,9 @@ impl McpRouter {
             }
 
             "avatar_walk_to" => {
-                let pos = parse_vec3(args, "global_position")
-                    .or_else(|_| parse_vec3(args, "position"))?;
-                let allow_flying = args
-                    .get("allow_flying")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let stop_distance = args
-                    .get("stop_distance")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.5) as f32;
+                let pos = parse_vec3(args, "global_position").or_else(|_| parse_vec3(args, "position"))?;
+                let allow_flying = args.get("allow_flying").and_then(Value::as_bool).unwrap_or(false);
+                let stop_distance = args.get("stop_distance").and_then(Value::as_f64).unwrap_or(0.5) as f32;
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -424,39 +350,23 @@ impl McpRouter {
             }
 
             "avatar_movement_status" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::NavMovementStatus, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::NavMovementStatus, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "avatar_stop" => {
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::NavStop, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::NavStop, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "nav_move_and_teleport" => {
-                let action = args
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .unwrap_or("walk_to");
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("walk_to");
                 let req = match action {
                     "walk_to" => {
                         let position = parse_vec3_or_xyz(args)?;
-                        let allow_flying = args
-                            .get("allow_flying")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false);
-                        let stop_distance = args
-                            .get("stop_distance")
-                            .and_then(Value::as_f64)
-                            .unwrap_or(0.75) as f32;
-                        let timeout_ms = args
-                            .get("timeout_ms")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0);
+                        let allow_flying = args.get("allow_flying").and_then(Value::as_bool).unwrap_or(false);
+                        let stop_distance = args.get("stop_distance").and_then(Value::as_f64).unwrap_or(0.75) as f32;
+                        let timeout_ms = args.get("timeout_ms").and_then(Value::as_u64).unwrap_or(0);
                         ViewerRequest::NavWalkTo {
                             position,
                             allow_flying,
@@ -475,26 +385,14 @@ impl McpRouter {
                     "stop" => ViewerRequest::NavStop,
                     "teleport" | "teleport_to" => {
                         let position = parse_vec3_or_xyz(args).unwrap_or([128.0, 128.0, 25.0]);
-                        let region_name = args
-                            .get("region_name")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned);
-                        ViewerRequest::NavTeleport {
-                            region_name,
-                            position,
-                        }
+                        let region_name = args.get("region_name").and_then(Value::as_str).map(str::to_owned);
+                        ViewerRequest::NavTeleport { region_name, position }
                     }
                     other => {
-                        return Err(McpError::InvalidParams(format!(
-                            "unknown nav_move_and_teleport action '{other}'"
-                        )));
+                        return Err(McpError::InvalidParams(format!("unknown nav_move_and_teleport action '{other}'")));
                     }
                 };
-                let timeout = args
-                    .get("timeout_ms")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(15000)
-                    .clamp(2000, 30000);
+                let timeout = args.get("timeout_ms").and_then(Value::as_u64).unwrap_or(15000).clamp(2000, 30000);
                 let resp = self.send_to_viewer(lease_id, req, timeout).await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -503,35 +401,19 @@ impl McpRouter {
                 let commands: Vec<String> = args
                     .get("commands")
                     .and_then(Value::as_array)
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                     .unwrap_or_default();
                 if commands.is_empty() {
-                    return Err(McpError::InvalidParams(
-                        "commands array must contain at least one @ command".into(),
-                    ));
+                    return Err(McpError::InvalidParams("commands array must contain at least one @ command".into()));
                 }
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::RlvaExecute { commands }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::RlvaExecute { commands }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             // ---- Phase 2: Settings, Camera, Poser & Floaters ----
             "settings_query" => {
-                let search = args
-                    .get("search")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
-                let modified_only = args
-                    .get("modified_only")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let search = args.get("search").and_then(Value::as_str).unwrap_or("").to_owned();
+                let modified_only = args.get("modified_only").and_then(Value::as_bool).unwrap_or(false);
                 let limit = args
                     .get("limit")
                     .and_then(Value::as_u64)
@@ -552,24 +434,14 @@ impl McpRouter {
             }
 
             "setting_get" => {
-                let group = args
-                    .get("group")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Global")
-                    .to_owned();
+                let group = args.get("group").and_then(Value::as_str).unwrap_or("Global").to_owned();
                 let key = req_str(args, "key")?;
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::SettingGet { group, key }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::SettingGet { group, key }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "setting_set" | "settings_set" => {
-                let group = args
-                    .get("group")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Global")
-                    .to_owned();
+                let group = args.get("group").and_then(Value::as_str).unwrap_or("Global").to_owned();
                 let key = args
                     .get("key")
                     .or_else(|| args.get("name"))
@@ -580,10 +452,7 @@ impl McpRouter {
                     .get("value")
                     .cloned()
                     .ok_or_else(|| McpError::InvalidParams("missing 'value'".into()))?;
-                let rollback_on_lease_end = args
-                    .get("rollback_on_lease_end")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
+                let rollback_on_lease_end = args.get("rollback_on_lease_end").and_then(Value::as_bool).unwrap_or(true);
 
                 let resp = self
                     .send_to_viewer(
@@ -628,11 +497,7 @@ impl McpRouter {
                     .send_to_viewer(
                         lease_id,
                         ViewerRequest::CameraControl {
-                            command: CameraCommand::ManualTransform {
-                                position,
-                                focus,
-                                fov_deg,
-                            },
+                            command: CameraCommand::ManualTransform { position, focus, fov_deg },
                         },
                         5000,
                     )
@@ -674,17 +539,13 @@ impl McpRouter {
             }
 
             "camera_control" => {
-                let mode = args
-                    .get("mode")
-                    .and_then(Value::as_str)
-                    .unwrap_or("follow_avatar");
+                let mode = args.get("mode").and_then(Value::as_str).unwrap_or("follow_avatar");
                 let command = match mode {
                     "follow_avatar" => CameraCommand::FollowAvatar,
                     "release" => CameraCommand::Release,
                     "focus_object" => CameraCommand::FocusObject {
                         object_id: req_str(args, "object_id")?,
-                        distance: args.get("distance").and_then(Value::as_f64).unwrap_or(4.0)
-                            as f32,
+                        distance: args.get("distance").and_then(Value::as_f64).unwrap_or(4.0) as f32,
                         pitch_deg: args
                             .get("pitch_deg")
                             .or_else(|| args.get("pitch"))
@@ -698,8 +559,7 @@ impl McpRouter {
                     },
                     "manual_transform" => CameraCommand::ManualTransform {
                         position: parse_vec3(args, "position")?,
-                        focus: parse_vec3(args, "look_at")
-                            .or_else(|_| parse_vec3(args, "focus"))?,
+                        focus: parse_vec3(args, "look_at").or_else(|_| parse_vec3(args, "focus"))?,
                         fov_deg: args
                             .get("fov_deg")
                             .or_else(|| args.get("fov"))
@@ -724,9 +584,7 @@ impl McpRouter {
                             .unwrap_or(0.0) as f32,
                     },
                     other => {
-                        return Err(McpError::InvalidParams(format!(
-                            "unknown camera_control mode '{other}'"
-                        )));
+                        return Err(McpError::InvalidParams(format!("unknown camera_control mode '{other}'")));
                     }
                 };
                 let resp = self
@@ -737,9 +595,7 @@ impl McpRouter {
 
             "poser_inspect" => {
                 let subject = parse_opt_uuid(args, "subject")?;
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::PoserInspect { subject }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::PoserInspect { subject }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -749,17 +605,10 @@ impl McpRouter {
                     .get("transforms")
                     .cloned()
                     .ok_or_else(|| McpError::InvalidParams("missing 'transforms' array".into()))?;
-                let transforms: Vec<BoneTransform> = serde_json::from_value(transforms_val)
-                    .map_err(|e| McpError::InvalidParams(format!("invalid BoneTransform: {e}")))?;
+                let transforms: Vec<BoneTransform> =
+                    serde_json::from_value(transforms_val).map_err(|e| McpError::InvalidParams(format!("invalid BoneTransform: {e}")))?;
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::PoserSetBones {
-                            subject,
-                            transforms,
-                        },
-                        5000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::PoserSetBones { subject, transforms }, 5000)
                     .await?;
                 self.leases.record_rollback(RollbackAction::ResetPoser);
                 Ok(text_block(into_json(resp)))
@@ -767,16 +616,12 @@ impl McpRouter {
 
             "poser_reset" => {
                 let subject = parse_opt_uuid(args, "subject")?;
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::PoserReset { subject }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::PoserReset { subject }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "floater_list" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::FloaterList, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::FloaterList, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -822,11 +667,7 @@ impl McpRouter {
                     .or_else(|| args.get("max_height"))
                     .and_then(Value::as_u64)
                     .unwrap_or(1024) as u32;
-                let label = args
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or("viewport")
-                    .to_owned();
+                let label = args.get("label").and_then(Value::as_str).unwrap_or("viewport").to_owned();
 
                 let resp = self
                     .send_to_viewer(
@@ -843,11 +684,9 @@ impl McpRouter {
 
                 match resp {
                     ViewerResponse::FrameCaptured(raw) => {
-                        let encoded = tokio::task::spawn_blocking(move || {
-                            vision::encode_captured_frame(raw, (max_w, max_h), &label)
-                        })
-                        .await
-                        .map_err(|e| McpError::Internal(format!("encode join error: {e}")))??;
+                        let encoded = tokio::task::spawn_blocking(move || vision::encode_captured_frame(raw, (max_w, max_h), &label))
+                            .await
+                            .map_err(|e| McpError::Internal(format!("encode join error: {e}")))??;
 
                         Ok(vec![
                             json!({
@@ -876,25 +715,10 @@ impl McpRouter {
 
             "capture_orbit" => {
                 let focus = parse_vec3(args, "focus")?;
-                let radius = args
-                    .get("radius")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(3.0)
-                    .max(0.5) as f32;
-                let height_offset = args
-                    .get("height_offset")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(1.0) as f32;
-                let views = args
-                    .get("views")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(4)
-                    .clamp(1, 12) as usize;
-                let label = args
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or("orbit")
-                    .to_owned();
+                let radius = args.get("radius").and_then(Value::as_f64).unwrap_or(3.0).max(0.5) as f32;
+                let height_offset = args.get("height_offset").and_then(Value::as_f64).unwrap_or(1.0) as f32;
+                let views = args.get("views").and_then(Value::as_u64).unwrap_or(4).clamp(1, 12) as usize;
+                let label = args.get("label").and_then(Value::as_str).unwrap_or("orbit").to_owned();
                 let evidence_kind = args
                     .get("evidence_kind")
                     .and_then(Value::as_str)
@@ -938,11 +762,9 @@ impl McpRouter {
                         .await?;
                     if let ViewerResponse::FrameCaptured(raw) = frame_resp {
                         let view_label = format!("{label}-view-{i}");
-                        let encoded = tokio::task::spawn_blocking(move || {
-                            vision::encode_captured_frame(raw, (1024, 1024), &view_label)
-                        })
-                        .await
-                        .map_err(|e| McpError::Internal(format!("encode join error: {e}")))??;
+                        let encoded = tokio::task::spawn_blocking(move || vision::encode_captured_frame(raw, (1024, 1024), &view_label))
+                            .await
+                            .map_err(|e| McpError::Internal(format!("encode join error: {e}")))??;
                         captured_views.push(json!({
                             "view_index": i,
                             "angle_deg": (angle.to_degrees() * 10.0).round() / 10.0,
@@ -976,15 +798,9 @@ impl McpRouter {
                     "radius": radius,
                     "views": captured_views,
                 });
-                let manifest_path =
-                    vision::capture_output_dir().join(format!("manifest-{manifest_id}.json"));
-                let _ = std::fs::write(
-                    &manifest_path,
-                    serde_json::to_string_pretty(&manifest).unwrap_or_default(),
-                );
-                self.manifests
-                    .lock()
-                    .insert(manifest_path.display().to_string(), manifest.clone());
+                let manifest_path = vision::capture_output_dir().join(format!("manifest-{manifest_id}.json"));
+                let _ = std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap_or_default());
+                self.manifests.lock().insert(manifest_path.display().to_string(), manifest.clone());
                 self.manifests.lock().insert(manifest_id, manifest.clone());
 
                 Ok(text_block(json!({
@@ -1004,24 +820,18 @@ impl McpRouter {
                 if let Some(m) = self.manifests.lock().get(key).cloned() {
                     return Ok(text_block(m));
                 }
-                let text = std::fs::read_to_string(key).map_err(|e| {
-                    McpError::InvalidParams(format!("cannot read manifest '{key}': {e}"))
-                })?;
-                let val: Value = serde_json::from_str(&text)
-                    .map_err(|e| McpError::InvalidParams(format!("invalid manifest JSON: {e}")))?;
+                let text =
+                    std::fs::read_to_string(key).map_err(|e| McpError::InvalidParams(format!("cannot read manifest '{key}': {e}")))?;
+                let val: Value = serde_json::from_str(&text).map_err(|e| McpError::InvalidParams(format!("invalid manifest JSON: {e}")))?;
                 Ok(text_block(val))
             }
 
             "image_compare" => {
-                let reference = req_str(args, "reference")
-                    .or_else(|_| req_str(args, "image_a"))?;
-                let observed = req_str(args, "observed")
-                    .or_else(|_| req_str(args, "image_b"))?;
-                let res = tokio::task::spawn_blocking(move || {
-                    vision::compare_images(&reference, &observed)
-                })
-                .await
-                .map_err(|e| McpError::Internal(format!("image_compare join error: {e}")))??;
+                let reference = req_str(args, "reference").or_else(|_| req_str(args, "image_a"))?;
+                let observed = req_str(args, "observed").or_else(|_| req_str(args, "image_b"))?;
+                let res = tokio::task::spawn_blocking(move || vision::compare_images(&reference, &observed))
+                    .await
+                    .map_err(|e| McpError::Internal(format!("image_compare join error: {e}")))??;
                 Ok(text_block(res))
             }
 
@@ -1033,11 +843,7 @@ impl McpRouter {
                     .and_then(Value::as_str)
                     .unwrap_or("/")
                     .to_owned();
-                let depth = args
-                    .get("depth")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1)
-                    .clamp(1, 5) as u8;
+                let depth = args.get("depth").and_then(Value::as_u64).unwrap_or(1).clamp(1, 5) as u8;
                 let limit = args
                     .get("limit")
                     .and_then(Value::as_u64)
@@ -1064,18 +870,9 @@ impl McpRouter {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned();
-                let folder_id = args
-                    .get("folder_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let asset_type = args
-                    .get("asset_type")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let worn_only = args
-                    .get("worn_only")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let folder_id = args.get("folder_id").and_then(Value::as_str).map(str::to_owned);
+                let asset_type = args.get("asset_type").and_then(Value::as_str).map(str::to_owned);
+                let worn_only = args.get("worn_only").and_then(Value::as_bool).unwrap_or(false);
                 let limit = args
                     .get("limit")
                     .and_then(Value::as_u64)
@@ -1098,9 +895,7 @@ impl McpRouter {
             }
 
             "appearance_get_worn" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::AppearanceGetWorn, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::AppearanceGetWorn, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -1113,40 +908,25 @@ impl McpRouter {
                 let operation = match op_name {
                     "attach" | "wear" => AppearanceOperation::Attach {
                         item_id: parse_req_uuid(args, "item_id")?,
-                        attach_point: args
-                            .get("attach_point")
-                            .and_then(Value::as_u64)
-                            .map(|v| v as u8),
-                        replace_existing: args
-                            .get("replace_existing")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
+                        attach_point: args.get("attach_point").and_then(Value::as_u64).map(|v| v as u8),
+                        replace_existing: args.get("replace_existing").and_then(Value::as_bool).unwrap_or(false),
                     },
                     "detach" | "take_off" => AppearanceOperation::Detach {
                         item_id: parse_req_uuid(args, "item_id")?,
                     },
                     "wear_folder" | "replace_outfit" => AppearanceOperation::WearFolder {
                         folder_id: parse_req_uuid(args, "folder_id")?,
-                        append: args
-                            .get("append")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(op_name == "wear_folder"),
+                        append: args.get("append").and_then(Value::as_bool).unwrap_or(op_name == "wear_folder"),
                     },
                     "remove_folder" => AppearanceOperation::RemoveFolder {
                         folder_id: parse_req_uuid(args, "folder_id")?,
                     },
                     other => {
-                        return Err(McpError::InvalidParams(format!(
-                            "unknown appearance_mutate op '{other}'"
-                        )));
+                        return Err(McpError::InvalidParams(format!("unknown appearance_mutate op '{other}'")));
                     }
                 };
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::AppearanceMutate { operation },
-                        15_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::AppearanceMutate { operation }, 15_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -1176,16 +956,13 @@ impl McpRouter {
 
             "prim_transform" => {
                 let transforms: Vec<PrimTransformSpec> = if let Some(arr) = args.get("transforms") {
-                    serde_json::from_value(arr.clone()).map_err(|e| {
-                        McpError::InvalidParams(format!("invalid 'transforms' array: {e}"))
-                    })?
+                    serde_json::from_value(arr.clone()).map_err(|e| McpError::InvalidParams(format!("invalid 'transforms' array: {e}")))?
                 } else {
                     let local_id = args
                         .get("local_id")
                         .and_then(Value::as_u64)
-                        .ok_or_else(|| {
-                            McpError::InvalidParams("missing 'local_id' or 'transforms'".into())
-                        })? as u32;
+                        .ok_or_else(|| McpError::InvalidParams("missing 'local_id' or 'transforms'".into()))?
+                        as u32;
                     vec![PrimTransformSpec {
                         local_id,
                         position: parse_vec3(args, "position").ok(),
@@ -1193,10 +970,7 @@ impl McpRouter {
                         rotation_euler_deg: parse_vec3(args, "rotation_euler_deg").ok(),
                         scale: parse_vec3(args, "scale").ok(),
                         name: args.get("name").and_then(Value::as_str).map(str::to_owned),
-                        description: args
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
+                        description: args.get("description").and_then(Value::as_str).map(str::to_owned),
                     }]
                 };
                 let resp = self
@@ -1209,8 +983,7 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let path_cut = parse_vec2(args, "path_cut").ok();
                 let profile_cut = parse_vec2(args, "profile_cut").ok();
                 let hollow = args.get("hollow").and_then(Value::as_f64).map(|v| v as f32);
@@ -1239,23 +1012,14 @@ impl McpRouter {
                 let local_ids: Vec<u32> = args
                     .get("local_ids")
                     .and_then(Value::as_array)
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(Value::as_u64)
-                            .map(|n| n as u32)
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
                     .unwrap_or_default();
                 if local_ids.is_empty() {
                     return Err(McpError::InvalidParams("missing 'local_ids'".into()));
                 }
                 let delink = args.get("delink").and_then(Value::as_bool).unwrap_or(false);
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::PrimLink { local_ids, delink },
-                        6000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::PrimLink { local_ids, delink }, 6000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -1264,40 +1028,25 @@ impl McpRouter {
                 let local_ids: Vec<u32> = args
                     .get("local_ids")
                     .and_then(Value::as_array)
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(Value::as_u64)
-                            .map(|n| n as u32)
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(Value::as_u64).map(|n| n as u32).collect())
                     .unwrap_or_default();
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::PrimDelete { local_ids }, 6000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::PrimDelete { local_ids }, 6000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "lsl_inspect_object_scripts" => {
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))?
-                    as u32;
+                let object_local_id =
+                    args.get("object_local_id")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))? as u32;
                 let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::LslInspectObjectScripts { object_local_id },
-                        6000,
-                    )
+                    .send_to_viewer(None, ViewerRequest::LslInspectObjectScripts { object_local_id }, 6000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "lsl_read_script" => {
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as u32;
+                let object_local_id = args.get("object_local_id").and_then(Value::as_u64).unwrap_or(0) as u32;
                 let script_item_id = parse_req_uuid(args, "script_item_id")?;
                 let resp = self
                     .send_to_viewer(
@@ -1313,22 +1062,12 @@ impl McpRouter {
             }
 
             "lsl_write_and_compile" => {
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as u32;
+                let object_local_id = args.get("object_local_id").and_then(Value::as_u64).unwrap_or(0) as u32;
                 let script_item_id = parse_opt_uuid(args, "script_item_id")?;
-                let script_name = args
-                    .get("script_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("New Script")
-                    .to_owned();
+                let script_name = args.get("script_name").and_then(Value::as_str).unwrap_or("New Script").to_owned();
                 let source_code = req_str(args, "source_code")?;
                 let mono = args.get("mono").and_then(Value::as_bool).unwrap_or(true);
-                let compile_target = args
-                    .get("compile_target")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let compile_target = args.get("compile_target").and_then(Value::as_str).map(str::to_owned);
                 let running = args.get("running").and_then(Value::as_bool).unwrap_or(true);
                 let resp = self
                     .send_to_viewer(
@@ -1355,11 +1094,7 @@ impl McpRouter {
                     .or_else(|| args.get("object_local_id"))
                     .and_then(Value::as_u64)
                     .map(|v| v as u32);
-                let duration_ms = args
-                    .get("duration_ms")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(500)
-                    .clamp(0, 10_000);
+                let duration_ms = args.get("duration_ms").and_then(Value::as_u64).unwrap_or(500).clamp(0, 10_000);
                 if duration_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(duration_ms)).await;
                 }
@@ -1378,23 +1113,13 @@ impl McpRouter {
             }
 
             "lsd_inspect" => {
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))?
-                    as u32;
-                let filter_regex = args
-                    .get("filter_regex")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let include_protected = args
-                    .get("include_protected")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-                let passphrase = args
-                    .get("passphrase")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let object_local_id =
+                    args.get("object_local_id")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))? as u32;
+                let filter_regex = args.get("filter_regex").and_then(Value::as_str).map(str::to_owned);
+                let include_protected = args.get("include_protected").and_then(Value::as_bool).unwrap_or(true);
+                let passphrase = args.get("passphrase").and_then(Value::as_str).map(str::to_owned);
                 let limit = args
                     .get("limit")
                     .and_then(Value::as_u64)
@@ -1417,15 +1142,14 @@ impl McpRouter {
             }
 
             "lsd_mutate" => {
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))?
-                    as u32;
+                let object_local_id =
+                    args.get("object_local_id")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| McpError::InvalidParams("missing 'object_local_id'".into()))? as u32;
                 let operations: Vec<LsdOperation> = serde_json::from_value(
-                    args.get("operations").cloned().ok_or_else(|| {
-                        McpError::InvalidParams("missing 'operations' array".into())
-                    })?,
+                    args.get("operations")
+                        .cloned()
+                        .ok_or_else(|| McpError::InvalidParams("missing 'operations' array".into()))?,
                 )
                 .map_err(|e| McpError::InvalidParams(format!("invalid LsdOperation: {e}")))?;
                 let resp = self
@@ -1445,92 +1169,57 @@ impl McpRouter {
                 let payload = args
                     .get("payload")
                     .ok_or_else(|| McpError::InvalidParams("missing 'payload'".into()))?;
-                let protected_keys = args
-                    .get("protected_keys")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let protected_keys = args.get("protected_keys").and_then(Value::as_bool).unwrap_or(false);
                 let filter_regex = args.get("filter_regex").and_then(Value::as_str);
                 let report = lsd::stress_test_payload(payload, protected_keys, filter_regex)?;
                 Ok(text_block(report))
             }
 
             "asset_inspect" | "asset_inspect_local" => {
-                let file_path = req_str(args, "file_path")
-                    .or_else(|_| req_str(args, "filename"))?;
-                let res = tokio::task::spawn_blocking(move || {
-                    asset_inspect::inspect_local_asset(&file_path)
-                })
-                .await
-                .map_err(|e| McpError::Internal(format!("asset_inspect join error: {e}")))??;
+                let file_path = req_str(args, "file_path").or_else(|_| req_str(args, "filename"))?;
+                let res = tokio::task::spawn_blocking(move || asset_inspect::inspect_local_asset(&file_path))
+                    .await
+                    .map_err(|e| McpError::Internal(format!("asset_inspect join error: {e}")))??;
                 Ok(text_block(res))
             }
 
             "local_mesh_status" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::LocalMeshStatus, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::LocalMeshStatus, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "local_mesh_open" => {
                 let open = args.get("open").and_then(Value::as_bool).unwrap_or(true);
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::LocalMeshOpen { open }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::LocalMeshOpen { open }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "local_mesh_auto_reload" => {
                 let enabled = args.get("enabled").and_then(Value::as_bool).unwrap_or(true);
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::LocalMeshAutoReload { enabled },
-                        5000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::LocalMeshAutoReload { enabled }, 5000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             // ---- Phase 6: Suite 1 — Direct Asset Upload, LiveMesh, Inventory Rez & Materials ----
             "livemesh_control" => {
-                let action = args
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .unwrap_or("status")
-                    .to_owned();
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("status").to_owned();
                 let source_id = parse_opt_uuid(args, "source_id")?;
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::LiveMeshControl { action, source_id },
-                        6000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::LiveMeshControl { action, source_id }, 6000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "asset_upload" => {
-                let action = args
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .unwrap_or("status")
-                    .to_owned();
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("status").to_owned();
                 let mut paths: Vec<String> = args
                     .get("paths")
                     .and_then(Value::as_array)
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                     .unwrap_or_default();
-                if let Some(single) = args
-                    .get("path")
-                    .or_else(|| args.get("file_path"))
-                    .and_then(Value::as_str)
-                {
+                if let Some(single) = args.get("path").or_else(|| args.get("file_path")).and_then(Value::as_str) {
                     paths.push(single.to_owned());
                 }
                 let choice = args
@@ -1559,15 +1248,7 @@ impl McpRouter {
                 let position = parse_vec3(args, "position")?;
                 let select = args.get("select").and_then(Value::as_bool).unwrap_or(false);
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::InventoryRezObject {
-                            item_id,
-                            position,
-                            select,
-                        },
-                        8000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryRezObject { item_id, position, select }, 8000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -1576,13 +1257,8 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
-                let action = args
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .unwrap_or("take")
-                    .to_owned();
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("take").to_owned();
                 let folder_id = parse_opt_uuid(args, "folder_id")?;
                 let resp = self
                     .send_to_viewer(
@@ -1602,8 +1278,7 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let face = args.get("face").and_then(Value::as_i64).map(|v| v as i32);
                 let texture_id = parse_opt_uuid(args, "texture_id")?;
                 let material_id = parse_opt_uuid(args, "material_id")?;
@@ -1614,21 +1289,11 @@ impl McpRouter {
                     .get("rotation_rad")
                     .and_then(Value::as_f64)
                     .map(|v| v as f32)
-                    .or_else(|| {
-                        args.get("rotation_deg")
-                            .and_then(Value::as_f64)
-                            .map(|d| (d as f32).to_radians())
-                    });
+                    .or_else(|| args.get("rotation_deg").and_then(Value::as_f64).map(|d| (d as f32).to_radians()));
                 let glow = args.get("glow").and_then(Value::as_f64).map(|v| v as f32);
                 let fullbright = args.get("fullbright").and_then(Value::as_bool);
-                let alpha_mode = args
-                    .get("alpha_mode")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u8);
-                let bump_shiny = args
-                    .get("bump_shiny")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u8);
+                let alpha_mode = args.get("alpha_mode").and_then(Value::as_u64).map(|v| v as u8);
+                let bump_shiny = args.get("bump_shiny").and_then(Value::as_u64).map(|v| v as u8);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1654,23 +1319,17 @@ impl McpRouter {
 
             // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
             "mesh_upload_open" => {
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::MeshUploadOpen, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::MeshUploadOpen, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "mesh_upload_status" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::MeshUploadStatus, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::MeshUploadStatus, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "native_file_dialogs" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::NativeFileDialogs, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::NativeFileDialogs, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -1678,55 +1337,24 @@ impl McpRouter {
                 let dialog_id = args.get("dialog_id").and_then(Value::as_i64).unwrap_or(1);
                 let filename = req_str(args, "filename")?;
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::NativeFileChoose {
-                            dialog_id,
-                            filename,
-                        },
-                        8000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::NativeFileChoose { dialog_id, filename }, 8000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "ui_inspect" => {
-                let path = args
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .unwrap_or("/main_view")
-                    .to_owned();
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::UiInspect { path }, 5000)
-                    .await?;
+                let path = args.get("path").and_then(Value::as_str).unwrap_or("/main_view").to_owned();
+                let resp = self.send_to_viewer(None, ViewerRequest::UiInspect { path }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "ui_find" => {
                 let query = req_str(args, "query")?;
-                let under = args
-                    .get("under")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
-                let search_in = args
-                    .get("search_in")
-                    .and_then(Value::as_str)
-                    .unwrap_or("path")
-                    .to_owned();
-                let match_mode = args
-                    .get("match")
-                    .and_then(Value::as_str)
-                    .unwrap_or("contains")
-                    .to_owned();
-                let max_depth = args
-                    .get("max_depth")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as usize);
-                let include_info = args
-                    .get("include_info")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let under = args.get("under").and_then(Value::as_str).unwrap_or("").to_owned();
+                let search_in = args.get("search_in").and_then(Value::as_str).unwrap_or("path").to_owned();
+                let match_mode = args.get("match").and_then(Value::as_str).unwrap_or("contains").to_owned();
+                let max_depth = args.get("max_depth").and_then(Value::as_u64).map(|v| v as usize);
+                let include_info = args.get("include_info").and_then(Value::as_bool).unwrap_or(false);
                 let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
                 let limit = args
                     .get("limit")
@@ -1754,19 +1382,9 @@ impl McpRouter {
 
             "ui_click" => {
                 let path = req_str(args, "path")?;
-                let button = args
-                    .get("button")
-                    .and_then(Value::as_str)
-                    .unwrap_or("LEFT")
-                    .to_owned();
-                let floater = args
-                    .get("floater")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let observe_path = args
-                    .get("observe_path")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let button = args.get("button").and_then(Value::as_str).unwrap_or("LEFT").to_owned();
+                let floater = args.get("floater").and_then(Value::as_str).map(str::to_owned);
+                let observe_path = args.get("observe_path").and_then(Value::as_str).map(str::to_owned);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1784,18 +1402,14 @@ impl McpRouter {
 
             "ui_get_value" => {
                 let path = req_str(args, "path")?;
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::UiGetValue { path }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::UiGetValue { path }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "ui_set_text" => {
                 let path = req_str(args, "path")?;
                 let text = req_str(args, "text")?;
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::UiSetText { path, text }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::UiSetText { path, text }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -1805,9 +1419,7 @@ impl McpRouter {
                     .get("value")
                     .cloned()
                     .ok_or_else(|| McpError::InvalidParams("missing 'value'".into()))?;
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::UiSelect { path, value }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::UiSelect { path, value }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -1817,17 +1429,9 @@ impl McpRouter {
                 let modifiers: Vec<String> = args
                     .get("modifiers")
                     .and_then(Value::as_array)
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
+                    .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                     .unwrap_or_default();
-                let observe_path = args
-                    .get("observe_path")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let observe_path = args.get("observe_path").and_then(Value::as_str).map(str::to_owned);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1844,22 +1448,14 @@ impl McpRouter {
             }
 
             "ui_list_menus" => {
-                let query = args
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::UiListMenus { query }, 5000)
-                    .await?;
+                let query = args.get("query").and_then(Value::as_str).unwrap_or("").to_owned();
+                let resp = self.send_to_viewer(None, ViewerRequest::UiListMenus { query }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "ui_invoke_menu" => {
                 let name = req_str(args, "name")?;
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::UiInvokeMenu { name }, 5000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::UiInvokeMenu { name }, 5000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -1868,16 +1464,11 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let face = args.get("face").and_then(Value::as_i64).unwrap_or(0) as i32;
                 let uv = parse_vec2(args, "uv").unwrap_or([0.5, 0.5]);
                 let st = parse_vec2(args, "st").unwrap_or([0.5, 0.5]);
-                let hold_ms = args
-                    .get("hold_ms")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(50)
-                    .clamp(0, 5000);
+                let hold_ms = args.get("hold_ms").and_then(Value::as_u64).unwrap_or(50).clamp(0, 5000);
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1895,11 +1486,7 @@ impl McpRouter {
             }
 
             "avatar_sit" => {
-                let action = args
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .unwrap_or("sit")
-                    .to_owned();
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("sit").to_owned();
                 let target_local_id = args
                     .get("target_local_id")
                     .or_else(|| args.get("local_id"))
@@ -1927,29 +1514,16 @@ impl McpRouter {
 
             "notecard_read" => {
                 let item_id = parse_req_uuid(args, "item_id")?;
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u32);
+                let object_local_id = args.get("object_local_id").and_then(Value::as_u64).map(|v| v as u32);
                 let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::NotecardRead {
-                            item_id,
-                            object_local_id,
-                        },
-                        8000,
-                    )
+                    .send_to_viewer(None, ViewerRequest::NotecardRead { item_id, object_local_id }, 8000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "notecard_write" => {
                 let item_id = parse_opt_uuid(args, "item_id")?;
-                let object_local_id = args
-                    .get("object_local_id")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u32);
+                let object_local_id = args.get("object_local_id").and_then(Value::as_u64).map(|v| v as u32);
                 let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
                 let body = req_str(args, "body")?;
                 let resp = self
@@ -1971,42 +1545,20 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let clear = args.get("clear").and_then(Value::as_bool).unwrap_or(false);
-                let pattern = args
-                    .get("pattern")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let pattern = args.get("pattern").and_then(Value::as_str).map(str::to_owned);
                 let texture_id = parse_opt_uuid(args, "texture_id")?;
                 let start_color = parse_vec4(args, "start_color").ok();
                 let end_color = parse_vec4(args, "end_color").ok();
                 let start_scale = parse_vec2(args, "start_scale").ok();
                 let end_scale = parse_vec2(args, "end_scale").ok();
-                let particle_max_age = args
-                    .get("particle_max_age")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32);
-                let burst_rate = args
-                    .get("burst_rate")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32);
-                let burst_part_count = args
-                    .get("burst_part_count")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u32);
-                let burst_radius = args
-                    .get("burst_radius")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32);
-                let burst_speed_min = args
-                    .get("burst_speed_min")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32);
-                let burst_speed_max = args
-                    .get("burst_speed_max")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32);
+                let particle_max_age = args.get("particle_max_age").and_then(Value::as_f64).map(|v| v as f32);
+                let burst_rate = args.get("burst_rate").and_then(Value::as_f64).map(|v| v as f32);
+                let burst_part_count = args.get("burst_part_count").and_then(Value::as_u64).map(|v| v as u32);
+                let burst_radius = args.get("burst_radius").and_then(Value::as_f64).map(|v| v as f32);
+                let burst_speed_min = args.get("burst_speed_min").and_then(Value::as_f64).map(|v| v as f32);
+                let burst_speed_max = args.get("burst_speed_max").and_then(Value::as_f64).map(|v| v as f32);
                 let accel = parse_vec3(args, "accel").ok();
                 let omega = parse_vec3(args, "omega").ok();
                 let follow_src = args.get("follow_src").and_then(Value::as_bool);
@@ -2070,13 +1622,7 @@ impl McpRouter {
 
             "viewer_shutdown" => {
                 let lease_id = args.get("lease_id").and_then(Value::as_str).map(str::to_owned);
-                let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::ViewerShutdown,
-                        5_000,
-                    )
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::ViewerShutdown, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -2085,8 +1631,7 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let physics = args.get("physics").and_then(Value::as_bool);
                 let temporary = args.get("temporary").and_then(Value::as_bool);
                 let phantom = args.get("phantom").and_then(Value::as_bool);
@@ -2120,8 +1665,7 @@ impl McpRouter {
                 let local_id = args
                     .get("local_id")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))?
-                    as u32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'local_id'".into()))? as u32;
                 let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
                 let description = args.get("description").and_then(Value::as_str).map(str::to_owned);
 
@@ -2150,14 +1694,7 @@ impl McpRouter {
                 let loop_anim = args.get("loop").and_then(Value::as_bool);
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::AvatarAnimationPlay {
-                            animation,
-                            loop_anim,
-                        },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::AvatarAnimationPlay { animation, loop_anim }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2172,48 +1709,24 @@ impl McpRouter {
                     .to_string();
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::AvatarAnimationStop {
-                            animation,
-                        },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::AvatarAnimationStop { animation }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "avatar_animations_list" => {
-                let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::AvatarAnimationsList,
-                        5_000,
-                    )
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::AvatarAnimationsList, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "economy_get_balance" => {
-                let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::EconomyGetBalance,
-                        5_000,
-                    )
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::EconomyGetBalance, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             // ---- Phase 8: Land, Parcel & Estate Suite ----
             "parcel_info" => {
-                let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::ParcelInfoQuery,
-                        5_000,
-                    )
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::ParcelInfoQuery, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -2226,11 +1739,7 @@ impl McpRouter {
                     .to_string();
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::ParcelSetMusic { music_url },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::ParcelSetMusic { music_url }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2241,30 +1750,14 @@ impl McpRouter {
                 let flags = args.get("flags").and_then(Value::as_u64).map(|v| v as u32);
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::ParcelSetProperties {
-                            name,
-                            description,
-                            flags,
-                        },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::ParcelSetProperties { name, description, flags }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "parcel_access_list_modify" => {
-                let action = args
-                    .get("action")
-                    .and_then(Value::as_str)
-                    .unwrap_or("add")
-                    .to_string();
-                let list = args
-                    .get("list")
-                    .and_then(Value::as_str)
-                    .unwrap_or("ban")
-                    .to_string();
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("add").to_string();
+                let list = args.get("list").and_then(Value::as_str).unwrap_or("ban").to_string();
                 let avatar_uuid = args
                     .get("avatar_uuid")
                     .or_else(|| args.get("target"))
@@ -2273,15 +1766,7 @@ impl McpRouter {
                     .to_string();
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::ParcelAccessListModify {
-                            action,
-                            list,
-                            avatar_uuid,
-                        },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::ParcelAccessListModify { action, list, avatar_uuid }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2297,11 +1782,7 @@ impl McpRouter {
                 let ban = args.get("ban").and_then(Value::as_bool);
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::ParcelEject { target_uuid, ban },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::ParcelEject { target_uuid, ban }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2319,8 +1800,7 @@ impl McpRouter {
                     .get("amount")
                     .or_else(|| args.get("amount_l$"))
                     .and_then(Value::as_i64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'amount'".into()))?
-                    as i32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'amount'".into()))? as i32;
                 if amount <= 0 {
                     return Err(McpError::InvalidParams("'amount' must be greater than 0".into()));
                 }
@@ -2341,18 +1821,16 @@ impl McpRouter {
             }
 
             "economy_pay_object" => {
-                let target_local_id = args
-                    .get("target_local_id")
-                    .or_else(|| args.get("local_id"))
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'target_local_id'".into()))?
-                    as u32;
+                let target_local_id =
+                    args.get("target_local_id")
+                        .or_else(|| args.get("local_id"))
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| McpError::InvalidParams("missing 'target_local_id'".into()))? as u32;
                 let amount = args
                     .get("amount")
                     .or_else(|| args.get("amount_l$"))
                     .and_then(Value::as_i64)
-                    .ok_or_else(|| McpError::InvalidParams("missing 'amount'".into()))?
-                    as i32;
+                    .ok_or_else(|| McpError::InvalidParams("missing 'amount'".into()))? as i32;
                 if amount <= 0 {
                     return Err(McpError::InvalidParams("'amount' must be greater than 0".into()));
                 }
@@ -2373,13 +1851,7 @@ impl McpRouter {
             }
 
             "groups_list" => {
-                let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::GroupsList,
-                        5_000,
-                    )
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::GroupsList, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
@@ -2392,11 +1864,7 @@ impl McpRouter {
                     .to_string();
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::GroupsActivate { group_uuid },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::GroupsActivate { group_uuid }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2404,29 +1872,18 @@ impl McpRouter {
             "friends_list" => {
                 let online_only = args.get("online_only").and_then(Value::as_bool);
 
-                let resp = self
-                    .send_to_viewer(
-                        None,
-                        ViewerRequest::FriendsList { online_only },
-                        5_000,
-                    )
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::FriendsList { online_only }, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             // ---- Phase 10: Environment & EEP Suite ----
             "environment_get" => {
-                let resp = self
-                    .send_to_viewer(None, ViewerRequest::EnvironmentGet, 5_000)
-                    .await?;
+                let resp = self.send_to_viewer(None, ViewerRequest::EnvironmentGet, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "environment_set_time" => {
-                let preset = args
-                    .get("preset")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                let preset = args.get("preset").and_then(Value::as_str).map(str::to_owned);
                 let time_of_day = args
                     .get("time_of_day")
                     .or_else(|| args.get("hour"))
@@ -2435,14 +1892,7 @@ impl McpRouter {
                     .map(|f| f as f32);
 
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::EnvironmentSetTime {
-                            preset,
-                            time_of_day,
-                        },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::EnvironmentSetTime { preset, time_of_day }, 5_000)
                     .await?;
 
                 if let ViewerResponse::EnvironmentMutated {
@@ -2460,31 +1910,24 @@ impl McpRouter {
 
             // Phase 11: Spatial Voice Suite
             "voice_status" => {
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::VoiceStatus, 5_000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::VoiceStatus, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "voice_participants_list" => {
-                let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::VoiceParticipantsList, 5_000)
-                    .await?;
+                let resp = self.send_to_viewer(lease_id, ViewerRequest::VoiceParticipantsList, 5_000).await?;
                 Ok(text_block(into_json(resp)))
             }
 
             "voice_set_user_volume" => {
-                let avatar_uuid = req_str(&args, "avatar_uuid")
-                    .or_else(|_| req_str(&args, "target_uuid"))
-                    .or_else(|_| req_str(&args, "agent_id"))?;
+                let avatar_uuid = req_str(args, "avatar_uuid")
+                    .or_else(|_| req_str(args, "target_uuid"))
+                    .or_else(|_| req_str(args, "agent_id"))?;
                 let volume = args
                     .get("volume")
                     .and_then(Value::as_f64)
-                    .ok_or_else(|| {
-                        McpError::InvalidParams(
-                            "missing required number 'volume' [0.0..1.0]".into(),
-                        )
-                    })? as f32;
+                    .ok_or_else(|| McpError::InvalidParams("missing required number 'volume' [0.0..1.0]".into()))?
+                    as f32;
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -2499,22 +1942,12 @@ impl McpRouter {
             }
 
             "voice_set_user_mute" => {
-                let avatar_uuid = req_str(&args, "avatar_uuid")
-                    .or_else(|_| req_str(&args, "target_uuid"))
-                    .or_else(|_| req_str(&args, "agent_id"))?;
-                let mute = args
-                    .get("mute")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
+                let avatar_uuid = req_str(args, "avatar_uuid")
+                    .or_else(|_| req_str(args, "target_uuid"))
+                    .or_else(|_| req_str(args, "agent_id"))?;
+                let mute = args.get("mute").and_then(Value::as_bool).unwrap_or(true);
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::VoiceSetUserMute {
-                            avatar_uuid,
-                            mute,
-                        },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::VoiceSetUserMute { avatar_uuid, mute }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2528,11 +1961,7 @@ impl McpRouter {
                     .and_then(Value::as_bool)
                     .unwrap_or(true);
                 let resp = self
-                    .send_to_viewer(
-                        lease_id,
-                        ViewerRequest::VoiceTransmit { transmitting },
-                        5_000,
-                    )
+                    .send_to_viewer(lease_id, ViewerRequest::VoiceTransmit { transmitting }, 5_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
@@ -2585,10 +2014,7 @@ impl McpRouter {
 
     fn handle_camera_response(&self, resp: ViewerResponse) -> Value {
         match resp {
-            ViewerResponse::CameraMutated {
-                previous_camera,
-                state,
-            } => {
+            ViewerResponse::CameraMutated { previous_camera, state } => {
                 if let Some(rollback) = previous_camera {
                     self.leases.record_rollback(rollback);
                 }
@@ -2639,8 +2065,7 @@ fn req_str(args: &Value, key: &str) -> Result<String, McpError> {
 
 fn parse_req_uuid(args: &Value, key: &str) -> Result<Uuid, McpError> {
     let s = req_str(args, key)?;
-    Uuid::parse_str(s.trim())
-        .map_err(|e| McpError::InvalidParams(format!("invalid UUID for '{key}': {e}")))
+    Uuid::parse_str(s.trim()).map_err(|e| McpError::InvalidParams(format!("invalid UUID for '{key}': {e}")))
 }
 
 fn parse_opt_uuid(args: &Value, key: &str) -> Result<Option<Uuid>, McpError> {
@@ -2661,14 +2086,9 @@ fn parse_vec2(args: &Value, key: &str) -> Result<[f32; 2], McpError> {
         .and_then(Value::as_array)
         .ok_or_else(|| McpError::InvalidParams(format!("missing 2D array '{key}'")))?;
     if arr.len() != 2 {
-        return Err(McpError::InvalidParams(format!(
-            "'{key}' must have 2 numbers"
-        )));
+        return Err(McpError::InvalidParams(format!("'{key}' must have 2 numbers")));
     }
-    Ok([
-        arr[0].as_f64().unwrap_or(0.0) as f32,
-        arr[1].as_f64().unwrap_or(0.0) as f32,
-    ])
+    Ok([arr[0].as_f64().unwrap_or(0.0) as f32, arr[1].as_f64().unwrap_or(0.0) as f32])
 }
 
 fn parse_vec3(args: &Value, key: &str) -> Result<[f32; 3], McpError> {
@@ -2677,9 +2097,7 @@ fn parse_vec3(args: &Value, key: &str) -> Result<[f32; 3], McpError> {
         .and_then(Value::as_array)
         .ok_or_else(|| McpError::InvalidParams(format!("missing 3D vector '{key}'")))?;
     if arr.len() != 3 {
-        return Err(McpError::InvalidParams(format!(
-            "'{key}' must have 3 numbers"
-        )));
+        return Err(McpError::InvalidParams(format!("'{key}' must have 3 numbers")));
     }
     Ok([
         arr[0].as_f64().unwrap_or(0.0) as f32,
@@ -2694,9 +2112,7 @@ fn parse_vec4(args: &Value, key: &str) -> Result<[f32; 4], McpError> {
         .and_then(Value::as_array)
         .ok_or_else(|| McpError::InvalidParams(format!("missing 4D vector '{key}'")))?;
     if arr.len() != 4 {
-        return Err(McpError::InvalidParams(format!(
-            "'{key}' must have 4 numbers"
-        )));
+        return Err(McpError::InvalidParams(format!("'{key}' must have 4 numbers")));
     }
     Ok([
         arr[0].as_f64().unwrap_or(0.0) as f32,
@@ -2716,8 +2132,7 @@ fn parse_vec3_or_xyz(args: &Value) -> Result<[f32; 3], McpError> {
     let x = args
         .get("x")
         .and_then(Value::as_f64)
-        .ok_or_else(|| McpError::InvalidParams("missing 'position' or 'x','y','z'".into()))?
-        as f32;
+        .ok_or_else(|| McpError::InvalidParams("missing 'position' or 'x','y','z'".into()))? as f32;
     let y = args
         .get("y")
         .and_then(Value::as_f64)
@@ -2822,7 +2237,15 @@ fn inspect_viewer_api(api: &str, operation: Option<&str>) -> Value {
     })
 }
 
-fn all_tool_definitions() -> Vec<ToolDefinition> {
+pub fn list_tools_for_profile(profile: McpProfile) -> Vec<ToolDefinition> {
+    let all = all_tool_definitions();
+    match profile {
+        McpProfile::All => all,
+        McpProfile::Compact => all.into_iter().filter(|t| t.in_compact_profile).collect(),
+    }
+}
+
+pub fn all_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         // Phase 0: Session, Leases & Dynamic Dispatch
         ToolDefinition {
@@ -4311,10 +3734,7 @@ mod tests {
             "ui_list_menus",
             "ui_invoke_menu",
         ] {
-            assert!(
-                names.contains(&legacy),
-                "missing Legacy Viewer MCP tool: {legacy}"
-            );
+            assert!(names.contains(&legacy), "missing Legacy Viewer MCP tool: {legacy}");
         }
         // Verify all 42 Aurora-native & LSD tools
         for native in [
@@ -4387,10 +3807,7 @@ mod tests {
             "voice_set_user_mute",
             "voice_transmit",
         ] {
-            assert!(
-                names.contains(&native),
-                "missing Aurora-native MCP tool: {native}"
-            );
+            assert!(names.contains(&native), "missing Aurora-native MCP tool: {native}");
         }
     }
 }

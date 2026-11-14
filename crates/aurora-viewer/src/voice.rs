@@ -380,10 +380,7 @@ impl Voice {
 
     /// Direct list of all participants in the active session.
     pub fn participants(&self) -> Vec<aurora_voice::Participant> {
-        self.session
-            .as_ref()
-            .map(|(_, s)| s.participants())
-            .unwrap_or_default()
+        self.session.as_ref().map(|(_, s)| s.participants()).unwrap_or_default()
     }
 
     /// Locally mute or unmute a resident in the active session.

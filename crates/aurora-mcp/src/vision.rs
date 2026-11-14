@@ -3,7 +3,7 @@
 use crate::asset_inspect::validate_local_file_path;
 use crate::bridge::{CaptureBufferType, McpError, RawCapturedFrame};
 use base64::Engine;
-use image::{ ImageBuffer, Rgba, RgbaImage, imageops::FilterType};
+use image::{ImageBuffer, Rgba, RgbaImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -33,14 +33,8 @@ pub fn capture_output_dir() -> PathBuf {
 
 /// Downscales (if needed) and encodes a raw RGBA8 frame into a PNG file and
 /// Base64 payload on a background worker thread.
-pub fn encode_captured_frame(
-    raw: RawCapturedFrame,
-    max_dimensions: (u32, u32),
-    label: &str,
-) -> Result<EncodedCapture, McpError> {
-    let expected_len = (raw.width as usize)
-        .saturating_mul(raw.height as usize)
-        .saturating_mul(4);
+pub fn encode_captured_frame(raw: RawCapturedFrame, max_dimensions: (u32, u32), label: &str) -> Result<EncodedCapture, McpError> {
+    let expected_len = (raw.width as usize).saturating_mul(raw.height as usize).saturating_mul(4);
     if raw.rgba_bytes.len() < expected_len || raw.width == 0 || raw.height == 0 {
         return Err(McpError::Internal(format!(
             "invalid raw frame buffer ({} bytes for {}x{})",
@@ -50,12 +44,8 @@ pub fn encode_captured_frame(
         )));
     }
 
-    let img: RgbaImage = ImageBuffer::from_raw(
-        raw.width,
-        raw.height,
-        raw.rgba_bytes[..expected_len].to_vec(),
-    )
-    .ok_or_else(|| McpError::Internal("failed to construct RgbaImage".into()))?;
+    let img: RgbaImage = ImageBuffer::from_raw(raw.width, raw.height, raw.rgba_bytes[..expected_len].to_vec())
+        .ok_or_else(|| McpError::Internal("failed to construct RgbaImage".into()))?;
 
     let (max_w, max_h) = (max_dimensions.0.max(32), max_dimensions.1.max(32));
     let final_img = if raw.width > max_w || raw.height > max_h {
@@ -97,11 +87,7 @@ pub fn encode_captured_frame(
         .collect();
     let file_name = format!(
         "{}-{}-{}.png",
-        if safe_label.is_empty() {
-            "capture"
-        } else {
-            &safe_label
-        },
+        if safe_label.is_empty() { "capture" } else { &safe_label },
         match raw.buffer_type {
             CaptureBufferType::ColorRgb => "color",
             CaptureBufferType::DepthNormalized => "depth",
@@ -109,8 +95,7 @@ pub fn encode_captured_frame(
         &sha256[..12]
     );
     let path = capture_output_dir().join(file_name);
-    std::fs::write(&path, &png_bytes)
-        .map_err(|e| McpError::Internal(format!("failed to write capture PNG: {e}")))?;
+    std::fs::write(&path, &png_bytes).map_err(|e| McpError::Internal(format!("failed to write capture PNG: {e}")))?;
 
     let base64_png = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     Ok(EncodedCapture {
@@ -131,16 +116,8 @@ pub fn encode_captured_frame(
 /// Compare two images on disk (`image_compare`), computing RMSE, MAE, max channel
 /// difference, changed pixel percentage, and writing a visual diff PNG.
 pub fn compare_images(reference_path: &str, observed_path: &str) -> Result<Value, McpError> {
-    let ref_path = validate_local_file_path(
-        reference_path,
-        ALLOWED_IMAGE_EXTENSIONS,
-        Some(MAX_COMPARE_IMAGE_BYTES),
-    )?;
-    let obs_path = validate_local_file_path(
-        observed_path,
-        ALLOWED_IMAGE_EXTENSIONS,
-        Some(MAX_COMPARE_IMAGE_BYTES),
-    )?;
+    let ref_path = validate_local_file_path(reference_path, ALLOWED_IMAGE_EXTENSIONS, Some(MAX_COMPARE_IMAGE_BYTES))?;
+    let obs_path = validate_local_file_path(observed_path, ALLOWED_IMAGE_EXTENSIONS, Some(MAX_COMPARE_IMAGE_BYTES))?;
     let ref_img = image::open(&ref_path)
         .map_err(|e| McpError::InvalidParams(format!("cannot open reference '{reference_path}': {e}")))?
         .to_rgba8();
@@ -182,16 +159,7 @@ pub fn compare_images(reference_path: &str, observed_path: &str) -> Result<Value
             sum_sq_err += df * df;
         }
         // Amplify small visual differences 4x so the diff PNG is easy to read.
-        diff_img.put_pixel(
-            x,
-            y,
-            Rgba([
-                dr.saturating_mul(4),
-                dg.saturating_mul(4),
-                db.saturating_mul(4),
-                255,
-            ]),
-        );
+        diff_img.put_pixel(x, y, Rgba([dr.saturating_mul(4), dg.saturating_mul(4), db.saturating_mul(4), 255]));
     }
 
     let channels = (total_pixels * 3) as f64;
