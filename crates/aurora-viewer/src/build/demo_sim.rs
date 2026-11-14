@@ -94,6 +94,19 @@ fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) ->
     }
 }
 
+/// The demo region makes new contents items like a Second Life region
+/// (CreateTaskInventoryItem); `AURORA_DEMO_CONTENTS_CAP=0` withdraws the
+/// capability, for the RezScript fallback and a disabled "New notecard".
+pub fn caps() -> Vec<(String, String)> {
+    if std::env::var("AURORA_DEMO_CONTENTS_CAP").is_ok_and(|v| v.trim() == "0") {
+        return Vec::new();
+    }
+    vec![(
+        super::contents::CREATE_TASK_ITEM_CAP.to_owned(),
+        "demo://create-task-item".to_owned(),
+    )]
+}
+
 fn script_copy_demo() -> bool {
     std::env::var("AURORA_DEMO_REPLACE_PRIM").is_ok_and(|mode| mode == "script")
 }
@@ -703,6 +716,42 @@ impl DemoSim {
                 }
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
+            }
+            // CreateTaskInventoryItem: the region writes the new item, a
+            // running Mono or Luau script or an empty notecard
+            BuildCmd::CreateTaskItem { item, tag, .. } => {
+                let id = item.parent_id;
+                if world.objects.index_of_uuid(&id).is_none() {
+                    return vec![NetEvent::CapReply {
+                        tag: *tag,
+                        result: Ok(llsd_map! { "success" => false, "message" => "Object not found" }),
+                    }];
+                }
+                let mut it = (**item).clone();
+                it.item_id = Uuid::new_v4();
+                it.asset_id = Uuid::new_v4();
+                let item_id = it.item_id;
+                let lua = aurora_net::scripts::is_slua_item(it.flags);
+                let script = it.asset_type == super::contents::AT_LSL_TEXT;
+                let entry = self.contents_of(id);
+                entry.1.push(it);
+                entry.0 = entry.0.wrapping_add(1);
+                let serial = entry.0;
+                if script {
+                    let vm = if lua {
+                        aurora_net::scripts::CompileTarget::Luau
+                    } else {
+                        aurora_net::scripts::CompileTarget::Mono
+                    };
+                    self.running.insert((id, item_id), (true, vm));
+                }
+                self.props_of(world, id).inventory_serial = serial;
+                let mut events = self.reply_props(world, &[id]);
+                events.push(NetEvent::CapReply {
+                    tag: *tag,
+                    result: Ok(llsd_map! { "success" => true, "item_id" => item_id }),
+                });
+                events
             }
             BuildCmd::RemoveTaskInventory { handle, local_id, item_id } => {
                 let ids = Self::uuids(world, *handle, &[*local_id]);
