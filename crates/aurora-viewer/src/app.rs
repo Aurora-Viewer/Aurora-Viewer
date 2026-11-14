@@ -10008,6 +10008,10 @@ impl App {
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
+            // the weather's memory of the ground (snow, wet, footprints)
+            if let Some(gfx) = &mut self.gfx {
+                gfx.renderer.shift_world(shift);
+            }
         }
         self.world.poll_inventory_cache();
         let receipts = std::mem::take(&mut self.world.received_items.receipts);

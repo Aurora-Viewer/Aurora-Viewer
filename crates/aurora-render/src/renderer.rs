@@ -7485,6 +7485,8 @@ impl Backend {
             capture: None,
             histogram: None,
             motion_cut: packet.motion_cut,
+            // (moved once, with the first eye)
+            world_shift: [0.0; 2],
             input_at: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
@@ -7671,10 +7673,20 @@ impl Backend {
             capture: wanted,
             histogram,
             motion_cut,
+            world_shift,
             input_at,
         } = packet;
         let external_output = output.is_some();
         self.motion_cut |= motion_cut;
+        if world_shift != [0.0; 2] {
+            let by = Vec2::from(world_shift);
+            if let Some(o) = &mut self.rain_wet.origin {
+                *o += by;
+            }
+            if let Some(o) = &mut self.snow_trail.origin {
+                *o += by;
+            }
+        }
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
             t.harvest();
