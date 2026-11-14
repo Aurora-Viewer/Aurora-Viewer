@@ -1311,7 +1311,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 panels.personal_lighting = true;
             }
             // Aurora's own: the weather beside the lighting it rides on
-            if menu::item(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-weather-aurora")) {
+            if menu::item(ui, p, "umbrella-filled", aurora_i18n::tr!("ui-bars-aurora-weather")) {
                 *action = BarAction::AuroraWeather;
             }
             // Firestorm's Phototools "New preset" buttons (World.EnvPreset)
