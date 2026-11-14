@@ -65,6 +65,32 @@ const DEFAULT_WINDOW: u8 = 4;
 /// in bytes, so an accented letter takes two).
 pub const NAME_MAX: usize = 63;
 
+/// The names an environment was applied with (ExtEnvironment's
+/// `day_names`: the whole day's, or one per track, 0 the water): the
+/// inventory items' names, their Aurora Weather codes with them, which the
+/// settings inside an item may lack (renamed by hand, the name inside its
+/// asset stays as it was).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DayNames {
+    pub whole: String,
+    pub tracks: [String; 5],
+}
+
+impl DayNames {
+    pub fn from_env(env: &aurora_llsd::Llsd) -> DayNames {
+        let names = &env["day_names"];
+        let mut out = DayNames::default();
+        if names.is_array() {
+            for (i, n) in out.tracks.iter_mut().enumerate() {
+                *n = names.at(i).to_string_value();
+            }
+        } else if let aurora_llsd::Llsd::String(n) = names {
+            out.whole = n.clone();
+        }
+        out
+    }
+}
+
 /// The weather of a sky: what it is like at its keyframe.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkyWeather {
@@ -141,6 +167,16 @@ impl SkyWeather {
     /// The letters of the code (without its `~`): nine, or twelve with an
     /// aurora.
     pub fn code(&self) -> String {
+        match self.bits() {
+            (v, SKY_AURORA_DATA) => encode(v, SKY_AURORA_DATA, SKY_AURORA_LEN),
+            (v, _) => encode(v, SKY_DATA, SKY_LEN),
+        }
+    }
+
+    /// The code's data without its check (its version in the low 2 bits),
+    /// and how many bits it takes: 32, or 45 with an aurora (also what a
+    /// sky's settings carry, weather/sky_mark.rs).
+    pub(crate) fn bits(&self) -> (u64, u32) {
         let mut b = Bits::default();
         b.put(if self.aurora.is_some() { SKY_AURORA_VERSION } else { SKY_VERSION }, 2);
         b.put(u64::from(self.precipitation == Precipitation::Snow), 1);
@@ -157,7 +193,7 @@ impl SkyWeather {
         b.put(level(self.strikes, 3), 2);
         debug_assert_eq!(b.at, SKY_DATA);
         let Some(a) = self.aurora else {
-            return encode(b.v, SKY_DATA, SKY_LEN);
+            return (b.v, SKY_DATA);
         };
         // (never 0: the aurora is there, if faint)
         b.put(level(a.intensity, 15).max(1), 4);
@@ -165,7 +201,7 @@ impl SkyWeather {
         b.put(level(a.height, 7), 3);
         b.put(u64::from(a.colours.index()), 2);
         debug_assert_eq!(b.at, SKY_AURORA_DATA);
-        encode(b.v, SKY_AURORA_DATA, SKY_AURORA_LEN)
+        (b.v, SKY_AURORA_DATA)
     }
 
     /// The length of this sky's code.
@@ -183,11 +219,19 @@ impl SkyWeather {
             (SKY_DATA, SKY_VERSION)
         };
         let len = if version == SKY_AURORA_VERSION { SKY_AURORA_LEN } else { SKY_LEN };
-        let mut b = Bits {
-            v: decode(letters, data, len)?,
-            at: 0,
-        };
-        if b.take(2) != version {
+        let v = decode(letters, data, len)?;
+        if v & 3 != version {
+            return None;
+        }
+        Self::from_bits(v)
+    }
+
+    /// The weather of a code's data (`bits`), if its version is one this
+    /// viewer reads; a sky without an aurora has nothing past its 32 bits.
+    pub(crate) fn from_bits(v: u64) -> Option<SkyWeather> {
+        let mut b = Bits { v, at: 0 };
+        let version = b.take(2);
+        if version == SKY_VERSION && v >> SKY_DATA != 0 || version != SKY_VERSION && version != SKY_AURORA_VERSION {
             return None;
         }
         let snow = b.take(1) == 1;
@@ -371,6 +415,16 @@ impl RegionDay {
     /// `DayCycle::track_for_altitude`, selectTrackNumber) of `day`, or None when
     /// none of its skies carries a weather (the region sets none there).
     pub fn read(day: &aurora_llsd::Llsd, track: usize, length: f64, offset: f64) -> Option<RegionDay> {
+        Self::read_named(day, &DayNames::default(), track, length, offset)
+    }
+
+    /// [`RegionDay::read`] with the names the environment was applied with
+    /// (`names`): a keyframe whose sky carries no code takes its track's
+    /// applied name's, a day with none at all the whole day's, and the
+    /// schedule the whole day's name's when the day's own has none. The
+    /// names are the inventory items' (a code typed into an item's name by
+    /// hand is not in its asset), and every viewer receives them.
+    pub fn read_named(day: &aurora_llsd::Llsd, names: &DayNames, track: usize, length: f64, offset: f64) -> Option<RegionDay> {
         let frames = &day["frames"];
         let keys_of = |t: usize| -> Vec<(f32, Option<SkyWeather>)> {
             // tracks: 0 the water, 1 the ground, 2.. the skies above
@@ -384,7 +438,10 @@ impl RegionDay {
                     let pos = if pos.is_finite() { pos.clamp(0.0, 1.0) } else { 0.0 };
                     (
                         pos,
-                        SkyWeather::from_name(frames[name]["name"].as_str()).or_else(|| SkyWeather::from_name(name)),
+                        super::sky_mark::read(&frames[name])
+                            .or_else(|| SkyWeather::from_name(frames[name]["name"].as_str()))
+                            .or_else(|| SkyWeather::from_name(name))
+                            .or_else(|| names.tracks.get(t + 1).and_then(|n| SkyWeather::from_name(n))),
                     )
                 })
                 .collect()
@@ -396,13 +453,16 @@ impl RegionDay {
             keys = keys_of(track);
         }
         if keys.iter().all(|(_, w)| w.is_none()) {
-            return None;
+            // a sky's code on the whole day's name: that weather all day
+            let whole = SkyWeather::from_name(&names.whole)?;
+            keys = vec![(0.0, Some(whole))];
         }
         let mut keys: Vec<(f32, SkyWeather)> = keys.into_iter().map(|(p, w)| (p, w.unwrap_or(SkyWeather::CLEAR))).collect();
         keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let schedule = DayWeather::from_name(day["name"].as_str()).or_else(|| DayWeather::from_name(&names.whole));
         Some(RegionDay {
             keys,
-            schedule: DayWeather::from_name(day["name"].as_str()).unwrap_or_default(),
+            schedule: schedule.unwrap_or_default(),
             length,
             offset,
         })
@@ -540,7 +600,9 @@ impl RegionDay {
 pub fn of_settings(map: &aurora_llsd::Llsd) -> Option<RegionDay> {
     match map["type"].as_str() {
         "daycycle" => RegionDay::read(map, 0, crate::world::eep::DEFAULT_DAY_LENGTH, crate::world::eep::DEFAULT_DAY_OFFSET),
-        "sky" => SkyWeather::from_name(map["name"].as_str()).map(RegionDay::fixed),
+        "sky" => super::sky_mark::read(map)
+            .or_else(|| SkyWeather::from_name(map["name"].as_str()))
+            .map(RegionDay::fixed),
         _ => None,
     }
 }
@@ -560,6 +622,33 @@ fn code_part(name: &str) -> Option<&str> {
     let trimmed = name.trim_end();
     let at = trimmed.rfind('~')?;
     Some(trimmed[at + 1..].trim())
+}
+
+/// Whether any key frame of `day` (a day cycle's settings) carries a sky's
+/// weather, in its sky's name or its key's.
+pub fn day_has_weather(day: &aurora_llsd::Llsd) -> bool {
+    let frames = &day["frames"];
+    day["tracks"].as_array().iter().skip(1).any(|track| {
+        track.as_array().iter().any(|key| {
+            let name = key["key_name"].as_str();
+            super::sky_mark::read(&frames[name]).is_some()
+                || SkyWeather::from_name(frames[name]["name"].as_str()).is_some()
+                || SkyWeather::from_name(name).is_some()
+        })
+    })
+}
+
+/// The name a day cycle is saved with: its schedule's code at its end
+/// whenever its key frames carry weather or its schedule is not the
+/// default (the default's code too: it is what shows the day's weather in
+/// the inventory), and none when neither does.
+pub fn day_name_for(name: &str, day: &aurora_llsd::Llsd) -> String {
+    let schedule = DayWeather::from_name(name).unwrap_or_default();
+    if day_has_weather(day) || schedule != DayWeather::default() {
+        with_code(name, &schedule.code())
+    } else {
+        strip_code(name).to_owned()
+    }
 }
 
 /// `name` without a weather code (a sky's or a day's) at its end.
@@ -659,7 +748,7 @@ impl Bits {
 }
 
 /// SplitMix64's finaliser: a good spread of every input bit.
-fn mix(mut z: u64) -> u64 {
+pub(crate) fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
@@ -872,6 +961,79 @@ mod tests {
         let d = DayWeather { window: 2, seed: 5 };
         assert_eq!(DayWeather::from_name(&d.name_with("Day")), Some(d));
         assert_eq!(DayWeather::default().name_with(&d.name_with("Day")), "Day");
+    }
+
+    /// A day saved with weather in its key frames carries its schedule's
+    /// code even when the schedule is the default (the inventory's tag);
+    /// without any, the default schedule's code goes.
+    #[test]
+    fn a_day_with_weather_names_itself_so() {
+        let s = storm();
+        let weathered = day("Day", &[(0.0, "a", &s.name_with("Storm"))]);
+        let named = day_name_for("Day", &weathered);
+        assert_eq!(DayWeather::from_name(&named), Some(DayWeather::default()));
+        assert!(coded_name(&named).is_some(), "{named}");
+        // saved again: the same name
+        assert_eq!(day_name_for(&named, &weathered), named);
+        // no weather, default schedule: no code
+        let plain = day("Day", &[(0.0, "a", "Plain")]);
+        assert_eq!(day_name_for(&named, &plain), "Day");
+        // a schedule set: its code stays, weather or not
+        let set = DayWeather { window: 2, seed: 7 }.name_with("Day");
+        assert_eq!(day_name_for(&set, &plain), set);
+    }
+
+    /// Applied from items whose names carry the codes (typed there by hand,
+    /// not in the assets): the region's weather takes them from the names
+    /// the environment was applied with, the skies' own names first.
+    #[test]
+    fn the_applied_names_give_the_weather_their_skies_lack() {
+        let s = storm();
+        let plain = day("Day", &[(0.0, "a", "Plain")]);
+        let none = DayNames::default();
+        assert!(RegionDay::read_named(&plain, &none, 0, 14_400.0, 0.0).is_none());
+        // a sky applied to the ground track by a coded item's name
+        let mut track = DayNames::default();
+        track.tracks[1] = s.name_with("Storm");
+        let r = RegionDay::read_named(&plain, &track, 0, 14_400.0, 0.0).expect("from the track's name");
+        assert_eq!(r.state_at(0.3), s);
+        // the whole day applied by a coded name: a sky's code, that weather
+        // all day; a day's code, its schedule
+        let whole = DayNames {
+            whole: s.name_with("Stormy day"),
+            ..Default::default()
+        };
+        assert_eq!(
+            RegionDay::read_named(&plain, &whole, 0, 14_400.0, 0.0)
+                .expect("whole")
+                .state_at(0.6),
+            s
+        );
+        let coded = day("Day", &[(0.0, "a", &s.name_with("Storm"))]);
+        let schedule = DayWeather { window: 3, seed: 9 };
+        let timed = DayNames {
+            whole: schedule.name_with("Day"),
+            ..Default::default()
+        };
+        assert_eq!(
+            RegionDay::read_named(&coded, &timed, 0, 14_400.0, 0.0).expect("timed").schedule,
+            schedule
+        );
+        // a sky's own code wins over the name it was applied with
+        let other = SkyWeather::CLEAR;
+        let mut renamed = DayNames::default();
+        renamed.tracks[1] = other.name_with("Calm");
+        assert_eq!(
+            RegionDay::read_named(&coded, &renamed, 0, 14_400.0, 0.0)
+                .expect("own")
+                .state_at(0.0),
+            s
+        );
+        // the names as the region sends them: one per track, or the whole day's
+        let env = llsd_map! {"day_names" => Llsd::Array(vec![Llsd::from("Water"), Llsd::from(s.name_with("Storm"))])};
+        assert_eq!(DayNames::from_env(&env).tracks[1], s.name_with("Storm"));
+        let env = llsd_map! {"day_names" => "Whole day"};
+        assert_eq!(DayNames::from_env(&env).whole, "Whole day");
     }
 
     #[test]

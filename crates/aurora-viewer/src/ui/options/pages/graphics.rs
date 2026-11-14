@@ -460,7 +460,7 @@ fn quality(cx: &mut Cx) {
             tr!("common-draw-distance"),
             tr!("ui-options-objects-beyond-this-distance-are-not-drawn-96-m"),
             &field!(draw_distance),
-            32.0..=512.0,
+            crate::settings::DRAW_DISTANCE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
             " m",
         );
         // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
@@ -937,11 +937,14 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_range),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
-                        .custom_parser(aurora_i18n::parse_number)
-                        .step_by(16.0)
-                        .suffix(" m")
-                        .trailing_fill(true),
+                    egui::Slider::new(
+                        &mut s.probe_range,
+                        crate::settings::PROBE_RANGE_MIN..=crate::settings::DRAW_DISTANCE_MAX,
+                    )
+                    .custom_parser(aurora_i18n::parse_number)
+                    .step_by(16.0)
+                    .suffix(" m")
+                    .trailing_fill(true),
                 )
                 .changed()
             },
@@ -1004,6 +1007,22 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // the order of the blended faces (scene/blend_order.rs), beyond the
+    // Legacy Viewer's sort
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        cx.combo(
+            tr!("ui-options-blend-order"),
+            tr!("ui-options-blend-order-help"),
+            &field!(blend_order),
+            &[
+                (0, tr!("ui-options-blend-order-standard")),
+                (1, tr!("ui-options-blend-order-fast")),
+                (2, tr!("ui-options-blend-order-balanced")),
+                (3, tr!("ui-options-blend-order-high")),
+                (4, tr!("ui-options-blend-order-full")),
+            ],
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another
