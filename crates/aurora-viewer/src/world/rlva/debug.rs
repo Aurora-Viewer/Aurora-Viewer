@@ -64,6 +64,7 @@ mod tests {
             owner_id: Uuid::from_u128(2),
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@setenv=n,setenv_daytime:0.5=force,getenv_daytime=123,getcommand:setenv;add=123".into(),
         };

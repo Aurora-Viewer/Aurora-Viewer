@@ -162,6 +162,60 @@ pub fn heap_sizes_mb(_adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u6
     None
 }
 
+/// Size of the video memory the CPU can map: the heap of the first memory
+/// type that is `DEVICE_LOCAL`, `HOST_VISIBLE` and `HOST_COHERENT`, the
+/// one the allocator tries first for every mappable buffer (gpu-allocator's
+/// `CpuToGpu`, `find_memorytype_index`: first match in index order). On a
+/// discrete GPU with no Resizable BAR this is a heap of its own of about
+/// 256 MB, the PCI window the whole desktop shares (#2171); with Resizable
+/// BAR, or on an integrated GPU, it is the whole video memory. None when
+/// the driver has no such type: mapped buffers then live in system memory.
+#[cfg(not(target_os = "macos"))]
+fn mappable_heap_bytes(memory: &vk::PhysicalDeviceMemoryProperties) -> Option<u64> {
+    let mappable = vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+    let ty = memory
+        .memory_types_as_slice()
+        .iter()
+        .find(|ty| ty.property_flags.contains(mappable))?;
+    memory.memory_heaps_as_slice().get(ty.heap_index as usize).map(|heap| heap.size)
+}
+
+/// [`mappable_heap_bytes`] of this adapter, in MB; `AURORA_MAPPABLE_MB`
+/// replaces the reading (a card with no Resizable BAR on one that has it).
+pub fn mappable_mb(adapter: &wgpu::Adapter) -> Option<u64> {
+    mappable_override(std::env::var("AURORA_MAPPABLE_MB").ok().as_deref()).or_else(|| mappable_mb_of(adapter))
+}
+
+/// The value of `AURORA_MAPPABLE_MB`, in MB; anything but a whole number
+/// leaves the adapter's reading.
+fn mappable_override(value: Option<&str>) -> Option<u64> {
+    value?.trim().parse().ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mappable_mb_of(adapter: &wgpu::Adapter) -> Option<u64> {
+    // SAFETY: the hal adapter is borrowed only for this physical-device query.
+    let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
+    // SAFETY: a read-only query of the physical device the hal adapter
+    // holds, valid from any thread.
+    let memory = unsafe {
+        hal.shared_instance()
+            .raw_instance()
+            .get_physical_device_memory_properties(hal.raw_physical_device())
+    };
+    mappable_heap_bytes(&memory).map(|bytes| bytes >> 20)
+}
+
+#[cfg(target_os = "macos")]
+fn mappable_mb_of(_adapter: &wgpu::Adapter) -> Option<u64> {
+    None
+}
+
+/// Under this much mappable video memory, the staging pool keeps to 64 MB
+/// (`upload::PoolSize::Window`): the large pool (256 MB) would fill a
+/// 256 MB window alone, and the other programs' mappings then fail (#2171).
+pub const SMALL_MAPPABLE_MB: u64 = 1024;
+
 /// AURORA_VRAM_BUDGET_MB: the driver's budget taken as this many megabytes
 /// (a smaller card on a large one: the texture budget, the Performance
 /// window's warning).
@@ -658,6 +712,87 @@ mod tests {
         assert_eq!(sampler.read(), Some((8312 * MB, 956 * MB, 7800 * MB)));
         drop(sampler);
         release_tx.send(()).expect("release the sampling thread");
+    }
+
+    /// Memory types of a discrete NVIDIA GPU: video memory alone, system
+    /// memory (plain and cached), and video memory the CPU can map, on the
+    /// heap `mappable_heap`.
+    #[cfg(not(target_os = "macos"))]
+    fn discrete_memory(heaps: &[(u64, bool)], mappable_heap: Option<u32>) -> vk::PhysicalDeviceMemoryProperties {
+        let host = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let mut memory = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: heaps.len() as u32,
+            memory_type_count: 3 + u32::from(mappable_heap.is_some()),
+            ..Default::default()
+        };
+        for (i, &(size, local)) in heaps.iter().enumerate() {
+            memory.memory_heaps[i].size = size;
+            if local {
+                memory.memory_heaps[i].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+            }
+        }
+        memory.memory_types[0].heap_index = 0;
+        memory.memory_types[0].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+        memory.memory_types[1].heap_index = 1;
+        memory.memory_types[1].property_flags = host;
+        memory.memory_types[2].heap_index = 1;
+        memory.memory_types[2].property_flags = host | vk::MemoryPropertyFlags::HOST_CACHED;
+        if let Some(heap) = mappable_heap {
+            memory.memory_types[3].heap_index = heap;
+            memory.memory_types[3].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL | host;
+        }
+        memory
+    }
+
+    #[test]
+    fn mappable_override_takes_whole_megabytes_only() {
+        assert_eq!(mappable_override(Some("246")), Some(246));
+        assert_eq!(mappable_override(Some(" 246 ")), Some(246));
+        assert_eq!(mappable_override(Some("0")), Some(0));
+        assert_eq!(mappable_override(None), None);
+        for bad in ["", "-1", "246MB", "2.5", "x"] {
+            assert_eq!(mappable_override(Some(bad)), None, "{bad:?}");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn mappable_video_memory_is_the_small_heap_without_resizable_bar() {
+        // Resizable BAR: the mappable type sits on the video memory itself
+        let whole = discrete_memory(&[(32_600 * MB, true), (46_400 * MB, false)], Some(0));
+        assert_eq!(mappable_heap_bytes(&whole), Some(32_600 * MB));
+        // without it: a third heap of the size of the PCI window
+        let window = discrete_memory(&[(16_000 * MB, true), (46_400 * MB, false), (246 * MB, true)], Some(2));
+        assert_eq!(mappable_heap_bytes(&window), Some(246 * MB));
+        // two such types: the first in index order, as the allocator takes
+        // it, not the largest heap
+        let mut two = window;
+        two.memory_type_count = 5;
+        two.memory_types[4].heap_index = 0;
+        two.memory_types[4].property_flags = two.memory_types[3].property_flags;
+        assert_eq!(mappable_heap_bytes(&two), Some(246 * MB));
+        // host-visible but not coherent: not the type the allocator asks for
+        let mut incoherent = window;
+        incoherent.memory_types[3].property_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE;
+        assert_eq!(mappable_heap_bytes(&incoherent), None);
+        // no mappable video memory: mapped buffers live in system memory
+        let none = discrete_memory(&[(16_000 * MB, true), (46_400 * MB, false)], None);
+        assert_eq!(mappable_heap_bytes(&none), None);
+        // a type naming a heap the driver did not list is no reading
+        let mut broken = discrete_memory(&[(16_000 * MB, true), (46_400 * MB, false)], Some(0));
+        broken.memory_types[3].heap_index = 7;
+        assert_eq!(mappable_heap_bytes(&broken), None);
+        // an integrated GPU: one heap, all of it mappable
+        let mut unified = vk::PhysicalDeviceMemoryProperties {
+            memory_heap_count: 1,
+            memory_type_count: 1,
+            ..Default::default()
+        };
+        unified.memory_heaps[0].size = 16_000 * MB;
+        unified.memory_heaps[0].flags = vk::MemoryHeapFlags::DEVICE_LOCAL;
+        unified.memory_types[0].property_flags =
+            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        assert_eq!(mappable_heap_bytes(&unified), Some(16_000 * MB));
     }
 
     #[cfg(not(target_os = "macos"))]

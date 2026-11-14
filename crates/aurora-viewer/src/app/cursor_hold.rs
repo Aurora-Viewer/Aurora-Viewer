@@ -203,14 +203,25 @@ impl App {
         self.hold_cursor(true);
     }
 
+    /// Hide and lock the cursor for a drag that began at `origin`: it comes
+    /// back there (the right button's orbit, which only holds it once it
+    /// moves past a click's jitter).
+    pub(super) fn hold_drag_cursor(&mut self, origin: (f32, f32)) {
+        self.hold_cursor_from(false, origin);
+    }
+
     fn hold_cursor(&mut self, focus: bool) {
+        self.hold_cursor_from(focus, self.cursor_pos);
+    }
+
+    fn hold_cursor_from(&mut self, focus: bool, origin: (f32, f32)) {
         if self.gfx.is_none() || self.clicks.scripted() {
             // AURORA_DEMO_CLICKS: several camera drags a second must not
             // take the real cursor of someone using the PC
             return;
         }
         let mouselook = self.mouselook_capture_enabled();
-        let Some(kind) = self.cursor_hold.take(mouselook, focus, self.cursor_pos) else {
+        let Some(kind) = self.cursor_hold.take(mouselook, focus, origin) else {
             return;
         };
         if kind == HoldKind::Mouselook {

@@ -35,6 +35,7 @@ mod avatar_render_settings;
 mod bridge;
 mod busy_pause;
 mod movelock;
+mod object_export;
 mod particle_editor;
 mod portals;
 mod poser;
@@ -85,6 +86,7 @@ mod gpu_recovery;
 mod gpu_stall;
 mod parcel_music;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
+mod avatar_align;
 mod debug_settings;
 mod draw_stepping;
 mod graphics_start;
@@ -145,6 +147,7 @@ mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
 mod stand_fidget;
+mod stand_fly;
 mod stream_list;
 mod suggest_demo;
 mod task_notecards;
@@ -301,6 +304,8 @@ enum MouseMode {
 /// from stealing ordinary clicks: jitter within 10 UI points never starts an orbit.
 #[derive(Default)]
 struct RightGesture {
+    /// Where the button went down: an orbit gives the cursor back there.
+    start: (f32, f32),
     offset: (f32, f32),
     orbit: bool,
     /// The button has walked, even if the left button has since been released.
@@ -425,6 +430,9 @@ pub struct App {
     pass_wall_at: Option<Instant>,
     /// The fly override's first-use caution is up (ui::fly_override).
     fly_override_caution: bool,
+    /// A turn of the Compass or Face nearest avatar waits to be sent at
+    /// once (`NetCommand::ForceAgentUpdate`), after this frame's controls.
+    force_agent_update: bool,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
     /// Throttle of the "sky frame" log line.
@@ -611,6 +619,8 @@ pub struct App {
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     /// Build › Edit particles (ParticleEditor).
+    object_export: crate::build::ui::export::ExportWindow,
+    object_export_job: object_export::Job,
     particle_editor: crate::build::ui::particles::ParticleEditor,
     particle_inject: particle_editor::Inject,
     portal_drop: Option<portals::landmark::Pending>,
@@ -1433,6 +1443,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
+    if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.blend_order = v.min(4);
+    }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
@@ -1660,6 +1673,7 @@ impl App {
             movement_probe: (None, false, None),
             pass_wall_at: None,
             fly_override_caution: false,
+            force_agent_update: false,
             scene,
             probes: Default::default(),
             sky_log: Default::default(),
@@ -1896,6 +1910,8 @@ impl App {
             first_arrival_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
+            object_export: Default::default(),
+            object_export_job: Default::default(),
             particle_editor: Default::default(),
             particle_inject: Default::default(),
             portal_drop: None,
@@ -3101,6 +3117,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || mode == "server-error"
             {
                 if mode == "terms" {
                     log::info!(
@@ -3264,6 +3281,8 @@ impl App {
         self.hover_height_ui = Default::default();
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
+        self.object_export = Default::default();
+        self.object_export_job = Default::default();
         self.particle_editor = Default::default();
         self.particle_inject = Default::default();
         self.portal_drop = None;
@@ -4511,6 +4530,10 @@ impl App {
             if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
             }
+            // once it orbits, the drag holds the cursor like the camera's
+            // other drags (LLToolCamera): hidden and locked, so it does not
+            // wander over the screen, and given back where the press began
+            self.hold_drag_cursor(self.right_gesture.start);
             match self.camera.free_mut() {
                 // the free camera looks around instead of orbiting
                 Some(free) => free.drag(dx, dy, s),
@@ -4712,7 +4735,7 @@ impl App {
                 self.panels.environment = true;
                 self.panels.personal_lighting = lighting;
             }
-            Step::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
+            Step::Pick(kind, asset) => self.pick_local_settings(asset, kind, None),
             Step::Next(kind) => {
                 let view = self.world.eep.local_view();
                 let shown = match kind {
@@ -4722,7 +4745,7 @@ impl App {
                 };
                 let list = self.env_ui.catalog().list(kind);
                 if let Some(asset) = env_select::step(list, env_select::shown_index(list, shown), true) {
-                    self.world.eep.request_local(asset, kind);
+                    self.pick_local_settings(asset, kind, None);
                 }
             }
             Step::Shared => {
@@ -6093,6 +6116,26 @@ impl App {
         }
     }
 
+    /// The seed of the region's thunder while the region sets the weather
+    /// (its day's weather seed for this region): None for my own weather,
+    /// a sky applied to myself or an editor's preview, whose strikes are
+    /// this viewer's own.
+    fn region_thunder_seed(&self) -> Option<u64> {
+        if self.env_ui.weather_source != crate::weather::WeatherSource::Region {
+            return None;
+        }
+        let Some((.., Some(day))) = &self.region_weather else {
+            return None;
+        };
+        let region = self
+            .world
+            .main()
+            .and_then(|r| r.info.as_ref())
+            .map_or(uuid::Uuid::nil(), |i| i.region_id);
+        // apart from the rain's draws from the same seed
+        Some(crate::weather::region::mix(day.schedule.seed_for(region) ^ 0x0074_6875_6E64_6572))
+    }
+
     /// Weather: thunder and lightning in heavy rain (the flash is lit in
     /// the frame, `thunder_light`).
     fn update_thunder(&mut self) {
@@ -6101,6 +6144,13 @@ impl App {
             enabled: self.weather_now.thunder,
             rain: self.weather_now.rain(),
             frequency: self.weather_now.thunder_frequency,
+            // the region's storm, the same strikes for everyone there
+            shared: self.region_thunder_seed().map(|seed| {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0.0, |d| d.as_secs_f64());
+                (seed, secs)
+            }),
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
@@ -6214,7 +6264,7 @@ impl App {
             let fresh = !matches!(&self.region_weather,
                 Some((d, t, l, o, _)) if Arc::ptr_eq(d, &day) && *t == track && *l == length && *o == offset);
             if fresh {
-                let read = RegionDay::read(&day, track, length, offset);
+                let read = RegionDay::read_named(&day, &self.world.eep.day_names(true), track, length, offset);
                 if read.is_some() {
                     log::info!("region weather on sky track {}", track + 1);
                 }
@@ -7447,6 +7497,7 @@ impl App {
         self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        self.object_export_demo_steps();
         self.release_keys_demo_steps();
         if self.frame_count == 400
             && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
@@ -7863,7 +7914,10 @@ impl App {
         let was_drag = self.right_drag;
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if pressed {
-            self.right_gesture = RightGesture::default();
+            self.right_gesture = RightGesture {
+                start: self.cursor_pos,
+                ..RightGesture::default()
+            };
             self.start_world_mouse_walk();
         }
         if self.mouse_walks() {
@@ -7882,6 +7936,11 @@ impl App {
                 // a click (no drag): context menu
                 self.open_context_menu();
             }
+        }
+        // the end of an orbit gives the cursor back, unless the left button
+        // still steers our avatar or mouselook has it
+        if !pressed && self.right_gesture.orbit && self.mouse_mode == MouseMode::None && !self.camera.mouselook() {
+            self.set_mouselook_grab(false);
         }
     }
 
@@ -9058,6 +9117,8 @@ impl App {
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.particle_editor.wanted_images.drain());
+        images.extend(self.object_export.wanted_images.drain());
+        images.extend(self.object_export_job.wanted_images());
         images.extend(self.particle_editor.picker.wanted_images.drain());
         images.extend(self.wearable_ui.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
@@ -10652,6 +10713,13 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        // the order of the blended faces: the user's, the exact one only
+        // where the renderer draws it (not under MSAA, scene/blend_order.rs)
+        let msaa = match self.settings.antialiasing {
+            aa @ 2..=4 => gfx.renderer.msaa_supported().iter().any(|&m| m <= 1 << (aa - 1)),
+            _ => false,
+        };
+        crate::scene::blend_order::set_user(self.settings.blend_order, gfx.renderer.blend_exact_supported() && !msaa);
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
@@ -11038,6 +11106,10 @@ impl App {
                         ..current
                     });
                 }
+            }
+            // a turn made on purpose leaves with the controls just handed over
+            if std::mem::take(&mut self.force_agent_update) {
+                self.net.send(NetCommand::ForceAgentUpdate);
             }
             // every change of the viewing angle goes to the simulator, as
             // LLViewerCamera::setView (the end of a zoom's easing excepted)
@@ -13829,6 +13901,7 @@ impl App {
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
         self.demo_sit_teleport();
+        self.demo_stand_fly();
         if let (Some(demo), Some(g)) = (&mut self.geometry_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut g.renderer);
         }
@@ -14817,7 +14890,10 @@ impl App {
             }
             // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
             // `runs` (#966) one second in three
-            if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
+            if matches!(
+                crate::scene::blend_order::mode(),
+                crate::scene::blend_order::Mode::Alternate | crate::scene::blend_order::Mode::ExactAlternate
+            ) {
                 let old = self.sync_alt.is_multiple_of(3);
                 crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
@@ -15083,6 +15159,9 @@ impl App {
         }
         for cmd in a.currency {
             self.send(cmd);
+        }
+        if let Some(action) = a.stand_fly {
+            self.stand_fly_action(action);
         }
         // the invitation to edit first (handle_lure), for all those chosen
         if !a.offer_tp.is_empty() {
@@ -15420,6 +15499,7 @@ impl App {
             BarAction::Controls { movement, toggle } => self.request_controls(movement, toggle),
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
             BarAction::ToggleFlyOverride => self.toggle_fly_override(),
+            BarAction::FaceNearestAvatar => self.face_nearest_avatar(),
             BarAction::ToggleQuickjump => {
                 self.settings.quickjump = !self.settings.quickjump;
                 self.settings.save();
@@ -16821,6 +16901,22 @@ impl App {
                         next_server: Some("login.other-grid.example".into()),
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server fails on its side (an HTTP 500
+                    // to the login request, LoginError::Server)
+                    log::info!("demo login: the login server answers HTTP 500");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: aurora_net::login::LoginError::Server(500).to_string(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
                 {
                     self.demo_mfa_challenge = None;
@@ -17951,6 +18047,9 @@ impl App {
                         }
                     }
                 }
+                // LLPanelStandStopFlying: Stand, Stop flying, Flycam above the
+                // bottom bar
+                a.stand_fly = ui::stand_fly::show(&ctx, &p, self.stand_fly_buttons(), bottom_top);
                 if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
                     self.fly_override_caution = false;
                 }
@@ -19030,6 +19129,10 @@ impl App {
                     self.world.experiences.change(experience, change);
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
+                if self.demo && self.frame_count == 760 && crate::demo::object_chat::scene().is_some_and(|scene| scene.inspect) {
+                    self.remote_object = self.world.chat.iter().find_map(|line| self.world.chat_object(line).cloned());
+                    ui::widgets::place_floater(&ctx, "remote_object", egui::pos2(320.0, 100.0), egui::vec2(640.0, 190.0));
+                }
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
@@ -19038,6 +19141,7 @@ impl App {
                 self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 self.particle_editor_window(&ctx, &p);
+                self.object_export_window(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(
@@ -19077,6 +19181,7 @@ impl App {
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
+                self.avatar_align_window(&ctx, &p);
                 if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
                     &ctx,
                     &p,
@@ -19426,7 +19531,8 @@ impl App {
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
                     avatar_pics: &self.avatar_pics,
-                    classic: self.settings.classic_profiles || (self.demo && crate::demo::group::create_classic()),
+                    classic: self.settings.classic_profiles
+                        || (self.demo && (crate::demo::group::create_classic() || crate::demo::group::profile_classic())),
                     now: ctx.input(|i| i.time),
                     group_calls: self.settings.audio.voice_enabled,
                 };
@@ -19761,6 +19867,8 @@ struct UiActions {
     typing: Vec<NetCommand>,
     /// Gestures played from the conversations' field.
     gestures: Vec<uuid::Uuid>,
+    /// A click on the floating Stand / Stop flying panel.
+    stand_fly: Option<ui::stand_fly::Action>,
 }
 
 impl UiActions {
@@ -19795,6 +19903,7 @@ impl UiActions {
         self.currency.extend(later.currency);
         self.typing.extend(later.typing);
         self.gestures.extend(later.gestures);
+        first(&mut self.stand_fly, later.stand_fly);
     }
 }
 
@@ -20054,6 +20163,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "server-error"
                         | "add"
                         | "password"
                         | "connecting"
@@ -20063,7 +20173,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -20110,7 +20220,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -20120,7 +20230,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -21063,6 +21173,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));
@@ -21111,6 +21222,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));

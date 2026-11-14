@@ -201,13 +201,16 @@ mod tests {
     #[test]
     fn graphics_saved_sanitizes_external_values_and_supports_older_entries() {
         let mut saved: Saved = serde_json::from_str("{}").expect("partial saved quality");
+        saved.quality.draw_distance = crate::settings::DRAW_DISTANCE_MAX;
+        let mut s = Settings::default();
+        saved.apply(&mut s);
+        assert_eq!(s.draw_distance, crate::settings::DRAW_DISTANCE_MAX);
         saved.quality.draw_distance = 99_999.0;
         saved.quality.shadow_quality = 255;
         saved.quality.antialiasing = 255;
         saved.dof.f_number = f32::NAN;
-        let mut s = Settings::default();
         saved.apply(&mut s);
-        assert!(s.draw_distance <= 512.0);
+        assert_eq!(s.draw_distance, crate::settings::DRAW_DISTANCE_MAX);
         assert!(s.shadow_quality <= 4);
         assert!(s.antialiasing <= 7);
         assert!(s.dof.f_number.is_finite());

@@ -305,6 +305,11 @@ pub struct ChatMessage {
     pub owner_id: Uuid,
     pub source_type: ChatSourceType,
     pub chat_type: ChatType,
+    /// The simulator circuit's region when the message arrived; None for
+    /// synthetic messages without a known origin. Never inferred from the
+    /// agent's current region, which may change before the event is consumed.
+    pub region: Option<RegionHandle>,
+    /// Region-local, as specified by ChatFromSimulator in message_template.msg.
     pub position: Vec3,
     pub message: String,
 }
@@ -1757,6 +1762,11 @@ pub enum NetCommand {
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
     AgentControls(AgentControls),
+    /// Send the controls of this frame now, even if nothing moved past the
+    /// thresholds (`send_agent_update(true, …)`, force_send): a turn the
+    /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
+    /// then send_agent_update in FSAvatarAlignBase::applyRotation).
+    ForceAgentUpdate,
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).

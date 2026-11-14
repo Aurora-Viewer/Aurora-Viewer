@@ -333,7 +333,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     }
     ui.item_if("coin-filled", aurora_i18n::tr!("common-pay"), o.pay, CtxAction::Pay(id));
     ui.item_if("shopping-cart-filled", aurora_i18n::tr!("common-buy"), o.buy, CtxAction::Buy(id));
-    ui.todo("device-floppy-filled", aurora_i18n::tr!("common-save-as"));
+    save_as_submenu(ui, id);
     ui.separator();
     ui.item_if("trash-filled", aurora_i18n::tr!("common-delete"), o.delete, CtxAction::Delete(id));
     ui.separator();
@@ -548,7 +548,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.detach,
         CtxAction::Detach(key),
     );
-    save_as_submenu(ui);
+    save_as_submenu(ui, f.object.id);
     ui.separator();
     sit_stand(ui, f);
     appearance_submenu(ui, f);
@@ -758,7 +758,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
                 aurora_i18n::tr!("ui-context-refresh-textures"),
                 CtxAction::RefreshTextures(object),
             );
-            save_as_submenu(ui);
+            save_as_submenu(ui, object);
         });
     }
     avatar_moderation(ui, f, id);
@@ -955,12 +955,20 @@ fn derender_items(ui: &mut Builder, id: Uuid, temporary: &str, enabled: bool) {
     );
 }
 
-/// "Save as" (Export Menu): the export has its own task and
-/// rules of rights; its two entries wait for it.
-fn save_as_submenu(ui: &mut Builder) {
+/// "Save as" (Export Menu) on the prim `id`: Collada and OBJ open the
+/// export window, which shows what the rights let through
+/// (Object.EnableExport only asks for a selection). Backup waits for its
+/// own task.
+fn save_as_submenu(ui: &mut Builder, id: Uuid) {
+    use crate::build::export::Format;
     ui.submenu("device-floppy-filled", aurora_i18n::tr!("common-save-as"), true, |ui| {
         ui.todo("device-floppy-filled", aurora_i18n::tr!("ui-context-save-backup"));
-        ui.todo("box", aurora_i18n::tr!("ui-context-save-collada"));
+        ui.item(
+            "box",
+            aurora_i18n::tr!("ui-context-save-collada"),
+            CtxAction::SaveAs(id, Format::Collada),
+        );
+        ui.item("box", aurora_i18n::tr!("ui-context-save-obj"), CtxAction::SaveAs(id, Format::Obj));
     });
 }
 
@@ -1856,14 +1864,25 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Unavailable))
             .map(|e| e.label)
             .collect();
-        // The pathfinding windows and exporters are separate subsystems. Script info
-        // is available through the Aurora bridge.
-        let expected = tr(&["common-save-as"]);
+        // The backup exporter is a separate subsystem. Script info is
+        // available through the Aurora bridge.
+        let expected = tr(&["ui-context-save-backup"]);
         let mut left_sorted = left.clone();
         left_sorted.sort();
         let mut expected_sorted = expected;
         expected_sorted.sort();
         assert_eq!(left_sorted, expected_sorted, "{left:?}");
+    }
+
+    #[test]
+    fn save_as_opens_the_collada_and_obj_export_of_the_prim() {
+        use crate::build::export::Format;
+        let f = Facts::default();
+        let menu = || world_menu(&object_target(), &f, Vec3::ZERO);
+        let collada = row(menu(), "ui-context-save-collada");
+        assert!(collada.enabled && matches!(collada.kind, Kind::Action(CtxAction::SaveAs(id, Format::Collada)) if id == ID));
+        let obj = row(menu(), "ui-context-save-obj");
+        assert!(obj.enabled && matches!(obj.kind, Kind::Action(CtxAction::SaveAs(id, Format::Obj)) if id == ID));
     }
 
     #[test]

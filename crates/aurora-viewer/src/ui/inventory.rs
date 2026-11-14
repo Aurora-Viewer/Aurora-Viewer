@@ -191,7 +191,8 @@ pub enum InvAction {
         text: String,
         close: bool,
     },
-    Environment(Uuid, u32),
+    /// A sky, water or day for myself: its asset, flags and item.
+    Environment(Uuid, u32, Uuid),
     EnvironmentParcel(Uuid),
     ExportTextures {
         items: Vec<Uuid>,
