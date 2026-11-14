@@ -3,6 +3,8 @@
 //! sibling selections without selecting an open folder's children as well.
 //! Right opens the current folder; Left closes it, or from an item or a
 //! closed folder selects the parent row (a second Left then closes it).
+//! Letters typed into the list jump to the first row whose name starts with
+//! them (handleUnicodeCharHere and search, same file).
 
 use super::*;
 
@@ -23,9 +25,29 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
     }
-    let mut keys = Vec::new();
-    ui.input_mut(|input| {
-        input.events.retain(|event| {
+    // In arrival order: "b" then Down within one frame selects the row
+    // after the first "b" match, as the Legacy Viewer handles each key.
+    let mut input = Vec::new();
+    let now = ui.input(|i| i.time);
+    ui.input_mut(|input_state| {
+        input_state.events.retain(|event| {
+            if let egui::Event::Text(text) = event {
+                let text: String = text.chars().filter(|c| !c.is_control()).collect();
+                if let Some(Typed::Text(last)) = input.last_mut() {
+                    last.push_str(&text);
+                } else if !text.is_empty() {
+                    input.push(Typed::Text(text));
+                }
+                return false;
+            }
+            if let egui::Event::Key {
+                key: egui::Key::Home | egui::Key::End | egui::Key::PageUp | egui::Key::PageDown,
+                pressed: true,
+                ..
+            } = event
+            {
+                input.push(Typed::Reset);
+            }
             if let egui::Event::Key {
                 key,
                 pressed: true,
@@ -43,21 +65,113 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
                     egui::Key::ArrowRight if !explorer => Arrow::Right,
                     _ => return true,
                 };
-                keys.push((arrow, modifiers.shift));
+                input.push(Typed::Arrow(arrow, modifiers.shift));
                 false
             } else {
                 true
             }
         });
     });
-    let navigated = !keys.is_empty();
-    for (arrow, shift) in keys {
-        match arrow {
-            Arrow::Up | Arrow::Down => step(inv, st, filtered, arrow == Arrow::Down, shift),
-            Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
+    let mut navigated = false;
+    for typed in input {
+        match typed {
+            Typed::Reset => st.type_ahead.clear(),
+            Typed::Arrow(arrow, shift) => {
+                st.type_ahead.clear();
+                navigated = true;
+                match arrow {
+                    Arrow::Up | Arrow::Down => step(inv, st, filtered, arrow == Arrow::Down, shift),
+                    Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
+                }
+            }
+            Typed::Text(text) => {
+                st.type_ahead.push(&text, now);
+                navigated |= type_ahead(inv, st);
+            }
         }
     }
     navigated || selected_after_delete
+}
+
+/// The Legacy Viewer's `TypeAheadTimeout` default (settings.xml), in seconds.
+const TYPE_AHEAD_TIMEOUT: f64 = 1.5;
+/// LLFolderView::handleUnicodeCharHere stops growing its string at 128.
+const TYPE_AHEAD_MAX: usize = 128;
+
+/// LLFolderView's `mSearchString` and `mSearchTimer`: the letters typed
+/// while the list has the keyboard, emptied after a pause, a click in the
+/// list, an arrow, Escape, Tab, Home, End, Page Up or Page Down, a rename,
+/// or a copy, cut or paste.
+#[derive(Debug, Default)]
+pub(super) struct TypeAhead {
+    text: String,
+    last: f64,
+}
+
+impl TypeAhead {
+    pub(super) fn clear(&mut self) {
+        self.text.clear();
+    }
+
+    fn push(&mut self, typed: &str, now: f64) {
+        if now - self.last > TYPE_AHEAD_TIMEOUT {
+            self.text.clear();
+        }
+        self.last = now;
+        let room = TYPE_AHEAD_MAX.saturating_sub(self.text.chars().count());
+        self.text.extend(typed.chars().take(room));
+    }
+}
+
+/// Lowercase one letter at a time, without `str::to_lowercase`'s final-sigma
+/// rule, which would fold a typed "ΟΣ" differently from the name "ΟΣΑ".
+fn folded(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars().flat_map(char::to_lowercase)
+}
+
+/// The name a row shows, as LLFolderViewModelItem::getSearchableName gives it.
+fn row_name(inv: &Inventory, id: Uuid) -> String {
+    match inv.items.get(&id) {
+        Some(item) => shown_name(item).to_owned(),
+        None => folder_name(inv, id),
+    }
+}
+
+/// Port of LLFolderView::search (indra/llui/llfolderview.cpp, originally
+/// LGPL 2.1), called from handleUnicodeCharHere: from the current row
+/// itself, the first shown row whose name starts with the typed letters,
+/// ignoring case and wrapping once, becomes the only selection. The Legacy
+/// Viewer ignores letters past ASCII; any letter typed as text matches here,
+/// so accented names can be reached too. Kana composed with an input method
+/// do not reach the list: egui turns the input method on for text fields
+/// only. Case folds letter by letter, so a typed capital sigma still
+/// matches a name with more letters after it.
+fn type_ahead(inv: &Inventory, st: &mut InventoryUi) -> bool {
+    let typed: Vec<char> = folded(&st.type_ahead.text).collect();
+    let order = shown_order(st);
+    let start = st
+        .selected
+        .filter(|id| st.selection.contains(id))
+        .and_then(|current| order.iter().position(|id| *id == current))
+        .unwrap_or(0);
+    let Some(found) = order[start..]
+        .iter()
+        .chain(&order[..start])
+        .find(|id| {
+            let name = row_name(inv, **id);
+            let mut name = folded(&name);
+            typed.iter().all(|c| name.next() == Some(*c))
+        })
+        .copied()
+    else {
+        return false;
+    };
+    st.selection.clear();
+    st.selection.insert(found);
+    st.anchor = Some(found);
+    st.selected = Some(found);
+    st.keyboard_selection = true;
+    true
 }
 
 /// The rows the list drew last: the plain tree, Aurora's explorer folder or
@@ -79,6 +193,14 @@ pub(super) fn shown_order(st: &InventoryUi) -> &[Uuid] {
         ShownOrder::Flat => &st.flat.order,
         ShownOrder::Results => &st.result_tree.order,
     }
+}
+
+/// One list key of a frame, kept in the order it was typed.
+enum Typed {
+    Arrow(Arrow, bool),
+    Text(String),
+    /// Home, End, Page Up or Page Down: the word starts again.
+    Reset,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -308,5 +430,75 @@ mod tests {
         st.selection.clear();
         step(&inv, &mut st, false, true, true);
         assert!(st.selection.is_empty());
+    }
+
+    #[test]
+    fn type_ahead_grows_until_a_pause_and_stops_at_the_legacy_limit() {
+        let mut ahead = TypeAhead::default();
+        ahead.push("b", 10.0);
+        ahead.push("o", 11.0);
+        assert_eq!(ahead.text, "bo");
+        ahead.push("x", 12.6);
+        assert_eq!(ahead.text, "x", "more than 1.5 s after the last letter starts again");
+        ahead.clear();
+        assert!(ahead.text.is_empty());
+        ahead.push(&"a".repeat(200), 13.0);
+        assert_eq!(ahead.text.chars().count(), TYPE_AHEAD_MAX);
+    }
+
+    #[test]
+    fn type_ahead_selects_the_next_shown_match_from_the_current_row() {
+        let id = Uuid::from_u128;
+        let mut inv = Inventory::default();
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: id(10),
+            parent: id(1),
+            name: "Body Parts".into(),
+            ..Default::default()
+        }]);
+        for (n, name) in [(11, "Apple"), (12, "banana"), (13, "Berry"), (14, "Été"), (15, "ΟΣΑ")] {
+            inv.items.insert(
+                id(n),
+                aurora_net::inventory::InvItem {
+                    id: id(n),
+                    parent: id(1),
+                    name: name.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut st = InventoryUi::default();
+        st.plain.order = [11, 10, 12, 13, 14, 15].map(id).to_vec();
+        let typed = |st: &mut InventoryUi, text: &str| {
+            st.type_ahead.clear();
+            st.type_ahead.push(text, 0.0);
+            type_ahead(&inv, st)
+        };
+
+        assert!(typed(&mut st, "b"), "nothing selected: search from the top");
+        assert_eq!(st.selected, Some(id(10)), "folders match by their shown name");
+        assert_eq!(st.selection, HashSet::from([id(10)]));
+        assert_eq!(st.anchor, Some(id(10)));
+        assert!(st.keyboard_selection);
+        assert!(typed(&mut st, "B"));
+        assert_eq!(st.selected, Some(id(10)), "the current row itself still matches");
+        assert!(typed(&mut st, "ber"));
+        assert_eq!(st.selected, Some(id(13)), "a longer prefix moves on, case ignored");
+        assert!(typed(&mut st, "a"));
+        assert_eq!(st.selected, Some(id(11)), "wraps to the top");
+        assert!(typed(&mut st, "ét"));
+        assert_eq!(st.selected, Some(id(14)), "letters past ASCII match too");
+        assert!(typed(&mut st, "ΟΣ"), "a capital sigma typed last folds as in the name");
+        assert_eq!(st.selected, Some(id(15)));
+
+        st.selection = HashSet::from([id(11), id(12)]);
+        assert!(!typed(&mut st, "z"), "no match leaves the selection alone");
+        assert_eq!(st.selection, HashSet::from([id(11), id(12)]));
+
+        st.result_tree.order = [13, 12].map(id).to_vec();
+        st.shown_order = ShownOrder::Results;
+        assert!(typed(&mut st, "b"));
+        assert_eq!(st.selected, Some(id(13)), "a search's rows in their own order");
+        assert!(!typed(&mut st, "body"), "rows hidden by the search are skipped");
     }
 }
