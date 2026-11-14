@@ -19007,6 +19007,10 @@ impl App {
                     self.world.experiences.change(experience, change);
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
+                if self.demo && self.frame_count == 760 && crate::demo::object_chat::scene().is_some_and(|scene| scene.inspect) {
+                    self.remote_object = self.world.chat.iter().find_map(|line| self.world.chat_object(line).cloned());
+                    ui::widgets::place_floater(&ctx, "remote_object", egui::pos2(320.0, 100.0), egui::vec2(640.0, 190.0));
+                }
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
@@ -21016,6 +21020,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));
@@ -21064,6 +21069,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));

@@ -231,6 +231,22 @@ The existing crashing-layer exclusions also disable Bandicam's implicit
 64-bit Vulkan layer using its manifest's `VK_LAYER_bandicam_helper_DEBUG_1`
 variable (#2080); its 32-bit disabling variable does not affect that DLL.
 
+`ui/remote_object.rs` shows object information with a fixed localized title,
+the object name as content, and separate object/owner block actions. Its
+`remote_object/tests.rs` exercises the distinct targets and the self/unknown
+owner cases. `world/blocking.rs::object_owner_block` resolves canonical
+resident or group names and enforces owner-block eligibility for both UI
+and dispatch, including self/Linden protection and existing complete blocks.
+
+Nearby chat keeps its coordinate frame through the network event queue:
+`aurora-net::ChatMessage::region` is the sending simulator circuit's handle
+at receipt, and `position` is region-local (`ChatFromSimulator` in
+`message_template.msg`). `world::World::region_at_offset` uses that origin
+for object-chat inspector locations, including unloaded neighbouring objects
+and messages processed after a region crossing. An unknown origin has no
+location; it never falls back to the agent's current region. The resolved
+location still passes the arrival-time RLVa privacy check before retention.
+
 `aurora-net::text_validation` defines the character policies ported from
 `LLTextValidate` (indra/llui/lltextvalidate.cpp). Viewer mutation guards share
 those policies through `text_validation.rs`. `ui/widgets/restricted_text.rs`
