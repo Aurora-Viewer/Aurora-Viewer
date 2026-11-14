@@ -3642,6 +3642,9 @@ struct SnowMeshOut {
     // the height of the surface under the snow (a triangle across a jump
     // of it is dropped; one down a footprint's or an edge's slope is not)
     @location(3) base: f32,
+    // the facing of the ground under it (its triangle's, flat on it): the
+    // snow lies by it as the flat snow does on that ground
+    @location(4) ground: vec3<f32>,
 };
 
 // The grid at this Weather quality: x cells a side of each of its levels,
@@ -3700,6 +3703,16 @@ fn snow_mesh_surface(xy: vec2<f32>, near_z: f32) -> f32 {
     let hi = max(max(a, b), max(c, d));
     if (lo < -1e8 || hi - lo > 0.2) { return rain_surface_height(xy, near_z); }
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// How level the ground deep snow stands on is at `xy` (its facing's z, 1
+// level): from the surface 30 cm around it, as the grid's triangles judge it.
+fn snow_mesh_ground_z(xy: vec2<f32>) -> f32 {
+    let c = snow_mesh_surface(xy, frame.camera_pos.z);
+    let ex = snow_mesh_surface(xy + vec2<f32>(0.3, 0.0), frame.camera_pos.z);
+    let ey = snow_mesh_surface(xy + vec2<f32>(0.0, 0.3), frame.camera_pos.z);
+    if (c < -1e8 || ex < -1e8 || ey < -1e8) { return 1.0; }
+    return normalize(vec3<f32>(c - ex, c - ey, 0.3)).z;
 }
 
 // How deep the snow lies at `xy` in the memory (0..1, no gating: the grid
@@ -3783,6 +3796,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     var out: SnowMeshOut;
     out.valid = 0.0;
     out.n = vec3<f32>(0.0, 0.0, 1.0);
+    out.ground = vec3<f32>(0.0, 0.0, 1.0);
     out.base = -1e9;
     // the finer square's cells (drawn by it), and the cells past the
     // reach: nothing (a triangle of one point)
@@ -3832,6 +3846,16 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
         across = across && mid > -1e8 && abs(mid - 0.5 * (hb[k] + hb[j])) <= 0.1;
     }
     out.base = c.x;
+    // the ground's facing over the triangle: the snow thins on a slope and
+    // is gone past about 55° exactly as `snow_cover_lit` lays the flat snow
+    // there. Judged on level ground, the deep snow stood whole on a slope
+    // the flat snow only dusted (two layouts of the same snow)
+    if (across) {
+        var gn = cross(vec3<f32>(at[1] - at[0], hb[1] - hb[0]), vec3<f32>(at[2] - at[0], hb[2] - hb[0]));
+        if (gn.z < 0.0) { gn = -gn; }
+        out.ground = normalize(gn);
+    }
+    let lies = c.z * smoothstep(0.55, 0.85, out.ground.z);
     if (c.x < -1e8) {
         out.world = vec3<f32>(xy, cam.z);
         out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
@@ -3873,7 +3897,7 @@ fn vs_snow_mesh(@builtin(vertex_index) vertex: u32) -> SnowMeshOut {
     out.world = vec3<f32>(xy, top + 0.008);
     out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
     out.n = nrm;
-    out.valid = select(0.0, 1.0, across && c.z > SNOW_MESH_SOLID);
+    out.valid = select(0.0, 1.0, across && lies > SNOW_MESH_SOLID);
     return out;
 }
 
@@ -3902,7 +3926,7 @@ fn on_deep_snow(world: vec3<f32>) -> bool {
     if (surface < -1e8) { return false; }
     // 8 mm at least: the surface's lift over what it lies on
     let up = world.z - surface;
-    return up > 0.005 && up < SNOW_DEEP_TOP + 0.02 && snow_memory_depth(world.xy) > SNOW_MESH_SOLID;
+    return up > 0.005 && up < SNOW_DEEP_TOP + 0.02 && snow_memory_depth(world.xy) * smoothstep(0.55, 0.85, snow_mesh_ground_z(world.xy)) > SNOW_MESH_SOLID;
 }
 
 @fragment
@@ -3910,7 +3934,7 @@ fn fs_snow_mesh(in: SnowMeshOut) -> @location(0) vec4<f32> {
     // (a triangle across a jump of the surface under it: its corners said so)
     if (in.valid < 0.999) { discard; }
     // where it lies by the level ground under it, lit by its own surface
-    let c = snow_cover_lit(in.clip.xy, in.world, vec3<f32>(in.world.xy, in.base), vec3<f32>(0.0, 0.0, 1.0), normalize(in.n));
+    let c = snow_cover_lit(in.clip.xy, in.world, vec3<f32>(in.world.xy, in.base), normalize(in.ground), normalize(in.n));
     // opaque or not drawn at all (what it writes in the depth hides the
     // ground): where it is not whole (far, at the distance's fade), the
     // ground's own snow shows instead
