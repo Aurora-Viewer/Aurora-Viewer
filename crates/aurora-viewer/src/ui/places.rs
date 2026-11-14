@@ -50,7 +50,8 @@ pub fn tab_from_name(name: &str) -> Option<usize> {
     match name.trim().to_lowercase().as_str() {
         "favorites" | "favoris" | "0" => Some(TAB_FAVORITES),
         "landmarks" | "reperes" | "repères" | "1" => Some(TAB_LANDMARKS),
-        "history" | "historique" | "2" => Some(TAB_HISTORY),
+        // history-big: same tab, a large demo history (#2955)
+        "history" | "historique" | "history-big" | "2" => Some(TAB_HISTORY),
         _ => None,
     }
 }
@@ -923,6 +924,10 @@ impl PlacesUi {
                     self.selected == Some(Sel::History(i)),
                     true,
                 );
+                // off-screen rows keep their slot but skip menus (#2955)
+                if !ui.is_rect_visible(r.response.rect) {
+                    continue;
+                }
                 drag::source(&r.response, || drag::PlaceDrag {
                     target: drag::Target::History(it.global),
                     favorite: None,
@@ -1223,6 +1228,14 @@ fn list_row(
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
     widgets::reveal_search_selection(ui, &response, selected);
+    // large Teleport History (#2955): skip paint and text layout off screen
+    if !ui.is_rect_visible(rect) {
+        return RowResponse {
+            response,
+            toggle: false,
+            info: false,
+        };
+    }
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));

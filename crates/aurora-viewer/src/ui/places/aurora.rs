@@ -805,8 +805,11 @@ impl PlacesUi {
                 Line::Title(t) => {
                     ui.add_space(10.0);
                     let at = ui.cursor().min + Vec2::new(10.0, 0.0);
-                    section(ui, p, t, at);
-                    ui.add_space(20.0);
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), egui::Sense::hover());
+                    // large History lists (#2955): skip off-screen section paint
+                    if ui.is_rect_visible(r) {
+                        section(ui, p, t, at);
+                    }
                     continue;
                 }
                 Line::Place(k, place) => (*k, place),
@@ -823,6 +826,11 @@ impl PlacesUi {
             };
             let out = place_row(ui, p, c, place, selected, snapshot, self.aurora.source == Source::Favorites, wide);
             widgets::reveal_search_selection(ui, &out.resp, selected);
+            // place_row already skips its paint when clipped; skip menus and
+            // snapshot work for thousands of History rows off screen (#2955)
+            if !ui.is_rect_visible(out.resp.rect) {
+                continue;
+            }
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),
@@ -837,9 +845,7 @@ impl PlacesUi {
             }
             // every row on screen asks for its picture, not only the one
             // previewed (#798)
-            if let Some(s) = spot
-                && ui.is_rect_visible(out.resp.rect)
-            {
+            if let Some(s) = spot {
                 self.want_snapshots.push(s);
             }
             if let Some(fav) = place.favorite.filter(|_| reorder) {
