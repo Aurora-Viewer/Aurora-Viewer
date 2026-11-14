@@ -9962,6 +9962,11 @@ impl App {
         self.world.events_this_frame = 0;
         self.sync_script_debug();
         self.world.received_items.enabled = self.settings.sort_received_items;
+        // FSMarkObjects, before the frame's events: the first lines after
+        // the login are marked too (AURORA_DEMO_OBJECT_CHAT=…:spoof: on for
+        // the run)
+        self.world.mark_unnamed_objects =
+            self.settings.mark_unnamed_objects || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.spoof));
         self.world.inventory_offers.auto_accept = self.settings.auto_accept_inventory;
         self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
         self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
@@ -21118,6 +21123,9 @@ impl ApplicationHandler for App {
             self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
             self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
             self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
+            // the arrival's lines come before the first frame's events
+            self.world.mark_unnamed_objects =
+                self.settings.mark_unnamed_objects || crate::demo::object_chat::scene().is_some_and(|s| s.spoof);
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
