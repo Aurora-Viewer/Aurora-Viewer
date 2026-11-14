@@ -49,7 +49,10 @@ fn fs_ssr(in: SsrOut) -> @location(0) vec4<f32> {
     let f0 = mix(0.04, 1.0, metallic);
     let fresnel = f0 + (1.0 - f0) * pow(1.0 - nv, 5.0);
     let smooth_k = clamp(1.0 - roughness * 2.0, 0.0, 1.0);
-    let k = clamp(fresnel * smooth_k * smooth_k * hit.a, 0.0, 1.0);
+    // the planar mirror wins over SSR, as the Legacy Viewer applies
+    // tapHeroProbe after the SSR mix (reflectionProbeF.glsl doProbeSample)
+    let mirror_w = mirror_tap(p, r, 1.0 - roughness).a;
+    let k = clamp(fresnel * smooth_k * smooth_k * hit.a * (1.0 - mirror_w), 0.0, 1.0);
     // premultiplied: mix the reflection over the lit color
     return vec4<f32>(hit.rgb * k, k);
 }
