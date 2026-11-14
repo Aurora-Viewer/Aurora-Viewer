@@ -204,6 +204,9 @@ pub mod object_menu;
 /// Boxes for the build tools' snap to objects (AURORA_DEMO_OBJECT_SNAP).
 #[path = "demo_object_snap.rs"]
 pub mod object_snap;
+/// AURORA_DEMO_OIT_COLUMN: a tall translucent textured column of nested tubes.
+#[path = "demo_oit_column.rs"]
+pub mod oit_column;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -404,6 +407,21 @@ fn height(x: f32, y: f32) -> f32 {
         0.0
     };
     21.5 + shore + hill + dune + relief + altitude()
+}
+
+/// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`: the panes (from
+/// one to 64, eight when the value is not a number), their opacity (0.3 by
+/// default, from 0.02 to full) and the distance between two (metres, 0.25 by
+/// default; 0 puts them all in the same place, exactly coplanar, for the
+/// order-independent transparency's tie-break), or `None` without the
+/// variable.
+fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32, f32)> {
+    let value = value?;
+    let mut parts = value.split(',').map(str::trim);
+    let n = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(8).clamp(1, 64);
+    let alpha = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.3).clamp(0.02, 1.0);
+    let spacing = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.25).clamp(0.0, 2.0);
+    Some((n, alpha, spacing))
 }
 
 fn te(color: [f32; 4], shiny: u8, fullbright: bool, glow: f32) -> Arc<TextureEntry> {
@@ -4386,6 +4404,31 @@ pub fn friend_location(world: &mut crate::world::World) {
     }
 }
 
+/// The capabilities of the offline demo. The `AURORA_DEMO_INVENTORY` `fetch`
+/// mode adds the inventory ones, so the background walk takes the AIS path
+/// and a cold load can be shown.
+fn caps() -> std::collections::HashMap<String, String> {
+    let mut caps: std::collections::HashMap<String, String> = [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
+        .into_iter()
+        .chain(sim_extras::caps())
+        .chain(crate::build::demo_sim::caps())
+        .chain(region::open_settings_caps())
+        .collect();
+    if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
+        for (name, url) in [
+            ("InventoryAPIv3", "demo://inventory"),
+            ("LibraryAPIv3", "demo://library"),
+            ("FetchInventoryDescendents2", "demo://fetch-inventory"),
+            ("FetchLibDescendents2", "demo://fetch-library"),
+            ("FetchInventory2", "demo://items"),
+            ("FetchLib2", "demo://lib-items"),
+        ] {
+            caps.insert(name.to_owned(), url.to_owned());
+        }
+    }
+    caps
+}
+
 pub fn events() -> Vec<NetEvent> {
     let agent = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001);
     let login = LoginResponse {
@@ -4412,17 +4455,11 @@ pub fn events() -> Vec<NetEvent> {
     let mut ev = vec![
         NetEvent::LoggedIn(Arc::new(login)),
         NetEvent::MainRegionChanged { handle: HANDLE },
-        // only the People API (names) is simulated, and what the
-        // scenarios of sim_extras add
+        // only the People API (names) is simulated, what the scenarios of
+        // sim_extras add, and the inventory capabilities of a `fetch` demo
         NetEvent::Capabilities {
             handle: HANDLE,
-            caps: Arc::new(
-                [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
-                    .into_iter()
-                    .chain(sim_extras::caps())
-                    .chain(region::open_settings_caps())
-                    .collect(),
-            ),
+            caps: Arc::new(caps()),
         },
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
@@ -5749,6 +5786,44 @@ pub fn events() -> Vec<NetEvent> {
         ));
         id += 1;
     }
+    // AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]: n wide translucent panes
+    // ahead of the start position, facing the camera, one every 0.25 m
+    // from 3 m on, each wide enough to fill the view at its distance: the
+    // fog planes, glass walls and skybox panes of a club, n blended layers
+    // over nearly every pixel (the load of the order-independent
+    // transparency, aurora-render oit_stochastic.rs). A hue ramp from the
+    // nearest to the farthest, so that a wrong order shows.
+    if let Some((n, alpha, spacing)) = alpha_planes_spec(std::env::var("AURORA_DEMO_ALPHA_PLANES").ok().as_deref()) {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        let (dx, dy) = (0.894_427_2, 0.447_213_6);
+        for i in 0..n {
+            // (spacing 0: the same place, size and depth for all of them)
+            let d = 3.0 + spacing * i as f32;
+            let (px, py) = (sx + dx * d, sy + dy * d);
+            // the camera is about 3 m behind the avatar: a pane grows with
+            // its distance from it, a little past the view
+            let (w, h) = (4.0 + 1.6 * d, 2.0 + 0.8 * d);
+            let t = i as f32 / n.max(2) as f32 * std::f32::consts::TAU;
+            let color = [0.5 + 0.5 * t.sin(), 0.5 + 0.5 * (t + 2.1).sin(), 0.5 + 0.5 * (t + 4.2).sin(), alpha];
+            add(prim(
+                id,
+                Vec3::new(px, py, g(px, py) + 1.5 + 0.3 * d),
+                Quat::from_rotation_z(dy.atan2(dx)),
+                Vec3::new(0.05, w, h),
+                boxp,
+                te(color, 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_BLEND_AO: a face ahead of the start position, its left
     // and right halves alike but one blended (alpha 0.99, opaque to the
     // eye), with a nose across the middle, under a wide hat brim and
@@ -6214,6 +6289,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(blend_shadows::events());
     ev.extend(veils::events());
     ev.extend(alpha_mask_ab::events());
+    ev.extend(oit_column::events());
     ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
     ev.extend(land_beside_events());
@@ -8395,6 +8471,19 @@ mod sun_tests {
         assert_eq!(parse_sun("10"), None);
         assert_eq!(parse_sun("east,10"), None);
     }
+
+    #[test]
+    fn alpha_planes_read_their_count_opacity_and_spacing() {
+        assert_eq!(alpha_planes_spec(None), None);
+        assert_eq!(alpha_planes_spec(Some("20")), Some((20, 0.3, 0.25)));
+        assert_eq!(alpha_planes_spec(Some("6, 0.5")), Some((6, 0.5, 0.25)));
+        // coplanar panes: no spacing
+        assert_eq!(alpha_planes_spec(Some("2,0.5,0")), Some((2, 0.5, 0.0)));
+        // not a number: the defaults; kept within 1 to 64 panes, never
+        // fully transparent, at most 2 m apart
+        assert_eq!(alpha_planes_spec(Some("on")), Some((8, 0.3, 0.25)));
+        assert_eq!(alpha_planes_spec(Some("500,0,9")), Some((64, 0.02, 2.0)));
+    }
 }
 
 #[cfg(test)]
@@ -8964,6 +9053,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
         return Some(hud::mask_cutoff_texture());
     }
     if let Some(texture) = alpha_mask_ab::texture(id) {
+        return Some(texture);
+    }
+    if let Some(texture) = oit_column::texture(id) {
         return Some(texture);
     }
     if let Some(texture) = coplanar_decal::texture(id) {

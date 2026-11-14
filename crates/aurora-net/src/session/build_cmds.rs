@@ -9,6 +9,9 @@ use aurora_msg::msgs::{self, *};
 use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
 use std::ops::Range;
 
+/// The capability of LLViewerObject::createInventoryItem.
+const CREATE_TASK_ITEM: &str = "CreateTaskInventoryItem";
+
 /// Most objects per message (LLSelectMgr::sendListToRegions MAX_OBJECTS_PER_PACKET).
 pub(super) const MAX_PER_PACKET: usize = 254;
 
@@ -414,12 +417,17 @@ impl Session<'_> {
     fn on_build_more(&mut self, c: BuildCmd) {
         let (agent_id, session_id) = (self.agent_id(), self.session_id());
         let Some(addr) = build_handle(&c).and_then(|h| self.sim_for_handle(h)) else {
-            if let BuildCmd::Cap { tag, cap, .. } = c {
+            let failed = match c {
+                BuildCmd::Cap { tag, cap, .. } => Some((tag, cap)),
+                BuildCmd::CreateTaskItem { tag, .. } => Some((tag, CREATE_TASK_ITEM.to_owned())),
+                _ => None,
+            };
+            if let Some((tag, cap)) = failed {
                 emit(
                     self.sh,
                     NetEvent::CapReply {
                         tag,
-                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap.to_string())),
+                        result: Err(aurora_i18n::tr!("session-build-cmds-no-region", cap = cap)),
                     },
                 );
             }
@@ -831,6 +839,17 @@ impl Session<'_> {
                 m.script.item_id = item_id;
                 self.send(addr, &m, true);
             }
+            BuildCmd::CreateTaskItem { handle, item, tag } => {
+                // an LLSD POST, answered like the other region capabilities
+                let body = crate::task_inventory::create_item_body(&item);
+                self.on_build_more(BuildCmd::Cap {
+                    handle,
+                    cap: CREATE_TASK_ITEM.into(),
+                    put: false,
+                    body,
+                    tag,
+                });
+            }
             BuildCmd::Cap { cap, put, body, tag, .. } => {
                 let url = self.sims.get(&addr).and_then(|s| s.caps.get(&cap).cloned());
                 let Some(url) = url else {
@@ -955,6 +974,7 @@ fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
         | BuildCmd::MoveTaskInventory { handle, .. }
         | BuildCmd::UpdateTaskInventory { handle, .. }
         | BuildCmd::RezScript { handle, .. }
+        | BuildCmd::CreateTaskItem { handle, .. }
         | BuildCmd::ScriptReset { handle, .. }
         | BuildCmd::SetScriptRunning { handle, .. }
         | BuildCmd::GetScriptRunning { handle, .. }
