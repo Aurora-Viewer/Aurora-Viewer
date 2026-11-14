@@ -124,7 +124,6 @@ pub fn events() -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let mut objects = Vec::new();
     let mut coarse = Vec::new();
-    let me = START.extend(floor_at(START.x, START.y) + BODY);
     for i in 0..n {
         let id = agent(i);
         // Ring ~8–40 m so every row is in NearMeRange and scrollable.
@@ -148,7 +147,6 @@ pub fn events() -> Vec<NetEvent> {
         let example = aurora_i18n::tr!("demo-example");
         a.name_values = format!("FirstName STRING RW SV Orion\nLastName STRING RW SV {example}");
         objects.push(a);
-        let _ = me;
     }
     let mut events = vec![
         NetEvent::ObjectUpdates { handle: HANDLE, objects },

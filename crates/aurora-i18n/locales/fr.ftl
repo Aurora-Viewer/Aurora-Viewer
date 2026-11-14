@@ -4388,6 +4388,7 @@ ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Les écran
 ui-inventory-dialogs-no-copy = non copiable
 ui-inventory-dialogs-no-transfer = non transférable
 ui-inventory-dialogs-left-out = exclu
+ui-inventory-dialogs-no-copy-one-resident = Un objet non copiable ne peut être donné qu’à un seul résident à la fois.
 ui-inventory-dialogs-not-given = { $count ->
     [one] { $number } élément ne peut pas être donné : il sera ignoré.
    *[other] { $number } éléments ne peuvent pas être donnés : ils seront ignorés.

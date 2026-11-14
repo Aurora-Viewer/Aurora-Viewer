@@ -157,8 +157,11 @@ impl AvatarPicker {
                 }
             };
             ui.add_space(4.0);
-            // Ctrl+A / Shift+click: LLScrollListCtrl multi-select
-            if self.multiple && !rows.is_empty() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
+            // Ctrl+A / Shift+click: LLScrollListCtrl multi-select. Ctrl+A
+            // selects every row only while no widget holds the keyboard focus:
+            // in the search field it keeps selecting the text.
+            let typing = ui.ctx().memory(|m| m.focused().is_some());
+            if self.multiple && !typing && !rows.is_empty() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
                 self.selected = rows.iter().map(|(id, ..)| *id).collect();
                 self.anchor = rows.last().map(|(id, ..)| *id);
             }

@@ -4382,6 +4382,7 @@ ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Loading an
 ui-inventory-dialogs-no-copy = no copy
 ui-inventory-dialogs-no-transfer = no transfer
 ui-inventory-dialogs-left-out = left out
+ui-inventory-dialogs-no-copy-one-resident = A no-copy item can only be given to one resident at a time.
 ui-inventory-dialogs-not-given = { $count ->
     [one] { $number } item can't be given and will be left out.
    *[other] { $number } items can't be given and will be left out.

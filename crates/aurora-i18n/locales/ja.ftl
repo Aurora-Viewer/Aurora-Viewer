@@ -4363,6 +4363,7 @@ ui-options-loading-and-teleport-screens-show-your-last-view-blurred = 読み込�
 ui-inventory-dialogs-no-copy = コピー不可
 ui-inventory-dialogs-no-transfer = 譲渡不可
 ui-inventory-dialogs-left-out = 除外
+ui-inventory-dialogs-no-copy-one-resident = コピー不可のアイテムは一度に1人の住人にしか渡せません。
 ui-inventory-dialogs-not-given = { $count ->
     [one] { $number }個のアイテムは渡せないため、除外されます。
    *[other] { $number }個のアイテムは渡せないため、除外されます。

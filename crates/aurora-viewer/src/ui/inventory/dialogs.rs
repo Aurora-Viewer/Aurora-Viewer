@@ -417,6 +417,18 @@ fn share(
                 |it| inventory_item_icon(inv, it, p),
             );
             let (fate, tag, why) = match rules::offer(inv, *id, &facts.worn) {
+                // A no-copy item leaves the inventory with its first give, so
+                // it can reach one resident only. The Legacy Viewer
+                // (give_inventory_cb, indra/newview/llavataractions.cpp) gives
+                // it to the first resident after CannotCopyWarning and stops
+                // there, leaving the others with nothing; Aurora leaves the
+                // no-copy item out and still gives the rest to everyone
+                // (stricter for the item, clearer for the user).
+                Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) && residents.len() > 1 => (
+                    Fate::Excluded,
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-copy"),
+                    aurora_i18n::tr!("ui-inventory-dialogs-no-copy-one-resident").to_owned(),
+                ),
                 Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) => {
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
@@ -2643,9 +2655,27 @@ mod tests {
             .map(|n| Uuid::from_u128(0xA0E0_5A4E_0000_0000_0000_0000_0000_0000 | n))
             .collect();
         st.dialog = Some(EditDialog::Share(ids.clone(), crowd.clone()));
+        let mut texts = Vec::new();
         for _ in 0..4 {
-            frame(&mut st, Vec::new());
+            texts = frame(&mut st, Vec::new()).0;
         }
+        // a no-copy item reaches one resident only: with several it is left
+        // out (give_inventory_cb stops after the first resident), and the
+        // copyable items still go to everyone
+        let shown = |s: &str| texts.iter().any(|t| t == s);
+        assert!(shown(&aurora_i18n::tr!(
+            "ui-inventory-dialogs-not-given",
+            count = 1usize,
+            number = "1"
+        )));
+        assert!(
+            !shown(&aurora_i18n::tr!(
+                "ui-inventory-dialogs-no-copy-will-leave",
+                count = 1usize,
+                number = "1"
+            )),
+            "nothing leaves the inventory: {texts:?}"
+        );
         let give_many = ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_share_give", st.ui_id))))
             .expect("give button")
@@ -2661,8 +2691,8 @@ mod tests {
         assert_eq!(actions.len(), crowd.len(), "one Share action per resident");
         for (action, who) in actions.iter().zip(&crowd) {
             assert!(
-                matches!(action, InvAction::Share { items, resident: to } if *items == ids && to == who),
-                "Give to {who}"
+                matches!(action, InvAction::Share { items, resident: to } if *items == ids[..1] && to == who),
+                "Give the copyable item to {who}, never the no-copy one"
             );
         }
         assert!(st.dialog.is_none());
