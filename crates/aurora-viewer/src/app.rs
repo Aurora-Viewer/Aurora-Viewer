@@ -7498,6 +7498,9 @@ impl App {
                 self.world.apply(NetEvent::ObjectsKilled { handle, local_ids });
             }
             self.world.apply(crate::demo::beacons::events());
+            if mode == "guides" {
+                self.world.apply(crate::demo::beacons::guide_events());
+            }
             if mode == "parcels" {
                 for event in crate::demo::beacons::overlay_events() {
                     self.world.apply(event);
@@ -17171,6 +17174,7 @@ impl App {
                     [self.settings.sun_beacon, self.settings.moon_beacon],
                 );
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
+                ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
@@ -20419,6 +20423,9 @@ impl ApplicationHandler for App {
                     sound: true,
                     particles: true,
                     media: true,
+                    light_boxes: mode == "guides",
+                    region_corners: mode == "guides",
+                    chat_spheres: mode == "guides",
                     ..Default::default()
                 };
                 self.settings.world_overlays.property_lines = mode == "parcels";
