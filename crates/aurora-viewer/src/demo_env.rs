@@ -12,6 +12,9 @@
 //! - `search`: the sky list open (2500), "sunset" typed in its search
 //!   field (2510): the two sunsets only. `search-none`: a long text no name
 //!   contains: the no-match line, cut to the list's width.
+//! - `order`: the items get dates (a later asset is newer), so the sky list
+//!   open at 2500 shows the inventory's order, newest first, scattered.
+//!   `order-az`: the same with the lists' A–Z switch on (2490).
 
 use crate::world::eep::{Settings, SkyFrame};
 use crate::world::env_select::{AT_SETTINGS, SettingsKind};
@@ -237,7 +240,12 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
             favorite: false,
             favorite_known: false,
             creator: Uuid::nil(),
-            created_at: 0,
+            // dated for `order` only: the other scenarios keep their order
+            created_at: if matches!(scenario(), "order" | "order-az") {
+                1_700_000_000 + *a as i64
+            } else {
+                0
+            },
             owner,
             group_mask: 0,
             everyone_mask: 0,
@@ -467,6 +475,8 @@ pub enum Step {
     OpenList(SettingsKind),
     /// Type into the open list's search field.
     Search(SettingsKind, &'static str),
+    /// Turn the lists' A–Z switch on.
+    ListsByName,
 }
 
 pub fn step(frame: u64) -> Option<Step> {
@@ -478,10 +488,11 @@ pub fn step(frame: u64) -> Option<Step> {
     let lighting = scenario() == "lighting";
     let s = match frame {
         30 => Step::Open { lighting },
-        2500 if matches!(scenario(), "list" | "search" | "search-none") => Step::OpenList(SettingsKind::Sky),
+        2490 if scenario() == "order-az" => Step::ListsByName,
+        2500 if matches!(scenario(), "list" | "search" | "search-none" | "order" | "order-az") => Step::OpenList(SettingsKind::Sky),
         2510 if scenario() == "search" => Step::Search(SettingsKind::Sky, "sunset"),
         2510 if scenario() == "search-none" => Step::Search(SettingsKind::Sky, "zzz no sky has a name as long as this one"),
-        _ if matches!(scenario(), "list" | "search" | "search-none") => return None,
+        _ if matches!(scenario(), "list" | "search" | "search-none" | "order" | "order-az") => return None,
         2600 => Step::Pick(SettingsKind::Sky, u(0x204)),
         2900 if lighting => Step::EditLighting,
         2900 => Step::Pick(SettingsKind::Water, u(0x302)),

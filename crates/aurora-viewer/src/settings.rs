@@ -618,6 +618,10 @@ pub struct Settings {
     pub env_persist: bool,
     /// The weather of this viewer (the Environment window's "Weather").
     pub weather: crate::weather::WeatherSettings,
+    /// Sky, water and day cycle lists A–Z instead of the inventory's order
+    /// (an Aurora switch on the lists, off: the order since #812; the
+    /// Legacy Viewer's lists are always by name).
+    pub env_lists_by_name: bool,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -2113,6 +2117,7 @@ impl Default for Settings {
             env_manual_transition: 0.0,
             env_persist: true,
             weather: Default::default(),
+            env_lists_by_name: false,
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,

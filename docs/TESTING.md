@@ -4824,7 +4824,7 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none`**:
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|order|order-az`**:
   environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
@@ -4836,7 +4836,13 @@ both open states and the selection count. Capture at frame 620.
   (2500). `search`: the same list, "sunset" typed in its search field
   (2510): only the two sunsets are left, without the two fixed entries.
   `search-none`: a long text no name contains: the list says so, the
-  line cut to the list's width.
+  line cut to the list's width. `order`: the items are dated (a later
+  one newer) and the sky list opens (2500) in the inventory's order,
+  newest first: the user's sky, then the library's from Annan Adored
+  Pink Sky down to A-12AM. `order-az`: the same with the lists' A–Z
+  switch on (2490): the user's sky, then the library's skies A to Z
+  (A-6PM before A-12AM: numbers by value, as the inventory's by-name
+  order), the switch lit beside the search field.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,

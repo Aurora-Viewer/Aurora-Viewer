@@ -769,9 +769,11 @@ impl DayEditorUi {
                 size,
                 can,
             );
-            super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                let order = super::inventory::view::picker_order(ui.ctx(), inv);
-                let items = SettingsCatalog::items_of(inv, SettingsKind::Day, |id| order.rank(id));
+            super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                // the switch stays open in the menu; a name closes it
+                super::environment::order_menu_row(ui, p);
+                let ranks = super::environment::list_ranks(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, SettingsKind::Day, |id| ranks.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-no-days")).size(12.0).color(p.muted));
                 }
@@ -855,10 +857,12 @@ impl DayEditorUi {
                 self.changed(out);
             }
             let l = widgets::action_button_if(ui, p, "briefcase-filled", load, ActionKind::Flat, size, can);
-            super::menu::dropdown(&l, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            super::menu::dropdown(&l, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 let kind = if water { SettingsKind::Water } else { SettingsKind::Sky };
-                let order = super::inventory::view::picker_order(ui.ctx(), inv);
-                let items = SettingsCatalog::items_of(inv, kind, |id| order.rank(id));
+                // the switch stays open in the menu; a name closes it
+                super::environment::order_menu_row(ui, p);
+                let ranks = super::environment::list_ranks(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, kind, |id| ranks.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-no-items")).size(12.0).color(p.muted));
                 }
