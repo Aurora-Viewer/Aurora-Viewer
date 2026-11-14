@@ -226,6 +226,9 @@ pub fn seed(world: &mut crate::world::World) {
         return;
     }
     let mut sets = crate::world::contact_sets::ContactSets::default();
+    // the default colour of a real account's store, so that a set made in
+    // the demo looks as it would on the grid
+    sets.set_default_color(crate::world::contact_sets::GREY);
     let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
     let is_friend = |id: &Uuid| friends.contains(id);
     for (name, color, members) in [

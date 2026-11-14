@@ -41,7 +41,7 @@ pub(crate) fn set_tile(ui: &egui::Ui, p: &Palette, tile: egui::Rect, set: &crate
 /// colour of what goes on it.
 fn tile_face(ui: &egui::Ui, p: &Palette, tile: egui::Rect, set: &crate::world::contact_sets::ContactSet) -> egui::Color32 {
     let radius = ui.visuals().widgets.inactive.corner_radius;
-    let color = crate::interface_colors::on_panel(crate::ui::colors::set_color(set.color));
+    let color = tile_ink(p, set.color);
     let fill = if set.visuals.background {
         color.gamma_multiply(0.2)
     } else {
@@ -54,6 +54,20 @@ fn tile_face(ui: &egui::Ui, p: &Palette, tile: egui::Rect, set: &crate::world::c
     }
     color
 }
+
+/// The colour of what a set's tile shows: the set's own, or the theme's
+/// muted ink when the set's colour is (nearly) see-through, as a colour
+/// picked with no alpha, or a store whose default colour is unset, gives:
+/// the badge, the letter and the place numbers stay readable.
+fn tile_ink(p: &Palette, color: [f32; 4]) -> egui::Color32 {
+    if color[3] < TILE_MIN_ALPHA {
+        return p.muted;
+    }
+    crate::interface_colors::on_panel(crate::ui::colors::set_color(color))
+}
+
+/// Below this alpha a set's colour no longer reads on its tile.
+const TILE_MIN_ALPHA: f32 = 0.35;
 
 /// A number turning over on a set's tile: the one shown, the one before
 /// it, and how far the turn is (0 to 1).
@@ -89,4 +103,17 @@ pub(crate) fn set_tile_number(
     let g = painter.layout_no_wrap(aurora_i18n::integer(number.now as i64), font, color);
     let at = tile.center() + Vec2::new(0.0, travel * (1.0 - e));
     widgets::paint_ink_centered(&painter, g, at, color.gamma_multiply(e.max(0.15)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_see_through_set_colour_falls_back_to_the_muted_ink() {
+        let p = crate::theme::Theme::default().skin_palette();
+        assert_eq!(tile_ink(&p, [0.0; 4]), p.muted, "a new set with no colour still shows its number");
+        assert_eq!(tile_ink(&p, [1.0, 0.0, 0.0, 0.2]), p.muted);
+        assert_ne!(tile_ink(&p, [1.0, 0.0, 0.0, 1.0]), p.muted, "a real colour is kept");
+    }
 }
