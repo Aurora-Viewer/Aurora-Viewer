@@ -185,6 +185,8 @@ impl Editor {
             .movable(false)
             .show(ctx, |ui| ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::click()).1)
             .inner;
+        // a bone under the pointer takes the press, not the studio's camera
+        self.manipulator_hovered |= response.contains_pointer();
         if response.hovered() {
             ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("ik-skeleton")))
                 .line_segment([s.a.0, s.b.0], Stroke::new(3.0, palette.violet_light));

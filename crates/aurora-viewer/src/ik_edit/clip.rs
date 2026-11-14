@@ -119,6 +119,11 @@ pub(super) struct State {
     timeline_tracks: Option<(u64, Arc<Vec<TimelineTrack>>)>,
     preview_revision: Option<u64>,
     selection_sync: Option<(usize, u64, u64, Option<u64>)>,
+    /// When the fields of an edited joint were last read from the pose
+    /// (`authoring::sync_authored_selection`).
+    pub(super) authored_sync: Option<((usize, u64, u64, Option<u64>, u64), u8)>,
+    /// Counts the edits of the pose, for `authored_sync`.
+    pub(super) edits: u64,
     building: bool,
     preview: Option<Preview>,
     pub(super) capture: Option<Capture>,
@@ -181,6 +186,8 @@ impl Default for State {
             timeline_tracks: None,
             preview_revision: None,
             selection_sync: None,
+            authored_sync: None,
+            edits: 0,
             building: false,
             preview: None,
             capture: None,
@@ -372,7 +379,12 @@ impl State {
             }
         }
     }
+    /// What `authoring::sync_authored_selection` reads the fields again on.
+    pub(super) fn authored_sync_key(&self, bone: usize) -> (usize, u64, u64, Option<u64>, u64) {
+        (bone, self.cursor.to_bits(), self.revision, self.preview_revision, self.edits)
+    }
     pub(super) fn mark(&mut self, goal: &Goal) {
+        self.edits = self.edits.wrapping_add(1);
         self.playing = false;
         self.clear_bones.retain(|b| *b != goal.bone);
         if goal.mode == Mode::Direct {

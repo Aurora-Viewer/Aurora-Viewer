@@ -505,6 +505,8 @@ fn animation_timeline_shortcuts_match_the_documented_commands() {
         timeline::timeline_shortcut(egui::Key::Escape, none),
         Some(Shortcut::ClearKeySelection)
     );
+    assert_eq!(timeline::timeline_shortcut(egui::Key::R, none), Some(Shortcut::ToggleTool));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::R, ctrl), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::A, none), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl_alt), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::V, none), None);
@@ -3836,4 +3838,71 @@ fn joints_selected_together_turn_with_the_selected_one_and_are_keyed_with_it() {
     );
     assert!(turned_left > 0.6, "the selected joint turned: {turned_left}");
     assert!((turned_left - turned_right).abs() < 0.01, "{turned_left} vs {turned_right}");
+}
+
+#[test]
+fn the_animation_editor_keeps_its_tool_and_shift_does_not_turn_rotate_into_move() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.timeline_open = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.select(rig.names["mHead"], &rig, &original);
+    assert_eq!(editor.tool, Tool::Move);
+    // R switches the gizmo to Rotate
+    let ctx = egui::Context::default();
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::R, egui::Modifiers::NONE));
+    assert_eq!(editor.tool, Tool::Rotate);
+    // another joint keeps it, and Shift (finer) keeps it
+    editor.select(rig.names["mNeck"], &rig, &original);
+    assert_eq!(editor.tool, Tool::Rotate);
+    assert_eq!(editor.active_tool(egui::Modifiers::SHIFT), Tool::Rotate);
+    assert!(editor.gizmo_visible(egui::Modifiers::SHIFT));
+    assert_eq!(editor.active_tool(egui::Modifiers::CTRL), Tool::Rotate);
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::R, egui::Modifiers::NONE));
+    assert_eq!(editor.tool, Tool::Move);
+    // outside the animation editor, Shift still means a free point move
+    editor.clip.active = false;
+    editor.tool = Tool::Rotate;
+    assert_eq!(editor.active_tool(egui::Modifiers::SHIFT), Tool::Move);
+    assert!(!editor.gizmo_visible(egui::Modifiers::SHIFT));
+}
+
+#[test]
+fn an_edited_joints_fields_hold_still_while_the_shown_pose_only_jitters() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let head = rig.names["mHead"];
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.mode = Mode::Direct;
+    editor.select(head, &rig, &original);
+    editor.orient = true;
+    editor.degrees.z += 20.0;
+    editor.commit_manipulation(&rig, &original, true);
+    assert!(editor.authoring.owns(head));
+    for _ in 0..4 {
+        editor.sync_authored_selection(&original);
+    }
+    let (position, degrees) = (editor.position, editor.degrees);
+    // the shown pose moves by a hair (another motion, rounding): nothing was edited
+    let mut rotations = rig.local_rot.clone();
+    rotations[rig.pelvis] = Quat::from_rotation_z(0.002) * rotations[rig.pelvis];
+    let jittered = frame(&lib, &rotations, &rig.local_pos, &rig.scale);
+    for _ in 0..4 {
+        editor.sync_authored_selection(&jittered);
+    }
+    assert_eq!((editor.position, editor.degrees), (position, degrees));
+    // a seek reads them again
+    editor.clip.cursor += 1.0;
+    editor.sync_authored_selection(&jittered);
+    assert_ne!(editor.degrees, degrees);
 }

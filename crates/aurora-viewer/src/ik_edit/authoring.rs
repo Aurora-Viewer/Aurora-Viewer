@@ -203,6 +203,23 @@ impl Editor {
         if self.graph.selected.is_some() || self.drag.is_some() || self.gizmo.dragging() || self.weight != 1.0 {
             return;
         }
+        // In the animation editor the fields are read again only when the
+        // joint, the playhead, the clip or its preview changes, or an edit
+        // ends: read every frame, the shown pose's last digits made them
+        // flicker while nothing was being done.
+        if self.clip.active {
+            // a few reads after a change: the shown pose may follow an edit
+            // a frame late
+            let key = self.clip.authored_sync_key(bone);
+            let reads = match self.clip.authored_sync {
+                Some((last, reads)) if last == key => reads,
+                _ => 0,
+            };
+            if reads >= 3 {
+                return;
+            }
+            self.clip.authored_sync = Some((key, reads + 1));
+        }
         let local = frame.model.inverse() * frame.joints[bone];
         self.position = local.transform_point3(self.contact);
         let (z, y, x) = local.to_scale_rotation_translation().1.to_euler(EulerRot::ZYX);

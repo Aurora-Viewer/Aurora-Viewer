@@ -22,7 +22,7 @@ pub(super) fn sensitivity_scale(sensitivity: f32) -> f32 {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Tool {
     #[default]
     Move,
@@ -398,6 +398,10 @@ pub(super) struct Gizmo {
 impl Gizmo {
     pub fn dragging(&self) -> bool {
         self.drag.is_some()
+    }
+    /// The tool of the handle being dragged.
+    pub fn dragging_tool(&self) -> Option<Tool> {
+        self.drag.as_ref().map(|drag| drag.geometry.tool)
     }
     pub fn cancel(&mut self) {
         self.drag = None;

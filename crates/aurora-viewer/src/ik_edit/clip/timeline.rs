@@ -44,6 +44,7 @@ pub(super) enum TimelineShortcut {
     SaveProject,
     SelectAllKeys,
     ClearKeySelection,
+    ToggleTool,
 }
 
 pub(super) fn timeline_key(key: &winit::keyboard::Key) -> Option<egui::Key> {
@@ -63,6 +64,7 @@ pub(super) fn timeline_key(key: &winit::keyboard::Key) -> Option<egui::Key> {
             "s" => Some(egui::Key::S),
             "k" => Some(egui::Key::K),
             "a" => Some(egui::Key::A),
+            "r" => Some(egui::Key::R),
             _ => None,
         },
         _ => None,
@@ -92,6 +94,7 @@ pub(super) fn timeline_shortcut(key: egui::Key, modifiers: egui::Modifiers) -> O
             egui::Key::ArrowRight => Some(TimelineShortcut::NextFrame),
             egui::Key::K => Some(TimelineShortcut::KeyBone),
             egui::Key::Escape => Some(TimelineShortcut::ClearKeySelection),
+            egui::Key::R => Some(TimelineShortcut::ToggleTool),
             _ => None,
         };
         if plain.is_some() {
@@ -524,6 +527,11 @@ impl Editor {
                 true
             }
             TimelineShortcut::SelectAllKeys => self.select_all_timeline_keys(),
+            // R switches the gizmo between Move and Rotate, as its switch does
+            TimelineShortcut::ToggleTool if !self.gizmo.dragging() && self.drag.is_none() => {
+                self.tool = if self.tool == Tool::Rotate { Tool::Move } else { Tool::Rotate };
+                true
+            }
             TimelineShortcut::ClearKeySelection if !self.clip.selected_keys.is_empty() => {
                 self.clip.selected_keys.clear();
                 true
@@ -537,6 +545,7 @@ impl Editor {
             | TimelineShortcut::PastePose
             | TimelineShortcut::DeleteKey
             | TimelineShortcut::ClearKeySelection
+            | TimelineShortcut::ToggleTool
             | TimelineShortcut::SaveProject => false,
         };
         if ran {

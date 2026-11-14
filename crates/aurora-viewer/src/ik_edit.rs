@@ -234,16 +234,22 @@ impl Editor {
     }
 
     fn active_tool(&self, modifiers: egui::Modifiers) -> Tool {
-        if modifiers.ctrl {
+        // a handle being dragged keeps its tool: Shift pressed during the
+        // drag only makes it finer (`gizmo::FINE`)
+        if let Some(tool) = self.gizmo.dragging_tool() {
+            tool
+        } else if modifiers.ctrl {
             Tool::Rotate
-        } else if modifiers.shift {
+        } else if modifiers.shift && !self.clip.active {
             Tool::Move
         } else {
+            // the animation editor keeps the Move or Rotate chosen (R) with
+            // Shift held, so that Shift grabs a ring or an arrow finely
             self.tool
         }
     }
     fn gizmo_visible(&self, modifiers: egui::Modifiers) -> bool {
-        self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift
+        self.gizmo.dragging() || modifiers.ctrl || !modifiers.shift || self.clip.active
     }
 
     /// The drag scale of the shared move and rotate handles. The Poser's
@@ -259,11 +265,12 @@ impl Editor {
     }
 
     /// Whether a free rotation drag is ten times finer. Shift does that in
-    /// the Poser, which says so on its trackball. Elsewhere Shift only
+    /// the Poser, which says so on its trackball, and in the animation
+    /// editor, whose Shift keeps the chosen tool. Elsewhere Shift only
     /// enables dragging a point (`point_drag_enabled`), so that Ctrl+Shift
     /// keeps the rotation rate it always had.
     fn fine_drag(&self, modifiers: egui::Modifiers) -> bool {
-        self.poser.active && modifiers.shift
+        (self.poser.active || self.clip.active) && modifiers.shift
     }
 
     fn bone_overlays_visible(&self) -> bool {
@@ -786,7 +793,10 @@ impl Editor {
             self.graph.target = binding.target.clone();
         }
         self.control = Control::Bone;
-        self.tool = Tool::Move;
+        // the animation editor keeps the Move or Rotate chosen from joint to joint
+        if !self.clip.active {
+            self.tool = Tool::Move;
+        }
         self.pole_orbit = None;
         self.pole = None;
         self.drag = None;
@@ -1157,6 +1167,9 @@ impl Editor {
                             response
                         })
                         .inner;
+                    // a press on a joint's handle is the editor's: Avatar Studio
+                    // would otherwise also turn its camera with the drag
+                    self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
                     if self.links.bone_pick && response.clicked() {
                         self.picked_bone(
                             world,
@@ -1210,6 +1223,8 @@ impl Editor {
                 self.show_poles(ctx, palette, proj, &frame, rig, gizmo_owns);
             }
             self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
+            // a point dragged keeps the pointer to its release, wherever it goes
+            self.manipulator_hovered |= self.drag.is_some();
         }
         if self.clip.active {
             // the animation editor has its own, narrower window and pages
