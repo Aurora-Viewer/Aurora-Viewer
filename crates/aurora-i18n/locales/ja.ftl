@@ -49,14 +49,14 @@ anim-timeline-track-enabled = このボーンをアニメーションに含め�
 anim-timeline-empty = キーのあるボーンはまだありません。ボーンを選んでポーズを付け、「キー」（K）を押してください。
 anim-timeline-keys-selected = { $count ->
     [one] { $count }個のキーを選択中：ドラッグで移動、Deleteで削除
-   *[other] { $count }個のキーを選択中：1つをドラッグするとすべて移動、Deleteで削除、Escで選択解除
+   *[other] { $count }個のキーを選択中：1つをドラッグするとすべて移動、Ctrl+Cでコピー、Deleteで削除、Escで選択解除
     }
 anim-edit-shortcut-play = 再生／一時停止（Space）
 anim-edit-shortcut-rewind = 最初に戻る（Home）
 anim-edit-shortcut-undo = 元に戻す（Ctrl+Z）
 anim-edit-shortcut-redo = やり直す（Ctrl+Y または Ctrl+Shift+Z）
-anim-edit-shortcut-copy = ポーズをコピー（Ctrl+C）
-anim-edit-shortcut-paste = ポーズを貼り付け（Ctrl+V）
+anim-edit-shortcut-copy = 選んだキー、またはポーズをコピー（Ctrl+C）
+anim-edit-shortcut-paste = 再生ヘッドの位置に貼り付け（Ctrl+V）
 anim-edit-shortcut-delete = 選んだキー、または選択中のボーンのキーを削除（Delete）
 anim-edit-shortcut-save = プロジェクトを保存（Ctrl+S）
 anim-edit-interpolation-smooth = スムーズ

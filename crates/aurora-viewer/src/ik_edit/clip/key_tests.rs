@@ -322,3 +322,36 @@ fn deleting_picked_keys_removes_them_all_and_keeps_the_hidden_rest_keys() {
     assert_eq!(document.frames(Some(head)), vec![0, 20]);
     assert_eq!(document.frames(Some(neck)), vec![0, 10, 20, 30], "a draft's rest track stays whole");
 }
+
+#[test]
+fn copied_keys_paste_at_the_playhead_with_their_spacing() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = imported_head(rig, &[0.0, 10.0 / 30.0, 0.5, 1.0]);
+    document.range(0, 30);
+    let source = head_track(&document, rig);
+    let copied = document.copy_keys(&std::collections::BTreeSet::from([(head, 10), (head, 15)]));
+    assert_eq!(copied.len(), 2);
+    assert_eq!((copied[0].offset, copied[1].offset), (0, 5));
+    assert_eq!(
+        copied[0].rotation,
+        Some(source.motion.rot_keys[1].rotation),
+        "the key itself, not a sample"
+    );
+
+    let pasted = document.paste_keys(28, &copied);
+
+    assert_eq!(pasted, std::collections::BTreeSet::from([(head, 28), (head, 33)]));
+    assert_eq!(document.frames(Some(head)), vec![0, 10, 15, 28, 30, 33]);
+    assert_eq!(document.end, 33, "the range grows to the last pasted key");
+    let track = head_track(&document, rig);
+    assert_eq!(track.motion.rot_keys[3].rotation, source.motion.rot_keys[1].rotation);
+    assert_eq!(track.motion.pos_keys[5].position, source.motion.pos_keys[2].position);
+    // past the length limit, a key is left out instead of piling up on the last frame
+    let max = document.max_frame();
+    assert_eq!(
+        document.paste_keys(max - 2, &copied),
+        std::collections::BTreeSet::from([(head, max - 2)])
+    );
+}

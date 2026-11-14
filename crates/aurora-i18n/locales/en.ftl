@@ -49,14 +49,14 @@ anim-timeline-track-enabled = Include this bone in the animation
 anim-timeline-empty = No keyed bone yet: select a bone, pose it, then press Key (K).
 anim-timeline-keys-selected = { $count ->
     [one] { $count } key picked: drag it to move it, Delete removes it
-   *[other] { $count } keys picked: drag one to move them all, Delete removes them, Esc drops them
+   *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, Esc drops them
     }
 anim-edit-shortcut-play = Play or pause (Space)
 anim-edit-shortcut-rewind = Rewind to the start (Home)
 anim-edit-shortcut-undo = Undo (Ctrl+Z)
 anim-edit-shortcut-redo = Redo (Ctrl+Y or Ctrl+Shift+Z)
-anim-edit-shortcut-copy = Copy pose (Ctrl+C)
-anim-edit-shortcut-paste = Paste pose (Ctrl+V)
+anim-edit-shortcut-copy = Copy the picked keys, or the pose (Ctrl+C)
+anim-edit-shortcut-paste = Paste at the playhead (Ctrl+V)
 anim-edit-shortcut-delete = Delete the picked keys, or the selected bone's key (Delete)
 anim-edit-shortcut-save = Save project (Ctrl+S)
 anim-edit-interpolation-smooth = Smooth
