@@ -51,7 +51,7 @@ pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
     reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
-    search_text_edit_with_margin,
+    search_text_edit_with_margin, select_on_focus,
 };
 pub use text_field::text_field;
 pub use tracks::{
@@ -550,6 +550,7 @@ impl<'a> Floater<'a> {
             }
             return None;
         }
+        pills::note_window_drawn(ctx, egui::Id::unique(self.id));
         let min_id = egui::Id::unique((self.id, "minimized"));
         // persisted with the UI layout (ui_layout.ron)
         let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
@@ -1051,6 +1052,7 @@ pub(crate) fn bare_window(
     if window_hidden(ctx, window_id, true, false) {
         return;
     }
+    pills::note_window_drawn(ctx, window_id);
     let drag = if locked {
         None
     } else {
