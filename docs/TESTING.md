@@ -1017,6 +1017,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_CANCEL=1\|locked` | The teleport screen's Cancel pressed during the demo teleport, or a teleport that cannot be cancelled |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
+| `AURORA_DEMO_AUTO_UNMUTE=1` | Ambient sounds and sound effects muted, unmuted by the demo teleport (see Details) |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
@@ -1429,6 +1430,12 @@ when unfocused") is ignored during a screenshot.
   stops at 50 % and no arrival comes. After 15 s + 3 s per attachment the
   screen closes on the world, a notice says the region did not confirm the
   arrival, and the session goes on.
+- **`AURORA_DEMO_AUTO_UNMUTE=1`**: the Ambient and Sounds channels start
+  muted, with Preferences › Sound and voice › "Unmute ambient sounds / sounds
+  after a teleport" on. With `AURORA_DEMO_TP=remote`, the arrival turns both
+  back on (the speakers of the volume panel), and the nearby chat gets one
+  line per channel. A login or `AURORA_DEMO_TP=1` (inside the region) leaves
+  them muted.
 - **`AURORA_DEMO_TP_CANCEL`**: with `AURORA_DEMO_TP=remote`, the teleport
   screen shows Cancel next to its title from the "teleport accepted" step
   (0.35 s) until "connecting to the region" (2.4 s), as the Legacy Viewer

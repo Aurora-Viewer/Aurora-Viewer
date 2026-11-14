@@ -4208,7 +4208,8 @@ impl App {
                 }
             }
             NetEvent::AgentMovementComplete { .. } => {
-                if std::mem::replace(&mut self.first_arrival_done, true) {
+                let arrived_before = std::mem::replace(&mut self.first_arrival_done, true);
+                if arrived_before {
                     self.draw_stepping_arrived();
                 } else {
                     self.start_draw_stepping("login");
@@ -4245,6 +4246,19 @@ impl App {
                         self.settings.camera.reset_on_teleport,
                         self.camera.focus_point().is_none()
                     );
+                    // a teleport to another place (TELEPORT_MOVING), not the
+                    // login nor a teleport inside the region (TELEPORT_LOCAL)
+                    if arrived_before && !local {
+                        let unmuted = audio_mute::unmute_after_teleport(&mut self.settings.audio);
+                        if !unmuted.is_empty() {
+                            self.settings.save();
+                            let names = crate::settings::audio_channels();
+                            for i in unmuted {
+                                self.world
+                                    .system_message(aurora_i18n::tr!("app-unmuted-after-teleport", channel = names[i].to_string()));
+                            }
+                        }
+                    }
                 }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
@@ -5226,6 +5240,7 @@ impl App {
                     mods,
                     true,
                     Some(idx),
+                    &self.interactions.props,
                 ) {
                     return;
                 }
@@ -5305,10 +5320,17 @@ impl App {
                     shift: self.shift,
                     command: self.command,
                 };
-                if self
-                    .media
-                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false, None)
-                {
+                if self.media.on_click(
+                    &self.world,
+                    &self.scene,
+                    ray,
+                    depth_t,
+                    &self.settings.media,
+                    mods,
+                    false,
+                    None,
+                    &self.interactions.props,
+                ) {
                     return;
                 }
             }
@@ -12458,6 +12480,18 @@ impl App {
                     hovered.and_then(|idx| self.world.objects.get(idx)).map(|o| o.key.local_id),
                     hovered.and_then(|idx| crate::interaction::cursor_action(&self.world, idx, &self.interactions.props)),
                 );
+            }
+            // MediaFirstClickInteract reads the owner of a media object
+            // before the click: LLSelectMgr::setHoverObject asks its
+            // properties as the pointer comes on it
+            if let Some(idx) = hovered
+                && self.settings.media.first_click_interact
+                && self.media.has_media(&self.world, idx)
+                && let Some((root, _)) = crate::interaction::root(&self.world, idx)
+                && let Some(o) = self.world.objects.get(root)
+                && let Some(cmd) = self.interactions.tip_request(o.key.region, o.full_id)
+            {
+                self.send(cmd);
             }
             if let Some(idx) = hovered
                 && let Some(target) = crate::interaction::target(&self.world, idx, &std::collections::HashMap::new())
@@ -20449,6 +20483,7 @@ impl ApplicationHandler for App {
                 }
             }
             crate::demo::contact_markers::apply_preferences(&mut self.settings);
+            audio_mute::apply_demo(&mut self.settings.audio);
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }

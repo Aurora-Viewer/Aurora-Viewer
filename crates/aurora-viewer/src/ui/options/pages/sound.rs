@@ -244,6 +244,17 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
         );
+        // FSAutoUnmuteAmbient, FSAutoUnmuteSounds (panel_preferences_sound.xml)
+        cx.toggle(
+            tr!("ui-options-unmute-ambient-after-teleport"),
+            tr!("ui-options-unmute-after-teleport-help"),
+            &field!(audio.auto_unmute_ambient),
+        );
+        cx.toggle(
+            tr!("ui-options-unmute-sounds-after-teleport"),
+            tr!("ui-options-unmute-after-teleport-help"),
+            &field!(audio.auto_unmute_sounds),
+        );
         // The immersive sound (occlusion, 3D sound, reverb): Aurora's own and
         // experimental, marked as such.
         // Aurora's own (scene/sound_occlusion.rs): off, as in the Legacy Viewer

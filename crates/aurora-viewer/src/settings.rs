@@ -1927,6 +1927,11 @@ pub struct AudioSettings {
     pub muted: [bool; 7],
     /// Channel enabled (checkbox; the master has none).
     pub enabled: [bool; 7],
+    /// FSAutoUnmuteAmbient / FSAutoUnmuteSounds: a teleport unmutes the
+    /// ambient sounds / the sound effects (off, as there; a line in the
+    /// nearby chat says so).
+    pub auto_unmute_ambient: bool,
+    pub auto_unmute_sounds: bool,
     /// Play the parcel music automatically when entering a parcel
     /// (FSParcelMusicAutoPlay, off by default: the radio toggle starts it).
     pub music_autoplay: bool,
@@ -2013,6 +2018,8 @@ impl Default for AudioSettings {
             perceptual_volume: false,
             muted: [false; 7],
             enabled: [true; 7],
+            auto_unmute_ambient: false,
+            auto_unmute_sounds: false,
             music_autoplay: false,
             music_fade: true,
             music_fade_in: 3.0,

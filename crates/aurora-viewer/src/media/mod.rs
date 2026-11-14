@@ -30,6 +30,7 @@
 pub mod cef_cache;
 pub mod entry;
 pub mod filter;
+pub mod first_click;
 mod interact;
 pub mod keys;
 pub mod nearby;
@@ -355,8 +356,10 @@ pub struct MediaSettings {
     /// PermAllowScriptedMedia: let scripts start the parcel media.
     pub allow_scripted: bool,
     /// MediaFirstClickInteract: the first click already goes to the page
-    /// when the face allows it (first_click_interact).
+    /// when the face allows it (first_click_interact), for the kinds of
+    /// object of `first_click` (off: MEDIA_FIRST_CLICK_NONE).
     pub first_click_interact: bool,
+    pub first_click: first_click::FirstClick,
     /// MediaAutoPlayHuds: media on HUDs plays by itself.
     pub autoplay_huds: bool,
     /// MediaEnableFilter: media and music ask before a site not in the
@@ -387,6 +390,7 @@ impl Default for MediaSettings {
             max_instances: 8,
             allow_scripted: false,
             first_click_interact: true,
+            first_click: first_click::FirstClick::default(),
             autoplay_huds: true,
             filter: true,
             filter_trust_own_worn: true,
