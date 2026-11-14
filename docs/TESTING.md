@@ -6016,6 +6016,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and delivers OwnerSay from an attachment with the native temporary marker,
   without experience or inventory metadata. Its raw command remains nearby
   chat; the log reports `option_off_jump=false, source_allowed=false`.
+  `ground-wear` sets `@detach=n`, then an object attaches at frame 760 with an
+  item missing from the inventory, as one worn from the ground; the log's
+  `RLVa ground wear demo` line reports `worn=true, rejected=false`.
   `hud-lock` seeds a temporary HUD with a point removal lock while requesting
   hidden HUDs and wireframe rendering. Capture after frame 810: the HUD is
   visible, the world stays filled and the log reports `locked=true,
