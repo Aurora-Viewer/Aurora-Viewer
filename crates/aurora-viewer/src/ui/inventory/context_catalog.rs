@@ -1677,7 +1677,11 @@ mod tests {
         inv.folders.insert(a, lockable_folder(a, inv.root));
         inv.folders.insert(b, lockable_folder(b, inv.root));
         let mut prefs = InventoryPreferences::default();
-        let mut state = InventoryUi { selected: Some(a), selection: HashSet::from([a, b]), ..Default::default() };
+        let mut state = InventoryUi {
+            selected: Some(a),
+            selection: HashSet::from([a, b]),
+            ..Default::default()
+        };
         let ctx = egui::Context::default();
 
         // Deliberate difference from the Legacy Viewer: lock every selected
@@ -1701,7 +1705,11 @@ mod tests {
         inv.folders.insert(b, lockable_folder(b, inv.root));
         let mut prefs = InventoryPreferences::default();
         prefs.protected.insert(a);
-        let mut state = InventoryUi { selected: Some(a), selection: HashSet::from([a, b]), ..Default::default() };
+        let mut state = InventoryUi {
+            selected: Some(a),
+            selection: HashSet::from([a, b]),
+            ..Default::default()
+        };
         let ctx = egui::Context::default();
 
         run_protect(&ctx, &inv, &mut state, &mut prefs);
@@ -1718,7 +1726,11 @@ mod tests {
         inv.folders.insert(folder, lockable_folder(folder, inv.root));
         let item = Uuid::from_u128(8100);
         let mut prefs = InventoryPreferences::default();
-        let mut state = InventoryUi { selected: Some(folder), selection: HashSet::from([folder, item]), ..Default::default() };
+        let mut state = InventoryUi {
+            selected: Some(folder),
+            selection: HashSet::from([folder, item]),
+            ..Default::default()
+        };
         let ctx = egui::Context::default();
 
         run_protect(&ctx, &inv, &mut state, &mut prefs);
