@@ -54,6 +54,9 @@ pub(crate) struct EditorUi {
     /// demo's captures).
     pub reveal_badges: bool,
     pub reveal_marker: bool,
+    /// Just asked for: shown whole and in front, even if it was left
+    /// minimized (LLFloater::openFloater).
+    pub raise: bool,
 }
 
 /// Where AURORA_DEMO_SET_NOTICES takes the editor: its auto-replies, or
@@ -99,9 +102,12 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         st.config = None;
         return;
     };
+    if std::mem::take(&mut st.editor.raise) {
+        widgets::bring_floater_front(ctx, "contact_set_config");
+    }
     match st.demo_scroll.take() {
         Some(DemoScroll::Responses) => st.editor.tab = EditorTab::Replies,
-        Some(DemoScroll::Bottom) => st.options_open = true,
+        Some(DemoScroll::Bottom) => st.open_set_options(),
         None => {}
     }
     let mut open = true;
@@ -978,7 +984,7 @@ fn behaviour(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contact
     )
     .clicked()
     {
-        st.options_open = true;
+        st.open_set_options();
     }
 }
 
@@ -1365,6 +1371,34 @@ mod tests {
         assert_eq!(
             marker_caption(&v).map(|c| c[0]),
             Some(aurora_i18n::text("set-editor-preview-far-parcel"))
+        );
+    }
+
+    /// Left minimized, the editor comes back whole when a set is opened
+    /// again (LLFloater::openFloater), as the options window does.
+    #[test]
+    fn opening_a_set_again_brings_a_minimized_editor_back() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.contact_sets.add_set("A");
+        let p = crate::theme::Theme::default().palette();
+        let pics = HashMap::new();
+        let mut st = ContactsUi::default();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        st.configure_set("A");
+        for _ in 0..3 {
+            frames.run(Vec::new(), |ui| window(ui.ctx(), &p, &mut world, &mut st, &pics));
+        }
+        frames
+            .ctx
+            .data_mut(|d| d.insert_persisted(egui::Id::unique(("contact_set_config", "minimized")), true));
+        assert!(widgets::floater_minimized(&frames.ctx, "contact_set_config"));
+        st.configure_set("A");
+        for _ in 0..3 {
+            frames.run(Vec::new(), |ui| window(ui.ctx(), &p, &mut world, &mut st, &pics));
+        }
+        assert!(
+            !widgets::floater_minimized(&frames.ctx, "contact_set_config"),
+            "it opened minimized"
         );
     }
 

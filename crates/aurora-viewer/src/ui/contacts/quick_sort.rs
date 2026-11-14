@@ -148,6 +148,10 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     let Some(qs) = st.quick_sort.as_mut() else {
         return;
     };
+    // just opened: whole and in front (LLFloater::openFloater)
+    if qs.grab {
+        widgets::bring_floater_front(ctx, WINDOW);
+    }
     qs.load(world);
     // the keys, while the window is in front and no field takes them
     // The keys while the window holds the keyboard: its focus keeps them

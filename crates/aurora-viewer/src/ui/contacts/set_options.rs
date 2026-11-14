@@ -16,6 +16,10 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     if !st.options_open {
         return;
     }
+    // asked for again: whole and in front (LLFloater::openFloater)
+    if std::mem::take(&mut st.options_raise) {
+        widgets::bring_floater_front(ctx, "contact_set_options");
+    }
     let mut open = true;
     widgets::Floater::new(
         "contact_set_options",

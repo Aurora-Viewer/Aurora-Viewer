@@ -236,8 +236,10 @@ pub struct ContactsUi {
     pub demo_scroll: Option<DemoScroll>,
     /// The set editor's tab, badge grid and preview distance.
     pub(crate) editor: set_editor::EditorUi,
-    /// The options shared by every set (the gear of People's sets).
+    /// The options shared by every set (the gear of People's sets), and
+    /// whether they were just asked for (shown whole and in front).
     options_open: bool,
+    options_raise: bool,
     /// Quick sort of the friends in no set, while its window is open.
     quick_sort: Option<quick_sort::QuickSort>,
     /// Height under the group and contact set lists (the count line),
@@ -375,6 +377,7 @@ impl ContactsUi {
         }
         self.rename = set.to_owned();
         self.config = Some(set.to_owned());
+        self.editor.raise = true;
     }
 
     /// The set editor on `set`, at one of its tabs (the demo's captures).
@@ -409,6 +412,7 @@ impl ContactsUi {
     /// The window of the options shared by every set.
     pub fn open_set_options(&mut self) {
         self.options_open = true;
+        self.options_raise = true;
     }
 
     /// Quick sort of the friends in no set, as they are now.
