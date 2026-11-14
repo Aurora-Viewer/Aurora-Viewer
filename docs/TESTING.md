@@ -4927,6 +4927,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
+| `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
@@ -12043,6 +12044,20 @@ What the inventory must show with these scenarios:
   shell; the control shows nothing (#1420, the alpha max(texture alpha,
   glare) of class3/deferred/materialF.glsl). Before the fix, no shell
   showed anything.
+- **`AURORA_DEMO_MIRROR=1`**: a closed room on the open patch at
+  (100, 100), lit by a warm lamp under its roof, with a manual box probe
+  filling it and a dark mirror on its east wall; our avatar starts 3 m in
+  front of the mirror, facing it (`AURORA_DEMO_POS` is ignored). Between
+  the two: on the left a skin-coloured ball under a black lace shell (a
+  blended texture of opaque threads, half-covered borders and holes), on
+  the right a pane of red glass at half alpha over a black shiny ball.
+  Capture at frame 620. The mirror shows the lace, the red glass and the
+  ball behind it as they are in front of it, our avatar's front lit warm
+  by the lamp, the black ball black, and the room dim: the sun stops at
+  the roof, there is no lit disc on the wall behind the camera. Before
+  #3479 the mirror had neither the lace nor the glass, and lit its image
+  by the sky and the sun through the roof: a pale grey avatar and a navy
+  blue ball.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended
