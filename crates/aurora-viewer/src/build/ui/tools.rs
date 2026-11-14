@@ -302,11 +302,17 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     });
 }
 
-/// GP_LAND_DIVIDE_JOIN, GP_LAND_RELEASE (llagent / roles_constants.h).
-const GP_LAND_DIVIDE_JOIN: u64 = 1 << 19;
-const GP_LAND_RELEASE: u64 = 1 << 20;
 /// REGION_FLAGS_ALLOW_PARCEL_CHANGES.
 const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
+
+/// Whether Divide/Join and Release are allowed (LLPanelLandInfo::refresh).
+/// Land we own keeps both. Group-owned land follows the role powers
+/// (roles_constants.h).
+fn parcel_divide_release_allowed(mine: bool, group_owned: bool, group_powers: u64) -> (bool, bool) {
+    use crate::world::land::powers;
+    let has = |bit: u64| group_owned && group_powers & bit != 0;
+    (mine || has(powers::LAND_DIVIDE_JOIN), mine || has(powers::LAND_RELEASE))
+}
 
 /// The land info panel (LLPanelLandInfo::refresh).
 pub fn parcel_panel(
@@ -384,19 +390,15 @@ pub fn parcel_panel(
     // who may do what (LLPanelLandInfo::refresh)
     let (mine, owner_divide, owner_release, can_buy) = match parcel.as_ref() {
         Some(pi) => {
-            let group_power = |power: u64| pi.is_group_owned && world.groups.group(&pi.group_id).is_some_and(|g| g.powers & power != 0);
+            let powers = world.groups.group(&pi.group_id).map_or(0, |g| g.powers);
             let mine = pi.owner_id == world.agent_id;
+            let (owner_divide, owner_release) = parcel_divide_release_allowed(mine, pi.is_group_owned, powers);
             let for_sale = pi.flags & aurora_net::parcel_flags::FOR_SALE != 0;
             let can_buy = for_sale
                 && !mine
                 && (pi.sale_price > 0 || !pi.auth_buyer.is_nil())
                 && (pi.auth_buyer.is_nil() || pi.auth_buyer == world.agent_id);
-            (
-                mine,
-                mine || group_power(GP_LAND_DIVIDE_JOIN),
-                mine || group_power(GP_LAND_RELEASE),
-                can_buy || pi.owner_id.is_nil(),
-            )
+            (mine, owner_divide, owner_release, can_buy || pi.owner_id.is_nil())
         }
         None => (false, false, false, false),
     };
@@ -617,6 +619,37 @@ mod tests {
             ]);
         }
         show(Vec::new()).1
+    }
+
+    #[test]
+    fn group_land_divide_and_release_follow_their_powers() {
+        use crate::world::land::powers;
+        assert_eq!(powers::LAND_DIVIDE_JOIN, 1 << 15);
+        assert_eq!(powers::LAND_RELEASE, 1 << 13);
+        // Own land stays available either way.
+        assert_eq!(parcel_divide_release_allowed(true, false, 0), (true, true));
+        assert_eq!(parcel_divide_release_allowed(true, true, 0), (true, true));
+        // Someone else's land: the bits do not apply.
+        assert_eq!(
+            parcel_divide_release_allowed(false, false, (1 << 15) | powers::LAND_RELEASE),
+            (false, false)
+        );
+        // Group land: Divide/Join is 1 << 15, not Set Landing Point.
+        let (divide, release) = parcel_divide_release_allowed(false, true, 1 << 15);
+        assert!(divide, "Divide/Join (1 << 15) enables divide on group land");
+        assert!(!release, "Divide/Join alone does not enable release");
+        let (divide, release) = parcel_divide_release_allowed(false, true, powers::LAND_SET_LANDING_POINT);
+        assert!(!divide, "Set Landing Point (1 << 19) does not enable divide");
+        assert!(!release, "Set Landing Point does not enable release");
+        // Group land: Release is LAND_RELEASE (1 << 13), not Change Media.
+        let (divide, release) = parcel_divide_release_allowed(false, true, powers::LAND_RELEASE);
+        assert!(!divide, "Release alone does not enable divide");
+        assert!(release, "Release (1 << 13) enables release on group land");
+        let (divide, release) = parcel_divide_release_allowed(false, true, powers::LAND_CHANGE_MEDIA);
+        assert!(!divide, "Change Media does not enable divide");
+        assert!(!release, "Change Media (1 << 20) does not enable release");
+        let (divide, release) = parcel_divide_release_allowed(false, true, (1 << 15) | powers::LAND_RELEASE);
+        assert!(divide && release, "both powers enable both");
     }
 
     #[test]
