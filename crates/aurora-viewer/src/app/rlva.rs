@@ -1,4 +1,5 @@
 //! RLVa preference and action integration, shared by every UI layout.
+use super::own_motion::temprun_resync;
 use super::*;
 use uuid::Uuid;
 
@@ -147,8 +148,13 @@ impl App {
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);
         }
-        if self.world.rlva.has("temprun") {
-            self.temp_run = None;
+        // RlvUIEnabler::onToggleMovement: clearTempRun tells the simulator,
+        // which would otherwise keep running with nothing left to stop it.
+        let temprun = self.world.rlva.has("temprun");
+        let ended = temprun && self.temp_run.take().is_some();
+        let changed = temprun != std::mem::replace(&mut self.rlva_temprun, temprun);
+        if temprun_resync(ended, changed, self.autopilot.as_ref().is_some_and(|a| a.run)) {
+            self.send(NetCommand::SetAlwaysRun(self.running() || self.joystick.running));
         }
         let invalid: Vec<_> = self
             .build
@@ -225,6 +231,14 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if let Some(run) = scenario.strip_prefix("run-") {
+                self.panels.settings = false;
+                match run {
+                    "temprun" => "@temprun=n".to_owned(),
+                    "alwaysrun" => "@alwaysrun=n".to_owned(),
+                    "both" => "@temprun=n,alwaysrun=n".to_owned(),
+                    _ => "@clear".to_owned(),
+                }
             } else if scenario == "rename" {
                 self.settings.rlva.shared_wear = false;
                 self.settings.rlva.auto_rename = true;
@@ -411,6 +425,27 @@ impl App {
                 self.world.rlva.has("unsit"),
                 self.world.rlva.has("sendchat")
             );
+        }
+        if mode.starts_with("run-") {
+            // A double tap through the real input path, held until frame 750;
+            // `run-autopilot` runs to a point and @temprun comes and goes.
+            let autopilot = mode == "run-autopilot";
+            match self.frame_count {
+                720 if autopilot => self.walk_to(self.world.agent.position + Vec3::X * 25.0, true),
+                730 if autopilot => self.rlva_demo_message("@temprun=n".to_owned()),
+                745 if autopilot => self.rlva_demo_message("@temprun=y".to_owned()),
+                720 => self.walk_tap(0, true),
+                722 if !autopilot => {
+                    // over NUDGE_TIME is no double tap: a slow frame, not a refusal
+                    let gap = self.last_tap.map_or(0.0, |(_, at)| at.elapsed().as_secs_f32());
+                    log::info!("RLVa demo: {mode} tap gap {gap:.3} s");
+                    self.walk_tap(0, true);
+                }
+                721 | 750 if !autopilot => self.walk_tap(0, false),
+                730 if mode == "run-late" => self.rlva_demo_message("@temprun=n".to_owned()),
+                740 | 749 => log::info!("RLVa demo: {mode} temp_run={}, running={}", self.temp_run.is_some(), self.running()),
+                _ => {}
+            }
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());

@@ -1693,6 +1693,21 @@ fn rlva_im_ranges_and_nametag_distances_follow_exclusions_and_strict_exceptions(
 }
 
 #[test]
+fn run_restrictions_each_leave_the_other_kind_of_run() {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    let run = NetCommand::SetAlwaysRun(true);
+    let walk = NetCommand::SetAlwaysRun(false);
+    command(&mut world.rlva, A, "@alwaysrun=n");
+    assert!(world.rlva_allows_command(&run, Uuid::nil()), "@alwaysrun leaves the double tap");
+    command(&mut world.rlva, A, "@alwaysrun=y,temprun=n");
+    assert!(world.rlva_allows_command(&run, Uuid::nil()), "@temprun leaves Always run");
+    command(&mut world.rlva, A, "@alwaysrun=n");
+    assert!(!world.rlva_allows_command(&run, Uuid::nil()), "both leave nothing that may run");
+    assert!(world.rlva_allows_command(&walk, Uuid::nil()));
+}
+
+#[test]
 fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() {
     let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     w.rlva.configure(true);

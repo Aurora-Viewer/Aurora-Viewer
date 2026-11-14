@@ -106,7 +106,7 @@ impl App {
 
     /// walkToClickedLocation: not while flying or manually sitting. Our own
     /// idle anchor releases before the walk and does not cancel its handover.
-    fn walk_to(&mut self, point: Vec3, run: bool) {
+    pub(super) fn walk_to(&mut self, point: Vec3, run: bool) {
         let agent = &self.world.agent;
         if agent.flying || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit) || !point.is_finite() {
             return;

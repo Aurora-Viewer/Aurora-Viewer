@@ -271,7 +271,10 @@ impl World {
                 (flags & control::STAND_UP == 0 || !blocked("unsit"))
                     && (flags & control::SIT_ON_GROUND == 0 || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
             }
-            NetCommand::SetAlwaysRun(true) => !blocked("alwaysrun"),
+            // One message for every kind of run (LLAgent::sendWalkRun): it is
+            // refused only when both restrictions leave nothing that may run.
+            // Each setter checks its own (set_always_run, walk_tap, running).
+            NetCommand::SetAlwaysRun(true) => !(blocked("alwaysrun") && blocked("temprun")),
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
             NetCommand::PayResident { .. } => !blocked("pay"),
