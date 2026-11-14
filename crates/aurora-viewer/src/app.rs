@@ -642,7 +642,7 @@ pub struct App {
     /// Turn key held since (yaw rate ramp).
     turn_since: Option<Instant>,
     /// Since when each camera key is held (CameraKeys rate ramp).
-    cam_key_since: [Option<Instant>; 10],
+    cam_key_since: [Option<Instant>; 12],
     /// Look-at: the privacy settings (PrivateLookAtTarget,
     /// PrivateLocalLookAtTarget) our last ViewerEffect followed (none before
     /// the first frame), camera focus, cursor and body heading
@@ -1776,7 +1776,7 @@ impl App {
             voice_level: 0.0,
             fb_since: None,
             turn_since: None,
-            cam_key_since: [None; 10],
+            cam_key_since: [None; 12],
             look_at_privacy: None,
             static_eyes: Default::default(),
             look_hover: None,
@@ -8625,7 +8625,7 @@ impl App {
             self.lr_since = None;
             self.up_since = None;
             self.turn_since = None;
-            self.cam_key_since = [None; 10];
+            self.cam_key_since = [None; 12];
             return;
         }
         if self.mouse_mode == MouseMode::Steer {
@@ -8725,7 +8725,7 @@ impl App {
         self.joystick_avatar_camera(moving, player_movement_input, dt);
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
         use crate::keybinds::Action as A;
-        const CAMERA_KEYS: [A; 10] = [
+        const CAMERA_KEYS: [A; 12] = [
             A::CamOrbitCw,
             A::CamOrbitCcw,
             A::CamOrbitOver,
@@ -8736,8 +8736,10 @@ impl App {
             A::CamPanRight,
             A::CamPanUp,
             A::CamPanDown,
+            A::CamRollLeft,
+            A::CamRollRight,
         ];
-        let mut rate = [0.0f32; 10];
+        let mut rate = [0.0f32; 12];
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
             let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
             if self.in_world() && (key || self.controls_held.contains(&a)) {
@@ -8764,6 +8766,8 @@ impl App {
             pan_right: rate[7],
             pan_up: rate[8],
             pan_down: rate[9],
+            roll_left: rate[10],
+            roll_right: rate[11],
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
