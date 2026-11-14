@@ -204,7 +204,7 @@ pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &
 fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3, point: Vec3) {
     let o = &f.object;
     ui.item_if("click-filled", touch_label(o), o.touch, CtxAction::Touch(key.local_id));
-    ui.item("pencil-filled", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
+    ui.item_if("pencil-filled", aurora_i18n::tr!("common-edit"), f.object.edit, CtxAction::Edit(id));
     ui.item_if(
         "paint-filled",
         aurora_i18n::tr!("ui-context-edit-pbr-material"),
@@ -1220,6 +1220,22 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_edit_entry_follows_edit_permission() {
+        for can_edit in [false, true] {
+            let mut facts = Facts::default();
+            facts.object.edit = can_edit;
+
+            let entries = world_menu(&object_target(), &facts, Vec3::ZERO);
+            let edit = entries
+                .iter()
+                .find(|entry| matches!(&entry.kind, Kind::Action(CtxAction::Edit(_))))
+                .expect("object Edit menu entry");
+
+            assert_eq!(edit.enabled, can_edit);
+        }
+    }
 
     fn particle_source(object: u128, owner: u128, name: &str, clicked: bool) -> super::super::ParticleMenuSource {
         super::super::ParticleMenuSource {
