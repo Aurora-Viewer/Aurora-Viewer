@@ -1912,6 +1912,7 @@ demo-aurora-viewer-rust-metal = { "Auroraビューア\u000ARust・Metal" }
 ui-login-aurora-viewer-v = Auroraビューア　v{ $value0 }
 cli-aurora-viewer = { "Auroraビューア" }{ $version }
 cli-aurora-viewer-2 = { "Auroraビューア" }{ $version }{ "‐" }{ $t }
+window-title-account-separator = { "‐" }
 common-aurora-viewer = { "Auroraビューア" }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Auroraビューア：Vulkanを初期化できませんでした：" }{ $e }
 splash-starting = 起動中…

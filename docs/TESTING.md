@@ -102,6 +102,26 @@ window is minimised, hidden or loses its tag, and the script stops when the
 viewer's process closes. For a test with human intervention, keep the title
 `Test <task>` without the tag.
 
+## Main window account title
+
+Inspect the native title bar or query the title of the viewer window by
+process ID. A renderer capture contains the client area only. Use
+`--title "Test account-title"` and the automation marker and outline above
+when driving the window automatically.
+
+- `AURORA_DEMO=1 AURORA_DEMO_LOGIN=connecting` stays generic while login is pending.
+- `AURORA_DEMO=1 AURORA_DEMO_EXIT=logout` shows the synthetic account
+  `Aurora Demo` after the custom title, with the build profile next to the
+  version. At the automatic logout (frame
+  800), the title returns to its generic form.
+- `AURORA_DEMO=1 AURORA_DEMO_GPU_LOST=600 AURORA_GPU_RECOVERY=1` recreates
+  the native window. Check that the account and test title appear on
+  the replacement window. Run the simulated loss separately from logout.
+
+For a private grid check, sign in, verify the account name during loading
+and in world, then log out and sign in to another account. The title is
+generic between sessions and identifies only the newly authenticated account.
+
 ## Windows SLurl handoff
 
 `cargo test --workspace slurl_handoff::windows` runs native Windows pipe and

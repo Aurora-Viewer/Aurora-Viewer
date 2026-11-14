@@ -10,6 +10,7 @@ use crate::settings::Settings;
 use crate::world::attention::{Cause, Notice, Open};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+use winit::window::WindowId;
 
 /// GROWL_THROTTLE_TIME: a second notification with the same title within
 /// this time is dropped.
@@ -35,9 +36,7 @@ pub struct State {
     /// Windows says between frames (LLWindowWin32::flashIcon asks
     /// GetForegroundWindow): the focus events can miss a minimize.
     behind: bool,
-    /// The window's own title, then the one last given to the window (the
-    /// unread count before it, `titled`).
-    title: Option<(String, String)>,
+    pub(super) title: MainTitle,
 }
 
 /// The titles told lately (GrowlManager::mTitleTimers).
@@ -99,12 +98,130 @@ pub fn titled(title: &str, unread: usize, on: bool) -> String {
     if !on || unread == 0 {
         return title.to_owned();
     }
-    let full = if unread > MAX_TITLE_COUNT {
-        format!("({MAX_TITLE_COUNT}+) {title}")
-    } else {
-        format!("({unread}) {title}")
-    };
-    full.chars().take(MAX_TITLE).collect()
+    format!("{}{title}", unread_prefix(unread)).chars().take(MAX_TITLE).collect()
+}
+
+fn unread_prefix(unread: usize) -> String {
+    match unread {
+        0 => String::new(),
+        1..=MAX_TITLE_COUNT => format!("({unread}) "),
+        _ => format!("({MAX_TITLE_COUNT}+) "),
+    }
+}
+
+/// Display the successful response's name (Legacy Viewer,
+/// LLAppViewer::handleLoginComplete, indra/newview/llappviewer.cpp).
+/// Aurora bounds the addition so the existing title and profile keep their space.
+pub(super) fn account_label(first: &str, last: &str) -> Option<String> {
+    fn single_line(input: &str) -> String {
+        input
+            .chars()
+            .filter_map(|c| match c {
+                '\r' | '\n' | '\t' | '\x0b' | '\x0c' | '\u{85}' | '\u{2028}' | '\u{2029}' => Some(' '),
+                c if c.is_control() => None,
+                c => Some(c),
+            })
+            .collect()
+    }
+    let first = single_line(first);
+    let first = first.trim();
+    if first.is_empty() {
+        return None;
+    }
+    let last = single_line(last);
+    Some(crate::world::social::format_name(first, last.trim()))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct TitleInputs {
+    language: &'static str,
+    currency: &'static str,
+    unread: usize,
+    paused: bool,
+    video_memory_full: bool,
+}
+
+impl TitleInputs {
+    fn annotate(self, mut title: String) -> String {
+        if self.paused {
+            title = aurora_i18n::tr_in!(self.language, "busy-pause-window-title", title = title.as_str());
+        }
+        if self.video_memory_full {
+            title = aurora_i18n::tr_in!(self.language, "video-memory-full-window-title", title = title.as_str());
+        }
+        title
+    }
+
+    fn compose(self, base: &crate::cli::TitleParts<'_>, account: Option<&str>) -> String {
+        if let Some(account) = account {
+            let prefix = unread_prefix(self.unread);
+            // Measure with the localized separator and all annotations, before
+            // applying any of the generic unread title's existing truncation.
+            // Translate the annotations before inserting the name: the
+            // localization layer can rewrite currency symbols in messages.
+            let annotations = self.annotate(String::new());
+            let reserved = prefix.chars().count() + base.render(Some("")).chars().count() + annotations.chars().count();
+            let budget = MAX_TITLE.saturating_sub(reserved);
+            let shortened;
+            let account = if account.chars().count() <= budget {
+                Some(account)
+            } else if budget >= 2 {
+                shortened = account.chars().take(budget - 1).chain(std::iter::once('…')).collect::<String>();
+                Some(shortened.as_str())
+            } else {
+                None
+            };
+            if let Some(account) = account {
+                return format!("{prefix}{}{annotations}", base.render(Some(account)));
+            }
+        }
+        self.annotate(titled(&base.render(None), self.unread, true))
+    }
+}
+
+#[derive(Default)]
+pub(super) struct MainTitle {
+    account: Option<String>,
+    composed: Option<(TitleInputs, String)>,
+    applied: Option<(WindowId, String)>,
+}
+
+impl MainTitle {
+    pub(super) fn set_account(&mut self, account: Option<String>) {
+        if self.account != account {
+            self.account = account;
+            self.composed = None;
+        }
+    }
+
+    pub(super) fn text(&mut self, inputs: TitleInputs) -> &str {
+        if self.composed.as_ref().is_some_and(|(previous, _)| *previous != inputs) {
+            self.composed = None;
+        }
+        &self
+            .composed
+            .get_or_insert_with(|| {
+                (
+                    inputs,
+                    inputs.compose(&crate::cli::window_title_parts(inputs.language), self.account.as_deref()),
+                )
+            })
+            .1
+    }
+
+    pub(super) fn applied(&mut self, window: WindowId, title: String) {
+        self.applied = Some((window, title));
+    }
+
+    fn update(&mut self, window: WindowId, inputs: TitleInputs, set_title: impl FnOnce(&str)) {
+        self.text(inputs);
+        if let Some((_, want)) = &self.composed
+            && !self.applied.as_ref().is_some_and(|(id, shown)| *id == window && shown == want)
+        {
+            set_title(want);
+            self.applied(window, want.clone());
+        }
+    }
 }
 
 /// What a notification opens, without its session (for the log).
@@ -202,7 +319,7 @@ impl App {
         if let Some(g) = &self.gfx {
             self.attention.behind = !window_in_front(&g.window);
         }
-        self.unread_title();
+        self.update_main_title();
         if std::mem::take(&mut self.attention.flash)
             && let Some(g) = &self.gfx
         {
@@ -223,32 +340,28 @@ impl App {
         self.attention_clicks();
     }
 
-    /// The unread count before the window title, set only when it changes.
-    /// Counted like the Conversations button (IMs, group chats,
-    /// conferences), in world only.
-    fn unread_title(&mut self) {
-        let Some(g) = &self.gfx else {
-            return;
-        };
-        let in_world = matches!(self.screen, super::Screen::World);
+    pub(super) fn main_title_inputs(&self) -> TitleInputs {
         let on = self.settings.unread_ims_in_window_title || (self.demo && crate::demo::im_announce::forced());
-        let unread = if in_world { self.world.conversations_badge() } else { 0 };
-        let (base, shown) = self
-            .attention
-            .title
-            .get_or_insert_with(|| (crate::cli::window_title(), crate::cli::window_title()));
-        let mut want = titled(base, unread, on);
-        // (the 3D paused behind on a busy card, busy_pause.rs)
-        if self.busy_pause.paused() {
-            want = aurora_i18n::tr!("busy-pause-window-title", title = want.as_str());
+        let unread = if on && matches!(self.screen, super::Screen::World) {
+            self.world.conversations_badge().min(MAX_TITLE_COUNT + 1)
+        } else {
+            0
+        };
+        TitleInputs {
+            language: aurora_i18n::language(),
+            currency: aurora_i18n::currency(),
+            unread,
+            paused: self.busy_pause.paused(),
+            video_memory_full: self.last_render.video_memory_full,
         }
-        // (the render targets waiting for video memory)
-        if self.last_render.video_memory_full {
-            want = aurora_i18n::tr!("video-memory-full-window-title", title = want.as_str());
-        }
-        if *shown != want {
-            g.window.set_title(&want);
-            *shown = want;
+    }
+
+    fn update_main_title(&mut self) {
+        if let Some(g) = &self.gfx {
+            let inputs = self.main_title_inputs();
+            self.attention
+                .title
+                .update(g.window.id(), inputs, |title| g.window.set_title(title));
         }
     }
 
@@ -446,5 +559,106 @@ mod tests {
         assert_eq!(titled(t, 99, true), "(99) Aurora Viewer 0.8 (Dev)");
         assert_eq!(titled(t, 100, true), "(99+) Aurora Viewer 0.8 (Dev)");
         assert_eq!(titled(&"é".repeat(300), 1, true).chars().count(), MAX_TITLE);
+    }
+    fn title_inputs(language: &'static str, unread: usize, paused: bool, video_memory_full: bool) -> TitleInputs {
+        TitleInputs {
+            language,
+            currency: "L$",
+            unread,
+            paused,
+            video_memory_full,
+        }
+    }
+
+    #[test]
+    fn account_title_uses_trimmed_single_line_login_names() {
+        for last in ["", "  Resident ", "rEsIdEnT\0"] {
+            assert_eq!(account_label("  Example  ", last).as_deref(), Some("Example"));
+        }
+        assert_eq!(
+            account_label("  Zoë\t名\0  ", " Li\u{2028}nden\r\n ").as_deref(),
+            Some("Zoë 名 Li nden")
+        );
+        assert_eq!(account_label("\0\u{1b}\t ", "Linden"), None);
+        assert_eq!(account_label("", "Linden"), None);
+        assert_eq!(account_label("Example", "Linden").as_deref(), Some("Example Linden"));
+    }
+
+    #[test]
+    fn account_title_keeps_localized_order_and_profile() {
+        for (language, viewer, separator, debug, pause, memory) in [
+            ("en", "Aurora Viewer ", " - ", "Debug", "Paused", "Video memory full"),
+            ("fr", "Aurora Viewer ", " - ", "Debug", "En pause", "Mémoire vidéo pleine"),
+            ("ja", "Auroraビューア", "‐", "デバッグ", "一時停止中", "ビデオメモリ不足"),
+        ] {
+            let tag = "Test account-title [AUTOMATION - DO NOT TOUCH]";
+            let base = crate::cli::title_with(language, Some(tag), "debugging", "1.2.3");
+            let shown = title_inputs(language, 100, true, true).compose(&base, Some("Zoë 名"));
+            assert_eq!(
+                shown,
+                format!("(99+) {viewer}1.2.3 ({debug}){separator}{tag}{separator}Zoë 名 — {pause} — {memory}")
+            );
+            for (profile, suffix) in [("ci", " (CI)"), ("release", " (Release)"), ("debug", " (Dev)"), ("other", "")] {
+                let base = crate::cli::title_with(language, None, profile, "1.2.3");
+                assert_eq!(
+                    title_inputs(language, 0, false, false).compose(&base, Some("例")),
+                    format!("{viewer}1.2.3{suffix}{separator}例")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn account_title_budgets_only_the_account_even_with_prefix_and_statuses() {
+        let name = "名".repeat(MAX_TITLE);
+        for unread in [0, 1, 99, 100] {
+            for (paused, full) in [(false, false), (true, false), (false, true), (true, true)] {
+                let inputs = title_inputs("en", unread, paused, full);
+                let base = crate::cli::title_with("en", Some("Test [AUTOMATION - DO NOT TOUCH]"), "debug", "1.2.3");
+                let composed = inputs.compose(&base, Some(&name));
+                assert_eq!(composed.chars().count(), MAX_TITLE);
+                assert!(composed.contains("[AUTOMATION - DO NOT TOUCH] - 名"));
+                assert!(composed.ends_with(&inputs.annotate("名…".into())));
+                let tag = "é".repeat(MAX_TITLE);
+                let overlong = crate::cli::title_with("en", Some(&tag), "debug", "1.2.3");
+                assert_eq!(inputs.compose(&overlong, Some("Example")), inputs.compose(&overlong, None));
+            }
+        }
+        let inputs = title_inputs("ja", 0, false, false);
+        let overhead = crate::cli::title_with("ja", Some(""), "debug", "1.2.3")
+            .render(Some(""))
+            .chars()
+            .count();
+        for (room, shown) in [(0, None), (1, None), (2, Some("名…")), (3, Some("名名名"))] {
+            let tag = "é".repeat(MAX_TITLE - overhead - room);
+            let base = crate::cli::title_with("ja", Some(&tag), "debug", "1.2.3");
+            assert_eq!(inputs.compose(&base, Some("名名名")), base.render(shown));
+        }
+    }
+
+    #[test]
+    fn account_title_cache_tracks_the_session_inputs_and_native_window() {
+        let mut title = MainTitle::default();
+        let first = WindowId::from(1u64);
+        let replacement = WindowId::from(2u64);
+        let inputs = title_inputs("en", 0, false, false);
+        let mut writes = Vec::new();
+        let mut record = |s: &str| writes.push(s.to_owned());
+        title.update(first, inputs, &mut record);
+        title.set_account(account_label("Example", "Resident"));
+        title.update(first, inputs, &mut record);
+        title.update(first, inputs, |_| panic!("unchanged title on the same window"));
+        title.update(replacement, inputs, &mut record);
+        title.update(replacement, title_inputs("ja", 1, true, true), &mut record);
+        title.set_account(None);
+        title.update(replacement, inputs, &mut record);
+        title.set_account(account_label("Other", "Linden"));
+        title.update(replacement, inputs, &mut record);
+        assert_eq!(writes.len(), 6);
+        assert_eq!(writes[1], writes[2]);
+        assert!(writes[1].contains(" - Example"));
+        assert!(writes[3].starts_with("(1) Auroraビューア") && writes[3].contains("‐Example"));
+        assert_eq!(writes[0], writes[4]);
+        assert!(writes[5].contains(" - Other Linden") && !writes[5].contains("Example"));
     }
 }

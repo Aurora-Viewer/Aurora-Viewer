@@ -3217,6 +3217,7 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.attention.title.set_account(None);
         self.parcel_music.enter(false);
         self.stream_url.clear();
         self.music_fade.reset();
@@ -4011,6 +4012,9 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.attention
+                    .title
+                    .set_account(attention::account_label(&l.first_name, &l.last_name));
                 self.parcel_music
                     .enter(!self.demo && self.settings.parcel_music_accounts.contains(&l.agent_id));
                 self.session_started(l.session_id);
