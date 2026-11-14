@@ -452,12 +452,7 @@ impl BackgroundFetch {
             // limit (the Legacy Viewer's InventoryLimitReachedAIS): record it,
             // announce it once, and still walk its subfolders.
             if error.kind == FetchFailure::TooBig && kind == Kind::FolderAndContent && single {
-                log::warn!("inventory folder {folder} is over the server's limit; its direct items cannot be loaded");
-                inv.too_big.insert(folder);
-                if !self.too_big_announced {
-                    self.too_big_announced = true;
-                    self.too_big_new.push(folder);
-                }
+                self.note_too_big(inv, &[folder], error.status);
                 for id in &targets {
                     self.pending.remove(id);
                 }

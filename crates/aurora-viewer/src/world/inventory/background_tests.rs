@@ -564,6 +564,10 @@ fn a_folder_too_big_even_at_depth_zero_is_reported_and_its_subfolders_still_load
     assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched, "the rest of the inventory loads");
     assert_eq!(inv.folders[&id(12)].state, FetchState::Fetched, "its subfolders still load");
     assert_eq!(inv.folders[&id(13)].state, FetchState::Fetched);
-    assert_eq!(fetch.take_too_big().0, [id(11)], "the alert names the folder once");
+    assert_eq!(
+        fetch.take_too_big(),
+        (vec![id(11)], Some(403)),
+        "the alert names the folder once, with the refusal's status"
+    );
     assert!(fetch.take_too_big().0.is_empty());
 }
