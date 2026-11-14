@@ -1118,7 +1118,12 @@ impl WorldMapUi {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0.0, |d| d.as_secs_f64());
-                for (section, items) in crate::ui::places::history_sections(&world.tp_storage.items, filter, now) {
+                for (section, items) in crate::ui::places::history_sections(
+                    &world.tp_storage.items,
+                    filter,
+                    now,
+                    crate::ui::places::history_offset(self.history_zone, now),
+                ) {
                     rows.push(Row::Section(section));
                     rows.extend(items.into_iter().map(Row::History));
                 }

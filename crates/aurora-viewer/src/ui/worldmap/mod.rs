@@ -86,6 +86,9 @@ pub struct WorldMapUi {
     pub want_folders: HashSet<Uuid>,
     /// AURORA_DEMO_MAP=legacy: the side panel without touching the setting.
     pub demo_style: Option<WorldMapStyle>,
+    /// The teleport history's days in the drawer: the zone of Places
+    /// (`tp_history_zone`), set by the app before each frame.
+    pub history_zone: crate::settings::HistoryZone,
 }
 
 impl Default for WorldMapUi {
@@ -108,6 +111,7 @@ impl Default for WorldMapUi {
             wanted_pics: HashSet::new(),
             want_folders: HashSet::new(),
             demo_style: None,
+            history_zone: crate::settings::HistoryZone::default(),
         }
     }
 }

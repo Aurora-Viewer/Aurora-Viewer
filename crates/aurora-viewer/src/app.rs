@@ -19514,6 +19514,7 @@ impl App {
                     images: &self.ui_images,
                     avatars: &self.avatar_pics,
                 };
+                self.worldmap_ui.history_zone = self.places_ui.demo_zone.unwrap_or(self.settings.tp_history_zone);
                 let wm = self.worldmap_ui.show(
                     &ctx,
                     &p,

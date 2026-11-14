@@ -264,7 +264,7 @@ fn now_secs() -> f64 {
 /// Seconds to add to UTC for the history's zone at `now`, as
 /// LLStringOps::getPacificTimeOffset and getLocalTimeOffset give it (the
 /// offset of the moment, for every entry).
-fn history_offset(zone: HistoryZone, now: f64) -> f64 {
+pub(crate) fn history_offset(zone: HistoryZone, now: f64) -> f64 {
     use crate::settings::ClockZone;
     let clock = match zone {
         HistoryZone::Utc => return 0.0,
