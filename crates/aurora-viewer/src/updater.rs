@@ -137,6 +137,9 @@ pub struct Updater {
     rx: crossbeam_channel::Receiver<Event>,
     manual: bool,
     rollback_notice: bool,
+    /// Why the update that restored this version failed, from its helper
+    /// (`install::failed_update`); none from an older helper.
+    pub rollback_reason: Option<String>,
     policy_pending: bool,
     cancel: Cancel,
     prepared: Option<Workspace>,
@@ -175,7 +178,8 @@ impl Updater {
         let (tx, rx) = crossbeam_channel::unbounded();
         let test = aurora_updater::test_environment();
         let enabled = checks_enabled();
-        let rollback = std::env::var_os("AURORA_UPDATE_ROLLBACK").is_some();
+        let rollback = std::env::var_os(aurora_updater::install::ROLLBACK_ENV).is_some();
+        let rollback_reason = if rollback { aurora_updater::install::failed_update() } else { None };
         let source = test.map(|t| t.source.clone()).unwrap_or_default();
         let mut this = Self {
             state: if rollback { State::Rollback } else { State::Idle },
@@ -188,6 +192,7 @@ impl Updater {
             rx,
             manual: false,
             rollback_notice: rollback,
+            rollback_reason,
             policy_pending: false,
             cancel: Cancel::default(),
             prepared: None,

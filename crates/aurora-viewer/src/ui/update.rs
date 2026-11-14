@@ -391,6 +391,14 @@ pub fn show_real(
                 }
                 State::Rollback => {
                     ui.label(RichText::new(aurora_i18n::tr!("update-rollback")).color(p.danger));
+                    // the helper's own words: what to tell, or to look at
+                    if let Some(reason) = &updater.rollback_reason {
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("update-rollback-reason", reason = reason.as_str()))
+                                .size(12.0)
+                                .color(p.muted),
+                        );
+                    }
                 }
                 _ => {}
             }

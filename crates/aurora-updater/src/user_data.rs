@@ -16,9 +16,39 @@ use std::{
 
 struct Entry {
     original: PathBuf,
+    /// The backup, or for a deferred clear the marker that asks for it.
     saved: PathBuf,
     directory: bool,
     existed: bool,
+    /// The cache could not be set aside: the new viewer clears it at its
+    /// start ([`clear_deferred_cache`]), and a rollback only drops the marker.
+    deferred: bool,
+}
+
+/// How long a held cache gets to be let go of after the old viewer exits:
+/// the browser plugin's processes outlive it for a few seconds, and an
+/// antivirus scans the files it just wrote. Windows refuses to rename a
+/// folder while any file in it is open.
+const PATIENCE: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Next to the cache, asks the new viewer to clear it at its start.
+fn pending_marker(cache: &Path) -> Option<PathBuf> {
+    let name = cache.file_name()?.to_string_lossy();
+    Some(cache.with_file_name(format!("{name}.aurora-clear-pending")))
+}
+
+/// What a deferred clear renames the cache to, deleted in the background.
+const CLEARED: &str = ".aurora-cleared-";
+
+fn rename_patiently(from: &Path, to: &Path, patience: std::time::Duration) -> std::io::Result<()> {
+    let start = std::time::Instant::now();
+    loop {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if start.elapsed() >= patience => return Err(e),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(250)),
+        }
+    }
 }
 
 pub(crate) struct Backup {
@@ -59,10 +89,10 @@ fn validate(path: &Path, directory: bool) -> Result<()> {
 impl Backup {
     pub(crate) fn prepare(install: &Path, token: &str, maintenance: Maintenance) -> Result<Self> {
         let (cache, settings) = paths(install)?;
-        Self::from_paths(&cache, &settings, token, maintenance)
+        Self::from_paths(&cache, &settings, token, maintenance, PATIENCE)
     }
 
-    fn from_paths(cache: &Path, settings: &Path, token: &str, maintenance: Maintenance) -> Result<Self> {
+    fn from_paths(cache: &Path, settings: &Path, token: &str, maintenance: Maintenance, patience: std::time::Duration) -> Result<Self> {
         ensure!(uuid::Uuid::parse_str(token).is_ok(), "invalid data backup token");
         let mut backup = Self { entries: Vec::new() };
         for (original, requested, directory) in [
@@ -73,11 +103,8 @@ impl Backup {
                 continue;
             }
             let existed = original.try_exists()?;
-            if existed {
-                validate(original, directory)?;
-            }
             // Resolve the parent, keeping the final component un-followed. A
-            // junction in the data itself was rejected above before any rename.
+            // junction in the data itself is rejected below before any rename.
             let parent = original.parent().context("data parent")?;
             fs::create_dir_all(parent)?;
             let parent = parent.canonicalize()?;
@@ -86,22 +113,46 @@ impl Backup {
             let original = parent.join(name);
             let saved = parent.join(format!("{}.aurora-before-update-{token}", name.to_string_lossy()));
             ensure!(!saved.try_exists()?, "data backup already exists");
-            if existed {
-                fs::rename(&original, &saved).context("cannot back up user data")?;
+            let moved = if existed {
+                validate(&original, directory)
+                    .and_then(|()| rename_patiently(&original, &saved, patience).map_err(Into::into))
+                    .context("cannot back up user data")
+            } else {
+                Ok(())
+            };
+            match moved {
+                Ok(()) => backup.entries.push(Entry {
+                    original,
+                    saved,
+                    directory,
+                    existed,
+                    deferred: false,
+                }),
+                // A cache that cannot be set aside never stops the update
+                // (only data the viewer downloads again): the new viewer
+                // clears it at its start, once whatever held it let go.
+                Err(e) if directory => {
+                    let marker = pending_marker(&original).context("cache marker")?;
+                    fs::write(&marker, token).context("cannot defer the cache clear")?;
+                    log::warn!("update: cache cleared at the new viewer's start instead ({e:#})");
+                    backup.entries.push(Entry {
+                        original,
+                        saved: marker,
+                        directory,
+                        existed,
+                        deferred: true,
+                    });
+                }
+                Err(e) => return Err(e),
             }
-            backup.entries.push(Entry {
-                original,
-                saved,
-                directory,
-                existed,
-            });
         }
         Ok(backup)
     }
 
     pub(crate) fn commit(&mut self) {
         for entry in self.entries.drain(..) {
-            if !entry.existed {
+            // a deferred clear's marker stays for the new viewer
+            if !entry.existed || entry.deferred {
                 continue;
             }
             if let Err(e) = validate(&entry.saved, entry.directory).and_then(|()| {
@@ -123,6 +174,13 @@ impl Backup {
         let mut failures = Vec::new();
         for entry in self.entries.drain(..).rev() {
             let result = (|| -> Result<()> {
+                if entry.deferred {
+                    // the cache was never moved: the old viewer keeps it
+                    return match fs::remove_file(&entry.saved) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+                        _ => Ok(()),
+                    };
+                }
                 if entry.existed {
                     validate(&entry.saved, entry.directory)?;
                 }
@@ -156,9 +214,61 @@ impl Drop for Backup {
     }
 }
 
+/// The cache clear an update could not do (`Backup::from_paths`), at the
+/// start of the viewer it installed, before anything opens the cache: the
+/// folder is renamed at once and deleted in the background. Still held, it
+/// is tried again at the next start.
+pub fn clear_deferred_cache() {
+    let result = (|| -> Result<()> {
+        let exe = std::env::current_exe()?.canonicalize()?;
+        let (cache, _) = paths(exe.parent().context("installation")?)?;
+        clear_deferred_at(&cache)
+    })();
+    if let Err(e) = result {
+        log::warn!("update: the cache clear asked by the update waits for the next start: {e:#}");
+    }
+}
+
+fn clear_deferred_at(cache: &Path) -> Result<()> {
+    let marker = pending_marker(cache).context("cache marker")?;
+    let parent = cache.parent().context("cache parent")?.to_path_buf();
+    let name = cache.file_name().context("cache name")?.to_string_lossy().into_owned();
+    if marker.try_exists()? {
+        if cache.try_exists()? {
+            let aside = parent.join(format!("{name}{CLEARED}{}", uuid::Uuid::new_v4()));
+            fs::rename(cache, &aside).context("cache still in use")?;
+        }
+        fs::remove_file(&marker)?;
+        log::info!("update: cache cleared, as the update asked");
+    }
+    // the folders set aside, this time or by a run cut short since
+    let prefix = format!("{name}{CLEARED}");
+    let old: Vec<PathBuf> = fs::read_dir(&parent)?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|e| e.path())
+        .collect();
+    if !old.is_empty() {
+        // `remove_dir_all` deletes a link inside, never what it leads to
+        let _ = std::thread::Builder::new().name("aurora-cache-cleared".into()).spawn(move || {
+            for dir in old {
+                if let Err(e) = fs::remove_dir_all(&dir) {
+                    log::warn!("update: an old cache is left for the next start ({e})");
+                }
+            }
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No wait for a held cache: the tests hold theirs on purpose.
+    fn now(cache: &Path, settings: &Path, token: &str, maintenance: Maintenance) -> Result<Backup> {
+        Backup::from_paths(cache, settings, token, maintenance, std::time::Duration::ZERO)
+    }
 
     struct Temp(PathBuf);
     impl Temp {
@@ -191,7 +301,7 @@ mod tests {
             for reset_settings in [false, true] {
                 let tmp = Temp::new();
                 let (cache, settings) = tmp.paths();
-                let mut backup = Backup::from_paths(
+                let mut backup = now(
                     &cache,
                     &settings,
                     &uuid::Uuid::new_v4().to_string(),
@@ -225,7 +335,7 @@ mod tests {
     fn failed_start_restores_cache_and_settings_even_after_new_viewer_writes() {
         let tmp = Temp::new();
         let (cache, settings) = tmp.paths();
-        let backup = Backup::from_paths(
+        let backup = now(
             &cache,
             &settings,
             &uuid::Uuid::new_v4().to_string(),
@@ -249,7 +359,7 @@ mod tests {
         let tmp = Temp::new();
         let cache = tmp.0.join("cache");
         let settings = tmp.0.join("profile/settings.json");
-        let backup = Backup::from_paths(
+        let backup = now(
             &cache,
             &settings,
             &uuid::Uuid::new_v4().to_string(),
@@ -267,6 +377,73 @@ mod tests {
         assert!(!settings.exists());
     }
 
+    /// Something keeps the cache from being set aside: a file open in it on
+    /// Windows (the browser plugin, an antivirus), a link in it elsewhere.
+    fn hold(cache: &Path) -> impl Sized {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(cache.join("old-texture"))
+                .expect("held file")
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(cache.join("old-texture"), cache.join("link")).expect("link");
+        }
+    }
+
+    #[test]
+    fn a_held_cache_never_stops_the_update_and_is_cleared_at_the_new_start() {
+        let tmp = Temp::new();
+        let (cache, settings) = tmp.paths();
+        let marker = pending_marker(&cache).expect("marker");
+        let held = hold(&cache);
+        let mut backup = now(
+            &cache,
+            &settings,
+            &uuid::Uuid::new_v4().to_string(),
+            Maintenance {
+                clear_cache: true,
+                reset_settings: true,
+            },
+        )
+        .expect("the update goes on");
+        assert!(marker.exists() && cache.join("old-texture").exists());
+        assert!(!settings.exists(), "the settings reset is still done");
+        backup.commit();
+        assert!(marker.exists(), "the marker stays for the new viewer");
+        drop(held);
+        clear_deferred_at(&cache).expect("cleared at the start");
+        assert!(!cache.exists() && !marker.exists());
+    }
+
+    #[test]
+    fn a_rollback_keeps_the_held_cache_and_drops_the_marker() {
+        let tmp = Temp::new();
+        let (cache, settings) = tmp.paths();
+        let marker = pending_marker(&cache).expect("marker");
+        let held = hold(&cache);
+        let backup = now(
+            &cache,
+            &settings,
+            &uuid::Uuid::new_v4().to_string(),
+            Maintenance {
+                clear_cache: true,
+                reset_settings: false,
+            },
+        )
+        .expect("the update goes on");
+        drop(backup);
+        drop(held);
+        assert!(!marker.exists());
+        assert_eq!(fs::read(cache.join("old-texture")).expect("cache kept"), b"cache");
+        clear_deferred_at(&cache).expect("nothing asked");
+        assert!(cache.join("old-texture").exists());
+    }
+
     #[test]
     fn partial_preparation_failure_restores_the_already_moved_cache() {
         let tmp = Temp::new();
@@ -274,7 +451,7 @@ mod tests {
         fs::remove_file(&settings).expect("fixture");
         fs::create_dir(&settings).expect("invalid settings");
         assert!(
-            Backup::from_paths(
+            now(
                 &cache,
                 &settings,
                 &uuid::Uuid::new_v4().to_string(),

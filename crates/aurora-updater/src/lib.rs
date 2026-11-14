@@ -8,6 +8,8 @@ pub mod media_pack;
 pub mod package;
 mod user_data;
 
+pub use user_data::clear_deferred_cache;
+
 /// Effects resolved for the installed version, including skipped releases.
 #[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Maintenance {

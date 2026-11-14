@@ -9070,6 +9070,7 @@ update-error-drive-root = Aurora ne peut pas se mettre à jour dans un dossier p
 update-error-unsupported-macos = Sur macOS, une nouvelle version s’installe à la main. Téléchargez-la depuis sa page, puis remplacez Aurora Viewer dans votre dossier Applications par la nouvelle.
 update-error-startup = L’auxiliaire de mise à jour n’a pas pu démarrer. L’installation actuelle est conservée.
 update-rollback = La nouvelle version n’a pas démarré correctement. L’ancienne installation a été restaurée.
+update-rollback-reason = Raison : { $reason }
 update-settings = Mises à jour
 update-settings-help = Les mises à jour obligatoires restent vérifiées. Les téléchargements automatiques attendent votre accord pour la relance.
 update-mode-disabled = Mises à jour obligatoires uniquement
