@@ -44,6 +44,8 @@ pub enum CapPurpose {
     GltfMaterials,
     /// RenderMaterials PUT (normal / specular maps).
     LegacyMaterials,
+    /// CreateTaskInventoryItem for the contents of this object.
+    CreateTaskItem(Uuid),
 }
 
 /// One extra parameter block, with its new value (`None`: not in use).
