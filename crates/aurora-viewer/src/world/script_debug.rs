@@ -102,6 +102,7 @@ mod tests {
             owner_id: owner,
             source_type: ChatSourceType::Object,
             chat_type,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "hello".into(),
         }

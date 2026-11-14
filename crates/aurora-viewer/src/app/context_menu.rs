@@ -735,6 +735,11 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::BlockObjectOwner { owner, group_owned } => {
+                if let Err(error) = self.world.block_object_owner(owner, group_owned) {
+                    self.world.system_message(error);
+                }
+            }
             CtxAction::Edit(id) => {
                 // pie menu "Edit": select the object, build floater on Edit (handle_object_edit)
                 if let Some(idx) = self.world.objects.index_of_uuid(&id) {

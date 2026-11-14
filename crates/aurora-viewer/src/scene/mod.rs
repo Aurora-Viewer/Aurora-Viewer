@@ -4982,6 +4982,9 @@ impl Scene {
 
         // objects in parallel
         let blend_casts = aurora_render::shadow_cull::blend_casts();
+        // the mirror the last frame drew (as the flexible prims): only then,
+        // and only on its side, are the blended faces gathered for it
+        let mirror_plane = self.mirror_plane;
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
@@ -5022,6 +5025,7 @@ impl Scene {
             casters: Vec<ShadowCaster>,
             shelter: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
+            refl_blend: Vec<blend_order::BlendEntry>,
             probe: Vec<ShadowCaster>,
             visible: usize,
             usage: Vec<(Uuid, f32, bool)>,
@@ -5049,6 +5053,7 @@ impl Scene {
             casters: Vec::new(),
             shelter: Vec::new(),
             refl: Vec::new(),
+            refl_blend: Vec::new(),
             probe: Vec::new(),
             visible: 0,
             usage: Vec::new(),
@@ -5260,6 +5265,20 @@ impl Scene {
                         }
                     }
                 }
+                // the mirror's blended faces, in view or not (the CPU lists
+                // hold every blended face, GPU culling or not: `is_special`)
+                if reflects && pass == Pass::Blend && mirror_plane.is_some_and(|(p, n)| n.dot(sc - p) > -sr) {
+                    l.refl_blend.push(blend_order::BlendEntry {
+                        distance: if g.rigged { blend_d } else { (sc - view.eye).length() },
+                        cmd,
+                        glow: false,
+                        double_sided: f.two_sided,
+                        rigged: g.rigged,
+                        object: idx as u32,
+                        face: f.te_index,
+                        rig,
+                    });
+                }
                 if usage {
                     // (out of view too: what memory pressure may not
                     // lower a texture under, see `note_usage_away`)
@@ -5331,6 +5350,7 @@ impl Scene {
             a.casters.append(&mut b.casters);
             a.shelter.append(&mut b.shelter);
             a.refl.append(&mut b.refl);
+            a.refl_blend.append(&mut b.refl_blend);
             a.probe.append(&mut b.probe);
             a.visible += b.visible;
             a.usage.append(&mut b.usage);
@@ -5369,6 +5389,10 @@ impl Scene {
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
+        self.lists.blend_precision = blend_order::precision();
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact {
+            blend_order::nearest_first(&mut self.blend_tmp, self.lists.blend_depth);
+        }
         let runs = match self.lists.blend_depth_mode {
             aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,
             aurora_render::RiggedBlendDepth::Split => blend_order::rig_objects,
@@ -5393,6 +5417,11 @@ impl Scene {
         self.lists.shadow_casters.extend(result.casters);
         self.lists.shelter_casters.extend(result.shelter);
         self.lists.reflection = result.refl;
+        // the rigged first, in the Legacy Viewer's order and writing depth as
+        // LLDrawPoolAlpha::forwardRender(true); the rest the mirror sorts
+        let mut refl_blend = result.refl_blend;
+        self.lists.reflection_blend_rigged = blend_order::sort(&mut refl_blend, true);
+        self.lists.reflection_blend = refl_blend.iter().map(|e| e.cmd).collect();
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;

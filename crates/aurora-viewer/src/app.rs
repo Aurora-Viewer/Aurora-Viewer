@@ -1432,6 +1432,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
+    if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.blend_order = v.min(4);
+    }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
@@ -3099,6 +3102,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || mode == "server-error"
             {
                 if mode == "terms" {
                     log::info!(
@@ -10641,6 +10645,13 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        // the order of the blended faces: the user's, the exact one only
+        // where the renderer draws it (not under MSAA, scene/blend_order.rs)
+        let msaa = match self.settings.antialiasing {
+            aa @ 2..=4 => gfx.renderer.msaa_supported().iter().any(|&m| m <= 1 << (aa - 1)),
+            _ => false,
+        };
+        crate::scene::blend_order::set_user(self.settings.blend_order, gfx.renderer.blend_exact_supported() && !msaa);
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
@@ -14810,7 +14821,10 @@ impl App {
             }
             // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
             // `runs` (#966) one second in three
-            if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
+            if matches!(
+                crate::scene::blend_order::mode(),
+                crate::scene::blend_order::Mode::Alternate | crate::scene::blend_order::Mode::ExactAlternate
+            ) {
                 let old = self.sync_alt.is_multiple_of(3);
                 crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
@@ -16777,6 +16791,22 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: Some("login.other-grid.example".into()),
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server fails on its side (an HTTP 500
+                    // to the login request, LoginError::Server)
+                    log::info!("demo login: the login server answers HTTP 500");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: aurora_net::login::LoginError::Server(500).to_string(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
@@ -18987,6 +19017,10 @@ impl App {
                     self.world.experiences.change(experience, change);
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
+                if self.demo && self.frame_count == 760 && crate::demo::object_chat::scene().is_some_and(|scene| scene.inspect) {
+                    self.remote_object = self.world.chat.iter().find_map(|line| self.world.chat_object(line).cloned());
+                    ui::widgets::place_floater(&ctx, "remote_object", egui::pos2(320.0, 100.0), egui::vec2(640.0, 190.0));
+                }
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
@@ -19993,6 +20027,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "server-error"
                         | "add"
                         | "password"
                         | "connecting"
@@ -20002,7 +20037,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -20049,7 +20084,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -20059,7 +20094,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -20996,6 +21031,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));
@@ -21044,6 +21080,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));

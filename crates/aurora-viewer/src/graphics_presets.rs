@@ -107,6 +107,7 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 8,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 // never written by a level (`apply`): the default
@@ -139,6 +140,7 @@ impl Preset {
                 reflection_probes: 0,
                 probe_count: 32,
                 antialiasing: 0,
+                blend_order: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: true,
@@ -170,6 +172,7 @@ impl Preset {
                 reflection_probes: 1,
                 probe_count: 64,
                 antialiasing: 1,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.0,
                 glow: true,
@@ -203,6 +206,7 @@ impl Preset {
                 reflection_probes: 2,
                 probe_count: 128,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 8,
                 sharpen: 0.4,
                 glow: true,
@@ -242,6 +246,7 @@ impl Preset {
                 reflection_probes: 3,
                 probe_count: 256,
                 antialiasing: 6,
+                blend_order: 4,
                 anisotropy: 16,
                 sharpen: 0.4,
                 glow: true,
@@ -630,6 +635,26 @@ pub(crate) fn upgrade_local_light_count(s: &mut Settings) {
     }
 }
 
+/// Settings files written before the order of the blended faces was a
+/// setting (version 39), all sorted: a profile exactly on Potato or Low
+/// keeps the sorted order, as these levels now say; any other takes the
+/// exact order at its finest, the default.
+pub(crate) fn upgrade_blend_order(s: &mut Settings) {
+    let on_level = |level: Preset| {
+        let level = level.values();
+        let current = Values {
+            blend_order: level.blend_order,
+            ..Values::read(s)
+        };
+        current.as_shown() == level.as_shown()
+    };
+    s.blend_order = if on_level(Preset::Potato) || on_level(Preset::Low) {
+        0
+    } else {
+        BLEND_ORDER_FULL
+    };
+}
+
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and
 /// Deluxe turn on.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -691,6 +716,11 @@ pub struct Values {
     pub reflection_probes: u8,
     pub probe_count: u32,
     pub antialiasing: u8,
+    /// `Settings::blend_order`: the sorted order in Potato and Low, the exact
+    /// one at its finest above (a backup or a saved preset written before
+    /// it holds none: the finest, the default then).
+    #[serde(default = "blend_order_full")]
+    pub blend_order: u8,
     pub anisotropy: u16,
     pub sharpen: f32,
     /// RenderGlow. Kept by a saved profile and the safe graphics backup; a
@@ -721,6 +751,13 @@ const ALL_LIGHTS: u32 = crate::scene::lights::MAX_LIGHTS as u32;
 
 fn all_lights() -> u32 {
     ALL_LIGHTS
+}
+
+/// `Settings::blend_order`: the exact order at its finest precision.
+pub(crate) const BLEND_ORDER_FULL: u8 = 4;
+
+fn blend_order_full() -> u8 {
+    BLEND_ORDER_FULL
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -811,6 +848,7 @@ impl Values {
             reflection_probes: s.reflection_probes,
             probe_count: s.probe_count,
             antialiasing: s.antialiasing,
+            blend_order: s.blend_order,
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
             glow: s.glow,
@@ -850,6 +888,7 @@ impl Values {
         s.reflection_probes = self.reflection_probes;
         s.probe_count = self.probe_count;
         s.antialiasing = self.antialiasing;
+        s.blend_order = self.blend_order;
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
         s.glow = self.glow;

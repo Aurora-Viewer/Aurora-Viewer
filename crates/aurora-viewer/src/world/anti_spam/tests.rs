@@ -315,6 +315,7 @@ fn chat(source: Uuid, owner: Uuid, source_type: ChatSourceType, text: &str) -> N
         owner_id: owner,
         source_type,
         chat_type: ChatType::Normal,
+        region: None,
         position: glam::Vec3::ZERO,
         message: text.into(),
     })
