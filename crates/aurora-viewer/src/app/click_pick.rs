@@ -314,6 +314,12 @@ impl App {
     fn mouse_button(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
         match button {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
+            MouseButton::Left if pressed && self.mouse_mode == MouseMode::Steer && self.steer_by_right => {
+                // MMO-style buttons: while the right button steers, the left
+                // one walks forward (a double press runs) and clicks nothing
+                self.left_down = true;
+                self.walk_tap(0, true);
+            }
             MouseButton::Left if pressed => {
                 if !over_ui && self.in_world() && self.camera.mouselook() {
                     self.double_click.reset();

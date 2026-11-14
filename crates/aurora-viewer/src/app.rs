@@ -293,6 +293,9 @@ enum MouseMode {
     Steer,
     /// Alt+left held: alt-camera drag (zoom; Ctrl orbit; Ctrl+Shift pan).
     FocusOrbit,
+    /// Left button held on our avatar with MMO-style mouse buttons: orbit
+    /// the camera around it without turning it (the default's right drag).
+    Orbit,
 }
 
 /// Aurora also uses a held right button to orbit, unlike LLToolPie::handleRightMouseDown
@@ -300,6 +303,8 @@ enum MouseMode {
 /// from stealing ordinary clicks: jitter within 10 UI points never starts an orbit.
 #[derive(Default)]
 struct RightGesture {
+    /// Where the button went down: an orbit gives the cursor back there.
+    start: (f32, f32),
     offset: (f32, f32),
     orbit: bool,
     /// The button has walked, even if the left button has since been released.
@@ -558,6 +563,10 @@ pub struct App {
     left_down: bool,
     /// An unhandled world press may start steering when the right button joins.
     world_mouse_walk_pending: bool,
+    /// The steering (`MouseMode::Steer`) was started by the right button's
+    /// drag (MMO-style mouse buttons): the left button walks and the right
+    /// one's release ends it.
+    steer_by_right: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
     hover_drawn: hover_pick::HoverDrawn,
@@ -1738,6 +1747,7 @@ impl App {
             alt_graph: false,
             left_down: false,
             world_mouse_walk_pending: false,
+            steer_by_right: false,
             clicks: Default::default(),
             hover_drawn: Default::default(),
             script_clicks: Default::default(),
@@ -4480,6 +4490,8 @@ impl App {
             if !self.alt_cursor.free() {
                 self.camera.look(dx, dy, s, &mut self.world.agent);
             }
+        } else if self.mouse_mode == MouseMode::Orbit {
+            self.camera.orbit_drag(dx, dy, s, &mut self.world.agent);
         } else if self.mouse_mode != MouseMode::None {
             // LLToolCamera: steering is the zoom tool on our avatar; the
             // modifiers held now choose the drag (AltGr: Ctrl + Alt)
@@ -4500,6 +4512,14 @@ impl App {
             if !self.right_gesture.motion(dx, dy, self.egui_ctx.pixels_per_point()) {
                 return; // maybe a click: do not move the camera yet
             }
+            if self.right_drag_steers() {
+                self.begin_right_steer();
+                return;
+            }
+            // once it orbits, the drag holds the cursor like the camera's
+            // other drags (LLToolCamera): hidden and locked, so it does not
+            // wander over the screen, and given back where the press began
+            self.hold_drag_cursor(self.right_gesture.start);
             match self.camera.free_mut() {
                 // the free camera looks around instead of orbiting
                 Some(free) => free.drag(dx, dy, s),
@@ -4791,19 +4811,74 @@ impl App {
         })
     }
 
-    /// The right button walks forward while the left button steers our avatar.
+    /// The other button walks forward while one steers our avatar: the
+    /// right one by default, the left one when the right one steers
+    /// (MMO-style mouse buttons).
     fn mouse_walks(&self) -> bool {
-        self.right_drag && self.mouse_mode == MouseMode::Steer
+        self.mouse_mode == MouseMode::Steer && if self.steer_by_right { self.left_down } else { self.right_drag }
     }
 
     /// LLToolCamera's avatar steering, also used by the optional world chord.
     fn begin_mouse_steer(&mut self) {
+        self.steer_by_right = false;
         self.camera.begin_drag(true);
         self.mouse_mode = MouseMode::Steer;
         if self.right_drag {
             self.right_gesture.walked = true;
         }
         self.set_mouselook_grab(true);
+    }
+
+    /// MMO-style mouse buttons: the right drag steers our avatar where it
+    /// orbits by default. Seated, in the photo's free camera or while
+    /// building it keeps looking around.
+    fn right_drag_steers(&self) -> bool {
+        self.settings.mmo_mouse_buttons
+            && self.mouse_mode == MouseMode::None
+            && self.camera.free().is_none()
+            && !self.camera.mouselook()
+            && !self.build.open
+            && !self.world.agent.is_sitting()
+    }
+
+    /// The right drag starts steering our avatar (MMO-style mouse buttons),
+    /// like the left button held on it by default; the left button held
+    /// already walks.
+    fn begin_right_steer(&mut self) {
+        // the cursor comes back where the press began, not where the drag
+        // crossed the click's jitter
+        self.hold_drag_cursor(self.right_gesture.start);
+        let s = &self.settings.camera;
+        if !s.click_avatar_keeps_camera {
+            self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
+        }
+        self.begin_mouse_steer();
+        self.steer_by_right = true;
+        if self.left_down {
+            self.walk_tap(0, true);
+        }
+    }
+
+    /// MMO-style mouse buttons: the left button held on our avatar orbits
+    /// the camera around it without turning it, as the right drag does by
+    /// default.
+    fn begin_avatar_orbit(&mut self) {
+        self.steer_by_right = false;
+        self.mouse_mode = MouseMode::Orbit;
+        self.set_mouselook_grab(true);
+    }
+
+    /// A drag of our avatar by the mouse ends (steering or the MMO-style
+    /// orbit): the camera tool and the cursor are given back.
+    fn end_mouse_drag(&mut self) {
+        self.mouse_mode = MouseMode::None;
+        self.steer_by_right = false;
+        self.camera.end_drag();
+        if !self.camera.mouselook() {
+            self.set_mouselook_grab(false);
+        }
+        // the other button no longer walks: a double click run ends
+        self.check_temp_run();
     }
 
     /// Called only after HUD, media and object click actions have had priority.
@@ -5389,7 +5464,11 @@ impl App {
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, s);
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
-            self.begin_mouse_steer();
+            if self.settings.mmo_mouse_buttons {
+                self.begin_avatar_orbit();
+            } else {
+                self.begin_mouse_steer();
+            }
         } else if crate::autopilot::takes_ground_double_click(crate::autopilot::Press {
             double,
             alt: self.alt,
@@ -7879,8 +7958,16 @@ impl App {
         let was_drag = self.right_drag;
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if pressed {
-            self.right_gesture = RightGesture::default();
+            self.right_gesture = RightGesture {
+                start: self.cursor_pos,
+                ..RightGesture::default()
+            };
             self.start_world_mouse_walk();
+        }
+        if !pressed && self.mouse_mode == MouseMode::Steer && self.steer_by_right {
+            // the right button that steered lets go: steering ends, even
+            // with the left one still walking
+            self.end_mouse_drag();
         }
         if self.mouse_walks() {
             self.right_gesture.walked = true;
@@ -7898,6 +7985,16 @@ impl App {
                 // a click (no drag): context menu
                 self.open_context_menu();
             }
+        }
+        // the end of an orbit gives the cursor back, unless the left button
+        // still steers our avatar or mouselook has it
+        if !pressed && self.right_gesture.orbit && self.mouse_mode == MouseMode::None && !self.camera.mouselook() {
+            self.set_mouselook_grab(false);
+        }
+        // the end of an orbit gives the cursor back, unless the left button
+        // still steers our avatar or mouselook has it
+        if !pressed && self.right_gesture.orbit && self.mouse_mode == MouseMode::None && !self.camera.mouselook() {
+            self.set_mouselook_grab(false);
         }
     }
 
@@ -8004,14 +8101,12 @@ impl App {
             shift: self.shift,
             command: self.command,
         });
-        if self.mouse_mode != MouseMode::None {
-            self.mouse_mode = MouseMode::None;
-            self.camera.end_drag();
-            if !self.camera.mouselook() {
-                self.set_mouselook_grab(false);
-            }
-            // the right button no longer walks: a double right click run ends
+        if self.mouse_mode == MouseMode::Steer && self.steer_by_right {
+            // the right button steers (MMO-style buttons): the left one only
+            // walked, its run ends
             self.check_temp_run();
+        } else if self.mouse_mode != MouseMode::None {
+            self.end_mouse_drag();
         }
     }
 
@@ -8659,6 +8754,11 @@ impl App {
             self.cam_key_since = [None; 10];
             return;
         }
+        if self.mouse_mode == MouseMode::Steer && self.steer_by_right && !self.right_drag {
+            // the right button that steered was let go without its release
+            // (exit prompt, lost focus, mouselook): steering ends with it
+            self.end_mouse_drag();
+        }
         if self.mouse_mode == MouseMode::Steer {
             // Mouse steering (LLToolCamera::mMouseSteering): the mouse turns
             // the avatar itself (cameraOrbitAround), forward and back keep
@@ -8669,8 +8769,9 @@ impl App {
             i.strafe_right |= i.turn_right;
             i.turn_left = false;
             i.turn_right = false;
-            // + right button = walk forward (LLToolCamera::handleRightMouseDown)
-            i.forward |= self.right_drag;
+            // + right button = walk forward (LLToolCamera::handleRightMouseDown);
+            // the left one when the right one steers (MMO-style buttons)
+            i.forward |= self.mouse_walks();
         }
         i.run = self.temp_run.is_some() || self.joystick.running;
         if self.world.rlva.has("temprun") {
@@ -14676,6 +14777,9 @@ impl App {
                 (0, n) if n >= 2 => {
                     if flag("world") || flag("world-off") {
                         self.settings.world_mouse_walk = flag("world");
+                    }
+                    if flag("mmo") {
+                        self.settings.mmo_mouse_buttons = true;
                     }
                     self.cursor_pos = (c[0], c[1]);
                     if flag("right-before-left") {
@@ -23619,6 +23723,22 @@ mod tests {
         let saved = serde_json::to_string(&enabled).expect("serialize synthetic preferences");
         let restored: Settings = serde_json::from_str(&saved).expect("restore synthetic preferences");
         assert!(restored.world_mouse_walk);
+    }
+
+    /// MMO-style mouse buttons are off in older and new settings alike, and
+    /// kept once turned on.
+    #[test]
+    fn mmo_mouse_buttons_are_opt_in_and_survive_a_settings_round_trip() {
+        let old: Settings = serde_json::from_str("{}").expect("old synthetic preferences");
+        assert!(!old.mmo_mouse_buttons);
+        assert!(!Settings::default().mmo_mouse_buttons);
+        let enabled = Settings {
+            mmo_mouse_buttons: true,
+            ..old
+        };
+        let saved = serde_json::to_string(&enabled).expect("serialize synthetic preferences");
+        let restored: Settings = serde_json::from_str(&saved).expect("restore synthetic preferences");
+        assert!(restored.mmo_mouse_buttons);
     }
 
     #[test]

@@ -1541,7 +1541,10 @@ when unfocused") is ignored during a screenshot.
   the `backing up from` and `after walking` yaws match, #1259). Additional
   comma-separated flags:
   `world` enables the world mouse-walk preference for this demo; `world-off`
-  disables it. Aim at land or a noninteractive object to compare both.
+  disables it. `mmo` turns on MMO-style mouse buttons: the left press
+  on the avatar then orbits the camera without turning it, and a right drag
+  (past the click's 10 points) steers instead, the left button walking
+  forward while it steers. Aim at land or a noninteractive object to compare both.
   `left-first` releases the left button before the right; by default the
   right is released first. `right-before-left` presses the right button first.
   `quick` queues both buttons and both releases behind the deferred left
