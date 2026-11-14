@@ -1210,6 +1210,9 @@ impl PageStore {
 
 pub struct TextureTable {
     pub layout: wgpu::BindGroupLayout,
+    /// its entries (the stochastic transparency's sample mask shader is
+    /// written against them, oit_stochastic.rs)
+    pub(crate) layout_entries: Vec<wgpu::BindGroupLayoutEntry>,
     pub bind_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
     /// Packed location of every slot (`tex_loc` in common.wgsl).
@@ -1261,37 +1264,38 @@ impl TextureTable {
         let capacity = capacity.max(RESERVED + 1);
         let page_capacity = page_capacity(bindable, partial);
         let max_layers = limits.max_texture_array_layers.clamp(1, MAX_LAYERS);
+        let layout_entries = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: NonZeroU32::new(page_capacity),
+            },
+            // the entries after the pages: `OTHER_DESCRIPTORS`
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: NonZeroU64::new(8),
+                },
+                count: None,
+            },
+        ];
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("textures"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: NonZeroU32::new(page_capacity),
-                },
-                // the entries after the pages: `OTHER_DESCRIPTORS`
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(8),
-                    },
-                    count: None,
-                },
-            ],
+            entries: &layout_entries,
         });
         let loc_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("texture locations"),
@@ -1346,6 +1350,7 @@ impl TextureTable {
         let bind_group = Self::build(device, &layout, &sampler, &loc_buffer, &store, bound);
         Self {
             layout,
+            layout_entries,
             bind_group,
             sampler,
             loc_buffer,
