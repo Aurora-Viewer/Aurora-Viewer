@@ -241,6 +241,8 @@ struct Slot {
     /// The day's settings map as received (None for Firestorm's default
     /// day, whose asset the settings streamer keeps).
     settings: Option<Arc<Llsd>>,
+    /// The names it was applied with (`DayNames`).
+    names: crate::weather::region::DayNames,
     length: f64,
     offset: f64,
     /// Bumped on every change: a new slot crossfades even with the same source.
@@ -361,6 +363,9 @@ pub struct EnvSelector {
     pending: VecDeque<Pending>,
     /// Aurora Weather by settings asset (`note_asset_weather`).
     asset_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
+    /// The same from the names of the inventory items picked
+    /// (`note_item_name`), for an asset whose own name carries none.
+    item_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
     /// Assets that could not be loaded, for the FailedToFindSettings message.
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
@@ -513,6 +518,7 @@ impl EnvSelector {
             handle,
             day,
             settings,
+            names: Default::default(),
             length,
             offset,
             generation: self.generation,
@@ -537,6 +543,7 @@ impl EnvSelector {
         self.next_fade = if ctx.teleporting { TRANSITION_FAST } else { TRANSITION_DEFAULT };
         let altitudes = answer.altitudes;
         let settings = answer.day_settings.clone();
+        let names = answer.names.clone();
         let day = answer.valid_day();
         if parcel_id == eep::REGION_PARCEL_ID {
             // a valid region day leaves the parcel's in place (RegionInfo
@@ -546,7 +553,9 @@ impl EnvSelector {
                     self.altitudes = altitudes;
                     self.default_pending = None;
                     let (length, offset) = (d.length, d.offset);
-                    self.region = Some(self.slot(handle, Arc::new(d), settings, length, offset));
+                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
+                    slot.names = names.clone();
+                    self.region = Some(slot);
                     AnswerOutcome::RegionDay
                 }
                 None => {
@@ -567,7 +576,9 @@ impl EnvSelector {
             match day {
                 Some(d) => {
                     let (length, offset) = (d.length, d.offset);
-                    self.parcel = Some(self.slot(handle, Arc::new(d), settings, length, offset));
+                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
+                    slot.names = names.clone();
+                    self.parcel = Some(slot);
                     AnswerOutcome::ParcelDay
                 }
                 None => {
@@ -685,6 +696,17 @@ impl EnvSelector {
         }
     }
 
+    /// The names the environment in effect was applied with (the parcel's,
+    /// else the region's), as [`EnvSelector::day_settings`] picks it.
+    pub fn day_names(&self, parcel: bool) -> crate::weather::region::DayNames {
+        let slot = if parcel {
+            self.parcel.as_ref().or(self.region.as_ref())
+        } else {
+            self.region.as_ref()
+        };
+        slot.map(|s| s.names.clone()).unwrap_or_default()
+    }
+
     /// Length and offset (s) of the region's day (LLPanelRegionEnvironment's
     /// mCurrentEnvironment), when it has one.
     pub fn region_timing(&self) -> Option<(f64, f64)> {
@@ -797,6 +819,20 @@ impl EnvSelector {
         self.local.as_ref().and_then(|l| l.weather.as_ref())
     }
 
+    /// An inventory item picked for myself, its asset `asset`: the weather
+    /// its name's code gives (a code typed into an item's name by hand is
+    /// not in its asset, whose name is read first).
+    pub fn note_item_name(&mut self, asset: Uuid, name: &str) {
+        match crate::weather::region::SkyWeather::from_name(name) {
+            Some(w) => {
+                self.item_weather.insert(asset, crate::weather::region::RegionDay::fixed(w));
+            }
+            None => {
+                self.item_weather.remove(&asset);
+            }
+        }
+    }
+
     /// The Aurora Weather of settings assets, read from their names as they
     /// load (scene/mod.rs): an item applied to myself carries it.
     pub fn note_asset_weather(&mut self, asset: Uuid, weather: Option<crate::weather::region::RegionDay>) {
@@ -840,7 +876,11 @@ impl EnvSelector {
                     // a sky or a day sets the weather (or clears it); a water
                     // has none and leaves the sky's
                     if !matches!(*s, super::eep::Settings::Water(_)) {
-                        let weather = self.asset_weather.get(&p.asset).cloned();
+                        let weather = self
+                            .asset_weather
+                            .get(&p.asset)
+                            .or_else(|| self.item_weather.get(&p.asset))
+                            .cloned();
                         self.set_local_weather(weather);
                     }
                 }

@@ -284,6 +284,7 @@ pub(super) fn effects(settings: &crate::settings::Settings, vr: bool) -> String 
         7 => word(true, format_args!("aa-fsr{}", settings.fsr_quality)),
         _ => {}
     }
+    word(settings.blend_order > 0, format_args!("blend-exact{}", settings.blend_order));
     word(settings.bloom, format_args!("bloom"));
     word(settings.glow, format_args!("glow"));
     word(

@@ -237,6 +237,65 @@ fn the_classic_window_keeps_the_general_pane_and_adds_the_members() {
 }
 
 #[test]
+fn the_classic_window_manages_members_and_administers_with_the_abilities() {
+    // #3522: the classic window had no way to edit roles or settings; eject
+    // and assign manage the members but are no administration abilities
+    let manager = MEMBER | powers::MEMBER_EJECT | powers::ROLE_ASSIGN_MEMBER;
+    for (abilities, manages, administers) in [(MEMBER, false, false), (manager, true, false), (u64::MAX, true, true)] {
+        let mut world = world(true, abilities);
+        // the sections folded: Administration with its abilities
+        let mut st = opened(&mut world);
+        let (shown, _) = texts(&mut st, &world, true);
+        assert_eq!(has(&shown, "ui-group-admin-tab"), administers, "{abilities:x}: {shown:?}");
+        // the members opened: managed with the abilities
+        let mut st = opened(&mut world);
+        st.show_member(crate::demo::DEMO_LOUP);
+        let (shown, _) = texts(&mut st, &world, true);
+        assert_eq!(has(&shown, "ui-group-admin-eject"), manages, "{abilities:x}: {shown:?}");
+        // the Legacy panel's columns in the narrow window
+        assert!(!manages || !has(&shown, "ui-group-profile-col-title"), "{shown:?}");
+        if !administers {
+            continue;
+        }
+        let mut st = opened(&mut world);
+        st.show_admin(false);
+        let (shown, _) = texts(&mut st, &world, true);
+        {
+            for key in [
+                "ui-group-admin-roles",
+                "ui-group-admin-identity",
+                "ui-group-admin-bans",
+                "ui-group-admin-new-role",
+            ] {
+                assert!(has(&shown, key), "{key} in {shown:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn administration_stacks_its_lists_in_a_narrow_window() {
+    let ctx = egui::Context::default();
+    for (width, stacked) in [(700.0, false), (400.0, true)] {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(width, 600.0))),
+                ..Default::default()
+            },
+            |ui| {
+                let full = ui.max_rect();
+                let (list, editor) = administration::split(ui, full, 220.0, 200.0);
+                assert_eq!(editor.top() > list.bottom(), stacked, "{width}: {list:?} {editor:?}");
+                assert_eq!(editor.left() > list.right(), !stacked);
+                assert!(full.contains_rect(list) && full.contains_rect(editor));
+            },
+        );
+        // the fonts' atlas, which epaint asserts is taken
+        output.textures_delta.clear();
+    }
+}
+
+#[test]
 fn joining_checks_the_group_limit_and_the_balance() {
     let mut world = world(false, 0);
     let mut st = opened(&mut world);

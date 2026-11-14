@@ -1063,6 +1063,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: format!("@{commands}"),
         }));

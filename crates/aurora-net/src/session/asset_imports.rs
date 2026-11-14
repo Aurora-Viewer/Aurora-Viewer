@@ -6,7 +6,7 @@ use super::*;
 use crate::inventory::{
     InvItem,
     operations::{Mutation, Operation},
-    upload::{Error, Kind, Receipt, Request},
+    upload::{Error, Kind, Receipt, Rejection, Request},
 };
 
 #[derive(Default)]
@@ -68,6 +68,12 @@ struct SettingsCreate {
     /// UpdateSettingsAgentInventory and FetchInventory2.
     caps: (String, String),
     asset_type: i32,
+}
+
+fn material_save_error(reason: String) -> Error {
+    let rejection = Rejection::from_message(&reason);
+    log::warn!("material inventory save did not confirm: {rejection:?}");
+    Error::Uncertain(rejection)
 }
 
 /// PERM_COPY (llpermissionsflags.h).
@@ -374,6 +380,19 @@ impl Session<'_> {
             );
             return;
         };
+        // Refused before CreateInventoryItem, so no empty material is left behind
+        // and the reason is certain (nothing was sent).
+        if let Err(reason) = crate::inventory::operations::material_content_check(&upload.data) {
+            log::warn!("material {} not uploaded: {reason}", upload.name);
+            emit(
+                self.sh,
+                NetEvent::AssetUploaded {
+                    request,
+                    result: Err(Error::Refused(Rejection::from_message(&reason))),
+                },
+            );
+            return;
+        }
         if self.asset_imports.creates.len() >= 8 || upload.expected_cost != 0 {
             emit(
                 self.sh,
@@ -747,7 +766,7 @@ impl Session<'_> {
                     .map_err(|_| Error::Verification)?;
                 let saved = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item.id, 57, pending.upload.data)
                     .await
-                    .map_err(|_| Error::Unknown)?;
+                    .map_err(material_save_error)?;
                 if saved.id != item.id
                     || saved.parent != item.parent
                     || saved.owner != owner
@@ -786,6 +805,7 @@ impl Session<'_> {
             if pending.started.elapsed() < Duration::from_secs(60) {
                 return true;
             }
+            log::warn!("asset import creation timed out before the simulator confirmed inventory item creation");
             emit(
                 self.sh,
                 NetEvent::AssetUploaded {
@@ -801,6 +821,18 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_save_error_keeps_the_server_reason() {
+        assert_eq!(
+            material_save_error("server rejected blend map".into()),
+            Error::Uncertain(Rejection {
+                status: None,
+                identifier: String::new(),
+                messages: vec!["server rejected blend map".into()],
+            })
+        );
+    }
 
     #[test]
     fn creation_defaults_only_update_the_expected_owned_item_and_preserve_owner_rights() {
