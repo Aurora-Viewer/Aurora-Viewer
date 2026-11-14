@@ -992,9 +992,9 @@ mod tests {
     }
 
     /// With "keep the chat bar active" (`keep_focus`): a message sent leaves
-    /// the field with the keyboard, Enter on the empty field gives it back to
-    /// the world, and the next Enter (the viewer's chat shortcut) takes it
-    /// again. Off, a message sent lets the keyboard go, as before.
+    /// the field with the keyboard, and Enter on the empty field leaves it
+    /// there too. Escape gives it back to the world. Off, a message sent
+    /// lets the keyboard go, as before.
     #[test]
     fn the_chat_bar_can_keep_the_keyboard_after_sending() {
         let mut bench = Bench::shown();
@@ -1015,11 +1015,15 @@ mod tests {
         bench.frame(vec![]);
         bench.frame(vec![]);
         assert!(bench.chat.has_focus);
-        // Enter on the empty bar: back to the world
+        // Enter on the empty bar keeps it (CloseChatOnReturn off).
         let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
         assert!(out.is_none());
         bench.frame(vec![]);
-        assert!(!bench.chat.has_focus, "Enter on the empty bar let the keyboard go");
+        assert!(bench.chat.has_focus, "Enter on the empty bar kept the keyboard");
+        // Escape still leaves
+        bench.frame(vec![key(egui::Key::Escape, true, egui::Modifiers::NONE)]);
+        bench.frame(vec![]);
+        assert!(!bench.chat.has_focus, "Escape let the keyboard go");
         // the viewer's Enter shortcut asks for the bar again
         bench.chat.focus_request = true;
         bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
@@ -1036,6 +1040,68 @@ mod tests {
         bench.frame(vec![]);
         bench.frame(vec![]);
         assert!(!bench.chat.has_focus, "off: the bar let the keyboard go after sending");
+    }
+
+    /// Keep-active on: the Enter after a sent line, on the empty bar, leaves
+    /// the keyboard there. FSNearbyChatControl::autohide drops focus only
+    /// when CloseChatOnReturn is on (indra/newview/fsnearbychatcontrol.cpp).
+    #[test]
+    fn an_empty_enter_keeps_the_bar_when_it_stays_active() {
+        let mut bench = Bench::shown();
+        bench.chat.keep_focus = true;
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("one".into())]);
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        assert_eq!(out.expect("sent").message, "one");
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus);
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        assert!(out.is_none());
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus, "the Enter after the message kept the bar");
+    }
+
+    /// Keep-active off: Text, Enter, Enter in one frame sends the line, and
+    /// the second Enter takes the bar back (start-chat). Return is handled
+    /// per key (LLViewerWindow::handleUnicodeChar).
+    #[test]
+    fn a_second_enter_in_the_same_frame_takes_the_bar_back() {
+        let mut bench = Bench::shown();
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus);
+        let (out, _, _) = bench.frame(vec![
+            egui::Event::Text("one".into()),
+            key(egui::Key::Enter, true, egui::Modifiers::NONE),
+            key(egui::Key::Enter, true, egui::Modifiers::NONE),
+        ]);
+        assert_eq!(out.expect("sent").message, "one");
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus, "the second Enter took the bar back");
+    }
+
+    /// Letters after Enter in the same frame are the next line, not part of
+    /// the one just sent.
+    #[test]
+    fn letters_after_enter_in_the_same_frame_stay_for_the_next_line() {
+        let mut bench = Bench::shown();
+        bench.chat.keep_focus = true;
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus);
+        let (out, _, _) = bench.frame(vec![
+            egui::Event::Text("one".into()),
+            key(egui::Key::Enter, true, egui::Modifiers::NONE),
+            egui::Event::Text("two".into()),
+        ]);
+        assert_eq!(out.expect("sent").message, "one");
+        assert_eq!(bench.chat.input, "two");
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus);
     }
 
     /// #1009: autohidden, the chat island shows only while the chat is used
