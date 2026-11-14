@@ -1306,7 +1306,7 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|zoom-unloaded|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit|head-follow|pelvis-follow|hand-follow`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|spin,x,y[,px]|zoom-resident|zoom-unloaded|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit|head-follow|pelvis-follow|hand-follow`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
   winit reports it (neither Ctrl nor Alt), so its `demo camera` lines match
@@ -1314,7 +1314,11 @@ when unfocused") is ignored during a screenshot.
   n frames (60 by default), then the camera no longer moves (close-up with a
   fixed camera, to compare consecutive screenshots); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
-  until frame 1200; press on our own name plate then drag (steering);
+  until frame 1200; `spin,x,y[,px]`: Alt+click at (x, y) at frame 600, then a
+  steady Ctrl+Alt orbit of `px` mouse pixels a frame (0.5 by default) until
+  frame 1200: the view turns all the time, for the shadows that depended on
+  where the camera looked (`AURORA_SHADOW_ANCHOR`, `AURORA_DEMO_PROJECTOR`);
+  press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
   world view" above the bottom bar); `ml-zoom`: the right button held in
   mouselook at 640 (the normal angle stays: no zoom was set with the wheel
@@ -4694,10 +4698,15 @@ both open states and the selection count. Capture at frame 620.
   our avatar. The square of light of the projector with the white image has
   soft edges (visible with `AURORA_DEMO_TOD=3`): the fade comes from the
   distance to the focal point, not from the levels of the texture. The post
-  casts its shadow on the wall: the two projectors most present on screen
-  have a shadow map (`AURORA_PROJECTOR_SHADOWS=0`: none, the wall is
-  lit behind the post), and their shadows fade in
-  during the first second. `point`: the three projectors without their
+  casts its shadow on the wall: the projectors on screen that send the most
+  light to the camera (the Legacy Viewer ranks the ones in its frustum by
+  apparent size) have a shadow map, two at most (`AURORA_PROJECTOR_SHADOWS=0`:
+  none, the wall is lit behind the post), and their shadows fade in during
+  the first second. A projector that held a map keeps it for 5 seconds after
+  it leaves the screen, so that turning back shows its shadow at once: with
+  `AURORA_DEMO_CAMERA=spin,640,400,2` and `AURORA_PROJECTOR_TRACE=1` (the
+  log's `projector trace` lines) the same two projectors keep their maps and
+  their fade of 1 along the turn. `point`: the three projectors without their
   texture, hence point lights, as they were rendered before being supported —
   the pool light then lights in cyan our avatar from below and
   the sides of the slab's relief turned towards it. The orange light is
@@ -11334,6 +11343,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MIP_FILTER=weighted` | Colour of the mips averaged by the alpha, as before (distant foliage brighter than in the Legacy Viewer) |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
+| `AURORA_SHADOW_ANCHOR=old` | The sun's texel grids anchored on the cascades' centres every frame, as before (far shadow edges hop as the camera turns), to compare |
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
@@ -12587,6 +12597,26 @@ What the inventory must show with these scenarios:
   default): two texels of the cascade, in metres along the light. `alt`:
   one second in two each. In the demo at noon (`AURORA_DEMO_TOD` unset),
   camera behind our avatar: the stairs on the skirt under the waist.
+- **`AURORA_SHADOW_ANCHOR=old`**: the texel grid of each sun cascade is
+  anchored on a world point near its centre. The anchor used to be taken
+  from the centre every frame, so each time the camera, turning or walking,
+  took a centre across a cell of the lattice (3 to 4 times a full turn) the
+  grid changed phase by up to half a texel and every far shadow edge of that
+  cascade hopped (up to 11 cm in the third cascade at the default quality).
+  Now the anchor is held until the sun or moon has swept the grid by half a
+  texel at the cascade's centre (seconds on the default day cycle, never on a
+  fixed sun), and taken again then, when the cascade's size changes, at a
+  photo and at a region change. `old` brings back the anchor of every frame.
+  To compare with a fixed sun (`AURORA_DEMO_TOD=2`) and
+  `AURORA_DEBUG_SHADOWS=1` (the shadows are the dark areas, in the colour of
+  the cascade they come from, which makes the edges easy to see):
+  `AURORA_DEMO_CAMERA=spin,640,400,1` turns the camera steadily from frame
+  600; capture two frames of one run (`AURORA_CAPTURE_FRAMES=700,900`) and
+  look at the far edges (the box on the left, the rim of the torus): with
+  `old`, some move by about a pixel between two captures taken either side of
+  a crossing; without, they only follow the camera. The unit test
+  `the_cascade_grid_keeps_its_phase_over_a_full_turn_with_a_fixed_sun` checks
+  the grid's phase over a full turn.
 - **`AURORA_DEBUG_SHADOWS=1`**: instead of the image, objects and terrain
   show the cascade each pixel reads — red, green then blue from the finest,
   mixed where two cascades are blended, black beyond the shadow distance —
