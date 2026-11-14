@@ -10,8 +10,18 @@ pub fn scenario() -> bool {
     std::env::var_os("AURORA_DEMO_FLOATING_TEXT").is_some()
 }
 
+/// `background`: every floating text on its background
+/// (FSHudTextShowBackground 2), fading from 16 m instead of 8.
+pub fn apply_preferences(settings: &mut crate::settings::Settings) {
+    if std::env::var("AURORA_DEMO_FLOATING_TEXT").is_ok_and(|mode| mode == "background") {
+        settings.floating_text_background = crate::settings::FloatingTextBackground::All;
+        settings.floating_text_fade_distance = 16.0;
+    }
+}
+
 pub fn events() -> Vec<NetEvent> {
-    if std::env::var("AURORA_DEMO_FLOATING_TEXT").is_ok_and(|mode| mode == "world") {
+    let mode = std::env::var("AURORA_DEMO_FLOATING_TEXT").unwrap_or_default();
+    if mode == "world" || mode == "background" {
         let start = Vec3::new(132.0, 126.0, 0.0);
         let ahead = Vec3::new(0.8, 0.4, 0.0).normalize();
         let p = start + ahead * 5.0 - Vec3::new(ahead.y, -ahead.x, 0.0) * 3.2;
@@ -31,10 +41,19 @@ pub fn events() -> Vec<NetEvent> {
             ExtraParams::default(),
             "First line\nSecond line\nThird line",
         );
-        return vec![NetEvent::ObjectUpdates {
-            handle: HANDLE,
-            objects: vec![cube],
-        }];
+        let mut objects = vec![cube];
+        if mode == "background" {
+            // a dark text farther away: a light background, faded with it
+            let p = start + ahead * 13.0 + Vec3::new(ahead.y, -ahead.x, 0.0) * 2.0;
+            let mut far = objects[0].clone();
+            far.local_id = ROOT + 20;
+            far.full_id = u(u128::from(far.local_id));
+            far.position = Vec3::new(p.x, p.y, floor_at(p.x, p.y) + 0.25);
+            far.text = "Dark text, farther away".to_owned();
+            far.text_color = [20, 24, 70, 255];
+            objects.push(far);
+        }
+        return vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }];
     }
     hud_events()
 }
