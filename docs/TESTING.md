@@ -1759,7 +1759,14 @@ when unfocused") is ignored during a screenshot.
   shows M, World map Ctrl+M and Snapshot to disk Ctrl+Ù (the AZERTY keys
   they are bound to); with `qwertz`, Snapshot to disk shows Ctrl+Ö. Saved
   bindings keep their keys, except the one-time move of the former US QWERTY
-  defaults (settings version 12).
+  defaults (settings version 12). With `system`, the labels follow a layout
+  switched while the viewer runs, on every system, and the log says `the
+  active layout changed`; the other values fix the layout and follow none.
+  On Wayland or XWayland with several layouts (`us,fr`), the first layout
+  stands in until the window gets the focus; when the reported one differs,
+  the log also says `the default shortcuts move to the reported layout` (a
+  new profile, or a file older than settings version 40, once). Switching
+  the layout while the viewer runs changes the labels, never the bindings.
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).

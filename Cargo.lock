@@ -768,6 +768,7 @@ dependencies = [
  "unicode-bidi",
  "unicode-bidi-mirroring",
  "uuid",
+ "wayland-backend",
  "wayland-client",
  "wgpu",
  "windows",
