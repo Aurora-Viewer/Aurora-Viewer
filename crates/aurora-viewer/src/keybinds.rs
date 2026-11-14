@@ -1518,6 +1518,16 @@ mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
 
+    /// LLKeyboard names KEY_END "End" (indra/llwindow/llkeyboard.cpp). Japanese
+    /// keyboards print End, as they print Home: 終了 read as "Quit".
+    #[test]
+    fn the_end_key_keeps_its_keyboard_name() {
+        assert_eq!(aurora_i18n::text_in("en", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("ja", "keybinds-end-2"), "End");
+        assert_eq!(aurora_i18n::text_in("fr", "keybinds-end-2"), "Fin");
+        assert_eq!(key_label("End"), aurora_i18n::text_in(aurora_i18n::language(), "keybinds-end-2"));
+    }
+
     /// Space stops moving while held, as the Legacy Viewer's stop_moving;
     /// a settings file from before it keeps a Space the user gave to
     /// another action.
