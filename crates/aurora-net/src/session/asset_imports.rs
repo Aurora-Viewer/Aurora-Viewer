@@ -380,6 +380,19 @@ impl Session<'_> {
             );
             return;
         };
+        // Refused before CreateInventoryItem, so no empty material is left behind
+        // and the reason is certain (nothing was sent).
+        if let Err(reason) = crate::inventory::operations::material_content_check(&upload.data) {
+            log::warn!("material {} not uploaded: {reason}", upload.name);
+            emit(
+                self.sh,
+                NetEvent::AssetUploaded {
+                    request,
+                    result: Err(Error::Refused(Rejection::from_message(&reason))),
+                },
+            );
+            return;
+        }
         if self.asset_imports.creates.len() >= 8 || upload.expected_cost != 0 {
             emit(
                 self.sh,
