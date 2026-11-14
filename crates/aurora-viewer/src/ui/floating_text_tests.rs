@@ -66,6 +66,7 @@ fn block(text: &str, font: &str, scale: f32, native: f32, zoom: f32, color: Colo
             12.0,
             color,
             zoom,
+            None,
         );
     });
     (text_shapes(output), shift)
@@ -223,6 +224,7 @@ fn world_objects_use_the_same_baselines_without_changing_avatar_tags() {
             None,
             None,
             None,
+            None,
         );
         assert!(hits.is_empty());
     });
@@ -295,6 +297,7 @@ fn tessellated_glyphs_stay_on_physical_pixels_without_resizing_the_font() {
                             12.0,
                             Color32::WHITE,
                             zoom,
+                            None,
                         );
                         reference = Some(crate::ui::bidi::no_wrap(
                             ui.ctx(),
@@ -342,4 +345,119 @@ fn tessellated_glyphs_stay_on_physical_pixels_without_resizing_the_font() {
             }
         }
     }
+}
+
+/// The world cube of the baseline test, its prim, and what `hud::draw`
+/// paints of it with `settings`, the pointer on `hovered`.
+fn world_cube_frame(settings: &crate::settings::Settings, hover: bool) -> Vec<Shape> {
+    use glam::{Mat4, Vec3, Vec4};
+    let lib = Arc::new(AvatarLibrary::load());
+    let mut world = World::new(lib.clone());
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    let texted: Vec<_> = world.objects.texted().map(|(idx, _)| idx).collect();
+    for idx in texted {
+        world.objects.get_mut(idx).expect("fixture object").text.clear();
+    }
+    for mut event in crate::demo::floating_text::hud_events() {
+        if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = &mut event {
+            objects.truncate(1);
+            let cube = &mut objects[0];
+            cube.parent_id = 0;
+            cube.state = 0;
+            cube.position = Vec3::ZERO;
+            cube.scale = Vec3::splat(0.5);
+            cube.text = "One\nTwo".into();
+            cube.text_color = [255; 4];
+        }
+        world.apply(event);
+    }
+    let cube = world.objects.texted().map(|(idx, _)| idx).next().expect("the cube");
+    let scene = Scene::new(std::path::PathBuf::new(), lib);
+    let ctx = context(fonts::INTER, 1.0);
+    let mut output = ctx.run_ui(input(1.0), |ui| {
+        let proj = hud::Projector {
+            view_proj: Mat4::from_cols(Vec4::X, Vec4::Z, Vec4::Y, Vec4::W),
+            width: 1600.0,
+            height: 1000.0,
+            ppp: 1.0,
+        };
+        hud::draw(
+            ui.ctx(),
+            &crate::theme::Theme::default().palette(),
+            &crate::ui::icons::Icons::default(),
+            &world,
+            &scene,
+            &proj,
+            // about 4 m from the text
+            Vec3::new(0.0, -4.0, 0.3),
+            false,
+            hud::AvatarTags::Hidden,
+            settings,
+            &mut hud::NameTagVisibility::default(),
+            &std::collections::HashMap::new(),
+            &settings.audio,
+            &mut crate::ui::voice_tag::VoiceTags::default(),
+            None,
+            None,
+            None,
+            None,
+            hover.then_some(cube),
+        );
+    });
+    output.textures_delta.clear();
+    output.shapes.into_iter().map(|s| s.shape).collect()
+}
+
+fn texts_and_cards(shapes: &[Shape]) -> (usize, Vec<Color32>) {
+    let texts = shapes
+        .iter()
+        .filter(|s| matches!(s, Shape::Text(t) if t.override_text_color.is_none()))
+        .count();
+    let cards = shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Rect(r) => Some(r.fill),
+            _ => None,
+        })
+        .collect();
+    (texts, cards)
+}
+
+#[test]
+fn the_fade_distance_follows_the_preferences_and_the_highlighted_text_ignores_it() {
+    let mut settings = crate::settings::Settings::default();
+    assert_eq!(texts_and_cards(&world_cube_frame(&settings, false)), (1, vec![]), "8 m by default");
+    settings.floating_text_fade_distance = 1.0;
+    settings.floating_text_fade_range = 1.0;
+    assert_eq!(texts_and_cards(&world_cube_frame(&settings, false)).0, 0, "gone past 2 m");
+    assert_eq!(texts_and_cards(&world_cube_frame(&settings, true)).0, 0, "hovered, no highlight");
+    settings.floating_text_hover_highlight = true;
+    assert_eq!(
+        texts_and_cards(&world_cube_frame(&settings, true)).0,
+        1,
+        "highlighted at any distance"
+    );
+}
+
+#[test]
+fn the_background_is_painted_behind_the_text_as_asked() {
+    use crate::settings::FloatingTextBackground as Bg;
+    let mut settings = crate::settings::Settings {
+        floating_text_background: Bg::All,
+        ..Default::default()
+    };
+    // a white text: black at FSHudTextBackgroundOpacity (0.75)
+    assert_eq!(
+        texts_and_cards(&world_cube_frame(&settings, false)),
+        (1, vec![Color32::from_black_alpha(191)])
+    );
+    settings.floating_text_background = Bg::Hovered;
+    assert!(texts_and_cards(&world_cube_frame(&settings, false)).1.is_empty());
+    settings.floating_text_hover_highlight = true;
+    assert_eq!(
+        texts_and_cards(&world_cube_frame(&settings, true)).1,
+        vec![Color32::from_black_alpha(191)]
+    );
 }

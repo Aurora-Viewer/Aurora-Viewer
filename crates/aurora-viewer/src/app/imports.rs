@@ -213,7 +213,12 @@ impl App {
             && let Some(index) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
             && let Some(object) = self.world.objects.get(index)
         {
-            let mesh = entry.local_mesh_ids.first().copied();
+            let mesh = self
+                .imports
+                .local_targets
+                .get(&object.full_id)
+                .and_then(|target| target.mesh(entry))
+                .map(|mesh| mesh.0);
             let matches_mesh = |key| matches!(key, Some(crate::scene::GeomKey::Mesh { id, .. }) if Some(id) == mesh);
             let gpu = self.scene.gpu.get(index);
             let texture = gpu.is_some_and(|gpu| gpu.faces.iter().any(|face| face.tex_id == entry.id));
@@ -965,13 +970,13 @@ impl App {
             let Some(entry) = self.imports.entries.iter().find(|e| e.id == target.entry) else {
                 continue;
             };
-            let Some(asset) = entry.local_mesh_ids.get(target.model).copied() else {
+            let Some((asset, fit)) = target.mesh(entry) else {
                 if !entry.local_mesh_ids.is_empty() {
                     invalid.push(*id);
                 }
                 continue;
             };
-            let scale = if target.use_scale {
+            let scale = if target.use_scale && !target.scene {
                 if let Some(Source::Mesh(draft)) = &entry.source {
                     draft
                         .scene
@@ -996,6 +1001,7 @@ impl App {
                     .and_then(|v| v.sculpt)
                     .is_some_and(|s| s.texture == asset)
                     && object.render.local_scale == scale
+                    && object.render.local_fit == fit
             }) {
                 continue;
             }
@@ -1007,6 +1013,7 @@ impl App {
             });
             object.render.local_volume = Some(Box::new(volume));
             object.render.local_scale = scale;
+            object.render.local_fit = fit;
             object.shape_dirty = true;
             object.render.needs_records = true;
             // counted again from the local mesh (face stepping, texturing)
@@ -1022,6 +1029,7 @@ impl App {
             {
                 object.render.local_volume = None;
                 object.render.local_scale = None;
+                object.render.local_fit = None;
                 object.shape_dirty = true;
                 object.render.needs_records = true;
             }

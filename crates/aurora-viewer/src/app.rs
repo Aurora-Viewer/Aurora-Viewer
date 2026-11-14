@@ -914,6 +914,11 @@ pub struct App {
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
     demo_slm: Option<crate::world::marketplace::demo::DemoSlm>,
+    /// `AURORA_DEMO_INVENTORY=big:...,fetch`: what the simulated AIS server
+    /// answers from, the live inventory starting cold.
+    demo_fetch: Option<crate::world::inventory::demo::FetchSource>,
+    /// `AURORA_DEMO_INVENTORY_FAULT`: the fetch demo's intended failures.
+    demo_faults: crate::world::inventory::demo::Faults,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
     region_tracker_ui: ui::region_tracker::RegionTrackerUi,
@@ -1439,7 +1444,7 @@ fn apply_test_overrides(settings: &mut Settings) {
         settings.shadow_quality = v;
     }
     if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
-        settings.blend_order = v.min(4);
+        settings.blend_order = v.min(crate::graphics_presets::BLEND_ORDER_STOCHASTIC);
     }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
@@ -1947,6 +1952,8 @@ impl App {
             destinations_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
+            demo_fetch: None,
+            demo_faults: Default::default(),
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
             region_tracker_ui: Default::default(),
@@ -2961,7 +2968,12 @@ impl App {
             {
                 self.world.apply(NetEvent::Balance(balance - price));
             }
-            for mut ev in crate::demo::demo_reply(&cmd) {
+            let events = match self.demo_fetch.as_ref() {
+                Some(source) => crate::world::inventory::demo::fetch_reply(&cmd, &self.world.inventory, source, &mut self.demo_faults)
+                    .unwrap_or_else(|| crate::demo::demo_reply(&cmd)),
+                None => crate::demo::demo_reply(&cmd),
+            };
+            for mut ev in events {
                 crate::ao::demo::preserve_custom_motions(&self.world, &cmd, &mut ev);
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
@@ -5023,6 +5035,7 @@ impl App {
             Action::ResetCameraAngles => self.reset_camera_angles(),
             Action::FocusSelection => self.look_at_selection(false),
             Action::ZoomSelection => self.look_at_selection(true),
+            Action::LookAtLastChatter => self.look_at_last_chatter(),
             Action::Chat => self.chat_ui.focus_request = true,
             Action::ToggleMic => self.toggle_mic(),
             // the shortcuts of the windows, like their toolbar buttons: a
@@ -13633,6 +13646,7 @@ impl App {
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         self.demo_admin_status();
+        self.demo_sysinfo();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -14230,6 +14244,7 @@ impl App {
             }
         }
         self.demo_altgr_shortcuts();
+        self.demo_look_at_last_chatter();
         // AURORA_DEMO_KEY="down" (up, left, right): hold that arrow from frame
         // 235, log the agent and drawn body headings every 30 frames;
         // "up:pulse": 2 s held, 2 s released, over and over (by the clock,
@@ -14365,6 +14380,13 @@ impl App {
                         {
                             self.build.open_task_item_properties(object, &item);
                         }
+                    }
+                    crate::build::demo::Step::ContentsNew => {
+                        if let Some(idx) = self.build.contents_target(&self.world) {
+                            self.build.new_notecard(&self.world, idx);
+                            self.build.new_script(&self.world, idx, false);
+                        }
+                        self.flush_build();
                     }
                     crate::build::demo::Step::ContentsSelection(rename) => {
                         if let Some(idx) = self.build.contents_target(&self.world)
@@ -14919,6 +14941,13 @@ impl App {
                 crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
+            // AURORA_OIT=alt: the order of the setting one second in three,
+            // the stochastic transparency the others
+            if aurora_render::oit_stochastic::alternates() {
+                let old = self.sync_alt.is_multiple_of(3);
+                aurora_render::oit_stochastic::set_alt_off(old);
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
             if name_tags_env() == Some(NameTagsEnv::Alternate) {
                 let old = self.sync_alt.is_multiple_of(3);
@@ -14978,14 +15007,24 @@ impl App {
         });
     }
 
+    /// The rewrites a typed line takes before it is sent (AutoCloseOOC,
+    /// AllowMUpose), from the Chat preferences.
+    fn line_rewrite(&self) -> ui::chat::LineRewrite {
+        ui::chat::LineRewrite {
+            close_ooc: self.settings.auto_close_ooc,
+            colon_emote: self.settings.colon_emote,
+        }
+    }
+
     /// Local chat from the chat bar or the conversations window: a chat bar
     /// command (FSCmdLine) or a line sent on its channel.
     fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
         if c.channel == 0 {
-            // the MU* pose first, then the gesture (FSNearbyChat::sendChat),
-            // and the channel read again from what the gesture says (#1916)
-            let (channel, message, gesture) =
-                ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, self.settings.colon_emote);
+            // the OOC close and the MU* pose first, then the gesture
+            // (FSNearbyChat::sendChat), and the channel read again from what
+            // the gesture says (#1916)
+            let rewrite = self.line_rewrite();
+            let (channel, message, gesture) = ui::chat::prepare_local_line(&mut self.gesture_state.manager, &c.message, rewrite);
             c.channel = channel;
             c.message = message;
             if let Some(id) = gesture {
@@ -15136,11 +15175,19 @@ impl App {
         for id in a.gestures {
             self.gesture_play(id, None);
         }
+        for to in a.sysinfo {
+            self.ask_sysinfo(to, true);
+        }
         for (to, mut text) in a.ims {
-            // ":" as "/me" in the conversations too (FSFloaterIM::sendMsg)
-            if self.settings.colon_emote {
-                ui::chat::colon_emote(&mut text);
+            // FSFloaterIM::sendMsg: "/sysinfo" in a 1:1 conversation sends
+            // the system information instead of the line
+            if text.starts_with("/sysinfo") && !self.world.is_group_session(&to) {
+                self.ask_sysinfo(to, false);
+                continue;
             }
+            // the OOC close and ":" as "/me" in the conversations too
+            // (FSFloaterIM::sendMsg)
+            self.line_rewrite().apply(&mut text);
             let text = ui::emoji::expand_shortcodes(&text);
             self.chat_ui.recent_emojis.note(&text);
             if self.world.is_group_session(&to) {
@@ -17175,6 +17222,7 @@ impl App {
                             opacity: self.settings.chat_bubble_opacity,
                             now: Instant::now(),
                         }),
+                        self.look_hover.and_then(|(idx, _)| idx),
                     )
                 };
                 ui::contact_markers::draw(
@@ -18325,6 +18373,7 @@ impl App {
                         }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
+                        ui::chat::ConvAction::SendSysinfo(to) => a.sysinfo.push(to),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
@@ -19394,6 +19443,7 @@ impl App {
                     sort: self.settings.places_sort,
                     favorites: &favorites_order,
                 });
+                self.places_ui.history_zone = self.places_ui.demo_zone.unwrap_or(self.settings.tp_history_zone);
                 let places_acts = self.places_ui.show(
                     &ctx,
                     &mut c,
@@ -19454,6 +19504,11 @@ impl App {
                         }
                         PlacesAction::Sort(by) => {
                             self.settings.places_sort = by;
+                            self.settings.save();
+                        }
+                        PlacesAction::HistoryZone(zone) => {
+                            self.places_ui.demo_zone = None;
+                            self.settings.tp_history_zone = zone;
                             self.settings.save();
                         }
                     }
@@ -19545,6 +19600,7 @@ impl App {
                     images: &self.ui_images,
                     avatars: &self.avatar_pics,
                 };
+                self.worldmap_ui.history_zone = self.places_ui.demo_zone.unwrap_or(self.settings.tp_history_zone);
                 let wm = self.worldmap_ui.show(
                     &ctx,
                     &p,
@@ -19590,6 +19646,7 @@ impl App {
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
                 self.about_window(&ctx, &p, renderer);
+                self.sysinfo_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
@@ -19818,6 +19875,8 @@ struct UiActions {
     font_changed: bool,
     cancel_loading: bool,
     ims: Vec<(uuid::Uuid, String)>,
+    /// "Send system information" asked in these residents' conversations.
+    sysinfo: Vec<uuid::Uuid>,
     offer_tp: Vec<uuid::Uuid>,
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,
@@ -19858,6 +19917,7 @@ impl UiActions {
         self.font_changed |= later.font_changed;
         self.cancel_loading |= later.cancel_loading;
         self.ims.extend(later.ims);
+        self.sysinfo.extend(later.sysinfo);
         self.offer_tp.extend(later.offer_tp);
         first(&mut self.landmark, later.landmark);
         first(&mut self.audio, later.audio);
@@ -20487,9 +20547,11 @@ impl ApplicationHandler for App {
             }
             crate::demo::contact_markers::apply_preferences(&mut self.settings);
             audio_mute::apply_demo(&mut self.settings.audio);
+            crate::demo::floating_text::apply_preferences(&mut self.settings);
             if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
                 self.panels.ao = false;
             }
+            crate::demo::tags::apply_distance_preferences(&mut self.settings);
             // AURORA_DEMO_TAGS: residents whose name plates show every
             // state, at the three distance levels
             if crate::demo::tags::mode().is_some() {
@@ -20607,7 +20669,7 @@ impl ApplicationHandler for App {
             // preview; ":open": its first place selected; both: ":wide,open";
             // ":classic": the Legacy Viewer's tabs for this run, not saved;
             // ":narrow": the window 260 points wide, its least width at
-            // text size 1)
+            // text size 1; ":utc" / ":local": the history in that zone)
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
             let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
@@ -20622,6 +20684,11 @@ impl ApplicationHandler for App {
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
+                self.places_ui.demo_zone = demo_how.split(',').find_map(|w| match w {
+                    "utc" => Some(crate::settings::HistoryZone::Utc),
+                    "local" => Some(crate::settings::HistoryZone::Local),
+                    _ => None,
+                });
             }
             // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
             // page, open at start
@@ -21957,7 +22024,21 @@ impl ApplicationHandler for App {
                     }
                 }
                 if let Some(big) = crate::world::inventory::demo::big() {
-                    let open = crate::world::inventory::demo::seed_big(&mut self.world.inventory, self.world.agent_id, big.items);
+                    if std::env::var_os("AURORA_DEMO_INVENTORY_FAULT").is_some() && !big.fetch {
+                        log::warn!("AURORA_DEMO_INVENTORY_FAULT is ignored without AURORA_DEMO_INVENTORY=big:...,fetch");
+                    }
+                    let open = if big.fetch {
+                        let (open, source) =
+                            crate::world::inventory::demo::seed_big_fetch(&mut self.world.inventory, self.world.agent_id, big.items);
+                        self.demo_fetch = Some(source);
+                        self.demo_faults = crate::world::inventory::demo::Faults::from_env();
+                        if let Some(loose) = open.first().copied() {
+                            self.demo_faults.arm(loose);
+                        }
+                        open
+                    } else {
+                        crate::world::inventory::demo::seed_big(&mut self.world.inventory, self.world.agent_id, big.items)
+                    };
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.open_folders(open);
                     self.inventory_ui.tab = if big.recent { 2 } else { 0 };
