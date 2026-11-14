@@ -25,6 +25,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "CopyInventoryFromNotecard",
     // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
     "CreateInventoryCategory",
+    // a new script or notecard made in an object's contents
+    // (LLPanelContents::createTaskInventoryItemHelper)
+    "CreateTaskInventoryItem",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
@@ -103,6 +106,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
+    // the LSL and SLua keywords together, ahead of LSLSyntax (LLSyntaxDefCache)
+    "ScriptDefinitions",
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
@@ -235,6 +240,7 @@ mod language_tests {
     fn the_minor_simulator_capabilities_are_requested() {
         for cap in [
             "LSLSyntax",
+            "ScriptDefinitions",
             "SendPostcard",
             "ServerReleaseNotes",
             "SimConsoleAsync",

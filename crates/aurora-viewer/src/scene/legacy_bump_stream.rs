@@ -158,53 +158,65 @@ impl TextureStreamer {
             let epoch = e.epoch;
             source.decoded = Some(discard);
             let pool = pool.clone();
-            jobs.spawn(move || {
-                let image = if mode >= 3 {
-                    source.standard_bump_image(source_id, mode)
-                } else {
-                    source.bake_image(source_id)
-                };
-                let size = size.or_else(|| image.as_ref().map(|i| (i.size[0], i.size[1])));
-                let normal = image.and_then(|image| {
-                    // Local/procedural pixels have no decoder discard level.
-                    let target = size.map(|(w, h)| texture_cache::discard_size(w, h, discard));
-                    let image = match target.filter(|&(w, h)| image.size != [w, h]) {
-                        Some((w, h)) => {
-                            let rgba = image::RgbaImage::from_raw(image.size[0], image.size[1], image.rgba.to_vec())?;
-                            let rgba = image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Triangle);
-                            Arc::new(aurora_render::preview::Image {
-                                size: [w, h],
-                                rgba: rgba.into_raw().into(),
-                            })
-                        }
-                        None => image,
+            // (a failed job comes back empty: the entry retries later)
+            jobs.spawn_or(
+                move || {
+                    let image = if mode >= 3 {
+                        source.standard_bump_image(source_id, mode)
+                    } else {
+                        source.bake_image(source_id)
                     };
-                    legacy_bump_image(image, mode)
-                });
-                let levels = normal.map(|image| build_mips(image.size[0], image.size[1], image.rgba.to_vec(), 16));
-                let mut staged = None;
-                let mut mips = Vec::new();
-                if let Some(levels) = levels {
-                    let slices: Vec<_> = levels.iter().map(|(w, h, data)| (*w, *h, data.as_slice())).collect();
-                    staged = StagedTexture::new(&pool, &slices);
-                    // A 2K RGBA chain exceeds the integrated pool's 16 MiB
-                    // chunk. Only that case uses the existing budgeted upload
-                    // fallback; a temporarily full pool retries off-thread.
-                    let (_, bytes) = aurora_render::upload::level_layout(TexelFormat::Rgba8, levels.iter().map(|m| (m.0, m.1)));
-                    if staged.is_none() && bytes > pool.max_region_bytes() {
-                        mips = levels;
+                    let size = size.or_else(|| image.as_ref().map(|i| (i.size[0], i.size[1])));
+                    let normal = image.and_then(|image| {
+                        // Local/procedural pixels have no decoder discard level.
+                        let target = size.map(|(w, h)| texture_cache::discard_size(w, h, discard));
+                        let image = match target.filter(|&(w, h)| image.size != [w, h]) {
+                            Some((w, h)) => {
+                                let rgba = image::RgbaImage::from_raw(image.size[0], image.size[1], image.rgba.to_vec())?;
+                                let rgba = image::imageops::resize(&rgba, w, h, image::imageops::FilterType::Triangle);
+                                Arc::new(aurora_render::preview::Image {
+                                    size: [w, h],
+                                    rgba: rgba.into_raw().into(),
+                                })
+                            }
+                            None => image,
+                        };
+                        legacy_bump_image(image, mode)
+                    });
+                    let levels = normal.map(|image| build_mips(image.size[0], image.size[1], image.rgba.to_vec(), 16));
+                    let mut staged = None;
+                    let mut mips = Vec::new();
+                    if let Some(levels) = levels {
+                        let slices: Vec<_> = levels.iter().map(|(w, h, data)| (*w, *h, data.as_slice())).collect();
+                        staged = StagedTexture::new(&pool, &slices);
+                        // A 2K RGBA chain exceeds the integrated pool's 16 MiB
+                        // chunk. Only that case uses the existing budgeted upload
+                        // fallback; a temporarily full pool retries off-thread.
+                        let (_, bytes) = aurora_render::upload::level_layout(TexelFormat::Rgba8, levels.iter().map(|m| (m.0, m.1)));
+                        if staged.is_none() && bytes > pool.max_region_bytes() {
+                            mips = levels;
+                        }
                     }
-                }
-                JobResult::LegacyBump {
+                    JobResult::LegacyBump {
+                        id,
+                        epoch,
+                        revision,
+                        discard,
+                        size,
+                        staged,
+                        mips,
+                    }
+                },
+                move || JobResult::LegacyBump {
                     id,
                     epoch,
                     revision,
                     discard,
                     size,
-                    staged,
-                    mips,
-                }
-            });
+                    staged: None,
+                    mips: Vec::new(),
+                },
+            );
             Self::settle(&mut self.todo, &mut self.counts, id, e);
         }
     }

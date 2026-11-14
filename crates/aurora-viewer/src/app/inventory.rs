@@ -163,6 +163,7 @@ impl App {
     }
 
     pub(super) fn open_notecard_attachment(&mut self, editor: Uuid, notecard: Uuid, marker: char, copy: bool, object: Uuid) {
+        let texture_preview = self.world.inventory.can_preview(0);
         let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) else {
             return;
         };
@@ -215,7 +216,14 @@ impl App {
             return;
         }
         match item.asset_type {
-            0 => st.attachment_preview = Some(item),
+            // RLVa @viewtexture blocks the "preview_texture" floater from any
+            // source, a notecard's embedded texture included (rlvui.cpp,
+            // RlvUIEnabler::filterFloaterViewXXX)
+            0 => {
+                if texture_preview {
+                    st.attachment_preview = Some(item);
+                }
+            }
             2 => {
                 let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
                 if !avatar.is_nil() {
@@ -505,7 +513,7 @@ impl App {
                                 .inventory
                                 .items
                                 .get(&item)
-                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
+                                .is_some_and(|it| aurora_net::scripts::is_slua_item(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,
@@ -519,9 +527,9 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags) => {
+            InvAction::Environment(asset, flags, item) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.world.eep.request_local(asset, kind);
+                    self.pick_local_settings(asset, kind, Some(item));
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
@@ -597,6 +605,8 @@ impl App {
                                 bucket,
                             });
                             self.world.inventory_offer_sent(resident, &name, folder);
+                            // FSCreateGiveInventoryParticleEffect (on)
+                            self.fire_beam(resident, glam::DVec3::ZERO);
                             self.world.inventory.remove(&removed);
                         }
                         Err(reason) => self.inventory_ui.message = reason,

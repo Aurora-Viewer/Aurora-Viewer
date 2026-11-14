@@ -77,6 +77,18 @@ impl MediaManager {
         Some(faces)
     }
 
+    /// The average direction a face looks to, in the prim's frame with its
+    /// scale (LLVOVolume::getApproximateFaceNormal, which sums the face's
+    /// normals): its triangles' normals, weighted by their area. The caller
+    /// turns it with the prim's rotation. `None` without the face's shape
+    /// (a sculpt, a mesh not loaded yet).
+    pub fn face_normal(&mut self, world: &World, scene: &Scene, idx: usize, face: u8) -> Option<Vec3> {
+        let scale = world.objects.get(idx)?.scale;
+        let faces = self.cpu_faces(world, scene, idx)?;
+        let f = faces.get(face as usize)?.as_ref()?;
+        area_normal(&f.positions, &f.indices, scale)
+    }
+
     /// Number of faces (texture entries) of an object: the prim volume's,
     /// or the mesh asset's submeshes once it is cached (the local mesh's
     /// during a preview).
@@ -409,9 +421,46 @@ impl MediaManager {
     }
 }
 
+/// The area-weighted normal of triangles (counter-clockwise faces look
+/// out, as the volume generator winds them), positions scaled first.
+fn area_normal(positions: &[[f32; 3]], indices: &[u16], scale: Vec3) -> Option<Vec3> {
+    let at = |i: u16| positions.get(i as usize).map(|p| Vec3::from(*p) * scale);
+    let mut sum = Vec3::ZERO;
+    for &[i, j, k] in indices.as_chunks::<3>().0 {
+        if let (Some(a), Some(b), Some(c)) = (at(i), at(j), at(k)) {
+            sum += (b - a).cross(c - a);
+        }
+    }
+    sum.try_normalize()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn face_normals_follow_the_generated_normals_and_the_scale() {
+        let boxp = aurora_prim::RawShape {
+            path_curve: aurora_prim::params::LL_PCODE_PATH_LINE,
+            profile_curve: aurora_prim::params::LL_PCODE_PROFILE_SQUARE,
+            path_scale_x: 100,
+            path_scale_y: 100,
+            ..Default::default()
+        }
+        .to_params();
+        let mesh = aurora_prim::generate_volume(&boxp, 1.0);
+        for f in &mesh.faces {
+            let given = f.normals.iter().map(|n| Vec3::from(*n)).sum::<Vec3>().normalize();
+            let n = area_normal(&f.positions, &f.indices, Vec3::ONE).unwrap();
+            assert!(n.dot(given) > 0.99, "{n} vs {given}");
+        }
+        // a flat panel: stretching it does not tilt a side's normal
+        let f = &mesh.faces[1];
+        let given = f.normals.iter().map(|n| Vec3::from(*n)).sum::<Vec3>().normalize();
+        let n = area_normal(&f.positions, &f.indices, Vec3::new(0.1, 4.0, 2.25)).unwrap();
+        assert!(n.dot(given) > 0.99);
+        assert_eq!(area_normal(&[], &[0, 1, 2], Vec3::ONE), None);
+    }
 
     #[test]
     fn hud_press_reaches_media_behind_a_plain_invisible_panel() {

@@ -462,7 +462,7 @@ impl Scene {
                 bits(&object.rotation.to_array(), &mut hash);
                 // Calibration uses the reported pose, so use its full size
                 // too, without following temporary render damping.
-                let scale = object.render.local_scale.unwrap_or(object.scale);
+                let scale = object.local_preview_scale(object.scale);
                 bits(&scale.to_array(), &mut hash);
                 let volume = object.visual_volume();
                 if volume.is_mesh() {
@@ -2271,6 +2271,7 @@ mod tests {
                         physics_convex: None,
                         physics_mesh: None,
                         version: 1,
+                        creator: uuid::Uuid::nil(),
                     },
                     bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),
                     skin: None,

@@ -467,6 +467,54 @@ impl Scene {
         (point, target)
     }
 
+    /// Aurora Weather: something solid within `far` m straight above
+    /// `from` (a roof, a canopy, an umbrella held up): an object's face, not
+    /// an avatar's nor a rigged mesh.
+    pub fn covered_above(&self, world: &World, from: Vec3, far: f32) -> bool {
+        let ray = (from, Vec3::Z);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let now = Instant::now();
+        candidates.iter().any(|&idx| {
+            let (Some(g), Some(o)) = (self.gpu.get(idx), world.objects.get(idx)) else {
+                return false;
+            };
+            if g.hud || g.rigged || o.pcode != aurora_prim::params::LL_PCODE_VOLUME || !ray_may_hit(g, ray) {
+                return false;
+            }
+            self.face_hit(world, idx, ray, now, false)
+                .is_some_and(|hit| hit.t.is_finite() && hit.t >= 0.0 && hit.t <= far)
+        })
+    }
+
+    /// Aurora Weather: the height of the ground within `far` m straight below
+    /// `from`: the terrain, or an object's face that does not move (not an
+    /// avatar, a rigged mesh, nor what is physical or moving).
+    pub fn ground_below(&self, world: &World, from: Vec3, far: f32) -> Option<f32> {
+        let ray = (from, -Vec3::Z);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let now = Instant::now();
+        let mut best = world.ground_height(from).filter(|h| *h <= from.z && from.z - *h <= far);
+        for idx in candidates {
+            let (Some(g), Some(o)) = (self.gpu.get(idx), world.objects.get(idx)) else {
+                continue;
+            };
+            if g.hud || g.rigged || g.physical || g.is_avatar || o.pcode != aurora_prim::params::LL_PCODE_VOLUME || !ray_may_hit(g, ray) {
+                continue;
+            }
+            if let Some(hit) = self.face_hit(world, idx, ray, now, false)
+                && hit.t.is_finite()
+                && hit.t >= 0.0
+                && hit.t <= far
+            {
+                let z = from.z - hit.t;
+                best = Some(best.map_or(z, |b| b.max(z)));
+            }
+        }
+        best
+    }
+
     /// LLToolPipette: sample the texture entry tint of the nearest volume face,
     /// independent of lighting, texture pixels, selection and modify rights.
     /// Candidate bounds and rendered triangles avoid a GPU readback.

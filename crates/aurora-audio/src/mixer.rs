@@ -378,6 +378,12 @@ impl ClipVoice {
         }
     }
 
+    /// Plays from sample `pos` (a rotated clip's start).
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
+    }
+
     fn mix_into(&mut self, bus: &mut [f32]) -> bool {
         let remaining = &self.data[self.pos.min(self.data.len())..];
         let n = remaining.len().min(bus.len());
@@ -576,6 +582,13 @@ impl WorldVoice {
     /// A voice placed by direction from its start (3D sound for
     /// headphones): `gain` the distance gain, `direction` in the listener's
     /// frame (x right, y ahead, z up).
+    /// Plays from sample `pos` (a rotated clip's start); a looping voice
+    /// wraps round to the beginning as usual.
+    pub(crate) fn starting_at(mut self, pos: usize) -> Self {
+        self.pos = pos.min(self.data.len()) & !1;
+        self
+    }
+
     pub(crate) fn new_binaural(id: u64, channel: Channel, data: Arc<[f32]>, looped: bool, gain: f32, direction: [f32; 3]) -> Self {
         let mut v = Self::new(id, channel, data, looped, (0.0, 0.0));
         v.start_binaural = Some((gain, direction));
@@ -1154,6 +1167,32 @@ mod tests {
         let mut buf = vec![0.0; 9_600];
         m.render(&mut buf);
         buf
+    }
+
+    /// A looping voice started part-way through shared samples (a rotated
+    /// clip, the rain's speakers) renders exactly as the rotated copy it
+    /// replaces did, wrapping round included.
+    #[test]
+    fn looping_voice_started_at_an_offset_matches_a_rotated_copy() {
+        let data: Arc<[f32]> = (0..4_800).map(|i| ((i * 37) % 101) as f32 / 101.0 - 0.5).collect();
+        let start = 1_234 * 2;
+        let copy: Arc<[f32]> = data[start..].iter().chain(&data[..start]).copied().collect();
+        let render = |voice: WorldVoice| {
+            let (mut m, _p, tx) = mixer();
+            tx.send(Command::PlayWorld(voice)).unwrap();
+            let mut buf = vec![0.0; 9_600];
+            m.render(&mut buf);
+            buf
+        };
+        let shared = render(WorldVoice::new(1, Channel::Sfx, data.clone(), true, (1.0, 1.0)).starting_at(start));
+        assert_eq!(shared, render(WorldVoice::new(1, Channel::Sfx, copy, true, (1.0, 1.0))));
+        let clip = crate::SoundClip {
+            samples: data.clone(),
+            start: 0,
+        };
+        let rotated = clip.rotated(0.5).rotated(0.75);
+        assert!(Arc::ptr_eq(&rotated.samples, &data), "rotating shares the samples");
+        assert_eq!(rotated.start, (1_200 + 1_800) % 2_400 * 2);
     }
 
     #[test]

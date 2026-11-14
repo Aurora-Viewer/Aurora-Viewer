@@ -1014,6 +1014,17 @@ impl SlotTable for Renderer {
     }
 }
 
+/// The alpha classes of the renderer's built-in slots: the transparent
+/// texture has no visible pixel. Every renderer has them, the one of a GPU
+/// recovery too (`gpu_reset_into`): without them, a face of the built-in
+/// transparent texture is drawn opaque, as the shine layers of mesh heads
+/// (eyebrows, lips, eyes) black after a reset.
+fn builtin_alpha() -> Vec<AlphaKind> {
+    let mut a = vec![AlphaKind::Opaque; 16];
+    a[aurora_render::textures::TRANSPARENT as usize] = AlphaKind::Mask;
+    a
+}
+
 /// Alpha class of a bindless slot; a change bumps `generation` and is
 /// listed in `changes` (`TextureStreamer::take_alpha_changes`).
 fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mut Vec<u32>, slot: u32, a: AlphaKind) {
@@ -1505,12 +1516,7 @@ impl TextureStreamer {
                 (id, mask)
             })
             .collect(),
-            // built-in slots: the transparent texture has no visible pixel
-            alpha_by_slot: {
-                let mut a = vec![AlphaKind::Opaque; 16];
-                a[aurora_render::textures::TRANSPARENT as usize] = AlphaKind::Mask;
-                a
-            },
+            alpha_by_slot: builtin_alpha(),
             alpha_channel_by_slot: Vec::new(),
             cache_dir,
             local_slots: HashMap::new(),
@@ -1864,7 +1870,7 @@ impl TextureStreamer {
     fn gpu_reset_into(&mut self, new: &mut impl SlotTable) {
         // their staged data is in the old device's pool
         self.uploads = Default::default();
-        self.alpha_by_slot.clear();
+        self.alpha_by_slot = builtin_alpha();
         self.alpha_channel_by_slot.clear();
         self.alpha_changes.clear();
         self.first_texels.clear();
@@ -2739,16 +2745,19 @@ impl TextureStreamer {
                         e.decoding = true;
                         *decodes += 1;
                         let (want, pool) = (e.want, staging.clone());
-                        jobs.spawn(move || {
-                            texture_result(
-                                id,
-                                want,
-                                (source.texels)(&id, want),
-                                (AlphaKind::Opaque, false),
-                                None,
-                                pool.as_deref(),
-                            )
-                        });
+                        jobs.spawn_or(
+                            move || {
+                                texture_result(
+                                    id,
+                                    want,
+                                    (source.texels)(&id, want),
+                                    (AlphaKind::Opaque, false),
+                                    None,
+                                    pool.as_deref(),
+                                )
+                            },
+                            move || JobResult::TextureFailed { id },
+                        );
                     }
                     return;
                 }
@@ -2876,13 +2885,24 @@ impl TextureStreamer {
             };
             let pool = staging.clone();
             let meter = meter.clone();
-            jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+            // (a failed decode gives its slot back and retries later, as a
+            // decode error does)
+            jobs.spawn_or(
+                move || decode_job(job, &data, pool.as_deref(), &meter),
+                move || JobResult::TextureFailed { id },
+            );
             Self::settle(todo, counts, id, e);
         }
         let dir = cache_dir.clone();
         let pool = staging.clone();
         jobs.spawn_many(cache_reads, move |(id, want, blocks)| {
-            read_job(&dir, id, want, blocks, pool.as_deref())
+            // (a failed read is a cache miss: the texture is downloaded)
+            super::jobs::caught(|| read_job(&dir, id, want, blocks, pool.as_deref())).unwrap_or(JobResult::TextureCache {
+                id,
+                data: None,
+                complete: false,
+                keep_rgba: false,
+            })
         });
         if !forgotten.is_empty() {
             log::info!("refreshing {} textures: downloaded again", forgotten.len());
@@ -5426,6 +5446,26 @@ mod tests {
             self.missing.push(slot);
             true
         }
+    }
+
+    #[test]
+    fn a_gpu_recovery_keeps_the_transparent_texture_invisible() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let transparent = aurora_render::textures::TRANSPARENT as usize;
+        assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
+        let mut e = entry(None, 100.0);
+        e.slot = 20;
+        s.entries.insert(id(1), e);
+        let mut table = Slots {
+            left: vec![30],
+            ..Default::default()
+        };
+        s.gpu_reset_into(&mut table);
+        // the textures got slots of the new table, the built-in ones kept
+        // their class: the shine layers of mesh heads stay see-through
+        assert_eq!(s.entries[&id(1)].slot, 30);
+        assert_eq!(s.alpha_by_slot[transparent], AlphaKind::Mask);
+        assert_eq!(s.alpha_by_slot[30], AlphaKind::Opaque);
     }
 
     /// A failed download of texture `n` (in slot `10 + n`, never loaded).
