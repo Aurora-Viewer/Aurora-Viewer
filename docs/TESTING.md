@@ -164,7 +164,7 @@ Actual grid login and teleporting are performed by the human.
 | `AURORA_LOG_NAME=<name>` | Name of the log file |
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
-| `AURORA_BLEND_ORDER=<0..4>` | Override the order of transparent surfaces: 0 sorted (Standard), 1 to 4 exact, from fast to full |
+| `AURORA_BLEND_ORDER=<0..5>` | Override the order of transparent surfaces: 0 sorted (Standard), 1 to 4 exact, from fast to full, 5 stochastic |
 | `AURORA_LOCAL_LIGHTS=0..64` | Overrides "Maximum nearby lights" (Graphics › Light) |
 | `AURORA_PROJECTOR_SHADOW_LIMIT=1..16` | Override the projector shadow budget (default 2) |
 | `AURORA_HDR=0\|1` | Overrides "HDR and Emissive" (Graphics › Image) |
@@ -395,7 +395,9 @@ the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
 
 `AURORA_BLEND_ORDER`: the setting Preferences › Graphics › Image ›
-Transparency, "Order of transparent surfaces". 0 is Standard (the
+Transparency, "Order of transparent surfaces" (a list of Standard, Exact
+and Stochastic; the precision of Exact is chosen beside the list while
+Exact is the choice). 0 is Standard (the
 blended faces sorted object by object, the Potato and Low levels); 1 to
 4 compose them in the true order of their fragments at each pixel, from
 the lightest precision to the finest (1 fast, 2 balanced, 3 high, 4 full,
@@ -5002,6 +5004,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
+| `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]` | `n` translucent panes filling the view ahead of the start position: `n` blended layers on every pixel; spacing 0: coplanar |
+| `AURORA_DEMO_OIT_COLUMN=<tubes>[,<alpha>]` | A tall translucent column of nested tubes with a fine woven texture, left of the start view: many curved blended layers for the transparency in each anti-aliasing mode |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
 | `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
@@ -11407,6 +11411,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CHAT_TEXT_SIZE=<size>` | Chat text size for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
+| `AURORA_MAPPABLE_MB=<n>` | The video memory the CPU can map taken as n MB, a card with no Resizable BAR on one that has it |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
@@ -11441,6 +11446,7 @@ What the inventory must show with these scenarios:
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=exact`, `layers` or `exact-alt` | The order of the blended faces whatever the setting says: composed in the order of their fragments at each pixel; sorted, as the Standard choice of the setting; or the sorted order one second in three |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (`layers`, the Standard order of the setting); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
+| `AURORA_OIT=0`, `1` or `alt` | The stochastic transparency off or on for this launch, whatever the setting "Order of transparent surfaces" says (`stochastic` is the same as `1`); `alt`: on two seconds in three, the setting's order the third |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -11621,6 +11627,16 @@ What the inventory must show with these scenarios:
     the goal: 3,571 lowered, 105 MB left). The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
+- **`AURORA_MAPPABLE_MB=<n>`**: the size of the video memory the CPU can
+  map is taken as n MB (`aurora-render/src/vram.rs`, `mappable_mb`). A
+  discrete GPU with no Resizable BAR gives the CPU a window of about
+  256 MB, shared by every program that draws; under 1024 MB the viewer
+  keeps its staging pool to 64 MB (2 × 32 MB instead of 8 × 32 MB; an
+  integrated GPU or a card under 4 GB keeps its 4 × 16 MB). 246 is the figure of an NVIDIA card without Resizable
+  BAR. The log line `staging pool: … MB in … MB chunks (mappable video memory: …)` says
+  which pool was made; on Linux with an NVIDIA card,
+  `nvidia-smi -q` (`BAR1 Memory Usage`) shows what the viewer takes of
+  the window, before and after.
 - **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer
   is taken as n MB (at least 256), what the texture budget and the
   Performance window then read (`aurora-render/src/vram.rs`); what the
@@ -12111,6 +12127,132 @@ What the inventory must show with these scenarios:
   `split`; with `AURORA_DEMO_HAIR=1` (one mesh per avatar), 0.076 and
   0.082 ms. By default, against `split` (60 fps cap, `alt`): 0.52 → 0.66 ms
   with eight meshes each, 0.083 → 0.131 ms with one.
+- **`AURORA_OIT=0|1|alt`**: the stochastic transparency off or on
+  (`alt`: on two seconds in three and the order of the setting the third,
+  `xmode=new` and `xmode=old` on the profile lines of `AURORA_PROFILE=1`,
+  to compare the two, image and `g_transparent`, from one place in one
+  run; the targets stay through that second and the temporal blend starts
+  again after it)
+  (`oit_stochastic.rs`; the "Stochastic" choice of Graphics › Image ›
+  Transparency › "Order of transparent surfaces", `AURORA_BLEND_ORDER=5`;
+  with `0` and that choice, the sorted order of the Legacy Viewer, per
+  face as `scene/blend_order.rs` sorts it): the blended faces drawn with
+  depth-based stochastic transparency (Enderton et al., "Stochastic
+  Transparency", I3D 2010, section 3.4): the total alpha of every sample,
+  then each fragment covering a stratified random subset of its samples of
+  size alpha x S into a copy of the opaque depth (GreaterEqual for the
+  faces of non-rigged meshes, as the sorted order, so that a decal at the
+  depth of its surface stays; Greater for rigged ones), then the
+  accumulation of the fragments at or in front of that depth, composited
+  per sample with the alpha correction; the glow of the blended faces that
+  have some is accumulated the same way (each face's glow where it is at or
+  in front of the stochastic depth: on average its glow dimmed by the
+  layers in front of it, as with `AURORA_OIT=0`), corrected by the same
+  ratio and added to the scene's glow (check with
+  `AURORA_DEMO_GLOW_LAYERS=1` or `shell`, `AURORA_DEBUG_GLOW=1`: the same
+  glow as `AURORA_OIT=0`). The method is made the first frame it is on and
+  not before (the log's `oit stochastic: made` and `pipelines for <n>
+  sample(s) made in <ms>` lines: the first frame with it on pays them once);
+  off, nothing of it exists and the scene module does not hold its shaders.
+  A face that gives a value that is not a finite number (a NaN alpha, an
+  infinite light) costs its own pixel at most: the resolve counts such a
+  sample for nothing (an infinite one for the most the target holds), and
+  the last frame's colour is left out where it is not a number, so none
+  stays from frame to frame nor reaches the neighbours.
+  Every anti-aliasing mode (`AURORA_AA`): the two stochastic passes run at
+  their own sample count, the most the device takes up to 8, whatever the
+  scene's: their depth starts as the opaque depth spread over those samples
+  (each takes the scene sample nearest to it); 8 samples per pixel, their
+  noise averaged over the frames by the temporal blend, only where there is
+  some: the resolve measures, per pixel, how far the samples' accumulated
+  alpha spreads around their total alpha (nothing where one layer covers
+  the pixel: every sample holds the same, the colour is exact and this
+  frame's alone, as sharp and as still as with `AURORA_OIT=0`); where
+  layers hide one another the colour is blended, down to 1/8, with the last
+  frame's, reprojected through the nearest transparent depth and clamped
+  to the 3 x 3 neighbourhood (the seeds change every frame), and the last
+  frame's colour is left where its total alpha is not this pixel's
+  (something else was there: the camera slid past layers at different
+  depths, a face moved), the neighbours of a like total alpha standing in
+  for it. Check in motion (`AURORA_DEMO_VEILS=4,0` while orbiting): no
+  trail behind the edge of a curtain, the lace of a single curtain as
+  sharp as with `AURORA_OIT=0`. The total alpha and the composite stay at
+  the scene's samples: with MSAA (`AURORA_AA=2`, `3`, `4`) each sample is
+  dimmed by its own transparency; without (`AURORA_AA=0` none, `1` FXAA,
+  `5` TAA, `6` SMAA, `7` FSR) the pixel is, by its one sample (as the
+  blended faces of the sorted order have one), and the
+  anti-aliasing then runs over the result as with `AURORA_OIT=0`: check the
+  edges of opaque objects in front of and behind the panes of
+  `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` (no halo, the same edge as with
+  `AURORA_OIT=0`). Under TAA the temporal blend is off (logged once as
+  `oit stochastic: temporal blend off, the scene's TAA accumulates`): TAA
+  accumulates already, the grain is the same every frame, so TAA neither
+  averages it out nor ghosts it. Under FSR (`AURORA_AA=7`,
+  `AURORA_FSR_QUALITY`) the passes and their targets are at the render
+  size, before the upscale (the log's `targets` line gives it), FSR's
+  reactive mask compares the scene copy with the composited colour as it
+  does with the sorted order, and the temporal blend stays on (FSR takes
+  this frame's colour on the blended faces, so a static grain would show,
+  enlarged and sharpened): check the 8 panes (as smooth as `AURORA_OIT=0`)
+  and the coplanar panes of `AURORA_DEMO_ALPHA_PLANES=2,0.5,0` across
+  frames. The history starts again (this frame's colour alone) when the
+  targets are new or the camera jumped. A photo, its tiles and a snapshot
+  draw the sorted order whatever the setting (their size and history are
+  their own, and the targets are freed before them: the snapshot's memory
+  plan counts none). The targets are freed too when the method is turned off
+  and after 120 frames without a blended face; when the memory refuses them
+  (`oit stochastic: the memory refused the targets`) the frame draws the
+  sorted order and the size is not tried again. The log gives the counts the
+  device takes (`oit stochastic: made; pass sample counts the device takes:
+  [2, 4, 8]`), the route (`oit stochastic: the sample mask route`, or `the
+  sample index route` when `spirv_fix.rs` cannot make the module or the
+  pipelines made from it are refused: the same image, about four times the
+  invocations of that pass) and the targets (`oit stochastic: targets
+  <w>x<h>, the scene at <n> samples, the passes at <p>, <m> MB`: about 187
+  MB at 1600 x 900 and 478 MB at 2560 x 1440 with MSAA 4x, 179 and 457 MB
+  without MSAA, 16 bytes a pixel more from the first frame with a glowing
+  blended face, logged again). With
+  `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=… depth=… accum=…
+  resolve_composite=… total=…` every 120 frames. Grain: compare a capture
+  with `AURORA_OIT=0` of the same frame where one layer covers the pixel
+  (exact there): the panes of `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` show it
+  most. Decals: `AURORA_DEMO_COPLANAR_DECAL` (a decal at the depth of the
+  surface under it) must show with the method on as it does off.
+- **`AURORA_DEMO_OIT_COLUMN=<tubes>[,<alpha>]`**: `tubes` nested hollow
+  cylinders (1 to 5, 3 when the value is not a number), 8 m tall, from
+  2.2 m across, 1.5 m ahead and 2 m to the left of the start position
+  (`AURORA_DEMO_POS`), filling the left of the start view at a slant: each
+  tube an outer and an inner wall, so a pixel crosses up to four layers per
+  tube. Their texture is a 64 x 64 weave (stripes of two shades both ways,
+  alpha 0.3 to 0.6 with a texel-scale grain), repeated 12 x 24 times, its
+  texels a few pixels wide and finer towards the edges; `alpha` multiplies
+  it (1 by default). For the order-independent transparency under each
+  anti-aliasing mode (`AURORA_AA`, `AURORA_OIT`): with the method on, the
+  column must look the same under SMAA, no anti-aliasing and MSAA (the
+  beats of the tubes' weaves against each other are the scene's own and
+  show in every mode; FXAA and TAA soften the weave as they do with the
+  method off); with it off, the sorted order shows as seams and bands
+  where the walls' order flips.
+
+- **`AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`**: `n` translucent
+  panes (1 to 64, 8 when the value is not a number; `alpha` their opacity,
+  0.3 by default) ahead of the start position (`AURORA_DEMO_POS`), facing
+  the camera, one every `spacing` metres (0.25 by default, up to 2) from
+  3 m on, each large enough to fill the view at its distance, their hue
+  running from the nearest to the farthest: the fog planes, glass walls and
+  skybox panes of a club, `n` blended layers over nearly every pixel. A
+  spacing of `0` puts them all in the same place, exactly coplanar
+  (`2,0.5,0`: two panes of the same depth on every pixel): with the
+  stochastic method both layers pass the depth test where either won a
+  sample (oit_stochastic.rs), so the two are averaged, the same on every
+  frame and every launch; consecutive captures
+  (`AURORA_CAPTURE_FRAMES=2000,2001,2002`) must be identical over the
+  panes, frame after frame, and the same again in another session, with
+  other content loaded first (`AURORA_DEMO_HAIR_CARDS`, `AURORA_DEMO_CROWD`). The load of the order-independent transparency
+  (`AURORA_OIT=1`): the grain of 20 layers against 8. In `perf summary`, compare
+  1600 × 900 and the frame is drawn again in the sorted order (the image
+  stays the same as with `AURORA_OIT=0`). In `perf summary`, compare
+  `g_transparent` with `AURORA_OIT=0` and `1`, `AURORA_AA=3` and `6`.
 - **`AURORA_MESH_ORDER=asset`**: the triangles of every mesh face are drawn
   in the order the Legacy Viewer draws them, reordered for the vertex cache
   when the mesh is loaded (`LLVolumeFace::cacheOptimize`,
