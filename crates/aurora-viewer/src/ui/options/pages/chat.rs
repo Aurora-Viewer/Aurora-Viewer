@@ -76,6 +76,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // FSMarkObjects (off)
+                cx.toggle(
+                    tr!("ui-options-mark-unnamed-objects"),
+                    tr!("ui-options-mark-unnamed-objects-hint"),
+                    &field!(mark_unnamed_objects),
+                );
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
