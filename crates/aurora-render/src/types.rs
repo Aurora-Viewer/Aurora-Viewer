@@ -1676,6 +1676,24 @@ pub struct FrameParams {
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
+    /// Volumetric clouds in the place of the Legacy Viewer's flat layer
+    /// (clouds.rs); None: the Legacy layer, with nothing else running.
+    pub clouds: Option<CloudsFrame>,
+}
+
+/// The volumetric clouds' inputs that are not in the sky: where the camera
+/// is on the grid, which the pattern is anchored to.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloudsFrame {
+    /// The south-west corner of the region the camera's position is relative
+    /// to (metres on the grid): positions stay continuous across regions.
+    pub region_origin: [f64; 2],
+    /// Size of the cloud texture as loaded so far (it grows while it loads;
+    /// the weather map is drawn again for it).
+    pub texture_size: (u32, u32),
+    /// Revision of the cloud texture's texels (`Textures::revision_of`):
+    /// a reload of the same size changes it, and the weather map follows.
+    pub texture_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1896,6 +1914,9 @@ pub struct RenderStats {
     /// GPU time of the contact shadows alone (ms), part of
     /// [`GpuElement::Effects`].
     pub gpu_contact: Option<f32>,
+    /// GPU time of the volumetric clouds' compute passes and weather map
+    /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
+    pub gpu_clouds: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,

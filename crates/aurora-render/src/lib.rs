@@ -16,6 +16,8 @@ mod blend_exact_tests;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
+mod clouds;
+pub mod clouds_noise;
 mod contact_shadows;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
@@ -112,6 +114,7 @@ pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
 // depth of field and the contact shadows (snapshot tiles in the viewer).
 pub use bloom::tile_reach as bloom_tile_reach;
+pub use clouds::type_of_shadow as clouds_type_of_shadow;
 pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
