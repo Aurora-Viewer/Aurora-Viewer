@@ -1890,6 +1890,11 @@ cube as a hologram, `start` leaves a hologram of it where the move began.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+`texture:bp-alpha` is the same Blinn-Phong tab after the selection's diffuse
+map is the built-in Transparent texture: Alpha mode is enabled and shows
+Alpha blending. Repeat with `AURORA_DEMO_BUILD_STYLE=legacy` and without it.
+A transparency above 0 still shows Alpha blending and greys the combo; an
+opaque texture still greys it.
 Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact tool
 block ends with linked-part navigation, Link/Unlink and the ruler on one row;
 counters sit directly above the five tabs. General places sale before permissions.

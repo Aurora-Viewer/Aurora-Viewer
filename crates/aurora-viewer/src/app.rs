@@ -14492,6 +14492,12 @@ impl App {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::TransparentDiffuse => {
+                        self.build.edit_faces(&mut self.world, |face, _, _| {
+                            face.texture = aurora_prim::te::TRANSPARENT_TEXTURE;
+                        });
+                        self.flush_build();
+                    }
                     crate::build::demo::Step::LinkSetup(denied) => {
                         crate::build::demo::link_setup(&mut self.world, &mut self.build, &self.settings.build, denied);
                         self.flush_build();
