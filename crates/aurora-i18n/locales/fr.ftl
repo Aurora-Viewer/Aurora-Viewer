@@ -12732,7 +12732,7 @@ poser-together = { $count ->
     }
 poser-together-clear = Celle-ci seule
 poser-together-clear-tip = Ne garder que cette articulation sélectionnée
-poser-together-tip = Maj + clic sur une articulation, son repère ou sa ligne, pour l’ajouter : elle bouge alors avec celle sélectionnée
+poser-together-tip = Maj ou Ctrl + clic sur une articulation, son repère ou sa ligne, pour l’ajouter : elle bouge alors avec celle sélectionnée
 poser-save-library = Enregistrer
 poser-load-menu = Charger
 poser-load-all = Charger tout

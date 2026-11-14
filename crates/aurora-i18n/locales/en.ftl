@@ -12733,7 +12733,7 @@ poser-together = { $count ->
     }
 poser-together-clear = Only this one
 poser-together-clear-tip = Keep only this joint selected
-poser-together-tip = Shift + click a joint, its marker or its row, to add it: it then moves with the selected one
+poser-together-tip = Shift or Ctrl + click a joint, its marker or its row, to add it: it then moves with the selected one
 poser-save-library = Save
 poser-load-menu = Load
 poser-load-all = Load all
