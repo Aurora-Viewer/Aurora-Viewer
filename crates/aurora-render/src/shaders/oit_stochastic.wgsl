@@ -31,6 +31,15 @@
 // 5. fs_composite_glow: the blended faces' glow, accumulated like their
 //    colour (object.wgsl fs_st_glow) and corrected the same way, added to
 //    the scene alpha (the glow amount) once the composite has dimmed it.
+//
+// No value that is not a finite number goes through: the passes sum what the
+// faces give them and the resolve divides those sums, where a face's NaN or
+// two infinite sums would take the pixel, and the previous frame's colour
+// would keep it and hand it to its neighbours frame after frame (#1380, as
+// the exact order's `blend_finite`). A sample holding one counts for
+// nothing (`st_sample`), a transparency that is one hides nothing
+// (`st_through`), and the previous frame's colour is left out where it is
+// one.
 
 struct ResolveParams {
     width: u32,
@@ -78,6 +87,38 @@ struct ResolveParams {
 // the transmittance of a single-sampled scene (trans_ms is then unused)
 @group(0) @binding(12) var trans_one: texture_2d<f32>;
 
+// The largest value an Rgba16Float target holds (common.wgsl `HDR_MAX`).
+const HDR_MAX: f32 = 65504.0;
+
+// Whether `x` is not a number. Tested on its bits (object.wgsl
+// `blend_nan`): a driver may fold `x != x` to false, and what min, max and
+// clamp make of a NaN is left to the card.
+fn st_nan(x: f32) -> bool {
+    return (bitcast<u32>(x) & 0x7fffffffu) > 0x7f800000u;
+}
+
+fn st_nan4(v: vec4<f32>) -> bool {
+    return st_nan(v.r) || st_nan(v.g) || st_nan(v.b) || st_nan(v.a);
+}
+
+// A sample of the accumulation as the resolve takes it: nothing where a
+// part of it is not a number, no part under 0 nor over what the target
+// holds (the sum of many bright layers may be infinite).
+fn st_sample(a: vec4<f32>) -> vec4<f32> {
+    return select(clamp(a, vec4<f32>(0.0), vec4<f32>(HDR_MAX)), vec4<f32>(0.0), st_nan4(a));
+}
+
+// A summed amount (the glow) the same way.
+fn st_amount(x: f32) -> f32 {
+    return select(clamp(x, 0.0, HDR_MAX), 0.0, st_nan(x));
+}
+
+// A sample of the transmittance: between nothing and all of the light, and
+// all of it where it is not a number.
+fn st_through(x: f32) -> f32 {
+    return select(clamp(x, 0.0, 1.0), 1.0, st_nan(x));
+}
+
 // The uncertainty left in a colour drawn, as a part of that colour (of a
 // dim one, as a part of QUIET_DIM): a pixel under it is this frame's alone,
 // one over it takes as much of the previous frames as brings it there.
@@ -117,10 +158,10 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
     let tn = min(rp.trans_samples, 16u);
     var trans = 0.0;
     if (tn <= 1u) {
-        trans = textureLoad(trans_one, px, 0).x;
+        trans = st_through(textureLoad(trans_one, px, 0).x);
     } else {
         for (var s = 0u; s < tn; s += 1u) {
-            trans += textureLoad(trans_ms, px, i32(s)).x;
+            trans += st_through(textureLoad(trans_ms, px, i32(s)).x);
         }
         trans /= f32(tn);
     }
@@ -132,7 +173,7 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
     var z = 0.0;
     var z_far = 1.0;
     for (var s = 0u; s < n; s += 1u) {
-        let a = textureLoad(accum_ms, px, i32(s));
+        let a = st_sample(textureLoad(accum_ms, px, i32(s)));
         sum += a;
         if (a.a > 1e-5) {
             squares += a.rgb * a.rgb / a.a;
@@ -152,7 +193,7 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
     var glow = 0.0;
     if ((rp.flags & 2u) != 0u) {
         for (var s = 0u; s < n; s += 1u) {
-            glow += textureLoad(glow_ms, px, i32(s)).x;
+            glow += st_amount(textureLoad(glow_ms, px, i32(s)).x);
         }
         glow /= nf;
     }
@@ -173,8 +214,11 @@ fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
         let count = sum.a * sum.a / max(alphas, 1e-10);
         unsure = total * sqrt(max(spread.r, max(spread.g, spread.b)) / max(count - 1.0, 1.0));
     }
-    textureStore(resolved_w, px, vec4<f32>(resolved.rgb * corr, total));
-    textureStore(aux_w, px, vec4<f32>(z_far, glow * corr, unsure, z));
+    // (the correction of a faint accumulation is large: nothing over what
+    // the targets hold, which they would keep as infinite)
+    let colour = min(resolved.rgb * corr, vec3<f32>(HDR_MAX));
+    textureStore(resolved_w, px, vec4<f32>(colour, total));
+    textureStore(aux_w, px, vec4<f32>(z_far, min(glow * corr, HDR_MAX), min(unsure, HDR_MAX), z));
 }
 
 // Where, in the last frame's pixels, what this pixel shows at the depth `z`
@@ -222,7 +266,13 @@ fn last_frame(px: vec2<i32>, aux: vec4<f32>, total: f32) -> vec4<f32> {
     let h01 = textureLoad(history, clamp(c00 + vec2<i32>(0, 1), vec2<i32>(0), last), 0);
     let h11 = textureLoad(history, clamp(c00 + vec2<i32>(1, 1), vec2<i32>(0), last), 0);
     let h = mix(mix(h00, h10, part.x), mix(h01, h11, part.x), part.y);
-    let slid = clamp((length(back.xy - at.xy) - SLID_FROM) / SLID_SPAN, 0.0, 1.0);
+    // (a NaN in the history would stay there and reach the four pixels that
+    // read it: none is let in)
+    let apart = length(back.xy - at.xy);
+    if (st_nan4(h) || st_nan(apart)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    let slid = clamp((apart - SLID_FROM) / SLID_SPAN, 0.0, 1.0);
     let other = clamp((abs(h.a - total) - OTHER_FROM) / OTHER_SPAN, 0.0, 1.0);
     return vec4<f32>(h.rgb, max(other, slid));
 }
@@ -278,7 +328,7 @@ fn cs_smooth(@builtin(global_invocation_id) g: vec3<u32>) {
     // what the blend left of the uncertainty, more of it where it went
     // without the last frame
     let left = mix(sqrt(weight / (2.0 - weight)), 1.0, last_frame(px, aux, c.a).a);
-    let reach = GRAIN_REACH * unsure * left;
+    let reach = max(GRAIN_REACH * unsure * left, 1e-6);
     let last = vec2<i32>(i32(rp.width), i32(rp.height)) - vec2<i32>(1);
     // twice: the nearest neighbours around the pixel's own colour first,
     // which is off by its grain, then the wider ones around their mean
@@ -319,9 +369,11 @@ fn fs_composite(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) 
     if ((rp.flags & 4u) != 0u) {
         trans = 1.0 - c.a;
     } else {
-        trans = textureLoad(trans_ms, px, i32(s)).x;
+        trans = st_through(textureLoad(trans_ms, px, i32(s)).x);
     }
-    if (c.a <= 0.0 && trans >= 1.0) {
+    // (no colour resolved here: nothing is drawn, rather than the scene
+    // dimmed by a face that left none, as cs_resolve's total alpha)
+    if (c.a <= 0.0) {
         discard;
     }
     return vec4<f32>(c.rgb, 1.0 - trans);
@@ -330,7 +382,7 @@ fn fs_composite(@builtin(position) p: vec4<f32>, @builtin(sample_index) s: u32) 
 // The blended faces' glow added to the scene alpha (alpha only, additive).
 @fragment
 fn fs_composite_glow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-    let glow = textureLoad(aux_r, vec2<i32>(p.xy), 0).y;
+    let glow = st_amount(textureLoad(aux_r, vec2<i32>(p.xy), 0).y);
     if (glow <= 0.0) {
         discard;
     }

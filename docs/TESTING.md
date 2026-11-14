@@ -395,7 +395,9 @@ the sky show through in patches
 (`AURORA_DEMO_POS="60,128"`, `AURORA_DEMO_ALTITUDE=86`).
 
 `AURORA_BLEND_ORDER`: the setting Preferences › Graphics › Image ›
-Transparency, "Order of transparent surfaces". 0 is Standard (the
+Transparency, "Order of transparent surfaces" (a list of Standard, Exact
+and Stochastic; the precision of Exact is chosen beside the list while
+Exact is the choice). 0 is Standard (the
 blended faces sorted object by object, the Potato and Low levels); 1 to
 4 compose them in the true order of their fragments at each pixel, from
 the lightest precision to the finest (1 fast, 2 balanced, 3 high, 4 full,
@@ -12036,6 +12038,11 @@ What the inventory must show with these scenarios:
   not before (the log's `oit stochastic: made` and `pipelines for <n>
   sample(s) made in <ms>` lines: the first frame with it on pays them once);
   off, nothing of it exists and the scene module does not hold its shaders.
+  A face that gives a value that is not a finite number (a NaN alpha, an
+  infinite light) costs its own pixel at most: the resolve counts such a
+  sample for nothing (an infinite one for the most the target holds), and
+  the last frame's colour is left out where it is not a number, so none
+  stays from frame to frame nor reaches the neighbours.
   Every anti-aliasing mode (`AURORA_AA`): the two stochastic passes run at
   their own sample count, the most the device takes up to 8, whatever the
   scene's: their depth starts as the opaque depth spread over those samples

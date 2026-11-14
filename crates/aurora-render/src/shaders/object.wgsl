@@ -1952,6 +1952,17 @@ fn water_clipped(world_pos: vec3<f32>) -> bool {
     return (WATER_CLIP == 1u) != (world_pos.z >= h);
 }
 
+// A fragment's alpha as the alpha-only passes take it: -1 (fs_blend's
+// discard) under the least alpha drawn, and for one that is not a finite
+// number, which would take the pixel's total alpha, then the scene under it;
+// never over 1 (a transparency under 0).
+fn st_alpha(a: f32) -> f32 {
+    if (not_finite(a) || a < 0.004) {
+        return -1.0;
+    }
+    return min(a, 1.0);
+}
+
 // eval_material's `color.a` alone, for the alpha-only passes: the portal
 // clip, then one fetch of the base texture (none for an emissive mask, whose
 // alpha is the face colour's). The normal, specular and emissive maps, the
@@ -1989,11 +2000,7 @@ fn blend_alpha(in: VsOut, front: bool) -> f32 {
     }
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
     if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
-        let surface = portal_surface(records[in.record], in.uv, portal_aa);
-        if (surface.alpha < 0.004) {
-            return -1.0;
-        }
-        return surface.alpha;
+        return st_alpha(portal_surface(records[in.record], in.uv, portal_aa).alpha);
     }
     if (water_clipped(in.world_pos)) {
         return -1.0;
@@ -2009,11 +2016,7 @@ fn blend_alpha(in: VsOut, front: bool) -> f32 {
     if (glare_possible(rec) && base_a < rec.base_color.a) {
         alpha = shade_material(in, eval_material(in, front)).color.a;
     }
-    let a = alpha * rez_alpha(rec, in);
-    if (a < 0.004) {
-        return -1.0;
-    }
-    return a;
+    return st_alpha(alpha * rez_alpha(rec, in));
 }
 
 @fragment

@@ -954,6 +954,45 @@ fn maturity_choice(ui: &mut egui::Ui, p: &Palette, access: aurora_net::search::A
     (picked != access.preferred).then_some(picked)
 }
 
+/// The order of the transparent surfaces (`Settings::blend_order`): its
+/// three methods in a list and, beside it while the exact order is chosen,
+/// that order's precision side by side, as the graphics levels. The
+/// precision comes back as it was left when the exact order is chosen again.
+fn blend_order_choice(ui: &mut egui::Ui, p: &Palette, order: &mut u8) -> bool {
+    use crate::graphics_presets::BlendMethod;
+    use aurora_i18n::tr;
+    let before = *order;
+    let kept = egui::Id::unique("preferences blend order precision");
+    let mut method = BlendMethod::of(*order);
+    if method == BlendMethod::Exact {
+        ui.data_mut(|d| d.insert_temp(kept, *order));
+    }
+    let methods = [
+        (BlendMethod::Standard, tr!("ui-options-blend-order-standard")),
+        (BlendMethod::Exact, tr!("ui-options-blend-order-exact")),
+        (BlendMethod::Stochastic, tr!("ui-options-blend-order-stochastic")),
+    ];
+    if combo(ui, &mut method, &methods) {
+        let precision = ui.data(|d| d.get_temp::<u8>(kept)).unwrap_or(0);
+        *order = method.order(precision);
+    }
+    if method == BlendMethod::Exact {
+        segmented(ui, p, order, &blend_precisions().map(|(v, label)| (v, label, true)));
+    }
+    *order != before
+}
+
+/// The precisions of the exact order, lightest first.
+fn blend_precisions() -> [(u8, &'static str); 4] {
+    use aurora_i18n::tr;
+    [
+        (1, tr!("ui-options-blend-order-fast")),
+        (2, tr!("ui-options-blend-order-balanced")),
+        (3, tr!("ui-options-blend-order-high")),
+        (4, tr!("ui-options-blend-order-full")),
+    ]
+}
+
 /// The five graphics levels, side by side; none is lit once a setting of
 /// the page no longer matches any of them ("Custom", like the Legacy
 /// Viewer's slider after a manual change).
