@@ -119,6 +119,7 @@ fn malformed_or_untrusted_protocol_messages_never_grant_consent_and_transport_ha
         owner_id: world.agent_id,
         source_type: aurora_net::ChatSourceType::Object,
         chat_type: aurora_net::ChatType::OwnerSay,
+        region: None,
         position: glam::Vec3::ZERO,
         message: wire(Uuid::new_v4(), PoseKind::Request, peer),
     };

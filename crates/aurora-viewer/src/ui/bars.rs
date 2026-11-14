@@ -100,6 +100,9 @@ pub enum BarAction {
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
+    /// Toolbar `face_nearest_avatar`, Me › Face nearest avatar
+    /// (Avatar.FaceNearest).
+    FaceNearestAvatar,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
     /// Advanced › Release Keys (Tools.ReleaseKeys).
@@ -961,6 +964,20 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         let quickjump = aurora_i18n::tr!("ui-bars-quickjump");
         if menu::check(ui, p, "arrow-big-up-lines-filled", quickjump, st.quickjump, true) {
             *action = BarAction::ToggleQuickjump;
+        }
+        // menu_viewer.xml: Avatar › Movement › Face nearest avatar and
+        // Avatar alignment (Avatar.FaceNearest, Avatar.AlignToggle), after
+        // Quickjump
+        if menu::item(ui, p, "user-search", aurora_i18n::tr!("toolbar-command-face-nearest")) {
+            *action = BarAction::FaceNearestAvatar;
+        }
+        let align = aurora_i18n::tr!("toolbar-command-avatar-align");
+        if menu::check(ui, p, "user-scan", align, panels.avatar_align, true) {
+            super::widgets::toggle_floater(
+                ui.ctx(),
+                super::avatar_align::window(panels.avatar_align_mini),
+                &mut panels.avatar_align,
+            );
         }
         if menu::item(ui, p, "swimming", aurora_i18n::tr!("movement-title")) {
             *action = BarAction::MovementEnhancer;
@@ -2476,6 +2493,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "stop_animations" => return BarAction::StopAnimations,
         "resync_animations" => return BarAction::ResyncAnimations,
         "immersive" => return BarAction::ToggleImmersive,
+        // Avatar.AlignToggle: the Compass in its saved layout
+        "avatar_align" => toggle(super::avatar_align::window(panels.avatar_align_mini), &mut panels.avatar_align),
+        "face_nearest_avatar" => return BarAction::FaceNearestAvatar,
         _ => {}
     }
     BarAction::None
@@ -2506,6 +2526,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "group_titles" => panels.group_titles,
         "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
+        "avatar_align" => panels.avatar_align,
         "webbrowser" => panels.web_browser,
         "destinations" => panels.destinations,
         "voice" => panels.voice_controls,

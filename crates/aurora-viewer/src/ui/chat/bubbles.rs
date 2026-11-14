@@ -234,7 +234,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 )
                 .sense(egui::Sense::click()),
             );
-            if !avatar.is_nil() {
+            if object && !line.source.is_nil() {
+                super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+            } else if !avatar.is_nil() {
                 line_name_menu(&r, p, world, avatar, line, env.menu);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))

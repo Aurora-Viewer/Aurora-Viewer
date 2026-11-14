@@ -200,6 +200,7 @@ fn reply(command: &NetCommand, revision: u32, enabled: bool, bundle: Uuid, rig: 
                 owner_id: BUILDER,
                 source_type: ChatSourceType::Object,
                 chat_type: ChatType::Other(9),
+                region: None,
                 position: Vec3::ZERO,
                 message: format!("{}{}", graph_wire::PREFIX, packet),
             }

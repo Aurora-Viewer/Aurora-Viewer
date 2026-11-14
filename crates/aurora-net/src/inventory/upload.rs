@@ -167,38 +167,51 @@ pub struct Rejection {
     pub messages: Vec<String>,
 }
 
+/// Hides local paths and URLs, drops control characters and caps the text at
+/// 512 characters: a server message is shown and logged, never as it came.
+fn clean_message(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| {
+            let token = word.trim_start_matches(['\'', '"', '(', '[']);
+            if token.contains(":/") || token.contains(":\\") || token.starts_with("\\\\") || token.starts_with('/') {
+                "…"
+            } else {
+                word
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(512)
+        .collect()
+}
+
 impl Rejection {
+    /// A server or network error message, cleaned like [`Self::from_response`].
+    pub fn from_message(message: &str) -> Self {
+        let message = clean_message(message);
+        Self {
+            status: None,
+            identifier: String::new(),
+            messages: (!message.is_empty()).then_some(message).into_iter().collect(),
+        }
+    }
+
     // LLMeshUploadThread::log_upload_error reads error.message, identifier
     // and the per-model errors array. Never propagate the full LLSD response.
     pub(super) fn from_response(status: Option<u16>, value: &Llsd) -> Self {
-        let clean = |text: &str| {
-            text.split_whitespace()
-                .map(|word| {
-                    let token = word.trim_start_matches(['\'', '"', '(', '[']);
-                    if token.contains(":/") || token.contains(":\\") || token.starts_with("\\\\") || token.starts_with('/') {
-                        "…"
-                    } else {
-                        word
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(512)
-                .collect::<String>()
-        };
         let error = &value["error"];
         let mut messages = Vec::new();
         for message in [error["message"].as_str(), error.as_str(), value["message"].as_str()] {
-            let message = clean(message);
+            let message = clean_message(message);
             if !message.is_empty() && !messages.contains(&message) {
                 messages.push(message);
             }
         }
         if let Llsd::Array(errors) = &error["errors"] {
             for detail in errors.iter().take(8) {
-                let message = clean(detail["message"].as_str());
+                let message = clean_message(detail["message"].as_str());
                 if !message.is_empty() && !messages.contains(&message) {
                     messages.push(message);
                 }
@@ -354,6 +367,13 @@ pub async fn upload(http: &reqwest::Client, cap: &str, fetch: &str, owner: Uuid,
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejection_messages_hide_paths_and_urls_and_stay_short() {
+        let rejection = Rejection::from_message("refused (https://sim.example/cap/abc) C:\\Users\\x\\a.png /home/x/b.png ok\u{7}");
+        assert_eq!(rejection.messages, vec!["refused … … … ok".to_owned()]);
+        assert_eq!(Rejection::from_message(&"a".repeat(2000)).messages[0].chars().count(), 512);
+        assert!(Rejection::from_message("  ").messages.is_empty());
+    }
     #[test]
     fn account_prices_keep_unknown_values_and_use_area_threshold() {
         let raw = llsd_map! { "account_level_benefits" => llsd_map! {

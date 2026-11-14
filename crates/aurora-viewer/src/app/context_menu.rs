@@ -440,6 +440,7 @@ impl App {
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)
                     && let Some(object) = self.world.objects.get(linkset_root(&self.world, index))
@@ -733,6 +734,11 @@ impl App {
                     self.world.unblock(root, &name, 0);
                 } else if let Err(e) = self.world.block(root, &name, crate::world::mutes::MuteType::Object) {
                     self.world.system_message(e);
+                }
+            }
+            CtxAction::BlockObjectOwner { owner, group_owned } => {
+                if let Err(error) = self.world.block_object_owner(owner, group_owned) {
+                    self.world.system_message(error);
                 }
             }
             CtxAction::Edit(id) => {
