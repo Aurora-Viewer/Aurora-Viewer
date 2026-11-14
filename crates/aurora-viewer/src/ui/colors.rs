@@ -158,6 +158,33 @@ pub fn sender_color(line: &ChatLine) -> Color32 {
     }
 }
 
+/// Color of a distance to us: within the chat, within a shout, farther.
+/// The radar's ranges and names, and the name tags' distance
+/// (FSTagShowDistance, FSTagShowDistanceColors in LLVOAvatar::idleUpdateNameTagText,
+/// indra/newview/llvoavatar.cpp). The Legacy Viewer's tags draw the bands
+/// green, yellow and red (NameTagChatDistanceColor…); Aurora keeps the
+/// radar's theme colors for both, so that a distance reads the same
+/// everywhere. Its whisper band has the chat's color there too.
+pub fn range_color(p: &crate::theme::Palette, range: Option<f32>) -> Color32 {
+    range_color_in(p, range, crate::world::radar::chat_ranges())
+}
+
+pub fn range_color_in(p: &crate::theme::Palette, range: Option<f32>, r: crate::world::radar::ChatRanges) -> Color32 {
+    match range {
+        Some(d) if d <= r.say => p.success,
+        Some(d) if d <= r.shout => p.ink,
+        _ => p.muted,
+    }
+}
+
+/// Whether `tag_color` gives a resident a color of its relation (Linden,
+/// friend, blocked) rather than the match / mismatch one: the Legacy
+/// Viewer's tags colored by distance keep such a color
+/// (`special_color_override` in LLVOAvatar::idleUpdateNameTagText).
+pub fn relation_tag(world: &World, id: &Uuid, name: &str) -> bool {
+    get().relation_names && (is_linden(name) || is_friend(world, id) || world.is_avatar_blocked(id))
+}
+
 /// Name tag color of an avatar (own, Linden, friend while the names are
 /// colored by relation, else match / mismatch).
 pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool) -> Color32 {

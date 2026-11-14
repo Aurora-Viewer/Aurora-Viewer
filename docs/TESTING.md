@@ -10805,6 +10805,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
+| `AURORA_DEMO_TAG_DISTANCE=1` | The distance in the name tags and the names colored by it, for this run |
 | `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -10965,6 +10966,14 @@ What the inventory must show with these scenarios:
     "Full plates for friends only" for this run, not saved): only Orion, the
     friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
     compact pills however near; the far pills do not change.
+  - With `AURORA_DEMO_TAG_DISTANCE=1` (Preferences › Avatars › "Distance in
+    name tags" and "Names colored by distance" for this run, not saved):
+    each plate but ours ends its name line with ` · 7.12 m`, on the full
+    plates, the pills and the far names alike; the five near residents (in
+    chat range) have that figure and their names in green, the farther ones
+    (within a shout) in the plain ink. Orion keeps the heart and his plate
+    the friends' tint. Add `AURORA_NAME_TAGS=classic` for the classic tags:
+    a small line under the names, before the complexity.
   - `AURORA_DEMO_NAME_TAGS=all|self-off|friends-off|others-off|off|temporary|classic-temporary`
     selects the visibility scenario at startup. Combine with `AURORA_DEMO_TAGS=voice`
     for a row containing a friend and other residents. Temporary modes use

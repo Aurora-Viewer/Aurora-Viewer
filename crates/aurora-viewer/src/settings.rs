@@ -1608,6 +1608,11 @@ pub struct Settings {
     pub tag_complexity: bool,
     pub tag_complexity_too_complex_only: bool,
     pub tag_complexity_own: bool,
+    /// The distance to the other avatars in their name tags (FSTagShowDistance,
+    /// off), and their names coloured by it (FSTagShowDistanceColors, off),
+    /// within the chat, within a shout or farther, as the radar colours them.
+    pub tag_distance: bool,
+    pub tag_distance_colors: bool,
     /// Display names (UseDisplayNames, on), the username with them
     /// (NameTagShowUsernames, on) as "Firstname Lastname"
     /// (FSNameTagShowLegacyUsernames, on), "Resident" hidden
@@ -2490,6 +2495,8 @@ impl Default for Settings {
             tag_complexity: true,
             tag_complexity_too_complex_only: true,
             tag_complexity_own: false,
+            tag_distance: false,
+            tag_distance_colors: false,
             use_display_names: true,
             show_usernames: true,
             group_titles: Default::default(),

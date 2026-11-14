@@ -17,6 +17,7 @@ fn content() -> Content {
         render_never: false,
         blocked: false,
         mark: None,
+        distance: None,
     }
 }
 
@@ -1369,4 +1370,78 @@ fn a_friend_s_plate_takes_the_friends_color_unless_a_set_colors_it() {
         );
     });
     output.textures_delta.clear();
+}
+
+#[test]
+fn the_distance_is_never_on_our_own_plate_and_is_rounded_to_its_figure() {
+    assert_eq!(Distance::of(12.0, true, true, true), None, "our own");
+    assert_eq!(Distance::of(12.0, false, false, false), None, "both options off");
+    assert_eq!(Distance::of(f32::NAN, false, true, false), None);
+    let d = Distance::of(12.3456, false, true, false).expect("shown");
+    assert_eq!(d.meters, 12.35);
+    assert!(d.shown && !d.color_name);
+    assert!(d.text().starts_with("12.35"));
+    // the names colored without the figure
+    let d = Distance::of(3.0, false, false, true).expect("colored");
+    assert!(!d.shown && d.color_name);
+}
+
+#[test]
+fn distance_bands_follow_the_chat_ranges() {
+    let p = Theme::default().palette();
+    let r = crate::world::radar::ChatRanges {
+        whisper: 10.0,
+        say: 20.0,
+        shout: 100.0,
+    };
+    let band = |d| crate::ui::colors::range_color_in(&p, d, r);
+    assert_eq!(band(Some(5.0)), p.success, "whisper");
+    assert_eq!(band(Some(20.0)), p.success, "chat");
+    assert_eq!(band(Some(20.5)), p.ink, "shout");
+    assert_eq!(band(Some(100.0)), p.ink);
+    assert_eq!(band(Some(150.0)), p.muted, "beyond");
+    assert_eq!(band(None), p.muted);
+}
+
+#[test]
+fn the_distance_follows_the_name_on_every_level_and_colors_it() {
+    let ctx = egui::Context::default();
+    Theme::default().apply(&ctx, 1.0);
+    let p = Theme::default().palette();
+    let near = |shown, color_name| Content {
+        distance: Distance::of(4.0, false, shown, color_name),
+        ..content()
+    };
+    for camera in [5.0, 25.0, 60.0] {
+        let width = |c: Content| {
+            let mut plates = Plates::default();
+            frame(&ctx, &mut plates, &[tag(1, camera, c)], 1.0).0[0].1.width()
+        };
+        assert!(width(near(true, false)) > width(content()), "wider at {camera} m");
+        assert_eq!(width(near(false, true)), width(content()), "the color alone takes no room");
+    }
+    let galley_colors = |c: Content| {
+        let mut plates = Plates::default();
+        let shapes = frame(&ctx, &mut plates, &[tag(1, 5.0, c)], 1.0).1;
+        let mut colors = Vec::new();
+        walk(&shapes, &mut |s| {
+            if let egui::Shape::Text(t) = s {
+                // (the plates lay each text out in one section)
+                colors.extend(t.galley.job.sections.iter().map(|s| s.format.color));
+            }
+        });
+        colors
+    };
+    assert!(!galley_colors(content()).contains(&p.success));
+    assert!(
+        galley_colors(near(false, true)).contains(&p.success),
+        "the name in the chat band's color"
+    );
+    // a contact set's name color wins
+    let mut set = near(false, true);
+    set.appearance = std::sync::Arc::new(crate::world::contact_sets::Appearance {
+        nameplate_name: Some([1.0, 0.0, 0.0, 1.0]),
+        ..Default::default()
+    });
+    assert!(!galley_colors(set).contains(&p.success));
 }

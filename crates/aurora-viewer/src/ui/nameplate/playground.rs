@@ -63,6 +63,7 @@ fn sample() -> Content {
         render_never: false,
         blocked: false,
         mark: None,
+        distance: None,
     }
 }
 

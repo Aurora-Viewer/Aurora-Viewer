@@ -48,6 +48,16 @@ pub fn apply_name_tag_preferences(settings: &mut crate::settings::Settings) -> b
     true
 }
 
+/// AURORA_DEMO_TAG_DISTANCE=1: the distance in the name tags and the names
+/// colored by it (FSTagShowDistance, FSTagShowDistanceColors) for this run;
+/// with AURORA_NAME_TAGS=classic, on the classic tags.
+pub fn apply_distance_preferences(settings: &mut crate::settings::Settings) {
+    if std::env::var_os("AURORA_DEMO_TAG_DISTANCE").is_some() {
+        settings.tag_distance = true;
+        settings.tag_distance_colors = true;
+    }
+}
+
 pub fn mode() -> Option<Mode> {
     static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_TAGS").ok()?.trim() {

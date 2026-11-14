@@ -99,6 +99,17 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(tag_complexity_own),
                     );
                 });
+                // FSTagShowDistance, FSTagShowDistanceColors (panel_preferences_colors.xml)
+                cx.toggle(
+                    tr!("ui-options-distance-in-name-tags"),
+                    tr!("ui-options-distance-in-name-tags-help"),
+                    &field!(tag_distance),
+                );
+                cx.toggle(
+                    tr!("ui-options-names-by-distance"),
+                    tr!("ui-options-names-by-distance-help"),
+                    &field!(tag_distance_colors),
+                );
             });
             // the plates' settings mean nothing to the classic name tags
             cx.group(tr!("ui-options-aurora-avatar-plates"), |cx| {
