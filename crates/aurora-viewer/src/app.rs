@@ -20984,6 +20984,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));
@@ -21032,6 +21033,7 @@ impl ApplicationHandler for App {
                     owner_id: uuid::Uuid::nil(),
                     source_type: aurora_net::ChatSourceType::Object,
                     chat_type: aurora_net::ChatType::Normal,
+                    region: self.world.main_region,
                     position: glam::Vec3::ZERO,
                     message: text.clone(),
                 }));

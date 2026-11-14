@@ -2007,16 +2007,16 @@ impl World {
         origin + clipped
     }
 
-    /// LLWorld::getRegionFromPosAgent: the known region under a position
-    /// given relative to the main region (a chat message's), with the
-    /// position within that region. None outside every known region.
-    fn region_at_main_offset(&self, pos: Vec3) -> Option<(&Region, Vec3)> {
-        let main = self.main_region?;
+    /// Like LLWorld::getRegionFromPosAgent (indra/newview/llworld.cpp), but
+    /// ChatFromSimulator positions are relative to the sending circuit's
+    /// region (message_template.msg), not the agent's current region.
+    /// Returns the known region under that position and its local position.
+    fn region_at_offset(&self, origin: RegionHandle, pos: Vec3) -> Option<(&Region, Vec3)> {
         if !pos.is_finite() {
             return None;
         }
-        let x = (main >> 32) as f64 + f64::from(pos.x);
-        let y = (main & 0xffff_ffff) as f64 + f64::from(pos.y);
+        let x = (origin >> 32) as f64 + f64::from(pos.x);
+        let y = (origin & 0xffff_ffff) as f64 + f64::from(pos.y);
         self.regions.iter().find_map(|(&handle, r)| {
             let (x0, y0) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
             let (w, d) = (f64::from(r.heightmap.size_x), f64::from(r.heightmap.size_y));
@@ -4599,8 +4599,9 @@ impl World {
             // RLVa @showloc: the location is masked when the line arrives,
             // so a later region change cannot reveal it (the inspector also
             // hides one kept from before the restriction)
-            let slurl = self
-                .region_at_main_offset(c.position)
+            let slurl = c
+                .region
+                .and_then(|region| self.region_at_offset(region, c.position))
                 .filter(|(r, _)| !r.name.is_empty() && !self.rlva_private_region(&r.name))
                 .map(|(r, pos)| {
                     format!(
@@ -7488,6 +7489,7 @@ mod motion_tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: "@showloc=n".to_owned(),
         }));
@@ -8185,6 +8187,7 @@ mod motion_tests {
             owner_id: id,
             source_type: ChatSourceType::Agent,
             chat_type: ChatType::Normal,
+            region: None,
             position: Vec3::new(10.0, 10.0, 20.0),
             message: "hello".into(),
         }));

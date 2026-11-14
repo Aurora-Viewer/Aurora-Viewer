@@ -720,6 +720,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: ChatType::Whisper,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "psst".into(),
         }));

@@ -69,6 +69,7 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
             owner_id: owner,
             source_type,
             chat_type,
+            region: Some(crate::demo::HANDLE),
             position: Vec3::new(128.0, 128.0, 25.0),
             message: text.into(),
         })

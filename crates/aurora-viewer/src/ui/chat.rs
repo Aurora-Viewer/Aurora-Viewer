@@ -6469,6 +6469,7 @@ mod tests {
             owner_id: owner,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::Normal,
+            region: world.main_region,
             position: glam::Vec3::new(32.0, 64.0, 128.0),
             message: "Hello from an unloaded object".into(),
         }));

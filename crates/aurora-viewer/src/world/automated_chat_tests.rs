@@ -25,6 +25,7 @@ fn said(from: Uuid, source_type: ChatSourceType, chat_type: ChatType) -> NetEven
         owner_id: OWNER,
         source_type,
         chat_type,
+        region: Some(crate::demo::HANDLE),
         position: glam::Vec3::new(128.0, 128.0, 25.0),
         message: "hello".into(),
     })
@@ -155,6 +156,7 @@ fn an_objects_owner_is_anonymous_in_its_inspector_under_shownames() {
         owner_id: ME,
         source_type: ChatSourceType::Object,
         chat_type: ChatType::OwnerSay,
+        region: None,
         position: glam::Vec3::ZERO,
         message: "@shownames=n".into(),
     };
@@ -187,6 +189,7 @@ fn an_objects_location_masked_under_showloc_stays_masked_after_a_region_change()
             owner_id: w.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: w.main_region,
             position: glam::Vec3::ZERO,
             message: message.into(),
         })
@@ -231,9 +234,9 @@ fn an_objects_location_masked_under_showloc_stays_masked_after_a_region_change()
     assert_eq!(origin(&w, speaker), "");
 }
 
-/// LLWorld::getRegionFromPosAgent: an object's nearby chat line takes the
-/// region under its position, a neighbour's included, with the position
-/// within it; outside every region we know, no location rather than ours.
+/// Like LLWorld::getRegionFromPosAgent, a position outside its origin region
+/// can resolve into a known neighbour. The offset is relative to the sending
+/// circuit, as specified by ChatFromSimulator, not necessarily our region.
 #[test]
 fn an_objects_chat_origin_is_the_region_under_its_position() {
     let mut w = world(false);
@@ -249,6 +252,7 @@ fn an_objects_chat_origin_is_the_region_under_its_position() {
             owner_id: OWNER,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::Normal,
+            region: Some(here),
             position: glam::Vec3::new(x, 40.0, 22.0),
             message: "hello".into(),
         })
@@ -260,6 +264,96 @@ fn an_objects_chat_origin_is_the_region_under_its_position() {
     assert_eq!(slurl(1), format!("{}/100/40/22", crate::slurl::encode("Home Region")));
     assert_eq!(slurl(2), format!("{}/14/40/22", crate::slurl::encode("East Region")));
     assert_eq!(slurl(3), "", "no region known there");
+}
+
+/// #2009: the same region-local coordinates belong to different places in
+/// the main and neighbouring circuits. Scene lookup must not be required:
+/// the neighbour's speaker may not have loaded, or may already have moved.
+#[test]
+fn an_objects_chat_origin_keeps_the_sending_region_for_loaded_and_unloaded_speakers() {
+    let mut w = world(false);
+    let here: RegionHandle = (1000 * 256) << 32 | (1000 * 256);
+    let east: RegionHandle = (1001 * 256) << 32 | (1000 * 256);
+    w.set_main_region(here);
+    w.ensure_region(here, (256, 256)).name = "Home Region".into();
+    w.ensure_region(east, (256, 256)).name = "East Region".into();
+    let position = Vec3::new(14.0, 40.0, 22.0);
+    let mut object = crate::demo::action_avatar(false);
+    object.full_id = VENDOR;
+    object.local_id = 0x0B1E;
+    object.parent_id = 0;
+    object.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+    object.position = position;
+    object.owner_id = OWNER;
+    let message = |region, chat_type| {
+        NetEvent::Chat(ChatMessage {
+            from_name: "Neighbour Speaker".into(),
+            source_id: VENDOR,
+            owner_id: OWNER,
+            source_type: ChatSourceType::Object,
+            chat_type,
+            region: Some(region),
+            position,
+            message: "hello from the neighbour".into(),
+        })
+    };
+    for loaded in [false, true] {
+        if loaded {
+            w.apply(NetEvent::ObjectUpdates {
+                handle: east,
+                objects: vec![object.clone()],
+            });
+            let index = w.objects.index_of_uuid(&VENDOR).expect("loaded speaker");
+            assert_eq!(w.objects.get(index).unwrap().key.region, east);
+        } else {
+            assert!(w.objects.index_of_uuid(&VENDOR).is_none());
+        }
+        for chat_type in [ChatType::Whisper, ChatType::Normal, ChatType::Shout] {
+            w.apply(message(east, chat_type));
+            assert_eq!(origin(&w, VENDOR), "East%20Region/14/40/22");
+        }
+    }
+    // Queued messages keep their arrival frame across a region crossing,
+    // even if the loaded speaker is now in a different region.
+    let queued = message(here, ChatType::Normal);
+    w.set_main_region(east);
+    w.apply(queued);
+    assert_eq!(origin(&w, VENDOR), "Home%20Region/14/40/22");
+}
+
+#[test]
+fn an_objects_chat_origin_never_guesses_a_region_for_unknown_or_invalid_positions() {
+    let mut w = world(false);
+    // Region handle zero is a valid origin, not an unknown-region sentinel.
+    w.set_main_region(0);
+    w.ensure_region(0, (512, 256)).name = "Wide Region".into();
+    let at = |region, position| {
+        NetEvent::Chat(ChatMessage {
+            from_name: "Speaker".into(),
+            source_id: VENDOR,
+            owner_id: OWNER,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::Normal,
+            region,
+            position,
+            message: "hello".into(),
+        })
+    };
+    w.apply(at(Some(0), Vec3::new(300.0, 40.0, 22.0)));
+    assert_eq!(origin(&w, VENDOR), "Wide%20Region/300/40/22");
+    for (region, position) in [
+        (None, Vec3::new(14.0, 40.0, 22.0)),
+        (Some(1024 << 32), Vec3::new(14.0, 40.0, 22.0)),
+        (Some(0), Vec3::new(512.0, 40.0, 22.0)),
+        (Some(0), Vec3::new(-1.0, 40.0, 22.0)),
+        (Some(0), Vec3::new(f32::NAN, 40.0, 22.0)),
+        (Some(0), Vec3::new(14.0, 40.0, f32::INFINITY)),
+    ] {
+        w.apply(at(region, position));
+        assert_eq!(origin(&w, VENDOR), "", "region={region:?}, position={position:?}");
+        let line = w.chat.back().unwrap();
+        assert_eq!(w.chat_object(line).unwrap().owner, OWNER);
+    }
 }
 
 /// Each line keeps its own origin, as each Legacy Viewer line carries its
@@ -278,6 +372,7 @@ fn each_object_chat_line_keeps_its_own_origin() {
             owner_id: OWNER,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::Normal,
+            region: Some(here),
             position: glam::Vec3::new(x, 50.0, 21.0),
             message: "step".into(),
         }));
