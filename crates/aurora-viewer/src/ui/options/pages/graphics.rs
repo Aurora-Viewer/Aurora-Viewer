@@ -713,6 +713,15 @@ fn quality(cx: &mut Cx) {
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-local-lights"), |cx| {
+        // the Legacy Viewer's "Max. nearby lights" (RenderLocalLightCount),
+        // up to the 64 the renderer holds (Settings::local_light_count)
+        cx.slider(
+            tr!("ui-options-max-nearby-lights"),
+            tr!("ui-options-max-nearby-lights-help"),
+            &field!(local_light_count),
+            0..=crate::scene::lights::MAX_LIGHTS as u32,
+            "",
+        );
         cx.toggle(
             tr!("ui-options-others-attached-lights"),
             tr!("ui-options-others-attached-lights-help"),
@@ -995,6 +1004,22 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // the order of the blended faces (scene/blend_order.rs), beyond the
+    // Legacy Viewer's sort
+    cx.group(tr!("ui-options-transparency"), |cx| {
+        cx.combo(
+            tr!("ui-options-blend-order"),
+            tr!("ui-options-blend-order-help"),
+            &field!(blend_order),
+            &[
+                (0, tr!("ui-options-blend-order-standard")),
+                (1, tr!("ui-options-blend-order-fast")),
+                (2, tr!("ui-options-blend-order-balanced")),
+                (3, tr!("ui-options-blend-order-high")),
+                (4, tr!("ui-options-blend-order-full")),
+            ],
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another
