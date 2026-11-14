@@ -2526,6 +2526,26 @@ fn rain_debug_color(world: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(vec3<f32>(0.0, open, 1.0 - open) * (0.3 + 0.7 * s.y) * 0.6, 0.6);
 }
 
+// Why the snow lies or not at `world` (facing `n`), for AURORA_RAIN_DEBUG=snow:
+// white, deep snow's own surface; red, none in the memory there (beyond it,
+// or none has built up); yellow, too steep by the surface's facing; blue,
+// off the surface the shelter map has there (under cover, or above it: what
+// stands there is not in the map), purple the same beyond the near map, by
+// the height the memory keeps; green, lying (brighter, deeper; darker
+// beyond the near map).
+fn snow_debug_color(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+    if (on_deep_snow(world)) { return vec4<f32>(0.6, 0.6, 0.6, 0.6); }
+    let raw = snow_memory_depth(world.xy);
+    if (raw <= 0.002) { return vec4<f32>(0.6, 0.0, 0.0, 0.6); }
+    if (smoothstep(0.55, 0.85, n.z) < 0.5) { return vec4<f32>(0.6, 0.5, 0.0, 0.6); }
+    let near = rain_shelter_texel(world.xy, world.z).z > 0.5;
+    let lying = snow_lying(world + n * 0.05);
+    if (lying < 0.5 * raw) {
+        return select(vec4<f32>(0.35, 0.0, 0.5, 0.6), vec4<f32>(0.0, 0.15, 0.6, 0.6), near);
+    }
+    return vec4<f32>(0.0, (0.25 + 0.35 * raw) * select(0.6, 1.0, near), 0.0, 0.6);
+}
+
 fn rain_wet_memory(world: vec3<f32>) -> f32 {
     let extent = frame.rain_wet.z;
     if (extent <= 0.0) { return -1.0; }
@@ -3148,6 +3168,7 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
+    if (rain_debug > 1.5) { return snow_debug_color(world, rain_depth_normal(uv, world)); }
     if (rain_debug > 0.5) { return rain_debug_color(world); }
     if (on_deep_snow(world)) { discard; }
     let n = rain_depth_normal(uv, world);
@@ -3220,10 +3241,19 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
-    if (rain_debug > 0.5) { return rain_debug_color(world); }
-    if (on_deep_snow(world)) { discard; }
     let g = textureLoad(rain_gbuf, vec2<i32>(in.clip.xy), 0);
     let cleared = abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004;
+    if (rain_debug > 1.5) {
+        // the facing the snow is judged by below, the G-buffer's where it has one
+        var dn = rain_depth_normal(uv, world);
+        if (!cleared) {
+            dn = rain_oct_decode(g.xy);
+            if (dot(dn, frame.camera_pos.xyz - world) < 0.0) { dn = -dn; }
+        }
+        return snow_debug_color(world, dn);
+    }
+    if (rain_debug > 0.5) { return rain_debug_color(world); }
+    if (on_deep_snow(world)) { discard; }
     var out: vec4<f32>;
     if (cleared) {
         let flat_n = rain_depth_normal(uv, world);

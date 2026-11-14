@@ -4514,7 +4514,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
 | `AURORA_DEMO_SNOW_ROOF=1` | Three canopies in the snow: plain, open at the top, glass |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
-| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
+| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
@@ -4542,7 +4542,12 @@ both open states and the selection count. Capture at frame 620.
   shelter map. `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
-  cover; brighter, the wetter. `AURORA_THUNDER_AT=<s>` makes one strike
+  cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
+  the snow lies or not: white, deep snow's own surface; red, no snow in the
+  memory there; yellow, too steep by the surface's facing; blue, off the
+  surface the shelter map has there (under cover, or not in the map),
+  purple the same beyond the near map; green, lying (darker beyond the
+  near map). `AURORA_THUNDER_AT=<s>` makes one strike
   1 km away, `s` seconds after the start, whether Thunder is on or not: its
   flash at once and, for most strikes, a bolt in the sky in its direction,
   then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in

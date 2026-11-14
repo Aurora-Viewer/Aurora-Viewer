@@ -2689,14 +2689,14 @@ fn rain_share(quality: u32) -> f32 {
 }
 
 /// Rain prototype: `AURORA_RAIN_DEBUG=1`, the wet pass showing the wetness
-/// memory.
+/// memory; `=snow`, why the snow lies or not (env.wgsl `snow_debug_color`).
 fn rain_constants() -> &'static [(&'static str, f64)] {
     static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
     CONSTANTS.get_or_init(|| {
-        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") {
-            1.0
-        } else {
-            0.0
+        let debug = match std::env::var("AURORA_RAIN_DEBUG").as_deref() {
+            Ok("1") => 1.0,
+            Ok("snow") => 2.0,
+            _ => 0.0,
         };
         [("rain_debug", debug)]
     })
