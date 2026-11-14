@@ -2260,6 +2260,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Controls
 
+- ✅ Quick lens presets in Camera Controls (task `camera-lens-controls`): expose 24, 35, 50, 85 and 135 mm equivalent focal lengths and a lens reset in both camera layouts and the free-camera tab. This extends the Legacy Viewer's distance controls with Aurora's existing photo focal lengths. Lens changes keep the camera position and target, use the keyboard zoom's field-of-view limits and respect RLVa camera ownership. Validated by the human in the local macOS demo on 2026-11-14. Demo scenarios: `AURORA_DEMO_CONTROLS=camera|classic|free`.
+
 - 🟡 The Home key is labelled Home ([#3415](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3415)): Preferences › Shortcuts showed "Origin" in English and "原点" in Japanese for Fly/Land, a translation of the French "Origine". The Legacy Viewer names KEY_HOME "Home" (`indra/llwindow/llkeyboard.cpp`, `addKeyName`). English and Japanese now say Home; French says Début, the name on French keyboards (human decision, 2026-11-14). The message id stays `keybinds-origin`. No new demo: `AURORA_DEMO_OPTIONS=shortcuts` opens that page (Movement is the first tab).
   - ⬜ QA: Preferences › Shortcuts › Movement, Fly/Land shows Home in English and Japanese, and Début in French.
 

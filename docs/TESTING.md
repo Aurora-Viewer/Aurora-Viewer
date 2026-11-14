@@ -1000,6 +1000,11 @@ has flown 2 m to the left and 1 m up and turned, the avatar where it was
 two joysticks with up / down, the speed and Back. Escape, Back or closing the
 photo window brings the camera back (`free camera: back to the avatar`).
 
+In `camera`, `classic` and `free`, open the Lens menu. Select Wide angle
+(24 mm), then Portrait (85 mm): the view narrows around the same target
+without moving the camera or changing the distance slider. Reset viewing
+angle restores the default lens. The menu also offers 35, 50 and 135 mm.
+
 `AURORA_CAPTURE_FRAMES`: allow about 620 to get past the loading fade.
 Several frames separated by commas (`2500,2600`) save one file each,
 `<file>-<frame>.png`. The frames-per-second cap in the background ("Limit

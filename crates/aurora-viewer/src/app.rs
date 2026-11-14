@@ -4992,24 +4992,9 @@ impl App {
             Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
             Action::CameraControls => self.request_controls(false, true),
-            Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
-                if self.world.rlva.camera_owner().is_none() {
-                    let aspect = self.view_aspect();
-                    let factor = match action {
-                        Action::LensZoomIn => Some(1.0 / 1.2),
-                        Action::LensZoomOut => Some(1.2),
-                        _ => None,
-                    };
-                    let current = self.camera.flycam.as_ref().map_or(self.settings.camera.fov, |flight| flight.fov);
-                    self.settings.camera.fov = crate::camera::zoom_lens(current, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
-                    if let Some(flight) = &mut self.camera.flycam {
-                        flight.set_fov(self.settings.camera.fov);
-                    }
-                    if !self.demo {
-                        self.settings.save();
-                    }
-                }
-            }
+            Action::LensZoomIn => self.change_camera_lens(self.camera_lens(), Some(1.0 / 1.2)),
+            Action::LensZoomOut => self.change_camera_lens(self.camera_lens(), Some(1.2)),
+            Action::LensZoomDefault => self.change_camera_lens(crate::camera::DEFAULT_FOV, None),
             Action::ResetCamera => {
                 if !self.photo_escape() {
                     self.reset_camera_view();
