@@ -2663,7 +2663,7 @@ impl World {
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
-                self.chat_log.login(l.agent_id);
+                self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 if self.chat_log.cfg.import_at_login
                     && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
                 {

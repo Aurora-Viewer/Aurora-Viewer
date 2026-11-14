@@ -10,6 +10,13 @@
 //! the account that left. The demo has its own grid name and its own
 //! settings folder, so it never touches a real account.
 //!
+//! With the Legacy layout (an Aurora option, off by default) and a chosen
+//! folder, the account's files are `<folder>/<first_last>` instead, the
+//! Legacy Viewer's own (`legacy_profile::Account::chat_folder`): both
+//! viewers then read and add to the same files. That folder is shared, so
+//! Aurora only appends lines to it: no import, merge, move or erasing
+//! there (`shared`).
+//!
 //! - `format`: the text of a line and its reading back;
 //! - `names`: the file of each conversation;
 //! - `store`: the folder, the thread that writes and reads;
@@ -87,9 +94,25 @@ pub fn grid_name(choice: &crate::settings::GridChoice, custom_login_uri: &str, d
     }
 }
 
+/// The account's folder in the Legacy layout, None on a grid without one.
+/// The names come from the server: what a file system refuses becomes '_'.
+fn legacy_folder(first: &str, last: &str, grid: &str) -> Option<String> {
+    import::Account {
+        first: names::clean_file_name(first),
+        last: names::clean_file_name(last),
+        grid: grid.to_owned(),
+    }
+    .chat_folder()
+}
+
 struct Open {
     identity: Identity,
     dir: PathBuf,
+    /// The account's folder in the Legacy layout, when the login gave its
+    /// name and the grid has one.
+    legacy: Option<String>,
+    /// `dir` is the Legacy layout's folder.
+    shared: bool,
 }
 
 /// The transcripts of the account logged in.
@@ -102,6 +125,9 @@ pub struct ChatLog {
     /// Folder holding one folder per account, when it is not the one of the
     /// settings: chosen in the preferences (InstantMessageLogPath), tests.
     accounts: Option<PathBuf>,
+    /// The files of the account in the Legacy Viewer's layout under the
+    /// chosen folder (Preferences › Chat, off by default).
+    legacy_layout: bool,
     /// A move to another folder asked for, until its answer comes, with the
     /// folder to go back to if it fails.
     moving: Option<(crossbeam_channel::Receiver<std::io::Result<usize>>, Option<PathBuf>)>,
@@ -139,7 +165,14 @@ impl ChatLog {
     }
 
     /// The account is known: its folder becomes the one written and read.
+    /// Without its name, the Legacy layout cannot be used (tests).
+    #[cfg(test)]
     pub fn login(&mut self, agent: Uuid) {
+        self.login_named(agent, None);
+    }
+
+    /// `login`, with the account's first and last names of the login.
+    pub fn login_named(&mut self, agent: Uuid, name: Option<(&str, &str)>) {
         self.epoch += 1;
         self.open = None;
         self.conversations.reset();
@@ -151,13 +184,55 @@ impl ChatLog {
             grid: self.grid.clone(),
             agent,
         };
-        let accounts = self.accounts.clone().unwrap_or_else(crate::settings::accounts_dir);
-        let dir = store::folder(&accounts, &identity);
-        self.open = Some(Open { identity, dir });
+        let legacy = name.and_then(|(first, last)| legacy_folder(first, last, &self.grid));
+        let (dir, shared) = self.place(self.accounts.as_deref(), &identity, legacy.as_deref());
+        self.open = Some(Open {
+            identity,
+            dir,
+            legacy,
+            shared,
+        });
         // LLConversationLog::initLoggingState
         if self.cfg.log_conversations {
             self.start_conversations();
         }
+    }
+
+    /// The folder of an account under the folder of the accounts (None: the
+    /// default one), and whether it is the Legacy layout's.
+    fn place(&self, accounts: Option<&Path>, identity: &Identity, legacy: Option<&str>) -> (PathBuf, bool) {
+        if self.legacy_layout
+            && let (Some(root), Some(name)) = (accounts, legacy)
+        {
+            return (root.join(name), true);
+        }
+        let root = accounts.map(Path::to_path_buf).unwrap_or_else(crate::settings::accounts_dir);
+        (store::folder(&root, identity), false)
+    }
+
+    /// The Legacy layout on or off (Preferences › Chat). Logged in, the next
+    /// lines go to the other folder and nothing moves: the account's Aurora
+    /// files stay where they are, and come back with the option off. Waits
+    /// while an import, a move or an erasing is under way (asked again by
+    /// the next frame).
+    pub fn set_legacy_layout(&mut self, on: bool) {
+        if on == self.legacy_layout || self.busy() {
+            return;
+        }
+        self.legacy_layout = on;
+        let Some(open) = &self.open else {
+            return;
+        };
+        let (dir, shared) = self.place(self.accounts.as_deref(), &open.identity, open.legacy.as_deref());
+        if let Some(open) = &mut self.open {
+            (open.dir, open.shared) = (dir, shared);
+        }
+    }
+
+    /// The account's files are in the Legacy layout, in a folder the Legacy
+    /// Viewer reads and writes too: Aurora only appends lines there.
+    pub fn shared(&self) -> bool {
+        self.open.as_ref().is_some_and(|o| o.shared)
     }
 
     fn conversations_file(&self) -> Option<PathBuf> {
@@ -328,8 +403,9 @@ impl ChatLog {
         self.importing.is_some() || self.moving.is_some() || self.erasing.is_some()
     }
 
+    /// Refused in the Legacy layout: the files are the Legacy Viewer's too.
     pub fn erase(&mut self) -> bool {
-        if self.importing.is_some() {
+        if self.importing.is_some() || self.shared() {
             return false;
         }
         let Some(dir) = self.dir().map(Path::to_path_buf) else {
@@ -359,10 +435,14 @@ impl ChatLog {
             self.accounts = accounts;
             return false;
         };
-        let root = accounts.clone().unwrap_or_else(crate::settings::accounts_dir);
-        let to = store::folder(&root, &open.identity);
-        if to == open.dir {
+        let (to, shared) = self.place(accounts.as_deref(), &open.identity, open.legacy.as_deref());
+        // a folder in the Legacy layout is the Legacy Viewer's too: its
+        // files never move, in or out; the next lines go to the new folder
+        if to == open.dir || shared || open.shared {
             self.accounts = accounts;
+            if let Some(open) = &mut self.open {
+                (open.dir, open.shared) = (to, shared);
+            }
             return false;
         }
         let from = open.dir.clone();
@@ -424,8 +504,10 @@ impl ChatLog {
         self.start_import(import::Sources::Find { apps, account }, kinds, true)
     }
 
+    /// Never into the Legacy layout's folder: a merge rewrites the files,
+    /// and these are the Legacy Viewer's too.
     fn start_import(&mut self, sources: import::Sources, kinds: import::Kinds, skip_unchanged: bool) -> bool {
-        if self.importing.is_some() || self.moving.is_some() || self.erasing.is_some() {
+        if self.busy() || self.shared() {
             return false;
         }
         let Some(dir) = self.dir().map(Path::to_path_buf) else {
@@ -874,6 +956,114 @@ mod tests {
         );
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&other).unwrap();
+    }
+
+    const JANE: Option<(&str, &str)> = Some(("Jane", "Doe"));
+
+    #[test]
+    fn the_legacy_layout_adds_to_the_legacy_viewers_own_files() {
+        let root = temp();
+        let me = Uuid::from_u128(0xA11CE);
+        // what the Legacy Viewer wrote, and a file of its own beside it
+        let legacy = root.join("jane_doe");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let written = "[2026/10/11 09:00]  Bob Smith: from the legacy viewer\r\n";
+        std::fs::write(legacy.join("Bob Smith.txt"), written).unwrap();
+        std::fs::write(legacy.join("conversation.log"), "kept").unwrap();
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        log.set_legacy_layout(true);
+        log.login_named(me, JANE);
+        assert!(log.shared());
+        assert_eq!(log.dir(), Some(legacy.as_path()));
+        log.append("Bob Smith", now(), "Bob Smith", "from aurora");
+        assert!(log.flush(WAIT));
+        // appended, the Legacy Viewer's line left as it was written
+        let text = std::fs::read_to_string(legacy.join("Bob Smith.txt")).unwrap();
+        assert!(text.starts_with(written), "{text}");
+        assert_eq!(texts(&legacy.join("Bob Smith.txt")), ["from the legacy viewer", "from aurora"]);
+        // and read back as the conversation's history
+        assert!(log.request_history(Uuid::from_u128(1), "Bob Smith"));
+        let loaded = wait_loaded(&mut log);
+        assert_eq!(loaded[0].entries.len(), 2);
+        // nothing that rewrites or removes these files
+        assert!(!log.erase());
+        assert!(!log.import(vec![root.join("elsewhere")]));
+        assert_eq!(std::fs::read_to_string(legacy.join("conversation.log")).unwrap(), "kept");
+        // nothing of Aurora's layout was made
+        let aurora = store::folder(
+            &root,
+            &Identity {
+                grid: "agni".into(),
+                agent: me,
+            },
+        );
+        assert!(!aurora.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn turning_the_legacy_layout_on_and_off_moves_nothing() {
+        let root = temp();
+        let me = Uuid::from_u128(0xA11CE);
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_grid("agni".into());
+        log.login_named(me, JANE);
+        assert!(!log.shared());
+        let aurora = log.dir().unwrap().to_path_buf();
+        log.append("Bob Smith", now(), "Bob Smith", "before");
+        log.set_legacy_layout(true);
+        assert!(log.shared());
+        log.append("Bob Smith", now(), "Bob Smith", "shared");
+        log.set_legacy_layout(false);
+        assert_eq!(log.dir(), Some(aurora.as_path()));
+        log.append("Bob Smith", now(), "Bob Smith", "after");
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&aurora.join("Bob Smith.txt")), ["before", "after"]);
+        assert_eq!(texts(&root.join("jane_doe").join("Bob Smith.txt")), ["shared"]);
+        // another folder chosen: the shared files stay with the Legacy Viewer
+        log.set_legacy_layout(true);
+        let other = root.join("other");
+        assert!(!log.relocate(Some(other.clone())));
+        assert_eq!(log.dir(), Some(other.join("jane_doe").as_path()));
+        assert!(log.flush(WAIT));
+        assert_eq!(texts(&root.join("jane_doe").join("Bob Smith.txt")), ["shared"]);
+        // back to the default folder: Aurora's layout, still no move
+        assert!(!log.relocate(None));
+        assert!(!log.shared());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_legacy_layout_needs_a_name_and_a_known_grid() {
+        let root = temp();
+        let me = Uuid::from_u128(0xA11CE);
+        let mut log = ChatLog::in_folder(root.clone());
+        log.set_legacy_layout(true);
+        log.set_grid("aditi".into());
+        log.login_named(me, JANE);
+        assert_eq!(log.dir(), Some(root.join("jane_doe.second_life_beta").as_path()));
+        log.logout();
+        // another grid's label is the Legacy Viewer's own: Aurora's layout
+        log.set_grid("custom_osgrid_org".into());
+        log.login_named(me, JANE);
+        assert!(!log.shared());
+        log.logout();
+        log.set_grid("agni".into());
+        log.login(me);
+        assert!(!log.shared());
+        // a name never leaves the chosen folder
+        log.logout();
+        log.login_named(me, Some(("..", "x/y")));
+        let dir = log.dir().unwrap();
+        assert_eq!(dir.parent(), Some(root.as_path()));
+        std::fs::remove_dir_all(&root).unwrap();
+        // without a chosen folder: Aurora's own layout (nothing is written)
+        let mut default = ChatLog::default();
+        default.set_grid("agni".into());
+        default.set_legacy_layout(true);
+        default.login_named(me, JANE);
+        assert!(!default.shared());
     }
 
     #[test]

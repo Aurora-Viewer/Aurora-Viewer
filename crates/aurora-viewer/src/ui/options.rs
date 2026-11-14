@@ -509,6 +509,9 @@ pub struct OptionsUi {
     pub chat_log_status: String,
     /// The transcripts are in a folder the user chose (set by the app).
     pub chat_log_custom: bool,
+    /// The transcripts are in the Legacy layout, shared with the Legacy
+    /// Viewer: no import nor erasing (set by the app).
+    pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// Entries of the conversation log of the account logged in.

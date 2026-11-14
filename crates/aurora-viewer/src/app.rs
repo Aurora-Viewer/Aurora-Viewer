@@ -1431,6 +1431,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
+    if let Some(v) = std::env::var("AURORA_BLEND_ORDER").ok().and_then(|v| v.parse::<u8>().ok()) {
+        settings.blend_order = v.min(4);
+    }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
@@ -3051,6 +3054,8 @@ impl App {
         if log.identity().is_none() {
             log.set_folder(chat_log_root(&s.chat_log_location));
         }
+        // no file moves: a no-op once applied
+        log.set_legacy_layout(s.log_legacy_layout);
     }
 
     // ------------------------------------------------------------------ login
@@ -3097,6 +3102,7 @@ impl App {
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
                 || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
+                || mode == "server-error"
             {
                 if mode == "terms" {
                     log::info!(
@@ -10645,6 +10651,13 @@ impl App {
         {
             gfx.renderer.apply_settings(self.settings.render_settings());
         }
+        // the order of the blended faces: the user's, the exact one only
+        // where the renderer draws it (not under MSAA, scene/blend_order.rs)
+        let msaa = match self.settings.antialiasing {
+            aa @ 2..=4 => gfx.renderer.msaa_supported().iter().any(|&m| m <= 1 << (aa - 1)),
+            _ => false,
+        };
+        crate::scene::blend_order::set_user(self.settings.blend_order, gfx.renderer.blend_exact_supported() && !msaa);
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
@@ -14810,7 +14823,10 @@ impl App {
             }
             // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
             // `runs` (#966) one second in three
-            if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
+            if matches!(
+                crate::scene::blend_order::mode(),
+                crate::scene::blend_order::Mode::Alternate | crate::scene::blend_order::Mode::ExactAlternate
+            ) {
                 let old = self.sync_alt.is_multiple_of(3);
                 crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
@@ -16429,6 +16445,7 @@ impl App {
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
         self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
+        self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
         self.poll_settings_backup();
         if let Some(done) = self.world.chat_log.take_relocated() {
@@ -16779,6 +16796,22 @@ impl App {
                         bad_credentials: false,
                         previous_session: false,
                         next_server: Some("login.other-grid.example".into()),
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("server-error")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server fails on its side (an HTTP 500
+                    // to the login request, LoginError::Server)
+                    log::info!("demo login: the login server answers HTTP 500");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: aurora_net::login::LoginError::Server(500).to_string(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
@@ -19998,6 +20031,7 @@ impl ApplicationHandler for App {
                         | "mfa-refused"
                         | "terms"
                         | "next-server"
+                        | "server-error"
                         | "add"
                         | "password"
                         | "connecting"
@@ -20007,7 +20041,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -20054,7 +20088,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "server-error" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -20064,7 +20098,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server" | "server-error") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -21208,7 +21242,7 @@ impl ApplicationHandler for App {
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(660.0, 560.0));
                 ui::widgets::place_floater(&self.egui_ctx, "chat_history", egui::pos2(8.0, 44.0), egui::vec2(620.0, 600.0));
                 let me = self.world.agent_id;
-                if !matches!(mode, Mode::Long { .. } | Mode::Restore)
+                if !matches!(mode, Mode::Long { .. } | Mode::Restore | Mode::Shared { .. })
                     && let Some(dir) = self.world.chat_log.dir().map(std::path::Path::to_path_buf)
                     && let Err(e) = chatlog::seed(&dir, mode, &self.world.own_name())
                 {
@@ -21232,6 +21266,39 @@ impl ApplicationHandler for App {
                         self.world.im_messages.clear();
                     }
                     Mode::Offline => {}
+                    Mode::Shared { on } => {
+                        // the synthetic Legacy Viewer folder, chosen for this
+                        // run only: never saved in the demo's settings, which
+                        // every worktree shares. The option itself is saved
+                        // like any setting; without a chosen folder it does
+                        // nothing.
+                        let account = self.world.login.as_ref().map(|l| crate::legacy_profile::Account {
+                            first: l.first_name.clone(),
+                            last: l.last_name.clone(),
+                            grid: "demo".into(),
+                        });
+                        let place = self
+                            .world
+                            .chat_log
+                            .dir()
+                            .map(chatlog::legacy_root)
+                            .zip(account.and_then(|a| a.chat_folder()));
+                        if let Some((root, folder)) = place {
+                            if let Err(e) = chatlog::seed_shared(&root, &folder, &self.world.own_name()) {
+                                log::warn!("demo Legacy Viewer transcripts not written: {e}");
+                            }
+                            if on {
+                                self.settings.log_legacy_layout = true;
+                                self.world.chat_log.set_legacy_layout(true);
+                            }
+                            self.world.chat_log.relocate(Some(root));
+                        }
+                        // the history read from the Legacy Viewer's file,
+                        // then a new message added to it
+                        self.world.apply(chatlog::new_message(me));
+                        self.panels.settings = true;
+                        self.options_ui.open(ui::options::Page::Chat, 3);
+                    }
                     Mode::Import(stage) => {
                         use chatlog::ImportStage;
                         let legacy = self.world.chat_log.dir().map(chatlog::legacy_root);

@@ -1043,6 +1043,7 @@ fn history(cx: &mut Cx) {
                         {
                             r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                         }
+                        // the Legacy Viewer's files too, in its layout
                         if action_button_if(
                             ui,
                             &p,
@@ -1050,7 +1051,7 @@ fn history(cx: &mut Cx) {
                             tr!("ui-options-chat-logs-erase"),
                             ActionKind::FlatDanger,
                             size,
-                            idle,
+                            idle && !st.chat_log_shared,
                         )
                         .clicked()
                         {
@@ -1079,7 +1080,7 @@ fn history(cx: &mut Cx) {
                         tr!("ui-options-chat-logs-import"),
                         crate::ui::widgets::ActionKind::Flat,
                         Vec2::new(0.0, 24.0),
-                        st.chat_log_importing.is_none(),
+                        st.chat_log_importing.is_none() && !st.chat_log_shared,
                     )
                     .clicked()
                     {
@@ -1103,6 +1104,13 @@ fn history(cx: &mut Cx) {
                 });
                 false
             },
+        );
+        // an Aurora addition: the folder of the Legacy Viewer's own layout,
+        // shared with it (`world::chat_log`, `shared`)
+        cx.toggle(
+            tr!("ui-options-chat-logs-legacy-layout"),
+            tr!("ui-options-chat-logs-legacy-layout-help"),
+            &field!(log_legacy_layout),
         );
     });
 }

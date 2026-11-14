@@ -99,6 +99,16 @@ best implementation for Aurora.
   example: `Port of LLMotionController::updateMotionsByType
   (indra/llcharacter/llmotioncontroller.cpp, originally LGPL 2.1)`. This code
   is distributed under the GPLv3 (see [NOTICE.md](NOTICE.md)).
+- **Credit the authors of what you port, in the same PR.** Open the header
+  of the source file you follow: when its copyright names someone other than
+  Linden Research or The Phoenix Firestorm Project (a resident, another
+  viewer's project, a shader's author), add or extend their line in the
+  "Authors of the ported code" table of [NOTICE.md](NOTICE.md), with the
+  Aurora files that follow it. Code under another licence (MIT, BSD,
+  Apache…) keeps its notice: its own NOTICE.md section with the licence
+  text, and the notice at the top of the ported file. A test of `check.ps1`
+  fails when the table names a file that no longer exists: a renamed or
+  moved file takes its credit along. When in doubt, credit.
 - An implementation that differs from Firestorm's is normal. A difference in
   **visible behaviour** (feature, rendering, defaults) is not: only when it
   is justified (and then better for the user), and noted in the code and in
@@ -314,6 +324,14 @@ Before each significant commit, and always before the PR:
 - **Up-to-date dependencies**: we use the latest versions (stable Rust,
   crates). A new dependency must be maintained, under a GPL v3 compatible
   licence (MIT, Apache-2.0, BSD, MPL-2.0, LGPL…), and justified in the PR.
+- **Every change to `Cargo.lock`** (a dependency added, removed or updated,
+  Dependabot's included) runs `./scripts/third-party-licenses.ps1` and
+  commits `THIRD-PARTY-LICENSES.md` with it: the viewer shows that file in
+  Help › About, so that every published build carries its crates' notices.
+  A test of `check.ps1` fails when the file names a crate version
+  `Cargo.lock` no longer has. A licence missing from
+  `packaging/licenses/about.toml` stops the script: add it there only once
+  it is checked to be GPL v3 compatible.
 - **Performance and smoothness first** (Rust, multithreading, Vulkan):
   - use the GPU to the full: GPU-driven work (culling, draw generation,
     compute), fewer round trips with the CPU, never a wait on the GPU in the
@@ -665,6 +683,7 @@ them):
 | Non-regression of neighbouring features | ✅ … |
 | Legacy Viewer fidelity | ✅ files checked: … |
 | Creators' permissions | ✅ same as the Legacy Viewer or stricter, both interface styles |
+| Credits | ✅ authors of the ported files in NOTICE.md, THIRD-PARTY-LICENSES.md regenerated if Cargo.lock changed |
 | Secrets / personal data | ✅ none |
 | Docs (README, ARCHITECTURE, TASKS) | ✅ |
 
