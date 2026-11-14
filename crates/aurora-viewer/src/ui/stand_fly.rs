@@ -9,10 +9,10 @@
 //! flying, EXT-871), Flycam while the joystick flycam is on. The panel goes
 //! with the hidden interface (HideUIControls) and in mouselook, unless the
 //! interface stays there (FSShowInterfaceInMouselook). RLVa does not hide
-//! Stand but greys it while @unsit forbids standing, like Aurora's own Stand
-//! up menu item. The Legacy Viewer leaves it enabled and only ignores the
-//! click; this differs on purpose (the human's decision on #2479), and the
-//! click is still refused (`App::stand_fly_action`). A setting
+//! Stand but greys it while @unsit forbids standing, as
+//! RlvUIEnabler::onToggleUnsit (indra/newview/rlvui.cpp) does to the
+//! panel's stand_btn; the click is still refused, as onStandButtonClick does
+//! through RlvActions::canStand (`App::stand_fly_action`). A setting
 //! (`show_stand_fly_panel`) hides the panel altogether.
 //!
 //! The Legacy Viewer keeps the panel at a fixed spot of its bottom toolbar
