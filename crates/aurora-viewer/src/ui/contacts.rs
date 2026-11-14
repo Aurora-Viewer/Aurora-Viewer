@@ -231,6 +231,9 @@ pub struct ContactsUi {
     /// `ResponseMode::ALL`, as typed: saved when the field loses the focus
     /// or the window closes (the Legacy Viewer's commit on focus lost).
     response_edit: Option<(String, [String; 3])>,
+    /// A name typed in the editor for a set left before it was applied:
+    /// (that set, the name).
+    pending_rename: Option<(String, String)>,
     /// AURORA_DEMO_SET_NOTICES=config-responses|config-bottom: the window
     /// scrolled down to the set's responses, or to its end.
     pub demo_scroll: Option<DemoScroll>,
@@ -372,7 +375,16 @@ impl ContactsUi {
 
     /// FSFloaterContactSetConfiguration on `set`: name, color, sorting.
     pub fn configure_set(&mut self, set: &str) {
-        if self.config.as_deref() != Some(set) {
+        if let Some(old) = self.config.clone()
+            && old != set
+        {
+            self.editor = set_editor::EditorUi::default();
+            // a name still being typed for the set left: applied on the
+            // editor's next frame (it has the world)
+            if self.rename.trim() != old {
+                self.pending_rename = Some((old, std::mem::take(&mut self.rename)));
+            }
+        } else if self.config.is_none() {
             self.editor = set_editor::EditorUi::default();
         }
         self.rename = set.to_owned();
@@ -1863,8 +1875,7 @@ fn sets_tab(
                 .clicked()
                     && mutable
                 {
-                    st.rename = choice.clone();
-                    st.config = Some(choice.clone());
+                    st.configure_set(&choice);
                 }
                 if icon_button(ui, p, "plus", aurora_i18n::tr!("ui-contacts-add-a-new-contact-set"), true).clicked() {
                     st.dialog = Some(Dialog::AddSet(aurora_i18n::tr!("ui-contacts-new-contact-set-2").into()));

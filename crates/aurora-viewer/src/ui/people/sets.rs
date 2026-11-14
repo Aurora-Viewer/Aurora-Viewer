@@ -28,6 +28,7 @@ use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::contact_sets::{self, ContactSets};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// The width from which the list of sets gets a column of its own.
@@ -46,21 +47,30 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
 
 /// The set shown: the one chosen while it exists, else the highest set,
 /// else all of them (FSPanelContactSets::refreshSetList, in Aurora's order).
-/// A pseudo-set this tab does not list (Non-friends, chosen in the classic
-/// Contacts window, which shares the choice) falls back the same way.
 fn choice(c: &mut Ctx) -> String {
-    let choice = match &c.contacts.set_choice {
-        Some(s) if sidebar::is_smart(s) || c.world.contact_sets.is_valid(s) => s.clone(),
-        _ => c
-            .world
-            .contact_sets
-            .ordered_set_names()
+    let (shown, store) = shown_set(c.contacts.set_choice.as_deref(), &c.world.contact_sets);
+    if store {
+        c.contacts.set_choice = Some(shown.clone());
+    }
+    shown
+}
+
+/// The set or smart list shown for the choice shared with the classic
+/// Contacts window, and whether to store it there. A pseudo-set this tab
+/// does not list (Non-friends) falls back here, but stays the classic
+/// window's choice.
+fn shown_set(chosen: Option<&str>, sets: &ContactSets) -> (String, bool) {
+    let fallback = || {
+        sets.ordered_set_names()
             .into_iter()
             .next()
-            .unwrap_or_else(|| contact_sets::ALL_SETS.to_owned()),
+            .unwrap_or_else(|| contact_sets::ALL_SETS.to_owned())
     };
-    c.contacts.set_choice = Some(choice.clone());
-    choice
+    match chosen {
+        Some(s) if sidebar::is_smart(s) || sets.is_valid(s) => (s.to_owned(), false),
+        Some(s) if ContactSets::is_internal(s) => (fallback(), false),
+        _ => (fallback(), true),
+    }
 }
 
 /// The people of a set or smart list, and how many are online.
@@ -69,17 +79,21 @@ pub(super) struct Members {
     pub online: usize,
 }
 
-/// Whether a resident shows as online: a friend seen online (the status
-/// of the others is not known).
-fn is_online(world: &World, id: &Uuid) -> bool {
-    world.social.friends.iter().any(|f| f.id == *id && f.online)
+/// The residents shown as online: friends seen online (the status of the
+/// others is not known). Looked up once per list: every row of the sets'
+/// column counts its members each frame, and a scan of the friends per
+/// member would grow with members × friends.
+fn online_friends(world: &World) -> HashSet<Uuid> {
+    world.social.friends.iter().filter(|f| f.online).map(|f| f.id).collect()
 }
 
 /// The members of `set` (generateAvatarList) and how many are online.
 pub(super) fn members(world: &World, set: &str) -> Members {
-    let friends: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
-    let ids = world.contact_sets.members(set, &friends, |id| world.social.is_friend(id));
-    let online = ids.iter().filter(|id| is_online(world, id)).count();
+    let friends: HashSet<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
+    let list: Vec<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
+    let ids = world.contact_sets.members(set, &list, |id| friends.contains(id));
+    let on = online_friends(world);
+    let online = ids.iter().filter(|id| on.contains(id)).count();
     Members { ids, online }
 }
 
@@ -130,14 +144,15 @@ fn members_pane(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mu
     let filter = st.filter.trim().to_lowercase();
     let mut ids = all.ids.clone();
     ids.retain(|id| super::matches_name(world, id, &rows::display_name(world, id), &filter));
+    let online = online_friends(world);
     if st.sets_online_only {
-        ids.retain(|id| is_online(world, id));
+        ids.retain(|id| online.contains(id));
     }
     let by_status = world.contact_sets.sorts_by_online(set);
     // FSPanelContactSets::updateAvatarListSorting
     ids.sort_by_cached_key(|id| {
         (
-            by_status && !is_online(world, id),
+            by_status && !online.contains(id),
             crate::natural_order::key(&rows::display_name(world, id)),
         )
     });
@@ -399,6 +414,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     {
         let carry = MemberCarry {
             id,
+            origin,
             grab: origin - rect.min,
             width: rect.width(),
         };
@@ -457,6 +473,8 @@ fn member_content_width(
 #[derive(Clone, Copy, Debug)]
 struct MemberCarry {
     id: Uuid,
+    /// Where the press began: the drag this card belongs to.
+    origin: Pos2,
     grab: Vec2,
     width: f32,
 }
@@ -465,19 +483,30 @@ fn member_carry_key() -> egui::Id {
     egui::Id::unique("people-set-member-carry")
 }
 
+/// The card of the drag under way, when it started in this tab (a drag of
+/// the same resident from the Friends tab or the classic window has no card
+/// here, nor this tab's selection).
+fn carry_now(ctx: &egui::Context) -> Option<MemberCarry> {
+    let drag = egui::DragAndDrop::payload::<crate::ui::call_invite::PersonDrag>(ctx)?;
+    let carry: MemberCarry = ctx.data(|d| d.get_temp(member_carry_key()))?;
+    let origin = ctx.input(|i| i.pointer.press_origin())?;
+    (carry.id == drag.0 && carry.origin == origin).then_some(carry)
+}
+
+/// The people a drop on a set brings: this tab's chosen people when the
+/// drag started here, else only the one dragged.
+pub(super) fn dropped_with<'a>(ctx: &egui::Context, sel: &'a [Uuid]) -> &'a [Uuid] {
+    if carry_now(ctx).is_some() { sel } else { &[] }
+}
+
 /// The member dragged, carried as a lifted card under the pointer, with
 /// how many go along when the people chosen are dragged together.
 fn carried_card(ui: &mut egui::Ui, c: &Ctx, data: &super::RadarData, st: &PeopleUi, set: &str) {
     let p = c.p;
     let world = c.world;
-    let drag = egui::DragAndDrop::payload::<crate::ui::call_invite::PersonDrag>(ui.ctx());
-    let carry: Option<MemberCarry> = ui.ctx().data(|d| d.get_temp(member_carry_key()));
-    let (Some(drag), Some(carry), Some(at)) = (drag, carry, ui.input(|i| i.pointer.interact_pos())) else {
+    let (Some(carry), Some(at)) = (carry_now(ui.ctx()), ui.input(|i| i.pointer.interact_pos())) else {
         return;
     };
-    if drag.0 != carry.id {
-        return;
-    }
     let id = carry.id;
     let name = rows::display_name(world, &id);
     let second = second_line(world, &id);
@@ -684,6 +713,76 @@ mod tests {
 
     /// The theme's segmented control: its lit face slides from the choice
     /// before to the new one over a few frames, then rests on it.
+    /// A drop on a set brings this tab's chosen people only for a drag
+    /// that started in this tab, not for the same resident dragged from
+    /// elsewhere afterwards.
+    #[test]
+    fn a_drop_brings_the_chosen_only_for_a_drag_started_here() {
+        let [a, b] = [1, 2].map(Uuid::from_u128);
+        let sel = vec![a, b];
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let here = Pos2::new(40.0, 40.0);
+        let press = |at: Pos2| {
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let mut brought = Vec::new();
+        frames.run(press(here), |ui| {
+            egui::DragAndDrop::set_payload(ui.ctx(), crate::ui::call_invite::PersonDrag(a));
+            let carry = MemberCarry {
+                id: a,
+                origin: here,
+                grab: Vec2::ZERO,
+                width: 100.0,
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(member_carry_key(), carry));
+            brought = dropped_with(ui.ctx(), &sel).to_vec();
+        });
+        assert_eq!(brought, sel, "dragged from this tab: the chosen come along");
+        frames.run(
+            vec![egui::Event::PointerButton {
+                pos: here,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            |_| {},
+        );
+        // the same resident dragged from another window: the old card stays
+        frames.run(press(Pos2::new(300.0, 200.0)), |ui| {
+            egui::DragAndDrop::set_payload(ui.ctx(), crate::ui::call_invite::PersonDrag(a));
+            brought = dropped_with(ui.ctx(), &sel).to_vec();
+            assert!(carry_now(ui.ctx()).is_none(), "no card for a drag started elsewhere");
+        });
+        assert!(brought.is_empty(), "only the one dragged");
+    }
+
+    #[test]
+    fn the_classic_windows_non_friends_choice_falls_back_here_and_stays_there() {
+        let mut sets = ContactSets::default();
+        assert_eq!(shown_set(None, &sets), (contact_sets::ALL_SETS.to_owned(), true));
+        sets.add_set("Family");
+        assert_eq!(shown_set(None, &sets), ("Family".to_owned(), true));
+        assert_eq!(shown_set(Some("Gone"), &sets), ("Family".to_owned(), true), "a deleted set");
+        assert_eq!(shown_set(Some("Family"), &sets), ("Family".to_owned(), false));
+        assert_eq!(
+            shown_set(Some(contact_sets::NO_SETS), &sets),
+            (contact_sets::NO_SETS.to_owned(), false)
+        );
+        assert_eq!(
+            shown_set(Some(contact_sets::EXTRA_AVS), &sets),
+            ("Family".to_owned(), false),
+            "shown as the first set here, left as it is for the classic window"
+        );
+    }
+
     #[test]
     fn a_segmented_choice_slides_its_face_to_the_new_choice() {
         let p = crate::theme::Theme::default().palette();

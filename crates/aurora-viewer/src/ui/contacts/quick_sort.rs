@@ -24,9 +24,12 @@ pub(super) struct QuickSort {
     queue: Vec<Uuid>,
     /// The one shown (`queue.len()` once all are seen).
     index: usize,
-    /// The sets chosen for the one shown, not saved yet.
-    picks: BTreeSet<String>,
-    /// For whom picks were loaded.
+    /// The sets the user ticked or unticked for the one shown, not saved
+    /// yet: the choice is their sets as they are now with these flipped, so
+    /// that a set made from the "New set" tile, or a change made in another
+    /// window meanwhile, is not undone by Save.
+    toggled: BTreeSet<String>,
+    /// For whom `toggled` was started.
     loaded: Option<usize>,
     /// How many friends were put in a set.
     placed: BTreeSet<Uuid>,
@@ -39,7 +42,7 @@ impl QuickSort {
         QuickSort {
             queue: queue(world),
             index: 0,
-            picks: BTreeSet::new(),
+            toggled: BTreeSet::new(),
             loaded: None,
             placed: BTreeSet::new(),
             grab: true,
@@ -50,7 +53,7 @@ impl QuickSort {
         self.queue.get(self.index).copied()
     }
 
-    /// The sets of the friend shown, as they are now, when they come.
+    /// A fresh choice for the friend shown, when they come.
     fn load(&mut self, world: &World) {
         // opened before the friend list came (a login, a demo): taken again
         if self.queue.is_empty() && self.index == 0 {
@@ -61,15 +64,25 @@ impl QuickSort {
             return;
         }
         self.loaded = Some(self.index);
-        self.picks = self
-            .current()
-            .map(|id| world.contact_sets.friend_sets(&id).into_iter().collect())
-            .unwrap_or_default();
+        self.toggled.clear();
+    }
+
+    /// The sets chosen for the friend shown: their sets as they are now,
+    /// with the user's ticks flipped.
+    fn picks(&self, world: &World) -> BTreeSet<String> {
+        let Some(id) = self.current() else {
+            return BTreeSet::new();
+        };
+        let now: BTreeSet<String> = world.contact_sets.friend_sets(&id).into_iter().collect();
+        now.symmetric_difference(&self.toggled)
+            .filter(|name| world.contact_sets.is_valid(name))
+            .cloned()
+            .collect()
     }
 
     fn toggle(&mut self, set: &str) {
-        if !self.picks.remove(set) {
-            self.picks.insert(set.to_owned());
+        if !self.toggled.remove(set) {
+            self.toggled.insert(set.to_owned());
         }
     }
 
@@ -77,8 +90,9 @@ impl QuickSort {
     /// the next one.
     fn save(&mut self, world: &mut World) {
         if let Some(id) = self.current() {
-            apply_picks(world, id, &self.picks);
-            if self.picks.is_empty() {
+            let picks = self.picks(world);
+            apply_picks(world, id, &picks);
+            if picks.is_empty() {
                 self.placed.remove(&id);
             } else {
                 self.placed.insert(id);
@@ -87,8 +101,11 @@ impl QuickSort {
         self.step(1);
     }
 
+    /// Another friend: their choice starts afresh, even when it is the one
+    /// just saved coming back (Back after Save).
     fn step(&mut self, by: isize) {
         self.index = self.index.saturating_add_signed(by).min(self.queue.len());
+        self.loaded = None;
     }
 }
 
@@ -189,9 +206,9 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         // the window takes the keyboard when it opens and on each click in it
         // (a click on a tile would otherwise leave the keys to the world)
         let holder = ui.interact(full, focus_id(), Sense::focusable_noninteractive());
-        let clicked_in = ui.input(|i| {
-            (i.pointer.any_pressed() || i.pointer.any_released()) && i.pointer.interact_pos().is_some_and(|at| full.contains(at))
-        });
+        // only a click this window gets: not one on a window laid over it
+        // (its fields keep their keys)
+        let clicked_in = ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()) && ui.rect_contains_pointer(full);
         if std::mem::take(&mut qs.grab) || clicked_in {
             holder.request_focus();
         }
@@ -323,6 +340,7 @@ fn current(
     ui.add_space(10.0);
     let gap = 8.0;
     let w = ((ui.available_width() - gap * (COLUMNS - 1) as f32) / COLUMNS as f32).floor();
+    let picks = qs.picks(world);
     let mut tiles: Vec<Option<&String>> = names.iter().map(Some).collect();
     tiles.push(None);
     for (r, row) in tiles.chunks(COLUMNS).enumerate() {
@@ -332,7 +350,7 @@ fn current(
                 let n = r * COLUMNS + c;
                 match tile {
                     Some(set) => {
-                        if set_tile_button(ui, p, world, set, qs.picks.contains(*set), (n < KEYED).then_some(n), w) {
+                        if set_tile_button(ui, p, world, set, picks.contains(*set), (n < KEYED).then_some(n), w) {
                             qs.toggle(set);
                         }
                     }
@@ -381,7 +399,7 @@ fn current(
         qs.step(-1);
     }
     buttons.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let label = if qs.picks.is_empty() {
+        let label = if qs.picks(world).is_empty() {
             aurora_i18n::tr!("quick-sort-next")
         } else {
             aurora_i18n::tr!("quick-sort-save-next")
@@ -549,7 +567,7 @@ mod tests {
         }
         let mut qs = QuickSort::new(&world);
         qs.load(&world);
-        assert!(qs.picks.is_empty());
+        assert!(qs.picks(&world).is_empty());
         qs.toggle("A");
         qs.toggle("B");
         qs.toggle("B");
@@ -566,7 +584,7 @@ mod tests {
         // back to the first: their sets as they are, changed again
         qs.step(-2);
         qs.load(&world);
-        assert_eq!(qs.picks.iter().cloned().collect::<Vec<_>>(), ["A"]);
+        assert_eq!(qs.picks(&world).into_iter().collect::<Vec<_>>(), ["A"]);
         qs.toggle("A");
         qs.toggle("B");
         qs.save(&mut world);
@@ -579,6 +597,36 @@ mod tests {
         qs.save(&mut world);
         assert!(world.contact_sets.friend_sets(&first).is_empty());
         assert!(qs.placed.is_empty());
+    }
+
+    #[test]
+    fn a_set_made_from_the_new_set_tile_or_elsewhere_survives_save() {
+        let mut world = world_with(&[(1, true), (2, true)]);
+        for s in ["A", "B"] {
+            world.contact_sets.add_set(s);
+        }
+        let first = Uuid::from_u128(1);
+        let mut qs = QuickSort::new(&world);
+        qs.load(&world);
+        qs.toggle("A");
+        // the "New set" tile: the set made with the friend in it
+        let mut st = ContactsUi::default();
+        st.ask_new_set_for(vec![first]);
+        super::super::create_set(&mut world, &mut st, "Work");
+        // another window puts them in B meanwhile
+        let social = &world.social;
+        world.contact_sets.add_to_set(&[first], "B", |id| social.is_friend(id));
+        assert_eq!(qs.picks(&world).into_iter().collect::<Vec<_>>(), ["A", "B", "Work"]);
+        qs.save(&mut world);
+        let mut now = world.contact_sets.friend_sets(&first);
+        now.sort();
+        assert_eq!(now, ["A", "B", "Work"]);
+        // a set deleted while ticked is not brought back
+        let mut qs = QuickSort::new(&world);
+        qs.load(&world);
+        qs.toggle("A");
+        world.contact_sets.remove_set("A", |_| true);
+        assert!(!qs.picks(&world).contains("A"));
     }
 
     #[test]
@@ -666,6 +714,57 @@ mod tests {
         run(&mut frames, &mut world, &mut st, vec![key(egui::Key::Enter)]);
         run(&mut frames, &mut world, &mut st, Vec::new());
         assert_eq!(world.contact_sets.friend_sets(&Uuid::from_u128(3)), ["B"]);
+    }
+
+    /// A field of a window laid over Quick sort keeps the keys typed in
+    /// it: a click there is not a click in Quick sort.
+    #[test]
+    fn a_field_over_the_window_keeps_its_keys() {
+        let mut world = world_with(&[(1, true)]);
+        world.contact_sets.add_set("A");
+        let p = crate::theme::Theme::default().palette();
+        let mut st = ContactsUi::default();
+        st.open_quick_sort(&world);
+        let pics = HashMap::new();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let mut text = String::new();
+        let field = egui::Id::new("field-over-quick-sort");
+        let mut run = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                // drawn before Quick sort, as a window earlier in the frame
+                let at = ui.ctx().content_rect().center() - Vec2::new(100.0, 12.0);
+                egui::Area::new(egui::Id::new("over-quick-sort"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(at)
+                    .show(ui.ctx(), |ui| {
+                        ui.add_sized([200.0, 24.0], egui::TextEdit::singleline(&mut text).id(field));
+                    });
+                window(ui.ctx(), &p, &mut world, &mut st, &pics);
+            });
+        };
+        for _ in 0..3 {
+            run(&mut frames, Vec::new());
+        }
+        let on_field = frames.ctx.content_rect().center();
+        for pressed in [true, false] {
+            run(
+                &mut frames,
+                vec![
+                    egui::Event::PointerMoved(on_field),
+                    egui::Event::PointerButton {
+                        pos: on_field,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        run(&mut frames, vec![egui::Event::Text("1".into())]);
+        run(&mut frames, Vec::new());
+        assert_eq!(frames.ctx.memory(|m| m.focused()), Some(field), "the field keeps the focus");
+        drop(run);
+        assert_eq!(text, "1", "the field got the key");
     }
 
     #[test]

@@ -3263,6 +3263,10 @@ impl App {
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
+        // the contact sets' windows, Quick sort's queue and the choices hold
+        // the last account's residents and sets: a relog as another account
+        // must not save them into its sets
+        self.contacts_ui = Default::default();
         self.contents_copies = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();

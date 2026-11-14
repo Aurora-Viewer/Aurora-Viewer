@@ -513,6 +513,12 @@ pub(super) fn select(
     // a still hold is not a drag yet, whatever egui counts
     if press.is_none() {
         resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(id));
+        // egui started the drag of a still press at its click time, while
+        // the hold had it: the hold given up for a move hands the resident
+        // to that drag (dnd_set_drag_payload only acts on its first frame)
+        if resp.dragged() && !egui::DragAndDrop::has_any_payload(ui.ctx()) {
+            egui::DragAndDrop::set_payload(ui.ctx(), crate::ui::call_invite::PersonDrag(id));
+        }
     }
     if resp.secondary_clicked() && !sel.contains(&id) {
         *sel = vec![id];
@@ -846,21 +852,28 @@ mod tests {
 
     #[test]
     fn a_hand_that_wobbles_a_little_still_opens_the_sheet() {
+        // 52 frames at 60 per second: past egui's still-press drag time
+        // (`max_click_duration`, 0.8 s), before the sheet (1.1 s)
+        const PAUSE: usize = 52;
         let mut h = PressHarness::new();
         let at = h.rects[0].center();
         h.button(at, egui::PointerButton::Primary, true);
-        h.wait(30);
-        // a few points away, past egui's own still-press drag time
+        h.wait(PAUSE);
         h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(4.0, 2.0))]);
         h.wait(40);
         assert_eq!(h.sheets, 1, "a wobble within the slop keeps the hold");
         assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx), "and it is not a drag");
         h.button(at, egui::PointerButton::Primary, false);
-        // just past the slop it is a drag
+        // a pause then a move past the slop: the hold gives way to a drag
         let mut h = PressHarness::new();
         h.button(at, egui::PointerButton::Primary, true);
-        h.wait(30);
+        h.wait(PAUSE);
         h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(HOLD_SLOP + 1.0, 0.0))]);
+        h.frame(vec![egui::Event::PointerMoved(at + Vec2::new(40.0, 0.0))]);
+        assert!(
+            egui::DragAndDrop::has_payload_of_type::<crate::ui::call_invite::PersonDrag>(&h.frames.ctx),
+            "the resident is carried after a pause"
+        );
         h.wait(40);
         assert_eq!(h.sheets, 0, "past the slop the hold is cancelled");
         h.button(at, egui::PointerButton::Primary, false);

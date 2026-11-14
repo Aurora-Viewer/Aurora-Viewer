@@ -98,6 +98,7 @@ fn is_preset(color: [f32; 4], rgb: [u8; 3]) -> bool {
 
 /// The window, when a set is being edited.
 pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi, pics: &HashMap<Uuid, egui::TextureHandle>) {
+    flush_left_edits(world, st);
     let Some(set) = st.config.clone() else {
         return;
     };
@@ -285,27 +286,57 @@ fn identity(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contacts
 /// The name typed, applied: renamed when it is new, put back when it
 /// cannot be (empty, internal, or another set's).
 fn rename(world: &mut World, st: &mut ContactsUi, set: &str) {
-    let new = st.rename.trim().to_owned();
-    if new == set {
+    if st.rename.trim() == set {
         return;
     }
-    if !new.is_empty() && world.contact_sets.rename_set(set, &new) {
-        st.config = Some(new.clone());
-        if st.set_choice.as_deref() == Some(set) {
-            st.set_choice = Some(new.clone());
-        }
-        if let Some((name, _)) = &mut st.response_edit
-            && name == set
-        {
-            *name = new;
-        }
-    } else {
+    let typed = st.rename.clone();
+    match apply_rename(world, st, set, &typed) {
+        Some(new) => st.config = Some(new),
+        None => st.rename = set.to_owned(),
+    }
+}
+
+/// `set` renamed to `typed`, the choice and the replies being typed
+/// following it; the new name, or None and a notice when it cannot be.
+fn apply_rename(world: &mut World, st: &mut ContactsUi, set: &str, typed: &str) -> Option<String> {
+    let new = typed.trim().to_owned();
+    if new.is_empty() || !world.contact_sets.rename_set(set, &new) {
         world.system_message(aurora_i18n::tr!(
             "ui-contacts-cannot-rename-contact-set-to-the-new-name-is",
             set = set.to_owned(),
             new = new
         ));
-        st.rename = set.to_owned();
+        return None;
+    }
+    if st.set_choice.as_deref() == Some(set) {
+        st.set_choice = Some(new.clone());
+    }
+    if let Some((name, _)) = &mut st.response_edit
+        && name == set
+    {
+        *name = new.clone();
+    }
+    Some(new)
+}
+
+/// What was typed and is no longer drawn: a name left in the rename field
+/// when another set was opened, the replies once their tab is left or
+/// another set opened (a field that is not drawn never loses the focus).
+fn flush_left_edits(world: &mut World, st: &mut ContactsUi) {
+    if let Some((old, typed)) = st.pending_rename.take()
+        && typed.trim() != old
+    {
+        apply_rename(world, st, &old, &typed);
+    }
+    let left = st
+        .response_edit
+        .as_ref()
+        .is_some_and(|(name, _)| st.config.as_deref() != Some(name.as_str()) || st.editor.tab != EditorTab::Replies);
+    if left {
+        if let Some((name, _)) = st.response_edit.clone() {
+            save_responses(world, st, &name);
+        }
+        st.response_edit = None;
     }
 }
 
@@ -725,7 +756,8 @@ fn custom_colour(ui: &mut egui::Ui, p: &Palette, world: &mut World, set: &str, c
             .ctx()
             .data(|d| d.get_temp::<widgets::color::ColorPickState>(id))
             .unwrap_or_else(|| widgets::color::ColorPickState::new(id, srgba));
-        if widgets::color::color_panel(ui, p, &mut state, &mut srgba, false) {
+        // with its alpha, as the set's swatch had it before
+        if widgets::color::color_panel(ui, p, &mut state, &mut srgba, true) {
             let [r, g, b, a] = srgba;
             let c = egui::Rgba::from(Color32::from_rgba_unmultiplied(r, g, b, a)).to_rgba_unmultiplied();
             world.contact_sets.set_color(set, c);
@@ -1072,7 +1104,8 @@ fn replies(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut ContactsU
     }
 }
 
-/// What is still typed in the response fields, when the window closes.
+/// What is still typed in the response fields of `set`, when the window
+/// closes or the fields are no longer drawn; unchanged texts are left.
 fn save_responses(world: &mut World, st: &ContactsUi, set: &str) {
     let Some((name, texts)) = &st.response_edit else {
         return;
@@ -1081,11 +1114,20 @@ fn save_responses(world: &mut World, st: &ContactsUi, set: &str) {
         return;
     }
     for (i, mode) in ResponseMode::ALL.into_iter().enumerate() {
-        let Some(enabled) = world.contact_sets.set(set).map(|c| c.response(mode).enabled) else {
+        let Some(now) = world.contact_sets.set(set).map(|c| c.response(mode).clone()) else {
             return;
         };
-        let text = texts[i].clone();
-        world.contact_sets.set_response(set, mode, SetResponse { enabled, text });
+        if now.text != texts[i] {
+            let text = texts[i].clone();
+            world.contact_sets.set_response(
+                set,
+                mode,
+                SetResponse {
+                    enabled: now.enabled,
+                    text,
+                },
+            );
+        }
     }
 }
 
@@ -1517,5 +1559,49 @@ mod tests {
         assert!(world.contact_sets.is_valid("C") && !world.contact_sets.is_valid("A"));
         assert_eq!(st.config.as_deref(), Some("C"));
         assert_eq!(st.set_choice.as_deref(), Some("C"));
+    }
+
+    /// Typed text whose field is no longer drawn is kept: the replies when
+    /// their tab is left or another set is opened, a name left in the
+    /// rename field when another set is opened.
+    #[test]
+    fn text_typed_then_left_behind_is_kept() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.contact_sets.add_set("A");
+        world.contact_sets.add_set("B");
+        let reply = |world: &World, set: &str| {
+            world
+                .contact_sets
+                .set(set)
+                .map(|c| c.response(ResponseMode::Autorespond).text.clone())
+        };
+        let mut st = ContactsUi::default();
+        st.configure_set_at("A", EditorTab::Replies);
+        st.response_edit = Some(("A".into(), ["".into(), "Back soon".into(), "".into()]));
+        flush_left_edits(&mut world, &mut st);
+        assert_ne!(
+            reply(&world, "A").as_deref(),
+            Some("Back soon"),
+            "still on its tab: saved as it loses the focus"
+        );
+        // the Look tab: no longer drawn, saved
+        st.editor.tab = EditorTab::Look;
+        flush_left_edits(&mut world, &mut st);
+        assert_eq!(reply(&world, "A").as_deref(), Some("Back soon"));
+        assert!(st.response_edit.is_none());
+        // typed on A's tab, then B opened from a sidebar cog
+        st.configure_set_at("A", EditorTab::Replies);
+        st.response_edit = Some(("A".into(), ["".into(), "Out".into(), "".into()]));
+        st.rename = "A2".into();
+        st.configure_set("B");
+        flush_left_edits(&mut world, &mut st);
+        assert_eq!(reply(&world, "A2").as_deref(), Some("Out"), "A's replies saved, under its new name");
+        assert!(
+            world.contact_sets.is_valid("A2") && !world.contact_sets.is_valid("A"),
+            "A's typed name applied"
+        );
+        assert_eq!(reply(&world, "B").as_deref(), Some(""), "nothing written to B");
+        assert_eq!(st.config.as_deref(), Some("B"));
+        assert_eq!(st.rename, "B");
     }
 }

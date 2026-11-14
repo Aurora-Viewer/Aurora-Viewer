@@ -181,7 +181,7 @@ pub(super) fn picker(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &st
     if resp.clicked() {
         st.sets_picker_open = !st.sets_picker_open;
     }
-    crate::ui::contacts::drag::set_target_with(&resp, set, &st.sel);
+    crate::ui::contacts::drag::set_target_with(&resp, set, super::dropped_with(ui.ctx(), &st.sel));
     if st.sets_picker_open {
         ui.add_space(6.0);
         egui::Frame::new()
@@ -588,7 +588,7 @@ fn set_rows(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, current: &str, he
             st.sets_picker_open = false;
         }
         // residents dropped join it (the people chosen with the one dragged)
-        crate::ui::contacts::drag::set_target_with(resp, name, &st.sel);
+        crate::ui::contacts::drag::set_target_with(resp, name, super::dropped_with(ui.ctx(), &st.sel));
     }
     if moving || slide.carry.is_some() || slide.dropped.is_some() {
         ui.ctx().request_repaint();
