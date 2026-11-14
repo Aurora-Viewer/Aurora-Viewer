@@ -16877,7 +16877,7 @@ impl App {
                     terrain,
                     elapsed: since.elapsed().as_secs_f32(),
                 };
-                let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, info.region, None, true);
+                let facts = ui::loading::PlaceFacts::gather(&ctx, &mut self.world, &mut self.map_tiles, info.region, None, true);
                 a.cancel_loading = ui::loading::show(
                     ui,
                     &p,
@@ -19569,7 +19569,7 @@ impl App {
                         } else {
                             self.world.tp_status.clone()
                         };
-                        let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &name, point, arrived);
+                        let facts = ui::loading::PlaceFacts::gather(&ctx, &mut self.world, &mut self.map_tiles, &name, point, arrived);
                         ui::loading::BannerText { name, stage, facts }
                     });
                     // Cancel until TeleportFinish, when the simulator allows it
