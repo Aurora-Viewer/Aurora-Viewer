@@ -3629,3 +3629,79 @@ fn ctrl_c_with_several_picked_keys_copies_them_and_ctrl_v_pastes_them_at_the_pla
     assert!(!editor.clip.clipboard.is_empty());
     assert!(editor.clip.key_clipboard.is_empty());
 }
+
+#[test]
+fn a_box_dragged_from_under_the_lanes_does_not_move_the_window() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    let baseline = |frames: &mut Frames, draw: &mut dyn FnMut(&mut egui::Ui)| {
+        frames
+            .shapes(Vec::new(), draw)
+            .into_iter()
+            .filter_map(|shape| {
+                let egui::Shape::LineSegment { points, .. } = shape else {
+                    return None;
+                };
+                ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(points)
+            })
+            .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+            .expect("timeline track baseline")
+    };
+    frames.run(Vec::new(), &mut draw);
+    let before = baseline(&mut frames, &mut draw);
+    let at = |frame: f32, below: f32| egui::pos2(before[0].x + (before[1].x - before[0].x) * frame / 30.0, before[0].y + below);
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: ctrl,
+    };
+    // from under the only lane, up and across the keys of frames 10 and 20
+    let start = at(8.0, 60.0);
+    let end = at(22.0, -6.0);
+    frames.run(
+        vec![
+            egui::Event::ModifiersChanged(ctrl),
+            egui::Event::PointerMoved(start),
+            button(start, true),
+        ],
+        &mut draw,
+    );
+    frames.run(vec![egui::Event::PointerMoved(start + egui::vec2(10.0, -10.0))], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(end)], &mut draw);
+    frames.run(vec![button(end, false)], &mut draw);
+    frames.run(vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], &mut draw);
+    let after = baseline(&mut frames, &mut draw);
+
+    assert_eq!(before, after, "the window stays where it was");
+    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
+}
