@@ -6,6 +6,7 @@ use crate::blend_exact::{
     EARLY_TEST, HAZE_FORMAT, Lists, PAGES, SLOTS, TWO_SOURCES, WIDE_RANGE, both_blend, layouts, once_blend, range_blend, range_format,
     range_shift, scene_source,
 };
+use crate::pipeline_cache::CachedPipelines;
 use crate::types::flags;
 use wgpu::util::DeviceExt;
 
@@ -567,7 +568,7 @@ impl Bench {
                     write_mask: d.write_mask,
                 }));
             }
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some(d.entry),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {

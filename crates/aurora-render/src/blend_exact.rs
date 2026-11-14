@@ -364,7 +364,7 @@ impl Lists {
     /// then drawn sorted, as without the exact order).
     pub fn new(device: &wgpu::Device, size: (u32, u32), depth_format: wgpu::TextureFormat) -> Option<Lists> {
         let pixels = u64::from(size.0) * u64::from(size.1);
-        let max = u64::from(device.limits().max_storage_buffer_binding_size);
+        let max = device.limits().max_storage_buffer_binding_size;
         // (a pixel of more layers than its own slots needs a page: no pool,
         // no fronts)
         let pages = pool_start(pixels);
@@ -386,7 +386,7 @@ impl Lists {
             return None;
         }
         let pixels = u64::from(self.size.0) * u64::from(self.size.1);
-        let max = u64::from(device.limits().max_storage_buffer_binding_size);
+        let max = device.limits().max_storage_buffer_binding_size;
         let most = [pool_pages(pixels), pool_pages(pixels) / 2, pool_pages(pixels) / 4]
             .into_iter()
             .find(|pages| fronts_size(pixels, *pages, max).is_some())
@@ -457,7 +457,7 @@ impl Lists {
             return None;
         }
         let pixels = u64::from(size.0) * u64::from(size.1);
-        let bytes = fronts_size(pixels, pages, u64::from(device.limits().max_storage_buffer_binding_size))?;
+        let bytes = fronts_size(pixels, pages, device.limits().max_storage_buffer_binding_size)?;
         let emptied = pixels.max(1) * u64::from(PIXEL_WORDS_EMPTIED) * 4;
         let pool = pixels.max(1) * u64::from(PIXEL_WORDS) * 4;
         let range_format = range_format(device.features());
@@ -537,7 +537,7 @@ impl Lists {
         let watch = Watch {
             readback: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("blend order pool count"),
-                size: 8,
+                size: crate::readback::readback_size(8),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),

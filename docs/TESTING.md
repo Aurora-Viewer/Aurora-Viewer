@@ -403,7 +403,9 @@ the default): a coarser level mixes the fainter layers (up to 25 %, 13 %,
 6 % and 3 % of alpha) with their neighbours instead of placing them one by
 one. Standard is drawn under MSAA and on a device without the depth test
 before the shader. `AURORA_RIGGED_BLEND`, when set, chooses the order
-instead of the setting, which then only gives the precision.
+instead of the setting, which then only gives the precision. Like the other
+overrides of settings, the value is saved with the profile of the run
+(the demo's): the next run without the variable keeps it.
 
 `AURORA_RENDER_SCALE`: the world's linear resolution percentage (50–100),
 before spatial upscaling. HUDs, labels and controls stay at native
@@ -5103,9 +5105,11 @@ both open states and the selection count. Capture at frame 620.
   white dress whose alpha wavers between 0.25 and 0.75 from one 4-texel
   stitch to the next (a sheer knit), and under it a red layer (95 %
   opaque), attached first on the same point so that it is drawn after the
-  dress, as a body add-on worn under clothes (#1300). By default the dress
-  hides the red layer everywhere and shows the body behind it, as the
-  Legacy Viewer; with `AURORA_RIGGED_BLEND=split` the red layer shows
+  dress, as a body add-on worn under clothes (#1300). With the sorted
+  order (`AURORA_BLEND_ORDER=0`) the dress hides the red layer everywhere
+  and shows the body behind it, as the Legacy Viewer; with the exact order
+  (the default) the red layer shows through the dress evenly, where it
+  lies under it; with `AURORA_RIGGED_BLEND=split` the red layer shows
   through the dress in speckles, wherever its alpha is under one half. The
   default camera looks at our avatar's back.
 - **`AURORA_DEMO_SOFT_MASK=1`** (with or without `AURORA_DEMO_HAIR`): our

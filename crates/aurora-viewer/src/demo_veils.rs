@@ -164,7 +164,7 @@ mod tests {
     fn the_lace_has_holes_a_net_and_threads() {
         let (px, w, h) = texture(&TEX_LACE).expect("the lace");
         assert_eq!(px.len() as u32, w * h * 4);
-        let count = |alpha: u8| px.chunks_exact(4).filter(|p| p[3] == alpha).count();
+        let count = |alpha: u8| px.as_chunks::<4>().0.iter().filter(|p| p[3] == alpha).count();
         assert!(count(0) > 0 && count(96) > count(255) && count(255) > 0);
         assert_eq!(count(0) + count(96) + count(255), (w * h) as usize);
     }
