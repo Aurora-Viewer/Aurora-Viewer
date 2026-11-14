@@ -14440,6 +14440,34 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
+# Conversation log (ui/conversation_log.rs)
+conversation-log-filter = Filter people
+conversation-log-actions = Actions on the selected person or group
+conversation-log-im = IM…
+conversation-log-call = Voice call…
+conversation-log-transcript = Open chat transcript…
+conversation-log-transcript-externally = Open chat transcript externally…
+conversation-log-block = Block / unblock
+conversation-log-sort-name = Sort by name
+conversation-log-sort-date = Sort by date
+conversation-log-friends-first = Sort friends on top
+conversation-log-show-blocked = Show blocked
+conversation-log-nearby-transcript = View nearby chat transcript…
+conversation-log-remove = Remove this entry
+conversation-log-offline = Messages arrived while you were logged out
+conversation-log-disabled-empty = Conversations are not being logged. To begin keeping a log, turn on “Keep a conversation log” in Preferences › Chat › History.
+conversation-log-disabled-not-empty = No more conversations will be logged. To resume keeping a log, turn on “Keep a conversation log” in Preferences › Chat › History.
+conversation-log-enabled-empty = There are no logged conversations. After you contact someone, or someone contacts you, a log entry will be shown here.
+conversation-log-transcript-missing = Chat transcript file is missing. Either there are no transcripts for this chat, or transcripts aren't being saved. You can save them with “Save IMs and group chats” in Preferences › Chat › History.
+ui-bars-conversation-log = Conversation log…
+people-friends-view-conversation-log = View conversation log…
+ui-options-chat-logs-conversations = Keep a conversation log
+ui-options-chat-logs-conversations-help = Lists the instant messages, group chats and conferences you had, and when, in Communicate › Conversation log. Off: nothing more is added, and the list stays as it is.
+ui-options-chat-logs-clear = Clear conversation log…
+ui-options-chat-logs-clear-title = Clear the conversation log?
+ui-options-chat-logs-clear-text = This will delete the logs of previous conversations, and any backups of that file. The transcripts are not touched.
+ui-options-chat-logs-clear-confirm = Clear
+
 # Parcel radio state and stream failures
 music-state-error = Can't play: { $reason }
 music-error-web-page = This web page offers no radio stream

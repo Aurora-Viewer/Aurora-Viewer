@@ -514,6 +514,9 @@ pub struct OptionsUi {
     pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// Entries of the conversation log of the account logged in.
+    pub conversation_log_entries: usize,
+    confirm_clear_conversation_log: bool,
     /// "Reset …?" confirmation open, then the reset it said yes to, done by
     /// the next pass of the window's body.
     confirm_reset: Option<ResetAsk>,
@@ -680,6 +683,9 @@ pub struct OptionsResult {
     pub folder: Option<(Folder, FolderChoice)>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
+    /// Clear the conversation log of the account (confirmed,
+    /// PreferenceChatClearLog).
+    pub clear_conversation_log: bool,
     /// The import window opened: look for the Legacy Viewers' folders.
     pub find_legacy_logs: bool,
     /// Import from these folders.
@@ -1295,6 +1301,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
@@ -1345,6 +1352,52 @@ fn erase_logs_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
     });
     if modal.should_close() {
         st.confirm_erase_logs = false;
+    }
+}
+
+/// PreferenceChatClearLog: asked before the conversation log is emptied.
+fn clear_conversation_log_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mut OptionsResult, open: bool) {
+    if !(st.confirm_clear_conversation_log && open) {
+        return;
+    }
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_clear_conversation_log")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-chat-logs-clear-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-chat-logs-clear-text"))
+                .size(12.5)
+                .color(p.muted),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            use super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("ui-options-chat-logs-clear-confirm"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                r.clear_conversation_log = true;
+                st.confirm_clear_conversation_log = false;
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.confirm_clear_conversation_log = false;
+            }
+        });
+    });
+    if modal.should_close() {
+        st.confirm_clear_conversation_log = false;
     }
 }
 

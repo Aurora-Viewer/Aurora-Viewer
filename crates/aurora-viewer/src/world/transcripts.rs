@@ -18,6 +18,7 @@
 //!   between the file's history and the new lines, without those the file
 //!   already has.
 
+use super::chat_log::conversations::{self, Conversation, Kind};
 use super::chat_log::{Entry, Loaded, format, import, names};
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
@@ -237,6 +238,10 @@ impl World {
     pub(super) fn conversation_push(&mut self, session: Uuid, line: ChatLine, unread: bool) {
         self.session_lines(session);
         self.ensure_transcript(session);
+        // LLConversationLog::onNewMessageReceived
+        if line.origin == Origin::Live {
+            self.log_conversation(session, false);
+        }
         if line.origin == Origin::Live && self.chat_log.cfg.log_im && self.chat_log.identity().is_some() {
             let (from, text) = self.transcript_text(&line);
             let s = self.session_lines(session);
@@ -309,8 +314,149 @@ impl World {
         self.chat_log.append(names::NEARBY, line.time, &from, &text);
     }
 
+    /// The conversation log's entry of a conversation as it is now
+    /// (LLConversation from an LLIMSession): a group chat, a conference or
+    /// an instant message with a resident; never with ourselves.
+    fn conversation_entry(&self, key: Uuid) -> Option<Conversation> {
+        if key.is_nil() || key == self.agent_id {
+            return None;
+        }
+        let info = self.groups.sessions.get(&key);
+        let stem = self
+            .social
+            .ims
+            .iter()
+            .find(|s| s.other == key)
+            .and_then(|s| s.log.stem().map(str::to_owned));
+        let group = self.groups.group(&key);
+        let (kind, name, participant, session, history_file) = if group.is_some() || info.is_some_and(|i| i.group) {
+            let name = group.map(|g| g.name.clone()).or(info.map(|i| i.name.clone())).unwrap_or_default();
+            (Kind::Group, name, key, key, stem.or_else(|| self.transcript_stem(&key)))
+        } else if let Some(info) = info {
+            // the one who invited us, or the first we invited
+            let participant = info
+                .participants
+                .iter()
+                .copied()
+                .find(|id| *id != self.agent_id)
+                .unwrap_or_default();
+            // a conference's file is only known once it is named
+            (Kind::Conference, self.session_title(&key), participant, key, stem)
+        } else {
+            let name = self
+                .social
+                .avatar_names
+                .complete(&key)
+                .or_else(|| self.social.names.get(&key).cloned())
+                .unwrap_or_default();
+            let session = conversations::private_session(self.agent_id, key);
+            (Kind::Private, name, key, session, stem.or_else(|| self.transcript_stem(&key)))
+        };
+        Some(Conversation {
+            time: conversations::now(),
+            kind,
+            name,
+            history_file: history_file.unwrap_or_default(),
+            session,
+            participant,
+            offline: false,
+        })
+    }
+
+    /// LLConversationLog::logConversation: a conversation opened, or a
+    /// message entered it; `offline` when it opened on messages kept while
+    /// we were logged out.
+    pub(super) fn log_conversation(&mut self, key: Uuid, offline: bool) {
+        if !self.chat_log.conversations.logging {
+            return;
+        }
+        let Some(mut c) = self.conversation_entry(key) else {
+            return;
+        };
+        c.offline = offline;
+        if c.kind == Kind::Private && self.social.avatar_names.complete(&key).is_none() {
+            self.chat_log.conversations.unnamed.insert(key);
+        }
+        self.chat_log.conversations.log(c);
+    }
+
+    /// Every frame: the conversation log follows the conversations: one
+    /// that opened is logged (sessionAdded), a resident's complete name
+    /// once known replaces the one it was logged with (onAvatarNameCache),
+    /// and a conversation read loses its unread offline mark
+    /// (onIMFloaterShown: here, no unread line left).
+    fn poll_conversation_log(&mut self) {
+        self.chat_log.poll_conversations();
+        if !self.chat_log.conversations.logging {
+            return;
+        }
+        let open: std::collections::HashSet<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
+        let opened: Vec<Uuid> = open.difference(&self.chat_log.conversations.known).copied().collect();
+        self.chat_log.conversations.known = open;
+        for key in opened {
+            self.log_conversation(key, false);
+        }
+        if !self.chat_log.conversations.unnamed.is_empty() {
+            let named: Vec<(Uuid, String)> = self
+                .chat_log
+                .conversations
+                .unnamed
+                .iter()
+                .filter_map(|id| Some((*id, self.social.avatar_names.complete(id)?)))
+                .collect();
+            for (id, name) in named {
+                self.chat_log.conversations.unnamed.remove(&id);
+                self.chat_log
+                    .conversations
+                    .rename(conversations::private_session(self.agent_id, id), &name);
+            }
+        }
+        if self.chat_log.conversations.list.iter().any(|c| c.offline) {
+            let read: Vec<Uuid> = self
+                .social
+                .ims
+                .iter()
+                .filter(|s| s.unread == 0)
+                .filter_map(|s| self.conversation_entry(s.other).map(|c| c.session))
+                .collect();
+            for session in read {
+                self.chat_log.conversations.read(session);
+            }
+        }
+    }
+
+    /// The name an entry of the conversation log shows: with RLVa @shownames
+    /// a resident's name stays hidden also when it was logged before the
+    /// restriction or imported. Display only: the log keeps the real name.
+    pub fn conversation_display_name(&self, c: &Conversation) -> String {
+        if c.kind == Kind::Private && !c.participant.is_nil() && !self.rlva_can_name(c.participant) {
+            return super::rlva::privacy::anonymous(c.participant).display_name.clone();
+        }
+        c.name.clone()
+    }
+
+    /// Title and transcript of a conversation log's entry, for the History
+    /// window: the file of the resident or group as it is named now, else
+    /// the one the entry was logged with (a conference's, an import's).
+    pub fn logged_transcript(&self, c: &Conversation) -> (String, Option<std::path::PathBuf>) {
+        let file = match c.kind {
+            // a group's session is the group (its participant in the
+            // Legacy Viewer's file may be whoever wrote first)
+            Kind::Group => self.transcript_of(Some(c.session)).1,
+            Kind::Private => self.transcript_of(Some(c.participant)).1,
+            _ => None,
+        };
+        let file = file.or_else(|| {
+            (!c.history_file.trim().is_empty())
+                .then(|| self.chat_log.history_file_of(&c.history_file))
+                .flatten()
+        });
+        (self.conversation_display_name(c), file)
+    }
+
     /// Every frame: histories asked for, histories read.
     pub fn poll_transcripts(&mut self) {
+        self.poll_conversation_log();
         if self.chat_log.identity().is_none() {
             return;
         }
@@ -336,6 +482,7 @@ impl World {
         }
         if let Some(report) = self.chat_log.take_imported() {
             self.history_imported(&report.changed);
+            self.chat_log.conversations.imported(report.conversations.clone());
             self.import_report = Some(report);
         }
     }
@@ -562,6 +709,50 @@ mod tests {
         w.agent_id = agent;
         w.chat_log.login(agent);
         w
+    }
+
+    #[test]
+    fn the_conversation_log_follows_the_conversations() {
+        let root = temp();
+        let me = Uuid::from_u128(0x5E1F);
+        let jane = Uuid::from_u128(0x1A4E);
+        let john = Uuid::from_u128(0x10B);
+        let mut w = world(&root, me);
+        assert!(w.chat_log.flush(WAIT));
+        w.poll_transcripts();
+        // a message kept while we were offline opens the conversation
+        let mut offline = im(jane, "Jane Doe", "while you were away");
+        offline.offline = true;
+        w.on_im(offline);
+        w.poll_transcripts();
+        let log = &w.chat_log.conversations;
+        assert_eq!(log.list.len(), 1);
+        let entry = &log.list[0];
+        assert_eq!(entry.kind, Kind::Private);
+        assert_eq!(entry.participant, jane);
+        assert_eq!(entry.session, conversations::private_session(me, jane));
+        assert_eq!(entry.name, "Jane Doe");
+        assert!(entry.offline);
+        // read: the mark goes
+        w.social.session_mut(jane).unread = 0;
+        w.poll_transcripts();
+        assert!(!w.chat_log.conversations.list[0].offline);
+        // a conversation opened without a message is logged too, once
+        w.social.session_mut(john);
+        w.poll_transcripts();
+        w.poll_transcripts();
+        assert_eq!(w.chat_log.conversations.list.len(), 2);
+        // never ourselves
+        w.social.session_mut(me);
+        w.poll_transcripts();
+        assert_eq!(w.chat_log.conversations.list.len(), 2);
+        // off: nothing more is logged
+        w.chat_log.cfg.log_conversations = false;
+        w.poll_transcripts();
+        w.social.session_mut(Uuid::from_u128(0xC0C0));
+        w.poll_transcripts();
+        assert_eq!(w.chat_log.conversations.list.len(), 2);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     fn im(from: Uuid, name: &str, text: &str) -> InstantMessage {
@@ -1185,6 +1376,48 @@ mod tests {
         // the notice of each invitee: in Jane's conversation, none opened for Bob
         assert!(w.social.ims[0].lines.back().unwrap().kind == ChatKind::System);
         assert_eq!(w.social.ims.len(), 1);
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn the_conversation_log_hides_a_private_name_under_shownames_only() {
+        use aurora_net::{ChatMessage, ChatSourceType, ChatType};
+        let root = temp();
+        let me = Uuid::from_u128(0x5E1F);
+        let jane = Uuid::from_u128(0x1A4E);
+        let group = Uuid::from_u128(0x6A00);
+        let mut w = world(&root, me);
+        let entry = |kind, participant, name: &str| Conversation {
+            time: 100,
+            kind,
+            name: name.into(),
+            history_file: name.into(),
+            session: Uuid::from_u128(77),
+            participant,
+            offline: false,
+        };
+        let private = entry(Kind::Private, jane, "Jane Doe");
+        let own = entry(Kind::Private, me, "Me Resident");
+        let chat = entry(Kind::Group, group, "Some Group");
+        // RLVa off: the real names
+        assert_eq!(w.conversation_display_name(&private), "Jane Doe");
+        w.rlva.configure(true);
+        let restrict = ChatMessage {
+            from_name: "RLVa test object".to_owned(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".to_owned(),
+            region: None,
+        };
+        assert!(w.rlva.receive(&restrict));
+        let hidden = w.conversation_display_name(&private);
+        assert_ne!(hidden, "Jane Doe", "a private conversation is anonymous");
+        assert!(!hidden.is_empty());
+        assert_eq!(w.conversation_display_name(&chat), "Some Group");
+        assert_eq!(w.conversation_display_name(&own), "Me Resident");
         clean(&w, &root);
     }
 }

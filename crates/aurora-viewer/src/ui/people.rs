@@ -108,6 +108,9 @@ pub enum PeopleAction {
     /// "+" of the friends tab: choose a resident to offer friendship to
     /// (People.AddFriendWizard).
     PickFriend,
+    /// "View Conversation Log…" of the friends tab's view menu
+    /// (Floater.Toggle conversation).
+    ConversationLog,
     /// The bell of a group: receive its notices or not.
     GroupNotices(Uuid, bool),
     /// The switch of the right to modify our objects in a sheet: asked
@@ -485,7 +488,7 @@ pub fn people_window(
                     panels.people_tab = TAB_BLOCKED;
                 }
             }
-            1 => friends_tab(ui, p, world, st, radar.pics, friends, &mut actions),
+            1 => friends_tab(ui, p, world, st, radar.pics, friends, panels.conversation_log, &mut actions),
             _ => {
                 widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
                 ui.add_space(4.0);
@@ -673,9 +676,9 @@ fn tabs_shown(widths: &[f32], open: usize, room: f32, more: f32) -> std::ops::Ra
     run
 }
 
-/// View and sort options of the friends (menu_people_friends_view.xml,
-/// without the conversation log, which has its own window).
-fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings) {
+/// View and sort options of the friends (menu_people_friends_view.xml);
+/// `log_open`: the conversation log's window is open (its check).
+fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings, log_open: bool, actions: &mut Vec<PeopleAction>) {
     for (sort, label) in [
         (SORT_NAME, aurora_i18n::tr!("people-friends-sort-name")),
         (SORT_USERNAME, aurora_i18n::tr!("people-friends-sort-username")),
@@ -700,6 +703,17 @@ fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings) {
         aurora_i18n::tr!("people-friends-view-permissions"),
         &mut s.permissions,
     );
+    menu::separator(ui, p);
+    if menu::check(
+        ui,
+        p,
+        "file-text-filled",
+        aurora_i18n::tr!("people-friends-view-conversation-log"),
+        log_open,
+        true,
+    ) {
+        actions.push(PeopleAction::ConversationLog);
+    }
 }
 
 /// Friends (the friends tab of LLPanelPeople, panel_people.xml): the filter
@@ -714,6 +728,7 @@ fn friends_tab(
     st: &mut PeopleUi,
     pics: &HashMap<Uuid, egui::TextureHandle>,
     settings: &mut FriendsSettings,
+    log_open: bool,
     actions: &mut Vec<PeopleAction>,
 ) {
     // laid out from the right, the filter takes what the buttons leave
@@ -727,7 +742,7 @@ fn friends_tab(
             actions.push(PeopleAction::PickFriend);
         }
         radar::tool_menu(ui, p, "arrows-sort", aurora_i18n::tr!("people-view-sort-options"), true, |ui| {
-            friends_view_menu(ui, p, settings);
+            friends_view_menu(ui, p, settings, log_open, actions);
         });
         widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });

@@ -14360,6 +14360,34 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
+# Conversation log (ui/conversation_log.rs)
+conversation-log-filter = 人物をフィルタ
+conversation-log-actions = 選択した人やグループに対するアクション
+conversation-log-im = IM…
+conversation-log-call = ボイスコール…
+conversation-log-transcript = チャットの履歴を開く…
+conversation-log-transcript-externally = チャットの履歴を別ウィンドウで開く…
+conversation-log-block = ブロック／ブロック解除
+conversation-log-sort-name = 名前で並べ替え
+conversation-log-sort-date = 日付で並べ替え
+conversation-log-friends-first = フレンドを上位に表示
+conversation-log-show-blocked = ブロック済みを表示
+conversation-log-nearby-transcript = 近くのチャットの履歴を表示…
+conversation-log-remove = この項目を削除
+conversation-log-offline = ログアウト中に届いたメッセージ
+conversation-log-disabled-empty = 会話はログに記録されていません。ログの記録を開始するには、「初期設定 › チャット › 履歴」で「会話の記録を残す」をオンにします。
+conversation-log-disabled-not-empty = これ以上の会話は記録されません。ログの記録を再開するには、「初期設定 › チャット › 履歴」で「会話の記録を残す」をオンにします。
+conversation-log-enabled-empty = 記録された会話はありません。誰かと話した後や、誰かがあなたに話しかけた後に、そのときのログがここに記載されます。
+conversation-log-transcript-missing = チャットの会話履歴ファイルが見つかりません。このチャットの会話履歴が存在しないか、保存されていません。「初期設定 › チャット › 履歴」の「ＩＭとグループチャットを保存」で保存できます。
+ui-bars-conversation-log = 会話の記録…
+people-friends-view-conversation-log = 会話の記録を表示…
+ui-options-chat-logs-conversations = 会話の記録を残す
+ui-options-chat-logs-conversations-help = IM、グループチャット、会議の相手といつ話したかを「コミュニケーション › 会話の記録」に一覧表示します。オフにすると、新しい項目は追加されず、一覧はそのまま残ります。
+ui-options-chat-logs-clear = 会話の記録をクリア…
+ui-options-chat-logs-clear-title = 会話の記録をクリアしますか？
+ui-options-chat-logs-clear-text = これにより、過去の会話のログ、およびそのファイルのすべてのバックアップが削除されます。会話履歴のテキストは削除されません。
+ui-options-chat-logs-clear-confirm = クリア
+
 # Parcel radio state and stream failures
 music-state-error = 再生できません：{ $reason }
 music-error-web-page = このウェブページにはラジオのストリームがありません

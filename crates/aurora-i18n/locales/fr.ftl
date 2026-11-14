@@ -14443,6 +14443,34 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+# Conversation log (ui/conversation_log.rs)
+conversation-log-filter = Filtrer les personnes
+conversation-log-actions = Actions sur la personne ou le groupe sélectionné
+conversation-log-im = Envoyer un IM…
+conversation-log-call = Appel vocal…
+conversation-log-transcript = Voir l'historique de conversation…
+conversation-log-transcript-externally = Ouvrir l'historique dans un logiciel externe…
+conversation-log-block = Bloquer / débloquer
+conversation-log-sort-name = Trier par nom
+conversation-log-sort-date = Trier par date
+conversation-log-friends-first = Placer les amis en premier
+conversation-log-show-blocked = Afficher les personnes bloquées
+conversation-log-nearby-transcript = Afficher l'historique du chat local…
+conversation-log-remove = Retirer cette entrée
+conversation-log-offline = Messages arrivés pendant que vous étiez déconnecté
+conversation-log-disabled-empty = Les conversations ne sont pas archivées. Pour commencer à tenir un journal, activez « Tenir un journal des conversations » dans Préférences › Chat › Historique.
+conversation-log-disabled-not-empty = Aucune conversation ne sera plus enregistrée. Pour recommencer à tenir un journal, activez « Tenir un journal des conversations » dans Préférences › Chat › Historique.
+conversation-log-enabled-empty = Il n'y a aucune conversation enregistrée. Quand quelqu'un vous contacte ou quand vous contactez quelqu'un, une entrée de journal s'affiche ici.
+conversation-log-transcript-missing = Le fichier contenant la transcription du chat est manquant. Soit il n'y a pas de transcription pour ce chat, soit les transcriptions ne sont pas enregistrées. Vous pouvez les enregistrer avec « Enregistrer IM et groupes » dans Préférences › Chat › Historique.
+ui-bars-conversation-log = Journal des conversations…
+people-friends-view-conversation-log = Afficher le journal des conversations…
+ui-options-chat-logs-conversations = Tenir un journal des conversations
+ui-options-chat-logs-conversations-help = Liste les messages instantanés, chats de groupe et conférences que vous avez eus, et quand, dans Communiquer › Journal des conversations. Désactivé : plus rien n'est ajouté, et la liste reste telle quelle.
+ui-options-chat-logs-clear = Vider le journal des conversations…
+ui-options-chat-logs-clear-title = Vider le journal des conversations ?
+ui-options-chat-logs-clear-text = Cela supprimera les journaux des conversations précédentes, ainsi que toute copie de sauvegarde de ce fichier. Les transcriptions ne sont pas touchées.
+ui-options-chat-logs-clear-confirm = Vider
+
 # Parcel radio state and stream failures
 music-state-error = Lecture impossible : { $reason }
 music-error-web-page = Cette page web ne propose aucun flux radio

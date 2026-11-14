@@ -718,6 +718,9 @@ impl World {
                     if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == temp_session) {
                         s.other = session;
                     }
+                    // the conversation log's entry (and the poll's memory of the
+                    // open conversation) follows, or the conference is logged twice
+                    self.chat_log.conversations.rekey(temp_session, session);
                 }
                 self.groups.restoring.remove(&session);
                 let info = self.info_mut(session, "");
@@ -890,6 +893,10 @@ impl World {
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
+            // sessionAdded with has_offline_msg
+            if inv.offline && new {
+                self.log_conversation(session, true);
+            }
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {

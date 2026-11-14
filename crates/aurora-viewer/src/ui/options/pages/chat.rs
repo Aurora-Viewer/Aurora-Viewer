@@ -961,6 +961,13 @@ fn keyword_alerts(cx: &mut Cx) {
 fn history(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-recording"), |cx| {
+        // KeepConversationLogTranscripts > 0 (Legacy Viewer › Privacy, Save:
+        // Log only / Log and transcripts), apart from the transcripts here
+        cx.toggle(
+            tr!("ui-options-chat-logs-conversations"),
+            tr!("ui-options-chat-logs-conversations-help"),
+            &field!(log_conversations),
+        );
         cx.toggle(tr!("ui-options-chat-logs-im"), tr!("ui-options-chat-logs-im-help"), &field!(log_im));
         cx.toggle(
             tr!("ui-options-chat-logs-nearby"),
@@ -1049,6 +1056,21 @@ fn history(cx: &mut Cx) {
                         .clicked()
                         {
                             st.confirm_erase_logs = true;
+                        }
+                        // Clear log… (Pref.ClearLog), enabled while the log
+                        // has entries
+                        if action_button_if(
+                            ui,
+                            &p,
+                            "trash-filled",
+                            tr!("ui-options-chat-logs-clear"),
+                            ActionKind::FlatDanger,
+                            size,
+                            st.conversation_log_entries > 0,
+                        )
+                        .clicked()
+                        {
+                            st.confirm_clear_conversation_log = true;
                         }
                     });
                     if crate::ui::widgets::action_button_if(
