@@ -139,7 +139,7 @@ pub fn drops(cfg: &Settings, here: &Here, sender: &Sender, region: Option<&str>,
 
 impl World {
     /// Is a region position on our parcel (LLViewerParcelMgr::inAgentParcel)?
-    fn on_agent_parcel(&self, pos: Vec3) -> Option<bool> {
+    pub(crate) fn on_agent_parcel(&self, pos: Vec3) -> Option<bool> {
         let (parcel, origin) = self.parcel.as_ref().zip(self.main_origin())?;
         if parcel.bitmap.is_empty() {
             return None;
