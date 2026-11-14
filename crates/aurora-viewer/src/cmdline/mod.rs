@@ -201,9 +201,9 @@ pub enum Command {
     /// `bw kbps`: the maximum bandwidth, within the range of the
     /// Preferences (Firestorm's command stops at 3,000).
     Bandwidth(u32),
-    /// A command Aurora can't do yet: said in the chat
-    /// instead of sending the line.
-    Unavailable(&'static str),
+    /// `/zoffset_up [m]`, `/zoffset_down [m]`, `/zoffset_reset`,
+    /// `/zoffset [m]`: the avatar's Z-offset, which is its hover height.
+    ZOffset(ZOffset),
     /// `key2name uuid`: tell the avatar name once known.
     KeyToName(Uuid),
     /// `/touch uuid`, `/siton uuid`, `/standup`.
@@ -237,9 +237,20 @@ pub enum Command {
     PasteCamera(CameraSpec),
 }
 
-fn hover_unavailable() -> &'static str {
-    aurora_i18n::tr!("cmdline-mod-use-hover-height-in-appearance")
+/// What a `/zoffset…` command does to the hover height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ZOffset {
+    /// Up (positive) or down by this many metres.
+    By(f32),
+    /// To this height (`/zoffset 0.25`, `/zoffset_reset`).
+    Set(f32),
+    /// `/zoffset` alone: say the current height.
+    Show,
 }
+
+/// The step of `/zoffset_up` and `/zoffset_down` without a number.
+pub const ZOFFSET_STEP: f32 = 0.05;
+
 fn camera_parse_error() -> &'static str {
     aurora_i18n::tr!("cmdline-mod-invalid-camera-position-expected-x-y-z-or-x")
 }
@@ -306,7 +317,10 @@ pub fn parse(text: &str, s: &ChatCommandSettings, mut roll: impl FnMut(u32) -> u
         "/touch" => return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::Touch)),
         "/siton" => return Some(i.uuid().map_or(Command::Report(Vec::new()), Command::SitOn)),
         "/standup" => return Some(Command::StandUp),
-        "/zoffset_up" | "/zoffset_down" | "/zoffset_reset" | "/zoffset" => return Some(Command::Unavailable(hover_unavailable())),
+        "/zoffset_up" => return Some(Command::ZOffset(ZOffset::By(i.float().unwrap_or(ZOFFSET_STEP).abs()))),
+        "/zoffset_down" => return Some(Command::ZOffset(ZOffset::By(-i.float().unwrap_or(ZOFFSET_STEP).abs()))),
+        "/zoffset_reset" => return Some(Command::ZOffset(ZOffset::Set(0.0))),
+        "/zoffset" => return Some(Command::ZOffset(i.float().map_or(ZOffset::Show, ZOffset::Set))),
         _ => {}
     }
     if is(&s.offer_tp) {
@@ -404,6 +418,19 @@ mod tests {
 
     fn cmd(text: &str) -> Option<Command> {
         parse(text, &ChatCommandSettings::default(), |_| 0)
+    }
+
+    #[test]
+    fn zoffset_commands_change_the_hover_height() {
+        assert_eq!(cmd("/zoffset_up"), Some(Command::ZOffset(ZOffset::By(ZOFFSET_STEP))));
+        assert_eq!(cmd("/zoffset_down"), Some(Command::ZOffset(ZOffset::By(-ZOFFSET_STEP))));
+        assert_eq!(cmd("/zoffset_up 0.2"), Some(Command::ZOffset(ZOffset::By(0.2))));
+        // the direction comes from the command, not from the sign
+        assert_eq!(cmd("/zoffset_down 0.2"), Some(Command::ZOffset(ZOffset::By(-0.2))));
+        assert_eq!(cmd("/zoffset_down -0.2"), Some(Command::ZOffset(ZOffset::By(-0.2))));
+        assert_eq!(cmd("/zoffset_reset"), Some(Command::ZOffset(ZOffset::Set(0.0))));
+        assert_eq!(cmd("/zoffset -0.35"), Some(Command::ZOffset(ZOffset::Set(-0.35))));
+        assert_eq!(cmd("/zoffset"), Some(Command::ZOffset(ZOffset::Show)));
     }
 
     #[test]

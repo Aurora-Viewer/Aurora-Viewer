@@ -1955,7 +1955,7 @@ app-gpu-lost =
     • fermer les autres programmes qui utilisent beaucoup la carte graphique ;
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
-cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
+cmdline-zoffset-now = Décalage Z : { $value } m
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
 demo-auto-blend = Auto : fondu
 demo-auto-mask = Auto : masque

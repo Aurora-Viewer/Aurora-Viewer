@@ -1940,7 +1940,7 @@ app-gpu-lost =
     ・グラフィックカードを多用している他のプログラムを閉じる。
     ・次回起動時に、Auroraが提示する安全なグラフィック設定を選択する。
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Auroraにはまだアニメーションオーバーライダー（ＡＯ）がありません。
-cmdline-mod-use-hover-height-in-appearance = アバターのホバーの高さは、外観→ホバーする高さで調整してください。
+cmdline-zoffset-now = Zオフセット：{ $value } m
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Auroraはこのリンクを開かないことをおすすめします。ログインや支払いを求められる場合、詐欺の可能性が非常に高いです：パスワードや支払情報は絶対に入力しないでください。
 demo-auto-blend = 自動：ブレンド
 demo-auto-mask = 自動：マスク
