@@ -15,6 +15,7 @@ mod picker;
 #[cfg(test)]
 mod tests;
 mod timeline;
+mod together;
 mod ui;
 use document::{Document, FPS, MAX_FRAME};
 pub use files::Prepared;
@@ -122,6 +123,8 @@ pub(super) struct State {
     preview: Option<Preview>,
     pub(super) capture: Option<Capture>,
     pub(super) modified: HashSet<usize>,
+    /// The joints that follow the selected one (`together`).
+    pub(super) together: Vec<usize>,
     pub(super) translations: HashSet<usize>,
     clear_after: Option<u64>,
     clear_bones: Vec<usize>,
@@ -182,6 +185,7 @@ impl Default for State {
             preview: None,
             capture: None,
             modified: HashSet::new(),
+            together: Vec::new(),
             translations: HashSet::new(),
             clear_after: None,
             clear_bones: Vec::new(),
@@ -1093,6 +1097,18 @@ impl Editor {
         let bones: Vec<_> = match capture {
             Capture::Bone(b) => {
                 let mut selected = vec![b];
+                // the joints selected with it are keyed with it
+                if self.selected == Some(b) {
+                    let followers = self.clip_followers();
+                    for bone in followers {
+                        selected.push(bone);
+                        if self.symmetry
+                            && let Some(other) = self.mirrors.counterpart(bone)
+                        {
+                            selected.push(other);
+                        }
+                    }
+                }
                 if self.symmetry
                     && let Some(other) = self.mirrors.counterpart(b)
                 {
@@ -1110,6 +1126,8 @@ impl Editor {
                         result.push(bone);
                     }
                 }
+                result.sort_unstable();
+                result.dedup();
                 result
             }
             Capture::Modified | Capture::AutoKeyModified => self.clip.modified.iter().copied().collect(),

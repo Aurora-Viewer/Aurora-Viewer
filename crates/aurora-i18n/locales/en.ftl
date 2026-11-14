@@ -48,8 +48,8 @@ anim-timeline-delete-frame-keys = Delete all keys at this frame
 anim-timeline-track-enabled = Include this bone in the animation
 anim-timeline-empty = No keyed bone yet: select a bone, pose it, then press Key (K).
 anim-timeline-keys-selected = { $count ->
-    [one] { $count } key picked: drag it to move it, Delete removes it
-   *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, Esc drops them
+    [one] { $count } key picked: drag it to move it, Delete removes it, right-click or Esc drops it
+   *[other] { $count } keys picked: drag one to move them all, Ctrl+C copies them, Delete removes them, right-click or Esc drops them
     }
 anim-edit-shortcut-play = Play or pause (Space)
 anim-edit-shortcut-rewind = Rewind to the start (Home)
@@ -13061,6 +13061,7 @@ anim-edit-import-hint = Open the ordinary import preview. Upload and payment rem
 anim-edit-file-filter = Second Life animation (.anim)
 anim-edit-bvh-filter = BVH motion capture (.bvh)
 anim-edit-bvh-unavailable = The avatar skeleton is unavailable for BVH import.
+anim-edit-fine-hint = Shift or Ctrl + click adds joints. Hold Shift while dragging a handle for 10× finer moves and turns.
 anim-edit-export-bvh = Export .bvh
 anim-edit-export-bvh-hint = Save the animation as a BVH file on the avatar's skeleton, to edit it in Blender or another animation tool. Priorities, loop, ease and hand pose stay in the .anim only.
 anim-edit-bvh-export-unavailable = The avatar skeleton is unavailable for BVH export.

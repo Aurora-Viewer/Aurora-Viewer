@@ -201,6 +201,9 @@ impl Editor {
                 self.picked_bone(world, frame, target);
             } else {
                 match s.source {
+                    Source::Bone(b) if self.clip.active => {
+                        self.clip_click_bone(b, rig, frame, ctx.input(|i| super::adds_to_selection(i.modifiers)));
+                    }
                     Source::Bone(b) => self.select(b, rig, frame),
                     Source::Node(id) => self.select_virtual_node(id),
                 }

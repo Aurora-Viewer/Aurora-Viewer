@@ -48,8 +48,8 @@ anim-timeline-delete-frame-keys = Supprimer toutes les clés de cette frame
 anim-timeline-track-enabled = Inclure cet os dans l’animation
 anim-timeline-empty = Aucun os n’a encore de clé : sélectionnez un os, posez-le, puis appuyez sur Clé (K).
 anim-timeline-keys-selected = { $count ->
-    [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime
-   *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, Échap les désélectionne
+    [one] { $count } clé choisie : faites-la glisser pour la déplacer, Suppr la supprime, clic droit ou Échap la désélectionne
+   *[other] { $count } clés choisies : faites-en glisser une pour toutes les déplacer, Ctrl+C les copie, Suppr les supprime, clic droit ou Échap les désélectionne
     }
 anim-edit-shortcut-play = Lire ou mettre en pause (Espace)
 anim-edit-shortcut-rewind = Revenir au début (Origine)
@@ -13060,6 +13060,7 @@ anim-edit-import-hint = Ouvrir l’aperçu d’import habituel. L’envoi et le 
 anim-edit-file-filter = Animation Second Life (.anim)
 anim-edit-bvh-filter = Capture de mouvement BVH (.bvh)
 anim-edit-bvh-unavailable = Le squelette de l’avatar n’est pas disponible pour importer le BVH.
+anim-edit-fine-hint = Maj ou Ctrl + clic ajoute des articulations. Maintenez Maj en faisant glisser une poignée pour des déplacements et rotations 10× plus fins.
 anim-edit-export-bvh = Exporter en .bvh
 anim-edit-export-bvh-hint = Enregistrer l’animation en fichier BVH sur le squelette de l’avatar, pour la retravailler dans Blender ou un autre outil d’animation. Les priorités, la boucle, les transitions et la pose des mains restent dans le .anim uniquement.
 anim-edit-bvh-export-unavailable = Le squelette de l’avatar n’est pas disponible pour exporter le BVH.

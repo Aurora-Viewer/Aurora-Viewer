@@ -165,6 +165,13 @@ pub fn offsets(joint: Mat4, contact: Vec3, target_p: Vec3, target_q: Quat) -> Op
     (p.is_finite() && q.is_finite()).then_some((p, q))
 }
 
+/// Whether a click with these modifiers adds its joint to the selection
+/// (or takes it out): Shift, or Ctrl (Cmd on macOS), the same on a handle,
+/// a bone, a picker dot and a row, in the pose and animation editors.
+pub(crate) fn adds_to_selection(modifiers: egui::Modifiers) -> bool {
+    modifiers.shift || modifiers.ctrl || modifiers.command
+}
+
 fn ray(proj: &Projector, at: Pos2) -> Option<(Vec3, Vec3)> {
     let inverse = proj.view_proj.inverse();
     let point = |z| {
@@ -1097,6 +1104,7 @@ impl Editor {
                         continue;
                     }
                     let selected = self.selected == Some(joint);
+                    let follower = self.clip_follows(joint);
                     let limb = limb_list.iter().find(|l| l.end == joint);
                     let point = if self.links.bone_pick {
                         frame.joints[joint].w_axis.truncate()
@@ -1137,10 +1145,14 @@ impl Editor {
                                     palette.teal,
                                 );
                             }
+                            if follower {
+                                // a joint that follows the selected one: a thinner ring
+                                ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.5, palette.teal));
+                            }
                             ui.painter().circle_filled(
                                 rect.center(),
-                                if selected { 4.5 } else { 2.5 },
-                                if selected { palette.teal } else { palette.ink },
+                                if selected || follower { 4.5 } else { 2.5 },
+                                if selected || follower { palette.teal } else { palette.ink },
                             );
                             response
                         })
@@ -1158,7 +1170,13 @@ impl Editor {
                         continue;
                     }
                     if response.clicked() || response.drag_started() {
-                        self.select(joint, rig, &frame);
+                        if !self.clip.active {
+                            self.select(joint, rig, &frame);
+                        } else if response.clicked() {
+                            self.clip_click_bone(joint, rig, &frame, ctx.input(|i| adds_to_selection(i.modifiers)));
+                        } else {
+                            self.clip_grab_bone(joint, rig, &frame);
+                        }
                         if self.mode == Mode::Ik
                             && self.pole.is_none()
                             && let Some(limb) = limb

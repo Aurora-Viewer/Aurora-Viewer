@@ -268,12 +268,22 @@ enum Motion {
     Edge { origin: Pos2, tangent: egui::Vec2, radius: f32 },
 }
 
+/// How much finer a handle moves while Shift is held during its drag.
+pub(super) const FINE: f32 = 0.1;
+
 struct Drag {
     geometry: Geometry,
     part: Part,
     pose: Pose,
     motion: Motion,
     sensitivity: f32,
+    /// The sensitivity asked for, before Shift's fine factor.
+    base: f32,
+    /// Whether Shift was held at the last update (ten times finer).
+    fine: bool,
+    /// The pose of the last update: a drag that turns fine or coarse
+    /// carries on from there instead of jumping.
+    last: Option<Pose>,
 }
 
 impl Drag {
@@ -323,7 +333,32 @@ impl Drag {
             pose,
             motion,
             sensitivity: sensitivity_scale(sensitivity),
+            base: sensitivity,
+            fine: false,
+            last: None,
         })
+    }
+
+    /// Like `update`, with Shift's fine factor: when it changes during the
+    /// drag, the drag starts again from where the handle is, so the pose
+    /// never jumps.
+    fn update_fine(&mut self, pointer: Pos2, fine: bool) -> Option<Pose> {
+        if fine != self.fine {
+            let at = self.last.unwrap_or(self.pose);
+            let mut geometry = self.geometry;
+            geometry.pivot += at.position - self.pose.position;
+            if let Some(mut restarted) = Drag::new(geometry, self.part, pointer, at, self.base) {
+                restarted.sensitivity *= if fine { FINE } else { 1.0 };
+                restarted.fine = fine;
+                restarted.last = Some(at);
+                *self = restarted;
+            }
+        }
+        let pose = self.update(pointer);
+        if pose.is_some() {
+            self.last = pose;
+        }
+        pose
     }
 
     fn update(&mut self, pointer: Pos2) -> Option<Pose> {
@@ -379,13 +414,14 @@ impl Gizmo {
         allow_hover: bool,
         sensitivity: f32,
     ) -> (bool, Option<(Pose, Tool)>) {
-        let (pointer, pressed, down, released, alt) = ctx.input(|i| {
+        let (pointer, pressed, down, released, alt, fine) = ctx.input(|i| {
             (
                 i.pointer.interact_pos(),
                 i.pointer.primary_pressed(),
                 i.pointer.primary_down(),
                 i.pointer.primary_released(),
                 i.modifiers.alt,
+                i.modifiers.shift,
             )
         });
         if alt {
@@ -411,7 +447,7 @@ impl Gizmo {
             if (down || released)
                 && let Some(pointer) = pointer
             {
-                change = drag.update(pointer).map(|pose| (pose, drag.geometry.tool));
+                change = drag.update_fine(pointer, fine).map(|pose| (pose, drag.geometry.tool));
             }
             let mut visual = drag.geometry;
             if let Some((pose, Tool::Move)) = change {

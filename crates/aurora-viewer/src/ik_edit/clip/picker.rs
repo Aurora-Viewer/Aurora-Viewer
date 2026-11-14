@@ -246,6 +246,8 @@ impl Editor {
             let bone = dots[index].bone;
             let lit = Some(index) == hovered;
             let chosen = Some(index) == selected;
+            // a joint that follows the selected one (`together`)
+            let follower = self.clip_follows(bone);
             let radius = if lit {
                 6.0
             } else if chosen {
@@ -253,10 +255,14 @@ impl Editor {
             } else {
                 3.5
             };
+            let radius = if follower && !lit { 4.5 } else { radius };
+            if follower {
+                painter.circle_stroke(points[index], radius + 1.5, egui::Stroke::new(1.5, palette.teal));
+            }
             if keyed.contains(&bone) {
                 painter.circle_stroke(points[index], radius + 2.5, egui::Stroke::new(1.5, palette.violet_light));
             }
-            let color = if chosen {
+            let color = if chosen || follower {
                 palette.teal
             } else if lit {
                 palette.ink
@@ -273,7 +279,8 @@ impl Editor {
         if response.clicked() {
             // a bone picked here shows its handles, whatever Display hides
             self.visibility.reveal(name);
-            self.select(bone, rig, frame);
+            let add = ui.input(|i| crate::ik_edit::adds_to_selection(i.modifiers));
+            self.clip_click_bone(bone, rig, frame, add);
         }
     }
 }

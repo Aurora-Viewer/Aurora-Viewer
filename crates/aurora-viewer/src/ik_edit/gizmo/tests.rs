@@ -375,3 +375,39 @@ fn a_window_over_the_bone_gizmo_owns_the_click_and_the_paint_order() {
     }
     assert!(clicked);
 }
+
+#[test]
+fn shift_during_a_handle_drag_moves_and_turns_ten_times_finer_without_a_jump() {
+    let g = geometry(Tool::Move, Quat::IDENTITY, 1.0, false);
+    let pose = Pose {
+        position: g.pivot,
+        rotation: Quat::IDENTITY,
+    };
+    let on_axis = |d: f32| g.cam.project(g.pivot + g.axis(0) * (g.length * 0.85 + d)).unwrap();
+    let mut drag = Drag::new(g, Part::Axis(0), on_axis(0.0), pose, DEFAULT_SENSITIVITY).unwrap();
+    let coarse = drag.update_fine(on_axis(0.1), false).unwrap();
+    assert!((coarse.position - pose.position).distance(g.axis(0) * 0.1) < 0.001);
+    // Shift pressed: the handle does not jump, then follows a tenth as far
+    let held = drag.update_fine(on_axis(0.1), true).unwrap();
+    assert!(held.position.distance(coarse.position) < 0.0005);
+    let fine = drag.update_fine(on_axis(0.3), true).unwrap();
+    assert!(
+        (fine.position - coarse.position).distance(g.axis(0) * 0.02) < 0.001,
+        "{}",
+        fine.position
+    );
+    // Shift released: back to one to one from there
+    let released = drag.update_fine(on_axis(0.3), false).unwrap();
+    assert!(released.position.distance(fine.position) < 0.0005);
+
+    let g = geometry(Tool::Rotate, Quat::IDENTITY, 1.0, false);
+    let pose = Pose {
+        position: g.pivot,
+        rotation: Quat::IDENTITY,
+    };
+    let ring = |a: f32| g.cam.project(g.ring(2, a)).unwrap();
+    let mut drag = Drag::new(g, Part::Ring(2), ring(0.3), pose, DEFAULT_SENSITIVITY).unwrap();
+    drag.update_fine(ring(0.3), true).unwrap();
+    let turned = drag.update_fine(ring(0.7), true).unwrap();
+    assert!(turned.rotation.dot(Quat::from_rotation_z(0.04)).abs() > 0.99999);
+}

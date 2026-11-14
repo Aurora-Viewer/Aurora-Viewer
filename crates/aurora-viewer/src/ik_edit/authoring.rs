@@ -49,7 +49,7 @@ impl State {
             })
             .collect()
     }
-    fn record(&mut self, owner: usize, before: &ik::LocalPose, after: &ik::LocalPose) {
+    pub(super) fn record(&mut self, owner: usize, before: &ik::LocalPose, after: &ik::LocalPose) {
         self.owners.insert(owner);
         for bone in 0..before.rotations.len() {
             let rotation = (before.rotations[bone].dot(after.rotations[bone]).abs() < 0.9999999).then_some(after.rotations[bone]);
@@ -171,6 +171,7 @@ impl Editor {
             self.authoring.remove(bone);
         }
         self.commit();
+        let start = pose.clone();
         let bones = [Some(bone), mirror];
         for bone in bones.into_iter().flatten() {
             if Some(bone) == pinned_mirror {
@@ -189,6 +190,9 @@ impl Editor {
             if ik::apply_goal(rig, &mut pose, Vec3::ZERO, &scale, &goal) {
                 self.authoring.record(bone, &before, &pose);
             }
+        }
+        if self.clip.active {
+            self.follow_clip_lead(rig, bone, mirror, &start, &mut pose, &scale, rotate);
         }
         self.refresh_clip_marks();
     }

@@ -62,12 +62,7 @@ impl Editor {
     }
 }
 
-/// Whether a click with these modifiers adds its joint to the selection
-/// (or takes it out): Shift, or Ctrl (Cmd on macOS), the same on a marker,
-/// a shaft and a row.
-pub(super) fn adds_to_selection(modifiers: egui::Modifiers) -> bool {
-    modifiers.shift || modifiers.ctrl || modifiers.command
-}
+pub(super) use crate::ik_edit::adds_to_selection;
 
 /// Add `bone` to the followers, or take it out.
 fn toggle(together: &mut Vec<usize>, bone: usize) {
