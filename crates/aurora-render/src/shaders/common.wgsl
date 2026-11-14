@@ -959,7 +959,14 @@ fn atmos_eval(dir: vec3<f32>, for_clouds: bool) -> Atmos {
     combined_haze = exp(-combined_haze * density_dist);
 
     a.light_dot = dot(rel_norm, lightnorm);
-    var haze_glow = max(1.0 - a.light_dot, 0.001);
+    // The glow's angle is taken from the view direction, not from rel_norm:
+    // skyF.glsl / cloudsF.glsl measure it from the dome point raised by 50 m,
+    // which on the low dome (about 600-850 m away overhead) puts the hotspot
+    // some 3 degrees under the sun or moon. The Legacy Viewer as it renders
+    // shows the glow centred on the body (compared on Agni, #2782): a
+    // deliberate difference from its source, kept to the glow alone (the
+    // haze colour, rainbow and halo still use rel_norm).
+    var haze_glow = max(1.0 - dot(d, lightnorm), 0.001);
     haze_glow *= glow.x;
     haze_glow = pow(haze_glow, glow.z);
     if (for_clouds) {
@@ -1517,9 +1524,17 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     // the camera read a far cascade, and no caster could be left out of a
     // far cascade for being near (shadow_cull.rs). splits.w == 0 keeps that
     // distance, to compare (AURORA_SHADOW_LEGACY).
+    // A planar reflection (the mirror) reads the main view's cascades, fitted
+    // around the real camera: the pixel's distance to that camera, its own
+    // camera mirrored back through the clip plane, picks the cascade
     var view_depth = vertex_depth;
-    if (splits.w > 0.5) {
-        view_depth = distance(world_pos, frame.camera_pos.xyz);
+    let planar = in_reflection_pass() && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.5;
+    if (splits.w > 0.5 || planar) {
+        var eye = frame.camera_pos.xyz;
+        if (planar) {
+            eye -= 2.0 * (dot(frame.clip_plane.xyz, eye) + frame.clip_plane.w) * frame.clip_plane.xyz;
+        }
+        view_depth = distance(world_pos, eye);
     }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
@@ -1542,6 +1557,13 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
             } else if (next >= 0.0) {
                 s = mix(s, next, t);
             }
+        }
+    }
+    // the mirror also sees behind the main camera, where the near cascades
+    // do not reach: a coarser one that does
+    if (planar) {
+        for (var k = cascade + 1u; k < 3u && s < 0.0; k++) {
+            s = cascade_shadow(world_pos, n, k);
         }
     }
     if (s < 0.0) {
