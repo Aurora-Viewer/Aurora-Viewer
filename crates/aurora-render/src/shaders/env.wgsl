@@ -2792,7 +2792,7 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     // edge, never in the map's squares
     let st = rain_shelter_texel(world.xy, world.z);
     if (st.z < 0.5) {
-        let surface = textureLoad(rain_wetness, i, 0).x;
+        let surface = snow_known_surface(world.xy, i);
         if (surface < -1e8) { return depth; }
         return depth * snow_gate(world.z - surface);
     }
@@ -2806,8 +2806,9 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     for (var k = 0; k < 16; k++) {
         var h = rain_shelter_height_at(s0 + vec2<i32>(k % 4 - 1, k / 4 - 1));
         if (h < -1e8) {
-            // beyond the map's reach: the height the memory keeps there
-            h = textureLoad(rain_wetness, i, 0).x;
+            // beyond the map's reach, or nothing drawn there (bare land):
+            // the height the memory keeps there, else the terrain's
+            h = snow_known_surface(world.xy, i);
             if (h < -1e8) { return depth; }
         }
         hs[k] = h;
@@ -2856,6 +2857,17 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     }
     if (counted < 1e-3) { return 0.0; }
     return depth * clamp(taken / counted, 0.0, 1.0) * open;
+}
+
+// The surface the snow lies on at `xy` where the shelter map has none: the
+// height the memory keeps in its cell `i`, else the terrain's (-1e9: none
+// known). Without the terrain, a cell the memory had not seen yet (all of
+// them, just after the snow-fill button) laid the ground's snow on whatever
+// stood there, avatars too.
+fn snow_known_surface(xy: vec2<f32>, i: vec2<i32>) -> f32 {
+    let kept = textureLoad(rain_wetness, i, 0).x;
+    if (kept > -1e8) { return kept; }
+    return rain_terrain(xy);
 }
 
 // How much snow a point `at` metres above the topmost surface the snow

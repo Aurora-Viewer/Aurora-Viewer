@@ -1022,12 +1022,14 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
+| `AURORA_DEMO_STAND_FLY=ground\|object\|fly\|stand\|land\|locked\|fly-rlva` | Sits or flies for the floating Stand / Stop flying panel, then presses it |
 | `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_TURN_SELECT=1` | The avatar turns to face an object selected while the camera is off it |
 | `AURORA_DEMO_FIDGET=1` | The stock stand signalled, so the standing avatar's variants start |
 | `AURORA_DEMO_URL_FLOATER=1` | The simulator asks for a web window (llOpenFloater) |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
+| `AURORA_DEMO_AVATAR_ALIGN=nearest\|full\|mini` | Face nearest avatar and the Compass window turn the avatar (see Details) |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
@@ -1044,6 +1046,18 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
+- **`AURORA_DEMO_AVATAR_ALIGN=nearest|full|mini`**: every turn logs
+  `avatar align: bearing <before>° -> <after>°` (bearings from north,
+  clockwise); the steps come after the loading fade. `nearest`: the avatar
+  faces east at frame 650, then the toolbar's Face nearest avatar runs at
+  frame 800 (capture at 750 for the before, 1000 for the after): it turns,
+  at once and without a turn animation, to the nearest demo avatar within
+  20 m. `full` (or `1`): the Compass opens at frame 650, then turns east by
+  its ring (750), 45° to the left (810, bearing 45°), to the nearest
+  cardinal (870, unchanged) and to the nearest avatar by its button (930);
+  the yellow needle and the bearing under the compass follow. `mini`: the
+  compact Compass (its layout saved as its Mini button would) opens at
+  frame 650 and turns 1° to the right at 750.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -1534,6 +1548,23 @@ when unfocused") is ignored during a screenshot.
   seated in the AO's sit; frame 720: standing at the destination. The log
   ends `AO state None, AO sit cover false` (before the fix: `AO state
   Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).
+- **`AURORA_DEMO_STAND_FLY=ground|object|fly|stand|land|locked|fly-rlva`**: the floating
+  panel of the Legacy Viewer's LLPanelStandStopFlying. At frame 240 our
+  avatar sits on the ground (`ground`, `stand`) or takes off (`fly`,
+  `land`); `object` sits on the nearest prim of the plaza at frame 300.
+  Capture at 460: "Stand up" (or "Stop flying") centred just above the
+  bottom bar, in the glass of the panels over the world, clear of the chat
+  bar, the toolbar and the windows. At 480 `stand` presses Stand and
+  `land` presses Stop flying, through the panel's own action: capture at
+  560, no panel. The log gives `demo stand/fly panel: seated …, flying …,
+  buttons …` at 470 and 560. The Flycam button shows with
+  `AURORA_DEMO_JOYSTICK=flycam` (from frame 630); the panel hides with
+  `AURORA_DEMO_BARS=hidden` (from 600) and in mouselook unless
+  Preferences › Camera keeps the interface there.
+  `locked` sits on the ground and adds RLVa `@unsit=n` at 300: Stand stays
+  shown but greyed (capture at 460). `fly-rlva` takes off and adds
+  `@fly=n` at 300 (the log at 470 tells whether the flight went on).
+  Preferences › Layout › Bars has a switch that hides the panel.
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the
   avatar slides right, its yaw unchanged), `2`: double right click
@@ -1773,6 +1804,8 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SLIDESHOW=1[,<s>][,net=<ms>][,mbps=<m>][,crowd=<n>][,preload]` | A panel whose texture a script changes every few seconds, its pictures downloaded from a local server |
 | `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
+| `AURORA_DEMO_OBJECT_EXPORT=collada\|obj` | Object › Save as › Collada / OBJ on a linked lamp, its rights and texture files |
+| `AURORA_DEMO_OBJECT_EXPORT_FILE=<path>` | With the above: Save as writes that file without the file dialog |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
 
@@ -3439,6 +3472,24 @@ The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
 
+**`AURORA_DEMO_OBJECT_EXPORT=collada|obj`** — at frame 600 a garden lamp of
+four linked prims of ours stands ahead, a little to the right: a tiled base
+(our own texture, its bottom face fully transparent), a post, a violet ring
+another resident created, and a globe with a texture we bought. At frame 700
+the Save as window opens on it in that format: "Exportable prims: 3/4" (the
+ring is not our work), "Exportable textures: 1/3" (the tiles; the blank and
+the bought textures are not saved), the options, the tiles under "Textures to
+save". Capture at frame 860. With `AURORA_DEMO_OBJECT_EXPORT_FILE=<path>`,
+Save as runs at frame 900 without the dialog: the log says "3/4 prims, 1/3
+textures, saving", then "object export: 3 prims, 858 triangles, 3 materials"
+and "saved"; `<path>` (and its `.mtl` for OBJ) and `Garden_tiles.png` are
+written beside it, and a notification names the file. Import the file in
+Blender: the lamp stands upright on its base (Collada is Z up, OBJ Y up),
+the tiles on the base, the globe and the post in their face colours. On the grid, the human compares with the Legacy Viewer's Save as ›
+Collada on an object of their own (prim, sculpt and mesh), on a bought one
+(nothing exportable) and on a megaprim, and checks that a texture they did not
+upload, or have no item of, is never written.
+
 **`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
@@ -4927,6 +4978,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_WET_LAYER=1` | Three spheres under transparent shells, two with a shiny blended legacy material: the wet layers of mesh bodies (#1420) |
+| `AURORA_DEMO_MIRROR=1` | A closed room with a mirror, our avatar facing it, lace, red glass and a black shiny ball between them (#3479) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
@@ -5893,7 +5945,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
-| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
+| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -5960,11 +6012,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
 | `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
-| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links]` | Group profile window, as a member, officer, owner or guest |
+| `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences][:no-links][:classic]` | Group profile window, as a member, officer, owner or guest, in either look |
 | `AURORA_DEMO_GROUPS=many` | More than 50 group memberships for the Conversations group picker |
 | `AURORA_DEMO_ACTIVE_GROUP=none` | Starts the demo session with no active group (active group nil) |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
-| `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
+| `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; one role of Aurora Builders has a blank title, listed as "<Blank title>"; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
@@ -8223,7 +8275,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
   by frame.
 
-- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
+- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
   llRegionSayTo with a link, then two notices (a friend online, a
@@ -8235,7 +8287,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   with the icon of their kind; the nearby chat's unread count counts the
   two residents' lines only. Compare a run without `:on`: the same lines in
   the style's usual look. Hover a cube: the object's name; click it or the
-  name: the object's inspector (its menu: inspect, ignore). `:im` shows the
+  name: the object's inspector (its menu: inspect, ignore). `:inspect` opens
+  the first object's information window automatically: fixed title, Object/name,
+  owner and location, with Show on map, Block object, Block owner and Close.
+  Use `compact:on:inspect` with `--language en`, `fr` or `ja` to compare labels
+  and the wrapping action row; the owner is a synthetic resident of the demo.
+  The inspector opens at frame 760; use `AURORA_CAPTURE_FRAMES=1800` for a
+  capture after the loading fade.
+  `:im` shows the
   friend's conversation instead, with a call's and an automatic reply's
   lines: unchanged with `:on` alone, compact with their icons (a phone, the
   "i") with `:on:imlines` (the sub-option "Compact the conversations'
@@ -9123,7 +9182,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opens the classic window (the Legacy Viewer's eight tabs) on the tab of
   the section asked (`terrain`: Terrain, `scripts` or `interventions`:
   Debug, `people`: Access, none: Region).
-- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links]`**:
+- **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences][:no-links][:classic]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
   (1,248, five of them online), roles, role pairs, titles and notices of
@@ -9186,6 +9245,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   as soon as the window opens): "Sandbox doors", General, owned by the
   group, land-scope; "Profile ›" opens the experience profile, whose
   Allow / Forget / Block log `demo group: experience permission …`.
+  `:classic` last (for example `owner:admin:classic`) shows the classic
+  window (Preferences › Aurora › Profiles, not saved), scrolled to the
+  section of the tab asked for and opened: with `owner:members:classic`,
+  "Members and roles" manages the members in the Legacy panel's narrow
+  layout (name, status and donation columns, Eject and Ban under the
+  list, the roles card below it); with `owner:admin:classic` or
+  `owner:identity:classic`, the "Administration" section shows its parts
+  as pills (Roles, Group identity, Abilities, Banned residents,
+  Invitations), the role list above the role being edited. A plain member
+  (`member:members:classic`) keeps the read-only list and has no
+  Administration section; an officer (`officer:admin:classic`) sees only
+  the parts their abilities allow.
   Check the header against the mockup (banner,
   insignia, badges, tabs), the switches of "Me in this group" (the active
   group follows in the top bar, the title in the Title shown list), the
@@ -9202,9 +9273,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   to verify that "None (no group tag)" displays the active tag badge and "Activate" is enabled for groups.
 - **`AURORA_DEMO_GROUP_REGION=1|still`**: the Group titles window (the
   toolbar's Group titles command, Contacts › Groups › Titles) opens at frame
-  600, with every title of the three demo groups and three region rules:
-  the demo region wears "Aurora Builders" › Builder (already worn at the
-  start: the log says `region group title: AlreadyWorn`), "Boreal Lagoon"
+  600, with every title of the three demo groups and three region rules.
+  Aurora Builders also offers a role whose title is blank: the list shows
+  "<Blank title>" (French « <Titre vide> », Japanese 「＜空のタイトル＞」), the
+  filter matches that placeholder, and Activate wears that role. It is not
+  the title worn at the start. The group profile's "Title shown" combo does
+  not list it. The three region rules: the demo region wears "Aurora
+  Builders" › Builder (already worn at the start: the log says `region
+  group title: AlreadyWorn`), "Boreal Lagoon"
   wears "Northern Wolves" › Officer, and "Pine Grove" a group left since
   (listed as "group left, ignored"). The demo server answers every group's
   titles, keeps the title chosen in each and names the active group with
@@ -9502,7 +9578,10 @@ local texture/mask change), `save-as`,
 frame 650), `drag` (an inventory texture carried over the first texture row
 from frame 700, without a press: capture at frame 712 for the violet outline)
 and `drop` (the same, released there at frame 720: the swatch, the avatar
-preview and Save follow; capture after frame 900). Capture after frame 760 for
+preview and Save follow; capture after frame 900). The texture of these modes
+is Copy only, no Modify and no Transfer, on a transferable layer: it is
+accepted, as the Legacy Viewer's wearable swatches take any inventory
+texture. Capture after frame 760 for
 save feedback. Check texture slots,
 shared clothing tint, sex-filtered parameter groups, the fixed save controls,
 the picker and its permissions, cancellation, and the existing shape/physics
@@ -9517,7 +9596,8 @@ server appearance. These modes also accept the other wearable types.
 `skin:local-save` and `universal:local-save` cover body parts and extra slots.
 Save, Save As and Save on closing accept confirmed local bitmap references,
 like LLWearable::exportStream; they do not upload the source images. Original
-wearable permissions and inventory texture permissions still apply. Reopen
+wearable permissions still apply, and an inventory texture must still be in
+the inventory, whatever its rights. Reopen
 the saved item while the local file is loaded: its slots retain their local
 references and the Local previews eye. Removing a saved local file restores
 the slot's default instead of leaving a stale local preview reference.
@@ -12057,6 +12137,20 @@ What the inventory must show with these scenarios:
   shell; the control shows nothing (#1420, the alpha max(texture alpha,
   glare) of class3/deferred/materialF.glsl). Before the fix, no shell
   showed anything.
+- **`AURORA_DEMO_MIRROR=1`**: a closed room on the open patch at
+  (100, 100), lit by a warm lamp under its roof, with a manual box probe
+  filling it and a dark mirror on its east wall; our avatar starts 3 m in
+  front of the mirror, facing it (`AURORA_DEMO_POS` is ignored). Between
+  the two: on the left a skin-coloured ball under a black lace shell (a
+  blended texture of opaque threads, half-covered borders and holes), on
+  the right a pane of red glass at half alpha over a black shiny ball.
+  Capture at frame 620. The mirror shows the lace, the red glass and the
+  ball behind it as they are in front of it, our avatar's front lit warm
+  by the lamp, the black ball black, and the room dim: the sun stops at
+  the roof, there is no lit disc on the wall behind the camera. Before
+  #3479 the mirror had neither the lace nor the glass, and lit its image
+  by the sky and the sun through the roof: a pale grey avatar and a navy
+  blue ball.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended

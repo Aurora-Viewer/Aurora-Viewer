@@ -66,6 +66,10 @@ impl SettingsDoc {
             (true, "water") => SettingsKind::Water,
             _ => return None,
         };
+        let mut map = map;
+        if kind == SettingsKind::Sky {
+            crate::weather::sky_mark::name_from_mark(&mut map);
+        }
         Some(SettingsDoc { kind, map })
     }
 
@@ -285,8 +289,11 @@ impl SettingsDoc {
 
     /// The asset to upload: LLSDSerialize::serialize(..., LLSD_NOTATION),
     /// header included (LLSettingsVOBase::updateInventoryItem).
+    /// A sky is marked with its name's weather (weather/sky_mark.rs).
     pub fn to_asset(&self) -> Vec<u8> {
-        format!("<? llsd/notation ?>\n{}", aurora_llsd::to_notation(&self.map)).into_bytes()
+        let mut map = self.map.clone();
+        crate::weather::sky_mark::sync_to_name(&mut map);
+        format!("<? llsd/notation ?>\n{}", aurora_llsd::to_notation(&map)).into_bytes()
     }
 
     /// A Windlight sky preset file (LLSettingsVOSky::buildFromLegacyPreset):

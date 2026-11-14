@@ -923,14 +923,21 @@ fn shadow_normal(m: Material) -> vec3<f32> {
 // worn prim's from its anchor's skeleton (palettes are PALETTE_STRIDE
 // apart); none for the rest.
 fn avatar_snow(rec: DrawRecord) -> f32 {
+    var entry = 0u;
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
-        return clamp(palettes[rec.flags.y + AVATAR_SNOW][0][0], 0.0, 1.0);
+        entry = rec.flags.y + AVATAR_SNOW;
+    } else if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        entry = rec.flags.y - rec.flags.y % PALETTE_STRIDE + AVATAR_SNOW;
+    } else {
+        return 0.0;
     }
-    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
-        let base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
-        return clamp(palettes[base + AVATAR_SNOW][0][0], 0.0, 1.0);
+    // only what the viewer wrote as snow (AVATAR_SNOW_MARK): the identity
+    // a palette starts with read as full snow (a car turned white)
+    let m = palettes[entry];
+    if (m[3][3] != AVATAR_SNOW_MARK) {
+        return 0.0;
     }
-    return 0.0;
+    return clamp(m[0][0], 0.0, 1.0);
 }
 
 // How much a point faces up on its avatar: its facing against the
@@ -1785,6 +1792,34 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
         discard;
     }
     return vec4<f32>(s.color.rgb, 1.0);
+}
+
+// The mirror's blended faces (lace, sheer cloth, hair strands, lashes,
+// appliers on a blended layer), drawn back to front over its solid image:
+// the Legacy Viewer's hero probe renders the whole scene, its alpha pools
+// included (LLHeroProbeManager::renderProbes -> display_cube_face ->
+// renderGeomPostDeferred). fs_blend's rules with fs_reflect's side and clip.
+@fragment
+fn fs_reflect_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let facing = front != mirrored_pass();
+    if ((!facing && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) || reflection_clip(in.world_pos)) {
+        discard;
+    }
+    let m = eval_material(in, facing);
+    if (m.color.a < 0.004 && !legacy_may_glare(rec, m, in.world_pos, in.clip.xy)) {
+        discard;
+    }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
+        discard;
+    }
+    var c = shade_material(in, m).color;
+    c.a = c.a * rez_alpha(rec, in);
+    if (c.a < 0.004) {
+        discard;
+    }
+    // premultiplied alpha
+    return vec4<f32>(c.rgb * c.a, c.a);
 }
 
 // Blended faces: invisible fragments leave before the lighting, as in

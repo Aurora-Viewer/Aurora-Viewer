@@ -70,6 +70,9 @@ pub const COMMANDS: &[Command] = commands![
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
     "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", true;
     "beacons", "bulb-filled", "toolbar-command-beacons", true;
+    // the Legacy Viewer's Compass and its Face nearest avatar (FSAvatarAlignBase)
+    "avatar_align", "user-scan", "toolbar-command-avatar-align", true;
+    "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
     "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
@@ -110,8 +113,6 @@ pub const COMMANDS: &[Command] = commands![
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
     "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
     "omnifilter", "filter-filled", "toolbar-command-omnifilter", true;
-    "avatar_align", "user-scan", "toolbar-command-avatar-align", false;
-    "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", false;
 ];
 
 impl Command {

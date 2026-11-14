@@ -4,7 +4,7 @@ use super::*;
 use std::sync::Arc;
 
 #[derive(Default, Debug, PartialEq)]
-pub(super) struct Metadata {
+pub(crate) struct Metadata {
     pub uploader: Option<Uuid>,
     pub date: Option<String>,
 }
@@ -37,7 +37,8 @@ fn decode_source(ctx: &egui::Context, asset: Uuid, mut source: crate::scene::tex
 
 /// LLViewerFetchedTexture::createTexture parses `a=UUID&z=YYYYMMDDHHMMSS`
 /// in the JPEG2000 COM marker. Stop at the first tile, never scan image data.
-fn metadata(bytes: &[u8]) -> Metadata {
+/// The object exporter reads the uploader too (DAESaver::updateTextureInfo).
+pub(crate) fn metadata(bytes: &[u8]) -> Metadata {
     let mut result = Metadata::default();
     let Some(start) = bytes.windows(2).position(|b| b == [0xff, 0x4f]) else {
         return result;

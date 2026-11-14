@@ -2271,6 +2271,7 @@ mod tests {
                         physics_convex: None,
                         physics_mesh: None,
                         version: 1,
+                        creator: uuid::Uuid::nil(),
                     },
                     bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),
                     skin: None,

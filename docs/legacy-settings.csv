@@ -210,12 +210,12 @@ CurrentGrid,String,unreviewed,,,Currently Selected Grid
 CurrentMapServerURL,String,unreviewed,,named in Aurora: aurora-viewer/src/grids.rs:385,Current Session World map URL
 CurrentlyUsingBakesOnMesh,Boolean,unreviewed,,,Are we currently on a grid that uses bakes on mesh? Persisted to force rebakes on login to named grids.
 Cursor3D,Boolean,unreviewed,,,Treat Joystick values as absolute positions (not deltas).
-DAEExportConsolidateMaterials,Boolean,unreviewed,,,Combine faces with same texture
-DAEExportSingleUVMap,Boolean,unreviewed,,,set all objects to have the same UV map name
-DAEExportSkipTransparent,Boolean,unreviewed,,,Skip exporting faces with default transparent texture or full transparent
-DAEExportTextureParams,Boolean,unreviewed,,,Apply texture params suchs as repeats to the exported UV map
-DAEExportTextures,Boolean,unreviewed,,,Export textures when exporting Collada
-DAEExportTexturesFormat,S32,unreviewed,,,Image file format to use when exporting Collada
+DAEExportConsolidateMaterials,Boolean,in-aurora,,field `build.export.consolidate`,Combine faces with same texture
+DAEExportSingleUVMap,Boolean,in-aurora,,field `build.export.single_uv_map`,set all objects to have the same UV map name
+DAEExportSkipTransparent,Boolean,in-aurora,,field `build.export.skip_transparent`,Skip exporting faces with default transparent texture or full transparent
+DAEExportTextureParams,Boolean,in-aurora,,field `build.export.texture_params`,Apply texture params suchs as repeats to the exported UV map
+DAEExportTextures,Boolean,in-aurora,,field `build.export.textures`,Export textures when exporting Collada
+DAEExportTexturesFormat,S32,in-aurora,,field `build.export.texture_format` (Tga / Png / J2c),Image file format to use when exporting Collada
 DayCycleName,String,unreviewed,,,Day cycle to use. May be superseded by region settings.
 DebugAnimatedObjects,Boolean,unreviewed,,,Show info related to animated objects
 DebugAvatarAppearanceMessage,Boolean,unreviewed,,,Dump a bunch of XML files when handling appearance messages

@@ -58,6 +58,10 @@ pub struct MeshHeader {
     pub physics_convex: Option<(usize, usize)>,
     pub physics_mesh: Option<(usize, usize)>,
     pub version: i32,
+    /// "creator": the resident who uploaded the mesh (LLMeshHeader's
+    /// mCreatorId), nil when the header has none. The object exporter's
+    /// rights read it (LLMeshRepository::getCreatorFromHeader).
+    pub creator: uuid::Uuid,
 }
 
 impl MeshHeader {
@@ -124,6 +128,7 @@ pub fn parse_mesh_header(data: &[u8]) -> Result<MeshHeader, AssetError> {
         physics_convex: range("physics_convex"),
         physics_mesh: range("physics_mesh"),
         version,
+        creator: hdr["creator"].as_uuid(),
     })
 }
 
@@ -529,6 +534,17 @@ mod tests {
         assert_eq!(h.physics_convex, Some((hs + 750, 20)));
         assert_eq!(h.actual_lod(2), Some(0));
         assert_eq!(h.actual_lod(3), Some(3));
+        assert!(h.creator.is_nil());
+
+        let uploader = uuid::Uuid::from_u128(0x1234);
+        let with_creator = llsd_map! { "creator" => uploader, "high_lod" => llsd_map!{ "offset" => 0, "size" => 1 } };
+        let mut asset = to_binary(&with_creator);
+        asset.push(0);
+        assert_eq!(
+            parse_mesh_header(&asset).unwrap().creator,
+            uploader,
+            "the uploader, read for the export rights"
+        );
 
         // Legacy textual header prefix is skipped and counted.
         let mut legacy = b"<? LLSD/Binary ?>\n".to_vec();

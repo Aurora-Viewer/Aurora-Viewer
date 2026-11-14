@@ -10,6 +10,7 @@ mod app;
 mod atomic_file;
 mod autopilot;
 mod autoreplace;
+mod avatar_align;
 mod avatar_studio;
 mod blender_live;
 // Bug report form, disabled for now: "Report a bug" (login screen, top bar,
