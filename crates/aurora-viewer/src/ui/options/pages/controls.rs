@@ -2,8 +2,9 @@
 //! Movement" (panel_preferences_move.xml) and what the keys move.
 
 use super::super::Page;
-use super::super::cx::{Cx, Nothing, field};
+use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::toggle;
+use crate::settings::Settings;
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
@@ -15,6 +16,7 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-world-mouse-walk-help"),
             &field!(world_mouse_walk),
         );
+        middle_mouse_camera_row(cx);
         // "Double-click on land" (double_click_action_combo)
         let choices: Vec<(crate::autopilot::DoubleClick, &str)> =
             crate::autopilot::DoubleClick::ALL.iter().map(|a| (*a, a.label())).collect();
@@ -132,6 +134,33 @@ fn friends_only_row(cx: &mut Cx) {
         }
         false
     });
+}
+
+/// The middle button moves the camera (Catznip's Settings-MouseCam,
+/// app/mouse_cam.rs) instead of push-to-talk. The switch is the Mouse
+/// Camera's binding itself: the Shortcuts window shows the same, and can
+/// give the camera another button.
+fn middle_mouse_camera_row(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    let p = cx.p;
+    let t = Custom {
+        path: "keybinds",
+        modified: |s: &Settings, d: &Settings| s.keybinds.middle_mouse_camera() != d.keybinds.middle_mouse_camera(),
+        reset: |s: &mut Settings, d: &Settings| s.keybinds.set_middle_mouse_camera(d.keybinds.middle_mouse_camera()),
+    };
+    cx.row_with(
+        tr!("ui-options-middle-mouse-camera"),
+        tr!("ui-options-middle-mouse-camera-help"),
+        &t,
+        |ui, s, _, _| {
+            let mut on = s.keybinds.middle_mouse_camera();
+            let changed = toggle(ui, &p, &mut on);
+            if changed {
+                s.keybinds.set_middle_mouse_camera(on);
+            }
+            changed
+        },
+    );
 }
 
 /// "Keep 'Show Friends Only' enabled after teleporting" (FSRenderFriendsOnlyPersistsTP of

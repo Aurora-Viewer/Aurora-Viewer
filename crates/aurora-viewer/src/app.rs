@@ -108,6 +108,7 @@ mod marketplace_listings;
 mod media_pack;
 mod money_tracker;
 mod monitor;
+mod mouse_cam;
 mod movement;
 mod nearby_media;
 mod object_actions;
@@ -293,6 +294,9 @@ enum MouseMode {
     Steer,
     /// Alt+left held: alt-camera drag (zoom; Ctrl orbit; Ctrl+Shift pan).
     FocusOrbit,
+    /// The middle button held over the world: Catznip's Settings-MouseCam
+    /// (app/mouse_cam.rs).
+    MouseCam,
 }
 
 /// Aurora also uses a held right button to orbit, unlike LLToolPie::handleRightMouseDown
@@ -560,6 +564,8 @@ pub struct App {
     world_mouse_walk_pending: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
+    /// The middle button holding the camera (app/mouse_cam.rs).
+    mouse_cam: mouse_cam::MouseCam,
     hover_drawn: hover_pick::HoverDrawn,
     script_clicks: script_clicks::ScriptClicks,
     /// Displacement while the right button is held (click vs orbit drag).
@@ -1739,6 +1745,7 @@ impl App {
             left_down: false,
             world_mouse_walk_pending: false,
             clicks: Default::default(),
+            mouse_cam: Default::default(),
             hover_drawn: Default::default(),
             script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
@@ -4487,6 +4494,7 @@ impl App {
             let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus && !ctrl && !self.shift;
             let mode = match self.mouse_mode {
                 MouseMode::Steer => crate::camera::ToolMode::Zoom,
+                MouseMode::MouseCam => self.mouse_cam.tool_mode(ctrl, self.shift),
                 _ if focus_tool => match self.build.focus_mode {
                     crate::build::FocusMode::Zoom => crate::camera::ToolMode::Zoom,
                     crate::build::FocusMode::Orbit => crate::camera::ToolMode::Orbit,
@@ -4930,6 +4938,9 @@ impl App {
             }
             return;
         }
+        if !pressed && self.mouse_cam.released_by(&input) {
+            self.end_mouse_cam();
+        }
         if !pressed || !self.in_world() {
             return;
         }
@@ -4960,6 +4971,7 @@ impl App {
             Action::PassWall => self.pass_wall(),
             Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
+            Action::MouseCam => self.start_mouse_cam(input),
             Action::CameraControls => self.request_controls(false, true),
             Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
                 if self.world.rlva.camera_owner().is_none() {
@@ -8706,7 +8718,10 @@ impl App {
         {
             self.world.agent.yaw = yaw;
         }
-        if moving && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
+        if moving
+            && !matches!(self.mouse_mode, MouseMode::FocusOrbit | MouseMode::MouseCam)
+            && self.vr_mode != Some(crate::camera::VrView::Avatar)
+        {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
             let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0 || gamepad_movement;
@@ -8773,7 +8788,7 @@ impl App {
         self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
         if gamepad
             && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
-            && self.mouse_mode != MouseMode::FocusOrbit
+            && !matches!(self.mouse_mode, MouseMode::FocusOrbit | MouseMode::MouseCam)
         {
             self.camera
                 .joystick_orbit_yaw(self.joystick.motion.axes[5], dt, &mut self.world.agent);
@@ -22779,6 +22794,7 @@ impl ApplicationHandler for App {
                 self.right_drag = false;
                 self.mic_button_held = false;
                 self.drop_clicks();
+                self.drop_mouse_cam();
                 self.on_left_release();
                 // LLViewerWindow::handleFocusLost: the cursor shown and free
                 // again, also in mouselook (taken back with the focus)

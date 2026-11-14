@@ -372,6 +372,11 @@ pub enum Action {
     CamPanRight,
     CamPanUp,
     CamPanDown,
+    /// Catznip's Settings-MouseCam: the button held over the world takes
+    /// the camera, focused on the clicked point, until it is released
+    /// (app/mouse_cam.rs). Unbound by default: Preferences › Mouse and
+    /// keyboard gives it the middle button (`set_middle_mouse_camera`).
+    MouseCam,
     Chat,
     PushToTalk,
     ToggleMic,
@@ -575,6 +580,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::CamPanRight, aurora_i18n::tr!("keybinds-pan-view-right")),
                     (Action::CamPanUp, aurora_i18n::tr!("keybinds-pan-view-up")),
                     (Action::CamPanDown, aurora_i18n::tr!("keybinds-pan-view-down")),
+                    (Action::MouseCam, aurora_i18n::tr!("keybinds-mouse-camera")),
                 ],
             ),
             (
@@ -711,6 +717,21 @@ fn kmod(code: KeyCode, ctrl: bool, shift: bool) -> Option<Binding> {
     })
 }
 
+/// The middle button, and Ctrl + the middle button (orbit on both axes):
+/// the Mouse Camera's bindings when the middle button moves the camera.
+fn middle_mouse_camera_bindings() -> [Option<Binding>; 2] {
+    let middle = Input::mouse(MouseButton::Middle);
+    [
+        middle.clone().map(Binding::plain),
+        middle.map(|input| Binding {
+            input,
+            ctrl: true,
+            shift: false,
+            alt: false,
+        }),
+    ]
+}
+
 /// Alt (+ Ctrl, + Shift) binding: Firestorm's third-person camera keys.
 fn kalt(code: KeyCode, ctrl: bool, shift: bool) -> Option<Binding> {
     Some(Binding {
@@ -816,6 +837,7 @@ impl KeyBindings {
             (Action::CamPanRight, [kalt(K::ArrowRight, true, true), None]),
             (Action::CamPanUp, [kalt(K::ArrowUp, true, true), None]),
             (Action::CamPanDown, [kalt(K::ArrowDown, true, true), None]),
+            (Action::MouseCam, [None, None]),
             (Action::Chat, [k(K::Enter), k(K::NumpadEnter)]),
             // menu_viewer.xml: Nearby Chat, shortcut="control|H" use_mac_ctrl="true"
             (Action::NearbyChat, [kmod(K::KeyH, true, false), None]),
@@ -1367,6 +1389,47 @@ impl KeyBindings {
                     continue;
                 }
                 self.set(*action, slot, Some(new.clone()));
+            }
+        }
+    }
+
+    /// The middle button moves the camera (Preferences › Mouse and keyboard).
+    pub fn middle_mouse_camera(&self) -> bool {
+        let middle = Input::mouse(MouseButton::Middle);
+        self.get(Action::MouseCam)
+            .iter()
+            .flatten()
+            .any(|b| Some(&b.input) == middle.as_ref())
+    }
+
+    /// Give the middle button to the Mouse Camera, taking it (and Ctrl + it)
+    /// from whatever had it, push-to-talk by default; or give it back to
+    /// push-to-talk when that has no binding left. As in Catznip, the button
+    /// does one or the other, never both.
+    pub fn set_middle_mouse_camera(&mut self, on: bool) {
+        let middle = Input::mouse(MouseButton::Middle);
+        if on {
+            let bindings = middle_mouse_camera_bindings();
+            for b in bindings.iter().flatten() {
+                for a in self.users(b) {
+                    for (slot, used) in self.get(a).iter().enumerate() {
+                        if used.as_ref() == Some(b) {
+                            self.set(a, slot, None);
+                        }
+                    }
+                }
+            }
+            for (slot, b) in bindings.into_iter().enumerate() {
+                self.set(Action::MouseCam, slot, b);
+            }
+        } else {
+            for (slot, b) in self.get(Action::MouseCam).iter().enumerate() {
+                if b.as_ref().is_some_and(|b| Some(&b.input) == middle.as_ref()) {
+                    self.set(Action::MouseCam, slot, None);
+                }
+            }
+            if self.get(Action::PushToTalk).iter().all(Option::is_none) {
+                self.set(Action::PushToTalk, 0, middle.map(Binding::plain));
             }
         }
     }
@@ -2449,6 +2512,43 @@ mod tests {
         kb.drop_letter_walk();
         assert_eq!(kb.get(Action::Forward), [Some(Binding::plain(Input::key(KeyCode::ArrowUp))), None]);
         assert_eq!(kb.get(Action::Back)[0], Some(Binding::plain(Input::key(KeyCode::ArrowDown))));
+    }
+
+    #[test]
+    fn the_middle_button_switches_between_push_to_talk_and_the_camera() {
+        let middle = Input::mouse(MouseButton::Middle).expect("the middle button is bindable");
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        // by default the button is push-to-talk's, as in the Legacy Viewer
+        let mut kb = KeyBindings::default();
+        assert!(!kb.middle_mouse_camera());
+        assert_eq!(kb.get(Action::MouseCam), [None, None]);
+        assert_eq!(kb.triggered(&middle, Mods::default()), None);
+        // switched on: the camera takes it, with and without Ctrl
+        kb.set_middle_mouse_camera(true);
+        assert!(kb.middle_mouse_camera());
+        assert_eq!(kb.get(Action::PushToTalk), [None, None]);
+        assert_eq!(kb.triggered(&middle, Mods::default()), Some(Action::MouseCam));
+        assert_eq!(kb.triggered(&middle, ctrl), Some(Action::MouseCam));
+        assert_eq!(kb.triggered(&middle, alt), None);
+        // switched off: push-to-talk has it again
+        kb.set_middle_mouse_camera(false);
+        assert!(!kb.middle_mouse_camera());
+        assert_eq!(kb.get(Action::MouseCam), [None, None]);
+        assert_eq!(kb.get(Action::PushToTalk), KeyBindings::default().get(Action::PushToTalk));
+        // push-to-talk moved to another key keeps it when switched off
+        let f8 = Some(Binding::plain(Input::key(KeyCode::F8)));
+        kb.set(Action::PushToTalk, 0, f8.clone());
+        kb.set_middle_mouse_camera(true);
+        assert_eq!(kb.get(Action::PushToTalk), [f8.clone(), None]);
+        kb.set_middle_mouse_camera(false);
+        assert_eq!(kb.get(Action::PushToTalk), [f8, None]);
     }
 
     #[test]
