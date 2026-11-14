@@ -177,6 +177,45 @@ impl Scene {
         }
         true
     }
+    /// Phantom prims of the world (no attachment, HUD or rigged mesh) whose
+    /// bounds reach `range` of `center`: the prims that could be water
+    /// volumes, before their names are known (`app/water_volumes`).
+    pub fn water_candidates(&self, world: &World, center: Vec3, range: f32, out: &mut Vec<usize>) {
+        self.pick
+            .box_candidates(center - Vec3::splat(range), center + Vec3::splat(range), out);
+        out.retain(|&idx| {
+            world.objects.get(idx).is_some_and(|o| {
+                o.pcode == aurora_prim::params::LL_PCODE_VOLUME
+                    && o.update_flags & crate::build::edits::FLAGS_PHANTOM != 0
+                    && !o.is_attachment()
+            }) && self.gpu.get(idx).is_some_and(|g| !g.hud && !g.rigged && g.owner_avatar.is_none())
+        });
+    }
+    /// The upright box a water prim fills, from its drawn bounds.
+    pub fn water_volume(&self, world: &World, idx: usize) -> Option<crate::movement::water_volume::Volume> {
+        let (center, size) = self.click_bounds(world, idx)?;
+        let (_, rotation, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
+        crate::movement::water_volume::Volume::new(center, rotation, size)
+    }
+    /// Highest upward-facing solid top under `position`, within `depth`:
+    /// the floor of a pool, or the ground a water plane lies over.
+    pub fn water_floor(&self, world: &World, position: Vec3, depth: f32) -> Option<f32> {
+        if !position.is_finite() {
+            return None;
+        }
+        let ray = (position, -Vec3::Z);
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        candidates
+            .iter()
+            .filter(|&&idx| self.movement_solid(world, idx))
+            .filter_map(|&idx| self.geometry_hit(world, idx, ray, now))
+            .filter(|hit| hit.normal.z > 0.7 && hit.t <= depth)
+            .map(|hit| hit.t)
+            .min_by(f32::total_cmp)
+            .map(|t| position.z - t)
+    }
     /// Independent support check for water exits when Falling/foot-plane
     /// messages lag. Only a nearby upward-facing solid top counts as land.
     pub fn movement_support(&self, world: &World, position: Vec3, height: f32) -> bool {

@@ -67,6 +67,10 @@ pub struct Motion {
     pub parameters: [f32; 3],
     /// Nonzero idempotency key for one physical passage/jump; zero for continuous motors.
     pub action: u32,
+    /// Region-space surface and floor of the prim water volume the avatar
+    /// is in (#2008), which the water motors use in place of llWater and
+    /// llGround; None for the region's water and terrain.
+    pub water: Option<[f32; 2]>,
 }
 impl Motion {
     pub const fn motor(mode: u8, speed: f32, height: f32) -> Self {
@@ -74,6 +78,7 @@ impl Motion {
             mode,
             parameters: [speed, height, 0.0],
             action: 0,
+            water: None,
         }
     }
     pub fn passage(offset: [f32; 3]) -> Option<Self> {
@@ -81,6 +86,7 @@ impl Motion {
             mode: 5,
             parameters: offset,
             action: ((Uuid::new_v4().as_u128() as u32) & i32::MAX as u32).max(1),
+            water: None,
         };
         motion.valid().then_some(motion)
     }
@@ -89,6 +95,7 @@ impl Motion {
             mode: 9,
             parameters: offset,
             action: ((Uuid::new_v4().as_u128() as u32) & i32::MAX as u32).max(1),
+            water: None,
         };
         motion.valid().then_some(motion)
     }
@@ -97,6 +104,7 @@ impl Motion {
             mode: if cannonball { 12 } else { 11 },
             parameters: [0.0, height, 0.0],
             action,
+            water: None,
         };
         motion.valid().then_some(motion)
     }
@@ -105,6 +113,7 @@ impl Motion {
             mode: 13,
             parameters: [speed, height, WATER_WALK_JUMP_HEIGHT],
             action: ((Uuid::new_v4().as_u128() as u32) & i32::MAX as u32).max(1),
+            water: None,
         }
     }
     pub fn valid(self) -> bool {
@@ -112,8 +121,14 @@ impl Motion {
         if !self.parameters.iter().all(|v| v.is_finite()) {
             return false;
         }
+        // A surface within the simulator's build height, its floor beneath it.
+        if self.water.is_some_and(|[surface, floor]| {
+            !(surface.is_finite() && floor.is_finite() && (0.0..=8192.0).contains(&surface) && floor <= surface)
+        }) {
+            return false;
+        }
         match self.mode {
-            0 => self.parameters == [0.0; 3] && self.action == 0,
+            0 => self.parameters == [0.0; 3] && self.action == 0 && self.water.is_none(),
             5 => {
                 let distance2 = self.parameters.iter().map(|v| v * v).sum::<f32>();
                 (0.25..=64.0).contains(&distance2) && climb.abs() <= 1.5 && self.action > 0 && self.action <= i32::MAX as u32
@@ -354,6 +369,27 @@ fn http() -> Result<&'static reqwest::Client, String> {
     Ok(http)
 }
 
+/// The POST body bridge.lsl reads: ten fields, then the water volume's
+/// surface and floor, both empty for the region's water (protocol 1.42).
+fn body(command: &Command) -> String {
+    let motion = &command.motion;
+    let [surface, floor] = motion
+        .water
+        .map_or([String::new(), String::new()], |w| w.map(|z| format!("{z:.2}")));
+    format!(
+        "lock|{}|{}|{}|{}|{}|{:.2}|{:.2}|{:.2}|{}|{surface}|{floor}",
+        command.endpoint.token,
+        command.sequence,
+        u8::from(command.enabled),
+        u8::from(command.relock),
+        motion.mode,
+        motion.parameters[0],
+        motion.parameters[1],
+        motion.parameters[2],
+        motion.action
+    )
+}
+
 pub async fn send(command: Command) -> Result<Ack, String> {
     let failed = || aurora_i18n::tr!("bridge-request-failed").to_owned();
     if !valid_url(&command.endpoint.url)
@@ -369,18 +405,7 @@ pub async fn send(command: Command) -> Result<Ack, String> {
         .post(&command.endpoint.url)
         .timeout(Duration::from_secs(if command.motion.mode == 0 { 8 } else { 2 }))
         .header("Content-Type", "text/plain; charset=utf-8")
-        .body(format!(
-            "lock|{}|{}|{}|{}|{}|{:.2}|{:.2}|{:.2}|{}",
-            command.endpoint.token,
-            command.sequence,
-            u8::from(command.enabled),
-            u8::from(command.relock),
-            command.motion.mode,
-            command.motion.parameters[0],
-            command.motion.parameters[1],
-            command.motion.parameters[2],
-            command.motion.action
-        ))
+        .body(body(&command))
         .send()
         .await
         .map_err(transport_failure)?;
@@ -702,5 +727,43 @@ mod tests {
         ] {
             assert!(Ack::parse(invalid).is_none());
         }
+    }
+
+    #[test]
+    fn prim_water_rides_in_two_trailing_fields_and_region_water_leaves_them_empty() {
+        let mut command = Command {
+            endpoint: Endpoint {
+                url: "https://sim.agni.lindenlab.com/cap/x".into(),
+                token: Uuid::from_u128(1),
+            },
+            sequence: 7,
+            enabled: false,
+            relock: true,
+            motion: Motion::motor(3, 5.0, 1.7),
+        };
+        assert_eq!(body(&command), format!("lock|{}|7|0|1|3|5.00|1.70|0.00|0||", Uuid::from_u128(1)));
+        command.motion.water = Some([1002.4, 1000.0]);
+        assert!(command.motion.valid());
+        let text = body(&command);
+        assert!(text.ends_with("|0|1002.40|1000.00"), "{text}");
+        assert_eq!(text.split('|').count(), 12);
+        for water in [[f32::NAN, 0.0], [20.0, 21.0], [-1.0, -2.0], [9000.0, 0.0]] {
+            assert!(
+                !Motion {
+                    water: Some(water),
+                    ..command.motion
+                }
+                .valid(),
+                "{water:?}"
+            );
+        }
+        assert!(
+            !Motion {
+                water: Some([20.0, 10.0]),
+                ..Motion::default()
+            }
+            .valid(),
+            "release carries no water"
+        );
     }
 }

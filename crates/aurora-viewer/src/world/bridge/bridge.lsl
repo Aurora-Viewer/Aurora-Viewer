@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.41. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.42. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.41";
+string VERSION = "1.42";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -25,6 +25,9 @@ integer gHelloPending;
 integer CONTROLS;
 integer gMode;
 vector gParameters;
+// Prim water from the viewer (#2008): <surface, floor, 1>, or ZERO_VECTOR
+// for the region's water and terrain.
+vector gWater;
 float gDepth;
 float gSurfaceSpeed;
 float gNativeDiveUntil;
@@ -260,12 +263,20 @@ steer(vector position, vector target, float tau) {
     }
     llMoveToTarget(target, tau);
 }
+float water() {
+    if (gWater.z != 0.0) return gWater.x;
+    return llWater(ZERO_VECTOR);
+}
+float ground() {
+    if (gWater.z != 0.0) return gWater.y;
+    return llGround(ZERO_VECTOR);
+}
 // The already captured control edge reaches the simulator before an HTTP
 // command round trip. Retain the same bounded goal and command watchdog.
 surfaceDive(integer level, integer edge) {
     if (gMode != 3 || !(level & edge & CONTROL_DOWN) || (level & CONTROL_UP)
         || (llGetAgentInfo(gOwner) & AGENT_SITTING) || llGetTime() - gMotionCommand >= 1.5) return;
-    if (llWater(ZERO_VECTOR) - llGround(ZERO_VECTOR) <= gParameters.y * 0.55) return;
+    if (water() - ground() <= gParameters.y * 0.55) return;
     float depth = gParameters.y * 0.5 + 1.1;
     if (depth < 1.8) depth = 1.8;
     gMode = 7;
@@ -316,7 +327,7 @@ applyMotion() {
         }
         gRunState = 12;
         if (agentInfo & AGENT_IN_AIR) gRunState = 13;
-        if (position.z - gParameters.y * 0.35 <= llWater(ZERO_VECTOR) + 0.03) gRunState = 14;
+        if (position.z - gParameters.y * 0.35 <= water() + 0.03) gRunState = 14;
         return;
     }
     if (gMode == 9) {
@@ -466,7 +477,7 @@ applyMotion() {
         float response = 0.2;
         if (gMode == 7) response = 0.12;
         vector goal = position + direction * speed * response;
-        goal.z = llWater(ZERO_VECTOR) + gParameters.z;
+        goal.z = water() + gParameters.z;
         float maximum = speed * response;
         if (gMode == 7 || gMode == 8) {
             // Descend promptly and brake near the goal. Returning to the
@@ -503,8 +514,8 @@ applyMotion() {
         return;
     }
     if (gMode == 13) {
-        float water = llWater(ZERO_VECTOR);
-        if (llGround(ZERO_VECTOR) >= water - 0.06 || (agentInfo & AGENT_FLYING)) { releaseMotion(); return; }
+        float surface = water();
+        if (ground() >= surface - 0.06 || (agentInfo & AGENT_FLYING)) { releaseMotion(); return; }
         // Crouching retains the same waterline support. React to captured
         // controls before the next viewer command, including always-run.
         float lift = 0.0;
@@ -520,13 +531,13 @@ applyMotion() {
         float response = 0.2;
         if (gParameters.z > 0.0) response = 0.1;
         vector target = position + direction * speed * response;
-        target.z = water + gParameters.y * 0.5 + lift;
+        target.z = surface + gParameters.y * 0.5 + lift;
         steer(position, position + bounded(target - position, 1.6), response);
         return;
     }
     if (gMode == 3 || gMode == 6 || gMode == 4) {
-        float water = llWater(ZERO_VECTOR);
-        if (water - llGround(ZERO_VECTOR) <= gParameters.y * 0.55 && gMode != 4) {
+        float surface = water();
+        if (surface - ground() <= gParameters.y * 0.55 && gMode != 4) {
             releaseMotion(); return;
         }
         vector target = position + direction * speed * 0.2;
@@ -534,7 +545,7 @@ applyMotion() {
             float depth = gParameters.y * 0.5 - 0.4;
             if (depth < 0.25) depth = 0.25;
             if (depth > 0.8) depth = 0.8;
-            target.z = water - depth + gParameters.z;
+            target.z = surface - depth + gParameters.z;
         } else if (gMode == 6) {
             float ascent = speed;
             if (ascent > 4.0) ascent = 4.0;
@@ -542,11 +553,11 @@ applyMotion() {
             // Keep depth anchored at rest, without accumulating unreachable goals.
             if (gDepth > position.z + 0.75) gDepth = position.z + 0.75;
             if (gDepth < position.z - 0.75) gDepth = position.z - 0.75;
-            if (gDepth > water + gParameters.z - 0.25) gDepth = water + gParameters.z - 0.25;
+            if (gDepth > surface + gParameters.z - 0.25) gDepth = surface + gParameters.z - 0.25;
             target.z = gDepth;
         } else target.z = position.z + gParameters.z * 0.2;
         float ceiling = target.z;
-        if (gMode == 6) ceiling = water + gParameters.z - 0.25;
+        if (gMode == 6) ceiling = surface + gParameters.z - 0.25;
         target += gEntryDrift;
         gEntryDrift *= 0.5;
         if (gMode != 4 && target.z > ceiling) target.z = ceiling;
@@ -809,7 +820,7 @@ default {
             // bounded POST body instead (wiki.secondlife.com/wiki/LlGetHTTPHeader).
             // Read-only queries live in the separate query.lsl script.
             list parts = llParseStringKeepNulls(body, ["|"], []);
-            if (llStringLength(body) > 256 || llGetListLength(parts) != 10 || llList2String(parts, 1) != (string)gToken) {
+            if (llStringLength(body) > 256 || llGetListLength(parts) != 12 || llList2String(parts, 1) != (string)gToken) {
                 llHTTPResponse(request, 403, "denied"); return;
             }
             if ((llGetPermissions() & PERMISSION_TAKE_CONTROLS) == 0) {
@@ -826,6 +837,11 @@ default {
                 integer mode = llList2Integer(parts, 5);
                 vector parameters = <llList2Float(parts, 6), llList2Float(parts, 7), llList2Float(parts, 8)>;
                 integer action = llList2Integer(parts, 9);
+                // Fields 10 and 11: a prim water volume's surface and floor,
+                // both empty for the region's water (viewer-checked bounds).
+                gWater = ZERO_VECTOR;
+                if (llList2String(parts, 10) != "")
+                    gWater = <llList2Float(parts, 10), llList2Float(parts, 11), 1.0>;
                 integer previousMode = gMode;
                 if (mode == 13) {
                     if (action > 0 && parameters.z == 2.5) {
