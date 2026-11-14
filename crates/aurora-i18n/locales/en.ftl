@@ -1924,6 +1924,7 @@ demo-aurora-viewer-rust-metal = { "Aurora Viewer\u000ARust · Metal" }
 ui-login-aurora-viewer-v = Aurora Viewer v{ $value0 }
 cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
+window-title-account-separator = { " - " }
 common-aurora-viewer = { "Aurora Viewer " }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Aurora Viewer: unable to initialize Vulkan: " }{ $e }
 splash-starting = Starting…
