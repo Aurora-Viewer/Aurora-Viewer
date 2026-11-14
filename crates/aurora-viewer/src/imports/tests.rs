@@ -58,16 +58,56 @@ fn failed_free_material_does_not_cancel_the_rest_of_the_batch() {
     assert!(matches!(imports.entries[1].status, Status::Preparing));
 }
 
-#[test]
-fn failed_material_map_only_fails_materials_that_depend_on_it() {
-    let map = files::local_image((*image(4, 4)).clone(), "map".into());
-    let options = import_texture::Options::default();
-    let key = map.upload_key(options);
+fn material_step(entry: &Entry, options: import_texture::Options, images: Box<[Option<LocalImage>; 4]>) -> Step {
+    Step {
+        key: entry.id,
+        entry: Some(entry.id),
+        kind: Kind::Material,
+        folder: Uuid::nil(),
+        name: entry.name.clone(),
+        description: String::new(),
+        source: Source::Material {
+            value: Default::default(),
+            images,
+        },
+        options,
+        sound_options: Default::default(),
+        cost: 0,
+        permissions: Default::default(),
+    }
+}
+
+fn map_step(map: &LocalImage, options: import_texture::Options, cost: i32) -> Step {
+    Step {
+        key: map.upload_key(options),
+        entry: None,
+        kind: Kind::Texture,
+        folder: Uuid::nil(),
+        name: map.name.clone(),
+        description: String::new(),
+        source: Source::Texture(map.pixels.clone()),
+        options,
+        sound_options: Default::default(),
+        cost,
+        permissions: Default::default(),
+    }
+}
+
+/// A Bulk upload scaled to 1K, with an entry set to 2K: the map's step key is
+/// built from the capped options, and the failure must still find its material.
+fn failed_map_batch(map_cost: i32) -> (Imports, Uuid, Uuid, Uuid) {
+    let map = files::local_image((*image(2048, 2048)).clone(), "map".into());
+    let options = import_texture::Options {
+        max_width: 2048,
+        max_height: 2048,
+        ..Default::default()
+    };
+    let with_map = Box::new([Some(map.clone()), None, None, None]);
     let mut dependent = Entry::new(
         "dependent.gltf".into(),
         Ok(Source::Material {
             value: Default::default(),
-            images: Box::new([Some(map.clone()), None, None, None]),
+            images: with_map.clone(),
         }),
         options,
     );
@@ -81,51 +121,60 @@ fn failed_material_map_only_fails_materials_that_depend_on_it() {
     );
     dependent.status = Status::Preparing;
     independent.status = Status::Preparing;
-    let dependent_id = dependent.id;
-    let independent_id = independent.id;
-    let request = Uuid::new_v4();
+    let (dependent_id, independent_id) = (dependent.id, independent.id);
     let mut imports = Imports {
-        entries: vec![dependent, independent],
-        current: Some((
-            request,
-            Step {
-                key,
-                entry: None,
-                kind: Kind::Texture,
-                folder: Uuid::nil(),
-                name: "map".into(),
-                description: String::new(),
-                source: Source::Texture(map.pixels),
-                options,
-                sound_options: Default::default(),
-                cost: 0,
-                permissions: Default::default(),
-            },
-        )),
-        queue: VecDeque::from([Step {
-            key: independent_id,
-            entry: Some(independent_id),
-            kind: Kind::Material,
-            folder: Uuid::nil(),
-            name: "independent".into(),
-            description: String::new(),
-            source: Source::Material {
-                value: Default::default(),
-                images: Box::new([None, None, None, None]),
-            },
-            options,
-            sound_options: Default::default(),
-            cost: 0,
-            permissions: Default::default(),
-        }]),
+        choice: Choice::Bulk,
+        scale_bulk_1k: true,
         ..Default::default()
     };
+    let capped = imports.options(&dependent);
+    assert_ne!(
+        map.upload_key(capped),
+        map.upload_key(options),
+        "the test needs the 1K cap to change the key"
+    );
+    let request = Uuid::new_v4();
+    imports.queue = VecDeque::from([
+        material_step(&dependent, capped, with_map),
+        material_step(&independent, capped, Box::new([None, None, None, None])),
+    ]);
+    imports.entries = vec![dependent, independent];
+    imports.current = Some((request, map_step(&map, capped, map_cost)));
+    (imports, request, dependent_id, independent_id)
+}
+
+#[test]
+fn failed_material_map_only_fails_materials_that_depend_on_it() {
+    let (mut imports, request, dependent_id, independent_id) = failed_map_batch(0);
 
     imports.uploaded(request, Err(Error::Unknown));
     assert!(matches!(imports.entries[0].status, Status::Error(_)));
     assert!(matches!(imports.entries[1].status, Status::Preparing));
-    assert_eq!(imports.queue.front().and_then(|step| step.entry), Some(independent_id));
-    assert_ne!(dependent_id, independent_id);
+    assert!(!imports.queue.iter().any(|step| step.entry == Some(dependent_id)));
+    assert_eq!(
+        imports.queue.iter().map(|step| step.entry).collect::<Vec<_>>(),
+        vec![Some(independent_id)]
+    );
+}
+
+#[test]
+fn a_price_change_on_a_free_map_still_stops_the_batch() {
+    let (mut imports, request, _, _) = failed_map_batch(0);
+
+    imports.uploaded(request, Err(Error::PriceChanged(Some(10))));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+    assert!(imports.queue.is_empty());
+}
+
+#[test]
+fn a_failed_paid_map_still_stops_the_batch() {
+    let (mut imports, request, _, _) = failed_map_batch(10);
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+    assert!(imports.queue.is_empty());
 }
 
 #[test]

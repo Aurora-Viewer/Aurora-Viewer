@@ -1019,16 +1019,17 @@ impl Imports {
                     self.cost_overrides
                         .insert((step.kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024), cost);
                 }
-                let reason = ui::error(error);
+                // do_bulk_upload (llviewermenufile.cpp) saves each material on its own,
+                // so a free material or free map that fails only fails the materials
+                // that need it. A paid step with an uncertain outcome, and a price
+                // change (the user confirms the new price), still stop the batch.
                 let material_map = step.kind == Kind::Texture && step.entry.is_none();
-                if material_map {
+                let continues = step.cost == 0 && !matches!(error, Error::PriceChanged(_)) && (step.kind == Kind::Material || material_map);
+                let reason = ui::error(error);
+                if material_map || continues {
                     self.fail_material_batch_step(&step, reason.clone());
                 }
-                if step.cost == 0 && (step.kind == Kind::Material || material_map) {
-                    if step.kind == Kind::Material {
-                        self.fail_material_batch_step(&step, reason);
-                    }
-                } else {
+                if !continues {
                     self.fail(step.entry, reason);
                 }
                 None
@@ -1064,7 +1065,8 @@ impl Imports {
                     if !matches!(entry.status, Status::Preparing) {
                         return None;
                     }
-                    let options = entry.options;
+                    // The same options as the map's step in `start`, "scale to 1K" included.
+                    let options = self.options(entry);
                     let depends_on_failed_texture = matches!(
                         &entry.source,
                         Some(Source::Material { images, .. })
