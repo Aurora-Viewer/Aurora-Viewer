@@ -2260,6 +2260,9 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Controls
 
+- 🟡 Mouselook combat aids (task `mouselook-combat`; no issue): FSMouselookCombatFeatures (off), ExodusMouselookIFF (off) and ExodusMouselookIFFRange (380 m) in Preferences › Camera › Mouselook, after LLViewerWindow::draw's Exodus block: the first avatar in the Legacy box ahead of the camera (0.75 m aside, 1.5 m up or down) gets `Name, 12.34 m` 150 px under the crosshair in its minimap colour, hidden by RLVa @shownames; target markers are edge arrows toward the avatars in range out of view (LLTracker::drawMarker with is_iff), the tracking beacon's arrow. `AURORA_DEMO_MOUSELOOK_COMBAT=1` with `AURORA_DEMO_CAMERA=ml`. Unit test: the target box.
+  - ⬜ QA (Agni): mouselook with both on in a busy place: arrows toward the avatars behind, a name and distance when one stands ahead; none of it with the option off.
+
 - 🟡 The Home key is labelled Home ([#3415](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3415)): Preferences › Shortcuts showed "Origin" in English and "原点" in Japanese for Fly/Land, a translation of the French "Origine". The Legacy Viewer names KEY_HOME "Home" (`indra/llwindow/llkeyboard.cpp`, `addKeyName`). English and Japanese now say Home; French says Début, the name on French keyboards (human decision, 2026-11-14). The message id stays `keybinds-origin`. No new demo: `AURORA_DEMO_OPTIONS=shortcuts` opens that page (Movement is the first tab).
   - ⬜ QA: Preferences › Shortcuts › Movement, Fly/Land shows Home in English and Japanese, and Début in French.
 
