@@ -91,6 +91,7 @@ fn chat(from: &str, n: u128, source: ChatSourceType, text: &str) -> NetEvent {
         owner_id: id(n),
         source_type: source,
         chat_type: ChatType::Normal,
+        region: None,
         position: Vec3::new(128.0, 128.0, 21.0),
         message: text.into(),
     })

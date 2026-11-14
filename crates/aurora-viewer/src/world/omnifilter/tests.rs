@@ -36,6 +36,7 @@ fn chat(from: &str, source: ChatSourceType, text: &str) -> NetEvent {
         owner_id: id(1),
         source_type: source,
         chat_type: ChatType::Normal,
+        region: None,
         position: glam::Vec3::new(128.0, 128.0, 20.0),
         message: text.into(),
     })
@@ -296,6 +297,7 @@ fn typing_starts_and_stops_are_not_filtered() {
         owner_id: id(1),
         source_type: ChatSourceType::Agent,
         chat_type: ChatType::StartTyping,
+        region: None,
         position: glam::Vec3::ZERO,
         message: String::new(),
     };
