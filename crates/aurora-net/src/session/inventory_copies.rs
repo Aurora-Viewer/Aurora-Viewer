@@ -29,9 +29,6 @@ pub(super) struct Completion {
     request: Uuid,
     callbacks: Vec<u32>,
     result: Result<(Reply, Vec<InvItem>), String>,
-    /// The items the server did confirm before a failed batch ended: they
-    /// exist in the inventory, so they are reported too (empty on success).
-    partial: Vec<InvItem>,
 }
 
 impl Pending {
@@ -83,15 +80,10 @@ impl Pending {
         for callback in &batch.callbacks {
             self.callbacks.remove(callback);
         }
-        let (result, partial) = match error {
-            None => (Ok((batch.reply, batch.received)), Vec::new()),
-            Some(error) => (Err(error), batch.received),
-        };
         Some(Completion {
             request,
             callbacks: batch.callbacks,
-            result,
-            partial,
+            result: error.map_or_else(|| Ok((batch.reply, batch.received)), Err),
         })
     }
 
@@ -237,7 +229,6 @@ impl Session<'_> {
             self.inventory_callbacks.remove(&callback);
         }
         let request = completion.request;
-        let partial = completion.partial;
         let result = completion.result.map(|(mut reply, items)| {
             // Firestorm updates the model from the server's items and notifies
             // observers. A second folder snapshot is not a completion barrier.
@@ -255,18 +246,6 @@ impl Session<'_> {
         });
         if result.is_err() {
             log::warn!("inventory copy was not fully confirmed");
-            // The copies the server did confirm are in the inventory: apply
-            // them, as LLWearCategoryAfterCopy wears whatever the category
-            // holds (indra/newview/llappearancemgr.cpp).
-            if !partial.is_empty() {
-                emit(
-                    self.sh,
-                    NetEvent::InventoryUpdated {
-                        folders: Vec::new(),
-                        items: partial,
-                    },
-                );
-            }
         }
         emit(self.sh, NetEvent::InventoryEdited { request, result });
     }
@@ -342,7 +321,6 @@ mod tests {
         let expired = pending.expire(Instant::now() + TIMEOUT);
         assert_eq!(expired.len(), 1);
         assert!(expired[0].result.is_err());
-        assert_eq!(expired[0].partial.len(), 1, "the confirmed copy is kept for the caller");
         assert!(pending.callbacks.is_empty() && pending.batches.is_empty());
     }
 
