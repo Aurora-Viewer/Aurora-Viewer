@@ -277,7 +277,7 @@ fn the_classic_window_manages_members_and_administers_with_the_abilities() {
 fn administration_stacks_its_lists_in_a_narrow_window() {
     let ctx = egui::Context::default();
     for (width, stacked) in [(700.0, false), (400.0, true)] {
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::Vec2::new(width, 600.0))),
                 ..Default::default()
@@ -290,6 +290,8 @@ fn administration_stacks_its_lists_in_a_narrow_window() {
                 assert!(full.contains_rect(list) && full.contains_rect(editor));
             },
         );
+        // the fonts' atlas, which epaint asserts is taken
+        output.textures_delta.clear();
     }
 }
 
