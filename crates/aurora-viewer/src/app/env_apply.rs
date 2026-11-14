@@ -217,7 +217,7 @@ impl App {
         use crate::ui::environment::EnvAction;
         for action in actions {
             match action {
-                EnvAction::Pick(kind, asset) => self.pick_local_settings(asset, kind),
+                EnvAction::Pick(kind, asset) => self.pick_local_settings(asset, kind, None),
                 EnvAction::Shared => {
                     self.world.eep.clear_local();
                     self.panels.time_of_day = 0;
@@ -229,9 +229,21 @@ impl App {
 
     /// A sky, water or day for myself (`EnvSelector::request_local`), with
     /// the name of the inventory item holding it: its Aurora Weather code,
-    /// typed there by hand, is not in its asset.
-    pub(super) fn pick_local_settings(&mut self, asset: uuid::Uuid, kind: crate::world::env_select::SettingsKind) {
-        if let Some(it) = self.world.inventory.items.values().find(|it| it.asset_id == asset) {
+    /// typed there by hand, is not in its asset. `item`: the one picked (the
+    /// inventory's); without it (the Environment window's catalog, which
+    /// lists assets), an item holding that asset, the first found.
+    pub(super) fn pick_local_settings(
+        &mut self,
+        asset: uuid::Uuid,
+        kind: crate::world::env_select::SettingsKind,
+        item: Option<uuid::Uuid>,
+    ) {
+        let inv = &self.world.inventory;
+        let held = match item {
+            Some(id) => inv.items.get(&id).filter(|it| it.asset_id == asset),
+            None => inv.items.values().find(|it| it.asset_id == asset),
+        };
+        if let Some(it) = held {
             self.world.eep.note_item_name(asset, &it.name);
         }
         self.world.eep.request_local(asset, kind);

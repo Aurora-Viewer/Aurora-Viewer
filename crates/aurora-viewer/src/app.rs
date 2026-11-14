@@ -4701,7 +4701,7 @@ impl App {
                 self.panels.environment = true;
                 self.panels.personal_lighting = lighting;
             }
-            Step::Pick(kind, asset) => self.pick_local_settings(asset, kind),
+            Step::Pick(kind, asset) => self.pick_local_settings(asset, kind, None),
             Step::Next(kind) => {
                 let view = self.world.eep.local_view();
                 let shown = match kind {
@@ -4711,7 +4711,7 @@ impl App {
                 };
                 let list = self.env_ui.catalog().list(kind);
                 if let Some(asset) = env_select::step(list, env_select::shown_index(list, shown), true) {
-                    self.pick_local_settings(asset, kind);
+                    self.pick_local_settings(asset, kind, None);
                 }
             }
             Step::Shared => {

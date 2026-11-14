@@ -122,11 +122,17 @@ pub fn write(sky: &mut Llsd, weather: Option<&SkyWeather>) -> bool {
             data | (check(data) << DATA)
         }
         // cleared: only a mark that reads is touched, its first part
-        // changed so that its check no longer holds
+        // changed until its check no longer holds (one change in 32,768
+        // would leave it holding, as another weather)
         None if read(sky).is_some() => {
             let v = real(sky, fields[0]);
-            let part = (v.to_bits() & PART_MASK) ^ 1;
-            sky.insert(fields[0], f64::from(marked(v, part)));
+            let low = v.to_bits() & PART_MASK;
+            for step in 1..=PART_MASK {
+                sky.insert(fields[0], f64::from(marked(v, low ^ step)));
+                if read(sky).is_none() {
+                    break;
+                }
+            }
             return true;
         }
         None => return true,
@@ -300,6 +306,23 @@ mod tests {
         // at each key frame, its own sky's weather
         assert_eq!(read.state_at(0.25).code(), storm().code());
         assert_eq!(read.state_at(0.75).code(), SkyWeather::CLEAR.code());
+    }
+
+    #[test]
+    fn a_cleared_mark_never_reads_as_any_weather() {
+        for chance in 0..32 {
+            for amount in 0..16 {
+                let w = SkyWeather {
+                    chance: chance as f32 / 31.0,
+                    amount: (0.0, amount as f32 / 15.0),
+                    ..storm()
+                };
+                let mut s = sky();
+                write(&mut s, Some(&w));
+                write(&mut s, None);
+                assert_eq!(read(&s), None, "{}", w.code());
+            }
+        }
     }
 
     #[test]

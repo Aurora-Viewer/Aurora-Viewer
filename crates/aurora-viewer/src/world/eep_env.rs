@@ -819,8 +819,6 @@ impl EnvSelector {
         self.local.as_ref().and_then(|l| l.weather.as_ref())
     }
 
-    /// The Aurora Weather of settings assets, read from their names as they
-    /// load (scene/mod.rs): an item applied to myself carries it.
     /// An inventory item picked for myself, its asset `asset`: the weather
     /// its name's code gives (a code typed into an item's name by hand is
     /// not in its asset, whose name is read first).
@@ -835,6 +833,8 @@ impl EnvSelector {
         }
     }
 
+    /// The Aurora Weather of settings assets, read from their names as they
+    /// load (scene/mod.rs): an item applied to myself carries it.
     pub fn note_asset_weather(&mut self, asset: Uuid, weather: Option<crate::weather::region::RegionDay>) {
         match weather {
             Some(w) => {
