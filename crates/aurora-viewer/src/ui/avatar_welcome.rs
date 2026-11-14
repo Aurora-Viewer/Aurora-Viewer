@@ -13,8 +13,10 @@
 //! Its browser is trusted (`trusted_content="true"`): a body or an outfit
 //! chosen on the page sends `secondlife://app/wear_folder/?folder_name=…`
 //! (the body, replacing the outfit) then `add_folder` (the clothing), which
-//! the app wears from the Library (`app/avatar_welcome.rs`). The page's
-//! other links are those of the shared `WebView`.
+//! the app wears from the Library (`app/avatar_welcome.rs`), but only while
+//! the top document's origin is the page's own: a frame inside it is not told
+//! apart (still stricter than the Legacy Viewer, which trusts the whole
+//! browser). The page's other links are those of the shared `WebView`.
 //!
 //! The page is the grid's (LFSimFeatureHandler::avatarPickerURL): on Second
 //! Life the `AvatarWelcomePack` setting, on another grid the region's

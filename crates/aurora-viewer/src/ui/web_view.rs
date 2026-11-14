@@ -138,10 +138,11 @@ pub struct WebView {
     pub progress: i32,
     /// The origin (scheme, host, port) of the trusted page, if any.
     trusted: Option<String>,
-    /// The origin of the document the browser has committed (NavigateComplete
-    /// or LocationChanged), cleared while a navigation to another origin is
-    /// under way: a command is trusted by the page that sends it, not by the
-    /// address that was asked.
+    /// The origin of the top document the browser has committed
+    /// (NavigateComplete or LocationChanged), cleared while a navigation to
+    /// another origin is under way: a command is trusted by the page that
+    /// sends it, not by the address that was asked. A frame inside that
+    /// document is not told apart from it.
     document: Option<String>,
     /// The folder commands the trusted page sent, for its window to take.
     pub folder_commands: Vec<crate::slapp::FolderCommand>,
@@ -542,9 +543,11 @@ fn origin(url: &str) -> Option<String> {
         .map(|u| u.origin().ascii_serialization())
 }
 
-/// A folder command sent by the trusted page (the committed document's
-/// origin is the trusted one, `document`), with or without a click: the welcome pack's script wears the
-/// body, then adds the clothing a moment later, without a gesture.
+/// A folder command sent while the top document's origin (`document`) is the
+/// trusted one, with or without a click: the welcome pack's script wears the
+/// body, then adds the clothing a moment later, without a gesture. A frame
+/// inside the trusted document is not told apart from it (still stricter than
+/// the Legacy Viewer, which trusts the whole browser).
 fn trusted_folder_command(event: &MediaEvent, trusted: Option<&str>, document: Option<&str>) -> Option<crate::slapp::FolderCommand> {
     let MediaEvent::ClickLinkNoFollow { url, .. } = event else {
         return None;
