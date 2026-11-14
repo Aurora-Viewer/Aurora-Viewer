@@ -13596,6 +13596,7 @@ impl App {
         self.demo_social_menu_steps();
         self.demo_land_moderation();
         self.demo_admin_status();
+        self.demo_sysinfo();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -15100,6 +15101,12 @@ impl App {
             self.gesture_play(id, None);
         }
         for (to, mut text) in a.ims {
+            // FSFloaterIM::sendMsg: "/sysinfo" in a 1:1 conversation sends
+            // the system information instead of the line
+            if text.starts_with("/sysinfo") && !self.world.is_group_session(&to) {
+                self.ask_sysinfo(to, false);
+                continue;
+            }
             // ":" as "/me" in the conversations too (FSFloaterIM::sendMsg)
             if self.settings.colon_emote {
                 ui::chat::colon_emote(&mut text);
@@ -18288,6 +18295,7 @@ impl App {
                         }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
+                        ui::chat::ConvAction::SendSysinfo(to) => self.ask_sysinfo(to, true),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
@@ -19553,6 +19561,7 @@ impl App {
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
                 self.about_window(&ctx, &p, renderer);
+                self.sysinfo_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);

@@ -1369,6 +1369,9 @@ pub enum ConvAction {
         text: String,
     },
     OfferTeleport(uuid::Uuid),
+    /// "Send system information" (FSFloaterIM's sysinfo button): the About
+    /// window's text to this resident, after a confirmation.
+    SendSysinfo(uuid::Uuid),
     /// Open the People floater (0 = nearby, 1 = friends).
     OpenPeople(u8),
     /// From the "Contacts" tab.
