@@ -496,6 +496,10 @@ pub struct Settings {
     pub browser_behavior: BrowserBehavior,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
+    /// The floating Stand / Stop flying / Flycam buttons over the world
+    /// (Preferences › Layout; on by default, like the Legacy Viewer's
+    /// panel). Off: the panel never shows, the menus still stand or land.
+    pub show_stand_fly_panel: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
     /// sunbeacon / moonbeacon: a line from the avatar towards the sun or
@@ -2077,6 +2081,7 @@ impl Default for Settings {
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
+            show_stand_fly_panel: true,
             show_huds: true,
             sun_beacon: false,
             moon_beacon: false,

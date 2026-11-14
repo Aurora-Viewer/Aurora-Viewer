@@ -145,6 +145,7 @@ mod shortcuts;
 mod snapshot;
 mod social_menu_demo;
 mod stand_fidget;
+mod stand_fly;
 mod stream_list;
 mod suggest_demo;
 mod task_notecards;
@@ -13860,6 +13861,7 @@ impl App {
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
         self.demo_sit_teleport();
+        self.demo_stand_fly();
         if let (Some(demo), Some(g)) = (&mut self.geometry_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut g.renderer);
         }
@@ -15117,6 +15119,9 @@ impl App {
         }
         for cmd in a.currency {
             self.send(cmd);
+        }
+        if let Some(action) = a.stand_fly {
+            self.stand_fly_action(action);
         }
         // the invitation to edit first (handle_lure), for all those chosen
         if !a.offer_tp.is_empty() {
@@ -17965,6 +17970,9 @@ impl App {
                         }
                     }
                 }
+                // LLPanelStandStopFlying: Stand, Stop flying, Flycam above the
+                // bottom bar
+                a.stand_fly = ui::stand_fly::show(&ctx, &p, self.stand_fly_buttons(), bottom_top);
                 if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
                     self.fly_override_caution = false;
                 }
@@ -19762,6 +19770,8 @@ struct UiActions {
     typing: Vec<NetCommand>,
     /// Gestures played from the conversations' field.
     gestures: Vec<uuid::Uuid>,
+    /// A click on the floating Stand / Stop flying panel.
+    stand_fly: Option<ui::stand_fly::Action>,
 }
 
 impl UiActions {
@@ -19796,6 +19806,7 @@ impl UiActions {
         self.currency.extend(later.currency);
         self.typing.extend(later.typing);
         self.gestures.extend(later.gestures);
+        first(&mut self.stand_fly, later.stand_fly);
     }
 }
 

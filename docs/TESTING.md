@@ -1022,6 +1022,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
+| `AURORA_DEMO_STAND_FLY=ground\|object\|fly\|stand\|land\|locked\|fly-rlva` | Sits or flies for the floating Stand / Stop flying panel, then presses it |
 | `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_TURN_SELECT=1` | The avatar turns to face an object selected while the camera is off it |
@@ -1547,6 +1548,23 @@ when unfocused") is ignored during a screenshot.
   seated in the AO's sit; frame 720: standing at the destination. The log
   ends `AO state None, AO sit cover false` (before the fix: `AO state
   Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).
+- **`AURORA_DEMO_STAND_FLY=ground|object|fly|stand|land|locked|fly-rlva`**: the floating
+  panel of the Legacy Viewer's LLPanelStandStopFlying. At frame 240 our
+  avatar sits on the ground (`ground`, `stand`) or takes off (`fly`,
+  `land`); `object` sits on the nearest prim of the plaza at frame 300.
+  Capture at 460: "Stand up" (or "Stop flying") centred just above the
+  bottom bar, in the glass of the panels over the world, clear of the chat
+  bar, the toolbar and the windows. At 480 `stand` presses Stand and
+  `land` presses Stop flying, through the panel's own action: capture at
+  560, no panel. The log gives `demo stand/fly panel: seated …, flying …,
+  buttons …` at 470 and 560. The Flycam button shows with
+  `AURORA_DEMO_JOYSTICK=flycam` (from frame 630); the panel hides with
+  `AURORA_DEMO_BARS=hidden` (from 600) and in mouselook unless
+  Preferences › Camera keeps the interface there.
+  `locked` sits on the ground and adds RLVa `@unsit=n` at 300: Stand stays
+  shown but greyed (capture at 460). `fly-rlva` takes off and adds
+  `@fly=n` at 300 (the log at 470 tells whether the flight went on).
+  Preferences › Layout › Bars has a switch that hides the panel.
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the
   avatar slides right, its yaw unchanged), `2`: double right click
