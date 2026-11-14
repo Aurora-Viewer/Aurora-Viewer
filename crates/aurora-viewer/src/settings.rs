@@ -142,6 +142,27 @@ pub enum ClockZone {
     Local,
 }
 
+/// The time zone of the teleport history's days and hours (the Legacy
+/// Viewer's FSTPHistoryTZ, SLT by default): UTC, Second Life time (US
+/// Pacific) or the computer's own.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HistoryZone {
+    Utc,
+    #[default]
+    Slt,
+    Local,
+}
+
+/// A saved history zone: anything unknown falls back to SLT rather than
+/// failing the whole file.
+fn history_zone_or_slt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HistoryZone, D::Error> {
+    Ok(match String::deserialize(d)?.as_str() {
+        "Utc" => HistoryZone::Utc,
+        "Local" => HistoryZone::Local,
+        _ => HistoryZone::Slt,
+    })
+}
+
 /// The hours of the bars' clock: as the system's regional format (Windows'
 /// short time, LC_TIME elsewhere), 12 hours with AM / PM, or 24 hours.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -713,6 +734,10 @@ pub struct Settings {
     pub inspect_columns: u32,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
+    /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
+    /// in its menu (`ui/places.rs`).
+    #[serde(deserialize_with = "history_zone_or_slt")]
+    pub tp_history_zone: HistoryZone,
     /// Ask before a teleport to a landmark, a history entry or a place link
     /// (TeleportFromLandmark, TeleportToHistoryEntry, TeleportViaSLAPP; the
     /// box "Do not show again" of the confirmation turns it off). Firestorm
@@ -2176,6 +2201,7 @@ impl Default for Settings {
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
             landmarks_by_date: true,
+            tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,
             warn_hypergrid_suitcase: true,
             confirm_no_transfer_settings: true,
@@ -4110,6 +4136,25 @@ mod tests {
         })
         .expect("settings json");
         assert_eq!(super::language_in(Some(&saved)), "ja");
+    }
+
+    /// The teleport history's zone: SLT by default (FSTPHistoryTZ), each
+    /// choice kept, anything unknown back to SLT with the rest of the file.
+    #[test]
+    fn the_history_zone_is_slt_unless_chosen() {
+        let read = |json: &str| serde_json::from_str::<super::Settings>(json).expect("settings");
+        assert_eq!(read("{}").tp_history_zone, super::HistoryZone::Slt);
+        for zone in [super::HistoryZone::Utc, super::HistoryZone::Slt, super::HistoryZone::Local] {
+            let saved = serde_json::to_string(&super::Settings {
+                tp_history_zone: zone,
+                ..Default::default()
+            })
+            .expect("settings json");
+            assert_eq!(read(&saved).tp_history_zone, zone);
+        }
+        let odd = read(r#"{"tp_history_zone":"Mars","landmarks_by_date":false}"#);
+        assert_eq!(odd.tp_history_zone, super::HistoryZone::Slt);
+        assert!(!odd.landmarks_by_date);
     }
 
     /// UTC, a clock time of the first version (#453), and an unknown name

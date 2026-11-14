@@ -19357,6 +19357,7 @@ impl App {
                     sort: self.settings.places_sort,
                     favorites: &favorites_order,
                 });
+                self.places_ui.history_zone = self.places_ui.demo_zone.unwrap_or(self.settings.tp_history_zone);
                 let places_acts = self.places_ui.show(
                     &ctx,
                     &mut c,
@@ -19417,6 +19418,11 @@ impl App {
                         }
                         PlacesAction::Sort(by) => {
                             self.settings.places_sort = by;
+                            self.settings.save();
+                        }
+                        PlacesAction::HistoryZone(zone) => {
+                            self.places_ui.demo_zone = None;
+                            self.settings.tp_history_zone = zone;
                             self.settings.save();
                         }
                     }
@@ -20569,7 +20575,7 @@ impl ApplicationHandler for App {
             // preview; ":open": its first place selected; both: ":wide,open";
             // ":classic": the Legacy Viewer's tabs for this run, not saved;
             // ":narrow": the window 260 points wide, its least width at
-            // text size 1)
+            // text size 1; ":utc" / ":local": the history in that zone)
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
             let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
@@ -20584,6 +20590,11 @@ impl ApplicationHandler for App {
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
+                self.places_ui.demo_zone = demo_how.split(',').find_map(|w| match w {
+                    "utc" => Some(crate::settings::HistoryZone::Utc),
+                    "local" => Some(crate::settings::HistoryZone::Local),
+                    _ => None,
+                });
             }
             // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
             // page, open at start
