@@ -47,6 +47,7 @@ pub mod mesh_bytes;
 pub mod mesh_inspection;
 pub mod meshes;
 pub mod morph;
+pub mod particle_order;
 pub mod particles;
 pub mod physics_shapes;
 mod pick_accel;
@@ -1115,7 +1116,20 @@ pub struct Scene {
     pub tree_lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
-    blend_tmp: Vec<blend_order::BlendEntry>,
+    /// The frame's blended faces in drawing order, as `lists.blend` was made
+    /// from them, and those under the water (`blend_under_sorted`, its first
+    /// `blend_under_rigged` rigged): kept for the particles to be placed
+    /// among them (`particle_order`) after this frame's `build_lists`.
+    blend_sorted: Vec<blend_order::BlendEntry>,
+    /// The blended faces under the water, sorted (`order_particles`).
+    blend_under_sorted: Vec<blend_order::BlendEntry>,
+    /// How many of `blend_under_sorted` are rigged, drawn first.
+    blend_under_rigged: usize,
+    /// The frame's blended-face sort basis and the water plane the lists were
+    /// split at (the camera above the water), for the particles
+    /// (`particle_order`).
+    alpha_view: Option<particle_order::AlphaView>,
+    particle_work: particle_order::Work,
     pub anims: anim::AnimStreamer,
     object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
@@ -1728,7 +1742,11 @@ impl Scene {
             tree_lod_factor: 0.5,
             draw_distance: 96.0,
             last_origin: None,
-            blend_tmp: Vec::new(),
+            blend_sorted: Vec::new(),
+            blend_under_sorted: Vec::new(),
+            blend_under_rigged: 0,
+            alpha_view: None,
+            particle_work: Default::default(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             sound_occlusion: Default::default(),
             sound_reverb: Default::default(),
@@ -5353,8 +5371,8 @@ impl Scene {
         self.lists.opaque_two_sided = result.opaque2;
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
-        self.blend_tmp = result.blend;
-        self.blend_tmp.extend(
+        self.blend_sorted = result.blend;
+        self.blend_sorted.extend(
             [
                 (self.banlines.cmds.as_slice(), false, false),
                 (self.portals.cmds.as_slice(), true, true),
@@ -5377,33 +5395,43 @@ impl Scene {
                 })
             }),
         );
-        self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
+        self.lists.blend_depth = blend_order::sort(&mut self.blend_sorted, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
         self.lists.blend_precision = blend_order::precision();
         if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact {
-            blend_order::nearest_first(&mut self.blend_tmp, self.lists.blend_depth);
+            blend_order::nearest_first(&mut self.blend_sorted, self.lists.blend_depth);
         }
         let runs = match self.lists.blend_depth_mode {
             aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,
             aurora_render::RiggedBlendDepth::Split => blend_order::rig_objects,
             _ => blend_order::rig_runs,
         };
-        runs(&self.blend_tmp, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
+        runs(&self.blend_sorted, self.lists.blend_depth, &mut self.lists.blend_depth_runs);
         if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Layers {
-            blend_order::quiet_runs(&self.blend_tmp, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
+            blend_order::quiet_runs(&self.blend_sorted, &self.lists.blend_depth_runs, &mut self.lists.blend_depth_quiet);
         } else {
             self.lists.blend_depth_quiet.clear();
         }
-        self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
+        self.lists.blend.extend(self.blend_sorted.iter().map(|e| e.cmd));
         // under the water: back to front, the rigged first
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
         // forwardRender()), all writing depth and without glow
         let mut under = result.blend_under;
-        blend_order::sort(&mut under, true);
+        self.blend_under_rigged = blend_order::sort(&mut under, true);
         self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
         self.lists.blend_under_double_sided.extend(under.iter().map(|e| e.double_sided));
-        self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
-        self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
+        self.blend_under_sorted = under;
+        self.alpha_view = Some(particle_order::AlphaView {
+            basis: particle_order::SortBasis {
+                eye: view.eye,
+                forward: face_sort.then_some(alpha_forward),
+            },
+            plane: under_water_plane,
+        });
+        self.lists.blend_glow.extend(self.blend_sorted.iter().map(|e| e.glow));
+        self.lists
+            .blend_double_sided
+            .extend(self.blend_sorted.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.shelter_casters.extend(result.shelter);
         self.lists.reflection = result.refl;
@@ -7623,6 +7651,21 @@ mod tests {
         assert_eq!(classify(&face(true, mask, 1.0), AlphaKind::Mask), Pass::Hidden);
         // a zero face color alpha hides it whatever the material
         assert_eq!(classify(&face(true, blend, 0.0), AlphaKind::Mask), Pass::Hidden);
+    }
+
+    /// The particles are placed among the faces of `blend` (`particle_order`):
+    /// a translucent face is in it whether it is fullbright or glows (neither
+    /// is a pass of its own; a glow only adds a draw right after the face), as
+    /// the Legacy Viewer's alpha pool holds them (LLDrawPoolAlpha::renderAlpha).
+    #[test]
+    fn a_translucent_face_is_blended_whatever_its_glow() {
+        for glow in [false, true] {
+            let face = FaceDraw {
+                te_alpha: 0.45,
+                ..test_face(Pass::Hidden, glow)
+            };
+            assert_eq!(classify(&face, AlphaKind::Opaque), Pass::Blend, "glow {glow}");
+        }
     }
 
     #[test]

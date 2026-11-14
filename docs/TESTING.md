@@ -4917,7 +4917,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
 | `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
-| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B (the particles then sort by radial distance too, to merge with the faces) |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4942,6 +4942,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
+| `AURORA_DEMO_PARTICLE_GLASS=1`, `sparse` or `dense` | Fountains behind, in front of and through three glass panes (one fullbright, one glowing; the emitters show red: the particle-source beacon highlight); 60 spread-out panes and 6 emitters; or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
+| `AURORA_PARTICLE_INTERLEAVE=0` | Particles as before the interleave: all after the blended faces and the overlays, radial sort, not clipped at the water, none of its pipelines or targets made (A/B; read at launch, not live) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -5239,6 +5241,33 @@ both open states and the selection count. Capture at frame 620.
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
   on the tree behind the palm, capture at frame 760.
+- **`AURORA_DEMO_PARTICLE_GLASS=1|sparse|dense`** (`demo_particle_glass.rs`), with
+  `AURORA_PARTICLE_INTERLEAVE=0|1` for the A/B: particles drawn between the
+  blended faces by view depth (`scene/particle_order.rs`). `1`: two 3 m
+  glass panes 9 m along the start view (face alpha 0.45, the middle one
+  fullbright, the right one glowing), a fountain 2 m behind each, one 2 m in front of each and one in
+  the left pane's plane. Expected: the particles behind a pane tinted by the
+  glass and those in front clear, the arc through the left pane cut exactly
+  at it, the glowing pane keeping its glow over the particles behind it;
+  with `AURORA_PARTICLE_INTERLEAVE=0` all the particles are over the glass.
+  `sparse`: 60 panes spread over 8 to 68 m ahead and 22 m across, and 6
+  fountains among them: the usual few runs of a busy place.
+  `dense`: 300 thin panes 8 to 80 m ahead and 36 fountains over the same
+  depths, more than 256 runs by depth alone, for the cost of the cap: read
+  `p_part_order`, `part_runs`, `r_*`, `g_transparent` and `g_post` with
+  `AURORA_PROFILE=1`, alternating `AURORA_PARTICLE_INTERLEAVE=0` and `1`
+  (the variable is read at launch). With the interleave the particles are
+  drawn inside the blended part of the GPU timing and the overlays after
+  them: `g_transparent` then holds the particles and `g_post` less, so
+  compare their sum. The particle-source beacons and the other debug
+  highlights (the red emitters of this scenario) are drawn after the
+  particles too, over them, as the Legacy Viewer draws its highlights after
+  the alpha pass; with `AURORA_PARTICLE_INTERLEAVE=0` they are under them. Under the water,
+  `AURORA_DEMO_WATER=shore:alpha:particles` (also `medium:shore:alpha:particles`)
+  adds a fountain behind and one in front of each of the three blended boxes
+  of `:alpha`: the particles under the surface are refracted and fogged like
+  the box, those above it are not, a fountain crossing the surface is cut at
+  it. `AURORA_PARTICLE_INTERLEAVE=0` brings back the former order and no clip.
 - **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the
@@ -12740,7 +12769,9 @@ parts, against the scene without weather. `--scenes` picks some,
     mirror, then the particles — `part_sources` systems set up or stopped
     by the object updates, `part_sim` simulation of each source,
     `part_list` instances of the frame sorted from the farthest to the
-    nearest (`particles` gives their number) —, `lights` nearest local
+    nearest (`particles` gives their number), `part_order` their split at
+    the water and their merge into the blended faces (`part_runs` gives the
+    number of switches drawn) —, `lights` nearest local
     lights and `probes` reflection probes (search for the candidates by
     slices, slots, face to capture);
   - the parts of the interface (`u_*`, in `ui`): `bars` top and bottom
@@ -13235,6 +13266,7 @@ rendered Gerstner spectrum at all qualities and several depths.
 | Variable | Purpose |
 |---|---|
 | `AURORA_DEMO_WATER=medium` | Offline coast, moving hull, pillars, wading and submerged avatars |
+| `AURORA_DEMO_WATER=<place>:alpha:particles` | The `:alpha` boxes with a fountain behind and one in front of each (particles above, across and under the surface) |
 | `AURORA_DEMO_WATER=off:exclusion` | Invisible water exclusion above/below the surface; use `medium` for enhanced water |
 | `AURORA_DEMO_WATER_ACTIONS=dive` | Local native water animation and jump/entry preview |
 | `AURORA_DEMO_WATER_ANIMS=<folder>` | Read-only folder containing the twelve native water clips |
@@ -13254,6 +13286,8 @@ The enhanced-water master is disabled by default (2026-10-19), including missing
 Experimental water defaults validation (2026-10-19): final `scripts/check.ps1` green, 3,576 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Regressions cover fresh/missing/partial defaults, disabled render flags, saved choices, all graphics presets, Aurora section reset and explicit bulk opt-in. Built the default dev viewer and inspected `.scratch/ao-water-spacing-final-fr.png`, `ao-water-spacing-final-en.png` (1024x768), `water-experimental-off-fr.png` and `water-experimental-on-en.png`, compared with `ao-optional-water-controls-fr.png` and `water-experimental-before-fr.png`. The two gesture gaps are wider and scrolling remains available. Water preferences show exactly one warning on global activation, with ordinary individual controls and readable disabled choices. Both water modes are explicit offline fixtures; they do not verify a real user's saved preference. Last-five disabled-water preferences before/after medians: 60 FPS, UI 0.83/0.80 ms and GPU 1.95/1.59 ms; baseline compilation and desktop load vary, so no isolated performance gain is claimed. Preferences captures have zero warnings/errors/panics; AO captures have no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
 
 Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. `:alpha` (#1678) adds three semi-transparent boxes, green under the water, yellow across its surface and magenta above it: from above (`off:shore:alpha`, `medium:shore:alpha`), the green one and the lower half of the yellow one must be refracted and fogged by the water like the ground around them, never drawn crisp over the surface, while the upper half and the magenta one look as before; from below (`:underwater:alpha`) nothing changes. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
+
+The `:alpha:particles` words (`AURORA_DEMO_WATER=<place>:alpha:particles`) add a fountain behind and one in front of each `:alpha` box, its particles above, across and under the surface: the particles under the water are drawn before it and fogged by it, those crossing it are cut at the surface; the emitters are sent once. With `AURORA_PARTICLE_INTERLEAVE=0` they are drawn after everything, as before. See also `AURORA_DEMO_PARTICLE_GLASS`.
 
 With `AURORA_DEMO_WATER_SHADERS=1`, an offline viewer loads common/spectrum, scene object/environment, water simulation, swept-wake and caustics WGSL from its own source checkout when pipelines are created. Restart the demo after editing shaders; no build is needed for each visual comparison. This switch is ignored without `AURORA_DEMO`; normal viewers and final acceptance runs use baked shaders. Missing source files fall back to the baked version.
 

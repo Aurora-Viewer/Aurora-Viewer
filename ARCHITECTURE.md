@@ -337,6 +337,23 @@ sides of single- and double-sided transparent faces.
 colour and depth fragment cuts, with unclipped, above-water and below-water
 specializations, to keep sidedness and water clipping consistent.
 
+The particles are drawn between those blended faces (`DrawLists::particle_runs`,
+made by `scene/particle_order.rs` from the sorted lists `Scene::blend_sorted`
+and `blend_under_sorted`): the renderer cuts the blended draws at each
+`ParticleRun` (`aurora_render::walk_runs`, with every index clamped to what was
+uploaded) and draws that stretch of the one particle buffer, bound once in its
+own vertex slot, between them; the overlays come after all of it. The particles
+reaching below the water while the camera is above it (`particles_under`, a
+crossing one in both lists) are drawn in the "blend under water" pass with the
+blended faces under the surface, clipped to their side and writing depth; their
+soft fade reads a copy of the scene depth made on first use
+(`Targets::depth_copy`, bound by `FrameGroups::under`; with MSAA the
+single-sampled depth serves). The runs come from the particles' view depths
+against the faces' (`particle_order::interleave`). At most 256 switches are
+drawn (the runs with the smallest depth gaps merge past that).
+`AURORA_PARTICLE_INTERLEAVE=0` keeps the former single draw after the faces and
+the overlays, and makes none of the pipelines and targets above.
+
 Texture imports and material maps share the PNG channel normalization in
 `aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
 and reduce 16-bit samples to their high byte, following
@@ -2931,6 +2948,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_mirror.rs` | The plaza's mirror, and the `AURORA_DEMO_MIRROR` scenario: a closed room with a mirror, our avatar facing it, blended lace and glass and a black shiny ball between them (#3479) |
 | `demo_wet_layer.rs` | `AURORA_DEMO_WET_LAYER` scenario: spheres under transparent shells, two with a shiny blended legacy material whose glare shows drips (#1420), one control without |
 | `demo_aa_switch.rs` | `AURORA_DEMO_AA_SWITCH`: the anti-aliasing changed at given frames, to watch the pipelines for new MSAA samples compile on their worker without a long frame |
+| `demo_particle_glass.rs` | `AURORA_DEMO_PARTICLE_GLASS` scenario: fountains behind, in front of and through glass panes (one glowing), or 300 panes and 36 emitters for the cost of the particle runs |
 | `demo_blend_shadows.rs` | `AURORA_DEMO_BLEND_SHADOWS` scenario: alpha-blended panels in the sun (greenhouse pane with opaque frame, face and texture alpha above and under the shadow cutoffs), or 400 greenhouse panes for the cost of blended casters |
 | `demo_plants.rs` | `AURORA_DEMO_PLANTS` scenario: the 21 tree species and 6 grass species near or far along the start view, or a forest of about 600 trees and 400 grass tufts; stand-in species textures drawn under their ids, in this scenario only |
 | `demo_object_snap.rs` | `AURORA_DEMO_OBJECT_SNAP` scenario: a slab, cubes, a turned box, a tilted plank and a pillar to snap together with the build tools' "Snap to objects" |
@@ -3102,6 +3120,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/still_check.rs` | `AURORA_STILL_CHECK` diagnostic: per second, what changed while the frame should be still (camera, our avatar, rebuilt faces and their reason, placed objects re-placed) |
 | `scene/describe.rs` | The Dev Toolbox's "Debug to log / clipboard" (J1, J2), read-only: textures, lights and materials of the objects within 12 m, a summary line per attachment of the avatars within 10 m (faces drawn and left out), and for each of them its worn objects against the simulator's list (`world/worn_listed.rs`), and for the avatars within 3 m or the target every face of every prim: texture entry as received, legacy or glTF alpha mode and cutoff, texture alpha class, pass, or why `rebuild_faces` left the face out; for L1 / L2, one prim face by face and each attachment's faces drawn and left out |
 | `scene/sculpt_watch.rs` | Optional `AURORA_SCULPT_WATCH` diagnostic: changed attachment classification, geometry binding and sculpt-map streaming state for one avatar; no rendering or network behavior changes. |
+| `scene/particle_order.rs` | Where the sorted particles come among the blended faces: a view depth key per particle in the faces' space, the linear merge into `DrawLists::particle_runs` (at most 256 switches), the split at the water into `particles_under`; `Scene::order_particles`; `AURORA_PARTICLE_INTERLEAVE` |
 | `scene/blend_order.rs` | Order of the frame's blended faces: those of rigged meshes first, back to front, drawn writing depth (`DrawLists::blend_depth`, the Legacy Viewer's rigged alpha pass), then the others back to front; a fixed order for faces at the same distance; nearest first instead for the exact blend order, whose passes need no order and leave early behind what is already filed; `AURORA_RIGGED_BLEND` |
 | `aurora-render/src/blend_exact.rs`, `blend_exact_tests.rs` | The exact blend order (`RiggedBlendDepth::Exact`), the default of the setting "Order of transparent surfaces": the fronts of the pixels (a buffer of slots and of pages from a pool that follows what the views take) and the two targets of their haze, which the pass of the blended faces fills (`fs_blend_once`, `fs_blend_cut` of `shaders/object.wgsl`) and the pass over the screen composes (`blend_compose`, `fs_blend_over`, `fs_blend_glow`, `fs_blend_both`); their sizes and layout, the precision of the setting (`BlendPrecision`), the shader source for devices without the early depth test or the blending from two sources; the GPU tests draw layers in every order through the production shaders and compare with a sort |
 | `demo_veils.rs` | `AURORA_DEMO_VEILS`: a hall of lace curtains that cross one another and glowing strings, for the order and the cost of many blended layers |
