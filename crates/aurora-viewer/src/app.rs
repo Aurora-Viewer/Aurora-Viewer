@@ -20421,6 +20421,16 @@ impl ApplicationHandler for App {
                             self.contacts_ui.configure_set_at(aurora_i18n::tr!("demo-family"), tab);
                             self.contacts_ui.demo_editor(badges, marker);
                         }
+                        Some(SetsScene::ThinEditor) => {
+                            self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                            let work = ui::layout::work_area(&self.egui_ctx);
+                            ui::widgets::place_floater(
+                                &self.egui_ctx,
+                                "contact_set_config",
+                                work.center() - egui::vec2(280.0, 360.0),
+                                egui::vec2(560.0, 720.0),
+                            );
+                        }
                         Some(SetsScene::QuickSort) => {
                             self.contacts_ui.set_choice = Some(crate::world::contact_sets::NO_SETS.to_owned());
                             self.people_ui.select(Vec::new());
@@ -20438,6 +20448,7 @@ impl ApplicationHandler for App {
                     crate::demo::people::sets_scene(),
                     Some(
                         crate::demo::people::SetsScene::Editor { .. }
+                            | crate::demo::people::SetsScene::ThinEditor
                             | crate::demo::people::SetsScene::QuickSort
                             | crate::demo::people::SetsScene::Options
                     )

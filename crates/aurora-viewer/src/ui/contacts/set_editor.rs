@@ -24,6 +24,9 @@ use egui::{Pos2, Rect};
 /// The window's size when it first opens, and the preview's column.
 const SIZE: Vec2 = Vec2::new(980.0, 720.0);
 const PREVIEW_MIN: f32 = 240.0;
+/// Narrower than this, the preview goes to a strip on top, this high.
+const STACK_BELOW: f32 = 700.0;
+const STRIP_H: f32 = 128.0;
 const PREVIEW_MAX: f32 = 300.0;
 /// The set's tile beside its name, and the tab bar.
 const TILE: f32 = 52.0;
@@ -120,6 +123,28 @@ pub(super) fn window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
     .flush_body()
     .show(ctx, p, &mut open, |ui| {
         let full = ui.available_rect_before_wrap();
+        if full.width() < STACK_BELOW {
+            // thin: the preview in a short strip on top, the settings under it
+            let strip = Rect::from_min_size(full.min, Vec2::new(full.width(), STRIP_H));
+            ui.painter().rect_filled(strip, 0.0, p.bar);
+            let mut strip_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("set-editor-preview-strip")
+                    .max_rect(strip.shrink2(Vec2::new(14.0, 12.0)))
+                    .layout(egui::Layout::left_to_right(egui::Align::Min)),
+            );
+            preview_strip(&mut strip_ui, p, &cfg);
+            let main = Rect::from_min_max(Pos2::new(full.left(), strip.bottom()), full.max);
+            let mut main_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("set-editor-main")
+                    .max_rect(main.shrink2(Vec2::new(18.0, 16.0)))
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            body(&mut main_ui, p, world, st, &set, &cfg, pics);
+            ui.allocate_rect(full, Sense::hover());
+            return;
+        }
         let side_w = (full.width() * 0.36).clamp(PREVIEW_MIN, PREVIEW_MAX).round();
         let side = Rect::from_min_max(full.min, Pos2::new(full.left() + side_w, full.bottom()));
         let main = Rect::from_min_max(Pos2::new(side.right(), full.top()), full.max);
@@ -1307,6 +1332,73 @@ fn preview(ui: &mut egui::Ui, p: &Palette, cfg: &ContactSet) {
             .size(12.0)
             .color(p.muted),
     );
+}
+
+/// The preview of a thin window, in one short strip: the plate (the marker
+/// at its corner while the set has one), then a chat line and a list row.
+fn preview_strip(ui: &mut egui::Ui, p: &Palette, cfg: &ContactSet) {
+    let appearance = sample(cfg);
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.spacing_mut().item_spacing = Vec2::new(10.0, 6.0);
+    let h = ui.available_height();
+    let plate_w = (ui.available_width() * 0.48).min(280.0);
+    let (scene, _) = ui.allocate_exact_size(Vec2::new(plate_w, h), Sense::hover());
+    ui.painter().rect_filled(scene, radius, p.field);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_center_size(scene.center(), Vec2::new(scene.width(), 100.0)))
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+    );
+    crate::ui::nameplate::preview(&mut child, p, appearance.clone());
+    if let Some(marker) = &appearance.marker {
+        crate::ui::contact_markers::paint_preview_at(ui.painter(), p, scene.right_top() + Vec2::new(-22.0, 22.0), marker);
+    }
+    let shown =
+        |c: Option<[f32; 4]>, fallback: Color32| c.map_or(fallback, |c| crate::interface_colors::on_panel(crate::ui::colors::set_color(c)));
+    let sample_name = aurora_i18n::tr!("contact-visual-sample-name");
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let w = ui.available_width();
+        // a chat line
+        let (line, _) = ui.allocate_exact_size(Vec2::new(w, (h - 6.0) / 2.0), Sense::hover());
+        ui.painter().rect_filled(line, radius, p.field);
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            sample_name,
+            0.0,
+            crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 12.0, shown(appearance.chat_name, p.ink)),
+        );
+        job.append(
+            aurora_i18n::tr!("set-editor-sample-chat"),
+            0.0,
+            egui::TextFormat::simple(
+                egui::FontId::proportional(12.0),
+                shown(appearance.chat_text, p.ink.gamma_multiply(0.85)),
+            ),
+        );
+        job.wrap.max_width = line.width() - 20.0;
+        job.wrap.max_rows = 2;
+        let g = ui.painter().layout_job(job);
+        let top = line.center().y - g.size().y / 2.0;
+        ui.painter().galley(Pos2::new(line.left() + 10.0, top), g, p.ink);
+        // a list row
+        let (row, _) = ui.allocate_exact_size(Vec2::new(w, (h - 6.0) / 2.0), Sense::hover());
+        ui.painter().rect_filled(row, radius, p.field);
+        let disc = Rect::from_center_size(Pos2::new(row.left() + 8.0 + 12.0, row.center().y), Vec2::splat(24.0));
+        widgets::avatar_disc(ui, p, disc, None, sample_name, false);
+        let mut job = egui::text::LayoutJob::single_section(
+            sample_name.to_owned(),
+            crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 12.0, shown(appearance.ui_name, p.ink)),
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width((row.right() - disc.right() - 16.0).max(0.0));
+        widgets::paint_row_text(
+            ui.painter(),
+            ui.painter().layout_job(job),
+            disc.right() + 8.0,
+            row.center().y,
+            p.ink,
+        );
+    });
 }
 
 #[cfg(test)]

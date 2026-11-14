@@ -78,6 +78,8 @@ pub enum SetsScene {
         badges: bool,
         marker: bool,
     },
+    /// The Family set's editor in a thin window: its preview on top.
+    ThinEditor,
     QuickSort,
     Options,
     /// Two members chosen: the selection's bar.
@@ -102,6 +104,7 @@ pub fn sets_scene() -> Option<SetsScene> {
             badges: false,
             marker: true,
         }),
+        "sets-editor-thin" => Some(SetsScene::ThinEditor),
         "sets-editor-behaviour" => editor(EditorTab::Behaviour, false),
         "sets-editor-replies" => editor(EditorTab::Replies, false),
         "sets-editor-members" => editor(EditorTab::Members, false),
