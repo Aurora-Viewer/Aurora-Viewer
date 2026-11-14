@@ -13611,6 +13611,12 @@ impl App {
                 self.shift = false;
             }
         }
+        // AURORA_DEMO_HUDS=slide: the HUD's script moves its card once, at frame 720.
+        if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "slide") && self.frame_count == 720 {
+            for ev in crate::demo::hud::slide_events() {
+                self.world.apply(ev);
+            }
+        }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_HUDS")
             && matches!(mode.as_str(), "menu" | "edit" | "edit-zoom" | "edit-no-mod" | "rotate-no-mod")

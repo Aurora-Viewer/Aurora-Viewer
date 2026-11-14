@@ -1071,19 +1071,18 @@ impl ObjectStore {
             return;
         };
         let clock = self.report_clock(key.region, received);
-        let hud = self.worn_on_hud(idx);
         let reported = Transform {
             position: Some(t.position),
             rotation: Some(t.rotation),
             scale: None,
         };
         let sent = self.sent_edits.filter(key, reported, now);
+        let hud_root = self.hud_root(idx);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        // A HUD shows a report at once: pages on the faces of a turning
-        // cube flip instantly in the Legacy Viewer, with no fade.
-        let drawn = (!hud).then(|| o.predicted(now, clock));
+        // a HUD linkset root shows a report at once, the prims below it fade (#3369)
+        let drawn = (!hud_root).then(|| o.predicted(now, clock));
         o.apply_terse(t);
         if let Some(sent) = sent {
             o.keep_sent(sent);
@@ -1099,7 +1098,6 @@ impl ObjectStore {
         self.hold_before_report(idx);
         let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
-        let hud = self.worn_on_hud(idx);
         let key = ObjKey {
             region,
             local_id: u.local_id,
@@ -1115,10 +1113,12 @@ impl ObjectStore {
             };
             self.sent_edits.filter(key, reported, now)
         };
+        let hud_root = self.hud_root(idx);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let mut drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
+        // as above, for a full update
+        let mut drawn = (!moved_frame && !hud_root).then(|| o.predicted(now, clock));
         let drawn_scale = o.scale_correction.map_or(o.scale, |c| c.sample(o.scale, now));
         o.apply_full(u);
         o.parent_region = region;
@@ -1127,8 +1127,10 @@ impl ObjectStore {
         }
         // Sample centre and size at the same receipt instant, including a
         // new report arriving before the previous correction has settled.
-        let smooth_scale =
-            !o.is_avatar() && drawn.is_some_and(|pose| motion::within_snap_distance(pose.0 - o.position, drawn_scale - o.scale));
+        // A HUD linkset root shows its size at once too.
+        let smooth_scale = !o.is_avatar()
+            && !hud_root
+            && drawn.is_some_and(|pose| motion::within_snap_distance(pose.0 - o.position, drawn_scale - o.scale));
         if !o.is_avatar() && !smooth_scale {
             drawn = None;
         }
@@ -1731,6 +1733,19 @@ impl ObjectStore {
             idx = parent;
         }
         false
+    }
+
+    /// Root prim of a HUD linkset (31-38, parented to the avatar): the Legacy
+    /// Viewer shows a report of one at once (LLVOAvatar::resetHUDAttachments
+    /// marks one undamped every frame) and damps the prims below it (#3369).
+    fn hud_root(&self, idx: usize) -> bool {
+        let Some(o) = self.get(idx) else {
+            return false;
+        };
+        let Some(parent) = self.parent_of(o) else {
+            return false;
+        };
+        self.get(parent).is_some_and(Object::is_avatar) && (31..=38).contains(&o.attachment_point())
     }
 }
 
@@ -2608,13 +2623,15 @@ mod tests {
         assert!(!s.get(seat).expect("seat").has_motion());
     }
 
+    /// A report of a HUD linkset's root prim shows at once; the prims below
+    /// it fade, as they do on the body (#3369).
     #[test]
-    fn a_hud_page_turns_at_once_while_a_worn_object_fades() {
+    fn a_report_shows_a_hud_linkset_root_at_once_and_damps_its_children() {
         let mut s = ObjectStore::default();
         s.upsert(1, update(10, AVATAR, ""));
         let now = Instant::now();
         let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-        for (point, root_id, fades) in [(31u8, 20, false), (2u8, 40, true)] {
+        for (point, root_id, root_fades) in [(31u8, 20u32, false), (2u8, 40u32, true)] {
             let mut root = update(root_id, PRIM, "");
             root.parent_id = 10;
             root.state = point.rotate_left(4);
@@ -2622,19 +2639,16 @@ mod tests {
             let mut cube = update(root_id + 1, PRIM, "");
             cube.parent_id = root_id;
             let cube_idx = s.upsert(1, cube.clone());
-            // The HUD page changes immediately; body-worn prims damp size
-            // and rotation together (llSetLinkPrimitiveParamsFast).
+            // llSetLinkPrimitiveParamsFast turns the card and grows it at once
             cube.rotation = quarter;
             cube.scale *= 2.0;
-            let reported_scale = cube.scale;
             s.upsert(1, cube);
             let o = s.get(cube_idx).expect("cube");
-            let drawn = s.predicted(o, now).1;
-            assert_eq!(o.correction.is_some(), fades, "point {point}");
-            assert_eq!(o.scale_correction.is_some(), fades, "scale at point {point}");
-            assert_eq!(o.visual_scale_at(now) == reported_scale, !fades, "scale at point {point}");
-            assert_eq!(drawn.abs_diff_eq(quarter, 1e-4), !fades, "point {point}: {drawn:?}");
-            // the HUD root itself turns at once too
+            assert!(o.correction.is_some() && o.scale_correction.is_some(), "point {point}");
+            near(o.visual_scale_at(now), Vec3::ONE);
+            assert!(s.predicted(o, now).1.abs_diff_eq(Quat::IDENTITY, 1e-4), "point {point}");
+            // a terse report that turns the root of the linkset: shown at once
+            // on a HUD, faded on the body
             let root_idx = s
                 .index_of(&ObjKey {
                     region: 1,
@@ -2645,12 +2659,27 @@ mod tests {
                 root_idx,
                 &TerseUpdate {
                     rotation: quarter,
+                    // the wire carries the attachment point on a terse report too
+                    state: point.rotate_left(4),
                     is_avatar: false,
                     ..terse(root_id, Vec3::ZERO, Vec3::ZERO)
                 },
             );
             let root = s.get(root_idx).expect("root");
-            assert_eq!(root.correction.is_some(), fades, "root at point {point}");
+            assert_eq!(root.correction.is_some(), root_fades, "root at point {point}");
+            let shown = if root_fades { Quat::IDENTITY } else { quarter };
+            assert!(s.predicted(root, now).1.abs_diff_eq(shown, 1e-4), "root at point {point}");
+            // the whole report, pose and size, shows at once on a HUD
+            let mut grown = update(root_id, PRIM, "");
+            grown.parent_id = 10;
+            grown.state = point.rotate_left(4);
+            grown.rotation = quarter;
+            grown.scale *= 2.0;
+            s.upsert(1, grown);
+            let root = s.get(root_idx).expect("root");
+            let grown_to = if root_fades { Vec3::ONE } else { Vec3::ONE * 2.0 };
+            near(root.visual_scale_at(now), grown_to);
+            assert_eq!(root.scale_correction.is_some(), root_fades, "size at point {point}");
         }
     }
 
