@@ -94,7 +94,8 @@ impl Editor {
         let name = rig.canonical_names.get(bone).map_or("", String::as_str);
         ui.add_space(ui.spacing().item_spacing.y);
         let pole = self.control == Control::Pole;
-        ui.strong(if pole { self.pole_label(rig, bone, name) } else { name });
+        let title = if pole { self.pole_label(rig, bone, name) } else { name };
+        widgets::section_header(ui, palette, "bone", title);
         // the joints selected with it (Shift or Ctrl + click), as in the pose editor
         let followers = self.clip_followers();
         if !followers.is_empty() {
@@ -123,7 +124,6 @@ impl Editor {
                 self.commit_manipulation(rig, frame, false);
             }
         } else {
-            ui.weak(aurora_i18n::tr!("anim-edit-fine-hint"));
             let (moved, rotated) = transform_fields(ui, "animation-bone-pose", &mut self.position, Some(&mut self.degrees), 0.005);
             let mut changed = moved;
             if rotated {
@@ -146,13 +146,39 @@ impl Editor {
                 self.commit_manipulation(rig, frame, rotated);
             }
         }
+        // how to pick several joints, switch the tool and go finer
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!("anim-edit-fine-hint"))
+                .small()
+                .color(palette.muted),
+        );
         ui.add_space(ui.spacing().item_spacing.y);
         self.clip_bone_track_ui(ui, palette, bone);
-        ui.horizontal(|ui| {
-            if ui.button(aurora_i18n::tr!("ik-edit-reset-bone")).clicked() {
+        ui.add_space(ui.spacing().item_spacing.y);
+        let size = egui::vec2(0.0, ui.spacing().interact_size.y);
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button(
+                ui,
+                palette,
+                "restore",
+                aurora_i18n::tr!("ik-edit-reset-bone"),
+                widgets::ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
                 self.reset_bone(bone, rig);
             }
-            if ui.button(aurora_i18n::tr!("ik-edit-reset-all")).clicked() {
+            if widgets::action_button(
+                ui,
+                palette,
+                "refresh",
+                aurora_i18n::tr!("ik-edit-reset-all"),
+                widgets::ActionKind::FlatDanger,
+                size,
+            )
+            .clicked()
+            {
                 self.reset_pose();
             }
         });

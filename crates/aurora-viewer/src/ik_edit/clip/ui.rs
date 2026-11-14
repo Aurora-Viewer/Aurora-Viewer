@@ -352,29 +352,52 @@ impl Editor {
             self.clip.changed();
         }
     }
-    pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_enabled_ui(!self.clip.waiting_source(), |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("anim-edit-key-bone")))
-                    .clicked()
-                    && let Some(bone) = self.selected
-                {
-                    self.clip.capture = Some(Capture::Bone(bone));
-                }
-                if ui
-                    .add_enabled(
-                        !self.clip.modified.is_empty(),
-                        egui::Button::new(aurora_i18n::tr!("anim-edit-key-changes")),
-                    )
-                    .clicked()
-                {
-                    self.clip.capture = Some(Capture::Modified);
-                }
-                if ui.button(aurora_i18n::tr!("anim-edit-key-pose")).clicked() {
-                    self.clip.capture = Some(Capture::Pose);
-                }
-            });
+    /// Key this bone (with the joints selected with it), the changes, or the
+    /// whole pose at the playhead: icon buttons like the timeline's.
+    pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
+        let waiting = self.clip.waiting_source();
+        let size = egui::vec2(0.0, ui.spacing().interact_size.y);
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "keyframe",
+                aurora_i18n::tr!("anim-edit-key-bone"),
+                widgets::ActionKind::Flat,
+                size,
+                !waiting && self.selected.is_some(),
+            )
+            .clicked()
+                && let Some(bone) = self.selected
+            {
+                self.clip.capture = Some(Capture::Bone(bone));
+            }
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "keyframe",
+                aurora_i18n::tr!("anim-edit-key-changes"),
+                widgets::ActionKind::Flat,
+                size,
+                !waiting && !self.clip.modified.is_empty(),
+            )
+            .clicked()
+            {
+                self.clip.capture = Some(Capture::Modified);
+            }
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "key",
+                aurora_i18n::tr!("anim-edit-key-pose"),
+                widgets::ActionKind::Flat,
+                size,
+                !waiting,
+            )
+            .clicked()
+            {
+                self.clip.capture = Some(Capture::Pose);
+            }
         });
     }
     fn clip_tracks_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
@@ -671,32 +694,54 @@ impl Editor {
         }
     }
     pub(in crate::ik_edit) fn clip_export_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
-        self.clip_capture_ui(ui);
+        // the page above scrolls; the keying and the files stay below it
+        widgets::divider(ui, palette);
+        self.clip_capture_ui(ui, palette);
         let enabled = !self.clip.busy
             && !self.clip.waiting_source()
             && self.clip.document.as_ref().is_some_and(|document| document.has_exportable_tracks());
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-save")))
-                .clicked()
+        let size = egui::vec2(0.0, ui.spacing().interact_size.y);
+        let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "device-floppy",
+                aurora_i18n::tr!("anim-edit-save"),
+                widgets::ActionKind::Primary,
+                size,
+                enabled,
+            )
+            .clicked()
             {
-                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
                 self.queue_studio_file_action(files::Action::Save { last_key_only });
             }
-            if ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-export-bvh")))
-                .on_hover_text(aurora_i18n::tr!("anim-edit-export-bvh-hint"))
-                .clicked()
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "file-export",
+                aurora_i18n::tr!("anim-edit-export-bvh"),
+                widgets::ActionKind::Flat,
+                size,
+                enabled,
+            )
+            .on_hover_text(aurora_i18n::tr!("anim-edit-export-bvh-hint"))
+            .clicked()
             {
-                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
                 self.queue_studio_file_action(files::Action::ExportBvh { last_key_only });
             }
-            if ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-upload")))
-                .on_hover_text(aurora_i18n::tr!("anim-edit-upload-hint"))
-                .clicked()
+            if widgets::action_button_if(
+                ui,
+                palette,
+                "upload",
+                aurora_i18n::tr!("anim-edit-upload"),
+                widgets::ActionKind::Flat,
+                size,
+                enabled,
+            )
+            .on_hover_text(aurora_i18n::tr!("anim-edit-upload-hint"))
+            .clicked()
             {
-                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
                 self.queue_studio_file_action(files::Action::Import { last_key_only });
             }
         });
