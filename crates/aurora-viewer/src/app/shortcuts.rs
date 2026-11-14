@@ -154,7 +154,10 @@ impl App {
                 .world
                 .objects
                 .iter()
-                .filter(|(_, o)| o.is_avatar() && o.parent_id == 0 && o.full_id != self.world.agent_id)
+                // the demo blocks one of its residents: their line would never be heard
+                .filter(|(_, o)| {
+                    o.is_avatar() && o.parent_id == 0 && o.full_id != self.world.agent_id && !self.world.mutes.text_muted(&o.full_id, "")
+                })
                 .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
                 .map(|(_, o)| (o.full_id, o.position));
             let Some((id, position)) = nearest else {

@@ -1470,11 +1470,13 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LAST_CHATTER=1`**: at frame 500 the nearest resident says
-  a line in nearby chat; at frame 540 Ctrl+\ (Look at Last Chatter) is
+- **`AURORA_DEMO_LAST_CHATTER=1`**: at frame 500 the nearest resident not
+  blocked says a line in nearby chat (the plaza's only other resident is
+  blocked: add `AURORA_DEMO_CROWD=4`); at frame 540 Ctrl+\ (Look at Last Chatter) is
   pressed through the bindings: the camera goes just behind our head, a
   little aside and above, looking at that resident's head (capture after
-  frame 600). The log line `demo last chatter` gives the speaker kept.
+  frame 600). The log line `demo last chatter` gives the speaker kept;
+  `no resident in view` means no resident could speak.
 - **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle|crash][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
