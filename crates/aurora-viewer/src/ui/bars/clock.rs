@@ -53,10 +53,13 @@ pub(crate) fn set_grid_time(seconds_since_epoch: &str) {
     log::info!("clock: the grid's time is {correction:+} s from the computer's clock");
 }
 
-/// The grid's time minus `now`, when `seconds_since_epoch` gives one.
+/// The grid's time minus `now`, when `seconds_since_epoch` gives one that
+/// fits in an `i32`, like the Legacy Viewer's `S32 gUTCOffset`: a server
+/// time near `i64::MAX` would otherwise overflow `unix + correction` in
+/// `slt_offset`.
 fn grid_correction(seconds_since_epoch: &str, now: i64) -> Option<i64> {
     let server = seconds_since_epoch.trim().parse::<i64>().ok().filter(|&t| t > 0)?;
-    Some(server - now)
+    i32::try_from(server - now).ok().map(i64::from)
 }
 
 /// The computer's tz database zone (Windows' own zones mapped to IANA
@@ -516,6 +519,20 @@ mod tests {
         assert_eq!(from_slt(round_to_minute(3600 - 2)), "SLT +1 h");
         assert_eq!(from_slt(round_to_minute(-3600 + 20)), "SLT −1 h");
         assert_eq!(from_slt(round_to_minute(5)), "SLT");
+    }
+
+    /// A server time far outside the `i32` range leaves the correction as
+    /// it was, so SLT cannot overflow.
+    #[test]
+    fn grid_correction_stays_in_the_i32_range() {
+        let computer = 1_794_350_036;
+        assert_eq!(grid_correction(&i64::MAX.to_string(), computer), None);
+        assert_eq!(grid_correction(&(i64::MAX - 1).to_string(), computer), None);
+        let largest = computer + i64::from(i32::MAX);
+        assert_eq!(grid_correction(&largest.to_string(), computer), Some(i64::from(i32::MAX)));
+        assert_eq!(grid_correction(&(largest + 1).to_string(), computer), None);
+        // the largest correction kept still gives an SLT offset
+        let _ = slt_offset(computer, i64::from(i32::MAX));
     }
 
     /// Windows short time patterns of a few regional formats.
