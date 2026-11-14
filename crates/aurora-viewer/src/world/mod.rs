@@ -2758,6 +2758,7 @@ impl World {
                 let root = self.inventory.root;
                 self.inventory.request(root);
                 self.map.set_home_from_login(l.raw["home"].as_str());
+                crate::ui::bars::clock::set_grid_time(&l.raw["seconds_since_epoch"].to_string_value());
                 self.login = Some(l.clone());
                 Some(NetEvent::LoggedIn(l))
             }

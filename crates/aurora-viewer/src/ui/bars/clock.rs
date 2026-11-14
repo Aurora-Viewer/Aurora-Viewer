@@ -5,6 +5,20 @@
 //! winter, CEST in summer), else its offset (UTC+4). The system island's
 //! tooltip gives both times, with how far local time is from SLT.
 //!
+//! Local time's offset is always the system's own: its time zone data
+//! follows the OS updates, while chrono-tz's bundled copy is frozen at its
+//! release (#3018: British Columbia left Pacific time for UTC−7 all year on
+//! 2026-11-01, which chrono-tz 0.10.4 still gives as PST, UTC−8). The
+//! bundled zone only names the offset, when it agrees with the system.
+//!
+//! SLT is the grid's time, not the computer's: like the Legacy Viewer's
+//! `time_corrected` (indra/llcommon/lltimer.cpp), it adds how far the
+//! computer's clock is from the login server's `seconds_since_epoch`
+//! (`gUTCOffset`, LLStartup's login response handling). A computer whose
+//! clock was set by hand, an hour off to show another zone's time, still
+//! shows the right SLT (#3018). Local time stays the computer's own clock,
+//! as its menu bar shows it.
+//!
 //! The Legacy Viewer's status bar shows SLT alone (LLStatusBar::
 //! updateClockDisplay); FSStatusBarTimeFormat picks 12 or 24 hours, the
 //! seconds and the time zone, by default the format of the viewer's
@@ -12,7 +26,7 @@
 //! system's regional format instead, the user's own 12 / 24 hours choice.
 
 use crate::settings::{ClockFormat, ClockZone, SystemIsland};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Seconds since the epoch, now.
@@ -21,6 +35,31 @@ pub(crate) fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Seconds to add to the computer's clock for the grid's time, from the
+/// last login (`set_grid_time`); 0 before any login, as in the Legacy
+/// Viewer, whose `gUTCOffset` starts at 0 and stays after a logout.
+static GRID_CORRECTION: AtomicI64 = AtomicI64::new(0);
+
+/// Takes the grid's time from a login response's `seconds_since_epoch`
+/// (LLStartup: `gUTCOffset = server_utc_time - time(NULL)`); an absent or
+/// zero value leaves the correction as it was.
+pub(crate) fn set_grid_time(seconds_since_epoch: &str) {
+    let Some(correction) = grid_correction(seconds_since_epoch, now_unix()) else {
+        return;
+    };
+    GRID_CORRECTION.store(correction, Ordering::Relaxed);
+    log::info!("clock: the grid's time is {correction:+} s from the computer's clock");
+}
+
+/// The grid's time minus `now`, when `seconds_since_epoch` gives one that
+/// fits in an `i32`, like the Legacy Viewer's `S32 gUTCOffset`: a server
+/// time near `i64::MAX` would otherwise overflow `unix + correction` in
+/// `slt_offset`.
+fn grid_correction(seconds_since_epoch: &str, now: i64) -> Option<i64> {
+    let server = seconds_since_epoch.trim().parse::<i64>().ok().filter(|&t| t > 0)?;
+    i32::try_from(server - now).ok().map(i64::from)
 }
 
 /// The computer's tz database zone (Windows' own zones mapped to IANA
@@ -58,18 +97,29 @@ fn local(unix: i64) -> (i64, String) {
     }
 }
 
-/// Local time's offset and label at `unix`: from the zone read at startup,
-/// else from the system's offset alone (a label like UTC+1).
+/// Local time's offset and label at `unix`: the system's offset, named by
+/// the zone read at startup when that zone agrees with it.
 fn local_at(unix: i64) -> (i64, String) {
-    if let Some(tz) = LOCAL_ZONE.get().copied().flatten() {
-        return zone_at(tz, unix);
-    }
     use chrono::{Offset, TimeZone};
-    let offset = chrono::Local
+    let system = chrono::Local
         .timestamp_opt(unix, 0)
         .single()
-        .map_or(0, |t| i64::from(t.offset().fix().local_minus_utc()));
-    (offset, zone_label(None, offset))
+        .map(|t| i64::from(t.offset().fix().local_minus_utc()));
+    let zone = LOCAL_ZONE.get().copied().flatten().map(|tz| zone_at(tz, unix));
+    local_from(system, zone)
+}
+
+/// Local time from the system's offset and the bundled zone's offset and
+/// label. The system wins: when the bundled rules disagree (a zone changed
+/// after chrono-tz's release), its label would be wrong too, so the offset
+/// names itself (UTC−7).
+fn local_from(system: Option<i64>, zone: Option<(i64, String)>) -> (i64, String) {
+    match (system, zone) {
+        (Some(offset), Some((zone_offset, label))) if zone_offset == offset => (offset, label),
+        (Some(offset), _) => (offset, zone_label(None, offset)),
+        (None, Some(zone)) => zone,
+        (None, None) => (0, zone_label(None, 0)),
+    }
 }
 
 /// A zone's offset and label at `unix`.
@@ -103,12 +153,19 @@ fn zone_label(abbreviation: Option<&str>, offset: i64) -> String {
     }
 }
 
-/// Seconds to add to UTC for `zone` at `unix`.
+/// Seconds to add to the computer's UTC for `zone` at `unix`: SLT counts
+/// the grid's correction too.
 pub(crate) fn offset(zone: ClockZone, unix: i64) -> i64 {
     match zone {
-        ClockZone::Slt => crate::world::chat_log::format::pacific_offset_hours(unix) * 3600,
+        ClockZone::Slt => slt_offset(unix, GRID_CORRECTION.load(Ordering::Relaxed)),
         ClockZone::Local => local(unix).0,
     }
+}
+
+/// US Pacific time at the grid's instant: the computer's `unix` plus
+/// `correction`.
+fn slt_offset(unix: i64, correction: i64) -> i64 {
+    correction + crate::world::chat_log::format::pacific_offset_hours(unix + correction) * 3600
 }
 
 /// The time a left click on the clock switches to.
@@ -302,6 +359,12 @@ pub(crate) fn text(s: SystemIsland) -> String {
     format!("{} {label}", hours(unix, offset, s.clock_seconds, twelve_hours(s.clock_format)))
 }
 
+/// `secs` to the nearest whole minute: the grid's correction carries the
+/// login's few seconds of latency, which the distance from SLT leaves out.
+fn round_to_minute(secs: i64) -> i64 {
+    (secs + 30).div_euclid(60) * 60
+}
+
 /// How far a time `diff` seconds from SLT is: "SLT +9 h", "SLT −8 h",
 /// "SLT +5 h 30", "SLT" when they are the same.
 fn from_slt(diff: i64) -> String {
@@ -327,7 +390,7 @@ pub(crate) fn tip_values(s: SystemIsland) -> [String; 2] {
         format!(
             "{} {label} ({})",
             hours(unix, local, s.clock_seconds, twelve),
-            from_slt(local - slt)
+            from_slt(round_to_minute(local - slt))
         ),
     ]
 }
@@ -412,6 +475,64 @@ mod tests {
         assert_eq!(zone_label(None, -12600), "UTC−3:30");
         assert_eq!(zone_label(Some("+03"), 10800), "UTC+3");
         assert_eq!(zone_label(Some(""), 0), "UTC");
+    }
+
+    /// The system's offset wins over the bundled zone's (#3018), whose
+    /// label is kept only when both agree.
+    #[test]
+    fn local_time_follows_the_systems_offset() {
+        // 2026-11-10 22:33:56 UTC, the reporter's Terminal time
+        let unix = 1_794_350_036;
+        let bundled = zone_at(chrono_tz::America::Vancouver, unix);
+        // the system's data: British Columbia on UTC−7 since 2026-11-01
+        assert_eq!(local_from(Some(-7 * 3600), Some(bundled.clone())), (-7 * 3600, "UTC−7".to_owned()));
+        assert_eq!(
+            local_from(Some(-8 * 3600), Some((-8 * 3600, "PST".to_owned()))),
+            (-8 * 3600, "PST".to_owned())
+        );
+        assert_eq!(local_from(Some(3600), None), (3600, "UTC+1".to_owned()));
+        assert_eq!(local_from(None, Some(bundled.clone())), bundled);
+        assert_eq!(local_from(None, None), (0, "UTC".to_owned()));
+        // SLT stays US Pacific: UTC−8 after the first Sunday of November
+        assert_eq!(offset(ClockZone::Slt, unix), -8 * 3600);
+    }
+
+    /// SLT follows the grid's clock, not a computer clock set by hand
+    /// (#3018: a Mac on Los Angeles time set one hour ahead to show
+    /// British Columbia's time).
+    #[test]
+    fn slt_follows_the_grids_time() {
+        // the grid's 2026-11-10 22:33:56 UTC, the computer one hour ahead
+        let grid = 1_794_350_036;
+        let computer = grid + 3600;
+        let correction = grid_correction(&grid.to_string(), computer).expect("a server time");
+        assert_eq!(correction, -3600);
+        // 14:33 SLT, as the Legacy Viewer shows, not the computer's 15:33
+        assert_eq!(hours(computer, slt_offset(computer, correction), false, false), "14:33");
+        // no correction before a login, or with no usable server time
+        assert_eq!(slt_offset(grid, 0), -8 * 3600);
+        assert_eq!(grid_correction("", computer), None);
+        assert_eq!(grid_correction("0", computer), None);
+        assert_eq!(grid_correction("soon", computer), None);
+        assert_eq!(grid_correction(" 1794350036 ", grid), Some(0));
+        // the login's latency stays out of the distance from SLT
+        assert_eq!(from_slt(round_to_minute(3600 - 2)), "SLT +1 h");
+        assert_eq!(from_slt(round_to_minute(-3600 + 20)), "SLT −1 h");
+        assert_eq!(from_slt(round_to_minute(5)), "SLT");
+    }
+
+    /// A server time far outside the `i32` range leaves the correction as
+    /// it was, so SLT cannot overflow.
+    #[test]
+    fn grid_correction_stays_in_the_i32_range() {
+        let computer = 1_794_350_036;
+        assert_eq!(grid_correction(&i64::MAX.to_string(), computer), None);
+        assert_eq!(grid_correction(&(i64::MAX - 1).to_string(), computer), None);
+        let largest = computer + i64::from(i32::MAX);
+        assert_eq!(grid_correction(&largest.to_string(), computer), Some(i64::from(i32::MAX)));
+        assert_eq!(grid_correction(&(largest + 1).to_string(), computer), None);
+        // the largest correction kept still gives an SLT offset
+        let _ = slt_offset(computer, i64::from(i32::MAX));
     }
 
     /// Windows short time patterns of a few regional formats.
