@@ -7841,6 +7841,7 @@ session-land-no-attachment-resources = リージョンはAttachmentResourcesの�
 ui-options-theme-json-layout-json-icons-reloaded-automatically = theme.json・layout.json・icons/‐自動的に再読み込みされます
 login-too-many-redirects = リダイレクトが多すぎます
 login-next-server-refused = ログインサーバーが暗号化なし、または無効なアドレスでのログイン継続を求めたため、ログインを中止しました。
+login-server-error = ログインサーバーがログインを完了できませんでした（ＨＴＴＰ { $status }）。多くの場合、グリッド側の問題です。数分後にもう一度お試しいただき、グリッドのステータスページで既知の問題がないか確認してください。問題が続く場合は、ネットワークとファイアウォールの設定を確認してください。
 build-ui-floaters-transfer = 再販・譲渡
 fetch-transport-error = 転送エラー
 ui-debug-overlay-too-small = 小さすぎ
