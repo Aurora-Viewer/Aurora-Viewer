@@ -85,6 +85,7 @@ impl World {
             | BuildCmd::SpinUpdate { object_id, .. }
             | BuildCmd::ScriptReset { object_id, .. }
             | BuildCmd::SetScriptRunning { object_id, .. } => uuid(object_id),
+            BuildCmd::CreateTaskItem { item, .. } => uuid(&item.parent_id),
             BuildCmd::Undo { ids, .. } | BuildCmd::Redo { ids, .. } => ids.iter().all(uuid),
             BuildCmd::Cap { cap, body, .. } if cap == "ModifyMaterialParams" => {
                 body.as_array().iter().all(|entry| uuid(&entry["object_id"].as_uuid()))

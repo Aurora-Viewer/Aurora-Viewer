@@ -1022,6 +1022,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
+| `AURORA_DEMO_LAST_CHATTER=1` | The nearest resident speaks, then Ctrl+\ looks at them |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
 | `AURORA_DEMO_STAND_FLY=ground\|object\|fly\|stand\|land\|locked\|fly-rlva` | Sits or flies for the floating Stand / Stop flying panel, then presses it |
@@ -1471,6 +1472,13 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
+- **`AURORA_DEMO_LAST_CHATTER=1`**: at frame 500 the nearest resident not
+  blocked says a line in nearby chat (the plaza's only other resident is
+  blocked: add `AURORA_DEMO_CROWD=4`); at frame 540 Ctrl+\ (Look at Last Chatter) is
+  pressed through the bindings: the camera goes just behind our head, a
+  little aside and above, looking at that resident's head (capture after
+  frame 600). The log line `demo last chatter` gives the speaker kept;
+  `no resident in view` means no resident could speak.
 - **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle|crash][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
@@ -1791,6 +1799,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_BUILD_STYLE=aurora\|legacy` | Construction window presentation for this demo run |
+| `AURORA_DEMO_CONTENTS_CAP=0` | The region without CreateTaskInventoryItem: New script by RezScript, New notecard disabled |
 | `AURORA_DEMO_OBJECT_SNAP=1\|on` | Boxes to snap together with "Snap to objects" |
 | `AURORA_DEMO_MOVE_HOLOGRAM=moving\|start` | The hologram of a move, for a build script |
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
@@ -2993,6 +3002,13 @@ choice belongs to this construction window, independently of inventory: Mine
 by default, Next owner, Both or Hidden. Switching it changes only the displayed
 suffix, never item permissions or simulator commands. `contents+next-owner`
 still selects Both for captures.
+With `AURORA_DEMO_BUILD=contents-new,object:118` and `AURORA_DEMO_BUILD_TAB=contents`,
+the Contents tab presses New notecard then New script at frame 260: the demo
+region answers CreateTaskInventoryItem like a Second Life region, and the list
+gains a "New notecard" (empty, opens in the notecard editor) and a running
+"New script". New notecard opens the second row, under New script.
+`AURORA_DEMO_CONTENTS_CAP=0` withdraws the capability: New notecard is
+disabled and New script falls back to RezScript, as on a region without it.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
 `AURORA_DEMO_BUILD_TAB=contents+permissions`, check the eleven icon filters,
 All/Clear, Group/Anyone/Next owner columns and OK/Apply/Cancel. No-copy forces
@@ -3358,7 +3374,7 @@ Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, Shift-click, move, edit |
-| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures |
+| `AURORA_DEMO_FLOATING_TEXT=<mode>` | Floating-text baseline and multiline reference fixtures; `background` for the floating text options |
 | `AURORA_DEMO_WORN=<mode>` | Object worn on the body: animated attachment point, menus, Edit, Inspect, derender of a linked part, inventory double-clicks, pause while edited, temporary detach, temporary attachments in Appearance |
 
 ### Details
@@ -3372,6 +3388,11 @@ letters sit on the ticks; test different UI text sizes and fonts.
 `world` instead adds a purple cube with three centered text rows near the
 default demo start. Last-baseline placement is shared, and interline spacing
 follows the selected font's ascent plus descent minus one, without line gap.
+`background` shows the same cube and a dark text farther away, with
+Preferences › Layout › World tooltips › Floating text set to a background on all objects and a
+fade distance of 16 m: a black card behind the white rows, a white one behind
+the dark text, both faded with their text. Hover the far cube with Highlight
+on hover on: its text turns opaque and comes in front of the scene.
 
 Eight textured HUDs on points 31–38, with floating text and a translucent
 child button; another avatar's HUD is hidden. No access to a
@@ -5944,6 +5965,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_ABOUT=info\|licences\|libraries[:end]` | Help › About Aurora Viewer opens on its Info, Licences or Libraries tab |
+| `AURORA_DEMO_SYSINFO=1` | "Send system information" chosen in the friend's conversation: its confirmation |
 | `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -6028,7 +6050,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban\|estate-menu\|estate-kick\|estate-home\|estate-ban` | "Freeze" and "Eject" of a resident on our land, and the estate's "Kick", "Teleport home" and "Ban" |
 | `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, or at its narrowest |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow,utc,local]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, at its narrowest, or the history in UTC or local time |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -7020,6 +7042,12 @@ failure. Grid validation and any paid upload are performed by the human.
   NOTICE.md, a card per heading; Libraries shows THIRD-PARTY-LICENSES.md
   as text (the crates, then the licence texts). Capture at frame 700 with
   `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
+- **`AURORA_DEMO_SYSINFO=1`**: at frame 600, "Send system information" of
+  the friend's conversation menu: once the computer is read, the
+  confirmation shows the About window's text in English (Send / Cancel).
+  The demo puts a made-up computer and graphics card in the text (in
+  the menu's text and in "/sysinfo"), never the PC it runs on. Capture
+  at frame 700. Send writes it in the friend's conversation.
 - **`AURORA_DEMO_VOICE_CONTROLS=1`**: the Voice controls window
   (`ui/voice_controls.rs`, the toolbar's `voice` command) opens at frame
   600. Nearby channel: Nova talks in bursts, Tess is in voice and silent,
@@ -9395,7 +9423,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `unknown`: a region for which nobody answers (error after 10 s);
   `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow]`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic,narrow,utc,local]`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months. In Aurora's look (Preferences › Aurora ›
   Places), `:wide` opens the window at 1040 × 640 (the rail of sources and
@@ -9409,7 +9437,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and at any interface scale (#2641).
   `:narrow` opens the window 260 points wide (its least width at text
   size 1): with `:classic` and `AURORA_TEXT_SIZE=2`, the window widens to
-  the three buttons, each whole.- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
+  the three buttons, each whole.
+  `:utc` / `:local`: the teleport history's days and hours in UTC or local
+  time for the run, instead of SLT (FSTPHistoryTZ; not saved, until a
+  zone is chosen in the menu): the day sections start at that zone's
+  midnight, and Aurora's "Today, 21:40" labels follow it.
+- **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
   gives it its notes and moves it to the chosen folder, Cancel deletes it.
@@ -10837,6 +10870,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
+| `AURORA_DEMO_TAG_DISTANCE=1` | The distance in the name tags and the names colored by it, for this run |
 | `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -10997,6 +11031,14 @@ What the inventory must show with these scenarios:
     "Full plates for friends only" for this run, not saved): only Orion, the
     friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
     compact pills however near; the far pills do not change.
+  - With `AURORA_DEMO_TAG_DISTANCE=1` (Preferences › Avatars › "Distance in
+    name tags" and "Names colored by distance" for this run, not saved):
+    each plate but ours ends its name line with ` · 7.12 m`, on the full
+    plates, the pills and the far names alike; the five near residents (in
+    chat range) have that figure and their names in green, the farther ones
+    (within a shout) in the plain ink. Orion keeps the heart and his plate
+    the friends' tint. Add `AURORA_NAME_TAGS=classic` for the classic tags:
+    a small line under the names, before the complexity.
   - `AURORA_DEMO_NAME_TAGS=all|self-off|friends-off|others-off|off|temporary|classic-temporary`
     selects the visibility scenario at startup. Combine with `AURORA_DEMO_TAGS=voice`
     for a row containing a friend and other residents. Temporary modes use
