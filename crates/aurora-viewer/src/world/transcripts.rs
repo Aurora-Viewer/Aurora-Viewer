@@ -299,6 +299,7 @@ impl World {
     /// Empty the nearby chat (the "clear" command of the chat bar).
     pub fn clear_nearby_chat(&mut self) {
         self.chat.clear();
+        self.chat_objects.clear();
         self.chat_clock.renumbered();
     }
 
@@ -910,6 +911,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: ChatType::Whisper,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "psst".into(),
         }));

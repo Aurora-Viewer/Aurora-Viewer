@@ -2876,7 +2876,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
-                    if !object && !avatar.is_nil() {
+                    if object && !line.source.is_nil() {
+                        object_sender(&r.clone().on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+                    } else if !avatar.is_nil() {
                         line_name_menu(&r, p, world, avatar, line, env.menu);
                     }
                     if !object
@@ -4360,18 +4362,30 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
                         super::profile::request_open(ui.ctx(), id);
                     }
                 }
-                SenderLink::Object(id) => object_sender(&resp, p, world, id, &line.from),
+                SenderLink::Object(_) => object_sender(&resp, p, world, line),
             }
         });
 }
 
 /// An object's name in a line: a click inspects it, a right click offers
-/// to inspect or to ignore it (Firestorm's objectim link of the name,
+/// to inspect or to ignore it (the Legacy Viewer's objectim link of the name,
 /// LLViewerChat::getSenderSLURL).
-fn object_sender(resp: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, name: &str) {
+fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine) {
+    let id = line.source;
+    let inspect = || {
+        CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
+            || crate::slapp::RemoteObject {
+                id,
+                name: line.from.clone(),
+                owner: uuid::Uuid::nil(),
+                group_owned: false,
+                slurl: String::new(),
+            },
+        )))
+    };
     super::menu::context_menu(resp, p, |ui| {
         if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
-            super::context::request(ui.ctx(), CtxAction::Inspect(id));
+            super::context::request(ui.ctx(), inspect());
         }
         let (icon, label) = if world.mutes.is_muted_id(&id) {
             ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
@@ -4379,11 +4393,17 @@ fn object_sender(resp: &egui::Response, p: &Palette, world: &World, id: uuid::Uu
             ("ban", aurora_i18n::tr!("common-ignore"))
         };
         if super::menu::item(ui, p, icon, label) {
-            super::context::request(ui.ctx(), CtxAction::ToggleBlockObject { id, name: name.to_owned() });
+            super::context::request(
+                ui.ctx(),
+                CtxAction::ToggleBlockObject {
+                    id,
+                    name: line.from.clone(),
+                },
+            );
         }
     });
     if resp.clicked() {
-        super::context::request(&resp.ctx, CtxAction::Inspect(id));
+        super::context::request(&resp.ctx, inspect());
     }
 }
 
@@ -6431,5 +6451,124 @@ mod tests {
         });
         assert!(tooltip_shown(&texts, LONG));
         assert!(texts.iter().any(|t| t.source == USERNAME));
+    }
+    #[test]
+    fn object_sender_names_open_the_message_origin_in_every_chat_style() {
+        use crate::ui::widgets::elide_tests::Frames;
+        use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetEvent};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = uuid::Uuid::from_u128(2009);
+        let owner = uuid::Uuid::from_u128(2010);
+        assert!(world.objects.index_of_uuid(&id).is_none());
+        world.apply(NetEvent::Chat(ChatMessage {
+            from_name: "Origin Vendor".into(),
+            source_id: id,
+            owner_id: owner,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::Normal,
+            region: world.main_region,
+            position: glam::Vec3::new(32.0, 64.0, 128.0),
+            message: "Hello from an unloaded object".into(),
+        }));
+        let line = world.chat.back().unwrap().clone();
+        let expected = world.chat_object(&line).unwrap().clone();
+        assert_eq!(expected.owner, owner);
+        assert!(expected.slurl.ends_with("/32/64/128"));
+        // an object's IM: its line belongs to the object (the IM's session id)
+        let mailer = uuid::Uuid::from_u128(2011);
+        world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: owner,
+            from_name: "Origin Mailer".into(),
+            to_agent_id: world.agent_id,
+            dialog: 19,
+            session_id: mailer,
+            message: "Hello from an object's IM".into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: b"Far Away/10/20/30\0".to_vec(),
+            timestamp: 0,
+        }));
+        let im_line = world.chat.back().unwrap().clone();
+        assert_eq!((im_line.kind, im_line.source), (ChatKind::ObjectIm, mailer));
+        let im_expected = world.chat_object(&im_line).unwrap().clone();
+        assert!(im_expected.slurl.ends_with("/10/20/30"));
+        // The object's latest origin stays known when it leaves the scene
+        // or the agent moves (one per object, not per line).
+        world.agent.position = glam::Vec3::ZERO;
+        let icons = crate::ui::icons::Icons::default();
+        let pics = HashMap::new();
+        for (line, expected, name) in [(&line, &expected, "Origin Vendor"), (&im_line, &im_expected, "Origin Mailer")] {
+            for renderer in 0..5 {
+                let mut frames = Frames::new();
+                crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+                let p = crate::theme::Theme::default().palette();
+                let mut emoji = crate::ui::emoji::Emoji::load();
+                let (mut names, mut wanted) = (HashSet::new(), HashSet::new());
+                let mut draw = |ui: &mut egui::Ui| {
+                    let mut env = LineEnv {
+                        p: &p,
+                        icons: &icons,
+                        emoji: &mut emoji,
+                        pics: &pics,
+                        world: &world,
+                        want_names: &mut names,
+                        wanted: &mut wanted,
+                        own_name: "Self",
+                        plain_history: false,
+                        compact_automated: renderer == 4,
+                        compact_notices: false,
+                        menu: None,
+                        bubbles: (renderer == 2).then_some(true),
+                        previews: None,
+                    };
+                    let look = view::Look {
+                        header: true,
+                        first: true,
+                        tail: true,
+                        ..Default::default()
+                    };
+                    if matches!(renderer, 0 | 1 | 4) {
+                        let mut out = Vec::new();
+                        let mut thread = thread::Thread {
+                            compact: renderer == 1,
+                            times: false,
+                            moderators: None,
+                            me: &[],
+                            out: &mut out,
+                        };
+                        thread::draw(ui, &mut env, &mut thread, line, look, None, true);
+                    } else {
+                        draw_line(ui, &mut env, line, look, None);
+                    }
+                };
+                frames.run(vec![], &mut draw);
+                let texts = frames.run(vec![], &mut draw);
+                let at = texts.iter().find(|t| t.source == name).unwrap().rect.center();
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(at),
+                            egui::Event::PointerButton {
+                                pos: at,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        &mut draw,
+                    );
+                }
+                let actions = crate::ui::context::take_requests(&frames.ctx);
+                assert!(
+                    matches!(&actions[..], [CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(o))] if o == expected),
+                    "{name}, renderer {renderer}: {actions:?}"
+                );
+            }
+        }
+        world.clear_nearby_chat();
+        assert!(world.chat_objects.is_empty());
     }
 }
