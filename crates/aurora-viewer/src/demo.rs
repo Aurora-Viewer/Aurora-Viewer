@@ -4454,6 +4454,7 @@ fn caps() -> std::collections::HashMap<String, String> {
     let mut caps: std::collections::HashMap<String, String> = [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
         .into_iter()
         .chain(sim_extras::caps())
+        .chain(crate::build::demo_sim::caps())
         .collect();
     if crate::world::inventory::demo::big().is_some_and(|big| big.fetch) {
         for (name, url) in [
