@@ -133,6 +133,10 @@ pub fn input(world: &World, scene: &mut Scene, key: ObjKey, now: Instant) -> Res
             if !best.is_some_and(|range| view.bytes.holds(range)) {
                 return Err(Waiting::Mesh);
             }
+            // a rigged mesh is written with its rigging: its skin block too
+            if view.header.skin.is_some() && view.skin.is_none() && !view.skin_bad {
+                return Err(Waiting::Mesh);
+            }
             Geometry::Mesh(view)
         }
         Some(s) => {
@@ -176,6 +180,8 @@ pub fn generate(input: PrimInput) -> SourcePrim {
                     uvs: f.uvs,
                     indices: f.indices.into_iter().map(u32::from).collect(),
                     te: te(i),
+                    joints: f.joints,
+                    weights: f.weights,
                 })
                 .collect(),
             Some(Err(e)) => {
@@ -185,11 +191,16 @@ pub fn generate(input: PrimInput) -> SourcePrim {
             None => Vec::new(),
         },
     };
+    let skin = match &input.geometry {
+        Geometry::Mesh(view) => view.skin.clone(),
+        _ => None,
+    };
     SourcePrim {
         position: input.position,
         rotation: input.rotation,
         scale: input.scale,
         faces,
+        skin,
     }
 }
 
@@ -203,6 +214,7 @@ fn volume_faces(mesh: aurora_prim::VolumeMesh, te: &dyn Fn(usize) -> TextureFace
             uvs: f.uvs,
             indices: f.indices.into_iter().map(u32::from).collect(),
             te: te(i),
+            ..Default::default()
         })
         .collect()
 }

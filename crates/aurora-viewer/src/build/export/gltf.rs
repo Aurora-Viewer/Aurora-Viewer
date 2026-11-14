@@ -12,10 +12,23 @@
 //!   the base colour (linear), multiplied by its texture as the grid draws
 //!   it; BLEND when the colour or the texture has transparency;
 //! - the textures embedded as PNG in the file's binary chunk, by the name
-//!   their item gives them (never their id).
+//!   their item gives them (never their id);
+//! - a rigged mesh with its rigging (Aurora's own: the Legacy Viewer's
+//!   Collada export writes none): one skeleton for the file, the joints the
+//!   rigged meshes use and their parents, laid out as avatar_skeleton.xml
+//!   places them (the mesh's own joint positions when it carries them,
+//!   LLMeshSkinInfo::mAlternateBindMatrix); per rigged mesh a skin with the
+//!   asset's inverse bind matrices, its vertices placed by its bind shape
+//!   matrix (the bind pose of LLSkinningUtil, `inverse_bind × bind_shape`:
+//!   glTF has no bind shape), and each vertex's joints and weights. Every
+//!   skin also lists the file's other joints, so the tools build one
+//!   armature from mPelvis. The mesh is written in its bind pose.
 
 use super::model::Model;
 use super::{Settings, TextureFiles};
+use aurora_assets::Skeleton;
+use aurora_assets::mesh::SkinInfo;
+use glam::Vec3;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -34,6 +47,7 @@ const ARRAY_BUFFER: u32 = 34962;
 const ELEMENT_ARRAY_BUFFER: u32 = 34963;
 const FLOAT: u32 = 5126;
 const UNSIGNED_INT: u32 = 5125;
+const UNSIGNED_BYTE: u32 = 5121;
 /// -90° about X: (x, y, z) becomes (x, z, -y).
 const Z_UP_TO_Y_UP: [f32; 4] = [-std::f32::consts::FRAC_1_SQRT_2, 0.0, 0.0, std::f32::consts::FRAC_1_SQRT_2];
 
@@ -70,13 +84,115 @@ fn floats<const N: usize>(values: &[[f32; N]]) -> Vec<u8> {
     values.iter().flatten().flat_map(|v| v.to_le_bytes()).collect()
 }
 
+/// The avatar skeleton the rigged meshes' joints are laid out on.
+fn skeleton() -> Option<&'static Skeleton> {
+    static SKELETON: std::sync::OnceLock<Option<Skeleton>> = std::sync::OnceLock::new();
+    SKELETON
+        .get_or_init(
+            || match Skeleton::parse(include_bytes!("../../../assets/character/avatar_skeleton.xml")) {
+                Ok(skeleton) => Some(skeleton),
+                Err(e) => {
+                    log::warn!("object export: avatar skeleton unreadable, rigging left out: {e}");
+                    None
+                }
+            },
+        )
+        .as_ref()
+}
+
+/// The joint nodes of the rigged meshes' skins, under the root (node 0):
+/// each joint they name and its parents up to mPelvis, at their default
+/// place (LLAvatarBoneInfo: `pos` scaled by the parent's scale, `rot`),
+/// or at the position a mesh carries for it (the first one wins). A
+/// collision volume keeps its own scale, which fitted mesh deforms with;
+/// bones have none. A name the skeleton does not know gets a node of its
+/// own under the root.
+struct Joints {
+    /// Each joint name's node (the skeleton's names and aliases, and the
+    /// unknown names).
+    by_name: HashMap<String, usize>,
+    /// The skeleton's joint nodes in order, each with its rest transform in
+    /// the grid's frame (the root's turn to Y up left out).
+    rest: Vec<(usize, glam::Mat4)>,
+}
+
+fn joint_nodes(skeleton: &Skeleton, skins: &[&SkinInfo], nodes: &mut Vec<Value>) -> Joints {
+    let count = skeleton.joints.len();
+    let mut needed = vec![false; count];
+    let mut moved: Vec<Option<Vec3>> = vec![None; count];
+    let mut unknown: Vec<(String, Option<Vec3>)> = Vec::new();
+    for skin in skins {
+        let positions = (skin.alt_inverse_bind.len() == skin.joint_names.len()).then_some(&skin.alt_inverse_bind);
+        for (i, name) in skin.joint_names.iter().enumerate() {
+            let position = positions.map(|p| p[i].w_axis.truncate());
+            match skeleton.find(name) {
+                Some(j) => {
+                    if moved[j].is_none() {
+                        moved[j] = position;
+                    }
+                    let mut at = Some(j);
+                    while let Some(k) = at.filter(|k| !needed[*k]) {
+                        needed[k] = true;
+                        at = skeleton.joints[k].parent;
+                    }
+                }
+                None if !unknown.iter().any(|(n, _)| n == name) => unknown.push((name.clone(), position)),
+                None => {}
+            }
+        }
+    }
+    let mut node_of: Vec<Option<usize>> = vec![None; count];
+    let mut global: Vec<glam::Mat4> = vec![glam::Mat4::IDENTITY; count];
+    let mut by_name = HashMap::new();
+    let mut rest = Vec::new();
+    // pre-order: a parent's node is made before its children's
+    for (j, joint) in skeleton.joints.iter().enumerate().filter(|(j, _)| needed[*j]) {
+        let parent_scale = joint.parent.map_or(Vec3::ONE, |p| skeleton.joints[p].scale);
+        let translation = moved[j].unwrap_or(joint.pos) * parent_scale;
+        let mut node = json!({ "name": joint.name, "translation": translation.to_array() });
+        let rotation = aurora_assets::skeleton::maya_q_xyz(joint.rot_euler_deg);
+        if !rotation.abs_diff_eq(glam::Quat::IDENTITY, 1e-7) {
+            node["rotation"] = json!(rotation.to_array());
+        }
+        let scale = if joint.is_collision_volume { joint.scale } else { Vec3::ONE };
+        if !scale.abs_diff_eq(Vec3::ONE, 1e-7) {
+            node["scale"] = json!(scale.to_array());
+        }
+        let local = glam::Mat4::from_scale_rotation_translation(scale, rotation, translation);
+        global[j] = joint.parent.map_or(glam::Mat4::IDENTITY, |p| global[p]) * local;
+        nodes.push(node);
+        let index = nodes.len() - 1;
+        node_of[j] = Some(index);
+        let parent = joint.parent.and_then(|p| node_of[p]).unwrap_or(0);
+        if let Some(children) = nodes[parent]["children"].as_array_mut() {
+            children.push(json!(index));
+        } else {
+            nodes[parent]["children"] = json!([index]);
+        }
+        by_name.insert(joint.name.clone(), index);
+        for alias in &joint.aliases {
+            by_name.entry(alias.clone()).or_insert(index);
+        }
+        rest.push((index, global[j]));
+    }
+    for (name, position) in unknown {
+        nodes.push(json!({ "name": name, "translation": position.unwrap_or(Vec3::ZERO).to_array() }));
+        let index = nodes.len() - 1;
+        if let Some(children) = nodes[0]["children"].as_array_mut() {
+            children.push(json!(index));
+        }
+        by_name.insert(name, index);
+    }
+    Joints { by_name, rest }
+}
+
 /// The `.glb` bytes. `images` holds the textures fetched for the file;
 /// those missing (not allowed, or not arrived) leave the colour alone.
 pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, Embedded>, settings: &Settings, tool: &str) -> Vec<u8> {
     let mut buffer = Buffer::default();
     let mut accessors: Vec<Value> = Vec::new();
-    let mut accessor = |buffer: &mut Buffer, data: &[u8], target: u32, value: Value| {
-        let view = buffer.view(data, Some(target));
+    let mut accessor = |buffer: &mut Buffer, data: &[u8], target: Option<u32>, value: Value| {
+        let view = buffer.view(data, target);
         let mut a = value;
         a["bufferView"] = json!(view);
         accessors.push(a);
@@ -124,14 +240,43 @@ pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, 
 
     let mut meshes = Vec::new();
     let mut nodes = vec![json!({ "name": "root", "rotation": Z_UP_TO_Y_UP, "children": [] })];
+    let skeleton = skeleton();
+    // the rigged prims' skins, in their nodes' order
+    let mut skins: Vec<&SkinInfo> = Vec::new();
     for prim in &model.prims {
         let groups: Vec<_> = prim.groups.iter().filter(|g| !g.indices.is_empty()).collect();
         if prim.positions.is_empty() || groups.is_empty() {
             continue;
         }
         let count = prim.positions.len();
+        let skin = prim
+            .skin
+            .as_deref()
+            .filter(|_| skeleton.is_some() && prim.joints.len() == count && prim.weights.len() == count);
+        // glTF has no bind shape matrix: a rigged mesh's vertices are written
+        // with it applied, and its joints keep the asset's own inverse bind
+        // matrices (the same pose: inverse_bind × (bind_shape × v)), so the
+        // tools that rebuild the bones from them place them where the
+        // uploader's skeleton had them
+        let (positions, normals): (std::borrow::Cow<[[f32; 3]]>, std::borrow::Cow<[[f32; 3]]>) = match skin {
+            Some(skin) => {
+                let m = skin.bind_shape;
+                let n = glam::Mat3::from_mat4(m).inverse().transpose();
+                (
+                    prim.positions
+                        .iter()
+                        .map(|p| m.transform_point3(Vec3::from(*p)).to_array())
+                        .collect(),
+                    prim.normals
+                        .iter()
+                        .map(|v| (n * Vec3::from(*v)).normalize_or(Vec3::Z).to_array())
+                        .collect(),
+                )
+            }
+            None => (prim.positions.as_slice().into(), prim.normals.as_slice().into()),
+        };
         let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
-        for p in &prim.positions {
+        for p in positions.iter() {
             for k in 0..3 {
                 min[k] = min[k].min(p[k]);
                 max[k] = max[k].max(p[k]);
@@ -139,23 +284,40 @@ pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, 
         }
         let position = accessor(
             &mut buffer,
-            &floats(&prim.positions),
-            ARRAY_BUFFER,
+            &floats(&positions),
+            Some(ARRAY_BUFFER),
             json!({ "componentType": FLOAT, "count": count, "type": "VEC3", "min": min, "max": max }),
         );
         let normal = accessor(
             &mut buffer,
-            &floats(&prim.normals),
-            ARRAY_BUFFER,
-            json!({ "componentType": FLOAT, "count": prim.normals.len(), "type": "VEC3" }),
+            &floats(&normals),
+            Some(ARRAY_BUFFER),
+            json!({ "componentType": FLOAT, "count": normals.len(), "type": "VEC3" }),
         );
         let uvs: Vec<[f32; 2]> = prim.uvs.iter().map(|[u, v]| [*u, 1.0 - v]).collect();
         let uv = accessor(
             &mut buffer,
             &floats(&uvs),
-            ARRAY_BUFFER,
+            Some(ARRAY_BUFFER),
             json!({ "componentType": FLOAT, "count": uvs.len(), "type": "VEC2" }),
         );
+        let rig = skin.map(|skin| {
+            let joints: Vec<u8> = prim.joints.iter().flatten().copied().collect();
+            let joints = accessor(
+                &mut buffer,
+                &joints,
+                Some(ARRAY_BUFFER),
+                json!({ "componentType": UNSIGNED_BYTE, "count": count, "type": "VEC4" }),
+            );
+            let weights = accessor(
+                &mut buffer,
+                &floats(&prim.weights),
+                Some(ARRAY_BUFFER),
+                json!({ "componentType": FLOAT, "count": count, "type": "VEC4" }),
+            );
+            skins.push(skin);
+            (joints, weights)
+        });
         let primitives: Vec<Value> = groups
             .iter()
             .map(|g| {
@@ -163,21 +325,70 @@ pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, 
                 let indices = accessor(
                     &mut buffer,
                     &bytes,
-                    ELEMENT_ARRAY_BUFFER,
+                    Some(ELEMENT_ARRAY_BUFFER),
                     json!({ "componentType": UNSIGNED_INT, "count": g.indices.len(), "type": "SCALAR" }),
                 );
-                json!({
-                    "attributes": { "POSITION": position, "NORMAL": normal, "TEXCOORD_0": uv },
-                    "indices": indices,
-                    "material": g.material,
-                })
+                let mut attributes = json!({ "POSITION": position, "NORMAL": normal, "TEXCOORD_0": uv });
+                if let Some((joints, weights)) = rig {
+                    attributes["JOINTS_0"] = json!(joints);
+                    attributes["WEIGHTS_0"] = json!(weights);
+                }
+                json!({ "attributes": attributes, "indices": indices, "material": g.material })
             })
             .collect();
         meshes.push(json!({ "name": prim.name, "primitives": primitives }));
-        nodes.push(json!({ "name": prim.name, "mesh": meshes.len() - 1, "matrix": prim.transform.to_cols_array() }));
+        // a skinned mesh is placed by its joints: its node has no transform
+        nodes.push(if rig.is_some() {
+            json!({ "name": prim.name, "mesh": meshes.len() - 1, "skin": skins.len() - 1 })
+        } else {
+            json!({ "name": prim.name, "mesh": meshes.len() - 1, "matrix": prim.transform.to_cols_array() })
+        });
         let child = nodes.len() - 1;
         if let Some(children) = nodes[0]["children"].as_array_mut() {
             children.push(json!(child));
+        }
+    }
+
+    // Each skin: the joints it weights, with the asset's bind pose, then
+    // every other joint of the file's skeleton, with the inverse of its rest
+    // transform (no vertex follows them): one armature from mPelvis for all
+    // the rigged meshes in tools that build one per skin root (Blender).
+    let mut gltf_skins: Vec<Value> = Vec::new();
+    if let Some(skeleton) = skeleton.filter(|_| !skins.is_empty()) {
+        let joints = joint_nodes(skeleton, &skins, &mut nodes);
+        for skin in &skins {
+            let mut list: Vec<usize> = Vec::new();
+            let mut bind: Vec<[f32; 16]> = Vec::new();
+            for (name, inverse) in skin.joint_names.iter().zip(&skin.inverse_bind) {
+                let mut node = joints.by_name[name];
+                if list.contains(&node) {
+                    // a name and its alias both listed: glTF wants each joint
+                    // once, so the second gets a node of its own on the first
+                    nodes.push(json!({ "name": name }));
+                    let own = nodes.len() - 1;
+                    if let Some(children) = nodes[node]["children"].as_array_mut() {
+                        children.push(json!(own));
+                    } else {
+                        nodes[node]["children"] = json!([own]);
+                    }
+                    node = own;
+                }
+                list.push(node);
+                bind.push(inverse.to_cols_array());
+            }
+            for (node, rest) in &joints.rest {
+                if !list.contains(node) {
+                    list.push(*node);
+                    bind.push(rest.inverse().to_cols_array());
+                }
+            }
+            let matrices = accessor(
+                &mut buffer,
+                &floats(&bind),
+                None,
+                json!({ "componentType": FLOAT, "count": bind.len(), "type": "MAT4" }),
+            );
+            gltf_skins.push(json!({ "inverseBindMatrices": matrices, "joints": list }));
         }
     }
 
@@ -208,6 +419,7 @@ pub fn write_glb(model: &Model, textures: &TextureFiles, images: &HashMap<Uuid, 
     }
     set("images", gltf_images);
     set("textures", gltf_textures);
+    set("skins", gltf_skins);
     if !buffer.bytes.is_empty() {
         doc["buffers"] = json!([{ "byteLength": buffer.bytes.len() }]);
     }
@@ -245,7 +457,7 @@ mod tests {
     use super::super::model::{SourceFace, SourcePrim, build};
     use super::*;
     use aurora_prim::te::TextureFace;
-    use glam::{Quat, Vec3};
+    use glam::Quat;
 
     fn model() -> Model {
         let face = |texture: u128, color: [f32; 4]| SourceFace {
@@ -258,12 +470,14 @@ mod tests {
                 color,
                 ..Default::default()
             },
+            ..Default::default()
         };
         let prim = SourcePrim {
             position: Vec3::new(100.0, 100.0, 20.0),
             rotation: Quat::IDENTITY,
             scale: Vec3::new(2.0, 2.0, 2.0),
             faces: vec![face(1, [1.0; 4]), face(2, [1.0, 0.0, 0.0, 0.5])],
+            skin: None,
         };
         build(
             &[
@@ -418,6 +632,183 @@ mod tests {
         let (doc, _) = read(&write_glb(&model(), &files, &images, &off, "Aurora"));
         assert!(doc.get("images").is_none());
         assert_eq!(doc["materials"][0]["alphaMode"], "OPAQUE");
+    }
+
+    /// A rigged triangle on mChest and the BELLY volume, mChest moved by the
+    /// mesh, beside a plain prim.
+    fn rigged_model() -> (Model, std::sync::Arc<SkinInfo>) {
+        use glam::Mat4;
+        let skin = std::sync::Arc::new(SkinInfo {
+            joint_names: vec!["mChest".into(), "BELLY".into()],
+            inverse_bind: vec![
+                Mat4::from_translation(Vec3::new(0.0, 0.0, -1.4)),
+                Mat4::from_translation(Vec3::new(0.0, 0.0, -1.1)),
+            ],
+            bind_shape: Mat4::from_scale(Vec3::splat(0.5)),
+            alt_inverse_bind: vec![
+                Mat4::from_translation(Vec3::new(-0.02, 0.0, 0.25)),
+                Mat4::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+            ],
+            ..Default::default()
+        });
+        let face = SourceFace {
+            positions: vec![[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            indices: vec![0, 1, 2],
+            te: TextureFace {
+                texture: Uuid::from_u128(1),
+                color: [1.0; 4],
+                ..Default::default()
+            },
+            joints: vec![[0, 1, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0]],
+            weights: vec![[0.5, 0.5, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]],
+        };
+        let rigged = SourcePrim {
+            position: Vec3::new(10.0, 10.0, 20.0),
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+            faces: vec![face.clone()],
+            skin: Some(skin.clone()),
+        };
+        let plain = SourcePrim {
+            faces: vec![SourceFace {
+                joints: Vec::new(),
+                weights: Vec::new(),
+                ..face
+            }],
+            skin: None,
+            ..rigged.clone()
+        };
+        (build(&[rigged, plain], &Settings::default()), skin)
+    }
+
+    fn node_named<'a>(doc: &'a Value, name: &str) -> (usize, &'a Value) {
+        doc["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n["name"] == name)
+            .unwrap_or_else(|| panic!("no node {name}"))
+    }
+
+    fn parent_of(doc: &Value, child: usize) -> Option<usize> {
+        doc["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .position(|n| n["children"].as_array().is_some_and(|c| c.contains(&json!(child))))
+    }
+
+    #[test]
+    fn a_rigged_mesh_is_written_with_its_skin_joints_and_weights() {
+        let (model, skin) = rigged_model();
+        let (doc, bin) = read(&write_glb(
+            &model,
+            &TextureFiles::default(),
+            &HashMap::new(),
+            &Settings::default(),
+            "Aurora",
+        ));
+        // the rigged prim's node: its skin, no transform; the plain one keeps its matrix
+        let (_, rigged) = node_named(&doc, "prim0");
+        assert_eq!(rigged["skin"], 0);
+        assert!(rigged.get("matrix").is_none());
+        assert!(node_named(&doc, "prim1").1.get("matrix").is_some());
+        assert_eq!(doc["skins"].as_array().expect("skins").len(), 1);
+        // the joints by name, mChest moved by the mesh, BELLY with its scale
+        let joints: Vec<&str> = doc["skins"][0]["joints"]
+            .as_array()
+            .expect("joints")
+            .iter()
+            .map(|j| doc["nodes"][j.as_u64().expect("joint") as usize]["name"].as_str().expect("name"))
+            .collect();
+        // the joints it weights first, then the rest of the file's skeleton
+        assert_eq!(&joints[..2], &["mChest", "BELLY"]);
+        assert_eq!(joints[2], "mPelvis", "the skeleton from its root, for one armature");
+        assert!(joints.contains(&"mSpine4") && joints.len() == 8, "{joints:?}");
+        let (chest, chest_node) = node_named(&doc, "mChest");
+        assert_eq!(chest_node["translation"], json!([-0.02f32, 0.0, 0.25f32]));
+        // mChest's parents up to the root, as avatar_skeleton.xml chains them
+        let mut chain = Vec::new();
+        let mut at = parent_of(&doc, chest);
+        while let Some(node) = at {
+            chain.push(doc["nodes"][node]["name"].as_str().expect("name").to_owned());
+            at = parent_of(&doc, node);
+        }
+        assert_eq!(chain, ["mSpine4", "mSpine3", "mTorso", "mSpine2", "mSpine1", "mPelvis", "root"]);
+        let belly = node_named(&doc, "BELLY").1;
+        assert!(belly.get("scale").is_some(), "a collision volume keeps its scale");
+        assert!(
+            doc["nodes"].as_array().expect("nodes").iter().all(|n| n["name"] != "mHead"),
+            "only the joints used and their parents"
+        );
+        // per-vertex joints (bytes) and weights
+        let attributes = &doc["meshes"][0]["primitives"][0]["attributes"];
+        let joints = &doc["accessors"][attributes["JOINTS_0"].as_u64().expect("joints") as usize];
+        assert_eq!(joints["componentType"], UNSIGNED_BYTE);
+        assert_eq!(joints["type"], "VEC4");
+        let view = &doc["bufferViews"][joints["bufferView"].as_u64().expect("view") as usize];
+        let start = view["byteOffset"].as_u64().expect("offset") as usize;
+        assert_eq!(&bin[start..start + 12], &[0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]);
+        let weights = accessor_floats(&doc, &bin, attributes["WEIGHTS_0"].as_u64().expect("weights") as usize);
+        assert_eq!(&weights[..4], &[0.5, 0.5, 0.0, 0.0]);
+        // the bind pose: inverse_bind × bind_shape
+        let matrices = accessor_floats(&doc, &bin, doc["skins"][0]["inverseBindMatrices"].as_u64().expect("ibm") as usize);
+        assert_eq!(matrices.len(), 16 * 8);
+        assert_eq!(
+            &matrices[..16],
+            &skin.inverse_bind[0].to_cols_array(),
+            "the asset's own inverse bind"
+        );
+        // the bind shape (a 0.5 scale here) applied to the vertices instead
+        let position = &doc["accessors"][attributes["POSITION"].as_u64().expect("position") as usize];
+        assert_eq!(position["max"], json!([0.25, 0.25, 0.0]));
+        let plain = &doc["meshes"][1]["primitives"][0]["attributes"]["POSITION"];
+        assert_eq!(
+            doc["accessors"][plain.as_u64().expect("position") as usize]["max"],
+            json!([0.5, 0.5, 0.0]),
+            "a plain prim is not scaled"
+        );
+        // an unweighted parent: the inverse of its rest place (mPelvis at its default spot)
+        let pelvis = skeleton().expect("skeleton").joints[skeleton().expect("skeleton").find("mPelvis").expect("mPelvis")].pos;
+        let rest = glam::Mat4::from_cols_array(&matrices[32..48].try_into().expect("16 floats"));
+        assert!(rest.w_axis.truncate().abs_diff_eq(-pelvis, 1e-5), "{rest:?}");
+        assert!(doc["meshes"][1]["primitives"][0]["attributes"].get("JOINTS_0").is_none());
+    }
+
+    #[test]
+    fn a_rigged_glb_reads_back_in_the_importer_with_the_same_joints_and_weights() {
+        let (model, _) = rigged_model();
+        let glb = write_glb(&model, &TextureFiles::default(), &HashMap::new(), &Settings::default(), "Aurora");
+        let doc = aurora_assets::import_gltf::Document::parse(&glb, |_| Err(aurora_assets::AssetError::invalid("no external file")))
+            .expect("the importer reads the file");
+        let scene = aurora_assets::import_mesh::gltf::parse(&doc, skeleton().expect("skeleton")).expect("the importer reads the scene");
+        let rigged: Vec<_> = scene.models.iter().filter(|m| m.skin.is_some()).collect();
+        assert_eq!(rigged.len(), 1, "{:?}", scene.warnings);
+        let skin = rigged[0].skin.as_ref().expect("skin");
+        let vertices: Vec<_> = rigged[0].faces.iter().flat_map(|f| &f.vertices).collect();
+        assert_eq!(vertices.len(), 3);
+        // each vertex's weights by joint name, as written
+        let by_name = |v: &aurora_assets::import_mesh::Vertex| {
+            // weights as whole percentages, to compare and sort
+            let mut w: Vec<(String, u32)> = (0..4)
+                .filter(|&k| v.weights[k] > 0.0)
+                .map(|k| (skin.names[v.joints[k] as usize].clone(), (v.weights[k] * 100.0).round() as u32))
+                .collect();
+            w.sort_by(|a, b| a.0.cmp(&b.0));
+            w
+        };
+        let mut seen: Vec<Vec<(String, u32)>> = vertices.iter().map(|v| by_name(v)).collect();
+        seen.sort();
+        let mut expected = vec![
+            vec![("BELLY".to_owned(), 50), ("mChest".to_owned(), 50)],
+            vec![("mChest".to_owned(), 100)],
+            vec![("BELLY".to_owned(), 100)],
+        ];
+        expected.sort();
+        assert_eq!(seen, expected);
     }
 
     #[test]
