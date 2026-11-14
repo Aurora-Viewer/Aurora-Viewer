@@ -1408,6 +1408,13 @@ impl BuildTool {
         self.selection.retain(|k| !keys.contains(k));
     }
 
+    /// A restriction takes these out of the selection: a drag of them stops
+    /// with it, or it would go on moving what is no longer selected.
+    pub fn drop_selected(&mut self, world: &World, keys: &[ObjKey]) {
+        self.deselect(world, keys);
+        self.manip.cancel();
+    }
+
     pub fn deselect_all(&mut self, world: &World) {
         let keys = std::mem::take(&mut self.selection);
         for (handle, ids) in self.wire_ids(world, &keys, self.selection_linked) {
@@ -2009,6 +2016,7 @@ impl BuildTool {
             };
             if taken
                 && passes_select_filters(world, s, idx)
+                && world.rlva_can_designate(idx, None)
                 && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
                 && seen.insert(u)
             {
@@ -2179,7 +2187,7 @@ impl BuildTool {
             Some((o.key, crate::world::lookat::local_offset(point, at, rot)))
         });
         // what a click may select; Create still places on any surface
-        let pick = target.filter(|&idx| passes_select_filters(world, s, idx));
+        let pick = target.filter(|&idx| passes_select_filters(world, s, idx) && world.rlva_can_designate(idx, hit));
         match self.tool {
             Tool::Focus => false,
             Tool::Grab => {
@@ -2406,7 +2414,7 @@ impl BuildTool {
         let Some(point) = hit else {
             return;
         };
-        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) {
+        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) || !world.rlva_can_place_at(point) {
             self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
             return;
         }
@@ -2494,7 +2502,7 @@ impl BuildTool {
             return;
         }
         // raycastForNewObjPos refuses the duplicate's surface too
-        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) {
+        if s.select_limit().is_some_and(|max| point.distance(world.agent.position) > max) || !world.rlva_can_place_at(point) {
             self.status = aurora_i18n::tr!("build-mod-too-far-away-to-create-an-object-here").into();
             return;
         }

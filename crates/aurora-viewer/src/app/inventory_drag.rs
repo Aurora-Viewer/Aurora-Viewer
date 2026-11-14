@@ -63,6 +63,7 @@ pub(super) struct InventoryDrop {
 
 fn reason_text(reason: &str) -> &'static str {
     match reason {
+        "rlva-blocked" => aurora_i18n::tr!("rlva-blocked"),
         "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
         "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
         "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
@@ -558,6 +559,9 @@ impl App {
         let result = item.and_then(|item| {
             let surface = self.inventory_drag.surface.ok_or("rez-no-surface")?;
             let contents = !landmark && surface.1.is_some() && (ctrl || item.asset_type != 6);
+            if (landmark || item.asset_type == 6) && !self.world.rlva_can_rez_drop(surface.1, ctrl) {
+                return Err("rlva-blocked");
+            }
             // Avoid cloning inventory metadata in the frame loop.
             if let Some(idx) = surface.1 {
                 target_allowed(&self.world, idx, item, false)?;

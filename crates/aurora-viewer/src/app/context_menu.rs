@@ -125,6 +125,13 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        // LLToolPie::handleRightClickPick shows no menu on what @interact or
+        // @fartouch keeps out of the selection
+        if !picked.map_or(self.world.rlva_can_designate_land(), |idx| {
+            self.world.rlva_can_designate(idx, Some(point))
+        }) {
+            return;
+        }
         if let Some(source) = picked
             .and_then(|idx| self.world.objects.get(idx))
             .filter(|object| object.is_editable_preview())

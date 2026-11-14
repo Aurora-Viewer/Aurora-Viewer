@@ -20,6 +20,120 @@ impl World {
             |d| self.rlva.allows_im_at(behaviour, target, Some(d)),
         )
     }
+    /// The root of `index` and, for an attachment, who wears it.
+    pub(crate) fn rlva_root_and_wearer(&self, index: usize) -> Option<(usize, Option<Uuid>)> {
+        let mut root = index;
+        for _ in 0..64 {
+            let object = self.objects.get(root)?;
+            let Some(parent) = self.objects.parent_of(object).and_then(|i| self.objects.get(i).map(|o| (i, o))) else {
+                break;
+            };
+            if parent.1.is_avatar() {
+                return Some((root, Some(parent.1.full_id)));
+            }
+            root = parent.0;
+        }
+        self.objects.get(root).map(|_| (root, None))
+    }
+
+    /// Whether `index` belongs to a HUD we wear.
+    pub(crate) fn rlva_is_hud(&self, index: usize) -> bool {
+        self.rlva_root_and_wearer(index).is_some_and(|(root, wearer)| {
+            wearer == Some(self.agent_id)
+                && self
+                    .objects
+                    .get(root)
+                    .and_then(|o| self.avatar_lib.attach_points.get(&o.attachment_point()))
+                    .is_some_and(|p| p.hud)
+        })
+    }
+
+    fn rlva_object_within(&self, index: usize, max: f32) -> bool {
+        crate::scene::Scene::object_transform_unshifted(self, index, std::time::Instant::now())
+            .is_some_and(|(p, _, _)| p.distance(self.agent.position) <= max)
+    }
+
+    /// RlvActions::canInteract: `point` is the clicked surface, as the
+    /// object's centre plus the pick offset. A left click's special action
+    /// (sit, pay, buy, open, play, zoom) needs it; so does a touch, through
+    /// `rlva_can_touch_at`. canInteract itself exempts a HUD from @interact,
+    /// but LLViewerWindow::cursorIntersect has dropped the pick by then, so
+    /// only @fartouch spares one here.
+    pub fn rlva_can_interact(&self, index: usize, point: Option<Vec3>) -> bool {
+        let r = &self.rlva;
+        if !r.enabled() {
+            return true;
+        }
+        let max = r.distance_limit("fartouch", 1.5, Uuid::nil());
+        !r.has("interact")
+            && (self.rlva_is_hud(index)
+                || !max.is_finite()
+                || match point.filter(|p| p.is_finite()) {
+                    Some(p) => p.distance(self.agent.position) <= max,
+                    None => self.rlva_object_within(index, max),
+                })
+    }
+
+    /// What a right click or a click of the build tools may designate:
+    /// LLViewerWindow::cursorIntersect keeps only our own avatar under
+    /// @interact, not even a HUD; LLToolSelect::handleObjectSelection takes
+    /// an object past @fartouch only when the clicked `surface` is within
+    /// 1.5 m, and never applies it to what we wear. The Legacy Viewer's
+    /// constant stays 1.5 m whatever the @fartouch distance is.
+    pub fn rlva_can_designate(&self, index: usize, surface: Option<Vec3>) -> bool {
+        let r = &self.rlva;
+        if !r.enabled() || self.objects.get(index).is_some_and(|o| o.full_id == self.agent_id) {
+            return true;
+        }
+        if r.has("interact") {
+            return false;
+        }
+        let max = r.distance_limit("fartouch", 1.5, Uuid::nil());
+        !max.is_finite()
+            || self
+                .rlva_root_and_wearer(index)
+                .is_some_and(|(_, wearer)| wearer == Some(self.agent_id))
+            || self.rlva_object_within(index, max)
+            || surface.is_some_and(|p| p.distance(self.agent.position) <= 1.5)
+    }
+
+    /// LLSelectMgr::deselectAllIfTooFar under @fartouch: `center` is the
+    /// selection's, `primary` one of its objects. An attachment stays,
+    /// whoever wears it.
+    pub fn rlva_selection_too_far(&self, primary: usize, center: Vec3) -> bool {
+        let max = self.rlva.distance_limit("fartouch", 1.5, Uuid::nil());
+        self.rlva.enabled()
+            && max.is_finite()
+            && center != Vec3::ZERO
+            && self.objects.get(primary).is_some_and(|o| !o.is_avatar())
+            && self.rlva_root_and_wearer(primary).is_some_and(|(_, wearer)| wearer.is_none())
+            && center.distance(self.agent.position) > max
+    }
+
+    /// The land under a right click: only @interact takes it
+    /// (LLViewerWindow::cursorIntersect).
+    pub fn rlva_can_designate_land(&self) -> bool {
+        !self.rlva.enabled() || !self.rlva.has("interact")
+    }
+
+    /// LLToolDragAndDrop::dad3dRezObjectOnLand and dad3dRezObjectOnObject:
+    /// `onto` is the object under the drop, `ctrl` its drop into the
+    /// contents. @rez lets a drop into contents pass, @interact only one on
+    /// a HUD.
+    pub fn rlva_can_rez_drop(&self, onto: Option<usize>, ctrl: bool) -> bool {
+        let r = &self.rlva;
+        !r.enabled()
+            || (!(r.has("rez") && !(ctrl && onto.is_some()))
+                && !(r.has("interact") && !(ctrl && onto.is_some_and(|i| self.rlva_is_hud(i)))))
+    }
+
+    /// LLToolPlacer::raycastForNewObjPos: @fartouch limits where the Create
+    /// tool places.
+    pub fn rlva_can_place_at(&self, point: Vec3) -> bool {
+        let max = self.rlva.distance_limit("fartouch", 1.5, Uuid::nil());
+        !self.rlva.enabled() || !max.is_finite() || point.distance(self.agent.position) <= max
+    }
+
     pub fn rlva_can_touch(&self, handle: aurora_net::RegionHandle, local_id: u32) -> bool {
         self.rlva_can_touch_at(handle, local_id, None)
     }
@@ -37,21 +151,9 @@ impl World {
         if !self.rlva_object_visible(index) {
             return false;
         }
-        let mut root = index;
-        let mut wearer = None;
-        for _ in 0..64 {
-            let Some(object) = self.objects.get(root) else {
-                return false;
-            };
-            let Some(parent) = self.objects.parent_of(object).and_then(|i| self.objects.get(i).map(|o| (i, o))) else {
-                break;
-            };
-            if parent.1.is_avatar() {
-                wearer = Some(parent.1.full_id);
-                break;
-            }
-            root = parent.0;
-        }
+        let Some((root, wearer)) = self.rlva_root_and_wearer(index) else {
+            return false;
+        };
         let Some(object) = self.objects.get(root) else {
             return false;
         };
@@ -249,7 +351,10 @@ impl World {
             }
             NetCommand::RequestSit { target, offset, .. } => {
                 let limit = r.distance_limit("sittp", 1.5, actor).min(r.distance_limit("fartouch", 1.5, actor));
+                // a click on a seat is an interaction (LLToolPie::handleLeftClickPick),
+                // a scripted @sit:<uuid>=force is not
                 !r.has("sit")
+                    && (!actor.is_nil() || !r.has("interact"))
                     && self
                         .objects
                         .index_of_uuid(target)
@@ -279,7 +384,7 @@ impl World {
                 aurora_net::build::BuildCmd::Add(_)
                 | aurora_net::build::BuildCmd::RezInventory(_)
                 | aurora_net::build::BuildCmd::Duplicate { .. },
-            ) => !blocked("rez"),
+            ) => !blocked("rez") && !r.has("interact"),
             NetCommand::Build(command) => self.rlva_allows_build(command),
             NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
             NetCommand::AcceptLure { lure_id, godlike } => {
