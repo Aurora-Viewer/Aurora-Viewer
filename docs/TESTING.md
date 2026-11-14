@@ -10663,6 +10663,11 @@ separate searches enabled and disabled; that preference controls only the text.
   after frame 740. Any added item must be saved before it is opened.
   Landmarks are fetched into the inventory before their place is opened,
   as in Firestorm; a landmark already present for the same asset is reused.
+- `task-preview`: an object of ours gets a texture, a sound and an
+  animation of the demo inventory in its contents, and all three open as from
+  its Contents tab: the texture's picture, the sound's Play button and the
+  animation's Play for everyone / Play locally, each window titled
+  "item (object)". Capture after frame 700.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
   Capture at frame 2250 to inspect the saved message in both the editor and
