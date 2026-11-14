@@ -1036,6 +1036,10 @@ pub struct Settings {
     pub ims_in_notification_center: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime, 30).
     pub im_toast_seconds: f32,
+    /// Seconds a friend's online / offline toast stays with the Legacy
+    /// Viewer's toasts (NotificationTipToastLifeTime, 10, its slider 1–30);
+    /// Aurora's center keeps its own timing.
+    pub tip_toast_seconds: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -2296,6 +2300,7 @@ impl Default for Settings {
             toast_group_im: false,
             ims_in_notification_center: false,
             im_toast_seconds: 30.0,
+            tip_toast_seconds: 10.0,
             log_im: true,
             log_nearby: false,
             reopen_ims: false,
@@ -3348,6 +3353,11 @@ impl Settings {
             *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
         }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
+        self.tip_toast_seconds = if self.tip_toast_seconds.is_finite() {
+            self.tip_toast_seconds.clamp(1.0, 30.0)
+        } else {
+            10.0
+        };
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)
