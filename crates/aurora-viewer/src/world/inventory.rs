@@ -431,6 +431,12 @@ impl Inventory {
             {
                 parent.children.push(id);
             }
+            // LLInventoryModel::processBulkUpdateInventory: scheduleFolderFetch
+            // on each folder so a gift or unpack sorts by its contents without
+            // waiting for the user to expand it (#3025).
+            if self.folders.get(&id).is_some_and(|f| !matches!(f.state, FetchState::Fetched)) {
+                self.request(id);
+            }
         }
         self.repair_item_parents(&mut items, parents::ItemSource::Simulator);
         for item in &items {
@@ -1069,6 +1075,31 @@ mod tests {
             assert_eq!(inv.folders[&child].items, vec![copied.id]);
             assert!(inv.items.contains_key(&Uuid::from_u128(723)), "copy keeps the original");
         }
+    }
+
+    /// #3025: a folder delivered by BulkUpdate must be fetched so its date
+    /// (newest descendant) sorts it with its contents, without waiting for expand.
+    #[test]
+    fn server_updated_folders_are_queued_for_fetch() {
+        let mut inv = fixture();
+        let id = Uuid::from_u128(9801);
+        inv.server_updated(
+            vec![InvFolder {
+                id,
+                parent: inv.root,
+                name: "Gift folder".into(),
+                type_default: -1,
+                version: -1,
+                ..Default::default()
+            }],
+            Vec::new(),
+        );
+        assert_eq!(inv.folders[&id].state, FetchState::Fetching);
+        assert!(
+            inv.queue.iter().any(|(queued, _)| *queued == id),
+            "descendent fetch queued: {:?}",
+            inv.queue
+        );
     }
 
     #[test]
