@@ -453,6 +453,8 @@ budgets atomically and applies the shared destination policy. The local footer a
 still require ordinary fee calculation and confirmation.
 `files/folder.rs` scans supported files on the import worker, retaining the selected
 source directory and its nested paths without following reparse points.
+`files/texture_names.rs` names a glTF material's maps from their image files and
+types, and their uploads after the material.
 `files/lods.rs` shares configured companion names with the mesh loader and orders
 parents before prospective children; `files/folder.rs` suppresses only companions
 that were successfully decoded and attached, retaining orphan/error rows.

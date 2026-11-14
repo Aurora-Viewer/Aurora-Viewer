@@ -893,7 +893,7 @@ impl Imports {
                             } else {
                                 Self::default_folder(world, prefs, Kind::Texture)
                             },
-                            name: image.name.clone(),
+                            name: files::texture_names::upload_name(&entry.name, &image.name),
                             description: String::new(),
                             source: Source::Texture(image.pixels.clone()),
                             options,
