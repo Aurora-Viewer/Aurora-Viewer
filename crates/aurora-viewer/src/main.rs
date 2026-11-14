@@ -78,6 +78,7 @@ mod movement;
 mod natural_order;
 mod net_adapters;
 mod net_profile;
+mod omnifilter;
 mod open_path;
 mod overlay_hooks;
 mod own_motion;

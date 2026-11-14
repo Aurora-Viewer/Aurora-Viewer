@@ -107,6 +107,8 @@ fn a_link_offer_shows_the_object_name_on_one_line() {
     world.apply(NetEvent::LoadUrl {
         object_name: OBJECT.into(),
         object_id: Uuid::from_u128(0x4322),
+        owner_id: Uuid::nil(),
+        owner_is_group: false,
         message: "Our shop".into(),
         url: "https://example.invalid/".into(),
     });

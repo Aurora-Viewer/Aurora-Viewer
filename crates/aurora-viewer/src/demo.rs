@@ -204,6 +204,10 @@ pub mod object_menu;
 /// Boxes for the build tools' snap to objects (AURORA_DEMO_OBJECT_SNAP).
 #[path = "demo_object_snap.rs"]
 pub mod object_snap;
+/// The Omnifilter's own rules and messages it filters
+/// (AURORA_DEMO_OMNIFILTER).
+#[path = "demo_omnifilter.rs"]
+pub mod omnifilter;
 /// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
 /// region that puts part of it back by itself.
 #[path = "demo_outfit_restore.rs"]
@@ -6375,6 +6379,8 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         ev.push(NetEvent::LoadUrl {
             object_name: aurora_i18n::tr!("demo-shop").into(),
             object_id: Uuid::from_u128(0xF5),
+            owner_id: Uuid::nil(),
+            owner_is_group: false,
             message: aurora_i18n::tr!("demo-scripted-url").into(),
             url: "https://example.invalid/shop".into(),
         });

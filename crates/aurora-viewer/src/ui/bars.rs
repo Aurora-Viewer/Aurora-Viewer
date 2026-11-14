@@ -1021,6 +1021,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "conversations",
             &mut panels.chat,
         );
+        // menu_viewer.xml: Omnifilter, after Conversations (Floater.Toggle)
+        flip_window(
+            ui,
+            p,
+            "filter-filled",
+            aurora_i18n::tr!("toolbar-command-omnifilter"),
+            super::omnifilter::WINDOW,
+            &mut panels.omnifilter,
+        );
         let gestures = crate::keybinds::chord_label("KeyG", true, false, false);
         if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
             super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
@@ -2411,6 +2420,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
+        // Floater.ToggleOrBringToFront omnifilter
+        "omnifilter" => toggle(super::omnifilter::WINDOW, &mut panels.omnifilter),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
@@ -2521,6 +2532,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "webbrowser" => panels.web_browser,
         "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
+        "omnifilter" => panels.omnifilter,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
@@ -4096,6 +4108,7 @@ mod tests {
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
+            ("omnifilter", super::super::omnifilter::WINDOW, |p| p.omnifilter),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {

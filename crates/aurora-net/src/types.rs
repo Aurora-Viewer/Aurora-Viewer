@@ -997,6 +997,9 @@ pub enum NetEvent {
     LoadUrl {
         object_name: String,
         object_id: Uuid,
+        /// The object's owner, a resident or a group (OwnerIsGroup).
+        owner_id: Uuid,
+        owner_is_group: bool,
         message: String,
         url: String,
     },

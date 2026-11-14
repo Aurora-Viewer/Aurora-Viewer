@@ -4456,6 +4456,8 @@ impl Session<'_> {
                 NetEvent::LoadUrl {
                     object_name: field_str(&d.object_name),
                     object_id: d.object_id,
+                    owner_id: d.owner_id,
+                    owner_is_group: d.owner_is_group,
                     message: field_str(&d.message),
                     url: field_str(&d.url),
                 },

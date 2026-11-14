@@ -830,6 +830,10 @@ impl World {
         if inv.from == self.agent_id || session.is_nil() {
             return;
         }
+        // LLIMMgr::addMessage, IM_SESSION_INVITE
+        if !self.omnifilter_session_invite(&mut inv) {
+            return;
+        }
         let in_group = self.groups.is_member(&session);
         if in_group && !self.rlva_allows_im("recvim", session) {
             return;
