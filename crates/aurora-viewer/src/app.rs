@@ -15100,6 +15100,9 @@ impl App {
         for id in a.gestures {
             self.gesture_play(id, None);
         }
+        for to in a.sysinfo {
+            self.ask_sysinfo(to, true);
+        }
         for (to, mut text) in a.ims {
             // FSFloaterIM::sendMsg: "/sysinfo" in a 1:1 conversation sends
             // the system information instead of the line
@@ -18295,7 +18298,7 @@ impl App {
                         }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
-                        ui::chat::ConvAction::SendSysinfo(to) => self.ask_sysinfo(to, true),
+                        ui::chat::ConvAction::SendSysinfo(to) => a.sysinfo.push(to),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
                         ui::chat::ConvAction::Close(id) => {
@@ -19790,6 +19793,8 @@ struct UiActions {
     font_changed: bool,
     cancel_loading: bool,
     ims: Vec<(uuid::Uuid, String)>,
+    /// "Send system information" asked in these residents' conversations.
+    sysinfo: Vec<uuid::Uuid>,
     offer_tp: Vec<uuid::Uuid>,
     landmark: Option<uuid::Uuid>,
     audio: Option<ui::audio::AudioAction>,
@@ -19830,6 +19835,7 @@ impl UiActions {
         self.font_changed |= later.font_changed;
         self.cancel_loading |= later.cancel_loading;
         self.ims.extend(later.ims);
+        self.sysinfo.extend(later.sysinfo);
         self.offer_tp.extend(later.offer_tp);
         first(&mut self.landmark, later.landmark);
         first(&mut self.audio, later.audio);
