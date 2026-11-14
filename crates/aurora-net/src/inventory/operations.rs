@@ -978,12 +978,12 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
 fn content_body(item: Uuid, kind: i32, lua: bool) -> Llsd {
     let mut body = llsd_map! { "item_id" => item };
     if kind == 10 {
-        let luau = if lua {
-            crate::scripts::Luau::Lua
+        let target = if lua {
+            crate::scripts::CompileTarget::Luau
         } else {
-            crate::scripts::Luau::Off
+            crate::scripts::CompileTarget::Mono
         };
-        body.insert("target", Llsd::String(crate::scripts::compile_target(true, luau).into()));
+        body.insert("target", Llsd::String(target.name().into()));
     }
     body
 }
