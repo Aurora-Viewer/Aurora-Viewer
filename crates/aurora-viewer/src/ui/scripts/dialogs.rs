@@ -339,7 +339,7 @@ impl Preferences {
                     });
                     let preview = "/* LSL */\ninteger counter = 0;\ndefault\n{\n    state_entry()\n    {\n        string greeting = \"Hello\";\n        llSay(PUBLIC_CHANNEL, greeting);\n    }\n}";
                     egui::Frame::new().fill(settings.color(ColorRole::Background, p)).inner_margin(6.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false)));
+                        ui.add(egui::Label::new(self.preview.custom(preview, p, egui::FontId::monospace(settings.font_size.clamp(8.0,32.0)), settings, "", false, false)));
                     });
                     crate::ui::widgets::divider(ui, p);
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.word_wrap, aurora_i18n::tr!("script-preferences-word-wrap"));
@@ -384,6 +384,8 @@ impl Preferences {
 pub(super) struct Help {
     pub open: bool,
     pub keyword: String,
+    /// The script is SLua: its words and help are Lua's.
+    pub lua: bool,
     history: Vec<String>,
     at: usize,
     filter: String,
@@ -391,7 +393,7 @@ pub(super) struct Help {
 
 impl Help {
     pub fn visit(&mut self, name: &str) {
-        if reference::get(name).is_none() || self.keyword == name {
+        if reference::get(name, self.lua).is_none() || self.keyword == name {
             return;
         }
         self.history.truncate(self.at + 1);
@@ -404,7 +406,7 @@ impl Help {
             return false;
         }
         if settings.help_follows_cursor {
-            self.visit(editing::word(source, editing::cursor(ctx, id).primary.index.0));
+            self.visit(editing::word(source, editing::cursor(ctx, id).primary.index.0, self.lua));
         }
         let before = settings.help_follows_cursor;
         Floater::new(
@@ -437,7 +439,7 @@ impl Help {
                 .selected_text(&self.keyword)
                 .height(220.0)
                 .show_ui(ui, |ui| {
-                    for entry in reference::all()
+                    for entry in reference::all(self.lua)
                         .iter()
                         .filter(|e| self.filter.is_empty() || e.name.to_lowercase().contains(&self.filter.to_lowercase()))
                     {
@@ -454,12 +456,12 @@ impl Help {
                 self.at = self.history.len() - 1;
                 self.keyword = name;
             }
-            if let Some(entry) = reference::get(&self.keyword) {
+            if let Some(entry) = reference::get(&self.keyword, self.lua) {
                 ui.label(RichText::new(&entry.signature).monospace().color(p.teal));
                 egui::ScrollArea::vertical().max_height(225.0).show(ui, |ui| {
                     ui.label(&entry.tooltip);
                 });
-                ui.hyperlink_to(aurora_i18n::tr!("script-help-wiki"), reference::url(&entry.name));
+                ui.hyperlink_to(aurora_i18n::tr!("script-help-wiki"), reference::url(&entry.name, self.lua));
             } else {
                 ui.label(aurora_i18n::tr!("script-help-select"));
             }
