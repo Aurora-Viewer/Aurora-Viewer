@@ -53,6 +53,48 @@ the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`: Copyright ©
 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
 GPL-3.0-or-later as described above.
 
+## Authors of the ported code
+
+The Second Life viewer and Firestorm sources hold code written by other
+viewer projects and by individual residents, who keep the copyright on it.
+The ported parts of Aurora Viewer that follow their files are listed below,
+with the authors named in those files' notices. Their code is originally
+LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
+
+| Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
+|---|---|---|
+| Region tracker, `newview/alfloaterregiontracker.cpp` — Copyright © 2014 Alchemy Viewer Project | `aurora-viewer/src/world/region_tracker.rs`, `ui/region_tracker.rs` | Originally LGPL 2.1 |
+| Animation overrider, `newview/aoengine.cpp`, `aoengine.h`, `aoset.cpp`, `ao.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/ao/`, `ui/ao/`, `movement.rs`, `movement/water_walk.rs`, `world/friend_join.rs` | Originally LGPL 2.1 |
+| Animation explorer, `newview/animationexplorer.cpp` — Copyright © 2013 Zi Ree | `aurora-viewer/src/app/animation_explorer.rs`, `ui/animation_explorer.rs`, `world/animation_log.rs` | Originally LGPL 2.1 |
+| Particle editor, `newview/particleeditor.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/app/particle_editor.rs`, `build/particle_editor.rs`, `build/ui/particles.rs`, `scene/particles.rs` | Originally LGPL 2.1 |
+| Pie menu, `newview/piemenu.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/ui/context/pie.rs` | Originally LGPL 2.1 |
+| Nearby chat, `newview/fsnearbychathub.cpp`, `fsfloaternearbychat.cpp` — Copyright © 2012 Zi Ree | `aurora-net/src/message_split.rs`, `session.rs`; `aurora-viewer/src/ui/chat.rs`, `ui/chat/`, `app/gestures.rs`, `world/bridge.rs`, `world/transcripts.rs`, `world/rlva/chat.rs` | Originally LGPL 2.1 |
+| Texture tab, `newview/fspanelface.cpp` — Copyright © 2024 Zi Ree | `aurora-viewer/src/build/ui/texture.rs`, `build/ui/texture_drop.rs`, `build/contents_drop.rs` | Originally LGPL 2.1 |
+| Object message filter, `newview/omnifilterengine.h` — Copyright © 2025 Zi Ree | `aurora-viewer/src/world/object_im_filter.rs` | Originally LGPL 2.1 |
+| Quick preferences, `newview/quickprefs.cpp` — Copyright © 2011 WoLf Loonie, © 2013 Zi Ree, © 2013 Ansariel Hiller, © 2013 Cinder Biscuits | `aurora-viewer/src/ui/quick_prefs.rs`, `ui/environment.rs`, `world/eep_photo.rs`, `world/env_select.rs` | Originally LGPL 2.1 |
+| Radar, `newview/fsradar.cpp`, `fsradarentry.cpp`, `fspanelradar.cpp` — Copyright © 2013 Ansariel Hiller; `fsradarlistctrl.cpp` — Copyright © 2011 Arrehn Oberlander | `aurora-net/src/bridge/query.rs`; `aurora-viewer/src/world/radar.rs`, `ui/people/radar.rs`, `ui/people/nearby.rs`, `world/friend_join.rs`, `app.rs` | Originally LGPL 2.1 |
+| Money tracker, `newview/fsmoneytracker.cpp` — Copyright © 2011 Arrehn Oberlander, © 2015 Ansariel Hiller | `aurora-viewer/src/ui/money_tracker.rs` | Originally LGPL 2.1 |
+| Asset blacklist, `newview/fsassetblacklist.cpp`, `fsfloaterassetblacklist.cpp` — Copyright © 2012 Wolfspirit Magic, © 2016 Ansariel Hiller | `aurora-viewer/src/world/derender.rs`, `ui/blacklist.rs` | Originally LGPL 2.1 |
+| Common helpers, `newview/fscommon.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/build/new_defaults.rs`, `ui/chat.rs`, `ui/emoji/recent.rs`, `world/groups.rs` | Originally LGPL 2.1 |
+| Avatar render settings, `newview/fsfloateravatarrendersettings.cpp` — Copyright © 2016 Ansariel Hiller | `aurora-viewer/src/ui/avatar_render_settings.rs` | Originally LGPL 2.1 |
+| Group titles, `newview/fsfloatergrouptitles.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/group_titles.rs` | Originally LGPL 2.1 |
+| Place details, `newview/fsfloaterplacedetails.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/place_details.rs`, `ui/places.rs`, `world/place_details.rs` | Originally LGPL 2.1 |
+| Partial inventory, `newview/fsfloaterpartialinventory.cpp` — Copyright © 2022 Ansariel Hiller | `aurora-viewer/src/ui/inventory.rs` | Originally LGPL 2.1 |
+| Stream title, `newview/fsfloaterstreamtitle.cpp` — Copyright © 2022 Ansariel Hiller; `streamtitledisplay.cpp` — Copyright © 2010 Katharine Berry, © 2013 Cinder Roxley | `aurora-viewer/src/stream_title.rs`, `ui/stream_title.rs`, `app.rs` | Originally LGPL 2.1 |
+| Desktop notifications, `newview/growlmanager.cpp` — Copyright © 2010 Katharine Berry | `aurora-viewer/src/system_notify.rs`, `app/attention.rs`, `world/attention.rs` | Originally LGPL 2.1 |
+| Search, `newview/fsfloatersearch.cpp` — Copyright © 2012 Cinder Roxley | `aurora-net/src/search.rs`; `aurora-viewer/src/ui/search.rs`, `ui/search/details.rs`, `world/search.rs` | Originally LGPL 2.1 |
+| Contact sets, `newview/lggcontactsets.cpp` — Copyright © 2011 Greg Hendrickson (LordGregGreg Back); `fspanelcontactsets.cpp`, `fsfloatercontactsetconfiguration.cpp` — Copyright © 2013 Cinder Roxley | `aurora-viewer/src/world/contact_sets.rs`, `world/contact_sets/`, `ui/contacts.rs`, `ui/people/sets.rs` | Originally LGPL 2.1 |
+| Poser, `newview/fsfloaterposer.cpp`, `fsposeranimator.cpp`, `fsjointpose.h` — Copyright © 2024 Angeldark Raymaker | `aurora-viewer/src/ik_edit/poser.rs`, `ik_edit/poser/`, `scene/avatar_studio.rs` | Originally LGPL 2.1 |
+| Area search, `newview/fsareasearch.cpp` — Copyright © 2012 Techwolf Lupindo | `aurora-viewer/src/app/area_search.rs`, `ui/area_search.rs`, `ui/area_search/`, `settings/area_search.rs`, `build/property_query.rs` | Originally LGPL 2.1 |
+| Local mesh, `newview/vjlocalmesh.cpp` — Copyright © 2022 Vaalith Jinn | `aurora-viewer/src/blender_live/protocol.rs` | Originally LGPL 2.1 |
+| Grids and SLURLs, `newview/fsgridhandler.cpp`, `fsslurl.cpp` — with modifications Copyright © 2012 arminweatherwax | `aurora-viewer/src/grids.rs`, `slurl.rs` | Originally LGPL 2.1 |
+| Media lists, `newview/floatermedialists.cpp` — Copyright © 2011 Sione Lomu | `aurora-viewer/src/media/filter.rs` | Originally LGPL 2.1 |
+| Simulator features, `newview/lfsimfeaturehandler.cpp` — Copyright © 2013 Liru Færs | `aurora-viewer/src/grid_status.rs` | Originally LGPL 2.1 |
+| Interface sounds, `newview/fspanelpreferenceuisounds.cpp` — Copyright © 2026 Firestorm Viewer Project | `aurora-viewer/src/ui_sound.rs`, `ui/options/pages/sound.rs` | Originally LGPL 2.1 |
+| Calculator, `llmath/llcalc.cpp`, `llcalcparser.h` — Copyright © 2008 Aimee Walton | `aurora-viewer/src/cmdline/calc.rs` | Originally LGPL 2.1 |
+| Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
+| RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+
 ## Bundled assets
 
 | Asset | Location | License |
@@ -71,6 +113,7 @@ GPL-3.0-or-later as described above.
 | Photo LUTs by Czar Fenris (20 looks made in Adobe Premiere Pro and DaVinci Resolve), packed by `scripts/generate-photo-luts.py` (built into the executable; origin and changes in [README.md](assets/photo-luts/README.md)) | `assets/photo-luts/czar-fenris.bin` | Shared with the viewer and its users by their creator, Czar Fenris, who remains their author (agreed on 2026-11-10) |
 | Photo LUTs by Nanner Pudding (45 looks made in DaVinci Resolve), packed by `scripts/generate-photo-luts.py` (built into the executable; origin and changes in [README.md](assets/photo-luts/README.md)) | `assets/photo-luts/nanner-pudding.bin` | Shared with the viewer and its users by their creator, Nanner Pudding, who remains their author (agreed on 2026-11-10) |
 | LSL keyword names, signatures and help from Firestorm `indra/newview/app_settings/keywords_lsl_default.xml` | `crates/aurora-viewer/assets/lsl/keywords.json`, `reference.json` | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
+| SLua keyword names, signatures and help — Copyright (c) 2025 Linden Research, Inc. (secondlife/lsl-definitions, release `v0.6.12`, `generated/lua_keywords_pretty.xml` with the whitespace between tags removed; built into the executable) | `crates/aurora-viewer/assets/slua/keywords_lua_default.xml` | MIT ([LICENSE-lsl-definitions.txt](crates/aurora-viewer/assets/slua/LICENSE-lsl-definitions.txt)) |
 | Windlight presets of Firestorm `indra/newview/app_settings/windlight` (`days`, `skies`, `water`; XML files unchanged, commit `c33bfee2`), made by Linden Lab and by Second Life residents for the Phoenix / Firestorm viewers (their names and tags are in the preset names); the files carry no notice of their own and are distributed in the Firestorm sources under its LGPL 2.1 (`LICENSE`, `doc/LICENSE-source.txt`) | `crates/aurora-viewer/assets/windlight/windlight.zip` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Hunspell spelling dictionaries of ten languages (wooorm/dictionaries, commit `8cfea406`, unchanged; built into the executable, the list and the origin of each in [README.md](crates/aurora-viewer/assets/dictionaries/README.md)) | `crates/aurora-viewer/assets/dictionaries/` | Their own licences, each next to its dictionary (`LICENSE.txt`) and shipped in `assets/dictionaries/`: MIT AND BSD (English), MPL-2.0 (French), GPL-2.0 OR GPL-3.0 (German), GPL-3.0 OR LGPL-3.0 OR MPL-1.1 (Spanish), GPL-3.0 OR LGPL-3.0 OR MPL-2.0 (Polish), LGPL-3.0 OR MPL-2.0 (Portuguese), BSD-3-Clause (Russian), GPL-2.0 OR LGPL-2.1 OR MPL-1.1 (Danish) |
 | Second Life glossary of the Legacy Viewer's dictionaries (`sl.dic`) and its auto-replace lists (`indra/newview/app_settings/autoreplace.xml`, unchanged) | `crates/aurora-viewer/assets/dictionaries/sl/`, `crates/aurora-viewer/assets/autoreplace.xml` | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
@@ -107,8 +150,21 @@ the pack does not include.
 
 ## Rust dependencies
 
-The crates used by Aurora Viewer (see `Cargo.lock`) are under licenses
+The crates built into Aurora Viewer (see `Cargo.lock`) are under licenses
 compatible with the GPL version 3 (mostly MIT and/or Apache-2.0).
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) lists each of them with its
+license, and gives the license texts and the copyright notices their authors
+ask to keep; the viewer shows it in Help › About, Libraries tab. It is
+generated from `Cargo.lock` by `scripts/third-party-licenses.ps1`.
+
+That list includes the native code some crates compile into the viewer, with
+its own notices: OpenJPEG (`openjpeg-sys`, BSD-2-Clause), libvorbis with the
+aoTuV tuning and libogg (`aotuv_lancer_vorbis_sys`, `ogg_next_sys`,
+BSD-3-Clause), mimalloc (`libmimalloc-sys`, MIT), AWS-LC and ring, the TLS
+cryptography (`aws-lc-sys`, `ring`: ISC, Apache-2.0 and the OpenSSL and
+BoringSSL notices they carry), the OpenXR loader (`openxr-sys`, Apache-2.0) and
+egui's default fonts (`epaint_default_fonts`: Ubuntu Font Licence 1.0 and SIL
+Open Font License 1.1).
 
 ## HIDAPI
 
@@ -224,6 +280,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 The world upscale in `crates/aurora-render/src/shaders/rlva_resolution.wgsl`
 is derived from FidelityFX CAS's `CasFilter` scaling path:
 <https://github.com/GPUOpen-Effects/FidelityFX-CAS/blob/master/ffx-cas/ffx_cas.h>.
+The sharpening of `crates/aurora-render/src/shaders/post.wgsl` follows the
+same filter's no-scaling path as the Legacy Viewer ships it
+(`indra/newview/app_settings/shaders/class1/deferred/CASF.glsl`), whose
+notice adds: Copyright (c) 2021 Advanced Micro Devices, Inc.; Copyright (c)
+2014 Michal Drobot (for concepts used in "FLOAT APPROXIMATIONS").
 
 Copyright (c) 2017-2019 Advanced Micro Devices, Inc. All rights reserved.
 
@@ -244,3 +305,71 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+## Vulkan glTF PBR by Sascha Willems
+
+The physically based shading of `crates/aurora-render/src/shaders/common.wgsl`,
+`env.wgsl`, `object.wgsl` and the prefiltered radiance of `probe_filter.wgsl`
+follow the Legacy Viewer's `deferredUtil.glsl` and `radianceGenF.glsl`
+(`indra/newview/app_settings/shaders/`), parts of which are taken from Sascha
+Willems' Vulkan glTF reference implementation
+(<https://github.com/SaschaWillems/Vulkan-glTF-PBR>), MIT License:
+
+Copyright (c) 2018 Sascha Willems
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Triplanar mapping by Inigo Quilez
+
+The triplanar mapping of the PBR terrain in
+`crates/aurora-render/src/shaders/env.wgsl` follows the Legacy Viewer's
+`pbrterrainUtilF.glsl`, adapted from Inigo Quilez' example shader
+(<https://www.shadertoy.com/view/MtsGWH>), MIT License:
+
+Copyright © 2015 Inigo Quilez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## SMAA
+
+The anti-aliasing of `crates/aurora-render/src/shaders/smaa.wgsl` is a WGSL port
+of SMAA (<https://www.iryoku.com/smaa/>) as the Legacy Viewer ships it, and
+`crates/aurora-render/src/smaa/area.bin` and `search.bin` are its precomputed
+lookup textures. The full notice is in
+[LICENSE-SMAA.txt](crates/aurora-render/src/smaa/LICENSE-SMAA.txt):
+
+Copyright (C) 2013 Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando
+Navarro and Diego Gutierrez. MIT License (its authors state that the notice
+need not be included in binary distributions; it is kept here all the same).

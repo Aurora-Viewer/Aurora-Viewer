@@ -10,66 +10,58 @@ pub mod experiences;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScriptOptions {
-    pub mono: bool,
-    /// Wins over `mono` when not `Off`: the Luau VM keeps its target.
-    pub luau: Luau,
+    pub compile: CompileTarget,
     pub running: bool,
     pub experience: Uuid,
 }
 
-/// II_FLAGS_SUBTYPE_MASK (indra/llinventory/llinventorydefines.h): a
-/// script item's subtype, its source language, sits in the low byte of
-/// its flags.
-const SUBTYPE_MASK: u32 = 0xff;
-/// SST_LUA (ScriptSubtype_t, indra/llinventory/llinventorytype.h).
-const SUBTYPE_LUA: u32 = 1;
-
-/// A script item written in Lua (SLua), from its inventory flags, as
-/// LLPreviewLSL::onLoadComplete and LLFloaterCompileQueue read
-/// `getInventorySubType() == SST_LUA`.
-pub fn lua_source(flags: u32) -> bool {
-    flags & SUBTYPE_MASK == SUBTYPE_LUA
+/// The VM a script is compiled for: the upload body's `target`
+/// (LLScriptAssetUpload::getCompileTarget). `LslLuau` is LSL source run on
+/// the Luau VM; `Luau` is SLua source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileTarget {
+    Lsl2,
+    Mono,
+    Luau,
+    LslLuau,
 }
 
-/// How a script uses the Luau VM, the compile targets beyond "lsl2" and
-/// "mono" (LLLiveLSLEditor::processScriptRunningReply).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Luau {
-    /// Not on Luau: "mono" or "lsl2".
-    #[default]
-    Off,
-    /// LSL source on the Luau VM: "lsl-luau".
-    Lsl,
-    /// Lua source: "luau", its only target.
-    Lua,
-}
-
-impl Luau {
-    /// From a script item's flags: a Lua source keeps "luau" whatever its
-    /// running reply says.
-    pub fn from_flags(flags: u32) -> Self {
-        if lua_source(flags) { Self::Lua } else { Self::Off }
+impl CompileTarget {
+    pub fn name(self) -> &'static str {
+        match self {
+            CompileTarget::Lsl2 => "lsl2",
+            CompileTarget::Mono => "mono",
+            CompileTarget::Luau => "luau",
+            CompileTarget::LslLuau => "lsl-luau",
+        }
     }
 
-    /// The event queue's ScriptRunningReply: `Luau` is the Luau VM,
-    /// `LuauLanguage` a Lua source.
-    pub fn from_running(luau: bool, lua_language: bool) -> Self {
-        match (luau, lua_language) {
-            (true, true) => Self::Lua,
-            (true, false) => Self::Lsl,
-            _ => Self::Off,
+    /// From ScriptRunningReply's `Mono`, `Luau` (Luau VM) and `LuauLanguage`
+    /// (SLua source) flags (LLLiveLSLEditor::processScriptRunningReply).
+    pub fn from_running(mono: bool, luau: bool, luau_language: bool) -> Self {
+        match (luau, luau_language, mono) {
+            (true, true, _) => CompileTarget::Luau,
+            (true, false, _) => CompileTarget::LslLuau,
+            (false, _, true) => CompileTarget::Mono,
+            (false, _, false) => CompileTarget::Lsl2,
+        }
+    }
+
+    /// The default for a script item: SLua items compile for Luau, LSL
+    /// items for Mono (LLLiveLSLEditor::loadAsset without runtime info).
+    pub fn for_item(flags: u32) -> Self {
+        if is_slua_item(flags) {
+            CompileTarget::Luau
+        } else {
+            CompileTarget::Mono
         }
     }
 }
 
-/// LLScriptAssetUpload's "target".
-pub fn compile_target(mono: bool, luau: Luau) -> &'static str {
-    match luau {
-        Luau::Lua => "luau",
-        Luau::Lsl => "lsl-luau",
-        Luau::Off if mono => "mono",
-        Luau::Off => "lsl2",
-    }
+/// SST_LUA: the script subtype is the low byte of the item's flags
+/// (LLInventoryItem::getInventorySubType, llinventorytype.h ScriptSubtype_t).
+pub fn is_slua_item(flags: u32) -> bool {
+    flags & 0xff == 1
 }
 
 pub const MAX_SOURCE: usize = 1024 * 1024;
@@ -105,9 +97,8 @@ pub fn compile_ok(ack: &Llsd) -> bool {
     }
 }
 
-pub fn upload_body(target: ScriptTarget, options: ScriptOptions, experience: Option<Uuid>) -> Llsd {
-    let running = options.running;
-    let mut body = llsd_map! { "item_id" => target.item, "target" => compile_target(options.mono, options.luau) };
+pub fn upload_body(target: ScriptTarget, compile: CompileTarget, running: bool, experience: Option<Uuid>) -> Llsd {
+    let mut body = llsd_map! { "item_id" => target.item, "target" => compile.name() };
     if !target.object.is_nil() {
         body.insert("task_id", target.object);
         body.insert("is_script_running", i32::from(running));
@@ -143,9 +134,13 @@ pub async fn save(
     tokio::time::timeout(std::time::Duration::from_secs(60), async {
         // LLLiveLSLEditor uploads the association loaded / selected by the
         // editor. No metadata lookup at save time can block a plain script.
-        let answer = crate::caps::post_llsd(http, cap, &upload_body(target, options, Some(options.experience)))
-            .await
-            .map_err(|_| aurora_i18n::tr!("script-save-failed").to_owned())?;
+        let answer = crate::caps::post_llsd(
+            http,
+            cap,
+            &upload_body(target, options.compile, options.running, Some(options.experience)),
+        )
+        .await
+        .map_err(|_| aurora_i18n::tr!("script-save-failed").to_owned())?;
         if answer["state"].as_str() != "upload" || answer["uploader"].as_str().is_empty() {
             return Err(aurora_i18n::tr!("script-save-unconfirmed").into());
         }
@@ -237,15 +232,19 @@ mod tests {
             item: Uuid::from_u128(21),
         };
         let source = "default\n{ // éèあ\n    state_entry() { llSay(0, \"Bonjour !\"); }\n}\n";
-        let options = ScriptOptions {
-            mono: false,
-            luau: Luau::Off,
-            running: false,
-            experience,
-        };
-        let result = save(&reqwest::Client::new(), &url, target, options, source.into())
-            .await
-            .expect("saved source");
+        let result = save(
+            &reqwest::Client::new(),
+            &url,
+            target,
+            ScriptOptions {
+                compile: CompileTarget::Lsl2,
+                running: false,
+                experience,
+            },
+            source.into(),
+        )
+        .await
+        .expect("saved source");
         assert_eq!(result.asset, asset);
         assert!(!result.compiled);
         assert_eq!(result.errors, ["(2, 3) ERROR"]);
@@ -253,7 +252,7 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(
             aurora_llsd::from_xml(&requests[0].1).expect("LLSD"),
-            upload_body(target, options, Some(experience))
+            upload_body(target, CompileTarget::Lsl2, false, Some(experience))
         );
         assert!(requests[1].0.to_lowercase().contains("content-type: application/octet-stream"));
         assert_eq!(requests[1].1, source.as_bytes());
@@ -265,13 +264,7 @@ mod tests {
             object: Uuid::nil(),
             item: Uuid::from_u128(12),
         };
-        let options = |mono, luau, running| ScriptOptions {
-            mono,
-            luau,
-            running,
-            experience: Uuid::nil(),
-        };
-        let body = upload_body(target, options(true, Luau::Off, false), None);
+        let body = upload_body(target, CompileTarget::Mono, false, None);
         assert_eq!(body["item_id"].as_uuid(), target.item);
         assert_eq!(body["target"].as_str(), "mono");
         assert!(body.as_map().expect("upload map").get("task_id").is_none());
@@ -279,35 +272,11 @@ mod tests {
             object: Uuid::from_u128(13),
             ..target
         };
-        let body = upload_body(task, options(false, Luau::Off, true), None);
+        let body = upload_body(task, CompileTarget::Lsl2, true, None);
         assert_eq!(body["task_id"].as_uuid(), task.object);
         assert_eq!(body["target"].as_str(), "lsl2");
         assert_eq!(body["is_script_running"].as_i32(), 1);
         assert_eq!(body["experience"].as_uuid(), Uuid::nil());
-        // The Luau VM keeps its target whatever the Mono box says.
-        for mono in [false, true] {
-            assert_eq!(upload_body(task, options(mono, Luau::Lua, true), None)["target"].as_str(), "luau");
-            assert_eq!(
-                upload_body(task, options(mono, Luau::Lsl, true), None)["target"].as_str(),
-                "lsl-luau"
-            );
-        }
-    }
-
-    #[test]
-    fn a_lua_source_is_read_from_the_item_subtype_and_the_running_reply() {
-        assert!(!lua_source(0));
-        assert!(lua_source(1));
-        // Only the low byte is the subtype: other flags bits do not count.
-        assert!(lua_source(0x0100_0001));
-        assert!(!lua_source(0x0100_0000));
-        assert!(!lua_source(2));
-        assert_eq!(Luau::from_flags(1), Luau::Lua);
-        assert_eq!(Luau::from_flags(0), Luau::Off);
-        assert_eq!(Luau::from_running(true, true), Luau::Lua);
-        assert_eq!(Luau::from_running(true, false), Luau::Lsl);
-        assert_eq!(Luau::from_running(false, false), Luau::Off);
-        assert_eq!(Luau::from_running(false, true), Luau::Off);
     }
 
     #[test]
@@ -341,5 +310,22 @@ mod tests {
         assert!(!compile_ok(
             &llsd_map! { "errors" => Llsd::Array(vec!["(4, 8) : ERROR : Syntax error".into()]) }
         ));
+    }
+
+    #[test]
+    fn slua_targets_follow_the_running_reply_and_the_item_subtype() {
+        use CompileTarget::*;
+        assert_eq!(CompileTarget::from_running(false, true, true), Luau);
+        assert_eq!(CompileTarget::from_running(true, true, false), LslLuau);
+        assert_eq!(CompileTarget::from_running(true, false, false), Mono);
+        assert_eq!(CompileTarget::from_running(false, false, false), Lsl2);
+        assert_eq!(CompileTarget::for_item(0x0100_0001), Luau);
+        assert_eq!(CompileTarget::for_item(0x0100_0000), Mono);
+        let target = ScriptTarget {
+            object: Uuid::from_u128(13),
+            item: Uuid::from_u128(12),
+        };
+        assert_eq!(upload_body(target, Luau, true, None)["target"].as_str(), "luau");
+        assert_eq!(upload_body(target, LslLuau, true, None)["target"].as_str(), "lsl-luau");
     }
 }

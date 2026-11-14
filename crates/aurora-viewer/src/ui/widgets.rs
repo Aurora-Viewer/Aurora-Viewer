@@ -558,16 +558,20 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
         }
+        let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
+        let shadow = ctx.global_style().visuals.window_shadow;
         let frame = egui::Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(
-                p.panel.r(),
-                p.panel.g(),
-                p.panel.b(),
-                p.panel_alpha,
+            .fill(super::surface_opacity::frame_fill(
+                p,
+                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+                opacity,
             ))
             .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
-            .shadow(ctx.global_style().visuals.window_shadow)
+            .shadow(egui::Shadow {
+                color: shadow.color.gamma_multiply(opacity),
+                ..shadow
+            })
             .inner_margin(if self.framed_header.is_some() {
                 egui::Margin::ZERO
             } else if self.flush_body {
@@ -969,12 +973,14 @@ impl<'a> Floater<'a> {
             }
             if let Some((painter, slot)) = glass_slot {
                 let radius = f32::from(ctx.global_style().visuals.window_corner_radius.nw);
-                workspace::finish_glass(
+                super::surface_opacity::fade_after(ctx, painter.layer_id(), slot, p, opacity);
+                workspace::finish_glass_faded(
                     &painter.with_clip_rect(response.response.rect),
                     slot,
                     response.response.rect,
                     p,
                     radius,
+                    opacity,
                 );
             }
             if !minimized {
