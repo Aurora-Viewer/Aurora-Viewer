@@ -349,6 +349,10 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(customize_animation),
                 );
             });
+            // FSPlayDefaultBentoAnimation (panel_preferences_firestorm.xml, Extras)
+            cx.group(tr!("ui-options-bento-idle-group"), |cx| {
+                cx.toggle(tr!("ui-options-bento-idle"), tr!("ui-options-bento-idle-hint"), &field!(bento_idle));
+            });
         }
     }
 }

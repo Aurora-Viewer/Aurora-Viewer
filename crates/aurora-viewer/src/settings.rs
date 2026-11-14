@@ -563,6 +563,12 @@ pub struct Settings {
     /// Viewer always does; Preferences › Avatars › Animations). Off, our
     /// avatar keeps its pose. Camera framing is controlled independently.
     pub customize_animation: bool,
+    /// FSPlayDefaultBentoAnimation: a priority 0 Bento pose plays under
+    /// every other animation, so hands, mouth, wings and tail fall back to
+    /// a natural pose instead of staying stuck where the last animation
+    /// left them (off, as in the Legacy Viewer; Preferences › Avatars ›
+    /// Animations).
+    pub bento_idle: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -2086,6 +2092,7 @@ impl Default for Settings {
             shape_height_feet: false,
             customize_animation: true,
             appearance_camera_movement: true,
+            bento_idle: false,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
