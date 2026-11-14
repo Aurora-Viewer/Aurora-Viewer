@@ -624,6 +624,8 @@ pub struct Settings {
     /// Keep the local environment from one session to the next (Firestorm
     /// EnvironmentPersistAcrossLogin, on).
     pub env_persist: bool,
+    /// The weather of this viewer (the Environment window's "Weather").
+    pub weather: crate::weather::WeatherSettings,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -930,6 +932,33 @@ pub struct Settings {
     pub typing_bubbles: bool,
     /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
     pub chat_bubble_opacity: f32,
+    /// Opacity of the background of the window with the focus
+    /// (ActiveFloaterTransparency, 1), `ui::surface_opacity`.
+    pub window_opacity_active: f32,
+    /// Opacity of the background of the other windows
+    /// (InactiveFloaterTransparency; 1 here where the Legacy Viewer has 0.95:
+    /// Aurora's windows are glass already).
+    pub window_opacity_inactive: f32,
+    /// Opacity of the Conversations window and the detached conversations
+    /// while not focused (FSIMOpacity, 1; there the lower of it and the
+    /// inactive windows').
+    pub conversations_opacity: f32,
+    /// Conversations takes the active window's opacity while it has the
+    /// focus (FSImActiveOpacityOverride, off).
+    pub conversations_active_opacity_override: bool,
+    /// Opacity of the background of the bars (Aurora's own, 1).
+    pub bar_opacity: f32,
+    /// Opacity of the menus' background (FSMenuBackgroundAlpha, 1).
+    pub menu_opacity: f32,
+    /// Opacity of the chat cards over the world (ConsoleBackgroundOpacity;
+    /// 0.75 here where the Legacy Viewer has 0.5: Aurora's cards always had it).
+    pub console_opacity: f32,
+    /// Opacity of the mini-map's background (FSMiniMapOpacity, 0.66).
+    pub minimap_opacity: f32,
+    /// The pie menu takes `pie_opacity` (OverridePieColors, off).
+    pub pie_opacity_override: bool,
+    /// Opacity of the pie menu when overridden (PieMenuOpacity, 0.85).
+    pub pie_opacity: f32,
     /// The entry of a conversation that receives a message while another
     /// is shown flashes in violet, then stays tinted until read
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
@@ -1019,6 +1048,10 @@ pub struct Settings {
     /// (an Aurora addition): moving between the two viewers keeps the
     /// history, and a notice says what came in.
     pub log_import_at_login: bool,
+    /// The transcripts in the Legacy Viewer's own layout under the chosen
+    /// folder (`<folder>/<first_last>`), so that both viewers share them. An
+    /// Aurora addition, off by default: Aurora then only appends lines there.
+    pub log_legacy_layout: bool,
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
@@ -1396,6 +1429,9 @@ pub struct Settings {
     /// avatars look, how our head follows the cursor (Preferences ›
     /// Privacy and Controls).
     pub lookat: crate::world::lookat::Settings,
+    /// Selection and give beams: shown or not, their look, our colour
+    /// (Preferences › Build, Aurora and Colors).
+    pub beams: crate::world::beams::Settings,
     /// The former "Look-at tracking" switch and its range, read once to
     /// carry the user's choice into `lookat`.
     #[serde(rename = "look_at", skip_serializing)]
@@ -1409,6 +1445,13 @@ pub struct Settings {
     pub projector_shadows: bool,
     /// Include lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
+    /// Local lights drawn at most, the nearest in view first (Preferences ›
+    /// Graphics, "Maximum nearby lights"; the Legacy Viewer's
+    /// RenderLocalLightCount). 0 to the 64 the renderer holds, where the
+    /// Legacy Viewer's slider goes to 8192 with 256 by default: every value
+    /// from 64 up draws the same lights here. 8 in Potato, as the Legacy
+    /// Viewer's Low.
+    pub local_light_count: u32,
     /// Maximum simultaneous projector shadows, independent of local-light count.
     pub projector_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
@@ -1419,6 +1462,13 @@ pub struct Settings {
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
     pub antialiasing: u8,
+    /// Order of the blended faces (scene/blend_order.rs): 0 sorted object
+    /// by object as the Legacy Viewer (the Potato and Low levels), 1 to 4
+    /// the true order of their fragments at each pixel, beyond the Legacy
+    /// Viewer, from its lightest precision to its finest
+    /// (`aurora_render::BlendPrecision`: 1 fast, 2 balanced, 3 high, 4 full,
+    /// the default). Sorted under MSAA.
+    pub blend_order: u8,
     /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
     /// 2 balanced, 3 performance, 4 ultra performance.
     pub fsr_quality: u8,
@@ -1686,7 +1736,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 37;
+const SETTINGS_VERSION: u32 = 39;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2078,6 +2128,7 @@ impl Default for Settings {
             time_of_day: 0,
             env_manual_transition: 0.0,
             env_persist: true,
+            weather: Default::default(),
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -2204,6 +2255,16 @@ impl Default for Settings {
             chat_bubbles_hide_console: true,
             typing_bubbles: false,
             chat_bubble_opacity: 0.5,
+            window_opacity_active: 1.0,
+            window_opacity_inactive: 1.0,
+            conversations_opacity: 1.0,
+            conversations_active_opacity_override: false,
+            bar_opacity: 1.0,
+            menu_opacity: 1.0,
+            console_opacity: crate::ui::surface_opacity::CONSOLE,
+            minimap_opacity: crate::ui::surface_opacity::MINIMAP,
+            pie_opacity_override: false,
+            pie_opacity: crate::ui::surface_opacity::PIE,
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
@@ -2234,6 +2295,7 @@ impl Default for Settings {
             log_show_history: true,
             log_dated_names: false,
             log_import_at_login: true,
+            log_legacy_layout: false,
             warn_external_links: true,
             trusted_sites: Default::default(),
             mute_all_groups: false,
@@ -2367,14 +2429,17 @@ impl Default for Settings {
             double_click_scripted: true,
             follow: Default::default(),
             lookat: Default::default(),
+            beams: Default::default(),
             former_look_at: None,
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
             others_attached_lights: true,
+            local_light_count: crate::scene::lights::MAX_LIGHTS as u32,
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
+            blend_order: crate::graphics_presets::BLEND_ORDER_FULL,
             fsr_quality: 1,
             fsr_sharpness: 80,
             render_scale_percent: 100,
@@ -3096,6 +3161,18 @@ impl Settings {
             // the former default, 10 s, takes it; another length was chosen
             self.complexity_notice_seconds = 0;
         }
+        if self.settings_version < 38 {
+            // the levels now set the nearby lights: a profile still exactly
+            // on Potato takes its 8 (the Legacy Viewer's Low), any other
+            // keeps all of them
+            crate::graphics_presets::upgrade_local_light_count(&mut self);
+        }
+        if self.settings_version < 39 {
+            // the order of the blended faces is now a setting, exact by
+            // default: a profile still exactly on Potato or Low keeps the
+            // sorted order of these levels
+            crate::graphics_presets::upgrade_blend_order(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -3109,6 +3186,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
+        self.local_light_count = self.local_light_count.min(crate::scene::lights::MAX_LIGHTS as u32);
         self.complexity_mode = self.complexity_mode.min(2);
         self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
             self.avatar_physics_detail.clamp(0.0, 1.0)
@@ -3221,6 +3299,7 @@ impl Settings {
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(7);
+        self.blend_order = self.blend_order.min(4);
         self.fsr_quality = self.fsr_quality.min(4);
         self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
@@ -3244,6 +3323,22 @@ impl Settings {
         } else {
             0.5
         };
+        for opacity in [
+            &mut self.window_opacity_active,
+            &mut self.window_opacity_inactive,
+            &mut self.conversations_opacity,
+            &mut self.bar_opacity,
+            &mut self.menu_opacity,
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 };
+        }
+        for (opacity, default) in [
+            (&mut self.console_opacity, crate::ui::surface_opacity::CONSOLE),
+            (&mut self.minimap_opacity, crate::ui::surface_opacity::MINIMAP),
+            (&mut self.pie_opacity, crate::ui::surface_opacity::PIE),
+        ] {
+            *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
+        }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
@@ -3492,6 +3587,8 @@ impl Settings {
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
+            // set each frame by the app while it rains
+            rain_surfaces: false,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
         }
@@ -5164,6 +5261,87 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(on.sanitized().complexity_notice_seconds, 10);
+    }
+
+    #[test]
+    fn an_earlier_file_on_potato_takes_its_eight_nearby_lights() {
+        use crate::graphics_presets::Preset;
+        let all = crate::scene::lights::MAX_LIGHTS as u32;
+        // a 0.9.8 file exactly on Potato, which then drew every light
+        let mut old = Settings {
+            settings_version: 37,
+            ..Settings::default()
+        };
+        Preset::Potato.apply(&mut old);
+        old.local_light_count = all;
+        let read = old.sanitized();
+        assert_eq!(read.local_light_count, 8);
+        assert_eq!(Preset::matching(&read), Some(Preset::Potato));
+        // the same on High keeps them all, and a count chosen after the
+        // migration stays
+        let mut high = Settings {
+            settings_version: 37,
+            ..Settings::default()
+        };
+        Preset::High.apply(&mut high);
+        assert_eq!(high.sanitized().local_light_count, all);
+        let mut chosen = Settings::default();
+        Preset::Potato.apply(&mut chosen);
+        chosen.local_light_count = all;
+        assert_eq!(chosen.sanitized().local_light_count, all);
+        // more than the renderer holds: its 64
+        let odd = Settings {
+            local_light_count: 500,
+            ..Settings::default()
+        };
+        assert_eq!(odd.sanitized().local_light_count, all);
+    }
+
+    #[test]
+    fn an_earlier_file_takes_the_exact_order_unless_on_potato_or_low() {
+        use crate::graphics_presets::Preset;
+        assert_eq!(Settings::default().blend_order, 4);
+        for (level, order) in [
+            (Preset::Potato, 0),
+            (Preset::Low, 0),
+            (Preset::Medium, 4),
+            (Preset::High, 4),
+            (Preset::Deluxe, 4),
+        ] {
+            // a file of before the setting, exactly on the level: it
+            // holds no order, and reads the default
+            let mut old = Settings {
+                settings_version: 38,
+                ..Settings::default()
+            };
+            level.apply(&mut old);
+            old.blend_order = Settings::default().blend_order;
+            let read = old.sanitized();
+            assert_eq!(read.blend_order, order, "{level:?}");
+            assert_eq!(Preset::matching(&read), Some(level));
+            // and the level itself, chosen now
+            let mut new = Settings::default();
+            level.apply(&mut new);
+            assert_eq!(new.blend_order, order, "{level:?}");
+        }
+        // a profile of its own takes the default; an order chosen after
+        // the migration stays, and an unknown one is the finest
+        let mut own = Settings {
+            settings_version: 38,
+            ..Settings::default()
+        };
+        Preset::Potato.apply(&mut own);
+        own.draw_distance += 32.0;
+        assert_eq!(own.sanitized().blend_order, 4);
+        let mut chosen = Settings::default();
+        Preset::Potato.apply(&mut chosen);
+        chosen.blend_order = 2;
+        assert_eq!(chosen.sanitized().blend_order, 2);
+        let odd = Settings {
+            blend_order: 9,
+            ..Settings::default()
+        };
+        assert_eq!(odd.sanitized().blend_order, 4);
     }
 
     #[test]

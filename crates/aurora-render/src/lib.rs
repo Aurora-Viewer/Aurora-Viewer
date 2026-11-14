@@ -10,6 +10,9 @@ pub mod adapter_choice;
 mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
+mod blend_exact;
+#[cfg(test)]
+mod blend_exact_tests;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
@@ -103,7 +106,7 @@ mod xr_device;
 mod xr_device;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod xr_frame;
-pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
+pub use water_effects::{RAIN_GROUND_SIZE, RainGround, WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the

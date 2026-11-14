@@ -13,6 +13,7 @@ pub mod calling_cards;
 
 mod arrival_wait;
 pub mod beacons;
+pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
@@ -39,6 +40,7 @@ pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;
+pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -163,6 +165,8 @@ pub struct Region {
     pub avatar_hover_height: bool,
     /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
     pub lsl_syntax_id: Option<Uuid>,
+    /// SimulatorFeatures' LuaScriptsEnabled: the region runs SLua scripts.
+    pub lua_scripts: bool,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -180,6 +184,9 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
+    /// post links in chat applies here, so the role editor shows it.
+    pub group_chat_post_links: bool,
     pub max_link_children: Option<u32>,
     pub animated_object_max_tris: u32,
 }
@@ -380,6 +387,10 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    /// The origin of each object's chat line (its object and the line's
+    /// time), as the Legacy Viewer links each line to its own `objectim`
+    /// SLURL; bounded by chat history.
+    pub chat_objects: HashMap<(Uuid, SystemTime), crate::slapp::RemoteObject>,
     /// What each avatar said lately, for the bubbles above its head.
     pub bubble_chat: bubble_chat::BubbleChat,
     /// Follows `chat` for the view.
@@ -471,6 +482,8 @@ pub struct World {
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
+    /// Selection and give beams, ours and the others' (`beams`).
+    pub beams: beams::Beams,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
@@ -619,6 +632,9 @@ pub struct World {
     pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// Local dressing-room visibility; independent of photo choices.
     pub avatar_studio: bool,
+    /// Avatar Studio's display-only hover height (metres) that our avatar's
+    /// entry of `avatar_poses` carries, as the scene last posed it.
+    pub avatar_studio_lift: f32,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -699,6 +715,8 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// A ban (or its lifting) on its way to all our groups.
+    pub ban_all: group_ban_all::BanAll,
     /// The group title worn by region, and every group's titles for the
     /// Group titles window (FSGroupTitleRegionMgr).
     pub region_titles: region_titles::RegionTitles,
@@ -850,6 +868,7 @@ impl World {
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
             chat_clock: Default::default(),
             chat_unread: 0,
@@ -881,6 +900,7 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
+            beams: beams::Beams::default(),
             object_im_filter: object_im_filter::Settings::default(),
             anti_spam: Default::default(),
             appearance_counter: 1,
@@ -963,6 +983,7 @@ impl World {
             parcel_visibility: Default::default(),
             photo_isolation: Default::default(),
             avatar_studio: false,
+            avatar_studio_lift: 0.0,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -988,6 +1009,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            ban_all: Default::default(),
             region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
@@ -1153,6 +1175,8 @@ impl World {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.beams
+            .forget(std::time::Instant::now(), |id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -1988,6 +2012,44 @@ impl World {
         origin + clipped
     }
 
+    /// Like LLWorld::getRegionFromPosAgent (indra/newview/llworld.cpp), but
+    /// ChatFromSimulator positions are relative to the sending circuit's
+    /// region (message_template.msg), not the agent's current region.
+    /// Returns the known region under that position and its local position.
+    fn region_at_offset(&self, origin: RegionHandle, pos: Vec3) -> Option<(&Region, Vec3)> {
+        if !pos.is_finite() {
+            return None;
+        }
+        let x = (origin >> 32) as f64 + f64::from(pos.x);
+        let y = (origin & 0xffff_ffff) as f64 + f64::from(pos.y);
+        self.regions.iter().find_map(|(&handle, r)| {
+            let (x0, y0) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
+            let (w, d) = (f64::from(r.heightmap.size_x), f64::from(r.heightmap.size_y));
+            (x >= x0 && x < x0 + w && y >= y0 && y < y0 + d).then(|| (r, Vec3::new((x - x0) as f32, (y - y0) as f32, pos.z)))
+        })
+    }
+
+    /// The object of a chat line about to be pushed, for its name's
+    /// inspector (`AppLink::ObjectIm`): kept while the line is. Returns the
+    /// line's time, made unique for the object so each line keeps its own.
+    fn remember_chat_object(&mut self, object: crate::slapp::RemoteObject) -> SystemTime {
+        let mut time = SystemTime::now();
+        while self.chat_objects.contains_key(&(object.id, time)) {
+            time += std::time::Duration::from_micros(1);
+        }
+        if self.chat_objects.len() >= MAX_CHAT {
+            let retained: HashSet<_> = self.chat.iter().map(|line| (line.source, line.time)).collect();
+            self.chat_objects.retain(|key, _| retained.contains(key));
+        }
+        self.chat_objects.insert((object.id, time), object);
+        time
+    }
+
+    /// The origin kept with an object's chat line (owner, location).
+    pub fn chat_object(&self, line: &ChatLine) -> Option<&crate::slapp::RemoteObject> {
+        self.chat_objects.get(&(line.source, line.time))
+    }
+
     fn push_chat(&mut self, line: ChatLine) {
         if self.alerts(line.kind) {
             self.chat_badge += 1;
@@ -2192,6 +2254,7 @@ impl World {
             voice_server: String::new(),
             avatar_hover_height: false,
             lsl_syntax_id: None,
+            lua_scripts: false,
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
@@ -2201,6 +2264,7 @@ impl World {
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -2642,7 +2706,7 @@ impl World {
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
-                self.chat_log.login(l.agent_id);
+                self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 if self.chat_log.cfg.import_at_login
                     && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
                 {
@@ -2757,21 +2821,25 @@ impl World {
                 materials_rate,
                 materials_max,
                 lsl_syntax_id,
+                lua_scripts,
                 grid_status_feed,
                 grid_status_page,
                 currency_base_uri,
                 opensim,
                 currency_symbol,
                 export_supported,
+                group_chat_post_links,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
+                r.lua_scripts = lua_scripts;
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.opensim = opensim;
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
+                r.group_chat_post_links = group_chat_post_links;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -2811,8 +2879,8 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
-            NetEvent::LslSyntax { id, keywords } => {
-                self.on_lsl_syntax(id, keywords);
+            NetEvent::LslSyntax { id, keywords, lua } => {
+                self.on_lsl_syntax(id, keywords, lua);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {
@@ -3131,6 +3199,7 @@ impl World {
             | NetEvent::SessionStarted { .. }
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
+            | NetEvent::SessionModerationFailed { .. }
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
                 match &ev {
@@ -3374,6 +3443,10 @@ impl World {
                 }
                 None
             }
+            NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
+                log::info!("alert muted during a ban in all groups: {message}");
+                None
+            }
             NetEvent::Alert { message } => {
                 self.map.on_alert(&message);
                 let restart = message.to_lowercase().contains("restart");
@@ -3404,11 +3477,14 @@ impl World {
                 self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
                 None
             }
-            // process_script_question drops only the questions of a blocked
-            // object (LLMuteList::isMuted(taskid)): not those of a blocked
-            // owner, nor on any other condition (no click needed, object out
-            // of view or unknown, another region, Do Not Disturb)
-            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
+            // A permission question follows the same block rule as script
+            // dialogs and URLs (`object_blocked`): a blocked object, by id or
+            // by name, or the blocked owner of an object in the scene.
+            // process_script_question checks the object id alone
+            // (LLMuteList::isMuted(taskid)); the owner and name checks are
+            // stricter. No other condition drops it (no click needed, object
+            // out of view or unknown, another region, Do Not Disturb).
+            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
@@ -4038,6 +4114,10 @@ impl World {
                 self.search.events.insert(e.id, *e);
                 None
             }
+            NetEvent::GroupBanInGroup { group, agent, ban, ok } => {
+                self.on_group_ban_in_group(group, agent, ban, ok);
+                None
+            }
             ev @ (NetEvent::GroupMembers(_)
             | NetEvent::GroupRoles(_)
             | NetEvent::GroupRoleMembers(_)
@@ -4354,6 +4434,25 @@ impl World {
                 }
                 None
             }
+            NetEvent::Beam {
+                effect,
+                source,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                // LLHUDEffectSpiral::unpackData: its source and its target
+                // object must be in the world; ours are drawn on their own
+                if source != self.agent_id {
+                    let objects = &self.objects;
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
+                }
+                None
+            }
             NetEvent::ResetSkeleton {
                 source,
                 target,
@@ -4502,8 +4601,39 @@ impl World {
                 );
             }
         }
+        // LLViewerChat::getObjectImSLURL uses the message's owner and
+        // position, even when the speaking object is not in the scene: the
+        // region under the position (LLWorld::getRegionFromPosAgent), none
+        // when no region we know holds it.
+        let mut time = SystemTime::now();
+        if matches!(kind, ChatKind::Object(_)) && !c.source_id.is_nil() {
+            // RLVa @showloc: the location is masked when the line arrives,
+            // so a later region change cannot reveal it (the inspector also
+            // hides one kept from before the restriction)
+            let slurl = c
+                .region
+                .and_then(|region| self.region_at_offset(region, c.position))
+                .filter(|(r, _)| !r.name.is_empty() && !self.rlva_private_region(&r.name))
+                .map(|(r, pos)| {
+                    format!(
+                        "{}/{:.0}/{:.0}/{:.0}",
+                        crate::slurl::encode(&r.name),
+                        pos.x.round(),
+                        pos.y.round(),
+                        pos.z.round()
+                    )
+                })
+                .unwrap_or_default();
+            time = self.remember_chat_object(crate::slapp::RemoteObject {
+                id: c.source_id,
+                name: from.clone(),
+                owner: c.owner_id,
+                group_owned: false,
+                slurl,
+            });
+        }
         self.push_chat(ChatLine {
-            time: SystemTime::now(),
+            time,
             from,
             text: c.message,
             kind,
@@ -4617,6 +4747,39 @@ impl World {
         } else {
             im.from_name
         };
+        // IM_FROM_TASK (LLIMProcessing::processNewMessage): the line belongs
+        // to the object, the IM's session id; the sender is its owner (a
+        // group with from_group) and the binary bucket its location. With
+        // the owner's id, the name's Inspect showed no object and its Block
+        // muted the owner, hiding all their chat and objects. An older
+        // region gives no session id: no object to link then.
+        let source = if im.dialog == 19 { im.session_id } else { im.from_agent_id };
+        let mut time = SystemTime::now();
+        if im.dialog == 19 && !im.session_id.is_nil() {
+            // RLVa @showloc masks the location of an object's IM from a
+            // nearby region when it is received, as the Legacy Viewer does:
+            // kept with the line, not checked against the regions of later
+            let slurl = object_im_filter::origin(&im.binary_bucket)
+                .filter(|o| !self.rlva_private_region(&o.region))
+                .map(|o| match o.pos {
+                    Some(p) => format!(
+                        "{}/{:.0}/{:.0}/{:.0}",
+                        crate::slurl::encode(&o.region),
+                        p.x.round(),
+                        p.y.round(),
+                        p.z.round()
+                    ),
+                    None => crate::slurl::encode(&o.region),
+                })
+                .unwrap_or_default();
+            time = self.remember_chat_object(crate::slapp::RemoteObject {
+                id: im.session_id,
+                name: from.clone(),
+                owner: im.from_agent_id,
+                group_owned: im.from_group,
+                slurl,
+            });
+        }
         // an object's message kept while we were offline (IM_FROM_TASK)
         let text = if im.offline && im.dialog == 19 {
             saved_prefix(im.timestamp) + &im.message
@@ -4645,11 +4808,11 @@ impl World {
             }
         }
         self.push_chat(ChatLine {
-            time: SystemTime::now(),
+            time,
             from,
             text,
             kind,
-            source: im.from_agent_id,
+            source,
             origin: Origin::Live,
         });
     }
@@ -5556,6 +5719,12 @@ impl World {
     /// (LFSimFeatureHandler::simSupportsExport).
     pub fn export_supported(&self) -> bool {
         self.main().is_some_and(|r| r.export_supported)
+    }
+
+    /// The region we are in applies the ability to post links in group
+    /// chat (LLViewerRegion::groupChatPostLinksEnabled for gAgent's region).
+    pub fn group_chat_post_links(&self) -> bool {
+        self.main().is_some_and(|r| r.group_chat_post_links)
     }
 
     /// The status feed and page the agent's region names for its OpenSim
@@ -7337,6 +7506,7 @@ mod motion_tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: "@showloc=n".to_owned(),
         }));
@@ -8034,6 +8204,7 @@ mod motion_tests {
             owner_id: id,
             source_type: ChatSourceType::Agent,
             chat_type: ChatType::Normal,
+            region: None,
             position: Vec3::new(10.0, 10.0, 20.0),
             message: "hello".into(),
         }));
@@ -8836,12 +9007,14 @@ mod motion_tests {
                 materials_rate: None,
                 materials_max: None,
                 lsl_syntax_id: Uuid::nil(),
+                lua_scripts: false,
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

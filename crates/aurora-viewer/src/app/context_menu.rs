@@ -674,6 +674,18 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::ModerateGroupText { session, agent, allow } => {
+                self.send(aurora_net::NetCommand::ModerateText { session, agent, allow });
+            }
+            CtxAction::GroupChatEject { group, agent } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Eject { group, agent });
+            }
+            CtxAction::GroupChatBan { group, agent } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::Ban { group, agent });
+            }
+            CtxAction::BanFromAllGroups { agent, ban } => {
+                self.group_chat_confirm = Some(ui::chat::moderation::Confirm::BanAll { agent, ban });
+            }
             // the volumes of the call's participants: applied live, saved
             // once the slider rests
             CtxAction::SetVoiceVolume(id, v) => {
@@ -721,6 +733,11 @@ impl App {
                     self.world.unblock(root, &name, 0);
                 } else if let Err(e) = self.world.block(root, &name, crate::world::mutes::MuteType::Object) {
                     self.world.system_message(e);
+                }
+            }
+            CtxAction::BlockObjectOwner { owner, group_owned } => {
+                if let Err(error) = self.world.block_object_owner(owner, group_owned) {
+                    self.world.system_message(error);
                 }
             }
             CtxAction::Edit(id) => {

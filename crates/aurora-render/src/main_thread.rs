@@ -226,6 +226,7 @@ pub struct Renderer {
     vsync: bool,
     settings: RenderSettings,
     msaa_supported: Vec<u32>,
+    blend_exact_supported: bool,
     /// The surface can be read back (captures).
     can_capture: bool,
     output_format: wgpu::TextureFormat,
@@ -693,6 +694,7 @@ impl Renderer {
             lost: lost.clone(),
         })?;
         let msaa_supported = backend.msaa_supported().to_vec();
+        let blend_exact_supported = backend.blend_exact_supported();
         let can_capture = backend.can_capture();
         let output_format = backend.output_format();
         let host = Host::new(
@@ -738,6 +740,7 @@ impl Renderer {
             vsync,
             settings: RenderSettings::default(),
             msaa_supported,
+            blend_exact_supported,
             can_capture,
             output_format,
             anim_clock,
@@ -1036,6 +1039,12 @@ impl Renderer {
         &self.msaa_supported
     }
 
+    /// Whether the device can draw the blended faces in the exact order of
+    /// their fragments (`RiggedBlendDepth::Exact`).
+    pub fn blend_exact_supported(&self) -> bool {
+        self.blend_exact_supported
+    }
+
     /// Frames are drawn by the render thread (false: AURORA_RENDER_THREAD=0).
     pub fn threaded(&self) -> bool {
         self.host.threaded()
@@ -1113,6 +1122,12 @@ impl Renderer {
         self.settings = s;
     }
 
+    /// Rain prototype: keep the G-buffer while it rains (pipelines and
+    /// targets follow with a later frame, as with any setting).
+    pub fn set_rain_surfaces(&mut self, on: bool) {
+        self.settings.rain_surfaces = on;
+    }
+
     pub fn set_vsync(&mut self, vsync: bool) {
         self.vsync = vsync;
     }
@@ -1125,6 +1140,13 @@ impl Renderer {
     /// reported it with the last frame it finished (None before the first).
     pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
         self.last_stats.present_mode
+    }
+
+    /// Aurora Weather: snow lay on the ground in the last frame the backend
+    /// finished. The app's footprints and snow work wait for it, or for snow
+    /// falling.
+    pub fn snow_lying(&self) -> bool {
+        self.last_stats.snow_lying
     }
 
     /// The last frame the backend finished was drawn with the settings last
@@ -1549,6 +1571,7 @@ impl Renderer {
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
+                gpu_weather: self.last_stats.gpu_weather,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
@@ -1924,6 +1947,13 @@ fn open_device(
     if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
         features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
     }
+    // The depth test before the fragment shader that files blended
+    // fragments (blend_exact.rs): only what shows is filed
+    features |= afeat & crate::blend_exact::EARLY_TEST;
+    // and their pass over the screen in one draw
+    features |= afeat & crate::blend_exact::TWO_SOURCES;
+    // and the places of their haze whole in its target
+    features |= afeat & crate::blend_exact::WIDE_RANGE;
     // Aurora's own pipeline cache on disk (pipeline_cache.rs)
     features |= crate::pipeline_cache::feature(afeat);
     let in_all_pools = descriptors_in_all_pools(adapter);

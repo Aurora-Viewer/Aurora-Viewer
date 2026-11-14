@@ -385,6 +385,29 @@ pub enum CtxAction {
     RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// A group chat's moderator allows or forbids a member's text
+    /// (LLIMSpeakerMgr::allowTextChat).
+    ModerateGroupText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
+    /// "Eject from group" / "Ban member" of a group chat's members, asked
+    /// first (`ui::chat::moderation`).
+    GroupChatEject {
+        group: Uuid,
+        agent: Uuid,
+    },
+    GroupChatBan {
+        group: Uuid,
+        agent: Uuid,
+    },
+    /// "Ban from all my groups" / "Unban from all my groups", asked first
+    /// (`world::group_ban_all`).
+    BanFromAllGroups {
+        agent: Uuid,
+        ban: bool,
+    },
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
     /// LLSpeakerVolumeStorage).
     SetVoiceVolume(Uuid, f32),
@@ -415,6 +438,11 @@ pub enum CtxAction {
     ToggleBlockObject {
         id: Uuid,
         name: String,
+    },
+    /// Block the resident or group owning a remote object, never toggle it.
+    BlockObjectOwner {
+        owner: Uuid,
+        group_owned: bool,
     },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
@@ -1748,6 +1776,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: "@shownames=n".into(),
         }));
