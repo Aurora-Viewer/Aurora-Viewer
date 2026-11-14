@@ -756,8 +756,9 @@ fn custom_colour(ui: &mut egui::Ui, p: &Palette, world: &mut World, set: &str, c
             .ctx()
             .data(|d| d.get_temp::<widgets::color::ColorPickState>(id))
             .unwrap_or_else(|| widgets::color::ColorPickState::new(id, srgba));
-        // with its alpha, as the set's swatch had it before
-        if widgets::color::color_panel(ui, p, &mut state, &mut srgba, true) {
+        // no alpha: a name's colour needs none (human decision; the
+        // Legacy Viewer's colour picker has none either)
+        if widgets::color::color_panel(ui, p, &mut state, &mut srgba, false) {
             let [r, g, b, a] = srgba;
             let c = egui::Rgba::from(Color32::from_rgba_unmultiplied(r, g, b, a)).to_rgba_unmultiplied();
             world.contact_sets.set_color(set, c);
