@@ -1209,6 +1209,18 @@ impl Controller {
                     }
                 }
             }
+            // A 0 s one-shot has no timed stop (activateMotionInstance:
+            // getDuration() != 0), but LLKeyframeMotion::onUpdate returns
+            // false once its time passes 0, so updateMotionsByType stops it
+            // on the next frame and requests the simulator stop. Held, a
+            // single-frame face pose froze a mesh head's expressions and
+            // eyes on its wearer's screen (#3227).
+            if m.stop.is_none() && !m.anim.anim.looping && m.anim.anim.duration <= 0.0 && now > m.activation {
+                m.stop_at(now);
+                if !m.internal && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                    completed.push(m.id);
+                }
+            }
             // A "loop" whose raw loop points run past its duration plays
             // once: LLKeyframeMotion::onUpdate returns false, and
             // updateMotionsByType stops it and requests the simulator stop
@@ -3205,6 +3217,46 @@ mod tests {
             assert!(c.sync(&resent, at(1.7), |_| Some(anim.clone())).is_empty());
             assert!(c.sync(&resent, at(3.0), |_| Some(anim.clone())).is_empty());
             assert!(c.motions.is_empty(), "eased out, not replayed (synchronized {synchronized})");
+        }
+    }
+
+    /// A non-looping 0 s animation (a mesh head HUD's single-frame face
+    /// pose) applies for one frame, then stops, eases out and asks the
+    /// simulator to stop it, once, as LLKeyframeMotion::onUpdate returning
+    /// false makes the Legacy Viewer do (#3227).
+    #[test]
+    fn a_zero_length_one_shot_stops_after_its_first_frame() {
+        let rig = rig();
+        let id = Uuid::from_u128(22);
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.0).anim.clone(), &rig);
+        bound.anim.looping = false;
+        bound.anim.duration = 0.0;
+        bound.anim.loop_in = 0.0;
+        bound.anim.loop_out = 0.0;
+        bound.anim.ease_in = 0.0;
+        bound.anim.ease_out = 0.5;
+        let anim = Arc::new(bound);
+        for synchronized in [false, true] {
+            let t0 = Instant::now();
+            let at = |s| t0 + Duration::from_secs_f64(s);
+            let mut c = if synchronized {
+                synchronized_controller()
+            } else {
+                Controller::default()
+            };
+            let playing = [signal(id, 1, t0)];
+            assert!(
+                c.sync(&playing, t0, |_| Some(anim.clone())).is_empty(),
+                "applied on its first frame"
+            );
+            assert!(c.motions[0].weight > 0.99);
+            assert_eq!(c.sync(&playing, at(0.02), |_| Some(anim.clone())), vec![id]);
+            assert_eq!(c.motions[0].stop, Some(at(0.02)));
+            // still listed by the simulator until it handles the stop: not replayed
+            assert!(c.sync(&playing, at(0.3), |_| Some(anim.clone())).is_empty());
+            assert!(c.motions[0].weight < 1.0, "easing out");
+            assert!(c.sync(&playing, at(1.0), |_| Some(anim.clone())).is_empty());
+            assert!(c.motions.is_empty(), "eased out (synchronized {synchronized})");
         }
     }
 
