@@ -51,6 +51,14 @@ pub fn page(cx: &mut Cx) {
             tr!("inventory-folder-colors-help"),
             &field!(inventory.folder_colors_enabled),
         );
+        let off = !cx.s.inventory.folder_colors_enabled;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("inventory-folder-colors-inherit"),
+                tr!("inventory-folder-colors-inherit-help"),
+                &field!(inventory.folder_colors_inherit),
+            );
+        });
         // the colors themselves, given from a folder's menu
         cx.track(&field!(inventory.folder_colors));
         cx.toggle(tr!("ui-inventory-controls-recent-tab"), "", &field!(inventory.show_recent));

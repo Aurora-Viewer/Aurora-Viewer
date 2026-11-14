@@ -14063,6 +14063,13 @@ inventory-folder-color-restore = デフォルトに戻す
 inventory-folder-color-private = この色はあなたにだけ表示されます。
 inventory-folder-color-many = { $count }個のフォルダ
 inventory-folder-color-none = 色を付けるフォルダを選択してください。
+inventory-folder-color-subfolders = すべてのサブフォルダに適用
+inventory-folder-color-all = すべてのフォルダに適用
+inventory-folder-color-all-title = すべてのフォルダに色を付けますか？
+inventory-folder-color-all-question = { $count }個のフォルダすべてにこの色が付き、付けていた色は置き換えられます。ライブラリは変わりません。
+inventory-folder-color-all-apply = すべてに適用
+inventory-folder-colors-inherit = サブフォルダは親フォルダの色を引き継ぐ
+inventory-folder-colors-inherit-help = 自分の色がないフォルダは、新しいフォルダも含め、最も近い色付きの親フォルダの色で表示されます。フォルダ自身に色を付けた場合はその色が優先されます。
 
 area-search-group = グループ
 area-search-last-owner = 前のオーナー

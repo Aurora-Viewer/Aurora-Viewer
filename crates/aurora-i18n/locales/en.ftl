@@ -14139,6 +14139,13 @@ inventory-folder-color-restore = Restore default
 inventory-folder-color-private = Only you see these colors.
 inventory-folder-color-many = { $count } folders
 inventory-folder-color-none = Select a folder to color it.
+inventory-folder-color-subfolders = Apply to all subfolders
+inventory-folder-color-all = Apply to ALL folders
+inventory-folder-color-all-title = Color all folders?
+inventory-folder-color-all-question = Every one of your { $count } folders will get this color, replacing the colors you gave them. The Library keeps its own.
+inventory-folder-color-all-apply = Apply to all
+inventory-folder-colors-inherit = Subfolder takes color from parent folder
+inventory-folder-colors-inherit-help = A folder without a color of its own shows the color of its nearest colored parent, new folders included. Its own color, when you give it one, comes first.
 
 area-search-group = Group
 area-search-last-owner = Last owner

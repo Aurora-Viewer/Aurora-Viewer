@@ -1280,7 +1280,7 @@ fn folder_row(
         if resp.clicked() {
             *open = !*open;
         }
-        let tint = folder_colors::tint(prefs, id);
+        let tint = folder_colors::tint(prefs, inv, id);
         tree::icon(ui, icons, folder_icon(folder.info.type_default, *open), p, tint);
         let label = match fetch_state {
             FetchState::Fetching => aurora_i18n::tr!("status-name-loading", name = name.to_string()),
