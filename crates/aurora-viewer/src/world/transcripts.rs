@@ -1410,6 +1410,7 @@ mod tests {
             chat_type: ChatType::OwnerSay,
             position: glam::Vec3::ZERO,
             message: "@shownames=n".to_owned(),
+            region: None,
         };
         assert!(w.rlva.receive(&restrict));
         let hidden = w.conversation_display_name(&private);
