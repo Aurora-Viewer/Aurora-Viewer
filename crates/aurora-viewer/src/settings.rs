@@ -889,6 +889,9 @@ pub struct Settings {
     /// ":" at the start of a line is "/me", in the nearby chat and the
     /// conversations (AllowMUpose, off; #1202): ":waves" is "Name waves".
     pub colon_emote: bool,
+    /// A line that opens "((" (or "[[") without closing it gets its "))" on
+    /// sending, in the nearby chat and the conversations (AutoCloseOOC, off).
+    pub auto_close_ooc: bool,
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
     pub chat_mention_autocomplete: bool,
@@ -1473,7 +1476,9 @@ pub struct Settings {
     /// the true order of their fragments at each pixel, beyond the Legacy
     /// Viewer, from its lightest precision to its finest
     /// (`aurora_render::BlendPrecision`: 1 fast, 2 balanced, 3 high, 4 full,
-    /// the default). Sorted under MSAA.
+    /// the default), sorted under MSAA; 5 the stochastic transparency
+    /// (aurora-render oit_stochastic.rs), an estimate of that order from 8
+    /// random samples per pixel, under MSAA too.
     pub blend_order: u8,
     /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
     /// 2 balanced, 3 performance, 4 ultra performance.
@@ -2248,6 +2253,7 @@ impl Default for Settings {
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
             colon_emote: false,
+            auto_close_ooc: false,
             chat_mention_autocomplete: true,
             autohide_chat_bar: false,
             show_contacts_tab: true,
@@ -2499,6 +2505,8 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
+            // an opt-in: the Legacy Viewer sorts its blended faces, and the
+            // method's targets take video memory while it is on
             anisotropy: 8,
             cache_size_mb: 20480,
             cache_location: String::new(),
@@ -3307,7 +3315,9 @@ impl Settings {
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
         self.antialiasing = self.antialiasing.min(7);
-        self.blend_order = self.blend_order.min(4);
+        if self.blend_order > crate::graphics_presets::BLEND_ORDER_STOCHASTIC {
+            self.blend_order = crate::graphics_presets::BLEND_ORDER_FULL;
+        }
         self.fsr_quality = self.fsr_quality.min(4);
         self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
@@ -3599,6 +3609,8 @@ impl Settings {
             rain_surfaces: false,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
+            // the stochastic choice of the order of the blended faces
+            oit: self.blend_order == crate::graphics_presets::BLEND_ORDER_STOCHASTIC,
         }
     }
 
@@ -5350,6 +5362,21 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(odd.sanitized().blend_order, 4);
+        // the stochastic transparency is a choice of the same setting
+        let stochastic = Settings {
+            blend_order: 5,
+            ..Settings::default()
+        };
+        assert_eq!(stochastic.clone().sanitized().blend_order, 5);
+        assert!(stochastic.render_settings().oit);
+        assert!((0..=4).all(|order| {
+            !Settings {
+                blend_order: order,
+                ..Settings::default()
+            }
+            .render_settings()
+            .oit
+        }));
     }
 
     #[test]

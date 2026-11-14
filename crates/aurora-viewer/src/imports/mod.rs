@@ -358,6 +358,8 @@ pub struct Entry {
     pub local_mesh_ids: Vec<Uuid>,
     pub local_model: usize,
     pub local_use_scale: bool,
+    pub local_scene: bool,
+    pub local_scene_size: Option<glam::Vec3>,
     pub watch: Option<local::Watch>,
     pub material_index: usize,
     pub empty_alpha: bool,
@@ -398,6 +400,7 @@ impl Entry {
             Ok(source) => (Some(source), Status::Ready),
             Err(error) => (None, Status::Error(error)),
         };
+        let local_scene = matches!(&source, Some(Source::Mesh(draft)) if local::scene::supported(draft));
         Self {
             id: Uuid::new_v4(),
             load_choice: None,
@@ -441,6 +444,8 @@ impl Entry {
             local_mesh_ids: Vec::new(),
             local_model: 0,
             local_use_scale: false,
+            local_scene,
+            local_scene_size: None,
             watch: None,
             material_index: 0,
             local_live: true,
