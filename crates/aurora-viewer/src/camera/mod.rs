@@ -1348,6 +1348,12 @@ impl Camera {
         self.force_mouselook = force_mouselook;
     }
 
+    /// Whether a script-defined sit camera is active (sitCameraEnabled in
+    /// indra/newview/llagentcamera.cpp, originally LGPL 2.1).
+    pub fn sit_camera_active(&self) -> bool {
+        self.sit_camera.is_some()
+    }
+
     /// CameraConstraint: the plane the simulator keeps the camera in front of.
     pub fn set_collide_plane(&mut self, plane: Vec4, s: &CameraSettings) {
         if !s.ignore_sim_constraints && plane.is_finite() {
@@ -1722,9 +1728,11 @@ impl Camera {
         agent.pitch = (agent.pitch - dy * k).clamp(-1.5, 1.5);
     }
 
-    /// Camera keys held this frame (LLAgentCamera::updateCamera); like
-    /// camera_spin_around_cw & co they first unlock the view from the avatar.
-    pub fn apply_keys(&mut self, keys: CameraKeys, agent: &mut AgentState, s: &CameraSettings, dt: f32) {
+    /// Camera keys held this frame (LLAgentCamera::updateCamera).
+    /// If `unlock` is true, or if orbiting left/right or panning, the view
+    /// is unlocked from the avatar (alt-camera). Seated forward/back zoom
+    /// and up/down tilt retain focus on the avatar unless already unlocked.
+    pub fn apply_keys(&mut self, keys: CameraKeys, unlock: bool, agent: &mut AgentState, s: &CameraSettings, dt: f32) {
         let mut keys = keys;
         if self.vr_mode == Some(VrView::Avatar) {
             if keys.any() {
@@ -1743,7 +1751,16 @@ impl Camera {
         if !keys.any() || self.mouselook() {
             return;
         }
-        self.unlock_view(agent, s);
+        if unlock
+            || keys.orbit_left != 0.0
+            || keys.orbit_right != 0.0
+            || keys.pan_left != 0.0
+            || keys.pan_right != 0.0
+            || keys.pan_up != 0.0
+            || keys.pan_down != 0.0
+        {
+            self.unlock_view(agent, s);
+        }
         let over = keys.orbit_up - keys.orbit_down;
         if over != 0.0 {
             self.orbit_over(over * ORBIT_RATE * dt);
@@ -1755,7 +1772,11 @@ impl Camera {
         let inward = keys.zoom_in - keys.zoom_out;
         if inward != 0.0 {
             // the distance to the focus per second
-            let distance = self.position.distance(self.focus_target);
+            let distance = if self.focus_on_avatar && self.third_person() {
+                self.target_distance
+            } else {
+                self.position.distance(self.target)
+            };
             self.orbit_in(inward * distance * dt, agent, s);
         }
         let pan_x = keys.pan_right - keys.pan_left;
@@ -3708,6 +3729,7 @@ mod tests {
                 pan_right: 1.0,
                 ..Default::default()
             },
+            true,
             &mut world.agent,
             &settings,
             input.dt,
@@ -3761,6 +3783,7 @@ mod tests {
                 pan_right: 1.0,
                 ..Default::default()
             },
+            true,
             &mut world.agent,
             &settings,
             input.dt,
@@ -4922,6 +4945,43 @@ mod tests {
         assert!(cam.scroll(-1.0, false, true, &mut agent, &mut s));
         assert!((s.focus_offset[2] - 0.9).abs() < 1e-5);
         assert_eq!(s.preset, CameraPreset::Custom);
+    }
+
+    #[test]
+    fn seated_camera_zoom_retains_avatar_focus_while_orbit_unlocks() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let mut agent = w.agent.clone();
+
+        assert!(cam.focus_on_avatar);
+        let initial_zoom = cam.zoom_fraction;
+
+        // Seated zoom in (unlock = false): keeps focus on avatar and reduces zoom_fraction
+        let zoom_in_keys = CameraKeys {
+            zoom_in: 1.0,
+            ..Default::default()
+        };
+        cam.apply_keys(zoom_in_keys, false, &mut agent, &s, 0.1);
+        assert!(cam.focus_on_avatar);
+        assert!(cam.zoom_fraction < initial_zoom);
+
+        // Seated zoom out (unlock = false): keeps focus on avatar and increases zoom_fraction
+        let zoom_out_keys = CameraKeys {
+            zoom_out: 1.0,
+            ..Default::default()
+        };
+        cam.apply_keys(zoom_out_keys, false, &mut agent, &s, 0.1);
+        assert!(cam.focus_on_avatar);
+
+        // Seated orbit around (A/D): unlocks view from avatar to orbit
+        let orbit_keys = CameraKeys {
+            orbit_left: 1.0,
+            ..Default::default()
+        };
+        cam.apply_keys(orbit_keys, false, &mut agent, &s, 0.1);
+        assert!(!cam.focus_on_avatar);
     }
 
     /// The camera limits on, as in the Legacy Viewer (Aurora turns them off

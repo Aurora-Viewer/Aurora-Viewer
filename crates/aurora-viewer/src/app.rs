@@ -8553,6 +8553,11 @@ impl App {
             // (app_settings/key_bindings.xml).
             i.stop = k(Action::StopMoving) && !self.world.agent.is_sitting();
         }
+        // The movement keys alone: the seated camera keys below answer to
+        // them, not to the Controls window's buttons nor to a joystick or
+        // gamepad, which push the avatar directly (LLViewerJoystick::agentPush,
+        // LLFloaterMove) and never reach camera_move_forward_sitting & co.
+        let move_keys = i;
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
         i.forward |= held(Action::Forward);
@@ -8648,6 +8653,51 @@ impl App {
         if self.world.rlva.has("jump") && !self.world.agent.flying {
             i.up = false;
         }
+        // While seated in third person, movement keys zoom and orbit the
+        // camera instead of moving the avatar or resetting the view, unless a
+        // script took the control, a sit camera is set or the avatar runs
+        // (SeatedCameraKeys::of: camera_move_forward_sitting & co). `i.run`
+        // is the Legacy Viewer's mbTempRun: a double-tap run, the joystick's
+        // run button, and nothing under RLVa @temprun.
+        // The headset owns the keys in VR, as for the camera keys below.
+        let sitting_cam = self.vr_camera.is_none() && self.world.agent.is_sitting() && !self.camera.mouselook() && self.in_world();
+        let SeatedCameraKeys {
+            zoom_in: sit_zoom_in,
+            zoom_out: sit_zoom_out,
+            orbit_cw: sit_orbit_cw,
+            orbit_ccw: sit_orbit_ccw,
+            orbit_up: sit_orbit_up,
+            orbit_down: sit_orbit_down,
+        } = if sitting_cam {
+            SeatedCameraKeys::of(
+                &move_keys,
+                &self.world.script_controls,
+                self.camera.sit_camera_active(),
+                self.always_run,
+                i.run,
+            )
+        } else {
+            SeatedCameraKeys::default()
+        };
+
+        if sit_zoom_in {
+            i.forward = false;
+        }
+        if sit_zoom_out {
+            i.back = false;
+        }
+        if sit_orbit_cw {
+            i.turn_left = false;
+        }
+        if sit_orbit_ccw {
+            i.turn_right = false;
+        }
+        if sit_orbit_up {
+            i.up = false;
+        }
+        if sit_orbit_down {
+            i.down = false;
+        }
         // nudge phase: the first 0.25 s of a press makes small steps
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
             if !held {
@@ -8738,9 +8788,23 @@ impl App {
             A::CamPanDown,
         ];
         let mut rate = [0.0f32; 10];
+        let mut unlock = false;
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
             let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
-            if self.in_world() && (key || self.controls_held.contains(&a)) {
+            let explicit = key || self.controls_held.contains(&a);
+            let sitting_active = match n {
+                0 => sit_orbit_cw,
+                1 => sit_orbit_ccw,
+                2 => sit_orbit_up,
+                3 => sit_orbit_down,
+                4 => sit_zoom_in,
+                5 => sit_zoom_out,
+                _ => false,
+            };
+            if self.in_world() && (explicit || sitting_active) {
+                if explicit {
+                    unlock = true;
+                }
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
             } else {
@@ -8750,6 +8814,9 @@ impl App {
         // the photo viewfinder's camera pad, held like the keys
         if let Some(pad) = self.viewfinder_pad(dt) {
             for (r, p) in rate.iter_mut().zip(pad) {
+                if p > 0.0 {
+                    unlock = true;
+                }
                 *r = r.max(p);
             }
         }
@@ -8765,7 +8832,8 @@ impl App {
             pan_up: rate[8],
             pan_down: rate[9],
         };
-        self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
+        self.camera
+            .apply_keys(keys, unlock, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
         if gamepad
             && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
@@ -23257,6 +23325,61 @@ fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now:
     now.duration_since(*since.get_or_insert(now)).as_secs_f32() > FLY_TIME
 }
 
+/// The movement keys a seated avatar hands to the camera: W / S zoom, A / D
+/// orbit around the avatar, E / C tilt it (camera_move_forward_sitting,
+/// camera_move_backward_sitting, camera_spin_around_cw_sitting,
+/// camera_spin_around_ccw_sitting, camera_spin_over_sitting and
+/// camera_spin_under_sitting, indra/newview/llviewerinput.cpp, originally
+/// LGPL 2.1). Each key goes to the avatar instead when its Legacy condition
+/// says so.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SeatedCameraKeys {
+    zoom_in: bool,
+    zoom_out: bool,
+    /// The turn-left key: spin_around_cw (the camera orbits right).
+    orbit_cw: bool,
+    /// The turn-right key: spin_around_ccw (the camera orbits left).
+    orbit_ccw: bool,
+    orbit_up: bool,
+    orbit_down: bool,
+}
+
+impl SeatedCameraKeys {
+    /// What the held `keys` do while seated in third person.
+    ///
+    /// - A script that took a control outright keeps it (forwardGrabbed,
+    ///   backwardGrabbed, rotateGrabbed, upGrabbed, downGrabbed: only the
+    ///   controls taken without pass-on; a pass-on hold does not stop the
+    ///   camera).
+    /// - A script-defined sit camera (sitCameraEnabled) keeps every key.
+    /// - A / D also go to the avatar while it runs: `getRunning()`, that is
+    ///   Always Run (`always_run`, mbAlwaysRun) or a temporary run
+    ///   (`temp_run`, mbTempRun: double-tap, joystick run button).
+    /// - W / S go to the avatar while it runs only by a temporary run:
+    ///   `getRunning() && !getAlwaysRun()`. With Always Run on they zoom,
+    ///   even after a double-tap (the Legacy Viewer never sets mbTempRun
+    ///   while Always Run is on).
+    /// - E / C have no run condition.
+    fn of(
+        keys: &MoveInput,
+        script: &aurora_net::script_controls::ScriptControls,
+        sit_camera: bool,
+        always_run: bool,
+        temp_run: bool,
+    ) -> Self {
+        let running = always_run || temp_run;
+        let temp_running = temp_run && !always_run;
+        Self {
+            zoom_in: keys.forward && !script.forward_grabbed() && !sit_camera && !temp_running,
+            zoom_out: keys.back && !script.backward_grabbed() && !sit_camera && !temp_running,
+            orbit_cw: keys.turn_left && !script.rotate_grabbed() && !sit_camera && !running,
+            orbit_ccw: keys.turn_right && !script.rotate_grabbed() && !sit_camera && !running,
+            orbit_up: keys.up && !script.up_grabbed() && !sit_camera,
+            orbit_down: keys.down && !script.down_grabbed() && !sit_camera,
+        }
+    }
+}
+
 /// Name of the swapchain's presentation mode for the profile and the bug
 /// reports; `unknown` until the renderer has answered a frame.
 fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static str {
@@ -23425,6 +23548,138 @@ mod tests {
         assert!(!super::synthetic_press(true, Released));
         assert!(!super::synthetic_press(false, Pressed));
         assert!(!super::synthetic_press(false, Released));
+    }
+
+    /// Seated keys against the script controls and the run state, as the
+    /// Legacy Viewer's camera_*_sitting functions decide them.
+    mod seated_camera_keys {
+        use super::super::SeatedCameraKeys;
+        use crate::agent::MoveInput;
+        use aurora_net::control;
+        use aurora_net::script_controls::ScriptControls;
+
+        /// W, S, A, D, E and C all held.
+        fn all_held() -> MoveInput {
+            MoveInput {
+                forward: true,
+                back: true,
+                turn_left: true,
+                turn_right: true,
+                up: true,
+                down: true,
+                ..Default::default()
+            }
+        }
+
+        fn of(script: &ScriptControls, sit_camera: bool, always_run: bool, temp_run: bool) -> SeatedCameraKeys {
+            SeatedCameraKeys::of(&all_held(), script, sit_camera, always_run, temp_run)
+        }
+
+        fn all_to_the_camera() -> SeatedCameraKeys {
+            SeatedCameraKeys {
+                zoom_in: true,
+                zoom_out: true,
+                orbit_cw: true,
+                orbit_ccw: true,
+                orbit_up: true,
+                orbit_down: true,
+            }
+        }
+
+        #[test]
+        fn free_seat_gives_every_key_to_the_camera() {
+            assert_eq!(of(&ScriptControls::default(), false, false, false), all_to_the_camera());
+        }
+
+        #[test]
+        fn a_key_not_held_stays_with_the_avatar() {
+            let keys = MoveInput {
+                forward: true,
+                ..Default::default()
+            };
+            let seated = SeatedCameraKeys::of(&keys, &ScriptControls::default(), false, false, false);
+            assert_eq!(
+                seated,
+                SeatedCameraKeys {
+                    zoom_in: true,
+                    ..Default::default()
+                }
+            );
+        }
+
+        #[test]
+        fn controls_taken_outright_keep_their_key() {
+            for (flag, key) in [
+                (control::AT_POS, "zoom_in"),
+                (control::AT_NEG, "zoom_out"),
+                (control::YAW_POS, "orbit_cw and orbit_ccw"),
+                (control::YAW_NEG, "orbit_cw and orbit_ccw"),
+                (control::UP_POS, "orbit_up"),
+                (control::UP_NEG, "orbit_down"),
+            ] {
+                let mut script = ScriptControls::default();
+                script.apply(true, flag, false);
+                let seated = of(&script, false, false, false);
+                let mut expected = all_to_the_camera();
+                match flag {
+                    control::AT_POS => expected.zoom_in = false,
+                    control::AT_NEG => expected.zoom_out = false,
+                    control::YAW_POS | control::YAW_NEG => {
+                        expected.orbit_cw = false;
+                        expected.orbit_ccw = false;
+                    }
+                    control::UP_POS => expected.orbit_up = false,
+                    _ => expected.orbit_down = false,
+                }
+                assert_eq!(seated, expected, "{key} goes to the script");
+            }
+        }
+
+        #[test]
+        fn controls_passed_on_do_not_stop_the_camera() {
+            // llTakeControls(..., TRUE, ...): the script listens, the camera
+            // keeps its keys (mControlsTakenCount only, not the pass-on count)
+            let mut script = ScriptControls::default();
+            script.apply(
+                true,
+                control::AT_POS | control::AT_NEG | control::YAW_POS | control::YAW_NEG | control::UP_POS | control::UP_NEG,
+                true,
+            );
+            assert!(script.any());
+            assert_eq!(of(&script, false, false, false), all_to_the_camera());
+        }
+
+        #[test]
+        fn a_sit_camera_keeps_every_key_for_the_avatar() {
+            assert_eq!(of(&ScriptControls::default(), true, false, false), SeatedCameraKeys::default());
+        }
+
+        #[test]
+        fn a_temporary_run_sends_every_walk_and_turn_key_to_the_avatar() {
+            let seated = of(&ScriptControls::default(), false, false, true);
+            assert!(!seated.zoom_in && !seated.zoom_out, "W / S push the avatar");
+            assert!(!seated.orbit_cw && !seated.orbit_ccw, "A / D turn the avatar");
+            assert!(seated.orbit_up && seated.orbit_down, "E / C have no run condition");
+        }
+
+        #[test]
+        fn always_run_sends_the_turn_keys_to_the_avatar_but_not_w_and_s() {
+            let seated = of(&ScriptControls::default(), false, true, false);
+            assert!(seated.zoom_in && seated.zoom_out, "getRunning() && !getAlwaysRun() is false");
+            assert!(!seated.orbit_cw && !seated.orbit_ccw, "getRunning() is true");
+            assert!(seated.orbit_up && seated.orbit_down);
+        }
+
+        #[test]
+        fn a_double_tap_under_always_run_still_zooms() {
+            // Aurora marks a double-tap run even with Always Run on; the Legacy
+            // Viewer never does (run_forward checks !getRunning()), so W / S
+            // behave as with Always Run alone
+            assert_eq!(
+                of(&ScriptControls::default(), false, true, true),
+                of(&ScriptControls::default(), false, true, false)
+            );
+        }
     }
 
     #[test]
