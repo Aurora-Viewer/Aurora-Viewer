@@ -10,6 +10,9 @@ pub mod adapter_choice;
 mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
+mod blend_exact;
+#[cfg(test)]
+mod blend_exact_tests;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
