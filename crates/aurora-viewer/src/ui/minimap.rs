@@ -429,6 +429,7 @@ impl MiniMap {
             default,
             vec2(64.0, 64.0),
             opts.mini_locked,
+            true,
             |ui| {
                 let size = ui.available_size().max(vec2(60.0, 60.0));
                 actions = self.draw(ui, p, world, tiles, cam, opts, size, true);
