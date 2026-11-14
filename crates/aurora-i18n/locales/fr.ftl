@@ -13984,6 +13984,7 @@ scene-nav-vertical = Personnage vertical
 # About Aurora Viewer (#1126)
 about-tab-info = Infos
 about-tab-licences = Licences
+about-tab-libraries = Bibliothèques
 about-copy = Copier dans le presse-papiers
 about-copied = Copié
 about-copy-hint = Copie tout ce qui précède, en anglais, pour une demande d'aide ou un rapport de bug.

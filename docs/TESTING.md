@@ -5853,7 +5853,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REGION_MESSAGE=1` | Messages to the whole region in the middle of the screen (#1404), one waiting behind the other |
 | `AURORA_DEMO_SIM_VERSION=1\|on` | The region's simulator version changes during the run: no notice by default, one with `on` |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
-| `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
+| `AURORA_DEMO_ABOUT=info\|licences\|libraries[:end]` | Help › About Aurora Viewer opens on its Info, Licences or Libraries tab |
 | `AURORA_DEMO_VOICE_CONTROLS=1` | The toolbar's Voice controls window opens (frame 600) on the nearby channel with three demo residents; with `AURORA_DEMO_CALL=conference` on the call's channel |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -6912,12 +6912,13 @@ failure. Grid validation and any paid upload are performed by the human.
   no notice comes. `on` turns it on for this run only (the setting is not
   saved): the "Simulator version changed" card arrives at 700 with both
   versions. Capture with `AURORA_FPS_LIMIT=60` at 760.
-- **`AURORA_DEMO_ABOUT=info|licences[:end]`**: the About window
+- **`AURORA_DEMO_ABOUT=info|licences|libraries[:end]`**: the About window
   (`ui/about.rs`) opens at frame 600 on the tab asked for (`info` when the
   value is anything else); `:end` scrolls the tab to its last card. Info shows the demo region and simulator, the
   computer once `system_info.rs` has read it in the background (a
   "Reading…" line for a moment), and "Copy to clipboard"; Licences lists
-  NOTICE.md, a card per heading. Capture at frame 700 with
+  NOTICE.md, a card per heading; Libraries shows THIRD-PARTY-LICENSES.md
+  as text (the crates, then the licence texts). Capture at frame 700 with
   `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
 - **`AURORA_DEMO_VOICE_CONTROLS=1`**: the Voice controls window
   (`ui/voice_controls.rs`, the toolbar's `voice` command) opens at frame
