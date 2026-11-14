@@ -508,6 +508,9 @@ pub fn show(
     if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
         floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
+    // Keep the user's Build size. Large Appearance › Text size reflows inside
+    // the floater (shape fields and Legacy Texture slots); it must not shove
+    // the window wider or taller on its own.
     floater.min_size = if s.legacy_window {
         legacy::MIN_SIZE
     } else {

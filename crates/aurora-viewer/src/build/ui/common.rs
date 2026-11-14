@@ -13,6 +13,13 @@ pub(super) const BODY: f32 = 12.0;
 pub(super) const SMALL: f32 = 11.0;
 pub(super) const TITLE: f32 = 13.0;
 
+/// Preference text size as a layout multiplier. Below 1.0 the fixed Build
+/// geometry already fits; above it, reserved strips and absolute slots must
+/// grow with the faces so controls stay inside the floater.
+pub(super) fn font_scale(ui: &egui::Ui) -> f32 {
+    crate::ui::fonts::scale(ui.ctx()).max(1.0)
+}
+
 pub(super) fn typography(ui: &mut egui::Ui) {
     crate::ui::widgets::organization_typography(ui);
 }
@@ -105,9 +112,10 @@ pub fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
 
 /// A label of fixed width then the content (Firestorm's two-column rows).
 pub fn row<R>(ui: &mut egui::Ui, p: &Palette, name: &str, width: f32, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let row_h = 20.0 * font_scale(ui);
     ui.horizontal(|ui| {
         if super::legacy::active(ui) {
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h), egui::Sense::hover());
             let mut caption = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(rect)
@@ -118,7 +126,7 @@ pub fn row<R>(ui: &mut egui::Ui, p: &Palette, name: &str, width: f32, body: impl
                 .add(egui::Label::new(RichText::new(name).size(BODY).color(p.muted)).truncate())
                 .on_hover_text(name);
         } else {
-            ui.allocate_ui_with_layout(Vec2::new(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(width, row_h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.set_min_width(width);
                 label(ui, p, name)
             });
@@ -182,10 +190,11 @@ pub fn transform_spin(
 
 /// An unavailable number has no numeric widget, draft or accessible value.
 pub fn empty_spin(ui: &mut egui::Ui, width: f32) -> Edit {
-    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
+    let scale = font_scale(ui);
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 } * scale;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.add_sized([(width - 13.0).max(16.0), height], egui::Label::new("—"));
+        ui.add_sized([(width - 13.0 * scale).max(16.0), height], egui::Label::new("—"));
         crate::ui::widgets::step_buttons(ui, height);
     });
     Edit::default()
@@ -252,11 +261,12 @@ fn spinner(
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
-    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
+    let scale = font_scale(ui);
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 } * scale;
     let (r, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let r = ui.add_sized([(width - 13.0).max(16.0), height], dv);
+            let r = ui.add_sized([(width - 13.0 * scale).max(16.0), height], dv);
             let step = crate::ui::widgets::step_buttons(ui, height);
             (r, step)
         })

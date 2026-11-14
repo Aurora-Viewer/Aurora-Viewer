@@ -2054,7 +2054,7 @@ fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
                     .find(|(text, rect)| {
                         aurora_i18n::parse_number(text).is_some()
                             && rect.left() > caption.right()
-                            && (rect.center().y - caption.center().y).abs() < 8.0
+                            && (rect.center().y - caption.center().y).abs() < 8.0 * text_scale.max(1.0)
                     })
                     .unwrap()
                     .1
@@ -3963,6 +3963,54 @@ fn a_pbr_uv_edit_keeps_each_faces_and_channels_own_pair() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn compact_object_shape_fields_stay_inside_at_large_text_size() {
+    let mut inspector = Inspector::new();
+    crate::theme::Theme::default().apply(&inspector.ctx, 1.75);
+    crate::ui::fonts::apply(&inspector.ctx, crate::ui::fonts::DEFAULT);
+    inspector.tool.tab = 5;
+    inspector.settings.transform_expanded = false;
+    inspector.screen = vec2(1600.0, 1400.0);
+    // Keep a normal Build width: large text must reflow inside it, not grow the floater.
+    // Height is only enough to keep the top shape rows on screen at 1.75× (rows are taller).
+    let min = super::minimum_size(&inspector.tool, &inspector.settings);
+    resize_inspector(&mut inspector, vec2(min.x.max(320.0), 1100.0));
+    let (window, texts) = inspector.show(vec![]);
+    // Top shape rows stay reachable without horizontal clipping; they are the ones Heeks
+    // saw clipped past the right edge while the middle stayed empty.
+    for label in [
+        aurora_i18n::tr!("build-compact-path-cut"),
+        aurora_i18n::tr!("build-ui-object-hollow"),
+        aurora_i18n::tr!("build-compact-twist"),
+    ] {
+        let caption = texts
+            .iter()
+            .find(|(text, rect)| text == label && window.contains_rect(*rect))
+            .unwrap_or_else(|| panic!("{label} must remain visible at 1.75× text size"))
+            .1;
+        let fields: Vec<_> = texts
+            .iter()
+            .filter(|(text, rect)| {
+                aurora_i18n::parse_number(text).is_some()
+                    && (rect.center().y - caption.center().y).abs() < 14.0 * 1.75
+                    && rect.left() > caption.left()
+            })
+            .map(|(_, rect)| *rect)
+            .collect();
+        assert!(!fields.is_empty(), "{label}: shape values must sit on the same row as the caption");
+        for field in &fields {
+            assert!(
+                field.right() <= window.right() + 1.0,
+                "{label}: value {field:?} must stay inside the floater {window:?}"
+            );
+            assert!(
+                field.left() < caption.right() + 220.0,
+                "{label}: empty middle must collapse so values sit next to the caption"
+            );
         }
     }
 }
