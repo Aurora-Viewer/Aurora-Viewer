@@ -192,6 +192,9 @@ pub struct FloaterState {
     pub contents_filter: String,
     /// Independent from every personal/folder inventory window.
     pub contents_rights: crate::ui::inventory::permissions::Rights,
+    /// The language picked for "New script"; None follows the region (Lua
+    /// where SLua runs, as LLPanelContents::getState resets it).
+    pub new_script_lua: Option<bool>,
     pub contents_selection: contents_selection::Selection,
     /// Whether the inventory held over the Contents tab may go in.
     pub contents_drop: crate::build::contents_drop::PlanCheck,

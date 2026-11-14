@@ -936,7 +936,7 @@ fn abilities_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &V
         return;
     }
     let (some, all) = admin_members::powers_of(d, &targets, &st.members.staged);
-    let catalogue = super::abilities::catalogue();
+    let catalogue = super::abilities::catalogue(v.post_links);
     let total: usize = catalogue.iter().map(|s| admin_members::set_count(s, some).0).sum();
     let title = aurora_i18n::tr!(
         "ui-group-admin-can-do",

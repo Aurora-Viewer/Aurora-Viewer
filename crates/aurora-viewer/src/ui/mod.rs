@@ -20,6 +20,7 @@ pub mod voice_controls;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod beacons;
+pub mod beams;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
@@ -129,6 +130,7 @@ pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
 pub mod stream_title;
+pub mod surface_opacity;
 pub(crate) mod text_menu;
 pub mod texture_library;
 pub mod texture_picker;
