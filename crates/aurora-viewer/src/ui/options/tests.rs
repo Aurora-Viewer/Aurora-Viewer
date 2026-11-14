@@ -124,6 +124,7 @@ const BEFORE: &[&str] = &[
     "show_perf",
     "show_minimap",
     "show_bug_report",
+    "show_stand_fly_panel",
     "place_bar_stretch",
     "place_bar_rights_text",
     "favorites_access",

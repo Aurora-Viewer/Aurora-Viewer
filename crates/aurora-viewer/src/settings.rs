@@ -459,6 +459,14 @@ impl DebugView {
 /// The former look-at range slider's maximum, which meant no limit.
 const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 
+/// The draw distance's range (m): the Legacy Viewer's Graphics slider
+/// (RenderFarClip, panel_preferences_graphics1.xml, 32 to 1024). A region
+/// sends what it allows of it (OpenSim's MaxDrawDistance, 512 by default).
+pub const DRAW_DISTANCE_MIN: f32 = 32.0;
+pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
+/// The nearest reach of the automatic reflection probes (`probe_range`).
+pub const PROBE_RANGE_MIN: f32 = 32.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -488,6 +496,10 @@ pub struct Settings {
     pub browser_behavior: BrowserBehavior,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
+    /// The floating Stand / Stop flying / Flycam buttons over the world
+    /// (Preferences › Layout; on by default, like the Legacy Viewer's
+    /// panel). Off: the panel never shows, the menus still stand or land.
+    pub show_stand_fly_panel: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
     pub show_huds: bool,
     /// sunbeacon / moonbeacon: a line from the avatar towards the sun or
@@ -1394,6 +1406,8 @@ pub struct Settings {
     /// FirstUseFlyOverride notification, once ever). The override itself is
     /// never saved (`World::fly_override`).
     pub fly_override_warned: bool,
+    /// The Compass opens in its compact layout (AvatarAlignMini, off).
+    pub avatar_align_mini: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -1556,8 +1570,9 @@ pub struct Settings {
     /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=256).
     pub probe_count: u32,
     /// How far automatic reflection probes are placed around the camera
-    /// (m, 32..=512), within the draw distance. The Legacy Viewer has no
-    /// such limit (the draw distance); 512 keeps its reach.
+    /// (m, 32 up to [`DRAW_DISTANCE_MAX`]), within the draw distance. The
+    /// Legacy Viewer has no such limit (the draw distance); the largest
+    /// value keeps its reach. 512 by default.
     pub probe_range: f32,
     /// RenderAvatarMaxComplexity: avatars above it show as grey silhouettes
     /// (0 = no limit; Firestorm's Ultra preset is 350 000).
@@ -2066,6 +2081,7 @@ impl Default for Settings {
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
             browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
+            show_stand_fly_panel: true,
             show_huds: true,
             sun_beacon: false,
             moon_beacon: false,
@@ -2410,6 +2426,7 @@ impl Default for Settings {
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
+            avatar_align_mini: false,
             block_click_sit: false,
             large_surface_protection: false,
             large_surface_prim_threshold: 75.0,
@@ -3214,7 +3231,7 @@ impl Settings {
         if !self.chat_island_width.is_finite() || self.chat_island_width < 0.0 {
             self.chat_island_width = 0.0;
         }
-        self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
+        self.draw_distance = self.draw_distance.clamp(DRAW_DISTANCE_MIN, DRAW_DISTANCE_MAX);
         self.draw_distance_stepping_interval = self.draw_distance_stepping_interval.clamp(5, 30);
         self.chat_commands.sanitize();
         if let Some(toolbar) = &mut self.toolbar {
@@ -3297,7 +3314,7 @@ impl Settings {
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 256);
         self.probe_range = if self.probe_range.is_finite() {
-            self.probe_range.clamp(32.0, 512.0)
+            self.probe_range.clamp(PROBE_RANGE_MIN, DRAW_DISTANCE_MAX)
         } else {
             512.0
         };
@@ -3862,6 +3879,33 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(disabled.render_settings().projector_shadow_limit, 0);
+    }
+
+    #[test]
+    fn draw_distance_goes_to_1024_like_the_legacy_slider() {
+        for (asked, kept) in [(16.0, 32.0), (512.0, 512.0), (1024.0, 1024.0), (2000.0, 1024.0)] {
+            let s = super::Settings {
+                draw_distance: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.draw_distance, kept, "{asked} m");
+        }
+    }
+
+    #[test]
+    fn probe_range_reaches_as_far_as_the_draw_distance() {
+        // the largest probe range keeps the whole draw distance's reach; the
+        // default stays 512 m
+        assert_eq!(super::Settings::default().probe_range, 512.0);
+        for (asked, kept) in [(8.0, 32.0), (512.0, 512.0), (1024.0, 1024.0), (5000.0, 1024.0), (f32::NAN, 512.0)] {
+            let s = super::Settings {
+                probe_range: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.probe_range, kept, "{asked} m");
+        }
     }
 
     #[test]

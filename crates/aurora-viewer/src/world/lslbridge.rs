@@ -76,6 +76,7 @@ mod tests {
             owner_id: Uuid::from_u128(3),
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: text.into(),
         }

@@ -207,6 +207,8 @@ pub struct EnvAnswer {
     /// Altitudes (m) where sky tracks 1..=4 start: 0 and `track_altitudes`
     /// (all 0 when absent, as EnvironmentInfo's constructor leaves them).
     pub altitudes: [f32; 4],
+    /// The names it was applied with (Aurora Weather reads codes there).
+    pub names: crate::weather::region::DayNames,
 }
 
 /// One settings asset (LLSettingsBase "type": sky, water or daycycle).
@@ -505,6 +507,7 @@ impl EnvAnswer {
             DayCycle::from_settings(&env["day_cycle"], length, offset)
         });
         EnvAnswer {
+            names: crate::weather::region::DayNames::from_env(env),
             day_settings: env.has("day_cycle").then(|| Arc::new(env["day_cycle"].clone())),
             parcel_id: if env.has("parcel_id") {
                 env["parcel_id"].as_i32()

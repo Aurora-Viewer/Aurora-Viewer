@@ -1108,6 +1108,10 @@ struct Pipelines {
     refl_terrain: wgpu::RenderPipeline,
     refl_terrain_pbr: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
+    /// The mirror's blended faces (`fs_reflect_blend`): the rigged ones
+    /// writing depth, then the others reading it.
+    refl_blend_rigged: wgpu::RenderPipeline,
+    refl_blend: wgpu::RenderPipeline,
     /// Shadow casters with the alpha test of `fs_shadow`.
     shadow: wgpu::RenderPipeline,
     /// Opaque shadow casters: the same vertices, no fragment shader.
@@ -2306,6 +2310,20 @@ fn cull_to_view(view_proj: Mat4, list: &[ShadowCaster]) -> Vec<DrawCmd> {
         .collect()
 }
 
+/// The mirror's blended faces (`DrawLists::reflection_blend`) that its view
+/// of `view_proj` touches: the first `rigged` of `list` in their order, then
+/// the others back to front from the mirror's camera at `eye` (its own
+/// distances, not the main view's: what is near the main camera may be far in
+/// the mirror). Equal distances keep their order.
+fn mirror_blend_order(view_proj: Mat4, eye: Vec3, list: &[DrawCmd], rigged: usize) -> [Vec<DrawCmd>; 2] {
+    let rigged = rigged.min(list.len());
+    let first = cull_cmds_to_view(view_proj, &list[..rigged]);
+    let mut rest = cull_cmds_to_view(view_proj, &list[rigged..]);
+    let distance = |c: &DrawCmd| eye.distance_squared(Vec3::new(c.bounds[0], c.bounds[1], c.bounds[2]));
+    rest.sort_by(|a, b| distance(b).total_cmp(&distance(a)));
+    [first, rest]
+}
+
 /// Draws of `list` whose `bounds` touch the view (radius 0: always kept).
 fn cull_cmds_to_view(view_proj: Mat4, list: &[DrawCmd]) -> Vec<DrawCmd> {
     let planes = crate::gpu_cull::view_planes(view_proj).map(|p| p.to_array());
@@ -3287,6 +3305,8 @@ struct Ranges {
     water_air_terrain: (u64, u32),
     water_air_terrain_pbr: (u64, u32),
     refl_mirror: (u64, u32),
+    /// The mirror's blended faces: the rigged, then the others back to front.
+    refl_mirror_blend: [(u64, u32); 2],
     refl_terrain_water: (u64, u32),
     refl_terrain_mirror: (u64, u32),
     refl_terrain_probe: (u64, u32),
@@ -5102,6 +5122,21 @@ impl Backend {
             ..pick_desc("mask interaction pick 2s", None)
         });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
+        // the mirror's blended faces, as the main view's with
+        // `RiggedBlendDepth::Write` (the Legacy Viewer's rule): the rigged
+        // write their depth from 1/255 as they are drawn, the others only
+        // read it; the reflection's alpha stays whole
+        let refl_blend_desc = |label: &'static str, depth_write: bool, depth_compare| PipeDesc {
+            vb: Vb::Mesh,
+            cull: None,
+            samples: 1,
+            blend: Some(premultiplied()),
+            depth_write,
+            depth_compare,
+            ..base(label, "vs_main", "fs_reflect_blend")
+        };
+        let refl_blend_rigged = pipe(refl_blend_desc("reflection blended rigged", true, wgpu::CompareFunction::Greater));
+        let refl_blend = pipe(refl_blend_desc("reflection blended", false, wgpu::CompareFunction::GreaterEqual));
         let shadow_desc = |label, fs| PipeDesc {
             label,
             vs: "vs_shadow",
@@ -5259,6 +5294,8 @@ impl Backend {
             refl_terrain,
             refl_terrain_pbr,
             refl_obj,
+            refl_blend_rigged,
+            refl_blend,
             shadow,
             shadow_depth,
             shadow_terrain,
@@ -7966,18 +8003,29 @@ impl Backend {
                 self.hud_depth = Some((self.config.width, self.config.height, depth.create_view(&Default::default())));
             }
         }
-        let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32| {
+        // `lit`: the mirror, lit as the main view (the Legacy Viewer's hero
+        // probe is a cube snapshot of the deferred pipeline: the sun's
+        // shadows, gDeferredSunProbeProgram having hasShadows, and the
+        // reflection probes, mRadiancePass, LLHeroProbeManager::renderProbes).
+        // Its shadows are the main view's cascades (shadow_factor picks them
+        // from the real camera); without the probes its surfaces took the
+        // sky's light, pale skin and black latex turned blue (#3479)
+        let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32, lit: bool| {
             let m = reflection_matrix(n, d);
             let mut rf = f.clone();
-            rf.shadows = false;
+            rf.shadows = lit && f.shadows;
             let mut u = this.frame_uniforms(&rf, f.view * m, None, &cascades, &splits);
             // 2: a reflection pass whose view is mirrored (mirrored_pass, common.wgsl)
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = n.extend(d + keep_offset).to_array();
+            if lit {
+                u.light_sets.mode[2] |= crate::probes::capture_lighting::LIT;
+            }
             u
         };
         let mut water_vp = Mat4::IDENTITY;
         let mut mirror_vp = Mat4::IDENTITY;
+        let mut mirror_eye = Vec3::ZERO;
         // the reflections' own pixel size, for the stars' footprint
         let star_pass = |t: &Option<ReflTarget>| {
             t.as_ref().map_or([0.0; 4], |t| {
@@ -7986,16 +8034,17 @@ impl Backend {
             })
         };
         if do_water_refl {
-            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05);
+            let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             u.sky_star_pass = star_pass(&self.targets.water_refl);
             water_vp = Mat4::from_cols_array_2d(&u.view_proj);
             self.queue.write_buffer(&self.refl_buffers[0], 0, bytemuck::bytes_of(&u));
         }
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
-            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01);
+            let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
+            mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
         // ---- reflection probes: list for the shaders, face capture uniforms
@@ -8502,6 +8551,8 @@ impl Backend {
         }
         if mirror.is_some() {
             rg.refl_mirror = push(cpu, &cull_to_view(mirror_vp, &lists.reflection));
+            let [rigged, rest] = mirror_blend_order(mirror_vp, mirror_eye, &lists.reflection_blend, lists.reflection_blend_rigged);
+            rg.refl_mirror_blend = [push(cpu, &rigged), push(cpu, &rest)];
         }
         // terrain of the reflection passes, each culled to its own frustum
         if capture.is_some() {
@@ -9215,6 +9266,7 @@ impl Backend {
                 rg.refl_water,
                 (rg.refl_terrain_water, rg.refl_terrain_pbr_water),
                 BIN_REFL_WATER,
+                [(0, 0); 2],
             ),
             (
                 mirror.is_some(),
@@ -9224,9 +9276,10 @@ impl Backend {
                 rg.refl_mirror,
                 (rg.refl_terrain_mirror, rg.refl_terrain_pbr_mirror),
                 BIN_REFL_MIRROR,
+                rg.refl_mirror_blend,
             ),
         ];
-        for (enabled, target, bg, label, objects, terrain, bin) in refl_passes {
+        for (enabled, target, bg, label, objects, terrain, bin, blended) in refl_passes {
             let (true, Some(t)) = (enabled, target) else {
                 continue;
             };
@@ -9261,6 +9314,8 @@ impl Backend {
             draw(&mut pass, &self.pipelines.refl_terrain_pbr, terrain.1);
             draw(&mut pass, &self.pipelines.refl_obj, objects);
             draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
+            draw(&mut pass, &self.pipelines.refl_blend_rigged, blended[0]);
+            draw(&mut pass, &self.pipelines.refl_blend, blended[1]);
         }
 
         mark(&mut encoder, MARK_WATER_AIR_BEGIN);
@@ -11363,6 +11418,44 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The mirror's blended faces: those it does not see left out, the rigged
+    /// first in their own order, then the others back to front from the
+    /// mirror's camera (#3479).
+    #[test]
+    fn mirror_blend_order_culls_and_sorts_from_the_mirror_camera() {
+        let eye = Vec3::new(10.0, 0.0, 2.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+        let cmd = |record: u32, x: f32| {
+            DrawCmd {
+                index_count: 3,
+                first_index: 0,
+                base_vertex: 0,
+                record,
+                bounds: [0.0; 4],
+            }
+            .with_bounds(Vec3::new(10.0 + x, 0.0, 2.0), 0.5)
+        };
+        // rigged: a far one before a near one (their attachment order), one
+        // behind the camera; then the others, one behind the camera
+        let list = [
+            cmd(1, 6.0),
+            cmd(2, 2.0),
+            cmd(3, -4.0),
+            cmd(4, 2.0),
+            cmd(5, 8.0),
+            cmd(6, -3.0),
+            cmd(7, 4.0),
+        ];
+        let [rigged, rest] = mirror_blend_order(proj * view, eye, &list, 3);
+        let records = |l: &[DrawCmd]| l.iter().map(|c| c.record).collect::<Vec<_>>();
+        assert_eq!(records(&rigged), [1, 2]);
+        assert_eq!(records(&rest), [5, 7, 4]);
+        // more rigged than entries: all of them rigged, nothing left over
+        let [rigged, rest] = mirror_blend_order(proj * view, eye, &list[..2], 9);
+        assert_eq!((records(&rigged), rest.len()), (vec![1, 2], 0));
+    }
 
     /// The frame's timestamps in the order the GPU writes them (every mark
     /// is written each frame, empty spans included).
