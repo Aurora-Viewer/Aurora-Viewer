@@ -421,9 +421,17 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
         } else {
             response.rect.center()
         };
-        response
-            .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point));
+        // Whether the row was drawn this frame with its whole height inside
+        // the list's clip, within a pixel: a row scrolled to the bottom ends
+        // on the clip's edge. A wide row runs past the clip sideways.
+        let shown = (
+            response.ctx.cumulative_frame_nr(),
+            response.interact_rect.height() + 1.0 >= response.rect.height(),
+        );
+        response.ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point);
+            data.insert_temp(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, item)), shown);
+        });
     }
 }
 
@@ -483,6 +491,30 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
             };
             return vec![egui::Event::Key {
                 key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        // Down from the object, past the bottom of the list: it scrolls so
+        // the selected row is drawn whole, at any font scale.
+        if mode.ends_with("keyboard-down") {
+            if frame == 720 {
+                let shown = st.selected.and_then(|id| {
+                    ctx.data(|data| data.get_temp::<(u64, bool)>(egui::Id::unique(("clipboard_demo_row_shown", st.ui_id, id))))
+                });
+                log::info!(
+                    "demo inventory keyboard down: frame={frame}, selected={:?}, drawn_whole={}",
+                    st.selected,
+                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr())
+                );
+            }
+            if !(660..=688).contains(&frame) || !frame.is_multiple_of(4) {
+                return Vec::new();
+            }
+            return vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
                 physical_key: None,
                 pressed: true,
                 repeat: false,

@@ -14,7 +14,7 @@ use super::*;
 
 /// Folders nested deeper are not listed (malformed parent cycles).
 pub const MAX_DEPTH: usize = 24;
-/// The height of a row, without the spacing between rows.
+/// The height of a row at font scale 1, without the spacing between rows.
 pub const ROW_HEIGHT: f32 = 20.0;
 
 /// LLInventoryPanel::openAllFolders / closeAllFolders recurse through every
@@ -39,13 +39,24 @@ pub(super) fn folders(view: &ViewCache, inv: &Inventory, root: Uuid, show_root: 
     folders
 }
 
-/// The height of the rows of this window: Aurora's are taller.
-pub fn row_height(st: &InventoryUi) -> f32 {
+/// The height of the rows of this window: Aurora's are taller. A Legacy-style
+/// row is as tall as its tallest label, an item's name with its rights letters
+/// (`permissions::Permissions::append_suffix`, in another face), which a font
+/// scale above 1 makes taller than `ROW_HEIGHT` (its icons stay 16 points).
+/// The lists scroll and draw by this height, so it must be the drawn one:
+/// LLFolderViewItem::getItemHeight (indra/llui/llfolderviewitem.cpp) is
+/// likewise the height every row is laid out at.
+pub fn row_height(ui: &egui::Ui, p: &Palette, st: &InventoryUi) -> f32 {
     if st.aurora.is_some() {
-        super::aurora::rows::HEIGHT
-    } else {
-        ROW_HEIGHT
+        return super::aurora::rows::HEIGHT;
     }
+    // The name, a worn one's in semi-bold, then the rights: a line is as tall
+    // as its tallest face, and egui rounds a laid out line's height up.
+    let mut label = tree::name("Ag", p);
+    label.append("Ag", 0.0, crate::ui::widgets::bold_format(ui, tree::font(), p.ink));
+    permissions::Permissions::default().append_suffix(ui, &mut label, p);
+    let text = ui.fonts_mut(|fonts| fonts.layout_job(label).size().y);
+    ROW_HEIGHT.max(text + 2.0 * crate::ui::widgets::INVENTORY_LABEL_PADDING.y)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,7 +296,7 @@ pub(super) fn scroll(
             inv.request(*id);
         }
     }
-    let height_of_row = row_height(st);
+    let height_of_row = row_height(ui, p, st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;
     if navigated {
         st.scroll_hold = None;
@@ -355,7 +366,7 @@ fn rows(
     range: std::ops::Range<usize>,
 ) {
     tree_spacing(ui);
-    let height = row_height(st);
+    let height = row_height(ui, p, st);
     for index in range {
         let Some(row) = st.plain.rows.get(index).copied() else { break };
         // Aurora's rows fit the list's width: they cut long names short.
@@ -373,7 +384,11 @@ fn rows(
             );
             st.plain.width = st.plain.width.max(width);
         }
-        ui.horizontal(|ui| {
+        // A Legacy row's own row centres its contents; this one places it at
+        // the top, so the row is as tall as it. Centred here, a row that starts
+        // at the theme's interact height sits lower and grows past `height`.
+        let legacy = st.aurora.is_none();
+        let draw = |ui: &mut egui::Ui| {
             ui.set_min_height(height);
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(row.level as f32 * ui.spacing().indent);
@@ -395,10 +410,22 @@ fn rows(
                     if st.aurora.is_some() {
                         ui.add_space(super::aurora::rows::LEAD);
                     }
-                    ui.label(RichText::new(text).size(12.0).color(p.muted_dim));
+                    let text = RichText::new(text).size(12.0).color(p.muted_dim);
+                    if legacy {
+                        // Centred in the row, as before it was placed at the top.
+                        let centred = egui::Layout::left_to_right(egui::Align::Center);
+                        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), height), centred, |ui| ui.label(text));
+                    } else {
+                        ui.label(text);
+                    }
                 }
             }
-        });
+        };
+        if legacy {
+            ui.horizontal_top(draw);
+        } else {
+            ui.horizontal(draw);
+        }
     }
 }
 
@@ -613,5 +640,62 @@ mod tests {
         let mut tree = PlainTree::default();
         tree.persist(&next, key);
         assert!(tree.is_open(id(10)));
+    }
+
+    /// The list scrolls by a pitch of `row_height`: drawn rows taller than it,
+    /// as a font scale above 1 made them, leave the keyboard's and type-ahead's
+    /// target short of sight, further down the list.
+    #[test]
+    fn legacy_rows_are_drawn_at_the_pitch_the_list_scrolls_by_at_every_font_scale() {
+        let fonts = [crate::ui::fonts::INTER, crate::ui::fonts::NOTO, crate::ui::fonts::ROBOTO];
+        for (font, scale) in fonts.into_iter().flat_map(|font| [1.0, 1.46, 2.0].map(|scale| (font, scale))) {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            crate::ui::fonts::apply(&ctx, font);
+            crate::ui::fonts::set_scale(&ctx, scale);
+            let p = theme.palette();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let mut prefs = InventoryPreferences::default();
+            let mut st = InventoryUi::default();
+            st.view.prepare(&inv, prefs.sort_for(st.tab));
+            st.plain.expand(&st.view, &inv, inv.root, false, false, true);
+            st.plain.prepare(&st.view, &inv, inv.root, false, false);
+            let count = st.plain.rows.len();
+            assert!(
+                st.plain.rows.iter().any(|row| row.kind == Kind::Item) && count > 10,
+                "folders and items to draw: {count} rows"
+            );
+            let (mut pitch, mut drawn) = (0.0, 0.0);
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                tree_spacing(ui);
+                pitch = row_height(ui, &p, &st) + ui.spacing().item_spacing.y;
+                let top = ui.cursor().top();
+                let icons = Icons::default();
+                rows(
+                    ui,
+                    &p,
+                    &icons,
+                    &mut inv,
+                    &mut st,
+                    &mut prefs,
+                    &Facts::default(),
+                    &mut Vec::new(),
+                    0..count,
+                );
+                drawn = ui.cursor().top() - top;
+            });
+            out.textures_delta.clear();
+            let expected = count as f32 * pitch;
+            assert!(
+                (drawn - expected).abs() < 0.01,
+                "{font} at {scale}: {count} rows drawn {drawn}, scrolled by {expected}"
+            );
+            assert!(pitch > ROW_HEIGHT);
+            if scale > 1.2 {
+                assert!(pitch > ROW_HEIGHT + 2.0, "scale {scale} grows the row");
+            }
+        }
     }
 }
