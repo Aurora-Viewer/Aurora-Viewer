@@ -293,6 +293,11 @@ pub struct PlacesUi {
 }
 
 impl PlacesUi {
+    /// The session ended: a question left open ends with it.
+    pub fn forget_question(&mut self) {
+        self.confirm = None;
+    }
+
     /// "open_landmark_tab" / "open_teleport_history_tab": the lists on a tab.
     pub fn open_tab(&mut self, tab: usize) {
         self.tab = tab.min(TAB_HISTORY);
