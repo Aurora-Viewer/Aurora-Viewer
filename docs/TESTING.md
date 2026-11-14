@@ -1040,7 +1040,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LAND_BESIDE=1` | A hollow frame on bare land: a right click on the ground in it is the land's |
 | `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]\|ahead` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off; `ahead`: our eyes come back straight when the look-at is turned off |
 | `AURORA_DEMO_POINTING=1\|release\|private\|remote\|remote-release\|aim` | Editing arm and gun targeting, driven by local selection or received point-at effects |
-| `AURORA_DEMO_BEAMS=1\|self\|legacy` | Selection and give beams: another avatar edits a cube and gives, or we edit one |
+| `AURORA_DEMO_BEAMS=1\|self\|legacy\|shape\|shape-legacy` | Selection and give beams: another avatar edits a cube and gives, or we edit one |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
@@ -1700,7 +1700,10 @@ when unfocused") is ignored during a screenshot.
   again every 0.25 s toward the point it clicked, and gives to the second
   every 2.5 s (a one-second beam). `self`: we edit a cube of our own, Build
   open, and our beam goes from our hand to the side we clicked. `legacy`:
-  the first with the Legacy Viewer's particles. Capture at 760: the thread
+  the first with the Legacy Viewer's particles. `shape`: the first with a
+  beam shape, 24 short beams around the point with each send: one thread
+  and one name all the same (`shape-legacy`: all of them as particles).
+  Capture at 760: the thread
   from the left hand, its glows, the halo on the cube's side and the other
   avatar's name above it. Add `AURORA_DEMO_CLASSIC=1` to see that avatar
   dressed rather than as a silhouette. Preferences › Build turns the beams
