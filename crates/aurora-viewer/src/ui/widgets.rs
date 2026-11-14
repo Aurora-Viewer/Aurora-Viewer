@@ -3290,7 +3290,7 @@ pub fn initials(name: &str) -> String {
 
 /// Part of a `w` x `h` picture a square shows: its center, the longer side
 /// cut (profile pictures are often 4:3).
-fn square_crop(w: usize, h: usize) -> egui::Rect {
+pub(crate) fn square_crop(w: usize, h: usize) -> egui::Rect {
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
     let (u, v) = if w > h { (h / w, 1.0) } else { (1.0, w / h) };
     egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(u, v))

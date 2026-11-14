@@ -8202,7 +8202,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   nearby chat" off, the error leaves the chat and the window opens.
   `AURORA_DEMO_OPTIONS=chat:script-errors` opens that section: the switch
   on, "Also say them on a chat channel" off, its channel (1) among its
-  sub-settings.
+  sub-settings. Last comes "Aurora Demo (gagged)", a gag we wear talking
+  for us: its line shows our profile picture where the other objects show
+  the cube, in every style, the compact rows and the cards above the chat
+  bar included.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the

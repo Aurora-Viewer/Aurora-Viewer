@@ -547,6 +547,9 @@ pub struct World {
     /// (`NetEvent::NearbyTyping`, LLVOAvatar::mTyping), until their stop,
     /// their line, or their leaving.
     nearby_typing: HashSet<Uuid>,
+    /// Objects heard speaking while worn by their owner (renamers, gags,
+    /// @redirchat relays) and that owner, whose picture their lines show.
+    pub worn_speakers: HashMap<Uuid, Uuid>,
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
@@ -855,6 +858,7 @@ impl World {
             balance_changes: Vec::new(),
             typing_started: Vec::new(),
             nearby_typing: HashSet::new(),
+            worn_speakers: HashMap::new(),
             login: None,
             agent_id: Uuid::nil(),
             regions: HashMap::new(),
@@ -4558,6 +4562,9 @@ impl World {
                 );
             }
         }
+        if c.source_type == ChatSourceType::Object && self.attachment_wearer(c.source_id).is_some_and(|(wearer, _)| wearer == c.owner_id) {
+            self.worn_speakers.insert(c.source_id, c.owner_id);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -4566,6 +4573,24 @@ impl World {
             source: c.source_id,
             origin: Origin::Live,
         });
+    }
+
+    /// The avatar wearing `source` and the prim of `source`'s link set on the
+    /// attachment point, from the object tree (none for a rezzed object).
+    pub(crate) fn attachment_wearer(&self, source: Uuid) -> Option<(Uuid, Uuid)> {
+        let mut index = self.objects.index_of_uuid(&source)?;
+        for _ in 0..64 {
+            let object = self.objects.get(index)?;
+            let parent = self
+                .objects
+                .parent_of(object)
+                .and_then(|index| self.objects.get(index).map(|parent| (index, parent)))?;
+            if parent.1.is_avatar() {
+                return (object.attachment_point() != 0).then_some((parent.1.full_id, object.full_id));
+            }
+            index = parent.0;
+        }
+        None
     }
 
     fn on_im(&mut self, mut im: InstantMessage) {
@@ -8111,6 +8136,41 @@ mod motion_tests {
             objects: vec![other],
         });
         assert!(!world.is_typing_nearby(&id));
+    }
+
+    /// An object heard while its owner wears it (a renamer, a gag) is
+    /// remembered with that owner, for their picture; a rezzed one, or one
+    /// worn by someone else than its owner, is not.
+    #[test]
+    fn only_objects_worn_by_their_owner_speak_with_the_owners_picture() {
+        let (mut world, avatar, worn, here, _) = worn_fixture();
+        let me = world.agent_id;
+        let mut rezzed = worn.clone();
+        rezzed.local_id = worn.local_id + 1;
+        rezzed.full_id = Uuid::from_u128(0xF00D);
+        rezzed.parent_id = 0;
+        rezzed.state = 0;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![avatar, worn.clone(), rezzed.clone()],
+        });
+        let said = |source, owner| {
+            NetEvent::Chat(ChatMessage {
+                from_name: "Jane Doe".into(),
+                source_id: source,
+                owner_id: owner,
+                source_type: ChatSourceType::Object,
+                chat_type: ChatType::Normal,
+                position: Vec3::new(10.0, 10.0, 20.0),
+                message: "hello".into(),
+            })
+        };
+        world.apply(said(rezzed.full_id, me));
+        world.apply(said(worn.full_id, Uuid::from_u128(0xD00D)));
+        assert!(world.worn_speakers.is_empty(), "rezzed, or worn by another than its owner");
+        world.apply(said(worn.full_id, me));
+        assert_eq!(world.worn_speakers.get(&worn.full_id), Some(&me));
+        assert_eq!(world.chat.len(), 3, "every line still shown");
     }
 
     #[test]

@@ -200,7 +200,19 @@ pub(super) fn cards(
                         ui.multiply_opacity(card_alpha);
                         if small {
                             compact_card(
-                                ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
+                                ui,
+                                p,
+                                world,
+                                pics,
+                                want_names,
+                                wanted_pics,
+                                &group,
+                                seconds,
+                                now,
+                                card_alpha,
+                                times,
+                                &mut links,
+                                &mut names,
                             );
                             return;
                         }
@@ -281,7 +293,7 @@ fn card<'a>(
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let (pic, _) = ui.allocate_exact_size(egui::vec2(PICTURE, PICTURE), egui::Sense::hover());
-        picture(ui, p, pics, wanted_pics, first, pic);
+        picture(ui, p, world, pics, wanted_pics, first, pic);
         names.push((pic, first));
         ui.add_space(GAP);
         // (as wide as its text: a short line keeps a small card)
@@ -327,7 +339,9 @@ fn compact_card<'a>(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     want_names: &mut HashSet<uuid::Uuid>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
     group: &[&'a ChatLine],
     seconds: f32,
     now: std::time::SystemTime,
@@ -391,7 +405,9 @@ fn compact_card<'a>(
             let middle = super::object_row::caps_middle(&painter, size, baseline);
             let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, middle), egui::vec2(side, side));
             let (glyph, tint) = super::object_row::object_glyph(line, p, p.muted_dim);
-            thread::paint_icon(&painter, glyph, r.shrink(1.0), tint);
+            if !super::object_row::paint_wearer(&painter, world, line, pics, wanted_pics, r, 1.0) {
+                thread::paint_icon(&painter, glyph, r.shrink(1.0), tint);
+            }
         }
         if let Some(range) = name
             && let Some(r) = visual.range_rects(origin, range).first().copied()
@@ -422,6 +438,7 @@ fn tags(ui: &mut egui::Ui, p: &Palette, line: &ChatLine) {
 fn picture(
     ui: &egui::Ui,
     p: &Palette,
+    world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     wanted_pics: &mut HashSet<uuid::Uuid>,
     line: &ChatLine,
@@ -430,7 +447,9 @@ fn picture(
     if is_object(line.kind) {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         let (glyph, tint) = super::object_row::object_glyph(line, p, crate::ui::colors::sender_color(line));
-        thread::paint_icon(ui.painter(), glyph, rect.shrink(6.0), tint);
+        if !super::object_row::paint_wearer(ui.painter(), world, line, pics, wanted_pics, rect, 1.0) {
+            thread::paint_icon(ui.painter(), glyph, rect.shrink(6.0), tint);
+        }
         return;
     }
     let id = line.source;

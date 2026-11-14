@@ -380,7 +380,9 @@ fn sender_picture(
     if object {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         let (glyph, tint) = super::object_row::object_glyph(line, p, super::super::colors::sender_color(line));
-        if let Some(t) = env.icons.get(glyph) {
+        if !super::object_row::paint_wearer(ui.painter(), env.world, line, env.pics, env.wanted, rect, 1.0)
+            && let Some(t) = env.icons.get(glyph)
+        {
             ui.painter().image(
                 t.id(),
                 rect.shrink(5.0),
