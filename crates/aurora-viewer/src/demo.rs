@@ -4420,6 +4420,7 @@ pub fn events() -> Vec<NetEvent> {
                 [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
                     .into_iter()
                     .chain(sim_extras::caps())
+                    .chain(crate::build::demo_sim::caps())
                     .collect(),
             ),
         },

@@ -13,6 +13,11 @@ use uuid::Uuid;
 /// AT_LSL_TEXT / IT_LSL.
 pub const AT_LSL_TEXT: i8 = 10;
 pub const IT_LSL: i8 = 10;
+/// AT_NOTECARD / IT_NOTECARD.
+pub const AT_NOTECARD: i8 = 7;
+pub const IT_NOTECARD: i8 = 7;
+/// The capability that makes new contents items (LLPanelContents::getState).
+pub const CREATE_TASK_ITEM_CAP: &str = "CreateTaskInventoryItem";
 /// PERM_ALL (llpermissionsflags.h).
 const PERM_ALL: u32 = 0x7fff_ffff;
 /// DEFAULT_PRICE of new items.
@@ -43,12 +48,17 @@ pub struct Contents {
     pub running: HashMap<(Uuid, Uuid), (bool, Option<aurora_net::scripts::CompileTarget>)>,
 }
 
-/// "YYYY-MM-DD HH:MM:SS lsl2 script" (LLViewerAssetType: new script
-/// descriptions carry their creation time, UTC here).
-fn new_script_description(unix: i64) -> String {
+/// "YYYY-MM-DD HH:MM:SS lsl2 script" (LLViewerAssetType::generateDescriptionFor:
+/// new item descriptions carry their creation time, UTC here, and the
+/// asset type's human-readable name).
+fn new_item_description(unix: i64, kind: &str) -> String {
     let (y, m, d) = aurora_net::profile::civil_from_days(unix.div_euclid(86_400));
     let s = unix.rem_euclid(86_400);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} lsl2 script", s / 3600, s / 60 % 60, s % 60)
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} {kind}", s / 3600, s / 60 % 60, s % 60)
+}
+
+fn new_script_description(unix: i64) -> String {
+    new_item_description(unix, "lsl2 script")
 }
 
 fn now_unix() -> i64 {
@@ -158,19 +168,26 @@ impl BuildTool {
         p.owner_id == world.agent_id || member
     }
 
-    /// "New script": RezScript of a default script
-    /// (LLPanelContents::onClickNewScript + LLViewerObject::saveScript).
-    /// RezScript uses the active group, independent of the parcel's rez group
-    /// (LLViewerObject::saveScript, indra/newview/llviewerobject.cpp). An SLua
-    /// script carries SST_LUA in its flags, the fallback of
-    /// LLPanelContents::createTaskInventoryItemHelper without
-    /// CreateTaskInventoryItem: the server then writes its default SLua script.
-    pub fn new_script(&mut self, world: &World, idx: usize, lua: bool) {
-        let Some(o) = world.objects.get(idx) else { return };
+    /// Whether the object's region makes new contents items itself
+    /// (CreateTaskInventoryItem; LLPanelContents::getState enables "New
+    /// Notecard" only then).
+    pub fn contents_create_cap(world: &World, idx: usize) -> bool {
+        world
+            .objects
+            .get(idx)
+            .and_then(|o| world.regions.get(&o.key.region))
+            .is_some_and(|r| r.caps.contains_key(CREATE_TASK_ITEM_CAP))
+    }
+
+    /// A new item of ours for the contents of `idx`, as
+    /// LLPanelContents::createTaskInventoryItemHelper fills it: full rights
+    /// for us, the creation defaults of its category added on its way out
+    /// (`creation_permissions::Defaults::prepare`).
+    fn new_task_item(world: &World, parent: Uuid, asset_type: i8, inv_type: i8, name: String, description: String) -> TaskItem {
         let now = now_unix();
-        let item = TaskItem {
+        TaskItem {
             item_id: Uuid::nil(),
-            parent_id: o.full_id,
+            parent_id: parent,
             creator_id: world.agent_id,
             owner_id: world.agent_id,
             base_mask: PERM_ALL,
@@ -179,16 +196,40 @@ impl BuildTool {
             everyone_mask: 0,
             // ScriptsNextOwner* defaults: move and transfer
             next_owner_mask: perm::MOVE | perm::TRANSFER,
-            asset_type: AT_LSL_TEXT,
-            inv_type: IT_LSL,
-            flags: u32::from(lua),
+            asset_type,
+            inv_type,
             sale_price: DEFAULT_PRICE,
-            name: aurora_i18n::tr!("extra-new-script").into(),
-            description: new_script_description(now),
+            name,
+            description,
             creation_date: now as i32,
             ..Default::default()
-        };
+        }
+    }
+
+    /// "New script" (LLPanelContents::onNewScriptFlyoutCommit +
+    /// createTaskInventoryItemHelper): the region writes its default script
+    /// through CreateTaskInventoryItem, running, in Luau for SLua and Mono
+    /// otherwise. Without the capability, RezScript of the same item
+    /// (LLViewerObject::saveScript), which uses the active group,
+    /// independent of the parcel's rez group (indra/newview/llviewerobject.cpp);
+    /// an SLua script carries SST_LUA in its flags and the server then
+    /// writes its default SLua script.
+    pub fn new_script(&mut self, world: &World, idx: usize, lua: bool) {
+        let Some(o) = world.objects.get(idx) else { return };
+        let mut item = Self::new_task_item(
+            world,
+            o.full_id,
+            AT_LSL_TEXT,
+            IT_LSL,
+            aurora_i18n::tr!("extra-new-script").into(),
+            new_script_description(now_unix()),
+        );
+        item.flags = u32::from(lua);
         let (handle, local_id, object_id) = (o.key.region, o.key.local_id, o.full_id);
+        if Self::contents_create_cap(world, idx) {
+            self.create_task_item(handle, item);
+            return;
+        }
         self.send(BuildCmd::RezScript {
             handle,
             local_id,
@@ -197,6 +238,55 @@ impl BuildTool {
             item: Box::new(item),
         });
         self.contents_changed(object_id);
+    }
+
+    /// "New Notecard" (LLPanelContents::onNewNotecardCommit): only through
+    /// CreateTaskInventoryItem, which writes the empty notecard; there is no
+    /// fallback, the button is disabled without the capability.
+    pub fn new_notecard(&mut self, world: &World, idx: usize) {
+        let Some(o) = world.objects.get(idx) else { return };
+        if !Self::contents_create_cap(world, idx) {
+            return;
+        }
+        let item = Self::new_task_item(
+            world,
+            o.full_id,
+            AT_NOTECARD,
+            IT_NOTECARD,
+            aurora_i18n::tr!("extra-new-notecard").into(),
+            new_item_description(now_unix(), "note card"),
+        );
+        self.create_task_item(o.key.region, item);
+    }
+
+    fn create_task_item(&mut self, handle: aurora_net::RegionHandle, item: TaskItem) {
+        let tag = self.next_tag;
+        self.next_tag += 1;
+        self.caps.insert(tag, super::edits::CapPurpose::CreateTaskItem(item.parent_id));
+        self.send(BuildCmd::CreateTaskItem {
+            handle,
+            item: Box::new(item),
+            tag,
+        });
+    }
+
+    /// The CreateTaskInventoryItem answer: on success the listing is asked
+    /// again (LLViewerObject::createInventoryItemCoro: dirtyInventory +
+    /// requestInventory); a failure is logged, like the Legacy Viewer, and
+    /// also said in the status line.
+    pub(super) fn on_task_item_created(&mut self, object_id: Uuid, result: Result<aurora_llsd::Llsd, String>) {
+        match result {
+            Ok(v) if aurora_net::task_inventory::create_item_succeeded(&v) => self.contents_changed(object_id),
+            Ok(v) => {
+                let message = v["message"].as_str().to_owned();
+                log::warn!("CreateTaskInventoryItem failed: {message}");
+                self.status = aurora_i18n::tr!("build-contents-create-failed", message = message);
+            }
+            Err(e) => {
+                log::warn!("CreateTaskInventoryItem failed: {e}");
+                self.status = aurora_i18n::tr!("build-contents-create-failed", message = e);
+            }
+        }
     }
 
     /// RemoveTaskInventory (LLViewerObject::removeInventory).
@@ -346,5 +436,99 @@ mod tests {
     fn script_description_date() {
         // 2023-11-14 22:13:20 UTC
         assert_eq!(new_script_description(1_700_000_000), "2023-11-14 22:13:20 lsl2 script");
+    }
+
+    fn fixture(cap: bool) -> (World, BuildTool, usize) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(118)).unwrap();
+        let region = world.objects.get(idx).unwrap().key.region;
+        let caps = std::sync::Arc::make_mut(&mut world.regions.get_mut(&region).unwrap().caps);
+        if cap {
+            caps.insert(CREATE_TASK_ITEM_CAP.into(), "https://cap.invalid/create".into());
+        } else {
+            caps.remove(CREATE_TASK_ITEM_CAP);
+        }
+        (world, BuildTool::default(), idx)
+    }
+
+    fn created(tool: &BuildTool) -> Vec<(u64, TaskItem)> {
+        tool.out
+            .iter()
+            .filter_map(|c| match c {
+                aurora_net::NetCommand::Build(BuildCmd::CreateTaskItem { tag, item, .. }) => Some((*tag, (**item).clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn new_items_go_through_create_task_inventory_item_when_the_region_has_it() {
+        let (world, mut tool, idx) = fixture(true);
+        let object = world.objects.get(idx).unwrap().full_id;
+        assert!(BuildTool::contents_create_cap(&world, idx));
+        tool.new_notecard(&world, idx);
+        tool.new_script(&world, idx, false);
+        tool.new_script(&world, idx, true);
+        let items = created(&tool);
+        assert_eq!(items.len(), 3, "no RezScript next to the capability");
+        assert!(
+            !tool
+                .out
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::Build(BuildCmd::RezScript { .. })))
+        );
+        let (_, note) = &items[0];
+        assert_eq!((note.asset_type, note.inv_type, note.flags), (AT_NOTECARD, IT_NOTECARD, 0));
+        assert_eq!(note.name, aurora_i18n::tr!("extra-new-notecard"));
+        assert!(note.description.ends_with(" note card"));
+        assert_eq!(
+            (note.parent_id, note.owner_id, note.creator_id),
+            (object, world.agent_id, world.agent_id)
+        );
+        assert_eq!((note.base_mask, note.owner_mask), (PERM_ALL, PERM_ALL));
+        let (_, lsl) = &items[1];
+        assert_eq!((lsl.asset_type, lsl.inv_type), (AT_LSL_TEXT, IT_LSL));
+        assert!(!aurora_net::scripts::is_slua_item(lsl.flags));
+        assert!(aurora_net::scripts::is_slua_item(items[2].1.flags));
+        // the answers: success lists the contents again, a refusal says why
+        tool.contents.objects.entry(object).or_default().requested = Some(Instant::now());
+        tool.on_task_item_created(object, Ok(aurora_llsd::llsd_map! { "success" => true }));
+        assert!(tool.contents.objects[&object].requested.is_none(), "listed again");
+        tool.contents.objects.get_mut(&object).unwrap().requested = Some(Instant::now());
+        tool.on_task_item_created(object, Ok(aurora_llsd::llsd_map! { "success" => false, "message" => "Denied" }));
+        assert!(tool.contents.objects[&object].requested.is_some());
+        assert!(tool.status.contains("Denied"));
+        tool.on_task_item_created(object, Err("timeout".into()));
+        assert!(tool.status.contains("timeout"));
+    }
+
+    #[test]
+    fn without_the_capability_scripts_use_rez_script_and_notecards_are_not_made() {
+        let (world, mut tool, idx) = fixture(false);
+        assert!(!BuildTool::contents_create_cap(&world, idx));
+        tool.new_notecard(&world, idx);
+        assert!(tool.out.is_empty(), "New Notecard needs CreateTaskInventoryItem");
+        tool.new_script(&world, idx, true);
+        assert!(created(&tool).is_empty());
+        assert!(tool.out.iter().any(|c| matches!(
+            c,
+            aurora_net::NetCommand::Build(BuildCmd::RezScript { enabled: true, item, .. })
+                if aurora_net::scripts::is_slua_item(item.flags)
+        )));
+    }
+
+    #[test]
+    fn the_answer_of_a_creation_reaches_its_object() {
+        let (mut world, mut tool, idx) = fixture(true);
+        let object = world.objects.get(idx).unwrap().full_id;
+        tool.new_notecard(&world, idx);
+        let (tag, _) = created(&tool)[0];
+        tool.contents.objects.entry(object).or_default().requested = Some(Instant::now());
+        tool.on_cap_reply(&mut world, tag, Ok(aurora_llsd::llsd_map! { "success" => true }));
+        assert!(tool.contents.objects[&object].requested.is_none());
+        assert!(!tool.caps.contains_key(&tag));
     }
 }

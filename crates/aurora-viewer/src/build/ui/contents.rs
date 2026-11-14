@@ -5,7 +5,7 @@
 
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::AT_LSL_TEXT;
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -20,6 +20,8 @@ use egui::{RichText, Vec2};
 fn display_name(i: &TaskItem) -> String {
     if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
         i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
+    } else if i.asset_type == AT_NOTECARD && i.name.starts_with("New Notecard") {
+        i.name.replacen("New Notecard", aurora_i18n::tr!("common-new-notecard"), 1)
     } else {
         i.name.clone()
     }
@@ -92,6 +94,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
     });
     ui.horizontal(|ui| {
+        // under New script, as floater_tools.xml stacks them; LLPanelContents::getState:
+        // only where the region has CreateTaskInventoryItem
+        if ui
+            .add_enabled(
+                editable && single && BuildTool::contents_create_cap(world, idx),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-notecard")).size(font_size)),
+            )
+            .clicked()
+        {
+            tool.new_notecard(world, idx);
+        }
         if ui
             .button(RichText::new(aurora_i18n::tr!("common-rights")).size(font_size))
             .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))

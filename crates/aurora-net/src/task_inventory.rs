@@ -236,6 +236,41 @@ pub fn item_crc(i: &TaskItem) -> u32 {
         .wrapping_add(i.creation_date as u32)
 }
 
+/// The CreateTaskInventoryItem request for a new item of an object's
+/// contents (LLViewerObject::createInventoryItem, llviewerobject.cpp): the
+/// object is the item's parent, the subtype the low byte of its flags. A
+/// script asks to run, in Luau for SLua and Mono otherwise
+/// (LLPanelContents::onNewScriptFlyoutCommit); a notecard has no params.
+pub fn create_item_body(item: &TaskItem) -> Llsd {
+    let mut body = aurora_llsd::llsd_map! {
+        "object_id" => item.parent_id,
+        "inventory_type" => i32::from(item.inv_type),
+        "asset_type" => i32::from(item.asset_type),
+        "sub_type" => (item.flags & 0xff) as i32,
+        "name" => item.name.as_str(),
+        "description" => item.description.as_str(),
+        "permissions" => aurora_llsd::llsd_map! {
+            "base" => item.base_mask,
+            "owner" => item.owner_mask,
+            "everyone" => item.everyone_mask,
+            "group" => item.group_mask,
+            "next_owner" => item.next_owner_mask,
+        },
+    };
+    // LLAssetType::AT_LSL_TEXT
+    if item.asset_type == 10 {
+        let vm = if crate::scripts::is_slua_item(item.flags) { "luau" } else { "mono" };
+        body.insert("params", aurora_llsd::llsd_map! { "enabled" => true, "vm" => vm });
+    }
+    body
+}
+
+/// Whether the region made the item (LLViewerObject::createInventoryItemCoro:
+/// an HTTP success whose answer says `success`).
+pub fn create_item_succeeded(reply: &Llsd) -> bool {
+    reply["success"].as_bool()
+}
+
 /// The capability answer `{inventory_serial, contents: [item LLSD]}`
 /// (LLViewerObject::loadTaskInvLLSD); the "Contents" root folder is added
 /// like the viewer does.
@@ -405,6 +440,62 @@ mod tests {
         i.sale_price = 5;
         i.flags = 2;
         assert_eq!(item_crc(&i), 5 + 0x0707_3096 + 2);
+    }
+
+    #[test]
+    fn create_item_body_follows_create_inventory_item() {
+        let object = Uuid::from_u128(77);
+        let mut item = TaskItem {
+            parent_id: object,
+            base_mask: 0x7fff_ffff,
+            owner_mask: 0x7fff_ffff,
+            group_mask: 0x0000_8000,
+            everyone_mask: 0x0000_8000,
+            next_owner_mask: 0x0008_2000,
+            asset_type: 7,
+            inv_type: 7,
+            name: "New Notecard".into(),
+            description: "2026-11-14 10:00:00 note card".into(),
+            ..Default::default()
+        };
+        let body = create_item_body(&item);
+        assert_eq!(body["object_id"].as_uuid(), object);
+        assert_eq!(
+            (
+                body["inventory_type"].as_i32(),
+                body["asset_type"].as_i32(),
+                body["sub_type"].as_i32()
+            ),
+            (7, 7, 0)
+        );
+        assert_eq!(body["name"].as_str(), "New Notecard");
+        assert_eq!(body["description"].as_str(), "2026-11-14 10:00:00 note card");
+        let p = &body["permissions"];
+        assert_eq!(
+            (
+                p["base"].as_i32(),
+                p["owner"].as_i32(),
+                p["everyone"].as_i32(),
+                p["group"].as_i32(),
+                p["next_owner"].as_i32()
+            ),
+            (0x7fff_ffff, 0x7fff_ffff, 0x8000, 0x8000, 0x0008_2000)
+        );
+        assert!(!body.has("params"), "a notecard sends no params");
+        // a script: running, Mono for LSL, Luau for SLua (SST_LUA in the flags)
+        item.asset_type = 10;
+        item.inv_type = 10;
+        let body = create_item_body(&item);
+        assert_eq!(body["params"]["vm"].as_str(), "mono");
+        assert!(body["params"]["enabled"].as_bool());
+        item.flags = 1;
+        let body = create_item_body(&item);
+        assert_eq!((body["sub_type"].as_i32(), body["params"]["vm"].as_str()), (1, "luau"));
+        assert!(create_item_succeeded(&aurora_llsd::llsd_map! { "success" => true }));
+        assert!(!create_item_succeeded(
+            &aurora_llsd::llsd_map! { "success" => false, "message" => "no" }
+        ));
+        assert!(!create_item_succeeded(&Llsd::Undef));
     }
 
     #[test]

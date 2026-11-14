@@ -239,6 +239,7 @@ impl BuildTool {
                     job.physics_request = None;
                 }
             }
+            CapPurpose::CreateTaskItem(object) => self.on_task_item_created(object, result),
             other => self.on_media_reply(world, other, result),
         }
     }

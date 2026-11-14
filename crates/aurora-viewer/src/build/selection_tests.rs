@@ -1333,6 +1333,8 @@ fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group()
     assert!(settings.rez_under_land_group);
     let roots = [object(&world, 99610), object(&world, 99614)];
     let keys: Vec<_> = roots.iter().map(|&idx| world.objects.get(idx).unwrap().key).collect();
+    // RezScript is the fallback of a region without CreateTaskInventoryItem
+    Arc::make_mut(&mut world.regions.get_mut(&keys[0].region).unwrap().caps).remove(contents::CREATE_TASK_ITEM_CAP);
     for active in [Uuid::from_u128(8800), Uuid::from_u128(8801), Uuid::nil()] {
         world.apply(NetEvent::ActiveGroup {
             id: active,

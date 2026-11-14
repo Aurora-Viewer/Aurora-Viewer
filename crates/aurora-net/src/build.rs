@@ -406,6 +406,14 @@ pub enum BuildCmd {
         group_id: Uuid,
         item: Box<TaskItem>,
     },
+    /// CreateTaskInventoryItem: the region makes a new script or notecard in
+    /// the object `item.parent_id` (LLViewerObject::createInventoryItem);
+    /// the answer comes back as NetEvent::CapReply with the same `tag`.
+    CreateTaskItem {
+        handle: RegionHandle,
+        item: Box<TaskItem>,
+        tag: u64,
+    },
     ScriptReset {
         handle: RegionHandle,
         object_id: Uuid,
