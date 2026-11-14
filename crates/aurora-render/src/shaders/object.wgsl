@@ -923,14 +923,21 @@ fn shadow_normal(m: Material) -> vec3<f32> {
 // worn prim's from its anchor's skeleton (palettes are PALETTE_STRIDE
 // apart); none for the rest.
 fn avatar_snow(rec: DrawRecord) -> f32 {
+    var entry = 0u;
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
-        return clamp(palettes[rec.flags.y + AVATAR_SNOW][0][0], 0.0, 1.0);
+        entry = rec.flags.y + AVATAR_SNOW;
+    } else if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
+        entry = rec.flags.y - rec.flags.y % PALETTE_STRIDE + AVATAR_SNOW;
+    } else {
+        return 0.0;
     }
-    if ((rec.flags.x & FLAG_ANCHORED) != 0u) {
-        let base = rec.flags.y - rec.flags.y % PALETTE_STRIDE;
-        return clamp(palettes[base + AVATAR_SNOW][0][0], 0.0, 1.0);
+    // only what the viewer wrote as snow (AVATAR_SNOW_MARK): the identity
+    // a palette starts with read as full snow (a car turned white)
+    let m = palettes[entry];
+    if (m[3][3] != AVATAR_SNOW_MARK) {
+        return 0.0;
     }
-    return 0.0;
+    return clamp(m[0][0], 0.0, 1.0);
 }
 
 // How much a point faces up on its avatar: its facing against the

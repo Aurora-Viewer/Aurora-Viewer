@@ -4701,7 +4701,7 @@ impl App {
                 self.panels.environment = true;
                 self.panels.personal_lighting = lighting;
             }
-            Step::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
+            Step::Pick(kind, asset) => self.pick_local_settings(asset, kind),
             Step::Next(kind) => {
                 let view = self.world.eep.local_view();
                 let shown = match kind {
@@ -4711,7 +4711,7 @@ impl App {
                 };
                 let list = self.env_ui.catalog().list(kind);
                 if let Some(asset) = env_select::step(list, env_select::shown_index(list, shown), true) {
-                    self.world.eep.request_local(asset, kind);
+                    self.pick_local_settings(asset, kind);
                 }
             }
             Step::Shared => {
@@ -6082,6 +6082,26 @@ impl App {
         }
     }
 
+    /// The seed of the region's thunder while the region sets the weather
+    /// (its day's weather seed for this region): None for my own weather,
+    /// a sky applied to myself or an editor's preview, whose strikes are
+    /// this viewer's own.
+    fn region_thunder_seed(&self) -> Option<u64> {
+        if self.env_ui.weather_source != crate::weather::WeatherSource::Region {
+            return None;
+        }
+        let Some((.., Some(day))) = &self.region_weather else {
+            return None;
+        };
+        let region = self
+            .world
+            .main()
+            .and_then(|r| r.info.as_ref())
+            .map_or(uuid::Uuid::nil(), |i| i.region_id);
+        // apart from the rain's draws from the same seed
+        Some(crate::weather::region::mix(day.schedule.seed_for(region) ^ 0x0074_6875_6E64_6572))
+    }
+
     /// Weather: thunder and lightning in heavy rain (the flash is lit in
     /// the frame, `thunder_light`).
     fn update_thunder(&mut self) {
@@ -6090,6 +6110,13 @@ impl App {
             enabled: self.weather_now.thunder,
             rain: self.weather_now.rain(),
             frequency: self.weather_now.thunder_frequency,
+            // the region's storm, the same strikes for everyone there
+            shared: self.region_thunder_seed().map(|seed| {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0.0, |d| d.as_secs_f64());
+                (seed, secs)
+            }),
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
@@ -6203,7 +6230,7 @@ impl App {
             let fresh = !matches!(&self.region_weather,
                 Some((d, t, l, o, _)) if Arc::ptr_eq(d, &day) && *t == track && *l == length && *o == offset);
             if fresh {
-                let read = RegionDay::read(&day, track, length, offset);
+                let read = RegionDay::read_named(&day, &self.world.eep.day_names(true), track, length, offset);
                 if read.is_some() {
                     log::info!("region weather on sky track {}", track + 1);
                 }

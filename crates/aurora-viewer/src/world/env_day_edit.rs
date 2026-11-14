@@ -413,9 +413,18 @@ impl DayDoc {
     }
 }
 
-/// Frames carry no name of their own in a day.
+/// A frame as a day keeps it: its name dropped (LLSettingsDay::getSettings
+/// clones its frames without SETTING_NAME), unless the name carries a sky's
+/// Aurora Weather (a code at its end, weather/region.rs), so that the day
+/// editor and a day applied to myself keep it. The server drops the
+/// frames' names of every day it is given, inline or as an asset (its
+/// validation and getSettings): a key frame's weather does not reach a
+/// parcel or a region this way yet (TASKS.md, Aurora Weather).
 fn without_name(mut v: Llsd) -> Llsd {
-    if let Llsd::Map(m) = &mut v {
+    let coded = crate::weather::region::SkyWeather::from_name(v["name"].as_str()).is_some();
+    if let Llsd::Map(m) = &mut v
+        && !coded
+    {
         m.remove("name");
     }
     v
@@ -460,6 +469,39 @@ mod tests {
             ]),
         };
         DayDoc::from_llsd(v).expect("a day")
+    }
+
+    /// A sky with Aurora Weather keeps it in a day: put in from the
+    /// inventory, changed in the panels, and saved, its name and code stay
+    /// with its frame (where the region's weather reads them); a plain
+    /// sky's name goes, as before.
+    #[test]
+    fn a_sky_keeps_its_weather_code_in_a_day() {
+        use crate::weather::region::SkyWeather;
+        let weather = SkyWeather::default();
+        let coded = weather.name_with("Stormy");
+        let mut sky = SettingsDoc::snapshot_sky(&SkyFrame::default(), &coded);
+        let mut d = day();
+        let i = d.put_frame(TRACK_GROUND + 1, 0.75, &sky).expect("put");
+        let frame = |d: &DayDoc, i: usize| d.frame_doc(TRACK_GROUND + 1, i).expect("frame");
+        assert_eq!(SkyWeather::from_name(frame(&d, i).name()), Some(weather));
+        // changed in the panels
+        sky.set_name(&coded);
+        d.set_frame(TRACK_GROUND + 1, i, &sky);
+        assert_eq!(SkyWeather::from_name(frame(&d, i).name()), Some(weather));
+        // saved: the frames of the asset carry it
+        let saved = d.to_llsd();
+        let named = saved["frames"]
+            .as_map()
+            .expect("frames")
+            .values()
+            .filter(|f| f["name"].as_str() == coded)
+            .count();
+        assert_eq!(named, 1, "{saved:?}");
+        // a plain sky's name goes
+        let plain = SettingsDoc::snapshot_sky(&SkyFrame::default(), "Plain");
+        let j = d.put_frame(TRACK_GROUND + 1, 0.9, &plain).expect("put");
+        assert_eq!(frame(&d, j).name(), "");
     }
 
     #[test]

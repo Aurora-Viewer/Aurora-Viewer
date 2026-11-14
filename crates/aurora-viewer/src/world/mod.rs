@@ -3767,6 +3767,33 @@ impl World {
                             d.water.len(),
                             d.length
                         );
+                        // Aurora Weather: where the codes came back (the
+                        // skies' own names, their keys' names, the names it
+                        // was applied with), for reports
+                        {
+                            use crate::weather::region::SkyWeather;
+                            let day_cycle = &environment["day_cycle"];
+                            let frames = &day_cycle["frames"];
+                            let (mut keys, mut by_sky, mut by_key) = (0, 0, 0);
+                            let mut seen = Vec::new();
+                            for track in day_cycle["tracks"].as_array().iter().skip(1) {
+                                for key in track.as_array() {
+                                    let k = key["key_name"].as_str();
+                                    let sky = frames[k]["name"].as_str();
+                                    keys += 1;
+                                    by_sky += usize::from(SkyWeather::from_name(sky).is_some());
+                                    by_key += usize::from(SkyWeather::from_name(k).is_some());
+                                    if seen.len() < 3 {
+                                        seen.push(format!("{k:?} -> {sky:?}"));
+                                    }
+                                }
+                            }
+                            log::info!(
+                                "Aurora Weather in the day (parcel {parcel_id}): {by_sky} of {keys} sky keys coded in their sky's name, {by_key} in their key's; applied as {:?}; first keys {}",
+                                answer.names,
+                                seen.join(", ")
+                            );
+                        }
                         if let Some(s) = d.sky_tracks[0].first().map(|k| &k.1) {
                             log::info!(
                                 "sky: classic {} probe ambiance {} sunlight {:?} ambient {:?} gamma {} cloud shadow {} blue horizon {:?} haze {} / {}",

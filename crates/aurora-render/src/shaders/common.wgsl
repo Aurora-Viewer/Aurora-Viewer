@@ -202,6 +202,9 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 // the snow on an avatar (x of its first column), and the entries per
 // skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
 const AVATAR_SNOW: u32 = 260u;
+// written by the viewer with this as its last element (types.rs
+// AVATAR_SNOW_MARK): anything else in the entry is no snow
+const AVATAR_SNOW_MARK: f32 = -2.0;
 const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;

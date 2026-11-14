@@ -217,7 +217,7 @@ impl App {
         use crate::ui::environment::EnvAction;
         for action in actions {
             match action {
-                EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
+                EnvAction::Pick(kind, asset) => self.pick_local_settings(asset, kind),
                 EnvAction::Shared => {
                     self.world.eep.clear_local();
                     self.panels.time_of_day = 0;
@@ -225,6 +225,16 @@ impl App {
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
             }
         }
+    }
+
+    /// A sky, water or day for myself (`EnvSelector::request_local`), with
+    /// the name of the inventory item holding it: its Aurora Weather code,
+    /// typed there by hand, is not in its asset.
+    pub(super) fn pick_local_settings(&mut self, asset: uuid::Uuid, kind: crate::world::env_select::SettingsKind) {
+        if let Some(it) = self.world.inventory.items.values().find(|it| it.asset_id == asset) {
+            self.world.eep.note_item_name(asset, &it.name);
+        }
+        self.world.eep.request_local(asset, kind);
     }
 
     /// The sunbeacon / moonbeacon settings, saved when changed.
