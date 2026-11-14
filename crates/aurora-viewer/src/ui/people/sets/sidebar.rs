@@ -52,13 +52,15 @@ fn header(ui: &mut egui::Ui, c: &mut Ctx) {
         }
         // the options of all sets (and their import): overlapping sets, not
         // the cog, which opens one set's editor
-        let gear = match crate::ui::icons::global(ALL_SETS_ICON) {
-            Some(t) => egui::Button::image(egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.ink)),
-            None => egui::Button::new(""),
-        };
-        let gear = ui
-            .add(gear.min_size(Vec2::splat(super::super::rows::TOOLBAR_H - 2.0)))
-            .on_hover_text(aurora_i18n::tr!("people-sets-gear"));
+        // flat like "+": a face only under the pointer or while its menu is open
+        let (cell, gear) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+        let gear = gear.on_hover_text(aurora_i18n::tr!("people-sets-gear"));
+        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&gear));
+        if gear.hovered() || open {
+            ui.painter()
+                .rect_filled(cell, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        }
+        super::super::radar::icon(ui, ALL_SETS_ICON, cell, 14.0, if gear.hovered() || open { p.ink } else { p.muted });
         let world = c.world;
         let contacts = &mut *c.contacts;
         menu::dropdown(&gear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
