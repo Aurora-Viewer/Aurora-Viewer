@@ -21048,6 +21048,9 @@ impl ApplicationHandler for App {
             self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
             self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
             self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
+            // the arrival's lines come before the first frame's events
+            self.world.mark_unnamed_objects =
+                self.settings.mark_unnamed_objects || crate::demo::object_chat::scene().is_some_and(|s| s.spoof);
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
