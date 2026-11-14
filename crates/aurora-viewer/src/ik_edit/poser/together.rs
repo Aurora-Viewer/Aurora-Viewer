@@ -1,5 +1,6 @@
-//! Several joints edited as one. Shift + click on a joint (its marker, its
-//! row or its finger cell) adds it to the selected joint, or takes it out;
+//! Several joints edited as one. Shift or Ctrl + click on a joint (its
+//! marker, its shaft, its row or its finger cell) adds it to the selected
+//! joint, or takes it out;
 //! the joints added follow every change of the selected one: both eyes turn
 //! together, both shoulders lift together, a few spine joints bend together.
 //! This is not Mirror: the followers get the same change, not its reflection.
@@ -59,6 +60,13 @@ impl Editor {
     pub(super) fn clear_together(&mut self) {
         self.poser.together.clear();
     }
+}
+
+/// Whether a click with these modifiers adds its joint to the selection
+/// (or takes it out): Shift, or Ctrl (Cmd on macOS), the same on a marker,
+/// a shaft and a row.
+pub(super) fn adds_to_selection(modifiers: egui::Modifiers) -> bool {
+    modifiers.shift || modifiers.ctrl || modifiers.command
 }
 
 /// Add `bone` to the followers, or take it out.
@@ -220,6 +228,16 @@ mod tests {
             "{moved} vs {led}"
         );
         assert!((moved.y + led.y).abs() < 0.005, "{moved} vs {led}");
+    }
+
+    #[test]
+    fn shift_or_ctrl_adds_a_joint_and_a_plain_click_does_not() {
+        use egui::Modifiers;
+        assert!(adds_to_selection(Modifiers::SHIFT));
+        assert!(adds_to_selection(Modifiers::CTRL));
+        assert!(adds_to_selection(Modifiers::COMMAND));
+        assert!(!adds_to_selection(Modifiers::NONE));
+        assert!(!adds_to_selection(Modifiers::ALT));
     }
 
     #[test]
