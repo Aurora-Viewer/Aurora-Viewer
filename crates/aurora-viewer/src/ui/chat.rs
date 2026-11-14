@@ -817,17 +817,56 @@ pub fn colon_emote(text: &mut String) {
     text.replace_range(..1, with);
 }
 
-/// A channel-0 local line as the Legacy Viewer sends it: the MU* pose and the
-/// gesture replacement apply first (`triggerAndReviseString`, llgesturemgr.cpp),
-/// then the channel is read from the text really sent (FSNearbyChat::sendChatFromViewer
-/// → stripChannelNumber, fsnearbychathub.cpp, llfloaterimnearbychat.cpp). A
-/// replacement opening with "/1" therefore speaks on channel 1 (#1916). The
-/// gesture id is returned to be played, as triggerAndReviseString does.
-pub fn prepare_local_line(manager: &mut crate::gestures::Manager, text: &str, pose: bool) -> (i32, String, Option<uuid::Uuid>) {
-    let mut text = text.to_owned();
-    if pose {
-        colon_emote(&mut text);
+/// An out-of-character line closed for the roleplayer (AutoCloseOOC): a line
+/// that opens "((" and never closes it gets "))", spaced like its opening
+/// ("(( brb" → "(( brb ))"), and the same for "[[ ]]". A line already ending
+/// with ")" gets a space first, so that it does not end ")))". Only the first
+/// unclosed pair is closed, as in the source. Port of FSCommon::applyAutoCloseOoc
+/// (indra/newview/fscommon.cpp, originally LGPL 2.1), applied like it before
+/// the MU* pose on channel 0 and in the conversations.
+pub fn auto_close_ooc(text: &mut String) {
+    for (open, close, last) in [("((", "))", ')'), ("[[", "]]", ']')] {
+        if !text.contains(open) || text.contains(close) {
+            continue;
+        }
+        if text.contains(&format!("{open} ")) || text.ends_with(last) {
+            text.push(' ');
+        }
+        text.push_str(close);
+        return;
     }
+}
+
+/// How the Legacy Viewer rewrites a typed line before sending it, on channel
+/// 0 and in the conversations: the OOC close (AutoCloseOOC) then the MU* pose
+/// (AllowMUpose), in FSFloaterIM::sendMsg's and FSNearbyChat::sendChat's order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LineRewrite {
+    pub close_ooc: bool,
+    pub colon_emote: bool,
+}
+
+impl LineRewrite {
+    pub fn apply(self, text: &mut String) {
+        if self.close_ooc {
+            auto_close_ooc(text);
+        }
+        if self.colon_emote {
+            colon_emote(text);
+        }
+    }
+}
+
+/// A channel-0 local line as the Legacy Viewer sends it: the OOC close, the
+/// MU* pose and the gesture replacement apply first (`triggerAndReviseString`,
+/// llgesturemgr.cpp), then the channel is read from the text really sent
+/// (FSNearbyChat::sendChatFromViewer → stripChannelNumber, fsnearbychathub.cpp,
+/// llfloaterimnearbychat.cpp). A replacement opening with "/1" therefore speaks
+/// on channel 1 (#1916). The gesture id is returned to be played, as
+/// triggerAndReviseString does.
+pub fn prepare_local_line(manager: &mut crate::gestures::Manager, text: &str, rewrite: LineRewrite) -> (i32, String, Option<uuid::Uuid>) {
+    let mut text = text.to_owned();
+    rewrite.apply(&mut text);
     let (revised, gesture) = manager.revise(&text);
     let (channel, message) = parse_channel(&revised);
     (channel, message, gesture)
@@ -5579,7 +5618,7 @@ mod tests {
             },
         );
         manager.active.insert(id);
-        let (channel, message, gesture) = prepare_local_line(&mut manager, "/wave", false);
+        let (channel, message, gesture) = prepare_local_line(&mut manager, "/wave", LineRewrite::default());
         assert_eq!((channel, message.as_str(), gesture), (0, "", Some(id)));
         assert!(!sends_local_line(channel, &message));
     }
@@ -5625,27 +5664,52 @@ mod tests {
             },
         );
         manager.active.insert(id);
-        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (1, "capture".into(), Some(id)));
+        assert_eq!(
+            prepare_local_line(&mut manager, "/cap", LineRewrite::default()),
+            (1, "capture".into(), Some(id))
+        );
         // only a leading channel is read: further in the line it stays text
         assert_eq!(
-            prepare_local_line(&mut manager, "say /cap", false),
+            prepare_local_line(&mut manager, "say /cap", LineRewrite::default()),
             (0, "say /1capture".into(), Some(id))
         );
         // the same channel forms as parse_channel
         if let Some(entry) = manager.entries.get_mut(&id) {
             entry.definition.replacement = "/-4242 ping".into();
         }
-        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (-4242, "ping".into(), Some(id)));
+        assert_eq!(
+            prepare_local_line(&mut manager, "/cap", LineRewrite::default()),
+            (-4242, "ping".into(), Some(id))
+        );
         if let Some(entry) = manager.entries.get_mut(&id) {
             entry.definition.replacement = "/5 test".into();
         }
-        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (5, "test".into(), Some(id)));
+        assert_eq!(
+            prepare_local_line(&mut manager, "/cap", LineRewrite::default()),
+            (5, "test".into(), Some(id))
+        );
         // no gesture: the MU* pose alone, and only when asked for
-        assert_eq!(prepare_local_line(&mut manager, ":waves", true), (0, "/me waves".into(), None));
-        assert_eq!(prepare_local_line(&mut manager, ":waves", false), (0, ":waves".into(), None));
+        assert_eq!(
+            prepare_local_line(
+                &mut manager,
+                ":waves",
+                LineRewrite {
+                    colon_emote: true,
+                    ..Default::default()
+                }
+            ),
+            (0, "/me waves".into(), None)
+        );
+        assert_eq!(
+            prepare_local_line(&mut manager, ":waves", LineRewrite::default()),
+            (0, ":waves".into(), None)
+        );
         // disabled gestures leave the line untouched
         manager.enabled = false;
-        assert_eq!(prepare_local_line(&mut manager, "/cap", false), (0, "/cap".into(), None));
+        assert_eq!(
+            prepare_local_line(&mut manager, "/cap", LineRewrite::default()),
+            (0, "/cap".into(), None)
+        );
     }
 
     /// ":" as "/me" (FSCommon::applyMuPose): poses and possessives become
@@ -5667,6 +5731,40 @@ mod tests {
         assert_eq!(pose(":abc"), "/me abc");
         assert_eq!(pose(":'s"), ":'s");
         assert_eq!(parse_channel("/hudping"), (0, "/hudping".into()));
+    }
+
+    /// "((" closed by "))" (FSCommon::applyAutoCloseOoc): spaced like the
+    /// opening, a space before a closing parenthesis, one pair only, and the
+    /// square brackets alike.
+    #[test]
+    fn auto_close_ooc_follows_the_legacy_rule() {
+        let close = |text: &str| {
+            let mut text = text.to_owned();
+            auto_close_ooc(&mut text);
+            text
+        };
+        assert_eq!(close("(( brb"), "(( brb ))");
+        assert_eq!(close("((brb"), "((brb))");
+        assert_eq!(close("((brb :)"), "((brb :) ))", "no triple parenthesis");
+        assert_eq!(close("[[ afk"), "[[ afk ]]");
+        assert_eq!(close("[[afk"), "[[afk]]");
+        assert_eq!(close("[[afk [x]"), "[[afk [x] ]]");
+        assert_eq!(close("((ooc)) and [[ more"), "((ooc)) and [[ more ]]", "the closed pair is skipped");
+        assert_eq!(close("(( a [[ b"), "(( a [[ b ))", "one pair per line");
+        for kept in ["hello", "(( done ))", "((x)) ((y", "))((", "( single", "", "été (( là ))"] {
+            assert_eq!(close(kept), kept);
+        }
+        // the close runs before the pose, as in the conversations' send
+        let mut line = ":waves ((brb".to_owned();
+        LineRewrite {
+            close_ooc: true,
+            colon_emote: true,
+        }
+        .apply(&mut line);
+        assert_eq!(line, "/me waves ((brb))");
+        let mut line = "((brb".to_owned();
+        LineRewrite::default().apply(&mut line);
+        assert_eq!(line, "((brb", "off by default, like the Legacy Viewer");
     }
 
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
