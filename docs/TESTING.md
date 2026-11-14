@@ -2993,7 +2993,7 @@ With `AURORA_DEMO_BUILD=contents-new,object:118` and `AURORA_DEMO_BUILD_TAB=cont
 the Contents tab presses New notecard then New script at frame 260: the demo
 region answers CreateTaskInventoryItem like a Second Life region, and the list
 gains a "New notecard" (empty, opens in the notecard editor) and a running
-"New script". New notecard sits after New script and its language choice.
+"New script". New notecard opens the second row, under New script.
 `AURORA_DEMO_CONTENTS_CAP=0` withdraws the capability: New notecard is
 disabled and New script falls back to RezScript, as on a region without it.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
