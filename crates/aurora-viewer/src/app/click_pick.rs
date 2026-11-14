@@ -291,6 +291,9 @@ impl App {
             // the hidden cursor is the camera's: the crosshair, never a window (#1343)
             return false;
         }
+        if self.ik_editor.manipulator_owns_pointer() {
+            return true;
+        }
         let ppp = self.egui_ctx.pixels_per_point();
         ui::widgets::pointer_over_ui(&self.egui_ctx, egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp))
     }

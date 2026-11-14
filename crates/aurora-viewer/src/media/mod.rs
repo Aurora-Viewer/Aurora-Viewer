@@ -32,6 +32,7 @@ pub mod entry;
 pub mod filter;
 mod interact;
 pub mod keys;
+pub mod nearby;
 pub mod openid;
 pub mod pack;
 pub mod pick;

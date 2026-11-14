@@ -26,6 +26,16 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-13 — Aurora 0.9.9 : Météo Aurora, Studio avatar et scripts Lua
+Météo Aurora apporte la pluie, la neige, le vent, l'orage et les aurores boréales, avec flaques, neige au sol et traces de pas : choisissez la vôtre dans la fenêtre Environnement, ou laissez les régions la choisir (désactivé par défaut). Le Studio avatar est un espace calme pour habiller, poser et photographier votre avatar, avec son propre éditeur d'animations : images clés, ligne de temps, import ANIM et BVH. Les scripts SLua ont un vrai éditeur, avec couleurs Lua, complétion et aide. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.9)
+
+## 2026-11-13 — Manette, VR, construction et avatars
+Avec une manette, sur l'écran ou en VR, passez du mode première personne au mode avatar et au Flycam. La caméra peut suivre une partie du corps animée. Quand d'autres modifient, saisissent ou donnent quelque chose, leur faisceau s'affiche, et le vôtre se voit. Glissez un élément hors des Contenus pour le poser, renvoyez un objet dans le contenu d'où il vient, et cochez Maillage animé sur tout un ensemble lié. Les têtes mesh n'ont plus de sourcils noirs sur les cartes AMD ni après une réinitialisation de la carte graphique, et les marches et courses des AO bouclent de nouveau.
+
+## 2026-11-13 — Encore plus comme le Legacy Viewer
+Des curseurs d'opacité pour les fenêtres, les barres et les menus (Préférences › Apparence), la liste des médias proches sous le bouton des médias, toutes les réponses « ne plus demander » dans Préférences › Confirmations, Lumières proches maximum, les options de modérateur dans les chats de groupe, un bannissement de tous vos groupes, la musique des parcelles en fondu d'une station à l'autre, et le soleil et la lune dessinés comme dans le Legacy Viewer. Merci à AiAiCaptainn, circuskid, Gaalrauch, Izusl, KanikaBreed, lambskin, Memekiller, Nowalski, Odessa-Draekavik, RheaMercury et voidel.
+
 ## 2026-11-12 — Aurora 0.9.8 : des correctifs pour la construction, le chat et les cartes AMD
 Choisir une face sélectionne de nouveau les faces de ce que vous portez, et Faire disparaître avec Modifier les parties liées ne cache que la partie choisie. Le sélecteur de canal s'affiche près de chaque saisie du chat local et garde le canal choisi. Sur les cartes AMD, les feuilles des arbres ne sont plus des carrés et les cheveux mesh n'ont plus de traînées, et les cils en fondu restent visibles derrière les cheveux mesh. Le cache est vidé une fois au premier lancement et se remplit tout seul ; vos réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)

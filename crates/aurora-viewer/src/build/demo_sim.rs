@@ -18,7 +18,7 @@ const PERM_ALL: u32 = 0x7fff_ffff;
 pub struct DemoSim {
     props: HashMap<Uuid, ObjectProps>,
     contents: HashMap<Uuid, (i16, Vec<TaskItem>)>,
-    running: HashMap<(Uuid, Uuid), (bool, bool)>,
+    running: HashMap<(Uuid, Uuid), (bool, aurora_net::scripts::CompileTarget)>,
     pending_running: HashMap<(Uuid, Uuid), bool>,
     physics: HashMap<Uuid, PhysicsParams>,
     /// The reports of transform edits held for a round trip
@@ -99,14 +99,20 @@ fn script_copy_demo() -> bool {
 }
 
 impl DemoSim {
-    pub fn save_script(&mut self, target: aurora_net::scripts::ScriptTarget, asset: Uuid, running: bool, mono: bool) {
+    pub fn save_script(
+        &mut self,
+        target: aurora_net::scripts::ScriptTarget,
+        asset: Uuid,
+        running: bool,
+        compile: aurora_net::scripts::CompileTarget,
+    ) {
         if let Some(entry) = self.contents.get_mut(&target.object)
             && let Some(item) = entry.1.iter_mut().find(|i| i.item_id == target.item)
         {
             item.asset_id = asset;
             entry.0 = entry.0.wrapping_add(1);
         }
-        self.running.insert((target.object, target.item), (running, mono));
+        self.running.insert((target.object, target.item), (running, compile));
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
@@ -138,10 +144,12 @@ impl DemoSim {
                 .map(|o| o.owner_id)
                 .filter(|owner| !owner.is_nil())
                 .unwrap_or(crate::demo::DEMO_AGENT);
+            // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
+            let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);
             ObjectProps {
                 object_id: id,
                 full: true,
-                creator_id: DEMO_CREATOR,
+                creator_id,
                 owner_id,
                 group_id: group.unwrap_or_else(|| {
                     if owner_id == crate::demo::DEMO_AGENT {
@@ -690,7 +698,8 @@ impl DemoSim {
                 entry.0 = entry.0.wrapping_add(1);
                 let serial = entry.0;
                 if let BuildCmd::RezScript { enabled, .. } = c {
-                    self.running.insert((id, script_id), (*enabled, true));
+                    self.running
+                        .insert((id, script_id), (*enabled, aurora_net::scripts::CompileTarget::Mono));
                 }
                 self.props_of(world, id).inventory_serial = serial;
                 self.reply_props(world, &ids)
@@ -714,24 +723,30 @@ impl DemoSim {
                 if script_copy_demo() {
                     self.pending_running.insert((*object_id, *item_id), *running);
                 } else {
-                    self.running.entry((*object_id, *item_id)).or_insert((true, true)).0 = *running;
+                    self.running
+                        .entry((*object_id, *item_id))
+                        .or_insert((true, aurora_net::scripts::CompileTarget::Mono))
+                        .0 = *running;
                 }
                 Vec::new()
             }
             BuildCmd::GetScriptRunning { object_id, item_id, .. } => {
                 let initial = *object_id != super::replace::demo::id(super::replace::demo::ROOT + 6);
-                let (running, mono) = self.running.get(&(*object_id, *item_id)).copied().unwrap_or((initial, true));
+                let (running, compile) = self
+                    .running
+                    .get(&(*object_id, *item_id))
+                    .copied()
+                    .unwrap_or((initial, aurora_net::scripts::CompileTarget::Mono));
                 // First reply observes the previous state; the next query
                 // confirms the asynchronous script-engine operation.
                 if let Some(next) = self.pending_running.remove(&(*object_id, *item_id)) {
-                    self.running.insert((*object_id, *item_id), (next, mono));
+                    self.running.insert((*object_id, *item_id), (next, compile));
                 }
                 vec![NetEvent::ScriptRunning {
                     object_id: *object_id,
                     item_id: *item_id,
                     running,
-                    mono: Some(mono),
-                    luau: aurora_net::scripts::Luau::Off,
+                    compile: Some(compile),
                 }]
             }
             // the hover tips' parcel under the pointer

@@ -10,6 +10,7 @@ mod app;
 mod atomic_file;
 mod autopilot;
 mod autoreplace;
+mod avatar_align;
 mod avatar_studio;
 mod blender_live;
 // Bug report form, disabled for now: "Report a bug" (login screen, top bar,
@@ -107,6 +108,7 @@ mod updater;
 mod url_scheme;
 mod voice;
 mod wearable_editor;
+mod weather;
 mod window_hold;
 mod window_show;
 mod world;
@@ -301,6 +303,9 @@ fn run_viewer() -> anyhow::Result<()> {
     raw_mouse::install(&mut event_loop);
     let event_loop = event_loop.build()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    // the cache clear an update could not do while the cache was held
+    // (aurora-updater user_data.rs), before anything opens it
+    aurora_updater::clear_deferred_cache();
     // the cache folder of this run, before anything uses it
     cache_location::init();
     // private browser profiles a crash left behind (search web tab)

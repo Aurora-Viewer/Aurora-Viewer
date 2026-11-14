@@ -158,6 +158,8 @@ struct SurfaceKey {
     hover: f32,
     pixels_per_point: f32,
     skin: u64,
+    /// ChatBubbleOpacity, against the plate's usual look at its default.
+    opacity: f32,
 }
 
 /// What the rings, discs and bars on a plate are built from.
@@ -442,11 +444,17 @@ fn marker_slot(level: Level, c: &Content, face: &Face, rect: Rect) -> Option<Rec
 fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &Content, cache: &mut Option<Built<SurfaceKey>>) {
     let p = env.p;
     let s = SCALE;
+    let (tag_tint, tag_blur) =
+        crate::ui::surface_opacity::relative(crate::ui::surface_opacity::name_tags(), crate::ui::surface_opacity::NAME_TAGS);
     if st.glass > 0.0 {
         // inside the antialiased edge of the surface, which hides the blur's own
         let radius = rect.height() * 0.5 - 0.5;
-        env.painter
-            .add(aurora_render::glass_region(rect.shrink(0.5), radius, st.glass * alpha, GLASS_SHADE));
+        env.painter.add(aurora_render::glass_region(
+            rect.shrink(0.5),
+            radius,
+            st.glass * alpha * tag_blur,
+            GLASS_SHADE,
+        ));
     }
     let key = SurfaceKey {
         tint: surface_tint(env, c).unwrap_or(env.tint),
@@ -458,6 +466,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
         hover: st.hover,
         pixels_per_point: env.pixels_per_point,
         skin: env.skin,
+        opacity: tag_tint,
     };
     let surface = Built::of(cache, key, |key| {
         let shadow = Glow {
@@ -466,7 +475,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &C
             spread: 0.0,
             color: p.navy.gamma_multiply(0.35),
         };
-        let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
+        let opacity = (lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass) * key.opacity).min(1.0);
         let plain = key
             .border
             .unwrap_or_else(|| p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover));

@@ -158,6 +158,8 @@ pub(super) fn alias(command: &str) -> Option<&'static str> {
         "menu:common-world/toolbar-command-region-tracker" => "regiontracker",
         "menu:common-world/toolbar-command-destinations" => "destinations",
         "menu:common-build/avatar-studio-title" => "avatar_studio",
+        "menu:common-me/toolbar-command-avatar-align" => "avatar_align",
+        "menu:common-me/toolbar-command-face-nearest" => "face_nearest_avatar",
         "menu:common-world/toolbar-command-resync-animations" => "resync_animations",
         "menu:common-contents/common-inventory" => "inventory",
         "menu:common-contents/gesture-title" | "menu:ui-bars-communicate/gesture-title" => "gestures",

@@ -27,7 +27,7 @@ use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use glam::{Quat, Vec3};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -130,6 +130,9 @@ pub struct LocalEnv {
     pub length: f64,
     pub offset: f64,
     generation: u64,
+    /// The Aurora Weather of the sky or day applied (its name's code,
+    /// weather/region.rs): mine while it stays, whatever the regions set.
+    pub weather: Option<crate::weather::region::RegionDay>,
 }
 
 impl LocalEnv {
@@ -141,6 +144,7 @@ impl LocalEnv {
             length: eep::DEFAULT_DAY_LENGTH,
             offset: eep::DEFAULT_DAY_OFFSET,
             generation,
+            weather: None,
         }
     }
 
@@ -237,6 +241,8 @@ struct Slot {
     /// The day's settings map as received (None for Firestorm's default
     /// day, whose asset the settings streamer keeps).
     settings: Option<Arc<Llsd>>,
+    /// The names it was applied with (`DayNames`).
+    names: crate::weather::region::DayNames,
     length: f64,
     offset: f64,
     /// Bumped on every change: a new slot crossfades even with the same source.
@@ -355,6 +361,11 @@ pub struct EnvSelector {
     /// The preset was dropped by another local change: the panels follow.
     preset_dropped: bool,
     pending: VecDeque<Pending>,
+    /// Aurora Weather by settings asset (`note_asset_weather`).
+    asset_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
+    /// The same from the names of the inventory items picked
+    /// (`note_item_name`), for an asset whose own name carries none.
+    item_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
     /// Assets that could not be loaded, for the FailedToFindSettings message.
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
@@ -507,6 +518,7 @@ impl EnvSelector {
             handle,
             day,
             settings,
+            names: Default::default(),
             length,
             offset,
             generation: self.generation,
@@ -531,6 +543,7 @@ impl EnvSelector {
         self.next_fade = if ctx.teleporting { TRANSITION_FAST } else { TRANSITION_DEFAULT };
         let altitudes = answer.altitudes;
         let settings = answer.day_settings.clone();
+        let names = answer.names.clone();
         let day = answer.valid_day();
         if parcel_id == eep::REGION_PARCEL_ID {
             // a valid region day leaves the parcel's in place (RegionInfo
@@ -540,7 +553,9 @@ impl EnvSelector {
                     self.altitudes = altitudes;
                     self.default_pending = None;
                     let (length, offset) = (d.length, d.offset);
-                    self.region = Some(self.slot(handle, Arc::new(d), settings, length, offset));
+                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
+                    slot.names = names.clone();
+                    self.region = Some(slot);
                     AnswerOutcome::RegionDay
                 }
                 None => {
@@ -561,7 +576,9 @@ impl EnvSelector {
             match day {
                 Some(d) => {
                     let (length, offset) = (d.length, d.offset);
-                    self.parcel = Some(self.slot(handle, Arc::new(d), settings, length, offset));
+                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
+                    slot.names = names.clone();
+                    self.parcel = Some(slot);
                     AnswerOutcome::ParcelDay
                 }
                 None => {
@@ -679,6 +696,17 @@ impl EnvSelector {
         }
     }
 
+    /// The names the environment in effect was applied with (the parcel's,
+    /// else the region's), as [`EnvSelector::day_settings`] picks it.
+    pub fn day_names(&self, parcel: bool) -> crate::weather::region::DayNames {
+        let slot = if parcel {
+            self.parcel.as_ref().or(self.region.as_ref())
+        } else {
+            self.region.as_ref()
+        };
+        slot.map(|s| s.names.clone()).unwrap_or_default()
+    }
+
     /// Length and offset (s) of the region's day (LLPanelRegionEnvironment's
     /// mCurrentEnvironment), when it has one.
     pub fn region_timing(&self) -> Option<(f64, f64)> {
@@ -778,6 +806,46 @@ impl EnvSelector {
         self.drop_preset();
     }
 
+    /// The applied sky's or day's Aurora Weather, kept with the local
+    /// environment (an editor's "Apply only to myself").
+    pub fn set_local_weather(&mut self, weather: Option<crate::weather::region::RegionDay>) {
+        if let Some(l) = &mut self.local {
+            l.weather = weather;
+        }
+    }
+
+    /// The Aurora Weather of the local environment in place.
+    pub fn local_weather(&self) -> Option<&crate::weather::region::RegionDay> {
+        self.local.as_ref().and_then(|l| l.weather.as_ref())
+    }
+
+    /// An inventory item picked for myself, its asset `asset`: the weather
+    /// its name's code gives (a code typed into an item's name by hand is
+    /// not in its asset, whose name is read first).
+    pub fn note_item_name(&mut self, asset: Uuid, name: &str) {
+        match crate::weather::region::SkyWeather::from_name(name) {
+            Some(w) => {
+                self.item_weather.insert(asset, crate::weather::region::RegionDay::fixed(w));
+            }
+            None => {
+                self.item_weather.remove(&asset);
+            }
+        }
+    }
+
+    /// The Aurora Weather of settings assets, read from their names as they
+    /// load (scene/mod.rs): an item applied to myself carries it.
+    pub fn note_asset_weather(&mut self, asset: Uuid, weather: Option<crate::weather::region::RegionDay>) {
+        match weather {
+            Some(w) => {
+                self.asset_weather.insert(asset, w);
+            }
+            None => {
+                self.asset_weather.remove(&asset);
+            }
+        }
+    }
+
     pub fn has_local(&self) -> bool {
         self.local.is_some()
     }
@@ -803,7 +871,19 @@ impl EnvSelector {
                 return;
             };
             match p.state {
-                PendingState::Ready(s, origin) => self.apply_settings(p.asset, &s, origin, p.timing),
+                PendingState::Ready(s, origin) => {
+                    self.apply_settings(p.asset, &s, origin, p.timing);
+                    // a sky or a day sets the weather (or clears it); a water
+                    // has none and leaves the sky's
+                    if !matches!(*s, super::eep::Settings::Water(_)) {
+                        let weather = self
+                            .asset_weather
+                            .get(&p.asset)
+                            .or_else(|| self.item_weather.get(&p.asset))
+                            .cloned();
+                        self.set_local_weather(weather);
+                    }
+                }
                 PendingState::Failed if p.preset != 0 => {
                     log::warn!(
                         "library sky {} of time of day preset {} could not be loaded: built-in sky with the preset's sun",
@@ -874,7 +954,10 @@ impl EnvSelector {
 
     fn apply_sky(&mut self, origin: LocalOrigin, sky: SkyFrame) {
         log::info!("local environment: sky {origin:?}");
-        self.local_mut().sky = Some((origin, sky));
+        // another sky: its weather, if any, is set after (set_local_weather)
+        let l = self.local_mut();
+        l.sky = Some((origin, sky));
+        l.weather = None;
         match origin {
             // the preset's own sky: the panels keep showing it
             LocalOrigin::Preset(n) => {
@@ -1800,6 +1883,28 @@ mod tests {
         assert!((gamma(&mut sel, 10.0) - 1.9).abs() < 1e-6);
         assert!((gamma(&mut sel, 12.5) - 1.1).abs() < 1e-5, "halfway through 5 s");
         assert!((gamma(&mut sel, 15.0) - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_water_applied_over_a_coded_sky_keeps_its_weather() {
+        use crate::weather::region::{RegionDay, SkyWeather};
+        let mut sel = region_selector();
+        sel.note_asset_weather(SKY, Some(RegionDay::fixed(SkyWeather::CLEAR)));
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
+        sel.frame(&input(1.0));
+        assert!(sel.local_weather().is_some(), "the coded sky's weather");
+        // a water has no weather: the sky's stays (review of #2410)
+        sel.request_local(WATER, SettingsKind::Water);
+        sel.on_settings(WATER, Some(water_asset(9.0)));
+        sel.frame(&input(2.0));
+        assert!(sel.local_weather().is_some(), "kept under a new water");
+        // another sky without a code clears it
+        let plain = Uuid::from_u128(0x54);
+        sel.request_local(plain, SettingsKind::Sky);
+        sel.on_settings(plain, Some(sky_asset(1.2)));
+        sel.frame(&input(3.0));
+        assert!(sel.local_weather().is_none());
     }
 
     #[test]

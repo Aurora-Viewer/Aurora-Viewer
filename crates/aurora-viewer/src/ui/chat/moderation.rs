@@ -13,6 +13,7 @@ use crate::ui::context::{CtxAction, request};
 use crate::ui::menu;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::World;
+use crate::world::group_ban_all;
 use crate::world::group_data::GroupData;
 use aurora_net::groups::powers;
 use uuid::Uuid;
@@ -25,6 +26,9 @@ pub enum Confirm {
     /// Aurora asks before a ban too, as its group profile does; the Legacy
     /// Viewer's chat menu bans at once.
     Ban { group: Uuid, agent: Uuid },
+    /// FSBanFromAllGroups / FSUnbanFromAllGroups: every group where we may
+    /// manage bans (`world::group_ban_all`).
+    BanAll { agent: Uuid, ban: bool },
 }
 
 /// isGroupModerator: the chat of a group of ours, which we moderate.
@@ -93,7 +97,8 @@ pub fn menu(ui: &mut egui::Ui, p: &Palette, world: &World, session: Uuid, id: Uu
     let powers = powers_in(world, &session);
     let moderator = is_group_moderator(world, &session);
     let ban = powers & powers::GROUP_BAN_ACCESS != 0;
-    if !moderator && !ban {
+    let ban_all = group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id);
+    if !moderator && !ban && !ban_all {
         return;
     }
     let ctx = ui.ctx().clone();
@@ -141,21 +146,45 @@ pub fn menu(ui: &mut egui::Ui, p: &Palette, world: &World, session: Uuid, id: Uu
             }
         });
     }
-    if ban {
+    if ban || ban_all {
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "ban", aurora_i18n::tr!("ui-chat-ban-member"), can_ban(data, powers, id, me)) {
-            request(&ctx, CtxAction::GroupChatBan { group: session, agent: id });
-        }
+    }
+    if ban && menu::item_if(ui, p, "ban", aurora_i18n::tr!("ui-chat-ban-member"), can_ban(data, powers, id, me)) {
+        request(&ctx, CtxAction::GroupChatBan { group: session, agent: id });
+    }
+    // fsparticipantlist.cpp: "Ban from all my groups" in a group's chat
+    // only, the lifting of the ban in the profile
+    if ban_all {
+        ban_all_entries(ui, p, world, id, false);
     }
 }
 
-/// `AURORA_DEMO_CONV_MODERATE=menu|eject|ban|banned|error` (with
-/// `AURORA_DEMO_CONV=aurora:group`): we moderate Aurora Builders' chat
-/// with every ability; `menu` right-clicks the builder shown as "Tess" in
-/// its members and opens "Moderator options", `eject` and `ban` ask about
-/// her, `banned` bans her at once (the group's members and roles are asked
-/// first, then the ban goes out), `error` forbids her text and the demo
-/// refuses it.
+/// "Ban from all my groups", and with `unban` "Unban from all my groups"
+/// (menu_profile_other.xml), for a resident we may ban in one group at
+/// least (canBanFromAnyGroup); nothing otherwise. Both ask first.
+pub fn ban_all_entries(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, unban: bool) {
+    if !group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id) {
+        return;
+    }
+    if menu::item(ui, p, "users-minus", aurora_i18n::tr!("ui-chat-ban-from-all-groups")) {
+        request(ui.ctx(), CtxAction::BanFromAllGroups { agent: id, ban: true });
+    }
+    if unban && menu::item(ui, p, "user-check", aurora_i18n::tr!("ui-chat-unban-from-all-groups")) {
+        request(ui.ctx(), CtxAction::BanFromAllGroups { agent: id, ban: false });
+    }
+}
+
+/// `AURORA_DEMO_CONV_MODERATE=menu|eject|ban|banned|error|ban-all|
+/// unban-all|ban-all-run|profile` (with `AURORA_DEMO_CONV=aurora:group`):
+/// we moderate Aurora Builders' chat with every ability, and may manage
+/// bans in the Northern Wolves too; `menu` right-clicks the builder shown
+/// as "Tess" in its members and opens "Moderator options", `eject` and
+/// `ban` ask about her, `banned` bans her at once (the group's members and
+/// roles are asked first, then the ban goes out), `error` forbids her text
+/// and the demo refuses it; `ban-all` and `unban-all` ask about a ban (or
+/// its lifting) in both groups, `ban-all-run` sends it (the Northern Wolves
+/// refuse) and reports; `profile` (with `AURORA_DEMO_PROFILE=nova`) opens
+/// the profile's menu.
 pub fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::LazyLock<Option<String>> =
         std::sync::LazyLock::new(|| std::env::var("AURORA_DEMO_CONV_MODERATE").ok().map(|v| v.trim().to_owned()));
@@ -163,32 +192,47 @@ pub fn demo_mode() -> Option<&'static str> {
 }
 
 #[derive(Clone, Copy, Debug, Hash)]
-pub(super) enum DemoMark {
+pub(crate) enum DemoMark {
     /// The member's row in the panel.
     Row,
     /// The "Moderator options" heading of the menu.
     Submenu,
+    /// The profile's menu button.
+    ProfileMore,
 }
 
 fn demo_id(mark: DemoMark) -> egui::Id {
     egui::Id::unique(("group_chat_moderation_demo", mark))
 }
 
-/// Where the demo's pointer goes: `menu` mode only.
-pub(super) fn demo_mark(ctx: &egui::Context, mark: DemoMark, rect: egui::Rect) {
-    if demo_mode() == Some("menu") {
+/// Where the demo's pointer goes: `menu` and `profile` modes only.
+pub(crate) fn demo_mark(ctx: &egui::Context, mark: DemoMark, rect: egui::Rect) {
+    if matches!(demo_mode(), Some("menu" | "profile")) {
         ctx.data_mut(|d| d.insert_temp(demo_id(mark), rect));
     }
 }
 
 /// `menu` mode: the right click on the member at frames 700 to 702, then
 /// the pointer on "Moderator options" from frame 730 (capture at 800 with
-/// `AURORA_FPS_LIMIT=60`).
+/// `AURORA_FPS_LIMIT=60`); `profile` mode: a click on the profile's menu
+/// button at frames 700 to 702 (capture at 760).
 pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let at = |mark| ctx.data(|d| d.get_temp::<egui::Rect>(demo_id(mark)));
+    if demo_mode() == Some("profile") && (700..=702).contains(&frame) {
+        let Some(r) = at(DemoMark::ProfileMore) else { return Vec::new() };
+        if frame == 700 {
+            return vec![egui::Event::PointerMoved(r.center())];
+        }
+        return vec![egui::Event::PointerButton {
+            pos: r.center(),
+            button: egui::PointerButton::Primary,
+            pressed: frame == 701,
+            modifiers: Default::default(),
+        }];
+    }
     if demo_mode() != Some("menu") || !(700..=760).contains(&frame) {
         return Vec::new();
     }
-    let at = |mark| ctx.data(|d| d.get_temp::<egui::Rect>(demo_id(mark)));
     match frame {
         700..=702 => {
             let Some(r) = at(DemoMark::Row) else { return Vec::new() };
@@ -215,9 +259,30 @@ pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
 }
 
 /// The confirmation of an ejection or a ban; Some(true) once confirmed,
-/// Some(false) when cancelled.
+/// Some(false) when cancelled. A ban in all our groups lists them
+/// (FSBanFromAllGroups: [GROUPS]).
 pub fn confirm(ctx: &egui::Context, p: &Palette, world: &World, c: &Confirm) -> Option<bool> {
+    let mut groups = Vec::new();
     let (agent, text, ok, icon) = match *c {
+        Confirm::BanAll { agent, ban } => {
+            groups = group_ban_all::ban_groups(&world.groups.groups);
+            let (name, count) = (world.social.name_of(&agent), groups.len());
+            if ban {
+                (
+                    agent,
+                    aurora_i18n::tr!("ui-chat-ban-from-all-groups-confirm", name = name, count = count),
+                    aurora_i18n::tr!("ui-group-admin-ban"),
+                    "users-minus",
+                )
+            } else {
+                (
+                    agent,
+                    aurora_i18n::tr!("ui-chat-unban-from-all-groups-confirm", name = name, count = count),
+                    aurora_i18n::tr!("ui-group-admin-unban"),
+                    "user-check",
+                )
+            }
+        }
         Confirm::Eject { agent, .. } => (
             agent,
             aurora_i18n::tr!("ui-group-admin-eject-one", name = world.social.name_of(&agent)),
@@ -235,6 +300,14 @@ pub fn confirm(ctx: &egui::Context, p: &Palette, world: &World, c: &Confirm) -> 
     let modal = widgets::Modal::new(egui::Id::unique(("group_chat_moderation_confirm", agent))).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.label(egui::RichText::new(&text).size(12.5).color(p.ink));
+        if !groups.is_empty() {
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                for (_, name) in &groups {
+                    ui.label(egui::RichText::new(name).size(12.5).color(p.muted));
+                }
+            });
+        }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             let size = egui::Vec2::new(0.0, 26.0);

@@ -22,6 +22,7 @@ pub mod demo_sim;
 pub mod draw;
 mod edge_pan;
 pub mod edits;
+pub mod export;
 pub mod geom;
 pub mod grab;
 pub mod hud_drag;
@@ -260,6 +261,9 @@ pub struct BuildSettings {
     /// handles) and of their pick areas, as a factor of the Legacy Viewer's
     /// fixed screen sizes, which it has no setting for (#1328).
     pub gizmo_scale: f32,
+    /// Object › Save as › Collada / OBJ: the DAEExport* options
+    /// (`export::Settings`).
+    pub export: export::Settings,
 }
 
 /// The hologram of a move (`BuildSettings::move_hologram`).
@@ -689,6 +693,7 @@ impl Default for BuildSettings {
             limit_drag_distance: true,
             max_drag_distance: MAX_DRAG_DISTANCE,
             gizmo_scale: 1.0,
+            export: export::Settings::default(),
         }
     }
 }
@@ -806,7 +811,7 @@ pub struct BuildTool {
     /// Whether the last frame edited HUDs; leaving that selection resets view zoom.
     hud_editing: bool,
     /// Last world pick, retained in the object's frame while it moves.
-    point_pick: Option<(ObjKey, glam::DVec3)>,
+    pub(crate) point_pick: Option<(ObjKey, glam::DVec3)>,
     /// "Select face" mode: the faces chosen on each selected prim (missing
     /// = all its faces; LLSelectNode::isTESelected).
     pub faces: HashMap<ObjKey, Vec<u8>>,

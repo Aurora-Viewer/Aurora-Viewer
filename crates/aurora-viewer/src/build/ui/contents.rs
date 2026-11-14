@@ -53,6 +53,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     tool.request_contents(world, idx, false);
     let editable = tool.contents_editable(world, idx);
     let single = tool.roots(world).len() == 1 || tool.sel_prims(world).len() == 1;
+    // LLPanelContents::getState: the Lua choice only where the object's region runs SLua
+    let lua_region = world
+        .objects
+        .get(idx)
+        .and_then(|o| world.regions.get(&o.key.region))
+        .is_some_and(|r| r.lua_scripts);
+    let lua = lua_region && tool.ui.new_script_lua.unwrap_or(true);
 
     let font_size = if super::legacy::active(ui) { 11.0 } else { 12.0 };
     ui.horizontal(|ui| {
@@ -63,7 +70,10 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             )
             .clicked()
         {
-            tool.new_script(world, idx);
+            tool.new_script(world, idx, lua);
+        }
+        if lua_region {
+            new_script_language(ui, tool, lua);
         }
         if ui
             .add_enabled(
@@ -397,6 +407,32 @@ fn item_row(
             }
         }
     });
+}
+
+/// The language of "New script" on a region with SLua (the `button new
+/// script` combo of panel_tools.xml: LSL or Lua).
+fn new_script_language(ui: &mut egui::Ui, tool: &mut BuildTool, lua: bool) {
+    let label = |lua: bool| {
+        if lua {
+            aurora_i18n::tr!("script-target-luau")
+        } else {
+            aurora_i18n::tr!("build-ui-contents-script-lsl")
+        }
+    };
+    let mut chosen = lua;
+    egui::ComboBox::from_id_salt("contents_new_script_language")
+        .selected_text(label(lua))
+        .width(56.0)
+        .show_ui(ui, |ui| {
+            for option in [false, true] {
+                ui.selectable_value(&mut chosen, option, label(option));
+            }
+        })
+        .response
+        .on_hover_text(aurora_i18n::tr!("build-ui-contents-script-language"));
+    if chosen != lua {
+        tool.ui.new_script_lua = Some(chosen);
+    }
 }
 
 #[cfg(test)]

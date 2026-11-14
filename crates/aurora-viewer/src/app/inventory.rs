@@ -505,7 +505,7 @@ impl App {
                                 .inventory
                                 .items
                                 .get(&item)
-                                .is_some_and(|it| aurora_net::scripts::lua_source(it.flags)),
+                                .is_some_and(|it| aurora_net::scripts::is_slua_item(it.flags)),
                         data,
                     }),
                     Err(reason) => st.preview_message = reason,
@@ -519,9 +519,9 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags) => {
+            InvAction::Environment(asset, flags, item) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.world.eep.request_local(asset, kind);
+                    self.pick_local_settings(asset, kind, Some(item));
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
@@ -597,6 +597,8 @@ impl App {
                                 bucket,
                             });
                             self.world.inventory_offer_sent(resident, &name, folder);
+                            // FSCreateGiveInventoryParticleEffect (on)
+                            self.fire_beam(resident, glam::DVec3::ZERO);
                             self.world.inventory.remove(&removed);
                         }
                         Err(reason) => self.inventory_ui.message = reason,

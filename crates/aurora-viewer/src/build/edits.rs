@@ -194,6 +194,24 @@ impl BuildTool {
             .is_some_and(|root| root.update_flags & crate::ui::context::flags::OBJECT_MODIFY != 0)
     }
 
+    /// LLPanelVolume::getState (indra/newview/llpanelvolume.cpp): "Animated
+    /// Mesh" needs one selected linkset (getRootObjectCount, however many prims
+    /// it has), its root as the primary object, a mesh, and modify rights
+    /// that are not pathfinding-enforced. The other Features need one prim.
+    /// ⬜ Not yet: the Legacy Viewer's triangle limit (canBeAnimatedObject) and
+    /// worn animesh count (canAttachMoreAnimatedObjects).
+    pub fn animated_mesh_editable(&self, world: &World) -> bool {
+        let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+            return false;
+        };
+        let Some(o) = world.objects.get(idx) else { return false };
+        o.parent_id == 0
+            && o.volume.is_mesh()
+            && self.roots(world).len() == 1
+            && self.can_modify(world, idx)
+            && !super::linking::permanent(world, idx)
+    }
+
     fn by_region(world: &World, idxs: &[usize]) -> HashMap<RegionHandle, Vec<u32>> {
         let mut m: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for &i in idxs {

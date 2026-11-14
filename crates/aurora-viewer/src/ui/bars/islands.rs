@@ -440,11 +440,15 @@ pub(crate) fn area_surface<R>(
         .constrain(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            if surface {
-                ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
-            }
+            let surface = ui.painter().add(if surface {
+                crate::ui::widgets::island_shape(ui.ctx(), p, rect)
+            } else {
+                egui::Shape::Noop
+            });
             ui.set_min_size(rect.size());
-            body(ui)
+            let out = body(ui);
+            crate::ui::surface_opacity::fade_after(ui.ctx(), ui.layer_id(), surface, p, crate::ui::surface_opacity::bars());
+            out
         })
         .inner
 }
