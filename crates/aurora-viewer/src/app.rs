@@ -1639,7 +1639,7 @@ impl App {
         scene.tree_lod_factor = settings.tree_lod_factor;
         scene.surface_protection = settings.surface_protection();
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
-        Ok(Box::new(App {
+        let mut app = Box::new(App {
             area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
             settings,
             disk_cache,
@@ -2140,7 +2140,9 @@ impl App {
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
-        }))
+        });
+        app.init_mcp_bridge();
+        Ok(app)
     }
 
     /// What the experience demo's simulator answers or does on its own.
@@ -23437,10 +23439,15 @@ impl ApplicationHandler for App {
             // producing frames until a real presentation makes it visible,
             // including when the render thread returns the previous frame.
             self.frame(event_loop);
-        } else if let Some(g) = &self.gfx
-            && let Some(w) = &g.window
-        {
-            w.request_redraw();
+        } else {
+            if let Some(g) = &self.gfx
+                && let Some(w) = &g.window
+            {
+                w.request_redraw();
+            }
+            if self.gfx.is_none() || self.last_frame.elapsed() >= Duration::from_millis(50) {
+                self.update_mcp_bridge(None);
+            }
         }
     }
 }

@@ -52,6 +52,7 @@ pub struct McpRouter {
     pub leases: Arc<LeaseManager>,
     pub profile: McpProfile,
     manifests: Mutex<HashMap<String, Value>>,
+    pub status_snapshot: Arc<std::sync::RwLock<Value>>,
 }
 
 impl McpRouter {
@@ -61,6 +62,7 @@ impl McpRouter {
             leases: Arc::new(LeaseManager::default()),
             profile,
             manifests: Mutex::new(HashMap::new()),
+            status_snapshot: Arc::new(std::sync::RwLock::new(default_status_snapshot())),
         }
     }
 
@@ -81,6 +83,9 @@ impl McpRouter {
             });
         }
 
+        let is_status_req = matches!(request, ViewerRequest::ConnectionStatus | ViewerRequest::GetAgentStatus);
+        let wait_ms = if is_status_req { timeout_ms.min(500) } else { timeout_ms };
+
         let effective_lease = if request.requires_lease() {
             Some(self.leases.verify_for_mutation(lease_id.as_deref())?)
         } else {
@@ -88,19 +93,50 @@ impl McpRouter {
         };
 
         let (reply_tx, reply_rx) = oneshot::channel();
-        self.tx
+        if self
+            .tx
             .send(McpRequestEnvelope {
                 lease_id: effective_lease,
                 request,
                 reply_tx,
             })
             .await
-            .map_err(|_| McpError::ViewerDisconnected)?;
+            .is_err()
+        {
+            if is_status_req {
+                return Ok(ViewerResponse::Json(
+                    self.status_snapshot.read().unwrap_or_else(|e| e.into_inner()).clone(),
+                ));
+            }
+            return Err(McpError::ViewerDisconnected);
+        }
 
-        match tokio::time::timeout(Duration::from_millis(timeout_ms), reply_rx).await {
+        match tokio::time::timeout(Duration::from_millis(wait_ms), reply_rx).await {
+            Ok(Ok(Ok(ViewerResponse::Json(val)))) => {
+                if is_status_req {
+                    *self.status_snapshot.write().unwrap_or_else(|e| e.into_inner()) = val.clone();
+                }
+                Ok(ViewerResponse::Json(val))
+            }
             Ok(Ok(res)) => res,
-            Ok(Err(_)) => Err(McpError::ViewerDisconnected),
-            Err(_) => Err(McpError::Timeout(timeout_ms)),
+            Ok(Err(_)) => {
+                if is_status_req {
+                    Ok(ViewerResponse::Json(
+                        self.status_snapshot.read().unwrap_or_else(|e| e.into_inner()).clone(),
+                    ))
+                } else {
+                    Err(McpError::ViewerDisconnected)
+                }
+            }
+            Err(_) => {
+                if is_status_req {
+                    Ok(ViewerResponse::Json(
+                        self.status_snapshot.read().unwrap_or_else(|e| e.into_inner()).clone(),
+                    ))
+                } else {
+                    Err(McpError::Timeout(wait_ms))
+                }
+            }
         }
     }
 
@@ -1525,7 +1561,13 @@ impl McpRouter {
                 let item_id = parse_opt_uuid(args, "item_id")?;
                 let object_local_id = args.get("object_local_id").and_then(Value::as_u64).map(|v| v as u32);
                 let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
-                let body = req_str(args, "body")?;
+                let folder_id = parse_opt_uuid(args, "folder_id")?;
+                let body = args
+                    .get("body")
+                    .or_else(|| args.get("content"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| McpError::InvalidParams("Missing required string parameter: body".into()))?;
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1533,9 +1575,10 @@ impl McpRouter {
                             item_id,
                             object_local_id,
                             name,
+                            folder_id,
                             body,
                         },
-                        8000,
+                        12000,
                     )
                     .await?;
                 Ok(text_block(into_json(resp)))
@@ -2246,7 +2289,7 @@ pub fn list_tools_for_profile(profile: McpProfile) -> Vec<ToolDefinition> {
 }
 
 pub fn all_tool_definitions() -> Vec<ToolDefinition> {
-    vec![
+    attach_lease_metadata(vec![
         // Phase 0: Session, Leases & Dynamic Dispatch
         ToolDefinition {
             name: "connection_status".into(),
@@ -2479,8 +2522,15 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "avatar_stop".into(),
-            description: "Cancel automatic movement and read resulting avatar state (Legacy Viewer MCP compatible).".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            description: "Cancel automatic movement and read resulting avatar state (Legacy Viewer MCP compatible). Requires lease_id from control_acquire.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lease_id": { "type": "string", "description": "Active control lease ID acquired via control_acquire or viewer_control_acquire." }
+                },
+                "required": ["lease_id"],
+                "additionalProperties": false
+            }),
             in_compact_profile: false,
         },
         ToolDefinition {
@@ -2588,8 +2638,15 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "camera_release".into(),
-            description: "Release scripted camera control back to the viewer (Legacy Viewer MCP compatible).".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            description: "Release scripted camera control back to the viewer (Legacy Viewer MCP compatible). Requires lease_id from control_acquire.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lease_id": { "type": "string", "description": "Active control lease ID acquired via control_acquire or viewer_control_acquire." }
+                },
+                "required": ["lease_id"],
+                "additionalProperties": false
+            }),
             in_compact_profile: false,
         },
         ToolDefinition {
@@ -3120,8 +3177,15 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
         ToolDefinition {
             name: "mesh_upload_open".into(),
-            description: "Open the standard mesh upload preview workflow. Does not submit an upload or authorize an upload fee.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+            description: "Open the standard mesh upload preview workflow. Does not submit an upload or authorize an upload fee. Requires lease_id from control_acquire.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lease_id": { "type": "string", "description": "Active control lease ID acquired via control_acquire or viewer_control_acquire." }
+                },
+                "required": ["lease_id"],
+                "additionalProperties": false
+            }),
             in_compact_profile: true,
         },
         ToolDefinition {
@@ -3314,14 +3378,15 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "notecard_write".into(),
-            description: "Create or update a notecard in Agent Inventory or inside an object's Task Inventory (enforces creator modify permissions).".into(),
+            description: "Create a new notecard (when item_id is omitted) or update an existing modifiable notecard (when item_id is provided), either in Agent Inventory or inside an object's Task Inventory (when object_local_id is provided; requires object modify permissions). Requires lease_id from control_acquire.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "item_id": { "type": "string" },
-                    "object_local_id": { "type": "integer" },
-                    "name": { "type": "string" },
-                    "body": { "type": "string" }
+                    "item_id": { "type": "string", "description": "Optional UUID of an existing notecard to overwrite. Omit to create a new notecard." },
+                    "object_local_id": { "type": "integer", "description": "Optional target prim local_id for Task Inventory notecards. Omit for Agent Inventory." },
+                    "folder_id": { "type": "string", "description": "Optional target inventory folder UUID when creating a new agent inventory notecard (defaults to system Notecards folder)." },
+                    "name": { "type": "string", "description": "Optional notecard name when creating a new notecard (defaults to 'New Note')." },
+                    "body": { "type": "string", "description": "Plain-text UTF-8 body content of the notecard." }
                 },
                 "required": ["body"]
             }),
@@ -3676,7 +3741,154 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
             }),
             in_compact_profile: true,
         },
-    ]
+    ])
+}
+
+fn default_status_snapshot() -> Value {
+    json!({
+        "connected": false,
+        "headless": false,
+        "offscreen_gpu": false,
+        "screen": "Login",
+        "login_state": {
+            "error": null,
+            "busy": false,
+            "show_mfa": false,
+            "progress": null,
+        },
+        "demo_mode": false,
+        "agent_id": "00000000-0000-0000-0000-000000000000",
+        "display_name": "",
+        "region_name": "Offline",
+        "is_estate_manager": false,
+        "is_region_owner": false,
+        "region_owner_id": null,
+        "can_manage_estate": false,
+        "parcel_name": "",
+        "position": [0.0, 0.0, 0.0],
+        "rotation_quat": [0.0, 0.0, 0.0, 1.0],
+        "velocity": [0.0, 0.0, 0.0],
+        "flying": false,
+        "sitting": false,
+        "ground_sit": false,
+        "health": 100.0,
+        "balance": 0,
+        "fps": 0.0,
+        "frame_ms": 0.0,
+        "viewport": [0, 0],
+        "draw_distance": 128.0,
+        "rlva_enabled": false,
+    })
+}
+
+const REQUIRES_LEASE_TOOLS: &[&str] = &[
+    "nav_move_and_teleport",
+    "avatar_walk_to",
+    "avatar_stop",
+    "rlva_execute",
+    "settings_set",
+    "setting_set",
+    "camera_control",
+    "camera_set",
+    "camera_release",
+    "mesh_preview_camera",
+    "poser_set_bones",
+    "poser_reset",
+    "floater_open",
+    "capture_orbit",
+    "appearance_mutate",
+    "prim_rez_new",
+    "prim_transform",
+    "prim_set_shape",
+    "prim_link",
+    "prim_delete",
+    "lsl_write_and_compile",
+    "lsd_mutate",
+    "local_mesh_open",
+    "local_mesh_auto_reload",
+    "inventory_rez_object",
+    "object_take_or_derez",
+    "prim_set_material",
+    "mesh_upload_open",
+    "native_file_choose",
+    "ui_click",
+    "ui_set_text",
+    "ui_select",
+    "ui_press_key",
+    "ui_invoke_menu",
+    "object_touch",
+    "avatar_sit",
+    "notecard_write",
+    "prim_set_particles",
+    "viewer_login",
+    "viewer_shutdown",
+    "prim_set_physics_properties",
+    "prim_set_metadata",
+    "avatar_animation_play",
+    "avatar_animation_stop",
+    "parcel_set_music",
+    "parcel_set_properties",
+    "parcel_access_list_modify",
+    "parcel_eject",
+    "economy_pay_avatar",
+    "economy_pay_object",
+    "groups_activate",
+    "environment_set_time",
+    "environment_apply_preset",
+    "voice_set_user_volume",
+    "voice_set_user_mute",
+    "voice_transmit",
+    "comms_send",
+];
+
+const CONDITIONAL_LEASE_TOOLS: &[&str] = &["viewer_call", "livemesh_control", "asset_upload"];
+
+fn attach_lease_metadata(mut defs: Vec<ToolDefinition>) -> Vec<ToolDefinition> {
+    for def in &mut defs {
+        let is_unconditional = REQUIRES_LEASE_TOOLS.contains(&def.name.as_str());
+        let is_conditional = CONDITIONAL_LEASE_TOOLS.contains(&def.name.as_str());
+        if !is_unconditional && !is_conditional {
+            continue;
+        }
+
+        if let Some(obj) = def.input_schema.as_object_mut() {
+            let props = obj.entry("properties").or_insert_with(|| json!({}));
+            if let Some(props_obj) = props.as_object_mut()
+                && !props_obj.contains_key("lease_id")
+            {
+                let desc = if is_conditional {
+                    "Active control lease ID acquired via control_acquire or viewer_control_acquire (required for mutating operations)."
+                } else {
+                    "Active control lease ID acquired via control_acquire or viewer_control_acquire."
+                };
+                props_obj.insert(
+                    "lease_id".to_string(),
+                    json!({
+                        "type": "string",
+                        "description": desc
+                    }),
+                );
+            }
+
+            if is_unconditional {
+                let req = obj.entry("required").or_insert_with(|| json!([]));
+                if let Some(req_arr) = req.as_array_mut()
+                    && !req_arr.iter().any(|v| v.as_str() == Some("lease_id"))
+                {
+                    req_arr.push(json!("lease_id"));
+                }
+            }
+        }
+
+        if !def.description.contains("lease_id") {
+            if is_conditional {
+                def.description.push_str(" Mutating actions require lease_id from control_acquire.");
+            } else {
+                def.description.push_str(" Requires lease_id from control_acquire.");
+            }
+        }
+    }
+    defs
 }
 
 #[cfg(test)]
@@ -3808,6 +4020,70 @@ mod tests {
             "voice_transmit",
         ] {
             assert!(names.contains(&native), "missing Aurora-native MCP tool: {native}");
+        }
+    }
+
+    #[test]
+    fn test_lease_requiring_tools_have_lease_id_in_schema() {
+        let defs = all_tool_definitions();
+        for tool_name in REQUIRES_LEASE_TOOLS {
+            let def = defs
+                .iter()
+                .find(|d| d.name == *tool_name)
+                .unwrap_or_else(|| panic!("missing tool definition for {tool_name}"));
+            assert!(
+                def.input_schema.get("properties").and_then(|p| p.get("lease_id")).is_some(),
+                "tool {tool_name} is missing lease_id in inputSchema.properties"
+            );
+            let required = def
+                .input_schema
+                .get("required")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("tool {tool_name} is missing inputSchema.required"));
+            assert!(
+                required.iter().any(|v| v.as_str() == Some("lease_id")),
+                "tool {tool_name} does not list lease_id in inputSchema.required"
+            );
+            assert!(
+                def.description.contains("lease_id"),
+                "tool {tool_name} description does not mention lease_id"
+            );
+        }
+
+        for tool_name in CONDITIONAL_LEASE_TOOLS {
+            let def = defs
+                .iter()
+                .find(|d| d.name == *tool_name)
+                .unwrap_or_else(|| panic!("missing conditional tool definition for {tool_name}"));
+            assert!(
+                def.input_schema.get("properties").and_then(|p| p.get("lease_id")).is_some(),
+                "conditional tool {tool_name} is missing lease_id in inputSchema.properties"
+            );
+            assert!(
+                def.description.contains("lease_id"),
+                "conditional tool {tool_name} description does not mention lease_id"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_status_calls_return_cached_snapshot_when_viewer_busy() {
+        let (tx, _rx) = mpsc::channel(8);
+        let router = McpRouter::new(tx, McpProfile::All);
+
+        for tool in ["connection_status", "get_agent_status"] {
+            let res = router.call_tool(tool, json!({})).await;
+            assert_eq!(res.get("isError").and_then(Value::as_bool), Some(false), "{tool} failed: {res}");
+            let text = res
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.first())
+                .and_then(|b| b.get("text"))
+                .and_then(Value::as_str)
+                .expect("missing text block");
+            let parsed: Value = serde_json::from_str(text).expect("valid JSON");
+            assert_eq!(parsed.get("screen").and_then(Value::as_str), Some("Login"));
+            assert!(parsed.get("frame_ms").and_then(Value::as_f64).is_some(), "expected scalar frame_ms");
         }
     }
 }

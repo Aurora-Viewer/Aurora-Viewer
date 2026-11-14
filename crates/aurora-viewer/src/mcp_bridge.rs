@@ -172,11 +172,38 @@ struct PendingScriptCreation {
     reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
 }
 
+struct PendingNotecardTaskTarget {
+    local_id: u32,
+    object_uuid: Uuid,
+    known_notecard_ids: HashSet<Uuid>,
+}
+
+struct PendingNotecardCreate {
+    note_name: String,
+    bytes: usize,
+    started_at: Instant,
+    target_object: Option<PendingNotecardTaskTarget>,
+    reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+}
+
+struct PendingNotecardDrop {
+    local_id: u32,
+    object_uuid: Uuid,
+    known_notecard_ids: HashSet<Uuid>,
+    agent_item_id: Uuid,
+    note_name: String,
+    bytes: usize,
+    started_at: Instant,
+    last_requested: Instant,
+    reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+}
+
 /// Main-thread state for the Model Context Protocol (MCP) bridge.
 #[derive(Default)]
 pub struct McpBridge {
     rx: Option<mpsc::Receiver<McpRequestEnvelope>>,
     server_handle: Option<McpServerHandle>,
+    status_snapshot: Option<Arc<std::sync::RwLock<Value>>>,
     subscribed_sources: HashSet<String>,
     events_buffer: VecDeque<Value>,
     next_event_seq: u64,
@@ -187,6 +214,8 @@ pub struct McpBridge {
     pending_script_creations: VecDeque<PendingScriptCreation>,
     pending_script_reads: HashMap<Uuid, PendingScriptRead>,
     pending_script_compiles: HashMap<Uuid, PendingScriptCompile>,
+    pending_notecard_creates: HashMap<Uuid, PendingNotecardCreate>,
+    pending_notecard_drops: VecDeque<PendingNotecardDrop>,
     lsd_stores: HashMap<Uuid, LinksetDataStore>,
     mcp_poses: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     local_mesh_auto_reload: bool,
@@ -251,6 +280,8 @@ impl App {
         match spawn_server(self.net.runtime(), tx, cli.mcp_port) {
             Ok(handle) => {
                 log::info!("MCP server listening on http://{}/mcp", handle.bind_addr);
+                *handle.status_snapshot.write().unwrap_or_else(|e| e.into_inner()) = self.build_mcp_status_snapshot(None);
+                self.mcp_bridge.status_snapshot = Some(handle.status_snapshot.clone());
                 self.mcp_bridge.sse_tx = Some(handle.sse_tx.clone());
                 self.mcp_bridge.rx = Some(rx);
                 self.mcp_bridge.server_handle = Some(handle);
@@ -259,6 +290,84 @@ impl App {
                 log::error!("Failed to start MCP server: {err}");
             }
         }
+    }
+
+    fn current_frame_ms(&self) -> f32 {
+        let raw = self
+            .perf
+            .frame_ms
+            .back()
+            .copied()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .or_else(|| Some(self.perf.frames.avg).filter(|v| v.is_finite() && *v > 0.0))
+            .unwrap_or_else(|| {
+                if self.perf.fps.is_finite() && self.perf.fps > 0.0 {
+                    1000.0 / self.perf.fps
+                } else {
+                    0.0
+                }
+            });
+        (raw * 100.0).round() / 100.0
+    }
+
+    fn build_mcp_status_snapshot(&self, renderer: Option<&Renderer>) -> Value {
+        let region_name = if self.in_world() {
+            self.world.region_name()
+        } else {
+            "Offline".to_string()
+        };
+        let region_info = self
+            .world
+            .main_region
+            .and_then(|h| self.world.regions.get(&h))
+            .and_then(|r| r.info.as_ref());
+        let is_estate_manager =
+            region_info.is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id) || self.world.god_level > 0;
+        let is_region_owner = region_info.is_some_and(|i| i.owner == self.world.agent_id);
+        let region_owner_id = region_info.map(|i| i.owner.to_string());
+        let pos = self.world.agent.position;
+        let rot = self.world.agent.body_rotation();
+        let vel = self.world.agent.velocity;
+        let (w, h) = renderer.map_or((0, 0), |r| r.size());
+        let fps = if self.perf.fps.is_finite() {
+            (self.perf.fps * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+        json!({
+            "connected": self.in_world(),
+            "headless": crate::cli::get().headless,
+            "offscreen_gpu": crate::cli::get().offscreen_gpu,
+            "screen": format!("{:?}", self.screen),
+            "login_state": {
+                "error": self.login_form.error.as_deref(),
+                "busy": self.login_form.busy,
+                "show_mfa": self.login_form.show_mfa,
+                "progress": self.login_progress.as_ref().map(|(msg, frac)| json!({ "stage": msg, "fraction": frac })),
+            },
+            "demo_mode": self.demo,
+            "agent_id": self.world.agent_id.to_string(),
+            "display_name": self.world.social.display_name_of(&self.world.agent_id),
+            "region_name": region_name,
+            "is_estate_manager": is_estate_manager,
+            "is_region_owner": is_region_owner,
+            "region_owner_id": region_owner_id,
+            "can_manage_estate": is_estate_manager,
+            "parcel_name": self.world.parcel_name,
+            "position": [pos.x, pos.y, pos.z],
+            "rotation_quat": [rot.x, rot.y, rot.z, rot.w],
+            "velocity": [vel.x, vel.y, vel.z],
+            "flying": self.world.agent.flying,
+            "sitting": self.world.agent.is_sitting(),
+            "ground_sit": self.world.agent.ground_sit,
+            "health": self.world.health,
+            "balance": self.world.balance,
+            "fps": fps,
+            "frame_ms": self.current_frame_ms(),
+            "viewport": [w, h],
+            "draw_distance": self.settings.draw_distance,
+            "rlva_enabled": self.settings.rlva_enabled,
+        })
     }
 
     /// Observes incoming `NetEvent`s for MCP script reads/compiles and event subscriptions.
@@ -403,6 +512,58 @@ impl App {
                     let _ = pending.reply_tx.send(resp);
                 }
             }
+            NetEvent::InventoryContentSaved { request, result, .. } => {
+                if let Some(pending) = self.mcp_bridge.pending_notecard_creates.remove(request) {
+                    match result {
+                        Ok(inv_item) => {
+                            if let Some(target) = pending.target_object {
+                                let Some(idx) = self.world.objects.index_of_uuid(&target.object_uuid) else {
+                                    let _ = pending.reply_tx.send(Err(McpError::InvalidParams(format!(
+                                        "Object with local_id {} not found in region",
+                                        target.local_id
+                                    ))));
+                                    return;
+                                };
+                                let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, inv_item, false) else {
+                                    let _ = pending.reply_tx.send(Err(McpError::PermissionDenied(
+                                        "Target object does not accept dropped notecards".into(),
+                                    )));
+                                    return;
+                                };
+                                self.send(NetCommand::Build(drop.command));
+                                self.build.contents_changed(target.object_uuid);
+                                self.build.request_contents(&self.world, idx, true);
+                                self.flush_build();
+                                self.mcp_bridge.pending_notecard_drops.push_back(PendingNotecardDrop {
+                                    local_id: target.local_id,
+                                    object_uuid: target.object_uuid,
+                                    known_notecard_ids: target.known_notecard_ids,
+                                    agent_item_id: inv_item.id,
+                                    note_name: pending.note_name,
+                                    bytes: pending.bytes,
+                                    started_at: pending.started_at,
+                                    last_requested: Instant::now(),
+                                    reply_tx: pending.reply_tx,
+                                });
+                            } else {
+                                let _ = pending.reply_tx.send(Ok(ViewerResponse::Json(json!({
+                                    "ok": true,
+                                    "created": true,
+                                    "item_id": inv_item.id.to_string(),
+                                    "folder_id": inv_item.parent.to_string(),
+                                    "name": inv_item.name,
+                                    "bytes": pending.bytes,
+                                }))));
+                            }
+                        }
+                        Err(err) => {
+                            let _ = pending
+                                .reply_tx
+                                .send(Err(McpError::Internal(format!("Failed to create notecard: {err}"))));
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -435,9 +596,14 @@ impl App {
         self.init_mcp_bridge();
         let start = Instant::now();
 
+        if let Some(snapshot) = &self.mcp_bridge.status_snapshot {
+            *snapshot.write().unwrap_or_else(|e| e.into_inner()) = self.build_mcp_status_snapshot(renderer.as_deref());
+        }
+
         self.progress_mcp_state_machines(renderer.as_deref_mut());
 
-        while start.elapsed() < MCP_FRAME_BUDGET {
+        let mut processed_any = false;
+        while !processed_any || start.elapsed() < MCP_FRAME_BUDGET {
             let Some(rx) = self.mcp_bridge.rx.as_mut() else {
                 break;
             };
@@ -445,6 +611,7 @@ impl App {
                 break;
             };
             self.handle_mcp_envelope(envelope, renderer.as_deref_mut());
+            processed_any = true;
         }
 
         if let Some(r) = renderer {
@@ -597,13 +764,87 @@ impl App {
         }
         self.mcp_bridge.pending_script_creations = remaining_creations;
 
-        // 3. Expire timed-out script reads / compiles
+        // 2c. Progress pending task notecard drops awaiting task inventory
+        let mut remaining_notecard_drops = VecDeque::new();
+        while let Some(mut drop_req) = self.mcp_bridge.pending_notecard_drops.pop_front() {
+            let found_item = self
+                .build
+                .contents
+                .objects
+                .get(&drop_req.object_uuid)
+                .filter(|inv| !inv.loading)
+                .and_then(|inv| {
+                    inv.items
+                        .iter()
+                        .rfind(|it| {
+                            (it.asset_type == 7 || it.inv_type == 7)
+                                && !drop_req.known_notecard_ids.contains(&it.item_id)
+                                && it.name == drop_req.note_name
+                        })
+                        .or_else(|| {
+                            inv.items
+                                .iter()
+                                .rfind(|it| (it.asset_type == 7 || it.inv_type == 7) && !drop_req.known_notecard_ids.contains(&it.item_id))
+                        })
+                        .cloned()
+                });
+            if let Some(found) = found_item {
+                if let Some(trash) = crate::world::inventory::actions::system(&self.world.inventory, 14)
+                    && let Ok(change) = crate::world::inventory::actions::move_selection(
+                        &self.world.inventory,
+                        &[drop_req.agent_item_id],
+                        trash,
+                        &HashSet::new(),
+                        &HashSet::new(),
+                    )
+                {
+                    self.send(NetCommand::EditInventory {
+                        request: Uuid::new_v4(),
+                        change,
+                    });
+                }
+                let _ = drop_req.reply_tx.send(Ok(ViewerResponse::Json(json!({
+                    "ok": true,
+                    "created": true,
+                    "object_local_id": drop_req.local_id,
+                    "item_id": found.item_id.to_string(),
+                    "name": found.name,
+                    "bytes": drop_req.bytes,
+                }))));
+            } else if now.duration_since(drop_req.started_at) > Duration::from_secs(12) {
+                let _ = drop_req.reply_tx.send(Err(McpError::Timeout(12000)));
+            } else {
+                if now.duration_since(drop_req.last_requested) >= Duration::from_millis(500) {
+                    drop_req.last_requested = now;
+                    if let Some(idx) = self.world.objects.index_of_uuid(&drop_req.object_uuid) {
+                        self.build.request_contents(&self.world, idx, true);
+                        self.flush_build();
+                    }
+                }
+                remaining_notecard_drops.push_back(drop_req);
+            }
+        }
+        self.mcp_bridge.pending_notecard_drops = remaining_notecard_drops;
+
+        // 3. Expire timed-out script reads / compiles and notecard creates
         self.mcp_bridge
             .pending_script_reads
             .retain(|_, pending| now.duration_since(pending.started_at) <= Duration::from_secs(20));
         self.mcp_bridge
             .pending_script_compiles
             .retain(|_, pending| now.duration_since(pending.started_at) <= Duration::from_secs(20));
+        let expired_notecard_reqs: Vec<Uuid> = self
+            .mcp_bridge
+            .pending_notecard_creates
+            .iter()
+            .filter(|(_, pending)| now.duration_since(pending.started_at) > Duration::from_secs(12))
+            .map(|(req, _)| *req)
+            .collect();
+        for req in expired_notecard_reqs {
+            if let Some(expired) = self.mcp_bridge.pending_notecard_creates.remove(&req) {
+                let _ = expired.reply_tx.send(Err(McpError::Timeout(12000)));
+            }
+        }
 
         // 4. Progress serialized COF mutation queue
         let cof_ready = self.world.outfit.is_done() && self.appearance_ui.pending.is_none() && !self.world.rlva_detach_in_flight(now);
@@ -677,58 +918,8 @@ impl App {
         } = envelope;
         match request {
             ViewerRequest::ConnectionStatus | ViewerRequest::GetAgentStatus => {
-                let region_name = if self.in_world() {
-                    self.world.region_name()
-                } else {
-                    "Offline".to_string()
-                };
-                let region_info = self
-                    .world
-                    .main_region
-                    .and_then(|h| self.world.regions.get(&h))
-                    .and_then(|r| r.info.as_ref());
-                let is_estate_manager =
-                    region_info.is_some_and(|i| i.is_estate_manager || i.owner == self.world.agent_id) || self.world.god_level > 0;
-                let is_region_owner = region_info.is_some_and(|i| i.owner == self.world.agent_id);
-                let region_owner_id = region_info.map(|i| i.owner.to_string());
-                let pos = self.world.agent.position;
-                let rot = self.world.agent.body_rotation();
-                let vel = self.world.agent.velocity;
-                let (w, h) = renderer.as_deref().map_or((0, 0), |r| r.size());
-                let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
-                    "connected": self.in_world(),
-                    "headless": crate::cli::get().headless,
-                    "offscreen_gpu": crate::cli::get().offscreen_gpu,
-                    "screen": format!("{:?}", self.screen),
-                    "login_state": {
-                        "error": self.login_form.error.as_deref(),
-                        "busy": self.login_form.busy,
-                        "show_mfa": self.login_form.show_mfa,
-                        "progress": self.login_progress.as_ref().map(|(msg, frac)| json!({ "stage": msg, "fraction": frac })),
-                    },
-                    "demo_mode": self.demo,
-                    "agent_id": self.world.agent_id.to_string(),
-                    "display_name": self.world.social.display_name_of(&self.world.agent_id),
-                    "region_name": region_name,
-                    "is_estate_manager": is_estate_manager,
-                    "is_region_owner": is_region_owner,
-                    "region_owner_id": region_owner_id,
-                    "can_manage_estate": is_estate_manager,
-                    "parcel_name": self.world.parcel_name,
-                    "position": [pos.x, pos.y, pos.z],
-                    "rotation_quat": [rot.x, rot.y, rot.z, rot.w],
-                    "velocity": [vel.x, vel.y, vel.z],
-                    "flying": self.world.agent.flying,
-                    "sitting": self.world.agent.is_sitting(),
-                    "ground_sit": self.world.agent.ground_sit,
-                    "health": self.world.health,
-                    "balance": self.world.balance,
-                    "fps": self.perf.fps,
-                    "frame_ms": self.perf.frame_ms,
-                    "viewport": [w, h],
-                    "draw_distance": self.settings.draw_distance,
-                    "rlva_enabled": self.settings.rlva_enabled,
-                }))));
+                let status = self.build_mcp_status_snapshot(renderer.as_deref());
+                let _ = reply_tx.send(Ok(ViewerResponse::Json(status)));
             }
             ViewerRequest::CapabilitiesRefresh => {
                 let region_name = self.in_world().then(|| self.world.region_name());
@@ -1735,10 +1926,10 @@ impl App {
                 item_id,
                 object_local_id,
                 name,
+                folder_id,
                 body,
             } => {
-                let resp = self.handle_mcp_notecard_write(item_id, object_local_id, name.as_deref(), &body);
-                let _ = reply_tx.send(resp);
+                self.handle_mcp_notecard_write(item_id, object_local_id, name, folder_id, &body, reply_tx);
             }
             ViewerRequest::PrimSetParticles {
                 local_id,
@@ -3004,21 +3195,38 @@ impl App {
             }
             item.item_id
         } else {
-            let template_script = self.world.inventory.items.values().find(|it| {
-                let mask = crate::world::inventory::actions::agent_mask(it, self.world.agent_id);
-                (it.asset_type == 10 || it.inv_type == 10) && (mask & (perm::COPY | perm::MODIFY)) == (perm::COPY | perm::MODIFY)
-            });
-            if let Some(template) = template_script {
-                if let Some(drop) = crate::build::contents_drop::item_drop(&self.world, idx, template, running) {
-                    self.send(NetCommand::Build(drop.command));
-                } else {
-                    self.build.new_script(&self.world, idx, is_lua);
-                    self.flush_build();
-                }
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i32);
+            let wanted_name: String = if script_name.trim().is_empty() {
+                if is_lua { "New Luau Script" } else { "New Script" }.to_string()
             } else {
-                self.build.new_script(&self.world, idx, is_lua);
-                self.flush_build();
-            }
+                script_name.trim().chars().take(63).collect()
+            };
+            let new_task_item = aurora_net::build::TaskItem {
+                item_id: Uuid::nil(),
+                parent_id: object_uuid,
+                creator_id: self.world.agent_id,
+                owner_id: self.world.agent_id,
+                base_mask: 0x7fff_ffff,
+                owner_mask: 0x7fff_ffff,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: perm::MOVE | perm::TRANSFER,
+                asset_type: 10,
+                inv_type: 10,
+                flags: u32::from(is_lua),
+                sale_price: 10,
+                name: wanted_name,
+                creation_date: now,
+                ..Default::default()
+            };
+            self.send(NetCommand::Build(BuildCmd::RezScript {
+                handle,
+                local_id: object_local_id,
+                enabled: false,
+                group_id: self.world.groups.active,
+                item: Box::new(new_task_item),
+            }));
+            self.build.contents_changed(object_uuid);
             self.build.request_contents(&self.world, idx, true);
             self.flush_build();
             let immediate_new = self
@@ -4268,76 +4476,200 @@ impl App {
         })))
     }
 
+    fn resolve_notecard_parent_folder(&self, folder_id: Option<Uuid>) -> Result<Uuid, McpError> {
+        if let Some(fid) = folder_id {
+            if fid.is_nil() {
+                return Err(McpError::InvalidParams("folder_id cannot be nil UUID".into()));
+            }
+            if !self.world.inventory.folders.is_empty() && !self.world.inventory.folders.contains_key(&fid) {
+                return Err(McpError::InvalidParams(format!("Inventory folder {fid} not found")));
+            }
+            return Ok(fid);
+        }
+        let parent = crate::world::inventory::actions::system(&self.world.inventory, 7).unwrap_or(self.world.inventory.root);
+        if parent.is_nil() {
+            return Err(McpError::Internal("Inventory Notecards/root folder is not loaded yet".into()));
+        }
+        Ok(parent)
+    }
+
     fn handle_mcp_notecard_write(
         &mut self,
         item_id: Option<Uuid>,
         object_local_id: Option<u32>,
-        name: Option<&str>,
+        name: Option<String>,
+        folder_id: Option<Uuid>,
         body: &str,
-    ) -> Result<ViewerResponse, McpError> {
-        let encoded = aurora_net::inventory::notecard::Notecard::default()
-            .encode(body)
-            .map_err(McpError::InvalidParams)?;
+        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+    ) {
+        let encoded = match aurora_net::inventory::notecard::Notecard::default().encode(body) {
+            Ok(data) => data,
+            Err(err) => {
+                let _ = reply_tx.send(Err(McpError::InvalidParams(err)));
+                return;
+            }
+        };
+        let note_name: String = name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("New Note")
+            .chars()
+            .take(63)
+            .collect();
 
         if let Some(lid) = object_local_id {
             let Some(handle) = self.world.main_region else {
-                return Err(McpError::NotInWorld);
+                let _ = reply_tx.send(Err(McpError::NotInWorld));
+                return;
             };
-            let (idx, _) = self.resolve_prim_by_local_id(lid)?;
-            self.check_object_modify_permission(idx)?;
-            let obj_uuid = self.world.objects.get(idx).unwrap().full_id;
-            let Some(item_uuid) = item_id else {
-                return Err(McpError::InvalidParams("item_id is required when updating a task notecard".into()));
+            let (idx, _) = match self.resolve_prim_by_local_id(lid) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = reply_tx.send(Err(e));
+                    return;
+                }
             };
-            let Some(meta) = self.task_notecard_item(obj_uuid, item_uuid) else {
-                return Err(McpError::InvalidParams(format!(
-                    "Task notecard {item_uuid} not found on object {lid}"
-                )));
-            };
-            let req_mask = crate::world::inventory::actions::COPY | crate::world::inventory::actions::MODIFY;
-            if (meta.owner_mask & req_mask) != req_mask {
-                return Err(McpError::PermissionDenied(
-                    "Task notecard requires both Copy and Modify permissions to edit".into(),
-                ));
+            if let Err(e) = self.check_object_modify_permission(idx) {
+                let _ = reply_tx.send(Err(e));
+                return;
             }
+            let obj_uuid = self.world.objects.get(idx).unwrap().full_id;
+            if let Some(item_uuid) = item_id {
+                let Some(meta) = self.task_notecard_item(obj_uuid, item_uuid) else {
+                    let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                        "Task notecard {item_uuid} not found on object {lid}"
+                    ))));
+                    return;
+                };
+                let req_mask = crate::world::inventory::actions::COPY | crate::world::inventory::actions::MODIFY;
+                if (meta.owner_mask & req_mask) != req_mask {
+                    let _ = reply_tx.send(Err(McpError::PermissionDenied(
+                        "Task notecard requires both Copy and Modify permissions to edit".into(),
+                    )));
+                    return;
+                }
+                let request = Uuid::new_v4();
+                self.send(NetCommand::SaveTaskNotecard {
+                    request,
+                    handle,
+                    object: obj_uuid,
+                    item: item_uuid,
+                    data: encoded.clone(),
+                });
+                let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
+                    "ok": true,
+                    "created": false,
+                    "object_local_id": lid,
+                    "item_id": item_uuid.to_string(),
+                    "bytes": encoded.len(),
+                }))));
+                return;
+            }
+
+            let parent = match self.resolve_notecard_parent_folder(folder_id) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = reply_tx.send(Err(e));
+                    return;
+                }
+            };
+            self.build.request_contents(&self.world, idx, false);
+            self.flush_build();
+            let known_notecard_ids: HashSet<Uuid> = self
+                .build
+                .contents
+                .objects
+                .get(&obj_uuid)
+                .map(|inv| {
+                    inv.items
+                        .iter()
+                        .filter(|it| it.asset_type == 7 || it.inv_type == 7)
+                        .map(|it| it.item_id)
+                        .collect()
+                })
+                .unwrap_or_default();
             let request = Uuid::new_v4();
-            self.send(NetCommand::SaveTaskNotecard {
+            let bytes = encoded.len();
+            self.mcp_bridge.pending_notecard_creates.insert(
                 request,
-                handle,
-                object: obj_uuid,
-                item: item_uuid,
-                data: encoded.clone(),
+                PendingNotecardCreate {
+                    note_name: note_name.clone(),
+                    bytes,
+                    started_at: Instant::now(),
+                    target_object: Some(PendingNotecardTaskTarget {
+                        local_id: lid,
+                        object_uuid: obj_uuid,
+                        known_notecard_ids,
+                    }),
+                    reply_tx,
+                },
+            );
+            self.send(NetCommand::CreateNotecardItem {
+                request,
+                parent,
+                name: note_name,
+                data: encoded,
+                permissions: None,
             });
-            return Ok(ViewerResponse::Json(json!({
-                "ok": true,
-                "object_local_id": lid,
-                "item_id": item_uuid.to_string(),
-                "bytes": encoded.len(),
-            })));
+            return;
         }
 
-        let Some(item_uuid) = item_id else {
-            return Err(McpError::InvalidParams(
-                "Provide 'item_id' of an existing modifiable notecard".into(),
-            ));
-        };
-        if !crate::world::inventory::preview::can_edit(&self.world.inventory, item_uuid, self.world.god_level) {
-            return Err(McpError::PermissionDenied("Notecard is not modifiable or is in the Library".into()));
+        if let Some(item_uuid) = item_id {
+            if !crate::world::inventory::preview::can_edit(&self.world.inventory, item_uuid, self.world.god_level) {
+                let _ = reply_tx.send(Err(McpError::PermissionDenied(
+                    "Notecard is not modifiable or is in the Library".into(),
+                )));
+                return;
+            }
+            let request = Uuid::new_v4();
+            self.send(NetCommand::SaveInventoryContent {
+                request,
+                item: item_uuid,
+                asset_type: 7, // LLAssetType::AT_NOTECARD
+                lua: false,
+                data: encoded.clone(),
+            });
+            let _ = reply_tx.send(Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "created": false,
+                "item_id": item_uuid.to_string(),
+                "name": name,
+                "bytes": encoded.len(),
+            }))));
+            return;
         }
+
+        if !self.in_world() && !self.demo {
+            let _ = reply_tx.send(Err(McpError::NotInWorld));
+            return;
+        }
+        let parent = match self.resolve_notecard_parent_folder(folder_id) {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = reply_tx.send(Err(e));
+                return;
+            }
+        };
         let request = Uuid::new_v4();
-        self.send(NetCommand::SaveInventoryContent {
+        let bytes = encoded.len();
+        self.mcp_bridge.pending_notecard_creates.insert(
             request,
-            item: item_uuid,
-            asset_type: 7, // LLAssetType::AT_NOTECARD
-            lua: false,
-            data: encoded.clone(),
+            PendingNotecardCreate {
+                note_name: note_name.clone(),
+                bytes,
+                started_at: Instant::now(),
+                target_object: None,
+                reply_tx,
+            },
+        );
+        self.send(NetCommand::CreateNotecardItem {
+            request,
+            parent,
+            name: note_name,
+            data: encoded,
+            permissions: None,
         });
-        Ok(ViewerResponse::Json(json!({
-            "ok": true,
-            "item_id": item_uuid.to_string(),
-            "name": name,
-            "bytes": encoded.len(),
-        })))
     }
 
     #[allow(clippy::too_many_arguments)]

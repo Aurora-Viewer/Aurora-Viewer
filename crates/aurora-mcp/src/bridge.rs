@@ -473,6 +473,8 @@ pub enum ViewerRequest {
         item_id: Option<Uuid>,
         object_local_id: Option<u32>,
         name: Option<String>,
+        #[serde(default)]
+        folder_id: Option<Uuid>,
         body: String,
     },
     PrimSetParticles {
