@@ -2381,7 +2381,7 @@ mod tests {
         use crate::ui::inventory::InvDrag;
         let p = crate::theme::Theme::default().palette();
         let mut emoji = super::super::emoji::Emoji::load();
-        let browser = crate::media::browser_settings(std::path::Path::new("."), "fr");
+        let browser = crate::media::browser_settings(std::path::Path::new("."), "fr", &Default::default());
         let web = WebContext {
             paths: None,
             browser: &browser,
