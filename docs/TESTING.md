@@ -6530,8 +6530,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   local watching, enable the preview then modify its file or a material
   map; the map's local identifier must stay stable.
   `local-mesh-applied`, with `AURORA_DEMO_ACTIONS=1`, automatically applies
-  the local cube to the selected test box; its server volume stays
-  unchanged. The remove button must restore its original appearance.
+  the static file as a complete assembly fitted uniformly inside its support
+  prim. Set `AURORA_DEMO_IMPORT_FILE` to a plain DAE/glTF/GLB file to inspect
+  its pieces through this same path. The gear menu's **All pieces (fit to
+  prim)** is the default for new static imports; selecting an individual
+  model restores the optional imported dimensions. Check that moving,
+  rotating and nonuniformly resizing the anchor preserves the assembly's
+  proportions, and that removal restores the prim. Assemblies use up to 45
+  face slots; rigged files retain individual-model mode.
+  Without an external file, this scenario uses a local cube. The support
+  prim's server volume stays unchanged. The remove button must restore its
+  original appearance.
   `local-mesh-removed` follows the same flow then removes the preview at frame
   400. The aggregated traces check the GPU binding to the local mesh, then the
   return to the prim, with the server volume kept; no file name or
@@ -7226,7 +7235,9 @@ failure. Grid validation and any paid upload are performed by the human.
   keyboard, `5` Appearance › Colours, `6` Network and cache, `7` Sound and
   voice, `8` Shortcuts, `10` Camera, `11` Commands, `12` Privacy, `13`
   Aurora, `14` Accessibility); `9`, the former Debug page, opens the Dev
-  Toolbox instead. `<what>`:
+  Toolbox instead. Shortcuts (`shortcuts`, or `8`) opens on Movement:
+  Fly/Land's Home key reads Home in English and Japanese and Début in
+  French (#3415). There is no separate demo for that label. `<what>`:
   - `altgr` on `shortcuts`: at frame 600, captures AltGr + F9 and AltGr +
     Shift + F9 in the Dev Toolbox's two slots, dispatches each through the
     real shortcut handler and restores the demo's saved bindings. Both
