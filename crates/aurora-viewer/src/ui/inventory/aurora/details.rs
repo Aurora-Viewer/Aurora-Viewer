@@ -129,7 +129,8 @@ fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, facts: &Facts) -> b
 
 fn give(st: &mut InventoryUi, ids: Vec<Uuid>) {
     st.share_items = ids;
-    st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+    // LLAvatarActions::shareWithAvatars: allow_multiple true
+    st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
 }
 
 /// The ids the actions act on: the selection, or the row shown.

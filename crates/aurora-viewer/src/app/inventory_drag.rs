@@ -683,7 +683,7 @@ impl App {
         if released {
             egui::DragAndDrop::clear_payload(ctx);
             if allowed {
-                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, to));
+                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, vec![to]));
                 self.inventory_ui.release_world_drag_focus(ctx);
             } else {
                 self.world

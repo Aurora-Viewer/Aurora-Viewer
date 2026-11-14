@@ -5936,6 +5936,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
+| `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -7442,6 +7443,14 @@ failure. Grid validation and any paid upload are performed by the human.
   our own (nothing), onto an avatar, onto what it wears, onto an avatar
   behind a wall (the wall wins), and Escape during the drag. No grid is
   needed.
+
+- **`AURORA_DEMO_SHARE=multi`** (or `multi:n=200`, capped at 2_000): seeds that
+  many friends named `Orion Example 001`… (same first/last as the demo Orion),
+  places them nearby inside NearMeRange, and answers Search for `ori` with the
+  whole list. Opens Inventory on a giveable landmark. Use Give / Share: Friends
+  or Nearby shows the long list; Ctrl+click or Ctrl+A then Select; the
+  confirmation names every chosen resident and Give emits one share per
+  resident (#3074). No grid.
 
 - **`AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]`**: from the 10th second in
   world, Tess writes in the Aurora Builders group chat every 6 seconds

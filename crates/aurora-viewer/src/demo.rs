@@ -242,6 +242,9 @@ pub mod seat_kill;
 /// (AURORA_DEMO_SET_NOTICES).
 #[path = "demo_set_notices.rs"]
 pub mod set_notices;
+/// Many Orion-like friends for multi-share (#3074; AURORA_DEMO_SHARE=multi).
+#[path = "demo_share.rs"]
+pub mod share;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -882,6 +885,10 @@ fn demo_raw() -> Llsd {
             .into_iter()
             .map(|(id, given, has)| llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}),
     );
+    // AURORA_DEMO_SHARE=multi: dozens of Orion-like friends for the Share picker
+    buddies.extend(share::friends().into_iter().map(|(id, given, has)| {
+        llsd_map! {"buddy_id" => id, "buddy_rights_given" => given, "buddy_rights_has" => has}
+    }));
     let mut raw = llsd_map! {
         "inventory-root" => Llsd::Array(vec![llsd_map!{"folder_id" => u(1)}]),
         // an adult account that wants every rating (the search window's boxes);
@@ -2978,6 +2985,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             vec![NetEvent::Names(
                 ids.iter()
                     .map(|id| {
+                        if let Some((first, last, _)) = share::name(id) {
+                            return (*id, first, last);
+                        }
                         if let Some((first, last, _)) = group::member_name(id) {
                             return (*id, first.to_owned(), last.to_owned());
                         }
@@ -3015,6 +3025,13 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                             (first.as_str(), "Resident", sample.display_name)
                         } else {
                             names[(id.as_u128() & 0xFF) as usize % names.len()]
+                        };
+                        // AURORA_DEMO_SHARE: Orion Example 001… override the cycle
+                        let owned = share::name(id);
+                        let (first, last, dn) = if let Some((ref f, ref l, ref d)) = owned {
+                            (f.as_str(), l.as_str(), d.as_str())
+                        } else {
+                            (first, last, dn)
                         };
                         let username = if last == "Resident" {
                             first.to_lowercase()

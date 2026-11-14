@@ -3426,6 +3426,9 @@ ui-context-send-im = ＩＭを送信
 ui-contacts-send-im = ＩＭを送信…
 ui-inventory-dialogs-give-to = 渡す相手
 ui-inventory-dialogs-give = 渡す
+ui-inventory-dialogs-give-to-many = { $name } + { $count ->
+    *[other] { $number }人
+}
 ui-inventory-dialogs-and-more = { $count ->
     [one] ほか{ $number }件
    *[other] ほか{ $number }件
@@ -4395,6 +4398,7 @@ ui-options-loading-and-teleport-screens-show-your-last-view-blurred = 読み込�
 ui-inventory-dialogs-no-copy = コピー不可
 ui-inventory-dialogs-no-transfer = 譲渡不可
 ui-inventory-dialogs-left-out = 除外
+ui-inventory-dialogs-no-copy-one-resident = コピー不可のアイテムは一度に1人の住人にしか渡せません。
 ui-inventory-dialogs-not-given = { $count ->
     [one] { $number }個のアイテムは渡せないため、除外されます。
    *[other] { $number }個のアイテムは渡せないため、除外されます。
