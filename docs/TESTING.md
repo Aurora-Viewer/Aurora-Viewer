@@ -3622,6 +3622,7 @@ To check with these scenarios:
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose/animation editor and target-prim contact export |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
+| `AURORA_DEMO_SHAPE_MORPH=1` | The Wolf and the crowd change shape every 200 frames, gliding over 0.65 s (see Details) |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
 | `AURORA_DEMO_EMOTE=<expression>[,<hand pose>][,signal][,self]` | A facial expression and a hand pose from an animation (system body) |
 | `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
@@ -4370,6 +4371,16 @@ tests do not establish that this report uses an invalid joint or index.
   contain "avatar … (own) shown after 1.0 s", then the time each part
   completed. Screenshots with `AURORA_FPS_LIMIT=60` and
   `AURORA_CAPTURE_FRAMES=240,1200`: the avatar is already shown at 240.
+- **`AURORA_DEMO_SHAPE_MORPH=1`**: from frame 600, every 200 frames, the
+  Wolf and the avatars of `AURORA_DEMO_CROWD` take the other of two shapes,
+  tall and thin, then short and broad. The first one lands at once (a first
+  appearance); each one after it glides over 0.65 s as in the Legacy
+  Viewer: a little back first, past the new shape, then settling. Use
+  `AURORA_DEMO_CROWD=20 AURORA_DEMO_POS=150,127` to face the crowd; a
+  capture 12 frames after a change (`AURORA_CAPTURE_FRAMES=812` at 60 fps)
+  shows the bodies between the two shapes. With `AURORA_PROFILE=1`, the
+  seconds of a glide show it in `poses` and `sync` (about 0.1 ms per
+  avatar).
 - **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
   avatars, the system body with a skin bake whose alpha is soft in a band
   at the waist and cut by a row of holes (an alpha layer), and a hair bake

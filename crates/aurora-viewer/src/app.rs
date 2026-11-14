@@ -10033,6 +10033,12 @@ impl App {
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
+            // AURORA_DEMO_SHAPE_MORPH: the Wolf and the crowd change shape
+            for ev in crate::demo::shape_morph::tick(self.frame_count, &self.world.avatar_lib.shape_params) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
             // AURORA_DEMO_SOUND_HRTF: the sounds around the listener
             if let Some(e) = crate::demo::sound_hrtf::tick(self.camera.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
@@ -11135,6 +11141,10 @@ impl App {
             self.scene.held_at = hold.map(|h| h.at);
             if studio_view.is_some() {
                 self.scene.fov_y = render_fov;
+            }
+            // other avatars' shapes gliding to a new appearance
+            if self.world.shape_tweens.active() {
+                self.world.shape_tweens.step(Instant::now());
             }
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
