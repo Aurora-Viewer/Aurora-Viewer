@@ -313,6 +313,8 @@ fn demo_hardware(sections: &mut [Section]) {
             "about-gpu" => "Demo GPU (discrete)",
             "about-driver" => "1.0.0",
             "about-vram" => "8192 MB",
+            "about-texture-budget" => "4096 MB",
+            "about-display" => "60 Hz, vsync",
             _ => continue,
         };
         row.value = crate::ui::about::Value::Text(text.into());
