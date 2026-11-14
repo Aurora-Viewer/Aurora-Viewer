@@ -31,7 +31,7 @@ pub mod texture_library;
 #[path = "demo_water.rs"]
 pub mod water;
 
-const HANDLE: u64 = (256000u64 << 32) | 256000;
+pub(crate) const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changed at given frames.
 #[path = "demo_aa_switch.rs"]
@@ -55,6 +55,9 @@ pub mod asset_server;
 pub mod attention;
 #[path = "demo_auto_hover.rs"]
 pub mod auto_hover;
+/// Face nearest avatar and the Compass (AURORA_DEMO_AVATAR_ALIGN).
+#[path = "demo_avatar_align.rs"]
+pub mod avatar_align;
 /// Blended panes standing in the sun, for their shadows
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]
@@ -189,6 +192,9 @@ pub mod notifs;
 /// not (AURORA_DEMO_OBJECT_CHAT).
 #[path = "demo_object_chat.rs"]
 pub mod object_chat;
+/// The garden lamp of the object export scenario (AURORA_DEMO_OBJECT_EXPORT).
+#[path = "demo_object_export.rs"]
+pub mod object_export;
 /// Objects' messages from near and far, filtered (AURORA_DEMO_OBJECT_IM).
 #[path = "demo_object_im.rs"]
 pub mod object_im;
@@ -1288,6 +1294,7 @@ pub fn bubbles_events() -> Vec<NetEvent> {
                 aurora_net::ChatSourceType::Agent
             },
             chat_type: aurora_net::ChatType::Normal,
+            region: Some(HANDLE),
             position: Vec3::ZERO,
             message: text.into(),
         })
@@ -1397,6 +1404,7 @@ fn chat_lines_said() -> Vec<NetEvent> {
                 aurora_net::ChatSourceType::Agent
             },
             chat_type,
+            region: Some(HANDLE),
             position: Vec3::ZERO,
             message: text.into(),
         })
@@ -2005,6 +2013,7 @@ pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type,
+            region: Some(HANDLE),
             position: Vec3::ZERO,
             message: text,
         })
@@ -2484,6 +2493,7 @@ fn long_name_events(agent: Uuid) -> Vec<NetEvent> {
             owner_id: Uuid::nil(),
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: aurora_net::ChatType::Normal,
+            region: Some(HANDLE),
             position: Vec3::ZERO,
             message: aurora_i18n::tr!("demo-hi-everyone-we-re-building-the-plaza-tonight").into(),
         }),
@@ -3442,6 +3452,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 owner_id: DEMO_AGENT,
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: Some(HANDLE),
                 position: Vec3::ZERO,
                 message: aurora_i18n::tr!(
                     "demo-channel-listener-heard",
@@ -3457,6 +3468,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             owner_id: Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0001),
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: *chat_type,
+            region: Some(HANDLE),
             position: Vec3::new(132.0, 126.0, 30.0),
             message: message.clone(),
         })],
@@ -6168,6 +6180,7 @@ pub fn events() -> Vec<NetEvent> {
         owner_id: Uuid::nil(),
         source_type: aurora_net::ChatSourceType::Agent,
         chat_type: aurora_net::ChatType::Normal,
+        region: Some(HANDLE),
         position: Vec3::ZERO,
         message: aurora_i18n::tr!("demo-welcome-to-the-aurora-viewer-demo").into(),
     }));
@@ -6192,6 +6205,7 @@ pub fn events() -> Vec<NetEvent> {
                 owner_id: agent,
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
+                region: Some(HANDLE),
                 position: Vec3::ZERO,
                 message: text.into(),
             }));

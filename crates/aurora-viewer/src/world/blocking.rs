@@ -178,10 +178,63 @@ impl World {
             self.close_orphan_inventory_offers();
         }
         if self.groups.report_blocks {
+            let shown_name = if kind == MuteType::Agent && !self.rlva_can_name(id) {
+                super::rlva::privacy::anonymous(id).display_name.clone()
+            } else {
+                name.clone()
+            };
             self.system_notice(
-                aurora_i18n::tr!("world-blocking-was-added-to-the-block-list", name = name.to_string()),
+                aurora_i18n::tr!("world-blocking-was-added-to-the-block-list", name = shown_name),
                 crate::world::notice_topics::Topic::People,
             );
+        }
+        Ok(())
+    }
+
+    /// Canonical name and mute type for a remote object's owner. Like
+    /// LLAvatarActions::toggleBlock / LLMuteList::add (llavataractions.cpp,
+    /// llmutelist.cpp), resident blocks enforce self/Linden protections.
+    /// Group owners follow inventory_offer_mute_callback (llviewermessage.cpp).
+    /// Wait for a real name: a display name or RLVa alias cannot establish
+    /// Linden status or be persisted as the owner's identity.
+    pub fn object_owner_block(&self, owner: Uuid, group_owned: bool) -> Option<(String, MuteType)> {
+        if owner.is_nil() || owner == self.agent_id || self.mutes.get(&owner).is_some_and(|entry| entry.flags == 0) {
+            return None;
+        }
+        let (name, kind) = if group_owned {
+            let name = self
+                .groups
+                .groups
+                .iter()
+                .find(|g| g.id == owner)
+                .map(|g| g.name.clone())
+                .or_else(|| self.land.group_names.get(&owner).cloned())?;
+            (name, MuteType::Group)
+        } else {
+            let name = self
+                .social
+                .avatar_names
+                .raw(&owner)
+                .and_then(|n| {
+                    if n.legacy_first.trim().is_empty() {
+                        (!n.username.trim().is_empty()).then(|| n.username.clone())
+                    } else {
+                        Some(n.user_name())
+                    }
+                })
+                .or_else(|| self.social.names.get(&owner).cloned())?;
+            if super::mutes::is_linden(&name) {
+                return None;
+            }
+            (name, MuteType::Agent)
+        };
+        (!name.trim().is_empty()).then_some((name, kind))
+    }
+
+    /// Recheck at dispatch, so stale inspector actions never unblock an owner.
+    pub fn block_object_owner(&mut self, owner: Uuid, group_owned: bool) -> Result<(), String> {
+        if let Some((name, kind)) = self.object_owner_block(owner, group_owned) {
+            self.block(owner, &name, kind)?;
         }
         Ok(())
     }
@@ -291,6 +344,113 @@ mod tests {
     use super::*;
     use crate::scene::avatar::AvatarLibrary;
     use std::sync::Arc;
+
+    #[test]
+    fn remote_object_owner_blocks_use_canonical_names_and_never_toggle_an_existing_block() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        let owner = Uuid::from_u128(1);
+        // No guessed identity while the name is still loading.
+        w.block_object_owner(owner, false).unwrap();
+        assert!(w.take_social_commands().is_empty());
+        w.social.names.insert(owner, "Demo Owner".into());
+        w.block_flags(owner, "Demo Owner", MuteType::Agent, flag::VOICE_CHAT).unwrap();
+        w.take_social_commands();
+        // A voice-only block can be promoted to a complete owner block.
+        w.block_object_owner(owner, false).unwrap();
+        assert!(
+            matches!(&w.take_social_commands()[..], [NetCommand::UpdateMute { id, name, kind: 1, flags: 0 }]
+            if *id == owner && name == "Demo Owner")
+        );
+        assert_eq!(w.mutes.get(&owner).unwrap().flags, 0);
+        w.block_object_owner(owner, false).unwrap();
+        assert!(w.take_social_commands().is_empty());
+        assert!(w.mutes.is_muted_id(&owner));
+        let group = Uuid::from_u128(2);
+        w.land.group_names.insert(group, "Demo Group".into());
+        w.block_object_owner(group, true).unwrap();
+        assert!(matches!(&w.take_social_commands()[..], [NetCommand::UpdateMute { id, kind: 3, flags: 0, .. }] if *id == group));
+    }
+
+    #[test]
+    fn remote_object_owner_blocks_preserve_self_and_linden_protections_under_rlva() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        let staff = Uuid::from_u128(1);
+        w.apply(aurora_net::NetEvent::DisplayNames {
+            names: vec![aurora_net::AvatarNameData {
+                id: staff,
+                username: "test.linden".into(),
+                display_name: "An unrelated display name".into(),
+                ..Default::default()
+            }],
+            bad_ids: Vec::new(),
+            max_age: None,
+        });
+        w.rlva_configure(true);
+        assert!(w.rlva.receive(&ChatMessage {
+            from_name: "RLVa test controller".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: w.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        for (owner, group) in [
+            (Uuid::nil(), false),
+            (w.agent_id, false),
+            (w.agent_id, true),
+            (staff, false),
+            (staff, true),
+        ] {
+            w.block_object_owner(owner, group).unwrap();
+            assert!(w.mutes.get(&owner).is_none());
+        }
+        assert!(w.take_social_commands().is_empty());
+    }
+
+    #[test]
+    fn remote_object_owner_block_keeps_canonical_identity_out_of_rlva_notices() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        w.groups.report_blocks = true;
+        let owner = Uuid::from_u128(1);
+        w.apply(aurora_net::NetEvent::DisplayNames {
+            names: vec![aurora_net::AvatarNameData {
+                id: owner,
+                username: "demo.owner".into(),
+                display_name: "A custom display name".into(),
+                legacy_first: "Demo".into(),
+                legacy_last: "Owner".into(),
+                ..Default::default()
+            }],
+            bad_ids: Vec::new(),
+            max_age: None,
+        });
+        w.rlva_configure(true);
+        assert!(w.rlva.receive(&ChatMessage {
+            from_name: "RLVa test controller".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: w.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        w.refresh_rlva_privacy();
+        w.block_object_owner(owner, false).unwrap();
+        assert_eq!(w.mutes.get(&owner).unwrap().name, "Demo Owner");
+        let notice = &w.chat.back().expect("block notice").text;
+        assert!(!notice.contains("Demo Owner"));
+        assert!(!notice.contains("A custom display name"));
+        assert!(notice.contains(&super::super::rlva::privacy::anonymous(owner).display_name));
+    }
 
     #[test]
     fn mute_particle_flag_remains_independent_of_other_mute_flags() {

@@ -281,6 +281,12 @@ pub const LIVE_MORPH_WEIGHTS: u32 = 256;
 /// The palette entry after a skeleton's live morph weights (four matrices)
 /// holding how much snow is on the avatar (Aurora Weather).
 pub const AVATAR_SNOW: u32 = 260;
+/// What the snow entry holds in its last element (w of its last column)
+/// when the viewer wrote it: anything else there (the identity a palette
+/// starts with, a joint's matrix, nothing written yet) is no snow. Read
+/// as snow, the identity's 1.0 whitened rigged meshes and animesh (cars)
+/// whose entry had not reached the GPU, whatever the weather.
+pub const AVATAR_SNOW_MARK: f32 = -2.0;
 /// Palette entries per skeleton (the viewer's `anim::PALETTE_JOINTS`).
 pub const PALETTE_STRIDE: u32 = 261;
 

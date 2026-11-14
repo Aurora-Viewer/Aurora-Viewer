@@ -456,6 +456,7 @@ pub fn chat_events(time: f64, last: &mut f64) -> Vec<NetEvent> {
                     owner_id: *who,
                     source_type: ChatSourceType::Agent,
                     chat_type: *chat_type,
+                    region: Some(crate::demo::HANDLE),
                     position: Vec3::ZERO,
                     message: (*text).to_owned(),
                 }));
