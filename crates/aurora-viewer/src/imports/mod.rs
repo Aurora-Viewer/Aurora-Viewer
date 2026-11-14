@@ -1019,7 +1019,19 @@ impl Imports {
                     self.cost_overrides
                         .insert((step.kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024), cost);
                 }
-                self.fail(step.entry, ui::error(error));
+                // do_bulk_upload (llviewermenufile.cpp) saves each material on its own,
+                // so a free material or free map that fails only fails the materials
+                // that need it. A paid step with an uncertain outcome, and a price
+                // change (the user confirms the new price), still stop the batch.
+                let material_map = step.kind == Kind::Texture && step.entry.is_none();
+                let continues = step.cost == 0 && !matches!(error, Error::PriceChanged(_)) && (step.kind == Kind::Material || material_map);
+                let reason = ui::error(error);
+                if material_map || continues {
+                    self.fail_material_batch_step(&step, reason.clone());
+                }
+                if !continues {
+                    self.fail(step.entry, reason);
+                }
                 None
             }
         }
@@ -1042,6 +1054,38 @@ impl Imports {
         }
         self.message = reason;
         self.cancel_remaining();
+    }
+    fn fail_material_batch_step(&mut self, step: &Step, reason: String) {
+        let failed: HashSet<Uuid> = if let Some(entry) = step.entry {
+            HashSet::from([entry])
+        } else if step.kind == Kind::Texture {
+            self.entries
+                .iter()
+                .filter_map(|entry| {
+                    if !matches!(entry.status, Status::Preparing) {
+                        return None;
+                    }
+                    // The same options as the map's step in `start`, "scale to 1K" included.
+                    let options = self.options(entry);
+                    let depends_on_failed_texture = matches!(
+                        &entry.source,
+                        Some(Source::Material { images, .. })
+                            if images.iter().flatten().any(|image| image.asset.is_none() && image.upload_key(options) == step.key)
+                    );
+                    depends_on_failed_texture.then_some(entry.id)
+                })
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        for entry in &mut self.entries {
+            if failed.contains(&entry.id) {
+                entry.status = Status::Error(reason.clone());
+            }
+        }
+        self.queue
+            .retain(|pending| !pending.entry.is_some_and(|entry| failed.contains(&entry)));
+        self.message = reason;
     }
     pub fn poll(
         &mut self,
@@ -1430,7 +1474,12 @@ impl Imports {
                         && image.asset.is_none()
                     {
                         let Some(receipt) = self.uploaded.get(&image.upload_key(step.options)) else {
-                            self.fail(step.entry, aurora_i18n::tr!("import-unverified").into());
+                            let reason = aurora_i18n::tr!("import-unverified").into();
+                            if step.cost == 0 {
+                                self.fail_material_batch_step(&step, reason);
+                            } else {
+                                self.fail(step.entry, reason);
+                            }
                             return commands;
                         };
                         ids[slot] = Some(receipt.item.asset_id);
