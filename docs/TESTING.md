@@ -1435,7 +1435,10 @@ when unfocused") is ignored during a screenshot.
   after a teleport" on. With `AURORA_DEMO_TP=remote`, the arrival turns both
   back on (the speakers of the volume panel), and the nearby chat gets one
   line per channel. A login or `AURORA_DEMO_TP=1` (inside the region) leaves
-  them muted.
+  them muted. Add `AURORA_DEMO_SOUND=1` to hear it (the demo is silent
+  without it), and `AURORA_DEMO_VOLUME=open` to watch the speakers:
+  `AURORA_DEMO_AUTO_UNMUTE=1 AURORA_DEMO_TP=remote AURORA_DEMO_SOUND=1
+  AURORA_DEMO_VOLUME=open`.
 - **`AURORA_DEMO_TP_CANCEL`**: with `AURORA_DEMO_TP=remote`, the teleport
   screen shows Cancel next to its title from the "teleport accepted" step
   (0.35 s) until "connecting to the region" (2.4 s), as the Legacy Viewer
