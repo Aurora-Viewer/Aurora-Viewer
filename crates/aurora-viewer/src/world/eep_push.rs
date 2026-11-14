@@ -194,6 +194,20 @@ impl PushLayer {
         }
         self.sky_keys.retain(|_, (_, owner)| !ours(*owner));
         self.water_keys.retain(|_, (_, owner)| !ours(*owner));
+        // A cleared half no longer outranks the pushes still downloading:
+        // its order falls back to the pushed day that now shows it, or to
+        // none. Another experience's older asset still applies on arrival,
+        // as onSetExperienceEnvAssetLoaded does.
+        if self.day.is_none() {
+            self.day_sequence = 0;
+        }
+        let shown = self.day.as_ref().map_or(0, |_| self.day_sequence);
+        if self.sky.is_none() {
+            self.sky_sequence = shown;
+        }
+        if self.water.is_none() {
+            self.water_sequence = shown;
+        }
         if experience.is_nil() {
             self.waiting.clear();
         } else {
@@ -335,6 +349,57 @@ mod tests {
         layer.clear(Uuid::nil(), 0.0);
         assert!(!layer.is_active());
         assert!(layer.wanted().is_empty());
+    }
+
+    #[test]
+    fn another_experience_asset_applies_after_a_newer_one_is_cleared() {
+        let mut layer = PushLayer::default();
+        let (older, newer) = (exp(61), exp(62));
+        layer.handle(exp(2), &full(older));
+        layer.handle(exp(1), &full(newer));
+        let sky = |gamma| {
+            Arc::new(Settings::Sky(SkyFrame {
+                gamma,
+                ..Default::default()
+            }))
+        };
+        layer.on_settings(newer, Some(&sky(2.0)));
+        layer.clear(exp(1), 0.0);
+        layer.on_settings(older, Some(&sky(3.0)));
+        assert_eq!(layer.apply(SkyFrame::default(), WaterFrame::default()).0.gamma, 3.0);
+    }
+
+    #[test]
+    fn a_cleared_sky_falls_back_to_the_order_of_the_pushed_day() {
+        let mut layer = PushLayer::default();
+        let (sky_before_day, day, sky_after_day) = (exp(61), exp(62), exp(63));
+        layer.handle(exp(3), &full(sky_before_day));
+        layer.handle(exp(1), &full(day));
+        layer.handle(exp(2), &full(sky_after_day));
+        let sky = |gamma| {
+            Arc::new(Settings::Sky(SkyFrame {
+                gamma,
+                ..Default::default()
+            }))
+        };
+        layer.on_settings(
+            day,
+            Some(&Arc::new(Settings::Day(DayCycle::fixed(
+                SkyFrame::default(),
+                WaterFrame::default(),
+            )))),
+        );
+        layer.on_settings(sky_after_day, Some(&sky(2.0)));
+        layer.clear(exp(2), 0.0);
+        // older than the day that still shows: the day keeps its sky
+        let generation = layer.generation();
+        layer.on_settings(sky_before_day, Some(&sky(3.0)));
+        assert_eq!(layer.generation(), generation);
+        assert!(layer.day().is_some());
+        assert_eq!(
+            layer.apply(SkyFrame::default(), WaterFrame::default()).0.gamma,
+            SkyFrame::default().gamma
+        );
     }
 
     #[test]
