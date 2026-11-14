@@ -28,6 +28,7 @@ chrono-tz = "0.10.4"
 aurora-assets = { version = "0.1.0", path = "../aurora-assets" }
 aurora-audio = { version = "0.1.0", path = "../aurora-audio" }
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
+aurora-mcp = { version = "0.1.0", path = "../aurora-mcp" }
 aurora-media = { version = "0.1.0", path = "../aurora-media" }
 aurora-net = { version = "0.1.0", path = "../aurora-net" }
 aurora-prim = { version = "0.1.0", path = "../aurora-prim" }

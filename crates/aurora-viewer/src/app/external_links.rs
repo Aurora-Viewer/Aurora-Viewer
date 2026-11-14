@@ -145,9 +145,9 @@ impl App {
             log::info!("startup links: not a SLURL, ignored");
             return;
         }
-        if raise && let Some(g) = &self.gfx {
-            g.window.set_minimized(false);
-            g.window.focus_window();
+        if raise && let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) {
+            win.set_minimized(false);
+            win.focus_window();
         }
         match request {
             Request::Place(location) if matches!(self.screen, Screen::Login) && !self.login_form.busy => {

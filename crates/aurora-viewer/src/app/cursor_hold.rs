@@ -229,20 +229,19 @@ impl App {
             // not over the button that started mouselook
             self.move_cursor_to_center();
         }
-        let Some(g) = &self.gfx else {
+        let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
             return;
         };
-        if let Err(e) = g
-            .window
+        if let Err(e) = win
             .set_cursor_grab(CursorGrabMode::Locked)
-            .or_else(|_| g.window.set_cursor_grab(CursorGrabMode::Confined))
+            .or_else(|_| win.set_cursor_grab(CursorGrabMode::Confined))
         {
             log::warn!("camera: the cursor could not be locked ({e}), it is only hidden");
         }
-        g.window.set_cursor_visible(false);
+        win.set_cursor_visible(false);
         // the windows stop seeing it now: a window it was over loses its hover
-        if let Some(g) = &mut self.gfx {
-            g.egui_state.egui_input_mut().events.push(egui::Event::PointerGone);
+        if let Some(egui_state) = self.gfx.as_mut().and_then(|g| g.egui_state.as_mut()) {
+            egui_state.egui_input_mut().events.push(egui::Event::PointerGone);
         }
     }
 
@@ -253,10 +252,10 @@ impl App {
         if self.cursor_hold.kind != Some(HoldKind::Mouselook) {
             return;
         }
-        let Some(g) = &self.gfx else {
+        let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
             return;
         };
-        let size = g.window.inner_size();
+        let size = win.inner_size();
         let center = (size.width as f32 / 2.0, size.height as f32 / 2.0);
         if (self.cursor_pos.0 - center.0).abs() > 0.5 || (self.cursor_pos.1 - center.1).abs() > 0.5 {
             self.move_cursor(center);
@@ -278,17 +277,17 @@ impl App {
         let Some(back) = self.cursor_hold.give_back(focus_lost) else {
             return;
         };
-        let Some(g) = &self.gfx else {
+        let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
             return;
         };
-        let _ = g.window.set_cursor_grab(CursorGrabMode::None);
+        let _ = win.set_cursor_grab(CursorGrabMode::None);
         match back {
             Return::Stay => {}
             Return::Center => self.move_cursor_to_center(),
             Return::At((x, y)) => self.move_cursor((x, y)),
         }
-        if let Some(g) = &self.gfx {
-            g.window.set_cursor_visible(true);
+        if let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) {
+            win.set_cursor_visible(true);
         }
     }
 
@@ -300,20 +299,18 @@ impl App {
     }
 
     fn move_cursor_to_center(&mut self) {
-        let Some(g) = &self.gfx else {
+        let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
             return;
         };
-        let size = g.window.inner_size();
+        let size = win.inner_size();
         self.move_cursor((size.width as f32 / 2.0, size.height as f32 / 2.0));
     }
 
     fn move_cursor(&mut self, (x, y): (f32, f32)) {
-        let Some(g) = &self.gfx else {
+        let Some(win) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
             return;
         };
-        let _ = g
-            .window
-            .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
+        let _ = win.set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
         self.cursor_pos = (x, y);
     }
 }

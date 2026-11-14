@@ -326,6 +326,29 @@ impl Renderer {
     where
         W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
     {
+        Self::new_inner(Some(window), width, height, vsync, gpu, xr)
+    }
+
+    /// Create a windowless offscreen renderer (no OS window or swapchain surface).
+    pub fn new_offscreen(width: u32, height: u32, vsync: bool, gpu: &str) -> Result<Renderer, RenderError> {
+        struct NoWindow;
+        impl wgpu::rwh::HasWindowHandle for NoWindow {
+            fn window_handle(&self) -> Result<wgpu::rwh::WindowHandle<'_>, wgpu::rwh::HandleError> {
+                Err(wgpu::rwh::HandleError::Unavailable)
+            }
+        }
+        impl wgpu::rwh::HasDisplayHandle for NoWindow {
+            fn display_handle(&self) -> Result<wgpu::rwh::DisplayHandle<'_>, wgpu::rwh::HandleError> {
+                Err(wgpu::rwh::HandleError::Unavailable)
+            }
+        }
+        Self::new_inner::<NoWindow>(None, width, height, vsync, gpu, false)
+    }
+
+    fn new_inner<W>(window: Option<Arc<W>>, width: u32, height: u32, vsync: bool, gpu: &str, xr: bool) -> Result<Renderer, RenderError>
+    where
+        W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
+    {
         crate::start_progress::enter(crate::start_progress::Phase::GpuDevice);
         let desc = || {
             let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
@@ -447,12 +470,18 @@ impl Renderer {
         // surface and drops after it (`Host`'s field order and join), or
         // stays with a render thread left behind; an abandoned surface is
         // never used again once its device is lost.
-        let surface = unsafe {
-            let target =
-                wgpu::SurfaceTargetUnsafe::from_display_and_window(&*window, &*window).map_err(|e| RenderError::Surface(e.to_string()))?;
-            instance.create_surface_unsafe(target)
-        }
-        .map_err(|e| RenderError::Surface(e.to_string()))?;
+        let surface = if let Some(win) = &window {
+            Some(
+                unsafe {
+                    let target = wgpu::SurfaceTargetUnsafe::from_display_and_window(&**win, &**win)
+                        .map_err(|e| RenderError::Surface(e.to_string()))?;
+                    instance.create_surface_unsafe(target)
+                }
+                .map_err(|e| RenderError::Surface(e.to_string()))?,
+            )
+        } else {
+            None
+        };
         let memories: Vec<(Option<u64>, Option<u64>)> = adapters
             .iter()
             .map(|adapter| crate::vram::heap_sizes_mb(adapter).unwrap_or((detect_vram_mb(adapter), None)))
@@ -467,7 +496,7 @@ impl Renderer {
                     // Keep adapter selection's existing device-local size
                     // preference unchanged; shared RAM is reported separately.
                     vram_mb: detect_vram_mb(a),
-                    surface: a.is_surface_supported(&surface),
+                    surface: surface.as_ref().is_none_or(|s| a.is_surface_supported(s)),
                 }
             })
             .collect();
@@ -677,7 +706,7 @@ impl Renderer {
             gpu_frames: gpu_frames.clone(),
             device: device.clone(),
             queue,
-            surface: Arc::new(surface),
+            surface: surface.map(Arc::new),
             external: false,
             output_format: None,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -707,11 +736,11 @@ impl Renderer {
         let blend_exact_supported = backend.blend_exact_supported();
         let can_capture = backend.can_capture();
         let output_format = backend.output_format();
-        let host = Host::new(
-            backend,
-            window,
-            thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()),
-        );
+        let keep: crate::render_thread::KeepAlive = match window {
+            Some(w) => w,
+            None => Arc::new(()),
+        };
+        let host = Host::new(backend, keep, thread_wanted(std::env::var("AURORA_RENDER_THREAD").ok().as_deref()));
         log::info!(
             "renderer: {}",
             if host.threaded() {
