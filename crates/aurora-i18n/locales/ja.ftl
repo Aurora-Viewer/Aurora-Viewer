@@ -9031,6 +9031,7 @@ update-error-drive-root = E:\Aurora Viewer のようにドライブ直下にあ�
 update-error-unsupported-macos = macOSでは、新しいバージョンは手動でインストールします。リリースページからダウンロードし、アプリケーションフォルダのAurora Viewerを新しいものに置き換えてください。
 update-error-startup = アップデートのヘルパーを起動できませんでした。現在のインストールは保持されています。
 update-rollback = 新しいバージョンが正しく起動しませんでした。以前のインストールを復元しました。
+update-rollback-reason = 理由：{ $reason }
 update-settings = アップデート
 update-settings-help = 必要なアップデートは引き続き確認されます。自動ダウンロードでは、再起動の前にあなたの承認を待ちます。
 update-mode-disabled = 必要なアップデートのみ

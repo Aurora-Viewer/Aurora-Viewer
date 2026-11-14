@@ -303,6 +303,9 @@ fn run_viewer() -> anyhow::Result<()> {
     raw_mouse::install(&mut event_loop);
     let event_loop = event_loop.build()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    // the cache clear an update could not do while the cache was held
+    // (aurora-updater user_data.rs), before anything opens it
+    aurora_updater::clear_deferred_cache();
     // the cache folder of this run, before anything uses it
     cache_location::init();
     // private browser profiles a crash left behind (search web tab)
