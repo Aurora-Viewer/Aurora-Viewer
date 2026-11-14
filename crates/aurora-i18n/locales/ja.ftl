@@ -10186,7 +10186,6 @@ search-event-place-info = 場所の詳細を表示
 search-aurora-all = すべて
 search-aurora-hint = 住人、場所、イベント、グループ、クラシファイド広告…
 search-aurora-land-hint = 販売中の土地はフィルタで検索します
-search-aurora-clear = クリア
 search-aurora-web-tip = 組み込みのブラウザでグリッドの検索ページを開く
 search-aurora-select = 結果を選択してください。
 search-aurora-start = 住人、場所、イベント、グループ、クラシファイド広告を検索します。

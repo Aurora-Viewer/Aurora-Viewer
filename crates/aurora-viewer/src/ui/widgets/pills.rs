@@ -299,6 +299,9 @@ pub fn filter_pill_width(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
 }
 
 /// The search field of a list: a magnifier then the text, on the field's face.
+/// Every window now uses `clearable_search_box`; the field centring test
+/// still measures this bare form.
+#[cfg(test)]
 pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
     icon_field(ui, p, "search-filled", text, hint, width)
 }
@@ -465,7 +468,10 @@ fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mu
         egui::pos2(response.rect.right() - f32::from(CLEAR_WIDTH), response.rect.top()),
         response.rect.right_bottom(),
     );
-    let clear = ui.interact(rect, response.id.with("clear"), Sense::click());
+    // Not a Tab stop: LLSearchEditor builds its clear button with
+    // `tab_stop(false)` (indra/llui/llsearcheditor.cpp), so Tab leaves the
+    // field for the next control. `Sense::click()` would make it focusable.
+    let clear = ui.interact(rect, response.id.with("clear"), Sense::CLICK);
     super::paint_title_button(ui, p, "x", &clear);
     let label = aurora_i18n::tr!("common-clear");
     clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
@@ -798,6 +804,44 @@ mod search_tests {
             }
             assert!(ctx.read_response(id.with("clear")).is_none(), "empty searches have no clear action");
             assert_eq!(field.rect.size(), rect.size(), "the field must not resize when cleared");
+        }
+    }
+
+    #[test]
+    fn tab_skips_the_search_clear_action() {
+        let tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for kind in 0..4 {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut text = "query".into();
+            let mut field = frame(&ctx, kind, &mut text, vec![], true);
+            for _ in 0..3 {
+                field = frame(&ctx, kind, &mut text, vec![], true);
+            }
+            let clear = field.id.with("clear");
+            assert!(ctx.read_response(clear).is_some(), "kind={kind}: a filled field has a clear action");
+            ctx.memory_mut(|m| m.request_focus(field.id));
+            frame(&ctx, kind, &mut text, vec![], true);
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(field.id),
+                "kind={kind}: the field holds the focus before Tab"
+            );
+            frame(&ctx, kind, &mut text, vec![tab.clone()], true);
+            for _ in 0..2 {
+                frame(&ctx, kind, &mut text, vec![], true);
+            }
+            assert_ne!(
+                ctx.memory(|m| m.focused()),
+                Some(clear),
+                "kind={kind}: Tab must not stop on the cross"
+            );
         }
     }
 

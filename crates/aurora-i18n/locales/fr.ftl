@@ -10240,7 +10240,6 @@ search-event-place-info = Afficher les détails de l'emplacement
 search-aurora-all = Tout
 search-aurora-hint = Résidents, lieux, événements, groupes, annonces…
 search-aurora-land-hint = Les terrains à vendre se cherchent par les filtres
-search-aurora-clear = Effacer
 search-aurora-web-tip = La page de recherche de la grille, dans le navigateur intégré
 search-aurora-select = Sélectionnez un résultat.
 search-aurora-start = Recherchez des résidents, des lieux, des événements, des groupes et des annonces.
