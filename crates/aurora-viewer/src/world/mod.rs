@@ -3774,7 +3774,7 @@ impl World {
                             use crate::weather::region::SkyWeather;
                             let day_cycle = &environment["day_cycle"];
                             let frames = &day_cycle["frames"];
-                            let (mut keys, mut by_sky, mut by_key) = (0, 0, 0);
+                            let (mut keys, mut by_sky, mut by_key, mut by_mark) = (0, 0, 0, 0);
                             let mut seen = Vec::new();
                             for track in day_cycle["tracks"].as_array().iter().skip(1) {
                                 for key in track.as_array() {
@@ -3783,13 +3783,14 @@ impl World {
                                     keys += 1;
                                     by_sky += usize::from(SkyWeather::from_name(sky).is_some());
                                     by_key += usize::from(SkyWeather::from_name(k).is_some());
+                                    by_mark += usize::from(crate::weather::sky_mark::read(&frames[k]).is_some());
                                     if seen.len() < 3 {
                                         seen.push(format!("{k:?} -> {sky:?}"));
                                     }
                                 }
                             }
                             log::info!(
-                                "Aurora Weather in the day (parcel {parcel_id}): {by_sky} of {keys} sky keys coded in their sky's name, {by_key} in their key's; applied as {:?}; first keys {}",
+                                "Aurora Weather in the day (parcel {parcel_id}): {by_mark} of {keys} sky keys marked in their sky's numbers, {by_sky} coded in their sky's name, {by_key} in their key's; applied as {:?}; first keys {}",
                                 answer.names,
                                 seen.join(", ")
                             );

@@ -2875,7 +2875,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/preview.rs`, `shaders/preview.wgsl` | 3D previews in the windows: PBR rendering and skinning on the GPU thread, off-screen targets linked directly to egui, deduplication of the shared maps, no GPU readback and no wait on the GPU in the interface loop. Shared orbit, screen-space pan, zoom and camera reset; material previews use Sphere / Cube / Aurora 3D and four worker-prepared thumbnails, with a self-contained bundled GLB |
 | `build/ui/shape_preview.rs`, `aurora-render/src/preview_mesh.rs`, `shaders/preview_mesh.wgsl` | Create thumbnails from the actual volume parameters and placement rotations, with shared studio shading and readable framing in both layouts. Cached GPU MSAA and supersampling box-filter premultiplied coverage at physical display resolution (64 samples for small tiles, bounded sampling for larger HiDPI tiles). Same-sized tiles share transient render targets; only final images remain cached until their source/size changes or the palette closes. No CPU readback or GPU wait in the frame loop. |
 | `build/new_defaults.rs`, `ui/options/pages/build.rs` | What a prim made with the Create tool starts as (FSCommon::applyDefaultBuildPreferences): colour, transparency, glow, full bright, shininess, physical, temporary and phantom, given when it arrives ours with full rights; Preferences › Build lists them with the size and material |
-| `weather/mod.rs`, `weather/region.rs`, `ui/environment.rs`, `scene/rain_sound.rs`, `scene/thunder.rs`, `scene/snow_detail.rs`, `scene/snow_trail.rs`, `scene/avatar_snow.rs`, `scene/rain_ground.rs`, `aurora-render/src/projector_shadows.rs` (`shelter_slot`) | Aurora Weather: the settings and the gusting wind, the region weather read from sky and day names, the Aurora Weather window, the rain's sound, thunder and lightning, the snow's detail texture, footprints, snow on avatars, the terrain under the puddles, and the shelter map's place in the shadow atlas (the first map past the projectors'); the drawing itself is in `shaders/env.wgsl` (see "Aurora Weather" below) |
+| `weather/mod.rs`, `weather/region.rs`, `weather/sky_mark.rs`, `ui/environment.rs`, `scene/rain_sound.rs`, `scene/thunder.rs`, `scene/snow_detail.rs`, `scene/snow_trail.rs`, `scene/avatar_snow.rs`, `scene/rain_ground.rs`, `aurora-render/src/projector_shadows.rs` (`shelter_slot`) | Aurora Weather: the settings and the gusting wind, the region weather read from sky and day names, the Aurora Weather window, the rain's sound, thunder and lightning, the snow's detail texture, footprints, snow on avatars, the terrain under the puddles, and the shelter map's place in the shadow atlas (the first map past the projectors'); the drawing itself is in `shaders/env.wgsl` (see "Aurora Weather" below) |
 | `scene/surface_area.rs` | Large surface protection (RenderVolumeSAProtection): prims and sculpts measured on their swept grid (`VolumeMesh::grid_area`, kept per geometry), those past their threshold added from the smallest each frame, the rest not drawn past the total; the object's drawing goes and comes back through `Scene::stop_drawing` and the sync planner |
 | `build/replace.rs`, `build/replace/`, `build/ui/replace.rs` | Guided replacement of a linked part: locked target, selection of the replacement, options and progress; steps confirmed by the server, copy of the contents through the resident's inventory, script states preserved, recovery of the initial configuration and offline simulator |
 | `ui/inventory/document.rs`, `aurora-net/src/inventory/notecard.rs` | Editing cycle of the documents: draft and save correlated with the window, closing after confirmation, refusal that keeps the text; import of v1 / v2 notecards, v2 export with a bounded UTF-8 length and the permissions of the attachments still referenced preserved |
@@ -3392,12 +3392,13 @@ lightest and heaviest, the wind, thunder) as a nine-letter code at the end
 of its name, the day cycle the timing (its key frames, blended as their
 colours are; a sky without a code is clear) and, at the end of the day's
 name, a five-letter schedule (the period, 5 minutes to a day, and the
-seed). The names reach every viewer, an EEP item's description does not. A known
-limit: the Legacy Viewer saves a day without its frames' names
-(LLSettingsDay::getSettings), so a region's day saved again by such a
-viewer loses its key frames' weather (the day's schedule stays); applying
-the coded skies again with Aurora restores it. Aurora's own "Apply to
-region" sends the frames' names, which the Legacy Viewer never does.
+seed). The names reach every viewer, an EEP item's description does not.
+The server drops the names of a day's frames (LLSettingsDay::getSettings,
+its validation), so `weather/sky_mark.rs` also writes a sky's code into
+the lowest bits of five of its numbers, which it keeps to the bit: Aurora
+marks every sky it saves, puts in a day or applies from its name's code,
+and a marked sky read without a code on its name takes it back. Another
+viewer moving one of those sliders wipes that sky's mark.
 In each period a seeded hash decides whether and how hard it falls, eased
 between periods, so viewers with the same environment and clock show the
 same weather with nothing sent. The sky editor's Aurora Weather tab writes

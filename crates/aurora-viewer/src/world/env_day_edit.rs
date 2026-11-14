@@ -79,6 +79,7 @@ impl DayDoc {
                 }
                 let mut frame = frame.clone();
                 frame.insert("type", frame_type(t));
+                crate::weather::sky_mark::name_from_mark(&mut frame);
                 let pos = key["key_keyframe"].as_f32();
                 let pos = if pos.is_finite() { pos.clamp(0.0, 1.0) } else { 0.0 };
                 match track.iter_mut().find(|(p, _)| *p == pos) {
@@ -142,11 +143,13 @@ impl DayDoc {
         for track in &self.tracks {
             let mut keys = Vec::with_capacity(track.len());
             for (pos, frame) in track {
-                let text = aurora_llsd::to_notation(frame);
+                let mut frame = frame.clone();
+                crate::weather::sky_mark::sync_to_name(&mut frame);
+                let text = aurora_llsd::to_notation(&frame);
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 text.hash(&mut h);
                 let name = h.finish().to_string();
-                frames.insert(name.clone(), frame.clone());
+                frames.insert(name.clone(), frame);
                 keys.push(aurora_llsd::llsd_map! {"key_keyframe" => *pos as f64, "key_name" => name});
             }
             tracks.push(Llsd::Array(keys));
@@ -418,9 +421,10 @@ impl DayDoc {
 /// Aurora Weather (a code at its end, weather/region.rs), so that the day
 /// editor and a day applied to myself keep it. The server drops the
 /// frames' names of every day it is given, inline or as an asset (its
-/// validation and getSettings): a key frame's weather does not reach a
-/// parcel or a region this way yet (TASKS.md, Aurora Weather).
+/// validation and getSettings): what reaches a parcel or a region is the
+/// mark in the sky's numbers, set from that name (weather/sky_mark.rs).
 fn without_name(mut v: Llsd) -> Llsd {
+    crate::weather::sky_mark::sync_to_name(&mut v);
     let coded = crate::weather::region::SkyWeather::from_name(v["name"].as_str()).is_some();
     if let Llsd::Map(m) = &mut v
         && !coded

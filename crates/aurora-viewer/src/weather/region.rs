@@ -167,6 +167,16 @@ impl SkyWeather {
     /// The letters of the code (without its `~`): nine, or twelve with an
     /// aurora.
     pub fn code(&self) -> String {
+        match self.bits() {
+            (v, SKY_AURORA_DATA) => encode(v, SKY_AURORA_DATA, SKY_AURORA_LEN),
+            (v, _) => encode(v, SKY_DATA, SKY_LEN),
+        }
+    }
+
+    /// The code's data without its check (its version in the low 2 bits),
+    /// and how many bits it takes: 32, or 45 with an aurora (also what a
+    /// sky's settings carry, weather/sky_mark.rs).
+    pub(crate) fn bits(&self) -> (u64, u32) {
         let mut b = Bits::default();
         b.put(if self.aurora.is_some() { SKY_AURORA_VERSION } else { SKY_VERSION }, 2);
         b.put(u64::from(self.precipitation == Precipitation::Snow), 1);
@@ -183,7 +193,7 @@ impl SkyWeather {
         b.put(level(self.strikes, 3), 2);
         debug_assert_eq!(b.at, SKY_DATA);
         let Some(a) = self.aurora else {
-            return encode(b.v, SKY_DATA, SKY_LEN);
+            return (b.v, SKY_DATA);
         };
         // (never 0: the aurora is there, if faint)
         b.put(level(a.intensity, 15).max(1), 4);
@@ -191,7 +201,7 @@ impl SkyWeather {
         b.put(level(a.height, 7), 3);
         b.put(u64::from(a.colours.index()), 2);
         debug_assert_eq!(b.at, SKY_AURORA_DATA);
-        encode(b.v, SKY_AURORA_DATA, SKY_AURORA_LEN)
+        (b.v, SKY_AURORA_DATA)
     }
 
     /// The length of this sky's code.
@@ -209,11 +219,19 @@ impl SkyWeather {
             (SKY_DATA, SKY_VERSION)
         };
         let len = if version == SKY_AURORA_VERSION { SKY_AURORA_LEN } else { SKY_LEN };
-        let mut b = Bits {
-            v: decode(letters, data, len)?,
-            at: 0,
-        };
-        if b.take(2) != version {
+        let v = decode(letters, data, len)?;
+        if v & 3 != version {
+            return None;
+        }
+        Self::from_bits(v)
+    }
+
+    /// The weather of a code's data (`bits`), if its version is one this
+    /// viewer reads; a sky without an aurora has nothing past its 32 bits.
+    pub(crate) fn from_bits(v: u64) -> Option<SkyWeather> {
+        let mut b = Bits { v, at: 0 };
+        let version = b.take(2);
+        if version == SKY_VERSION && v >> SKY_DATA != 0 || version != SKY_VERSION && version != SKY_AURORA_VERSION {
             return None;
         }
         let snow = b.take(1) == 1;
@@ -420,7 +438,8 @@ impl RegionDay {
                     let pos = if pos.is_finite() { pos.clamp(0.0, 1.0) } else { 0.0 };
                     (
                         pos,
-                        SkyWeather::from_name(frames[name]["name"].as_str())
+                        super::sky_mark::read(&frames[name])
+                            .or_else(|| SkyWeather::from_name(frames[name]["name"].as_str()))
                             .or_else(|| SkyWeather::from_name(name))
                             .or_else(|| names.tracks.get(t + 1).and_then(|n| SkyWeather::from_name(n))),
                     )
@@ -581,7 +600,9 @@ impl RegionDay {
 pub fn of_settings(map: &aurora_llsd::Llsd) -> Option<RegionDay> {
     match map["type"].as_str() {
         "daycycle" => RegionDay::read(map, 0, crate::world::eep::DEFAULT_DAY_LENGTH, crate::world::eep::DEFAULT_DAY_OFFSET),
-        "sky" => SkyWeather::from_name(map["name"].as_str()).map(RegionDay::fixed),
+        "sky" => super::sky_mark::read(map)
+            .or_else(|| SkyWeather::from_name(map["name"].as_str()))
+            .map(RegionDay::fixed),
         _ => None,
     }
 }
@@ -610,7 +631,9 @@ pub fn day_has_weather(day: &aurora_llsd::Llsd) -> bool {
     day["tracks"].as_array().iter().skip(1).any(|track| {
         track.as_array().iter().any(|key| {
             let name = key["key_name"].as_str();
-            SkyWeather::from_name(frames[name]["name"].as_str()).is_some() || SkyWeather::from_name(name).is_some()
+            super::sky_mark::read(&frames[name]).is_some()
+                || SkyWeather::from_name(frames[name]["name"].as_str()).is_some()
+                || SkyWeather::from_name(name).is_some()
         })
     })
 }
