@@ -1002,7 +1002,7 @@ fn behaviour(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contact
     if widgets::action_button(
         ui,
         p,
-        "settings-filled",
+        "layers-intersect",
         aurora_i18n::tr!("set-editor-all-sets-options"),
         widgets::ActionKind::Flat,
         Vec2::new(0.0, 30.0),

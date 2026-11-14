@@ -12,6 +12,10 @@ use crate::ui::{context, menu, widgets};
 use crate::world::contact_sets;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
+/// The icon of the options shared by every set: sets overlapping (no
+/// filled version in Tabler; the cog is a set's own editor).
+pub(crate) const ALL_SETS_ICON: &str = "layers-intersect";
+
 /// A set's row in the column, in the picker's list, a smart list's row.
 const SET_ROW_H: f32 = 42.0;
 const PICKER_ROW_H: f32 = 36.0;
@@ -46,11 +50,19 @@ fn header(ui: &mut egui::Ui, c: &mut Ctx) {
         if widgets::icon_button(ui, p, "plus", aurora_i18n::tr!("ui-contacts-add-a-new-contact-set"), true) {
             c.contacts.ask_new_set();
         }
-        let gear = super::super::rows::gear(ui, p, aurora_i18n::tr!("people-sets-gear"));
+        // the options of all sets (and their import): overlapping sets, not
+        // the cog, which opens one set's editor
+        let gear = match crate::ui::icons::global(ALL_SETS_ICON) {
+            Some(t) => egui::Button::image(egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), Vec2::splat(14.0))).tint(p.ink)),
+            None => egui::Button::new(""),
+        };
+        let gear = ui
+            .add(gear.min_size(Vec2::splat(super::super::rows::TOOLBAR_H - 2.0)))
+            .on_hover_text(aurora_i18n::tr!("people-sets-gear"));
         let world = c.world;
         let contacts = &mut *c.contacts;
         menu::dropdown(&gear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("people-sets-options")) {
+            if menu::item(ui, p, ALL_SETS_ICON, aurora_i18n::tr!("people-sets-options")) {
                 contacts.open_set_options();
             }
             menu::separator(ui, p);
