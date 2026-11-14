@@ -3,5 +3,9 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
+# Shell scripts always get LF line endings: sh misreads a script with CRLF, and
+# a Windows checkout must not commit one that breaks the Linux launcher.
+*.sh text eol=lf
+
 # Raw grayscale terrain texels must keep their exact bytes.
 *.r8 binary

@@ -164,6 +164,20 @@ On Debian and Ubuntu, the build packages are `build-essential cmake clang
 pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev`, with
 Rust from [rustup.rs](https://rustup.rs).
 
+### Development environment
+
+The Aurora tools run on Linux with PowerShell 7 (`pwsh`, needed first): the
+same menus as `aurora-tools.cmd`, explained in
+[the guide for humans](../HUMANS.md#the-aurora-tools-aurora-toolscmd). Clone the
+repository into a folder for the project, then run `aurora-tools.sh`:
+
+```bash
+git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
+./aurora-viewer/aurora-tools.sh
+```
+
+Repair installs what is missing with `pacman` or `apt`, through `sudo`.
+
 ## Reporting a problem
 
 See [Reporting bugs](BUG_REPORTING.md), and say that you are on Linux, with

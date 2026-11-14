@@ -27,7 +27,17 @@ function Get-TaskSlug([string]$Name) {
 # A build or a viewer is running from $Dir: compiler command lines name
 # their output folder, the viewer runs from its own exe.
 function Test-InUse([string]$Dir) {
-    $full = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $full = [IO.Path]::GetFullPath($Dir).TrimEnd($sep) + $sep
+    if ($IsLinux) {
+        # no CIM here. A cargo that has not started rustc yet names no folder
+        # on its command line, but it runs from one.
+        return [bool](Get-Process cargo, rustc, clippy-driver, aurora-viewer -ErrorAction SilentlyContinue | Where-Object {
+            $cwd = (Get-Item -LiteralPath "/proc/$($_.Id)/cwd" -Force -ErrorAction SilentlyContinue).LinkTarget
+            ($_.Path -and $_.Path.StartsWith($full)) -or ($_.CommandLine -and $_.CommandLine.Contains($full)) -or
+            ($cwd -and "$($cwd.TrimEnd($sep))$sep".StartsWith($full))
+        })
+    }
     $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue -Filter (
         "Name='cargo.exe' OR Name='rustc.exe' OR Name='clippy-driver.exe' OR Name='aurora-viewer.exe'")
     [bool]($procs | Where-Object {

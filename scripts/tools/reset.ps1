@@ -21,6 +21,11 @@ function Get-UnpushedCount([string]$Repo, [string]$Branch, [string]$Upstream) {
     [int](git -C $Repo rev-list --count "origin/main..$Branch" 2>$null)
 }
 
+# A path as this system writes it, for comparing two of them.
+function Get-NormalPath([string]$Path) {
+    [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+}
+
 function Get-ResetInventory {
     $repo = $Paths.Repo
     git -C $repo fetch origin --prune --quiet 2>$null
@@ -37,10 +42,10 @@ function Get-ResetInventory {
     $worktrees = @()
     $current = $null
     foreach ($line in git -C $repo worktree list --porcelain) {
-        if ($line -like 'worktree *') { $current = [pscustomobject]@{ Path = ($line.Substring(9) -replace '/', '\'); Branch = $null } ; $worktrees += $current }
+        if ($line -like 'worktree *') { $current = [pscustomobject]@{ Path = (Get-NormalPath $line.Substring(9)); Branch = $null } ; $worktrees += $current }
         elseif ($line -like 'branch *' -and $current) { $current.Branch = $line.Substring(7) -replace '^refs/heads/', '' }
     }
-    $worktrees = @($worktrees | Where-Object { [IO.Path]::GetFullPath($_.Path).TrimEnd('\') -ne [IO.Path]::GetFullPath($repo).TrimEnd('\') } | ForEach-Object {
+    $worktrees = @($worktrees | Where-Object { $_.Path -ne (Get-NormalPath $repo) } | ForEach-Object {
         $up = if ($_.Branch) { (git -C $repo for-each-ref --format='%(upstream:short)' "refs/heads/$($_.Branch)") }
         [pscustomobject]@{
             Path = $_.Path
@@ -100,12 +105,12 @@ function Show-ResetInventory($Inv) {
 function Invoke-Reset {
     Write-Title 'Reset the repository'
     Write-Color "  Puts $($Paths.Repo) back in the state of a fresh clone of main on GitHub," ink
-    Write-Color '  deletes the agent tasks (work\) and RELEASE\, then repairs the environment.' ink
+    Write-Color "  deletes the agent tasks (work$DirSep) and RELEASE$DirSep, then repairs the environment." ink
     Write-Color '  Inventory (GitHub, branches, tasks)…' muted_dim
     $inv = Get-ResetInventory
     $lost = Show-ResetInventory $inv
-    # Test-InUse (scripts\common.ps1): a build or a viewer running in the project
-    . (Join-Path $Paths.Repo 'scripts\common.ps1')
+    # Test-InUse (scripts/common.ps1): a build or a viewer running in the project
+    . (Get-ToolScript 'common.ps1')
     if (Test-InUse $Paths.Root) {
         Write-Color '  A build or a viewer is running in the project: close it, then try again.' danger
         Wait-Back; return
@@ -113,14 +118,14 @@ function Invoke-Reset {
     $typed = Read-Text "$(if ($lost) { 'What is listed above will be lost. ' })To confirm, type $ResetWord (empty: cancel):"
     if ($typed -cne $ResetWord) { Write-Color '  Cancelled: nothing was touched.' muted; Wait-Back; return }
     if ($DryRun) {
-        Write-Color '  [dry run] git worktree remove --force (each task, RELEASE\src); folders work\* and RELEASE\ deleted' teal
+        Write-Color "  [dry run] git worktree remove --force (each task, RELEASE$($DirSep)src); folders work$DirSep* and RELEASE$DirSep deleted" teal
         Write-Color '  [dry run] git checkout -B main origin/main; git reset --hard origin/main; git clean -ffdx; local branches and stashes deleted' teal
         Write-Color '  [dry run] repair (toolchain, crates, Firestorm)' teal
         Wait-Back; return
     }
 
     $repo = $Paths.Repo
-    Write-Title 'Agent tasks and RELEASE\'
+    Write-Title "Agent tasks and RELEASE$DirSep"
     foreach ($w in $inv.Worktrees) {
         git -C $repo worktree remove --force $w.Path 2>$null
         if (Test-Path -LiteralPath $w.Path) { Remove-Item -LiteralPath $w.Path -Recurse -Force -ErrorAction SilentlyContinue }
@@ -148,6 +153,6 @@ function Invoke-Reset {
     Invoke-Repair $Paths
     Write-Host ''
     Write-Aurora '  » Repository reset.'
-    Write-Color '    Close and reopen aurora-tools.cmd to use the tools of this main.' muted
+    Write-Color "    Close and reopen $LauncherName to use the tools of this main." muted
     Wait-Back
 }

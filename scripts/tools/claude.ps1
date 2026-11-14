@@ -37,6 +37,13 @@ $ClaudeAllowRules = @(
     'PowerShell(./scripts/pr-captures.ps1 *)'
     'PowerShell(./scripts/issue-board.ps1 *)'
 )
+# On Linux the agents have no PowerShell tool: the same commands go through the
+# Bash tool, the scripts of the repository through pwsh.
+if ($IsLinux) {
+    $ClaudeAllowRules = @($ClaudeAllowRules | ForEach-Object {
+        $_ -replace '^PowerShell\(\./scripts/', 'Bash(pwsh ./scripts/' -replace '^PowerShell\(', 'Bash('
+    })
+}
 # For the classifier, should one of these commands still reach it (a listing
 # piped into a PowerShell loop does not match the allow rule). One rule per
 # subject: a settings file that already has the first ones only gains the new.
@@ -49,6 +56,8 @@ $ClaudeAutoModeRules = @(
     'In the Aurora-Viewer repository, publishing the demo captures of a pull request with scripts/pr-captures.ps1 is allowed: the script only pushes image files to the dedicated captures branch, never to main (AGENTS.md, section 12).'
     'In the Aurora-Viewer repository, reading the team''s project board and moving the Status of an issue of that repository on it (adding the issue to the board if needed) with scripts/issue-board.ps1 is allowed: tracking the issues on the board is part of the agents'' work, and the script never changes the Priority or the milestone (AGENTS.md, section 15).'
 )
+
+if ($IsLinux) { $ClaudeAutoModeRules = @($ClaudeAutoModeRules | ForEach-Object { $_ -replace 'in PowerShell', 'in the shell' }) }
 
 function Get-ClaudeSettingsFile {
     $dir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }

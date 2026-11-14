@@ -1089,7 +1089,9 @@ git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
 the Legacy Viewer sources next to the repository, and download the Rust
-toolchain and the crates. Then, driven by the keyboard: release /
+toolchain and the crates. On Linux, `aurora-tools.sh` is the same tool (see
+[Installing on Linux](docs/LINUX.md#development-environment)). Then, driven by
+the keyboard: release /
 dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
 Windows notifications, releases (see
 [HUMANS.md](HUMANS.md)).

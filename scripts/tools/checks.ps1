@@ -28,7 +28,83 @@ function Get-CommonScript($P) {
     }
 }
 
+# What Linux package manager this machine has, among those docs/LINUX.md covers.
+function Get-LinuxPackageManager {
+    foreach ($m in 'pacman', 'apt') { if (Get-Command $m -CommandType Application -ErrorAction SilentlyContinue) { return $m } }
+}
+
+# Linux: the build tools of docs/LINUX.md ("Building from source") not on PATH.
+function Get-MissingBuildTools {
+    @('cc', 'cmake', 'clang', 'pkg-config' | Where-Object { -not (Get-Command $_ -CommandType Application -ErrorAction SilentlyContinue) })
+}
+
+# Linux: what the tools use from the desktop and Windows always has (open a
+# folder or a link, notify, copy). On a machine without a display, nothing.
+function Get-MissingDesktopTools {
+    if (-not ($env:WAYLAND_DISPLAY -or $env:DISPLAY)) { return @() }
+    $has = { param($c) [bool](Get-Command $c -CommandType Application -ErrorAction SilentlyContinue) }
+    @(
+        if (-not (& $has 'xdg-open')) { 'xdg-open' }
+        if (-not (& $has 'notify-send')) { 'notify-send' }
+        if ($env:WAYLAND_DISPLAY) { if (-not (& $has 'wl-copy')) { 'wl-copy' } }
+        elseif (-not ((& $has 'xclip') -or (& $has 'xsel'))) { 'xclip' }
+    )
+}
+
+# The packages of a tool on Linux, named by its winget id (see Install-Tool);
+# the build packages are those of docs/LINUX.md. $null: the package manager has
+# no such package, or there is no package manager the tools know.
+function Get-LinuxPackages([string]$Id) {
+    $packages = @{
+        pacman = @{
+            'Git.Git' = 'git'; 'GitHub.cli' = 'github-cli'; 'Rustlang.Rustup' = 'rustup'; 'Mozilla.sccache' = 'sccache'
+            'xdg-open' = 'xdg-utils'; 'notify-send' = 'libnotify'; 'wl-copy' = 'wl-clipboard'; 'xclip' = 'xclip'
+            'BuildTools' = 'base-devel', 'cmake', 'clang', 'pkgconf', 'alsa-lib', 'libxkbcommon', 'wayland', 'libx11', 'libxcursor', 'libxrandr', 'libxi', 'vulkan-icd-loader'
+        }
+        apt = @{
+            'Git.Git' = 'git'; 'GitHub.cli' = 'gh'; 'Mozilla.sccache' = 'sccache'
+            'xdg-open' = 'xdg-utils'; 'notify-send' = 'libnotify-bin'; 'wl-copy' = 'wl-clipboard'; 'xclip' = 'xclip'
+            'BuildTools' = 'build-essential', 'cmake', 'clang', 'pkg-config', 'libasound2-dev', 'libudev-dev', 'libxkbcommon-dev', 'libwayland-dev'
+        }
+    }
+    $manager = Get-LinuxPackageManager
+    if (-not $manager) { return }
+    if ($Id -eq 'DesktopTools') { Get-MissingDesktopTools | ForEach-Object { $packages[$manager][$_] } }
+    else { $packages[$manager][$Id] }
+}
+
+# The "What I do" column for a missing tool.
+function Get-InstallText([string]$Id, [string]$What, [string]$Windows) {
+    if (-not $IsLinux) { return $Windows }
+    if ($Id -eq 'Rustlang.Rustup' -and -not (Get-LinuxPackages $Id)) { return 'installed with rustup.rs (for your account)' }
+    $manager = Get-LinuxPackageManager
+    if ($manager) { "installed with $manager (sudo)" } else { "$What to install by hand" }
+}
+
+# Linux side of Install-Tool: the machine's package manager, through sudo where
+# Windows shows its permission window. rustup is per user without a package.
+function Install-LinuxTool([string]$Id, [string]$What) {
+    $packages = @(Get-LinuxPackages $Id)
+    if ($Id -eq 'Rustlang.Rustup' -and -not $packages) {
+        Write-Color "  Installing $What…" muted
+        sh -c 'curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
+    } elseif (-not $packages) {
+        throw "$What is missing, and this machine has neither pacman nor apt: install it by hand."
+    } else {
+        Write-Color "  Installing $What (sudo may ask for your password)…" muted
+        switch (Get-LinuxPackageManager) {
+            'pacman' { sudo pacman -S --needed --noconfirm @packages }
+            'apt' {
+                sudo apt-get update
+                if ($LASTEXITCODE -eq 0) { sudo apt-get install -y @packages }
+            }
+        }
+    }
+    if ($LASTEXITCODE -ne 0) { throw "installing $What (code $LASTEXITCODE)." }
+}
+
 function Get-MsvcName {
+    if ($IsLinux) { return }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
         & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName | Select-Object -First 1
@@ -42,15 +118,24 @@ function Get-Checks($P, [switch]$Offline) {
     $add = { param($r) [void]$rows.Add($r) }
 
     $git = if (Get-Command git -ErrorAction SilentlyContinue) { (git --version) -replace '^git version\s+', '' -replace '\.windows.*$', '' }
-    & $add (New-Check git 'Git' $git $(if ($git) { 'ok' } else { 'todo' }) $(if ($git) { 'nothing to do' } else { 'installed with winget, for the whole machine' }))
+    & $add (New-Check git 'Git' $git $(if ($git) { 'ok' } else { 'todo' }) $(if ($git) { 'nothing to do' } else { Get-InstallText 'Git.Git' 'Git' 'installed with winget, for the whole machine' }))
     $gh = if (Get-Command gh -ErrorAction SilentlyContinue) { (gh --version | Select-Object -First 1) -replace '^gh version\s+(\S+).*$', '$1' }
-    & $add (New-Check gh 'GitHub CLI' $gh $(if ($gh) { 'ok' } else { 'todo' }) $(if ($gh) { 'nothing to do' } else { 'installed with winget, for the whole machine' }))
-    $msvc = Get-MsvcName
-    & $add (New-Check msvc 'Visual Studio C++ tools' $msvc $(if ($msvc) { 'ok' } else { 'todo' }) $(if ($msvc) { 'nothing to do' } else { 'installed with winget (several GB)' }))
+    & $add (New-Check gh 'GitHub CLI' $gh $(if ($gh) { 'ok' } else { 'todo' }) $(if ($gh) { 'nothing to do' } else { Get-InstallText 'GitHub.cli' 'GitHub CLI' 'installed with winget, for the whole machine' }))
+    if ($IsLinux) {
+        $missing = Get-MissingBuildTools
+        if ($missing) { & $add (New-Check build 'Build tools' "without $($missing -join ', ')" stale (Get-InstallText 'BuildTools' 'the build tools' '')) }
+        else { & $add (New-Check build 'Build tools' 'cc, cmake, clang, pkg-config' ok 'nothing to do') }
+        $missing = Get-MissingDesktopTools
+        if ($missing) { & $add (New-Check desktop 'Desktop tools' "without $($missing -join ', ')" stale (Get-InstallText 'DesktopTools' 'the desktop tools' '')) }
+        else { & $add (New-Check desktop 'Desktop tools' 'links, notifications, clipboard' ok 'nothing to do') }
+    } else {
+        $msvc = Get-MsvcName
+        & $add (New-Check msvc 'Visual Studio C++ tools' $msvc $(if ($msvc) { 'ok' } else { 'todo' }) $(if ($msvc) { 'nothing to do' } else { 'installed with winget (several GB)' }))
+    }
 
     $rustup = if (Get-Command rustup -ErrorAction SilentlyContinue) { (rustup --version 2>$null) -replace '^rustup\s+(\S+).*$', 'rustup $1' }
     if (-not $rustup) {
-        & $add (New-Check rust 'Rust' $null todo 'installed with winget (rustup, for your account)')
+        & $add (New-Check rust 'Rust' $null todo (Get-InstallText 'Rustlang.Rustup' 'rustup' 'installed with winget (rustup, for your account)'))
     } elseif (-not $Offline -and ((rustup check 2>$null) -match '^stable.*Update available')) {
         & $add (New-Check rust 'Rust' "$rustup, stable behind" stale 'stable version updated')
     } else {
@@ -91,7 +176,7 @@ function Get-Checks($P, [switch]$Offline) {
     }
 
     $work = Test-Path $P.Work
-    & $add (New-Check work 'work\ folder (tasks)' $(if ($work) { 'present' }) $(if ($work) { 'ok' } else { 'todo' }) $(if ($work) { 'nothing to do' } else { 'created' }))
+    & $add (New-Check work "work$DirSep folder (tasks)" $(if ($work) { 'present' }) $(if ($work) { 'ok' } else { 'todo' }) $(if ($work) { 'nothing to do' } else { 'created' }))
     & $add (New-Check crates 'Rust toolchain and crates' $null always 'installed or updated (cargo fetch)')
 
     # shared compiler cache of the worktrees (scripts/common.ps1)
@@ -101,7 +186,7 @@ function Get-Checks($P, [switch]$Offline) {
         $sccache = Find-Sccache
         $wired = Test-Path (Join-Path $P.Root '.cargo\config.toml')
         if (-not $sccache) {
-            & $add (New-Check sccache 'Compiler cache (sccache)' $null todo 'installed with winget (for your account), shared by the tasks')
+            & $add (New-Check sccache 'Compiler cache (sccache)' $null todo (Get-InstallText 'Mozilla.sccache' 'sccache' 'installed with winget (for your account), shared by the tasks'))
         } elseif (-not $wired) {
             & $add (New-Check sccache 'Compiler cache (sccache)' 'installed, not used by Cargo' stale 'set up for the repository and the tasks')
         } else {
@@ -119,7 +204,7 @@ function Get-Checks($P, [switch]$Offline) {
     $email = if ($git) { if ($hasRepo) { git -C $P.Repo config user.email } else { git config --global user.email } }
     & $add (New-Check identity 'Git identity' $email $(if ($email) { 'ok' } else { 'todo' }) $(if ($email) { 'nothing to do' } else { 'your GitHub username + noreply address' }))
 
-    # the --release viewer of RELEASE\ (menu "Release viewer"): information only
+    # the --release viewer of RELEASE/ (menu "Release viewer"): information only
     $version = Join-Path $P.Release 'Aurora-Viewer\version.txt'
     if ($hasRepo -and (Test-Path $version)) {
         # the line after the reported version: "main: <short sha> <subject> (<date>)",
@@ -127,7 +212,7 @@ function Get-Checks($P, [switch]$Offline) {
         $built = if (((Get-Content $version -Encoding UTF8) -join "`n") -match '(?m)^(?:main|PR #\d+) ?: ([0-9a-f]{7,}) ') { $Matches[1] }
         $main = (git -C $P.Repo rev-parse --short origin/main 2>$null)
         $same = $built -and $main -and ($main.StartsWith($built) -or $built.StartsWith($main))
-        & $add (New-Check release 'Release viewer (RELEASE\)' $(if ($same) { 'up to date with main' } else { "commit $built, main is ahead" }) info $(if ($same) { 'nothing to do' } else { 'menu "Release viewer" to rebuild it' }))
+        & $add (New-Check release "Release viewer (RELEASE$DirSep)" $(if ($same) { 'up to date with main' } else { "commit $built, main is ahead" }) info $(if ($same) { 'nothing to do' } else { 'menu "Release viewer" to rebuild it' }))
     }
     , $rows.ToArray()
 }
@@ -143,6 +228,7 @@ function Update-SessionPath {
 }
 
 function Install-Tool([string]$Id, [string]$What, [string[]]$Extra = @()) {
+    if ($IsLinux) { Install-LinuxTool $Id $What; return }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw "$What is missing, and winget (the Windows package manager) is not available: install it by hand."
     }
@@ -160,7 +246,10 @@ function Invoke-Repair($P) {
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { Install-Tool 'GitHub.cli' 'GitHub CLI' @('--scope', 'machine') }
     # Rust on Windows links with the Visual Studio C++ tools (MSVC and the
     # Windows SDK): install them before Rust.
-    if (-not (Get-MsvcName)) {
+    if ($IsLinux) {
+        if (Get-MissingBuildTools) { Install-Tool 'BuildTools' 'the build tools' }
+        if (Get-MissingDesktopTools) { Install-Tool 'DesktopTools' 'the desktop tools' }
+    } elseif (-not (Get-MsvcName)) {
         Install-Tool 'Microsoft.VisualStudio.BuildTools' 'the Visual Studio C++ tools' @(
             '--override', '--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended')
     }
@@ -168,12 +257,12 @@ function Invoke-Repair($P) {
     # without admin rights (%USERPROFILE%\.cargo and .rustup).
     if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
         Install-Tool 'Rustlang.Rustup' 'Rust (rustup)'
-        $env:Path += ";$env:USERPROFILE\.cargo\bin"
+        if ($IsLinux) { $env:PATH += ":$HOME/.cargo/bin" } else { $env:Path += ";$env:USERPROFILE\.cargo\bin" }
         if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
             throw 'rustup not found after its installation: open a new window and run it again.'
         }
     }
-    Write-Color '  Git, GitHub CLI, C++ tools and Rust: OK.' success
+    Write-Color "  Git, GitHub CLI, $(if ($IsLinux) { 'build tools' } else { 'C++ tools' }) and Rust: OK." success
 
     Write-Title 'Aurora Viewer repository'
     New-Item -ItemType Directory -Force -Path $P.Root -ErrorAction Stop | Out-Null
@@ -223,6 +312,12 @@ function Invoke-Repair($P) {
     . (Get-CommonScript $P)
     if (-not (Find-Sccache)) {
         try { Install-Tool 'Mozilla.sccache' 'sccache' } catch { Write-Color "  Not installed ($($_.Exception.Message)): the builds work without it." warn }
+    } elseif ($IsLinux) {
+        # silent like winget's: only when sudo needs no password right now
+        switch (Get-LinuxPackageManager) {
+            'pacman' { sudo -n pacman -S --needed --noconfirm sccache *> $null }
+            'apt' { sudo -n apt-get install -y --only-upgrade sccache *> $null }
+        }
     } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
         # nothing to do when it is up to date; refused while a build uses it
         winget upgrade --id Mozilla.sccache --exact --source winget --accept-package-agreements --accept-source-agreements *> $null
