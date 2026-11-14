@@ -3095,18 +3095,68 @@ pub fn rail_row(
     on: bool,
     depth: usize,
 ) -> egui::Response {
+    rail_tree_row(ui, p, icon, tint, label, count, on, depth, None).0
+}
+
+/// Width the disclosure caret of `rail_tree_row` adds before the icon.
+const RAIL_CARET_ROOM: f32 = 18.0;
+/// Size of that caret, the one of the Inventory sidebar.
+const RAIL_CARET: f32 = 13.0;
+
+/// `rail_row` for a folder of a tree (the Places rail): when `open` is
+/// `Some`, the folder has sub-folders and a `disclosure_caret` comes before
+/// its icon, as in the Inventory sidebar. The caret is its own click target,
+/// returned beside the row: a click on it folds or unfolds, a click on the
+/// rest of the row chooses the folder.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_tree_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+    open: Option<bool>,
+) -> (egui::Response, Option<egui::Response>) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    let caret_center = egui::pos2(x + 8.0, rect.center().y);
+    // Registered after the row, so it is the one a click on the caret reaches.
+    let caret = open.map(|open| {
+        let caret = ui.interact(
+            egui::Rect::from_center_size(caret_center, Vec2::splat(RAIL_CARET + 6.0)),
+            resp.id.with("rail_caret"),
+            Sense::click(),
+        );
+        caret.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), open, label));
+        caret
+    });
     if !ui.is_rect_visible(rect) {
-        return resp;
+        return (resp, caret);
     }
     let radius = ui.visuals().window_corner_radius;
     if on {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() {
+    } else if resp.hovered() || caret.as_ref().is_some_and(|c| c.hovered()) {
         ui.painter().rect_filled(rect, radius, p.raised);
     }
-    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    let x = match (open, &caret) {
+        (Some(open), Some(c)) => {
+            let color = if c.hovered() {
+                p.ink
+            } else if on {
+                p.violet_pale
+            } else {
+                p.muted_dim
+            };
+            paint_glyph(ui.painter(), disclosure_caret(open), caret_center, RAIL_CARET, color);
+            x + RAIL_CARET_ROOM
+        }
+        _ => x,
+    };
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -3135,7 +3185,7 @@ pub fn rail_row(
         let w = g.size().x;
         paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
     }
-    resp
+    (resp, caret)
 }
 
 /// The margin that puts the capitals of a text field in `font` in the middle

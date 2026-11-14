@@ -19,6 +19,8 @@ pub const LANDMARKS_FOLDER: u128 = 12;
 pub const FAVORITES_FOLDER: u128 = 20;
 /// A sub-folder of the landmarks.
 pub const SHOPS_FOLDER: u128 = 30;
+/// Nested under Shopping so the Places rail shows a disclosure caret in demo.
+pub const SHOPS_OUTLETS_FOLDER: u128 = 31;
 /// Two more of `AURORA_DEMO_MAP=landmarks`.
 pub const CLUBS_FOLDER: u128 = 32;
 pub const BEACHES_FOLDER: u128 = 33;
@@ -294,7 +296,7 @@ fn landmarks() -> &'static Vec<(u128, &'static str, (u32, u32), [f32; 3], i64)> 
                 1_750_000_000,
             ),
             (
-                SHOPS_FOLDER,
+                SHOPS_OUTLETS_FOLDER,
                 aurora_i18n::tr!("common-plaza-market"),
                 (1000, 1000),
                 [128.0, 128.0, 25.0],
@@ -502,6 +504,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         LANDMARKS_FOLDER,
         FAVORITES_FOLDER,
         SHOPS_FOLDER,
+        SHOPS_OUTLETS_FOLDER,
         CLUBS_FOLDER,
         BEACHES_FOLDER,
         WALKS_FOLDER,
@@ -526,6 +529,9 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
             v.push(sub(MARKETS_FOLDER, aurora_i18n::tr!("demo-map-markets")));
         }
         v
+    } else if n == SHOPS_FOLDER {
+        // Nested child so the rail can show expand/collapse without AURORA_DEMO_MAP=landmarks.
+        vec![sub(SHOPS_OUTLETS_FOLDER, aurora_i18n::tr!("demo-map-outlets"))]
     } else {
         Vec::new()
     };

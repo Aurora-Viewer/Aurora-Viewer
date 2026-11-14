@@ -1829,6 +1829,7 @@ demo-place-wolf-s-workshop = Atelier du Loup
 demo-map-clubs = Clubs
 demo-map-walks = Balades
 demo-map-markets = Marchés
+demo-map-outlets = Magasins d'usine
 demo-map-beaches = Plages
 demo-map-club = Club { $n }
 demo-map-beach = Plage { $n }
