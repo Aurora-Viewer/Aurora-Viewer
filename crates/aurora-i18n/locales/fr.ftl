@@ -14443,6 +14443,36 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+wearable-favorites-all = Tous les favoris
+wearable-favorites-empty = Faites glisser les objets ici pour les ajouter à la liste.
+wearable-favorites-no-match = Aucun élément ne correspond.
+wearable-favorites-filter = Filtrer les objets
+wearable-favorites-new-folder-tip = Créer un nouveau dossier de favoris
+wearable-favorites-rename-folder-tip = Renommer le dossier de favoris sélectionné
+wearable-favorites-delete-folder-tip = Supprimer le dossier de favoris sélectionné
+wearable-favorites-import = Importer les favoris du Legacy Viewer
+wearable-favorites-import-tip = Ajoute à ces favoris, avec leurs dossiers, des liens vers les objets à porter mis en favoris dans le Legacy Viewer. Rien n'est copié ni déplacé, et les favoris du Legacy Viewer restent tels quels.
+wearable-favorites-options-tip = Options des vêtements préférés
+wearable-favorites-remove-tip = Retirer de la liste des vêtements préférés
+wearable-favorites-sort-name = Trier par nom
+wearable-favorites-sort-recent = Trier par date
+wearable-favorites-sort-type = Trier par type
+wearable-favorites-assign = Assigner au dossier
+wearable-favorites-new-folder-prompt = Saisissez un nom pour le nouveau dossier des vêtements préférés :
+wearable-favorites-new-folder-default = Nouveau dossier
+wearable-favorites-rename-prompt = Saisissez un nouveau nom pour le dossier des vêtements préférés { $name } :
+wearable-favorites-delete-confirm =
+    Supprimer le dossier des vêtements préférés « { $name } » ?
+
+    Seuls le dossier et ses liens sont supprimés. Les éléments d’origine de l’inventaire ne sont pas supprimés.
+wearable-favorites-delete-refused =
+    Le dossier « { $name } » contient des éléments d’origine de l’inventaire, pas seulement des liens : il n’est pas supprimé. Déplacez d’abord les éléments d’origine hors du dossier.
+wearable-favorites-delete-unloaded =
+    Le dossier « { $name } » n’a pas fini de se charger : il n’est pas supprimé. Attendez que son contenu soit chargé, puis réessayez.
+wearable-favorites-invalid-name =
+    Impossible de créer le dossier des vêtements préférés « { $name } ».
+    Les noms de dossier ne peuvent pas contenir / ou \.
+
 # Parcel radio state and stream failures
 music-state-error = Lecture impossible : { $reason }
 music-error-web-page = Cette page web ne propose aucun flux radio

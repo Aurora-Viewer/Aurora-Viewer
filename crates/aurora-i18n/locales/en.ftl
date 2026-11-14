@@ -14440,6 +14440,36 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
+wearable-favorites-all = All Favorites
+wearable-favorites-empty = Drag wearable items here to add to list.
+wearable-favorites-no-match = No matching items found.
+wearable-favorites-filter = Filter Wearables
+wearable-favorites-new-folder-tip = Create new favorites folder
+wearable-favorites-rename-folder-tip = Rename selected favorites folder
+wearable-favorites-delete-folder-tip = Delete selected favorites folder
+wearable-favorites-import = Import favourites from the Legacy Viewer
+wearable-favorites-import-tip = Links the wearables favourited in the Legacy Viewer into these favourites, with their folders. Nothing is copied or moved, and the Legacy Viewer's favourites stay as they are.
+wearable-favorites-options-tip = Wearable favorites options
+wearable-favorites-remove-tip = Remove wearable from favorites list
+wearable-favorites-sort-name = Sort by name
+wearable-favorites-sort-recent = Sort by most recent
+wearable-favorites-sort-type = Sort by type name
+wearable-favorites-assign = Assign to Folder
+wearable-favorites-new-folder-prompt = Enter a name for the new Favorite Wearables folder:
+wearable-favorites-new-folder-default = New Folder
+wearable-favorites-rename-prompt = Enter a new name for Favorite Wearables folder { $name }:
+wearable-favorites-delete-confirm =
+    Delete Favorite Wearables folder "{ $name }"?
+
+    This removes the folder and its favorite links only. Original inventory items are not deleted.
+wearable-favorites-delete-refused =
+    The folder "{ $name }" holds original inventory items, not only links, so it is not deleted. Move the originals out of it first.
+wearable-favorites-delete-unloaded =
+    The folder "{ $name }" has not finished loading, so it is not deleted. Wait for its contents to load, then try again.
+wearable-favorites-invalid-name =
+    Could not create Favorite Wearables folder "{ $name }".
+    Folder names cannot contain / or \.
+
 # Parcel radio state and stream failures
 music-state-error = Can't play: { $reason }
 music-error-web-page = This web page offers no radio stream

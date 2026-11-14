@@ -14360,6 +14360,36 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
+wearable-favorites-all = 全てのお気に入り
+wearable-favorites-empty = 装着可能な着用物やＨＵＤをドラッグしてリストに追加します。
+wearable-favorites-no-match = アイテムが見つかりませんでした。
+wearable-favorites-filter = フィルタ
+wearable-favorites-new-folder-tip = 新しいお気に入りフォルダを作成
+wearable-favorites-rename-folder-tip = 選択したお気に入りフォルダの名前を変更
+wearable-favorites-delete-folder-tip = 選択したお気に入りフォルダを削除
+wearable-favorites-import = Legacy Viewerのお気に入りをインポート
+wearable-favorites-import-tip = Legacy Viewerでお気に入りにした着用物へのリンクを、フォルダごとこのお気に入りに追加します。コピーや移動は行わず、Legacy Viewerのお気に入りはそのまま残ります。
+wearable-favorites-options-tip = お気に入りのオプション
+wearable-favorites-remove-tip = お気に入りをリストから削除
+wearable-favorites-sort-name = 名前で並べ替え
+wearable-favorites-sort-recent = 新しい順に並べ替え
+wearable-favorites-sort-type = 種類で並べ替え
+wearable-favorites-assign = フォルダに割り当て
+wearable-favorites-new-folder-prompt = 新しいお気に入りの着用物のフォルダ名を入力してください：
+wearable-favorites-new-folder-default = 新しいフォルダ
+wearable-favorites-rename-prompt = お気に入りの着用物のフォルダ「{ $name }」の新しい名前を入力してください：
+wearable-favorites-delete-confirm =
+    お気に入りの着用物のフォルダ「{ $name }」を削除してもよろしいですか？
+
+    フォルダとその中のお気に入りリンクのみが削除されます。元のインベントリアイテムは削除されません。
+wearable-favorites-delete-refused =
+    フォルダ「{ $name }」にはリンクだけでなく元のインベントリアイテムが入っているため、削除されません。先に元のアイテムをフォルダの外へ移動してください。
+wearable-favorites-delete-unloaded =
+    フォルダ「{ $name }」はまだ読み込みが完了していないため、削除されません。内容の読み込みが終わってからもう一度お試しください。
+wearable-favorites-invalid-name =
+    お気に入りの着用物のフォルダ「{ $name }」を作成できませんでした。
+    フォルダ名に「/」または「\」を含めることはできません。
+
 # Parcel radio state and stream failures
 music-state-error = 再生できません：{ $reason }
 music-error-web-page = このウェブページにはラジオのストリームがありません

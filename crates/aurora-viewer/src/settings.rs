@@ -806,6 +806,8 @@ pub struct Settings {
     pub show_appearance: bool,
     /// Crop outfit gallery previews to fill their frames (off: fit the whole image).
     pub appearance_fill_previews: bool,
+    /// The order of the Favorite Wearables list (FSWearableFavoritesSortOrder).
+    pub wearable_favorites_sort: crate::world::wearable_favorites::SortOrder,
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
@@ -2211,6 +2213,7 @@ impl Default for Settings {
             show_inventory: false,
             show_appearance: false,
             appearance_fill_previews: false,
+            wearable_favorites_sort: Default::default(),
             appearance_tab: 0,
             show_ao: false,
             ao: Default::default(),

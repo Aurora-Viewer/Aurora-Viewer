@@ -914,6 +914,10 @@ impl App {
             }
             return;
         }
+        if let crate::world::appearance::Action::Gesture(ids, on) = action {
+            self.gesture_action(crate::ui::gestures::Action::Active(ids, on));
+            return;
+        }
         if let crate::world::appearance::Action::Favorite(id) = action {
             if let Some(it) = self.world.inventory.items.get(&id)
                 && self.appearance_ui.favorite_pending.insert(id)
