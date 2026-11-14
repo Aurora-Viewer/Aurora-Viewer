@@ -805,6 +805,16 @@ pub(super) fn preview(
             if let Some(marker) = edited.copy {
                 st.dialog = Some(EditDialog::CopyEmbedded(id, marker));
             }
+            if let Some(marker) = edited.drag {
+                egui::DragAndDrop::set_payload(
+                    ui.ctx(),
+                    super::NotecardDrag {
+                        editor: st.ui_id,
+                        notecard: id,
+                        marker,
+                    },
+                );
+            }
             let valid_size = st.preview_text.as_ref().is_some_and(|r| {
                 r.as_ref()
                     .is_ok_and(|text| it.asset_type != 7 || aurora_net::inventory::notecard::Notecard::validate_text(text).is_ok())

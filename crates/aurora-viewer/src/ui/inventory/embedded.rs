@@ -21,6 +21,8 @@ pub(super) struct EditorResult {
     pub save: bool,
     pub open: Option<char>,
     pub copy: Option<char>,
+    /// an embedded object dragged out of the text, to rez in the world
+    pub drag: Option<char>,
     pub drop: Option<(usize, Uuid)>,
     #[cfg(test)]
     galley: Option<std::sync::Arc<egui::Galley>>,
@@ -305,11 +307,16 @@ pub(super) fn editor(
             let response = ui.interact(
                 rect.intersect(output.text_clip_rect),
                 id.with(("attachment", index)),
-                egui::Sense::click(),
+                egui::Sense::click_and_drag(),
             );
             // LLViewerTextEditor::handleMouseUp opens items on a single click.
             if response.clicked() {
                 result.open = Some(marker);
+            }
+            // handleHover begins a drag past the threshold. Only an object
+            // has somewhere to go here: the world (dropObject).
+            if response.drag_started() && attachment.item.asset_type == 6 {
+                result.drag = Some(marker);
             }
             response
                 .clone()

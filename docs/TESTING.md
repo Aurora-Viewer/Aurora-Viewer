@@ -10663,6 +10663,11 @@ separate searches enabled and disabled; that preference controls only the text.
   after frame 740. Any added item must be saved before it is opened.
   Landmarks are fetched into the inventory before their place is opened,
   as in Firestorm; a landmark already present for the same asset is reused.
+- `note-rez`: the notecard of `note-embedded`; its object is dragged out
+  of the text from frame 650 and released over the world at frame 680. A
+  new box appears where the pointer let go (RezObjectFromNotecard, the
+  offline simulator rezzes it like any inventory object); the notecard stays
+  open and unchanged. Capture after frame 760.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
   Capture at frame 2250 to inspect the saved message in both the editor and
