@@ -86,11 +86,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                     .char_limit(63),
             );
         } else {
-            ui.add(
-                egui::TextEdit::singleline(&mut tool.ui.notecards.filter)
-                    .desired_width(ui.available_width())
-                    .hint_text(aurora_i18n::tr!("build-layout-filter-notecards")),
-            );
+            {
+                let width = ui.available_width();
+                crate::ui::widgets::search_text_edit(ui, p, &mut tool.ui.notecards.filter, |edit| {
+                    edit.desired_width(width)
+                        .hint_text(aurora_i18n::tr!("build-layout-filter-notecards"))
+                })
+            };
             let filter = tool.ui.notecards.filter.to_lowercase();
             let mut items: Vec<_> = world
                 .inventory
@@ -104,7 +106,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 })
                 .map(|item| (item.id, item.name.clone()))
                 .collect();
-            items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+            items.sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
             egui::ScrollArea::vertical()
                 .id_salt("layout-notecard-list")
                 .max_height(260.0)
@@ -113,7 +115,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                         common::small(ui, p, aurora_i18n::tr!("build-layout-no-notecards"));
                     }
                     for (id, name) in items {
-                        if ui.selectable_label(tool.ui.notecards.selected == Some(id), name).clicked() {
+                        if widgets::search_list_item(ui, tool.ui.notecards.selected == Some(id), name).clicked() {
                             tool.ui.notecards.selected = Some(id);
                         }
                     }

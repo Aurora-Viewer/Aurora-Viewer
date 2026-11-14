@@ -151,7 +151,7 @@ fn run(
             e.tools.file_snapshot.clone_from(&e.source);
             e.tools.file_job = Some(files::open(settings.convert_tabs));
         }
-        Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone())),
+        Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone(), e.lua())),
         Command::Preferences => prefs.preferences.open = true,
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
@@ -160,6 +160,7 @@ fn run(
                 e.source.clone(),
                 settings.external_editor.clone(),
                 settings.convert_tabs,
+                e.lua(),
             ));
         }
         Command::Undo | Command::Redo => {
@@ -182,12 +183,13 @@ fn run(
         }
         Command::Find => prefs.search.begin(ctx, owner, id, text(e)),
         Command::Goto => e.tools.goto = true,
-        Command::Help => ctx.open_url(egui::OpenUrl::new_tab(reference::url(""))),
+        Command::Help => ctx.open_url(egui::OpenUrl::new_tab(reference::url("", e.lua()))),
         Command::Keyword => {
             e.tools.help.open = true;
             e.tools.help.visit(editing::word(
                 if e.tools.processed { &e.tools.processed_source } else { &e.source },
                 editing::cursor(ctx, id).primary.index.0,
+                e.lua(),
             ));
         }
         Command::Library => e.tools.library = true,
@@ -381,6 +383,34 @@ fn header(
     }
 }
 
+/// The compile target picker (panel_script_ed.xml `compile_target`, in its
+/// order). The Lua targets need a region with SLua, as
+/// LLScriptEdCore::postBuild enables them from LuaScriptsEnabled.
+fn compile_target(ui: &mut egui::Ui, e: &mut Editor) {
+    use aurora_net::scripts::CompileTarget;
+    let label = |t: CompileTarget| match t {
+        CompileTarget::Mono => aurora_i18n::tr!("script-target-mono"),
+        CompileTarget::Lsl2 => aurora_i18n::tr!("script-target-lsl2"),
+        CompileTarget::LslLuau => aurora_i18n::tr!("script-target-lsl-luau"),
+        CompileTarget::Luau => aurora_i18n::tr!("script-target-luau"),
+    };
+    egui::ComboBox::from_id_salt(("script_compile_target", e.target.object, e.target.item))
+        .selected_text(label(e.compile))
+        .show_ui(ui, |ui| {
+            for t in [
+                CompileTarget::Mono,
+                CompileTarget::Lsl2,
+                CompileTarget::LslLuau,
+                CompileTarget::Luau,
+            ] {
+                let lua = matches!(t, CompileTarget::LslLuau | CompileTarget::Luau);
+                ui.add_enabled_ui(!lua || e.lua_scripts, |ui| ui.selectable_value(&mut e.compile, t, label(t)));
+            }
+        })
+        .response
+        .on_hover_text(aurora_i18n::tr!("script-target-hint"));
+}
+
 fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut Vec<Action>) {
     let ctx = ui.ctx().clone();
     ui.horizontal(|ui| {
@@ -388,8 +418,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.label(
             RichText::new(aurora_i18n::tr!(
                 "script-position",
-                line = e.tools.position.0 as i64,
-                column = e.tools.position.1 as i64
+                line = (e.tools.position.0 + e.first_line()) as i64,
+                column = (e.tools.position.1 + e.first_line()) as i64
             ))
             .small()
             .color(p.muted),
@@ -423,7 +453,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.add_enabled_ui(
             e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
             |ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                compile_target(ui, e);
             },
         );
     });
@@ -458,7 +488,8 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
                 {
                     e.tools.processed = e.tools.diagnostics_processed && !e.tools.processed_source.is_empty();
                     let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
-                    let at = editing::line_cursor(text, line, column);
+                    // LLScriptEdCore::onErrorList: a Lua error's line counts from 1
+                    let at = editing::line_cursor(text, line.saturating_sub(e.first_line()), column);
                     editing::select(&ctx, visible_id(id, e.tools.processed), at..at, true);
                     e.tools.scroll_to_cursor = true;
                 }
@@ -542,8 +573,11 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                         ui.horizontal_top(|ui| {
                             let (gutter, _) = ui.allocate_exact_size(Vec2::new(56.0, 1.0), egui::Sense::hover());
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
+                            let lua = e.lua();
                             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                                let mut job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                let mut job = e
+                                    .highlighter
+                                    .custom(text.as_str(), p, font.clone(), settings, &query, insensitive, lua);
                                 // panel_script_ed.xml enables wrapping; only the visual rows change.
                                 job.wrap.max_width = if settings.word_wrap { wrap } else { f32::INFINITY };
                                 e.folding.sync(text.as_str());
@@ -619,7 +653,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             );
                             let painter = ui.painter().with_clip_rect(clip);
                             painter.rect_filled(clip, 0.0, settings.color(ColorRole::Background, p));
-                            let mut line = 0;
+                            let mut line = e.first_line();
                             let mut line_start = true;
                             for row in &output.galley.rows {
                                 let y = output.galley_pos.y + row.pos.y;
@@ -632,7 +666,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                         egui::Align2::RIGHT_TOP,
                                         line.to_string(),
                                         font.clone(),
-                                        if line == e.tools.position.0 {
+                                        if line == e.tools.position.0 + e.first_line() {
                                             settings.color(ColorRole::Cursor, p)
                                         } else {
                                             p.muted
@@ -654,7 +688,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             e.folding.draw(ui, p, id, &output, left);
                             if let Some(pos) = output.response.hover_pos() {
                                 let at = output.galley.cursor_from_pos(pos - output.galley_pos).index.0;
-                                if let Some(entry) = reference::get(editing::word(text, at)) {
+                                if let Some(entry) = reference::get(editing::word(text, at, lua), lua) {
                                     (*output.response)
                                         .clone()
                                         .on_hover_text(format!("{}\n{}", entry.signature, entry.tooltip));
@@ -667,6 +701,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
 }
 
 fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
+    let lua = e.lua();
     let mut chosen = None;
     ui.add_enabled_ui(
         e.loaded && e.can_edit && e.saving.is_none() && !e.tools.processed && !e.colors.active(),
@@ -678,12 +713,11 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
                     super::focus::claim(ui.ctx(), ui.layer_id(), id);
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
-                            .id(id.with("insert_filter"))
+                    let field = crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| {
+                        edit.id(id.with("insert_filter"))
                             .desired_width(260.0)
-                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
-                    );
+                            .hint_text(aurora_i18n::tr!("script-insert-filter"))
+                    });
                     if !e.tools.insertion_open {
                         field.request_focus();
                     }
@@ -696,7 +730,7 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                     let filter = e.tools.insert_filter.trim().to_lowercase();
                     results.show(ui, |ui| {
                         let mut found = false;
-                        for entry in reference::all()
+                        for entry in reference::all(lua)
                             .iter()
                             .filter(|e| e.group == "functions" && e.name.to_lowercase().contains(&filter))
                         {
@@ -742,6 +776,7 @@ pub(super) fn dialogs(
     }
     let original_id = id;
     let id = visible_id(id, e.tools.processed);
+    e.tools.help.lua = e.lua();
     if e.tools.help.show(
         ctx,
         p,
@@ -762,7 +797,11 @@ pub(super) fn dialogs(
         .fixed()
         .show(ctx, p, &mut open, |ui| {
             ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("script-goto-line"));
+                ui.label(if e.lua() {
+                    aurora_i18n::tr!("script-goto-line-lua")
+                } else {
+                    aurora_i18n::tr!("script-goto-line")
+                });
                 let input = ui.add(crate::ui::widgets::restricted_number(
                     egui::DragValue::new(&mut e.tools.goto_line).range(0..=usize::MAX),
                     crate::ui::widgets::TextPolicy::Digits,
@@ -771,7 +810,7 @@ pub(super) fn dialogs(
                     || (input.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)))
                 {
                     let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
-                    let at = editing::line_cursor(text, e.tools.goto_line, 0);
+                    let at = editing::line_cursor(text, e.tools.goto_line.saturating_sub(e.first_line()), 0);
                     editing::select(ctx, id, at..at, true);
                     e.tools.goto = false;
                     e.tools.scroll_to_cursor = true;
@@ -781,6 +820,7 @@ pub(super) fn dialogs(
         e.tools.goto &= open;
     }
     if e.tools.library {
+        let lua = e.lua();
         Floater::new(
             &format!("{id:?}_library"),
             aurora_i18n::tr!("script-help-library"),
@@ -788,11 +828,11 @@ pub(super) fn dialogs(
             Vec2::new(560.0, 480.0),
         )
         .show(ctx, p, &mut e.tools.library, |ui| {
-            ui.text_edit_singleline(&mut e.tools.insert_filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| edit);
             let filter = e.tools.insert_filter.to_lowercase();
             let mut keyword = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for entry in reference::all().iter().filter(|e| e.name.to_lowercase().contains(&filter)) {
+                for entry in reference::all(lua).iter().filter(|e| e.name.to_lowercase().contains(&filter)) {
                     if ui
                         .selectable_label(false, RichText::new(&entry.signature).monospace())
                         .on_hover_text(&entry.tooltip)
@@ -823,7 +863,7 @@ pub(super) fn dialogs(
                 if flat_button(ui, p, aurora_i18n::tr!("script-menu-revert")).clicked() {
                     let end = e.source.chars().count();
                     editing::replace(ctx, original_id, &mut e.source, 0..end, &e.baseline);
-                    e.mono = e.baseline_mono;
+                    e.compile = e.baseline_compile;
                     e.experience.selected = e.experience.baseline;
                     e.tools.revert = false;
                 }
@@ -1005,14 +1045,14 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            editors.open(target, "Script".into(), readable, editable);
+            editors.open(target, "Script".into(), readable, editable, 0);
             let e = &mut editors.documents[0];
             e.can_reset = available;
             if saving {
                 e.saving = Some(super::super::PendingSave {
                     request: Uuid::from_u128(11),
                     source: String::new(),
-                    mono: true,
+                    compile: aurora_net::scripts::CompileTarget::Mono,
                     experience: None,
                     running: false,
                 });
@@ -1088,7 +1128,7 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Wrapping".into(), true, editable).expect("load");
+            let request = editors.open(target, "Wrapping".into(), true, editable, 0).expect("load");
             editors.loaded(request, target, Ok(original.clone()));
             let e = &mut editors.documents[0];
             e.tools.reset_history = false;
@@ -1171,7 +1211,7 @@ mod tests {
                 item: uuid::Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Resize".into(), true, true).unwrap();
+            let request = editors.open(target, "Resize".into(), true, true, 0).unwrap();
             editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
             let e = &mut editors.documents[0];
             let settings = ScriptSettings::default();
@@ -1250,7 +1290,7 @@ mod tests {
             item: uuid::Uuid::from_u128(10),
         };
         let mut editors = super::super::Editors::default();
-        let request = editors.open(target, "Main".into(), true, false).unwrap();
+        let request = editors.open(target, "Main".into(), true, false, 0).unwrap();
         editors.loaded(request, target, Ok("éあ original".into()));
         let e = &mut editors.documents[0];
         let ctx = egui::Context::default();

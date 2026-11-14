@@ -139,6 +139,29 @@ impl ListingsUi {
     /// their order. A listed listing and its version folder never get here:
     /// they cannot move or go to the Trash (`marketplace::Holds`).
     pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool, drag: bool) -> Option<Mutation> {
+        self.guard_inventory_edit(inv, change, cut, drag, None)
+    }
+
+    /// Keep a deletion's originating selection through the merchant question;
+    /// cancellation or a refused edit drops it without changing the inventory.
+    pub fn guard_inventory_delete(
+        &mut self,
+        inv: &Inventory,
+        deletion: super::super::inventory::DeleteRequest,
+    ) -> Option<super::super::inventory::DeleteRequest> {
+        let super::super::inventory::DeleteRequest { change, selection } = deletion;
+        self.guard_inventory_edit(inv, change, false, false, Some(&selection))
+            .map(|change| super::super::inventory::DeleteRequest { change, selection })
+    }
+
+    fn guard_inventory_edit(
+        &mut self,
+        inv: &Inventory,
+        change: Mutation,
+        cut: bool,
+        drag: bool,
+        after_delete: Option<&super::super::inventory::DeleteSelection>,
+    ) -> Option<Mutation> {
         let Some(root) = mp::root(inv) else { return Some(change) };
         if change.operations.iter().any(|operation| {
             let id = match operation {
@@ -190,7 +213,12 @@ impl ListingsUi {
         match prompt.filter(|prompt| self.asks(*prompt)) {
             Some(prompt) => {
                 self.open = true;
-                self.confirm = Some(Confirm::Inventory { change, cut, prompt });
+                self.confirm = Some(Confirm::Inventory {
+                    change,
+                    cut,
+                    prompt,
+                    after_delete: after_delete.map(|selection| std::sync::Arc::new(selection.clone())),
+                });
                 None
             }
             None => Some(change),

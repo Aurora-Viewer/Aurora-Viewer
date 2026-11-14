@@ -106,7 +106,7 @@ impl AnimationExplorer {
             rows.sort_by(|a, b| {
                 let (a, b) = (&self.rows[*a], &self.rows[*b]);
                 let order = match column {
-                    Column::PlayedBy => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    Column::PlayedBy => crate::natural_order::cmp(&a.name, &b.name),
                     Column::Played => b.playing.cmp(&a.playing).then(b.started.cmp(&a.started)),
                     Column::Priority => a.priority.cmp(&b.priority),
                 };

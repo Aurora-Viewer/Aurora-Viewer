@@ -23,8 +23,9 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 30u;
+const BINS: u32 = 31u;
 const BIN_WATER_EXCLUSION: u32 = 29u;
+const BIN_PROBE_SHADOW: u32 = 30u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
@@ -34,18 +35,19 @@ const BIN_SHADOW_ALPHA: u32 = 10u;
 const BIN_SPOT: u32 = 13u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 30u;
-const REGION_PRE2: u32 = 34u;
+const REGION_PRE1: u32 = 31u;
+const REGION_PRE2: u32 = 35u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 30u;
-const COUNT_TRIANGLES: u32 = 31u;
-const COUNT_HIDDEN: u32 = 32u;
-const COUNT_PRE1: u32 = 33u;
-const COUNT_PRE2: u32 = 37u;
+const COUNT_VISIBLE: u32 = 31u;
+const COUNT_TRIANGLES: u32 = 32u;
+const COUNT_HIDDEN: u32 = 33u;
+const COUNT_PRE1: u32 = 34u;
+const COUNT_PRE2: u32 = 38u;
+const COUNT_CLAMPED: u32 = 51u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
-const COUNT_SHADOW: u32 = 41u;
+const COUNT_SHADOW: u32 = 42u;
 const SHADOW_STATS: u32 = 9u;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
@@ -72,7 +74,9 @@ const OBJ_HUD: u32 = 8u;
 const OBJ_NO_PROBE: u32 = 16u;
 const OBJ_POSED: u32 = 32u;
 const OBJ_FIRST_PERSON_HIDDEN: u32 = 64u;
-const OBJ_PHOTO_HIDDEN: u32 = 128u;
+const OBJ_HIDDEN: u32 = 128u;
+// physical (moves on its own): not in the rain's shelter map
+const OBJ_PHYSICAL: u32 = 256u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
@@ -96,6 +100,8 @@ const F_OCCLUSION: u32 = 32u;
 const F_SHADOW_STATS: u32 = 64u;
 // every caster drawn with the alpha test (AURORA_SHADOW_LEGACY)
 const F_SHADOW_ALPHA_ALL: u32 = 128u;
+// the shadow map of the probe being captured is drawn this frame
+const F_PROBE_SHADOW: u32 = 256u;
 // projector shadow map k is drawn
 const F_SPOT: u32 = 65536u;
 const F_WATER_AIR: u32 = 1024u;
@@ -103,6 +109,9 @@ const F_WATER_AIR: u32 = 1024u;
 const F_BLEND_CASTS: u32 = 2048u;
 const F_FIRST_PERSON: u32 = 4096u;
 const F_SHOW_SELF: u32 = 8192u;
+// projector map groups.w is the rain's shelter map: what moves is left out
+// of it
+const F_SPOT_SHELTER: u32 = 16384u;
 
 struct CullFace {
     index_count: u32,
@@ -153,9 +162,13 @@ struct CullFrame {
     water_air: array<vec4<f32>, 6>,
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
+    // xyz the probe capture's origin, w how far it draws objects
+    probe_eye: vec4<f32>,
     // frustums of the projector shadow maps
     spots: array<vec4<f32>, 96>,
     cascades: array<mat4x4<f32>, 3>,
+    // shadow map of the probe being captured (F_PROBE_SHADOW)
+    probe_shadow: mat4x4<f32>,
     // per cascade, SHADOW_PLANES planes (inside: positive) around what can
     // cast a shadow the main view samples in that cascade
     // (gpu_cull::caster_planes)
@@ -169,7 +182,8 @@ struct CullFrame {
     dist: vec4<f32>,
     // x faces, y objects, z slots per bin, w flags
     sizes: vec4<u32>,
-    // x classify workgroups
+    // x classify workgroups, y first-person avatar + 1, z index buffer length,
+    // w the projector map of the rain's shelter (F_SPOT_SHELTER)
     groups: vec4<u32>,
 }
 
@@ -188,7 +202,7 @@ struct OcclParams {
 @group(0) @binding(4) var<storage, read_write> masks: array<u32>;
 // per workgroup and bin: face count, then (after cs_scan) offset
 @group(0) @binding(5) var<storage, read_write> group_data: array<u32>;
-@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 52>;
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 53>;
 // DrawIndexedIndirect: index_count, instance_count, first_index, base_vertex, first_instance
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
@@ -330,6 +344,14 @@ var<workgroup> wg_bins: array<atomic<u32>, BINS>;
 var<workgroup> wg_stats: array<atomic<u32>, 2>;
 var<workgroup> wg_shadow: array<atomic<u32>, SHADOW_STATS>;
 
+// The face's index range fits in the index buffer (frame.groups.z). A face
+// past it is drawn with no index (write_args), counted once per frame in
+// COUNT_CLAMPED (cs_classify) and left out of the triangle statistics.
+fn index_range_fits(f: CullFace) -> bool {
+    let index_limit = frame.groups.z;
+    return f.first_index <= index_limit && f.index_count <= index_limit - f.first_index;
+}
+
 // Bins of face `i` this frame (0: not drawn anywhere).
 fn face_mask(i: u32) -> u32 {
     let f = faces[i];
@@ -338,7 +360,7 @@ fn face_mask(i: u32) -> u32 {
         return 0u;
     }
     let o = objects[f.object];
-    if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & (OBJ_HUD | OBJ_PHOTO_HIDDEN)) != 0u) {
+    if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & (OBJ_HUD | OBJ_HIDDEN)) != 0u) {
         return 0u;
     }
     let is_avatar = (o.flags & OBJ_AVATAR) != 0u;
@@ -363,17 +385,28 @@ fn face_mask(i: u32) -> u32 {
     }
     let fl = frame.sizes.w;
     // LLAgent::needsRenderHead / LLVOAvatarSelf::updateAttachmentVisibility.
-    let in_view = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
-    let casts = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
-    let reflects = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
-    if (!in_view && !casts && !reflects) {
+    let viewed = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
+    let shadow_reach = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
+    let reflect_reach = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
+    // a capture measures from its probe, not from the camera
+    let captured = (fl & F_REFLECTIONS) != 0u && (fl & F_PROBE) != 0u && (o.flags & OBJ_NO_PROBE) == 0u
+        && length(c - frame.probe_eye.xyz) - r < frame.probe_eye.w && sphere_in(frame.probe, c, r);
+    // the rain's shelter map takes all of its square, however far the
+    // shadows reach (a roof beyond them would leave the floor under it
+    // open to the rain, cut at the seams between a building's meshes)
+    let shelter_map = min(frame.groups.w, 15u);
+    let shelters = (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << shelter_map)) != 0u && spot_in(shelter_map, c, r);
+    if (!viewed && !shadow_reach && !reflect_reach && !captured && !shelters) {
         return 0u;
     }
     // tiny objects far away (small object culling)
-    let px = r * frame.dist.z / max(d, 0.1);
-    if (px < 1.5 && !is_avatar) {
+    let large = r * frame.dist.z / max(d, 0.1) >= 1.5 || is_avatar;
+    if (!large && !captured) {
         return 0u;
     }
+    let in_view = viewed && large;
+    let casts = shadow_reach && large;
+    let reflects = reflect_reach && large;
     if (in_view && (f.bits & FACE_FIRST) != 0u) {
         atomicAdd(&wg_stats[0], 1u);
     }
@@ -386,6 +419,7 @@ fn face_mask(i: u32) -> u32 {
         return select(0u, 1u << BIN_WATER_EXCLUSION, allowed);
     }
     var m = 0u;
+    let tris = select(0u, f.index_count / 3u, index_range_fits(f));
     // LLPipeline::renderShadow: blended faces cast too, rigged or not
     // (renderAlphaObjects), with fs_shadow's alpha rules
     let rigged = (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u;
@@ -399,19 +433,36 @@ fn face_mask(i: u32) -> u32 {
             if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r) && !(depth_only && merged_from_finer(k, c, r))) {
                 m |= 1u << (bin + k);
                 if ((fl & F_SHADOW_STATS) != 0u) {
-                    atomicAdd(&wg_shadow[k], f.index_count / 3u);
+                    atomicAdd(&wg_shadow[k], tris);
                     if (rigged) {
                         atomicAdd(&wg_shadow[3u + k], 1u);
-                        atomicAdd(&wg_shadow[6u + k], f.index_count / 3u);
+                        atomicAdd(&wg_shadow[6u + k], tris);
                     }
                 }
             }
         }
     }
+    // casters of the shadow map of the probe being captured: what the capture
+    // draws, around the probe and not the camera
+    if (reflects && (fl & F_PROBE_SHADOW) != 0u && (o.flags & OBJ_NO_PROBE) == 0u
+        && (fp != PASS_BLEND || (fl & F_BLEND_CASTS) != 0u)
+        && in_cascade(frame.probe_shadow, c, r)) {
+        m |= 1u << BIN_PROBE_SHADOW;
+    }
     // casters of the projectors' shadow maps, all drawn with the alpha test
-    if (caster) {
+    // (the shelter map takes blended faces too: a glass roof keeps the rain
+    // off as well as a tiled one)
+    if (caster || shelters) {
+        // the rain's shelter map (projector map groups.w): what stands still
+        // overhead only (an avatar, a rigged mesh, a rolling ball leave no
+        // dry patch)
+        // (an attachment too, rigged or not: horns, hair, a hat; the snow
+        // would settle on it at once, as deep as on the ground)
+        let moves = (o.flags & (OBJ_AVATAR | OBJ_RIGGED | OBJ_PHYSICAL)) != 0u || o.avatar < n;
         for (var k = 0u; k < 16u; k++) {
-            if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r)) {
+            let shelter = k == shelter_map && (fl & F_SPOT_SHELTER) != 0u;
+            let takes = caster || shelter;
+            if (takes && (fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
                 m |= 1u << (BIN_SPOT + k);
             }
         }
@@ -425,13 +476,13 @@ fn face_mask(i: u32) -> u32 {
         if ((fl & F_MIRROR) != 0u && sphere_in(frame.mirror, c, r)) {
             m |= 1u << BIN_REFL_MIRROR;
         }
-        if ((fl & F_PROBE) != 0u && (o.flags & OBJ_NO_PROBE) == 0u && sphere_in(frame.probe, c, r)) {
-            m |= 1u << BIN_PROBE;
-        }
+    }
+    if (captured && solid) {
+        m |= 1u << BIN_PROBE;
     }
     if (in_view && solid) {
         m |= 1u << (fp - PASS_OPAQUE);
-        atomicAdd(&wg_stats[1], f.index_count / 3u);
+        atomicAdd(&wg_stats[1], tris);
     }
     return m;
 }
@@ -457,6 +508,9 @@ fn cs_classify(
     if (i < frame.sizes.x) {
         m = face_mask(i);
         masks[i] = m;
+        if (m != 0u && !index_range_fits(faces[i])) {
+            atomicAdd(&counts[COUNT_CLAMPED], 1u);
+        }
     }
     for (var b = 0u; b < BINS; b++) {
         if (((m >> b) & 1u) != 0u) {
@@ -537,9 +591,15 @@ fn pack_bins(m: u32) -> BinPack {
 
 fn write_args(slot: u32, f: CullFace, rec: u32, instances: u32) {
     let a = slot * 5u;
-    args[a] = f.index_count;
+    var first_index = f.first_index;
+    var index_count = f.index_count;
+    if (!index_range_fits(f)) {
+        first_index = min(first_index, frame.groups.z);
+        index_count = 0u;
+    }
+    args[a] = index_count;
     args[a + 1u] = instances;
-    args[a + 2u] = f.first_index;
+    args[a + 2u] = first_index;
     args[a + 3u] = bitcast<u32>(f.base_vertex);
     args[a + 4u] = rec;
 }

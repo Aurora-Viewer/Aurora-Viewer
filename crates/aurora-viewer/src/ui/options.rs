@@ -7,6 +7,8 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// Aurora's own marked in its gradient, outside Preferences too.
+pub(crate) use pages::aurora::aurora_word;
 mod saved_graphics;
 mod scale;
 
@@ -48,7 +50,9 @@ pub enum Page {
     #[default]
     Graphics,
     Camera,
+    Vr,
     Avatars,
+    Build,
     Chat,
     Sound,
     Media,
@@ -61,6 +65,7 @@ pub enum Page {
     Confirmations,
     Inventory,
     Controls,
+    Gamepad,
     Shortcuts,
     Commands,
     System,
@@ -69,11 +74,13 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 21] = [
+    pub const ALL: [Page; 24] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
+        Page::Vr,
         Page::Avatars,
+        Page::Build,
         Page::Chat,
         Page::Sound,
         Page::Media,
@@ -86,6 +93,7 @@ impl Page {
         Page::Confirmations,
         Page::Inventory,
         Page::Controls,
+        Page::Gamepad,
         Page::Shortcuts,
         Page::Commands,
         Page::System,
@@ -99,7 +107,9 @@ impl Page {
             Page::Aurora => "aurora",
             Page::Graphics => "graphics",
             Page::Camera => "camera",
+            Page::Vr => "vr",
             Page::Avatars => "avatars",
+            Page::Build => "build",
             Page::Chat => "chat",
             Page::Sound => "sound",
             Page::Media => "media",
@@ -112,6 +122,7 @@ impl Page {
             Page::Confirmations => "confirmations",
             Page::Inventory => "inventory",
             Page::Controls => "controls",
+            Page::Gamepad => "gamepad",
             Page::Shortcuts => "shortcuts",
             Page::Commands => "commands",
             Page::System => "system",
@@ -125,7 +136,9 @@ impl Page {
             Page::Aurora => aurora_i18n::tr!("ui-options-aurora"),
             Page::Graphics => aurora_i18n::tr!("ui-options-graphics"),
             Page::Camera => aurora_i18n::tr!("common-camera"),
+            Page::Vr => aurora_i18n::tr!("vr-preferences-title"),
             Page::Avatars => aurora_i18n::tr!("ui-options-avatars"),
+            Page::Build => aurora_i18n::tr!("common-build"),
             Page::Chat => aurora_i18n::tr!("common-chat"),
             Page::Sound => aurora_i18n::tr!("ui-options-sound-and-voice"),
             Page::Media => aurora_i18n::tr!("ui-options-page-media"),
@@ -138,6 +151,7 @@ impl Page {
             Page::Confirmations => aurora_i18n::tr!("ui-options-page-confirmations"),
             Page::Inventory => aurora_i18n::tr!("common-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-page-controls"),
+            Page::Gamepad => aurora_i18n::tr!("joystick-gamepad"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-shortcuts"),
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
@@ -152,7 +166,9 @@ impl Page {
             Page::Aurora => aurora_i18n::tr!("ui-options-aurora-intro"),
             Page::Graphics => aurora_i18n::tr!("ui-options-about-graphics"),
             Page::Camera => aurora_i18n::tr!("ui-options-about-camera"),
+            Page::Vr => aurora_i18n::tr!("vr-preferences-about"),
             Page::Avatars => aurora_i18n::tr!("ui-options-about-avatars"),
+            Page::Build => aurora_i18n::tr!("ui-options-about-build"),
             Page::Chat => aurora_i18n::tr!("ui-options-about-chat"),
             Page::Sound => aurora_i18n::tr!("ui-options-about-sound"),
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
@@ -165,6 +181,7 @@ impl Page {
             Page::Confirmations => aurora_i18n::tr!("ui-options-about-confirmations"),
             Page::Inventory => aurora_i18n::tr!("ui-options-about-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-about-controls"),
+            Page::Gamepad => aurora_i18n::tr!("ui-options-about-gamepad"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"),
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
@@ -178,7 +195,10 @@ impl Page {
             Page::Aurora => "sparkles-filled",
             Page::Graphics => "device-desktop-filled",
             Page::Camera => "camera-filled",
+            Page::Vr => "device-vision-pro-filled",
             Page::Avatars => "user-filled",
+            // the build tools' icon (Command_Build_Icon)
+            Page::Build => "box",
             Page::Chat => "messages-filled",
             Page::Sound => "headset-filled",
             Page::Media => "player-play-filled",
@@ -191,6 +211,7 @@ impl Page {
             Page::Confirmations => "circle-check-filled",
             Page::Inventory => "box",
             Page::Controls => "mouse-filled",
+            Page::Gamepad => "device-gamepad-filled",
             Page::Shortcuts => "keyboard-filled",
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
@@ -284,6 +305,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "auto-accept" => row(Page::Inventory, 0, tr!("received-auto-accept")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
+        "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
         _ => None,
     };
     let audio = match what {
@@ -299,8 +321,15 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         st.open_audio(section);
     } else if what == "reset" {
         st.demo_reset = true;
-    } else if what == "modified" {
+    } else if what == "reset-ask" {
+        st.confirm_reset = Some(ResetAsk::Page(page));
+    } else if what == "reset-all-ask" {
+        st.confirm_reset = Some(ResetAsk::All);
+    } else if what == "modified" || what == "modified-ask" {
         st.modified_view = true;
+        if what == "modified-ask" {
+            st.confirm_reset = Some(ResetAsk::Modified);
+        }
     } else if what == "cogs" {
         st.demo_open_cogs = true;
     } else if what == "system-fonts" || what == "system-fonts-scroll" {
@@ -321,6 +350,16 @@ enum Done {
     /// The settings that differed from their defaults.
     Modified,
     /// Every setting (the app also forgets the windows' layout).
+    All,
+}
+
+/// A reset asked by a button, waiting for its "Reset" in a dialog. `Undo`
+/// still follows it: the dialog is for a slip of the mouse, the undo for a
+/// change of mind.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ResetAsk {
+    Page(Page),
+    Modified,
     All,
 }
 
@@ -347,6 +386,7 @@ pub struct OptionsUi {
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
     pub rlva_sendim_locked: bool,
     pub joystick: crate::joystick::Snapshot,
+    pub vr_default_resolution: Option<[u32; 2]>,
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
@@ -401,6 +441,8 @@ pub struct OptionsUi {
     /// The session's "Show my favorite landmarks at login", while logged in
     /// with an account the login screen remembers (set by the app).
     pub login_favorites: Option<bool>,
+    /// The account's "Show Friends Only", while logged in (set by the app).
+    pub friends_only: Option<bool>,
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
@@ -409,8 +451,8 @@ pub struct OptionsUi {
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
     pub cache_usage: u64,
     pub cache_clearing: bool,
-    /// Detected video memory (MB) and integrated GPU; set by the app.
-    pub vram: (Option<u64>, bool),
+    /// Detected dedicated/shared heaps (MB) and integrated GPU; set by the app.
+    pub vram: (Option<u64>, Option<u64>, bool),
     /// The GPUs that can draw the viewer, the one in use, and why the
     /// dedicated one may not be drawing; set by the app as soon as the
     /// renderer is created, so the login screen has them too (#894). The
@@ -424,6 +466,8 @@ pub struct OptionsUi {
     /// Audio devices (set by the app) and microphone level (0..1).
     pub output_devices: Vec<String>,
     pub input_devices: Vec<String>,
+    /// The device lists are being read again (set by the app).
+    pub devices_listing: bool,
     pub mic_level: f32,
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
@@ -465,8 +509,15 @@ pub struct OptionsUi {
     pub chat_log_status: String,
     /// The transcripts are in a folder the user chose (set by the app).
     pub chat_log_custom: bool,
+    /// The transcripts are in the Legacy layout, shared with the Legacy
+    /// Viewer: no import nor erasing (set by the app).
+    pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// "Reset …?" confirmation open, then the reset it said yes to, done by
+    /// the next pass of the window's body.
+    confirm_reset: Option<ResetAsk>,
+    reset_confirmed: Option<ResetAsk>,
     /// The import of a Legacy Viewer's chat history (set by the app).
     pub chat_import: ChatImportUi,
     /// Files done and files to do of the import under way (set by the app).
@@ -639,6 +690,8 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// "Show my favorite landmarks at login" switched (Privacy).
     pub login_favorites: Option<bool>,
+    /// "Show Friends Only" switched (Controls).
+    pub friends_only: Option<bool>,
     /// "Keep Show Friends Only after teleporting" switched (Controls).
     pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
@@ -706,7 +759,8 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
         Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
         Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
         Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
-        Failure::Unsupported => aurora_i18n::tr!("media-plugins-error-unsupported"),
+        // the media pack goes to the data folder: never a drive root's
+        Failure::Unsupported | Failure::DriveRoot => aurora_i18n::tr!("media-plugins-error-unsupported"),
     }
 }
 
@@ -910,11 +964,7 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
     let changed = super::widgets::segmented(ui, p, &mut selected, &options);
     if current.is_none() && !changed {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-options-preset-custom"))
-                .size(12.0)
-                .color(p.violet_pale),
-        );
+        ui.label(RichText::new(preset_label(s)).size(12.0).color(p.violet_pale));
     }
     match Preset::ALL.get(selected) {
         Some(level) if changed => {
@@ -925,10 +975,31 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     }
 }
 
+/// The line under the level row when no level matches: the Mac's own
+/// default on macOS, "Custom" otherwise.
+fn preset_label(s: &Settings) -> &'static str {
+    if cfg!(target_os = "macos") && crate::graphics_presets::mac_mid_high::matches(s) {
+        aurora_i18n::tr!("ui-options-preset-mac-mid-high")
+    } else {
+        aurora_i18n::tr!("ui-options-preset-custom")
+    }
+}
+
 /// Device combo: "" = system default. Returns (a device was chosen, the
 /// list is unfolded).
-pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
-    named_combo(ui, id, value, devices, width, aurora_i18n::tr!("ui-options-system-default"))
+/// `listing`: the devices are being listed again (off the UI thread); the
+/// list shows the last ones and says so, and the current choice is not
+/// called missing meanwhile.
+pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32, listing: bool) -> (bool, bool) {
+    choice_combo(
+        ui,
+        id,
+        value,
+        devices,
+        width,
+        aurora_i18n::tr!("ui-options-system-default"),
+        listing,
+    )
 }
 
 /// `device_combo` whose empty choice reads `default_label`.
@@ -939,6 +1010,18 @@ pub(super) fn named_combo(
     devices: &[String],
     width: f32,
     default_label: &str,
+) -> (bool, bool) {
+    choice_combo(ui, id, value, devices, width, default_label, false)
+}
+
+fn choice_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    devices: &[String],
+    width: f32,
+    default_label: &str,
+    listing: bool,
 ) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
@@ -955,7 +1038,9 @@ pub(super) fn named_combo(
             for d in devices {
                 changed |= ui.selectable_value(value, d.clone(), d).changed();
             }
-            if !value.is_empty() && !devices.contains(value) {
+            if listing {
+                ui.label(RichText::new(aurora_i18n::tr!("ui-options-listing-devices")).size(12.0).weak());
+            } else if !value.is_empty() && !devices.contains(value) {
                 ui.label(
                     RichText::new(aurora_i18n::tr!("status-value-missing", value = value.to_string()))
                         .size(12.0)
@@ -1057,6 +1142,30 @@ fn run_page(cx: &mut Cx, page: Page, tab: Option<usize>) {
     }
 }
 
+/// What Preferences says of each setting, in the interface's language: its
+/// path (`camera.fov`, with no space), the row's label and its hint. For the
+/// Debug Settings window, whose list is the settings themselves.
+pub fn describe_settings() -> Vec<(String, String, String)> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut s = Settings::default();
+    let d = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut r = OptionsResult::default();
+    let mut out = Vec::new();
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+        for page in Page::ALL {
+            run_page(&mut cx, page, None);
+        }
+        out = std::mem::take(&mut cx.described)
+            .into_iter()
+            .map(|(path, label, hint)| (path.replace(' ', ""), label, hint))
+            .collect();
+    });
+    out
+}
+
 /// The pages counted (modified rows, search hits), nothing drawn.
 fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult) {
     let query = st.query.clone();
@@ -1107,9 +1216,8 @@ fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
             .is_none_or(|(at, query)| now - at >= COUNT_REFRESH || now < *at || *query != st.query)
 }
 
-/// One frame of `body` outside the window (tests), its textures dropped as
-/// a renderer would take them.
-#[cfg(test)]
+/// One frame of `body` outside the window (tests, `describe_settings`), its
+/// textures dropped as a renderer would take them.
 pub(crate) fn run_ui(ctx: &egui::Context, raw: egui::RawInput, body: impl FnMut(&mut egui::Ui)) {
     let mut output = ctx.run_ui(raw, body);
     output.textures_delta.clear();
@@ -1187,6 +1295,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
@@ -1364,7 +1473,13 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
         st.flash_scroll = row.is_some();
     }
     if std::mem::take(&mut st.demo_reset) {
-        reset_page(ui, p, s, d, st, r, now);
+        reset_page(ui, p, s, d, st, r, st.page, now);
+    }
+    match st.reset_confirmed.take() {
+        Some(ResetAsk::Page(page)) => reset_page(ui, p, s, d, st, r, page, now),
+        Some(ResetAsk::Modified) => reset_modified(ui, p, s, d, st, r, now),
+        Some(ResetAsk::All) => reset_all(s, st, r, now),
+        None => {}
     }
     // a row asked by its label (demo, another window): its page first,
     // then `Cx` opens its cog and lights it
@@ -1389,7 +1504,7 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
     sidebar(ui, p, s, d, st, r, side, now);
     let searching = !st.query.trim().is_empty();
     let content_rect = page_area(ui, p, s, d, st, r, main, searching);
-    footer_bar(ui, p, s, d, st, r, footer, searching, close, now);
+    footer_bar(ui, p, st, footer, searching, close);
     undo_bar(ui, p, s, st, r, content_rect);
     st.count_stale = input || r.changed;
 }
@@ -1676,18 +1791,7 @@ fn page_area(
                     )
                     .clicked()
                     {
-                        let before = Box::new(s.clone());
-                        reset_rows(ui, p, s, d, st, r, None);
-                        for page in Page::ALL {
-                            st.after_reset(page, s, r);
-                        }
-                        st.finish_undo(r);
-                        st.undo = Some(Undo {
-                            before,
-                            text: aurora_i18n::tr!("ui-options-modified-were-reset").to_owned(),
-                            shown: ui.input(|i| i.time),
-                            done: Done::Modified,
-                        });
+                        st.confirm_reset = Some(ResetAsk::Modified);
                     }
                 } else {
                     let legacy = action_button(
@@ -1794,19 +1898,7 @@ fn page_area(
     rows
 }
 
-#[allow(clippy::too_many_arguments)]
-fn footer_bar(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    s: &mut Settings,
-    d: &Settings,
-    st: &mut OptionsUi,
-    r: &mut OptionsResult,
-    footer: Rect,
-    searching: bool,
-    close: &mut bool,
-    now: f64,
-) {
+fn footer_bar(ui: &mut egui::Ui, p: &Palette, st: &mut OptionsUi, footer: Rect, searching: bool, close: &mut bool) {
     ui.painter().hline(
         footer.x_range(),
         footer.top() + 0.5,
@@ -1829,25 +1921,14 @@ fn footer_bar(
     )
     .on_hover_text(aurora_i18n::tr!("ui-options-reset-all-settings"));
     if reset_all.clicked() {
-        let before = Box::new(s.clone());
-        s.reset_keeping_account();
-        for page in Page::ALL {
-            st.after_reset(page, s, r);
-        }
-        st.finish_undo(r);
-        st.undo = Some(Undo {
-            before,
-            text: aurora_i18n::tr!("ui-options-all-were-reset").to_owned(),
-            shown: now,
-            done: Done::All,
-        });
+        st.confirm_reset = Some(ResetAsk::All);
     }
     if !searching && !st.modified_view {
         let label = aurora_i18n::tr!("ui-options-reset-page", page = st.page.name());
         let b = action_button(&mut ui, p, "restore", &label, ActionKind::Flat, size)
             .on_hover_text(aurora_i18n::tr!("ui-options-reset-section-help", section = st.page.name()));
         if b.clicked() {
-            reset_page(&mut ui, p, s, d, st, r, now);
+            st.confirm_reset = Some(ResetAsk::Page(st.page));
         }
     }
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1876,9 +1957,106 @@ fn footer_bar(
     });
 }
 
-/// The page shown back to its defaults, with an undo.
-fn reset_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
-    let page = st.page;
+/// "Reset …?": the reset waits for its "Reset" here, and is done by the
+/// next pass of the window's body, which has the rows to run.
+fn reset_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, open: bool) {
+    let Some(ask) = st.confirm_reset.filter(|_| open) else {
+        st.confirm_reset = None;
+        return;
+    };
+    let (title, text): (String, String) = match ask {
+        ResetAsk::Page(page) => (
+            aurora_i18n::tr!("ui-options-reset-section-title", section = page.name()),
+            aurora_i18n::tr!("ui-options-reset-section-text").to_string(),
+        ),
+        ResetAsk::Modified => (
+            aurora_i18n::tr!("ui-options-modified-reset-title").to_string(),
+            aurora_i18n::tr!("ui-options-modified-reset-text").to_string(),
+        ),
+        ResetAsk::All => (
+            aurora_i18n::tr!("ui-options-reset-everything").to_string(),
+            aurora_i18n::tr!("ui-options-reset-everything-text").to_string(),
+        ),
+    };
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_reset_confirm")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
+        ui.add_space(6.0);
+        ui.label(RichText::new(text).size(12.5).color(p.muted));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            use super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(
+                ui,
+                p,
+                "restore",
+                aurora_i18n::tr!("ui-options-reset-confirm"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                st.reset_confirmed = Some(ask);
+                st.confirm_reset = None;
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.confirm_reset = None;
+            }
+        });
+    });
+    if modal.should_close() {
+        st.confirm_reset = None;
+    }
+    if st.reset_confirmed.is_some() {
+        ctx.request_repaint();
+    }
+}
+
+/// Every setting back to its default but the account's, with an undo.
+fn reset_all(s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
+    let before = Box::new(s.clone());
+    s.reset_keeping_account();
+    for page in Page::ALL {
+        st.after_reset(page, s, r);
+    }
+    st.finish_undo(r);
+    st.undo = Some(Undo {
+        before,
+        text: aurora_i18n::tr!("ui-options-all-were-reset").to_owned(),
+        shown: now,
+        done: Done::All,
+    });
+}
+
+/// The settings that differ from their defaults back to them, with an undo.
+fn reset_modified(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
+    let before = Box::new(s.clone());
+    reset_rows(ui, p, s, d, st, r, None);
+    for page in Page::ALL {
+        st.after_reset(page, s, r);
+    }
+    st.finish_undo(r);
+    st.undo = Some(Undo {
+        before,
+        text: aurora_i18n::tr!("ui-options-modified-were-reset").to_owned(),
+        shown: now,
+        done: Done::Modified,
+    });
+}
+
+/// A page back to its defaults, with an undo.
+#[allow(clippy::too_many_arguments)]
+fn reset_page(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut Settings,
+    d: &Settings,
+    st: &mut OptionsUi,
+    r: &mut OptionsResult,
+    page: Page,
+    now: f64,
+) {
     let before = Box::new(s.clone());
     reset_rows(ui, p, s, d, st, r, Some(page));
     st.after_reset(page, s, r);

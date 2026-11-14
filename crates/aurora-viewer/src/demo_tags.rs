@@ -74,6 +74,9 @@ const fn id(n: u128) -> Uuid {
     Uuid::from_u128(0xA0E0_7A65_0000_0000_0000_0000_0000_0000 | n)
 }
 
+/// AURORA_DEMO_CONTACT_MARKERS: who joins its contact sets.
+pub const MARKER_RESIDENTS: [Uuid; 3] = [NOVA, ORION, VEGA];
+
 const NOVA: Uuid = id(1);
 const TESS: Uuid = id(2);
 /// A friend of the demo buddy list.
@@ -453,6 +456,7 @@ pub fn chat_events(time: f64, last: &mut f64) -> Vec<NetEvent> {
                     owner_id: *who,
                     source_type: ChatSourceType::Agent,
                     chat_type: *chat_type,
+                    region: Some(crate::demo::HANDLE),
                     position: Vec3::ZERO,
                     message: (*text).to_owned(),
                 }));

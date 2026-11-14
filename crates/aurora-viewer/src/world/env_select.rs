@@ -167,7 +167,11 @@ impl SettingsCatalog {
             })
             .collect();
         items.sort_by_key(|(item, library)| (*library, rank(item.id)));
-        items.into_iter().map(|(it, _)| (it.id, it.name.clone())).collect()
+        // (without an Aurora Weather code: shown as the inventory shows it)
+        items
+            .into_iter()
+            .map(|(it, _)| (it.id, crate::weather::region::strip_code(&it.name).to_owned()))
+            .collect()
     }
 
     /// FSSettingsCollector's filtering and asset deduplication, preserving
@@ -190,7 +194,9 @@ impl SettingsCatalog {
             };
             let choice = SettingsChoice {
                 item: it.id,
-                name: it.name.clone(),
+                // the name as the inventory shows it: without its Aurora
+                // Weather code (searched and listed by what people read)
+                name: crate::weather::region::strip_code(&it.name).to_owned(),
                 asset: it.asset_id,
             };
             match kind {

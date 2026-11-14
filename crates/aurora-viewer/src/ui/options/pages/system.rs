@@ -57,6 +57,19 @@ pub fn page(cx: &mut Cx) {
                 (Channel::Beta, tr!("update-channel-beta")),
             ],
         );
+        use crate::updater::Interval;
+        cx.combo(
+            tr!("update-interval"),
+            tr!("update-interval-help"),
+            &field!(update_check_interval),
+            &[
+                (Interval::Minutes10, tr!("update-interval-10-minutes")),
+                (Interval::Minutes30, tr!("update-interval-30-minutes")),
+                (Interval::Hour1, tr!("update-interval-1-hour")),
+                (Interval::Hours6, tr!("update-interval-6-hours")),
+                (Interval::Never, tr!("update-interval-never")),
+            ],
+        );
     });
     // the system's state, not a saved setting, so outside the page's reset;
     // the Legacy Viewer's installer asks it once

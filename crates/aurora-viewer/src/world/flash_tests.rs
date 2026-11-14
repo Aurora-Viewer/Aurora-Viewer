@@ -23,6 +23,7 @@ fn say(w: &mut World, from: Uuid, source_type: ChatSourceType, chat_type: ChatTy
         owner_id: from,
         source_type,
         chat_type,
+        region: None,
         position: Vec3::ZERO,
         message: text.into(),
     }));

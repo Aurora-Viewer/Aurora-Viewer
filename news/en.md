@@ -26,6 +26,73 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-13 — Aurora 0.9.9: Aurora Weather, Avatar Studio and Lua scripts
+Aurora Weather brings rain, snow, wind, thunder and northern lights, with puddles, lying snow and footprints: choose yours in the Environment window, or let regions set it (off by default). Avatar Studio is a calm space to dress, pose and photograph your avatar, with its own animation editor: keyframes, a timeline, ANIM and BVH import. SLua scripts get a real editor, with Lua colours, completion and help. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.9)
+
+## 2026-11-13 — Gamepad, VR, building and avatars
+With a gamepad, on the desktop or in VR, switch between First Person, Avatar Mode and Flycam. The camera can follow an animated body part. When others edit, grab or give something, their beam shows, and yours is seen. Drag an item out of Contents to rez it, save an object back into the contents it came from, and tick Animated Mesh on a whole linkset. Mesh heads no longer get black eyebrows on AMD cards or after a graphics card reset, and AO walks and runs loop again.
+
+## 2026-11-13 — More like the Legacy Viewer
+Opacity sliders for windows, bars and menus (Preferences › Appearance), the nearby media list under the media button, every don't-ask-again answer in Preferences › Confirmations, Maximum nearby lights, moderator options in group chats, a ban from all your groups, parcel music that fades between stations, and the sun and moon drawn like the Legacy Viewer. Thanks to AiAiCaptainn, circuskid, Gaalrauch, Izusl, KanikaBreed, lambskin, Memekiller, Nowalski, Odessa-Draekavik, RheaMercury and voidel.
+
+## 2026-11-12 — Aurora 0.9.8: fixes for building, chat and AMD cards
+Select face picks the faces of what you wear again, and Derender with Edit linked parts hides only the selected part. The channel selector shows by every nearby chat input and keeps the channel you chose. On AMD cards, tree leaves are no longer drawn as squares and mesh hair has no more streaks, and blended eyelashes stay visible behind mesh hair. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.8)
+
+## 2026-11-12 — Startup, voice and the poser
+A small Aurora window now shows while the viewer starts and after an update's restart. Nearby voice connects on slow, high-latency links, invisible HUD buttons take a left click again, and the avatar complexity notice no longer repeats (off by default, Preferences › Graphics › Avatars › Complexity notices). In the poser, holding Ctrl highlights the part of the avatar's meshes that Ctrl + click selects. Thanks to Bruica, iGao, KanikaBreed, Nowalski and Odessa-Draekavik.
+
+## 2026-11-12 — Aurora 0.9.7: a rethought Build window, script recovery and Destinations
+The Build window is reorganised: the selection sits in a header that folds away, the options form columns above the tabs that you arrange as you like with Organize options…, position, size and rotation keep the full width, and Contents gets its own display menu. After a crash or a lost connection, Script recovery brings back the unsaved changes of your scripts at the next login, in Lost And Found. Destinations opens Aurora's own window on the Destination Guide: search, categories, ratings and a one-click teleport. Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.7)
+
+## 2026-11-12 — Poser, appearance and avatars
+The poser gets a compact window that leaves the scene free, Shift + click to move several joints together, and a ring that turns a joint around the camera's view. Export XML, next to Import XML in the shape, physics and clothing editors, saves an appearance file, and Appearance's gear menu exports your whole look. Your avatar plays the talk, shout and whisper animations in nearby chat, Reload avatar in the right-click menu repairs an avatar that looks broken, and the wet and shine layers of mesh bodies now show.
+
+## 2026-11-12 — More like the Legacy Viewer, and fixes
+Script dialogs per object keeps one menu per object instead of a pile. Advanced › Release keys frees the controls a broken vehicle or HUD keeps, and a teleport in progress can be cancelled. Group notices also appear in the group's chat, Preferred browser chooses where web links open, and the Milky Way is fainter, with its own slider. On OpenSim, Request Admin Status turns on admin powers (god mode). Thanks to anne-skydancer, Bruica, circuskid, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Nowalski and Odessa-Draekavik.
+
+## 2026-11-11 — Aurora 0.9.6: outfit showcase, auto portraits and 65 photo looks
+Appearance's Outfit gallery becomes a showcase: large pictures of your outfits, a rail for favourites, outfits without a picture and folders, and wear in one click (the small tiles stay in Preferences › Aurora). Auto portrait frames you in a studio for the outfit's free picture, Take the portraits does every outfit in one go, and an optional HD picture costs the grid's upload price. The photo LUT tab now holds 20 looks by Czar Fenris and 45 by Nanner Pudding, thank you both! Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.6)
+
+## 2026-11-11 — The Milky Way from real stars, and Rendering types
+The Milky Way is now drawn from the 2.5 million stars of the Tycho-2 Catalogue, with its star clouds and dark lanes, and Star hour can show the sky by the real clock. Advanced › Rendering types hides terrain, water, objects, avatars or particles to see behind them, like the Legacy Viewer. A Mac starts at the display's logical resolution with Mid-High quality, AMD RX 9000 cards keep their contact shadows, and HUD media answer first in busy regions.
+
+## 2026-11-11 — Poser, building, inventory and fixes
+Hold Space to brake your avatar, like the Legacy Viewer. The poser gets Save as… and shows where a pose went. Move handles are easier to grab, land selections snap to the parcel grid, and glTF materials keep 2K maps. Favorites lists starred items without their folders, and the delete confirmation can be turned off. Region / Estate asks before a change that can send people home. Thanks to anne-skydancer, circuskid, emmelinedevere, Gaalrauch, KanikaBreed, LisaScheers, Marakiinfinity, Memekiller, Nowalski and Odessa-Draekavik.
+
+## 2026-11-10 — Aurora 0.9.5: Region Tracker, contact set markers and appearance XML
+World › Region tracker watches a list of regions, like the Legacy Viewer: whether each one is up and how many avatars are there, without opening the map; the World map's Track region adds one. A contact set can now mark its members in the world, through walls and at the screen's edge: set its World marker in People › Contact sets (off by default). Import XML, in the shape, physics and clothing editors, loads an appearance file from a shape website or another viewer. Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.5)
+
+## 2026-11-10 — Emojis, chat and L$
+Your recent emojis sit in a row by the chat field, and the GIF picker shows the GIFs you sent. Turn on Favorite emojis in Preferences › Chat to keep yours first, with a star tab in the picker. Alt+Enter sends ((OOC)) chat, and Request teleport sits next to Offer teleport in the conversation. A button collapses or expands the conversation list. The L$ you receive or spend show under your balance before they join it, and a resident paying you shows a notification.
+
+## 2026-11-10 — Your view, the world and fixes
+Preferences › Graphics can hide the face lights other avatars wear and keep yours, and World › Hide name tags hides every tag in one click. Avatar tips can stay with world tooltips off, and the media filter's question is a banner that lets you keep flying. The ground stays at region crossings, a full video memory no longer freezes the world, and parcel radios hold through teleports. Thanks to circuskid, ClifHofmann, dash-sl, Gaalrauch, iGao, KanikaBreed, Nowalski, Odessa-Draekavik and RheaMercury.
+
+## 2026-11-08 — Aurora 0.9.4: Debug settings, and more of the Legacy Viewer's options
+The toolbar's Debug settings button, or Ctrl+Alt+Shift+S, opens the Debug settings window: every setting by name, with a search, a star on the ones you changed and Reset to default. Preferences › Build sets what a new prim starts as: colour, transparency, glow, fullbright, physical, temporary or phantom. Preferences › Graphics gets a progressive draw distance (off by default), the Trees detail and Particles from worn objects, and Preferences › Protections can hide objects with a huge surface. Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.4)
+
+## 2026-11-08 — Neighbouring regions, objects that stay in view, calls that hold
+Aurora now asks the region for your own draw distance, so the neighbouring regions appear at 256 m and beyond, as in the Legacy Viewer. Objects in plain view no longer vanish at some camera angles, and the world comes back by itself when the video memory was full at login. Media screens in busy regions load and follow their remotes, and textures left white come back without a relog. Private calls stay connected across teleports, and parcel music no longer cuts out while you cam around.
+
+## 2026-11-08 — Chat, camera, avatars and fixes
+Camera smoothing goes up to 300 without jumps, and Preferences › Chat sets how many lines show above the chat bar. Ctrl+Tab cycles through the conversations, the Japanese IME shows the active conversion segment, and script text boxes take several lines. About Land edits stick, the AO no longer leaves a sit playing after a teleport, and the RLVa tools get an Exceptions tab. Thanks to AiAiCaptainn, anne-skydancer, circuskid, ClifHofmann, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, MilkIsPrettyGood, Nowalski, Odessa-Draekavik and RheaMercury.
+
+## 2026-11-06 — Aurora 0.9.3: AMD FSR 3.1, and steadier on every graphics card
+Choose FSR 3.1 under Anti-aliasing in Preferences › Graphics: smooth edges at the window's size, or a world drawn smaller and rebuilt sharp, for more frames per second. After a graphics card reset Aurora reopens its window and keeps you logged in (a switch in Preferences turns it off). Intel 6th to 9th generation integrated GPUs start again, and so do AMD + NVIDIA laptops; integrated GPUs count their shared memory in the texture budget. The cache is cleared once at the first start of 0.9.3; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)
+
+## 2026-11-06 — Updates, your computer, and clicks that land
+Aurora now tells you when a new version is out, while it runs. Preferences › Language and updates › Remove Aurora from this computer takes away what Aurora registered outside its own folders, then lists the folders left. The web and media pack downloads only once you agree. Clicks go through alpha textures and invisible prims like the Legacy Viewer, and Shift or Ctrl + right click extends the build selection.
+
+## 2026-11-06 — Camera, inventory and fixes
+The camera limits are back on by default, like the Legacy Viewer: a card at login says where to turn them off. The teleport history survives a crash, and neither writing the log nor turning voice off can freeze the viewer. Terrain edges meet the next region, profile pictures stay sharp, Favorites lists starred items and the hover popups of the inventory have a switch. Thanks to ClifHofmann, chrzang, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Odessa-Draekavik and xWynt3r.
+
 ## 2026-11-05 — Aurora 0.9.2: your chat history comes along, and a fullscreen mode
 Preferences › Chat › History imports your conversations from the Legacy Viewer and the other approved viewers that write the same files. The messages join your Aurora history in time order, each login adds only what is new, and the other viewer's files are only read. Preferences › Graphics gets a borderless fullscreen mode, and Alt+Enter turns it on or off at once, without a restart: a clean frame for videos, and the window comes back exactly as it was.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.2)

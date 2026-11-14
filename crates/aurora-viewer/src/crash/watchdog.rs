@@ -55,6 +55,9 @@ pub struct State {
     pub preset: &'static str,
     pub vram_used_mb: Option<u64>,
     pub vram_budget_mb: Option<u64>,
+    /// The tightest headroom of the last minute: budget less usage,
+    /// negative while the viewer was past the budget (vram.rs).
+    pub vram_headroom_min_mb: Option<i64>,
     /// Texture memory pressure step and its maximum.
     pub texture_pressure: (u32, u32),
     pub objects: usize,
@@ -122,6 +125,7 @@ pub const EFFECT_WORDS: &[&str] = &[
     "aa-msaa",
     "aa-taa",
     "aa-smaa",
+    "blend-exact",
     "bloom",
     "glow",
     "indirect-light",
@@ -148,6 +152,9 @@ impl State {
         let _ = writeln!(out, "preset={}", self.preset);
         if let (Some(used), Some(budget)) = (self.vram_used_mb, self.vram_budget_mb) {
             let _ = writeln!(out, "vram_mb={used}/{budget}");
+        }
+        if let Some(headroom) = self.vram_headroom_min_mb {
+            let _ = writeln!(out, "vram_headroom_60s_mb={headroom}");
         }
         let _ = writeln!(out, "texture_pressure={}/{}", self.texture_pressure.0, self.texture_pressure.1);
         let _ = writeln!(out, "objects={}", self.objects);
@@ -443,4 +450,19 @@ pub fn read_alive(dir: &Path) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// When `alive.txt` was last written, in Unix seconds: the last sign of life
+/// when its content is lost. The file is renamed into place without a flush
+/// (every 5 s, a flush would cost the disk): a system that stops at once
+/// (Windows crash, power cut, forced restart) can leave it empty or full of
+/// zeros, while its date, journaled with the rename, survives. The pending
+/// copy counts too: a rename lost with the system leaves only it.
+pub fn alive_written(dir: &Path) -> Option<u64> {
+    ["alive.txt", "alive.pending"]
+        .iter()
+        .filter_map(|name| std::fs::metadata(dir.join(name)).and_then(|m| m.modified()).ok())
+        .filter_map(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map(|at| at.as_secs())
+        .max()
 }
