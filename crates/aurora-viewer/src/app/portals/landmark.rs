@@ -202,13 +202,22 @@ pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos
         .interactable(false)
         .show(ctx, |ui| {
             ui::widgets::overlay(ui, p, egui::Margin::same(8), |ui| {
-                ui.label(if !ready {
+                // Laid out at a width taken from the screen, never from the
+                // area: an area lays its content out in the size it kept from
+                // the previous frame, so a wrapping label kept the narrower box
+                // of the other Shift text, taller at each toggle and on the
+                // next drag (#2636). Wider than the screen, it still wraps,
+                // inside its margins even in a very narrow window.
+                let screen = ui.ctx().content_rect().width();
+                let width = (screen - 64.0).max(160.0).min(screen - 24.0).max(1.0);
+                let text = egui::WidgetText::from(if !ready {
                     aurora_i18n::tr!("portal-bridge-required")
                 } else if shift {
                     aurora_i18n::tr!("portal-drop-public")
                 } else {
                     aurora_i18n::tr!("portal-drop-friends")
                 });
+                ui.label(text.into_galley(ui, Some(egui::TextWrapMode::Wrap), width, egui::TextStyle::Body));
             });
         });
 }
@@ -265,6 +274,59 @@ mod tests {
         }
         let drag = frame(true, Some(false)).expect("release reaches the world");
         assert!(drag.released && drag.shift);
+    }
+
+    /// #2636: toggling Shift during a held landmark drag keeps the tooltip
+    /// fitted to its current text, and a later drag starts at that size; on
+    /// a screen narrower than the text it wraps, the same at every toggle,
+    /// and stays inside a window narrower than its usual minimum width.
+    #[test]
+    fn portal_drag_preview_fits_its_text_across_shift_toggles_and_drags() {
+        let palette = crate::theme::Theme::default().palette();
+        for screen in [egui::vec2(1000.0, 700.0), egui::vec2(300.0, 700.0), egui::vec2(150.0, 700.0)] {
+            let point = egui::pos2(screen.x * 0.65, 400.0);
+            let frame = |ctx: &egui::Context, shift: Option<bool>| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if let Some(shift) = shift {
+                            preview(ui.ctx(), &palette, point, shift, true);
+                        }
+                    },
+                );
+                output.textures_delta.clear();
+                ctx.memory(|memory| memory.area_rect(egui::Id::unique("portal_landmark_preview")))
+            };
+            let settled = |ctx: &egui::Context, shift: bool| {
+                let mut rect = None;
+                for _ in 0..3 {
+                    rect = frame(ctx, Some(shift));
+                }
+                rect.expect("preview shown")
+            };
+            let fresh = |shift: bool| settled(&egui::Context::default(), shift).size();
+            let (friends, public) = (fresh(false), fresh(true));
+            assert_ne!(friends, public);
+            let ctx = egui::Context::default();
+            for drag in 0..2 {
+                for shift in [false, true, false, true, false, true, false] {
+                    let rect = settled(&ctx, shift);
+                    assert_eq!(
+                        rect.size(),
+                        if shift { public } else { friends },
+                        "{screen:?}, drag {drag}, shift {shift}"
+                    );
+                    assert!(rect.width() <= screen.x, "{screen:?}: {rect:?} is wider than the screen");
+                }
+                // Released: no preview for a few frames, then the next drag.
+                for _ in 0..3 {
+                    frame(&ctx, None);
+                }
+            }
+        }
     }
 
     #[test]

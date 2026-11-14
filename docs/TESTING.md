@@ -228,7 +228,7 @@ leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
 Cross a freshly placed portal without first retreating, then use its arrival return twice. Send several travelers through the same source: destination observers must see one aperture with one unchanged expiry, including late discovery. Private destination observers see a redacted label unless authorized; Friends grants come only from the original creator, while each traveler keeps a personal return. Verify no return is created after a failed, canceled or redirected-to-another-region teleport.
 
-`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
+`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus|drop-toggle|drop-toggle-public`
 drags an inventory landmark over the world. Hover scenarios retain the cargo;
 the others release it at frame 560. Shift changes at frame 500 in public modes:
 capture around 530 for the access preview and 700 for the created portal or
@@ -237,6 +237,12 @@ props. The landmark stays in inventory. Ctrl insertion and other inventory drops
 retain their normal behavior.
 `drop-focus` keeps the inventory open with keyboard focus during the drag;
 after release it stays open and logs that keyboard focus returned to the scene.
+`drop-toggle|drop-toggle-public` hold the landmark and press Shift at frame 498,
+release it eight frames later and repeat, four presses in all; `drop-toggle`
+releases the last one at 554 and rests on Friends, `drop-toggle-public` keeps it
+held and rests on Public. Capture around 600 and compare with
+`drop-friends-hover` or `drop-public-hover`: the access hint must keep the size
+of its text, on one line, however many toggles came before (#2636).
 
 `drop-places|drop-places-hover|drop-favorites|drop-favorites-public|drop-favorites-hover`
 uses the shared Places/Favorites landmark cargo with Places open. Hover modes

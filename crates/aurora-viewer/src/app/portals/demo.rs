@@ -18,6 +18,22 @@ fn drop_mode() -> Option<&'static str> {
         .as_deref()
 }
 
+/// Shift during a scripted drop. `drop-toggle` presses it at frame 498 and
+/// releases it eight frames later, four times, while the landmark stays held
+/// (#2636), then rests on Friends; `drop-toggle-public` keeps the fourth press
+/// and rests on Public. The other public modes hold it from frame 500.
+fn drop_shift(mode: &str, frame: u64) -> bool {
+    if mode.starts_with("drop-toggle") {
+        match frame {
+            ..490 => false,
+            490..554 => (frame - 490) / 8 % 2 == 1,
+            _ => mode.ends_with("public"),
+        }
+    } else {
+        mode.contains("public") && frame >= 500
+    }
+}
+
 impl App {
     pub(in crate::app) fn seed_portal_drop_demo(&mut self) -> bool {
         let Some(mode) = drop_mode().filter(|_| self.demo) else {
@@ -112,12 +128,12 @@ impl App {
         raw.focused = true;
         raw.events.retain(|event| !matches!(event, egui::Event::WindowFocused(false)));
         let modifiers = egui::Modifiers {
-            shift: mode.contains("public") && self.frame_count >= 500,
+            shift: drop_shift(mode, self.frame_count),
             ..Default::default()
         };
         raw.events.push(egui::Event::ModifiersChanged(modifiers));
         raw.events.push(egui::Event::PointerMoved(point));
-        if self.frame_count == 480 || self.frame_count == 560 && !mode.ends_with("hover") {
+        if self.frame_count == 480 || self.frame_count == 560 && !mode.ends_with("hover") && !mode.starts_with("drop-toggle") {
             raw.events.push(egui::Event::PointerButton {
                 pos: point,
                 button: egui::PointerButton::Primary,
