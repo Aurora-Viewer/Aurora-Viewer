@@ -93,6 +93,12 @@ pub(super) enum ContentsOp {
         body: String,
         replace: bool,
     },
+    /// The object's own next-owner permissions.
+    ObjectNextOwner {
+        copy: Option<bool>,
+        modify: Option<bool>,
+        transfer: Option<bool>,
+    },
 }
 
 /// What has to show in a later listing for the change to count as done.
@@ -100,6 +106,15 @@ enum Check {
     NextOwner {
         item_id: Uuid,
         mask: u32,
+    },
+    /// The object's own next-owner permissions (copy / modify / transfer).
+    ObjectNextOwner {
+        mask: u32,
+    },
+    /// A script just saved, listed under its exact name.
+    Named {
+        item_id: Uuid,
+        name: String,
     },
     Gone {
         item_id: Uuid,
@@ -204,7 +219,38 @@ impl App {
         if let Some(idx) = self.world.objects.index_of_uuid(&object_uuid) {
             self.build.request_contents(&self.world, idx, true);
             self.flush_build();
+            if let Some(handle) = self.world.objects.get(idx).map(|o| o.key.region) {
+                self.send(NetCommand::RequestObjectProperties {
+                    handle,
+                    object: object_uuid,
+                });
+            }
         }
+    }
+
+    /// A compiled script's answer, held until a fresh listing shows it under
+    /// its exact name (the next tool may look for it by name at once).
+    pub(super) fn verify_script_listed(
+        &mut self,
+        object_uuid: Uuid,
+        local_id: u32,
+        item_id: Uuid,
+        name: String,
+        summary: Value,
+        reply_tx: oneshot::Sender<Result<ViewerResponse, McpError>>,
+    ) {
+        self.relist(object_uuid);
+        self.mcp_bridge.pending_contents.push_back(PendingContents {
+            object_uuid,
+            local_id,
+            started: Instant::now(),
+            stage: Stage::Verify {
+                check: Check::Named { item_id, name },
+                summary,
+                last_list: Instant::now(),
+            },
+            reply_tx,
+        });
     }
 
     fn listing(&self, object_uuid: Uuid) -> Option<&[TaskItem]> {
@@ -268,6 +314,12 @@ impl App {
                             .find(|it| it.item_id == *item_id)
                             .map(|it| (it.next_owner_mask & (perm::COPY | perm::MODIFY | perm::TRANSFER)) == *mask),
                         Check::Gone { item_id } => Some(!items.iter().any(|it| it.item_id == *item_id)),
+                        Check::ObjectNextOwner { mask } => self
+                            .build
+                            .props
+                            .get(&p.object_uuid)
+                            .map(|pr| (pr.next_owner_mask & (perm::COPY | perm::MODIFY | perm::TRANSFER)) == *mask),
+                        Check::Named { item_id, name } => Some(items.iter().any(|it| it.item_id == *item_id && &it.name == name)),
                         Check::Appeared { name, before } => Some(
                             items
                                 .iter()
@@ -377,8 +429,17 @@ impl App {
                     Ok(it) => it.clone(),
                     Err(e) => return Some(Err(e)),
                 };
-                if it.owner_id != self.world.agent_id || (it.owner_mask & perm::MODIFY) == 0 {
-                    return Some(Err(McpError::PermissionDenied(format!("'{}' is not yours to change", it.name))));
+                if it.owner_id != self.world.agent_id {
+                    return Some(Err(McpError::PermissionDenied(format!("'{}' is not yours", it.name))));
+                }
+                if (it.owner_mask & perm::MODIFY) == 0 {
+                    // Second Life's rule (the Legacy Viewer greys the boxes out too)
+                    return Some(Err(McpError::PermissionDenied(format!(
+                        "'{}' is no-modify for you (owner: copy {}, transfer {}), and Second Life only lets you set next-owner permissions on what you can modify. Set them on the original before it is copied (object_set_permissions on the object, or task_item_permissions where you can modify it).",
+                        it.name,
+                        (it.owner_mask & perm::COPY) != 0,
+                        (it.owner_mask & perm::TRANSFER) != 0
+                    ))));
                 }
                 let set = |m: u32, bit: u32, on: Option<bool>| match on {
                     Some(true) => m | bit,
@@ -414,6 +475,52 @@ impl App {
                         "name": it.name,
                         "next_owner": masks(next),
                     }),
+                    last_list: now,
+                };
+                None
+            }
+            ContentsOp::ObjectNextOwner { copy, modify, transfer } => {
+                let Some(pr) = self.build.props.get(&p.object_uuid).cloned() else {
+                    return None; // the properties are on their way
+                };
+                if pr.owner_id != self.world.agent_id {
+                    return Some(Err(McpError::PermissionDenied("this object is not yours".into())));
+                }
+                if (pr.owner_mask & perm::MODIFY) == 0 {
+                    return Some(Err(McpError::PermissionDenied(
+                        "this object is no-modify for you, and Second Life only lets you set next-owner permissions on what you can modify"
+                            .into(),
+                    )));
+                }
+                let (handle, local_id) = {
+                    let o = self.world.objects.get(idx)?;
+                    (o.key.region, o.key.local_id)
+                };
+                let mut next = pr.next_owner_mask;
+                for (bit, on) in [(perm::COPY, copy), (perm::MODIFY, modify), (perm::TRANSFER, transfer)] {
+                    if let Some(on) = on {
+                        self.send(NetCommand::Build(BuildCmd::SetPermissions {
+                            handle,
+                            local_ids: vec![local_id],
+                            field: aurora_net::build::perm_field::NEXT_OWNER,
+                            set: on,
+                            mask: bit,
+                        }));
+                        if on {
+                            next |= bit;
+                        } else {
+                            next &= !bit;
+                        }
+                    }
+                }
+                next &= pr.base_mask | perm::MOVE;
+                self.flush_build();
+                self.relist(p.object_uuid);
+                p.stage = Stage::Verify {
+                    check: Check::ObjectNextOwner {
+                        mask: next & (perm::COPY | perm::MODIFY | perm::TRANSFER),
+                    },
+                    summary: json!({ "object": pr.name, "next_owner": masks(next) }),
                     last_list: now,
                 };
                 None
@@ -560,7 +667,8 @@ impl App {
                     "name": it.name,
                     "type": kind,
                     "description": it.description,
-                    "creator_id": it.creator_id.to_string(),
+                    // nil when the listing does not say (shown as null, never as a creator)
+                    "creator_id": (!it.creator_id.is_nil()).then(|| it.creator_id.to_string()),
                     "owner_id": it.owner_id.to_string(),
                     "base": masks(it.base_mask),
                     "owner": masks(it.owner_mask),
@@ -606,7 +714,8 @@ impl App {
                 "name": p.name,
                 "description": p.description,
                 "owner_id": p.owner_id.to_string(),
-                "creator_id": p.creator_id.to_string(),
+                // the family properties carry no creator: null rather than a nil key
+                "creator_id": (p.full && !p.creator_id.is_nil()).then(|| p.creator_id.to_string()),
                 "group_id": p.group_id.to_string(),
                 "last_owner_id": p.last_owner_id.to_string(),
                 "base": masks(p.base_mask),

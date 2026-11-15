@@ -280,6 +280,13 @@ pub enum ViewerRequest {
         modify: Option<bool>,
         transfer: Option<bool>,
     },
+    /// Set the object's own next-owner copy / modify / transfer, read back.
+    ObjectSetPermissions {
+        object_local_id: u32,
+        copy: Option<bool>,
+        modify: Option<bool>,
+        transfer: Option<bool>,
+    },
     /// Remove an item from a prim's contents, read back.
     TaskItemRemove {
         object_local_id: u32,
@@ -793,6 +800,7 @@ impl ViewerRequest {
             | ViewerRequest::VoiceTransmit { .. }
             | ViewerRequest::ViewerLogin { .. }
             | ViewerRequest::TaskItemPermissions { .. }
+            | ViewerRequest::ObjectSetPermissions { .. }
             | ViewerRequest::TaskItemRemove { .. }
             | ViewerRequest::TaskItemAdd { .. }
             | ViewerRequest::TaskNotecardWrite { .. }

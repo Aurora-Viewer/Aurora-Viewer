@@ -431,7 +431,23 @@ impl App {
                             "errors": [err],
                         }))),
                     };
-                    let _ = pending.reply_tx.send(resp);
+                    // a saved script: answer once a fresh listing shows it under its name
+                    // (the next tool may look for it by name straight away)
+                    match resp {
+                        Ok(ViewerResponse::Json(json)) if json.get("asset_id").is_some() => {
+                            self.verify_script_listed(
+                                pending.object_uuid,
+                                pending.local_id,
+                                pending.item_id,
+                                pending.script_name.clone(),
+                                json,
+                                pending.reply_tx,
+                            );
+                        }
+                        other => {
+                            let _ = pending.reply_tx.send(other);
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1401,6 +1417,16 @@ impl App {
                     let _ = reply_tx.send(Err(e));
                 }
             },
+            ViewerRequest::ObjectSetPermissions {
+                object_local_id,
+                copy,
+                modify,
+                transfer,
+            } => self.start_mcp_contents(
+                object_local_id,
+                contents::ContentsOp::ObjectNextOwner { copy, modify, transfer },
+                reply_tx,
+            ),
             ViewerRequest::TaskItemRemove {
                 object_local_id,
                 item_id,
