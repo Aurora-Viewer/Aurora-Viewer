@@ -291,6 +291,18 @@ pub enum ViewerRequest {
     ObjectCopyContents {
         object_local_id: u32,
     },
+    /// The inventory offers waiting for an answer.
+    InventoryOffers,
+    /// Accept or decline one offer.
+    InventoryOfferRespond {
+        offer_id: u64,
+        accept: bool,
+    },
+    /// Offer an inventory item to an avatar (the window's Share).
+    GiveInventory {
+        item_id: Uuid,
+        to_avatar: Uuid,
+    },
     /// Move agent-inventory items to the Trash (never purged), read back.
     InventoryDelete {
         item_ids: Vec<Uuid>,
@@ -720,6 +732,11 @@ impl ViewerRequest {
             | ViewerRequest::PoserInspect { .. }
             | ViewerRequest::FloaterList
             | ViewerRequest::ObjectContents { .. }
+<<<<<<< ours
+=======
+            | ViewerRequest::InventoryOffers
+            | ViewerRequest::ScriptPromptList
+>>>>>>> theirs
             | ViewerRequest::ViewportCapture { .. }
             | ViewerRequest::InventoryBrowse { .. }
             | ViewerRequest::InventorySearch { .. }
@@ -810,6 +827,8 @@ impl ViewerRequest {
             | ViewerRequest::TaskItemPermissions { .. }
             | ViewerRequest::ObjectSetPermissions { .. }
             | ViewerRequest::InventoryDelete { .. }
+            | ViewerRequest::InventoryOfferRespond { .. }
+            | ViewerRequest::GiveInventory { .. }
             | ViewerRequest::ObjectCopyContents { .. }
             | ViewerRequest::TaskItemRemove { .. }
             | ViewerRequest::TaskItemAdd { .. }

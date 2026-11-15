@@ -836,6 +836,33 @@ impl McpRouter {
             }
 
             // ---- Phase 4: Inventory & Appearance (COF State Machine) ----
+            "inventory_offers" => {
+                let resp = self.send_to_viewer(None, ViewerRequest::InventoryOffers, 5000).await?;
+                Ok(text_block(into_json(resp)))
+            }
+            "inventory_offer_respond" => {
+                let offer_id = args
+                    .get("offer_id")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| McpError::InvalidParams("offer_id (from inventory_offers) is required".into()))?;
+                let accept = args
+                    .get("accept")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| McpError::InvalidParams("accept: true or false is required".into()))?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryOfferRespond { offer_id, accept }, 25_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
+            "give_inventory" => {
+                let item_id = parse_opt_uuid(args, "item_id")?.ok_or_else(|| McpError::InvalidParams("item_id is required".into()))?;
+                let to_avatar =
+                    parse_opt_uuid(args, "to_avatar_key")?.ok_or_else(|| McpError::InvalidParams("to_avatar_key is required".into()))?;
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::GiveInventory { item_id, to_avatar }, 5000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
             "inventory_delete" => {
                 let ids: Vec<Uuid> = match args.get("item_ids").or_else(|| args.get("item_id")) {
                     Some(Value::Array(a)) => a
@@ -2950,6 +2977,38 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
 
         // Phase 4: Inventory & Appearance (COF Queue)
         ToolDefinition {
+            name: "inventory_offers".into(),
+            description: "Inventory offers waiting for an answer (an avatar's or an object's give): offer_id, from_id, item_name, asset_type, and the item_id an avatar's offer already has. Read-only.".into(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "inventory_offer_respond".into(),
+            description: "Accept or decline one inventory offer as its card's buttons do. An accepted avatar offer answers once the item is in your inventory (item_id and its folder path); an object's offer is delivered after accepting.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "offer_id": { "type": "integer", "description": "from inventory_offers" },
+                    "accept": { "type": "boolean" }
+                },
+                "required": ["offer_id", "accept"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
+            name: "give_inventory".into(),
+            description: "Offer one item from your inventory to an avatar, as the inventory window's Share does. A no-copy item leaves your inventory with the offer. The recipient still has to accept; their answer comes as an IM (comms_read_history).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_id": { "type": "string" },
+                    "to_avatar_key": { "type": "string", "description": "the avatar's UUID" }
+                },
+                "required": ["item_id", "to_avatar_key"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "inventory_delete".into(),
             description: "Move items from your inventory to the Trash, as the inventory window's Delete does, and answer once they are there. Never purges: they can be restored from the Trash. Worn, Library and protected system items are refused.".into(),
             input_schema: json!({
@@ -3906,7 +3965,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 119, "expected 119 total tools (43 Legacy + 76 Aurora-native)");
+        assert_eq!(defs.len(), 122, "expected 122 total tools (43 Legacy + 79 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [

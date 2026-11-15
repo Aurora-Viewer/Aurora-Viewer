@@ -10,6 +10,8 @@ use super::*;
 mod contents;
 #[path = "mcp_bridge/inventory.rs"]
 mod inv_tools;
+#[path = "mcp_bridge/offers.rs"]
+mod offers;
 use aurora_mcp::{
     AppearanceOperation, BoneTransform, CameraCommand, CaptureBufferType, ChatKind, FRAME_BUDGET_MICROS, LinksetDataStore, LsdOperation,
     McpError, McpRequestEnvelope, McpServerHandle, PrimTransformSpec, RawCapturedFrame, RollbackAction, ViewerRequest, ViewerResponse,
@@ -215,6 +217,7 @@ pub struct McpBridge {
     pending_takes: VecDeque<PendingTake>,
     pending_trash: VecDeque<inv_tools::PendingTrash>,
     pending_radar: VecDeque<PendingRadar>,
+    pending_offers: VecDeque<offers::PendingOffer>,
     /// The last source sent per object (bytes, sha256): reported back
     /// instead of the source, which may hold keys.
     script_fingerprints: HashMap<Uuid, (usize, String)>,
@@ -605,6 +608,7 @@ impl App {
         // 2a. Object contents requests (mcp_bridge/contents.rs)
         self.poll_mcp_contents();
         self.poll_mcp_inventory_delete();
+        self.poll_mcp_offers();
         let scans = std::mem::take(&mut self.mcp_bridge.pending_radar);
         for scan in scans {
             let (json, unknown) = self.mcp_radar_objects_quiet(scan.max_radius_m, scan.root_only, scan.name_filter.clone(), scan.limit);
@@ -1475,6 +1479,16 @@ impl App {
                     self.resolve_inventory_path(wanted).map(Some)
                 };
                 let resp = folder_uuid.and_then(|f| self.handle_mcp_inventory_browse(f, None, None, false, limit));
+                let _ = reply_tx.send(resp);
+            }
+            ViewerRequest::InventoryOffers => {
+                let _ = reply_tx.send(Ok(self.mcp_inventory_offers()));
+            }
+            ViewerRequest::InventoryOfferRespond { offer_id, accept } => {
+                self.start_mcp_offer_respond(offer_id, accept, reply_tx);
+            }
+            ViewerRequest::GiveInventory { item_id, to_avatar } => {
+                let resp = self.mcp_give_inventory(item_id, to_avatar);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::InventoryDelete { item_ids } => {
