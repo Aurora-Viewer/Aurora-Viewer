@@ -15,9 +15,11 @@
 
 use super::environment::{EnvAction, EnvironmentUi};
 use super::hud::Projector;
+use super::viewfinder::{Isolate, IsolateRow};
 use super::widgets::{self, ActionKind, Floater};
 use crate::camera::track::{self, Curve, Keyframe, Pose};
 use crate::director::{self, Director, Format, Joint, Mode, Target};
+use crate::snapshot::isolate::{Isolation, Mode as Shown};
 use crate::theme::Palette;
 use crate::world::eep_env::LocalView;
 use egui::{Align2, Color32, FontId, Id, Pos2, Rect, RichText, Sense, Stroke, Vec2};
@@ -87,6 +89,9 @@ pub enum Action {
     /// Lock the view on what the camera is focused on (Alt + click): the
     /// avatar it belongs to, or the object.
     LockFocus,
+    /// The track as it was before its last change, and that change again.
+    Undo,
+    Redo,
 }
 
 /// The live camera and what restricts it, as the app gives them.
@@ -106,6 +111,17 @@ pub struct Live {
     /// Where the lock's target is now (smoothed); `None` when it is not in
     /// sight, or nothing needs it.
     pub target: Option<Vec3>,
+    /// The track has a change to undo, an undone one to redo.
+    pub can_undo: bool,
+    pub can_redo: bool,
+}
+
+/// The photo's isolation as the window shows it (`snapshot::isolate`): its
+/// state, the names of what is chosen, and what the section asks.
+pub struct IsolateView<'a> {
+    pub isolation: &'a Isolation,
+    pub rows: &'a [IsolateRow],
+    pub out: &'a mut Vec<Isolate>,
 }
 
 /// The environment block's needs (those of Quick preferences).
@@ -163,7 +179,17 @@ fn clock(seconds: f32, tenths: bool) -> String {
 /// playback, the picture and the environment, each a section that folds
 /// (the first four open at first), in a body that scrolls when the room
 /// the bars leave is too short for them all.
-pub fn window(ctx: &egui::Context, p: &Palette, open: &mut bool, d: &mut Director, live: &Live, env: Env<'_>, actions: &mut Vec<Action>) {
+#[allow(clippy::too_many_arguments)]
+pub fn window(
+    ctx: &egui::Context,
+    p: &Palette,
+    open: &mut bool,
+    d: &mut Director,
+    live: &Live,
+    isolate: IsolateView<'_>,
+    env: Env<'_>,
+    actions: &mut Vec<Action>,
+) {
     if !*open {
         return;
     }
@@ -199,6 +225,9 @@ pub fn window(ctx: &egui::Context, p: &Palette, open: &mut bool, d: &mut Directo
                     });
                     widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
                         picture_section(ui, p, d);
+                    });
+                    widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
+                        isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out);
                     });
                     let Env {
                         ui: lists,
@@ -370,6 +399,99 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
             .on_hover_text(aurora_i18n::tr!("director-format-tip"));
     });
     widgets::checkbox(ui, p, &mut d.thirds, aurora_i18n::tr!("director-thirds"));
+}
+
+/// The photo mode's isolation, for the film: everything, our avatar alone,
+/// or the avatars and objects chosen in the scene, on an empty background or
+/// not. The same state, rule and choices as the photo's (`snapshot::isolate`,
+/// `ui::viewfinder::isolate`): what is chosen here is chosen there.
+fn isolate_section(ui: &mut egui::Ui, p: &Palette, iso: &Isolation, rows: &[IsolateRow], out: &mut Vec<Isolate>) {
+    let modes = [Shown::Off, Shown::Own, Shown::Chosen];
+    let mut mode = modes.iter().position(|shown| *shown == iso.mode).unwrap_or(0);
+    let options = [
+        (aurora_i18n::tr!("photo-isolate-off"), true),
+        (aurora_i18n::tr!("photo-isolate-own"), true),
+        (aurora_i18n::tr!("photo-isolate-chosen"), true),
+    ];
+    if widgets::segmented(ui, p, &mut mode, &options) {
+        out.push(Isolate::Mode(modes[mode]));
+    }
+    if iso.mode == Shown::Chosen {
+        if rows.is_empty() {
+            ui.label(RichText::new(aurora_i18n::tr!("photo-isolate-none")).size(12.0).color(p.muted));
+        }
+        for row in rows {
+            ui.horizontal(|ui| {
+                if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("photo-isolate-remove"), true) {
+                    out.push(Isolate::Remove(row.id));
+                }
+                ui.add(egui::Label::new(RichText::new(&row.name).size(12.5).color(p.ink)).truncate());
+            });
+        }
+        let (glyph, label, kind) = if iso.picking {
+            ("check", aurora_i18n::tr!("photo-isolate-pick-done"), ActionKind::Primary)
+        } else {
+            ("pointer-filled", aurora_i18n::tr!("photo-isolate-pick"), ActionKind::Flat)
+        };
+        if widgets::action_button(ui, p, glyph, label, kind, Vec2::new(0.0, 26.0)).clicked() {
+            out.push(Isolate::Picking(!iso.picking));
+        }
+        if iso.picking {
+            ui.label(RichText::new(aurora_i18n::tr!("photo-isolate-pick-hint")).size(12.0).color(p.muted));
+        }
+    }
+    if iso.mode != Shown::Off {
+        let mut empty = iso.transparent;
+        if widgets::checkbox(ui, p, &mut empty, aurora_i18n::tr!("director-isolate-empty"))
+            .on_hover_text(aurora_i18n::tr!("director-isolate-empty-tip"))
+            .changed()
+        {
+            out.push(Isolate::Transparent(empty));
+        }
+    }
+}
+
+/// Choosing in the scene for the isolation: over the world, above the
+/// timeline strip and under the windows, the pointer names what is under it
+/// (`hover`: its name, and whether it is chosen) and a click adds it or
+/// removes it, as in the photo mode's viewfinder.
+pub fn isolate_picking(ctx: &egui::Context, p: &Palette, iso: &Isolation, hover: Option<&(String, bool)>, out: &mut Vec<Isolate>) {
+    if !iso.picking {
+        return;
+    }
+    let room = super::layout::work_area(ctx);
+    // (the strip as it was last drawn: it takes its own clicks)
+    let bottom = ctx
+        .memory(|m| m.area_rect(Id::unique("director_timeline")))
+        .map_or(room.bottom(), |strip| strip.top().min(room.bottom()));
+    let size = Vec2::new(room.width(), (bottom - room.top()).max(0.0));
+    egui::Area::new(Id::unique("director_isolate_pick"))
+        .order(egui::Order::Background)
+        .fixed_pos(room.min)
+        .constrain(false)
+        .show(ctx, |ui| {
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            let Some(at) = response.hover_pos() else {
+                return;
+            };
+            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+            out.push(Isolate::Hover(at));
+            if response.clicked() && rect.contains(at) {
+                out.push(Isolate::Click(at));
+            }
+            if let Some((name, chosen)) = hover {
+                let text = if *chosen {
+                    aurora_i18n::tr!("photo-isolate-hover-remove", name = name.as_str())
+                } else {
+                    aurora_i18n::tr!("photo-isolate-hover-add", name = name.as_str())
+                };
+                let (place, font) = (at + egui::vec2(16.0, 14.0), FontId::proportional(13.0));
+                ui.painter()
+                    .text(place + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &text, font.clone(), p.bar);
+                ui.painter()
+                    .text(place, Align2::LEFT_TOP, &text, font, if *chosen { p.danger } else { p.ink });
+            }
+        });
 }
 
 fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &mut Vec<Action>) {
@@ -708,6 +830,49 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
     {
         actions.push(Action::AddKey);
     }
+    let tip = aurora_i18n::tr!("director-delete-tip");
+    if widgets::action_button_if(
+        ui,
+        p,
+        "trash-filled",
+        "",
+        ActionKind::FlatDanger,
+        STRIP_BUTTON,
+        d.selected.is_some_and(|index| index < d.track.len()),
+    )
+    .on_hover_text(tip)
+    .on_disabled_hover_text(tip)
+    .clicked()
+        && let Some(index) = d.selected
+    {
+        d.remove(index);
+    }
+    for (icon, tip, enabled, action) in [
+        ("arrow-back-up", aurora_i18n::tr!("director-undo"), live.can_undo, Action::Undo),
+        ("arrow-forward-up", aurora_i18n::tr!("director-redo"), live.can_redo, Action::Redo),
+    ] {
+        if widgets::action_button_if(ui, p, icon, "", ActionKind::Flat, STRIP_BUTTON, enabled)
+            .on_hover_text(tip)
+            .on_disabled_hover_text(tip)
+            .clicked()
+        {
+            actions.push(action);
+        }
+    }
+}
+
+/// Whether the Director has the keyboard (Delete, Ctrl+Z, Ctrl+Y): since the
+/// last press of a mouse button, which gives it when it lands on the
+/// timeline strip, on the window or on a keyframe's camera in the world,
+/// and takes it away anywhere else. `had`: what it was before this frame.
+pub fn keys(ctx: &egui::Context, had: bool, keyframes: usize) -> bool {
+    let Some(at) = ctx.input(|i| i.pointer.press_origin().filter(|_| i.pointer.any_pressed())) else {
+        return had;
+    };
+    let inside = |id: Id| ctx.memory(|m| m.area_rect(id)).is_some_and(|rect| rect.contains(at));
+    inside(Id::unique("director_timeline"))
+        || inside(Id::unique(WINDOW))
+        || (0..keyframes).any(|index| inside(Id::unique(("director_world_key", index))))
 }
 
 /// The ruler: the seconds, the keyframes on their lane and the playhead.
@@ -1086,6 +1251,8 @@ mod tests {
             restricted: false,
             focus: false,
             target: None,
+            can_undo: false,
+            can_redo: false,
         }
     }
 
@@ -1259,6 +1426,64 @@ mod tests {
             bench.frame(events, |ctx, p| world(ctx, p, &projector, &mut d, 16.0 / 9.0, None, &mut actions));
         }
         assert_eq!(d.selected, None);
+    }
+
+    #[test]
+    fn a_click_on_the_strip_gives_the_director_the_keyboard() {
+        let mut bench = Bench::new();
+        let mut d = three();
+        let mut actions = Vec::new();
+        let mut has = false;
+        let mut frame = |bench: &mut Bench, events: Vec<egui::Event>, has: &mut bool| {
+            bench.frame(events, |ctx, p| {
+                timeline(ctx, p, &mut d, BOTTOM_TOP, &live(), &mut actions);
+                *has = keys(ctx, *has, 3);
+            });
+        };
+        for _ in 0..4 {
+            frame(&mut bench, vec![], &mut has);
+        }
+        assert!(!has, "not before a click");
+        let strip = bench
+            .ctx
+            .memory(|m| m.area_rect(Id::unique("director_timeline")))
+            .expect("the strip");
+        // on the clock, at the strip's right end: nothing to press there
+        let on = egui::pos2(strip.right() - 40.0, strip.center().y);
+        frame(&mut bench, vec![egui::Event::PointerMoved(on)], &mut has);
+        frame(&mut bench, vec![Bench::button(on, true)], &mut has);
+        assert!(has, "a press on the strip gives it");
+        frame(&mut bench, vec![Bench::button(on, false)], &mut has);
+        frame(&mut bench, vec![], &mut has);
+        assert!(has, "and it keeps it until another press");
+        // a press anywhere else (the world, another window) takes it away
+        let away = egui::pos2(120.0, 120.0);
+        frame(&mut bench, vec![egui::Event::PointerMoved(away)], &mut has);
+        frame(&mut bench, vec![Bench::button(away, true)], &mut has);
+        assert!(!has);
+    }
+
+    #[test]
+    fn choosing_in_the_scene_reports_the_pointer_and_the_click() {
+        let mut bench = Bench::new();
+        let mut iso = Isolation::default();
+        iso.set_open(true);
+        iso.set_mode(Shown::Chosen);
+        let mut out = Vec::new();
+        let at = egui::pos2(500.0, 400.0);
+        // not choosing: nothing over the world
+        bench.frame(vec![egui::Event::PointerMoved(at)], |ctx, p| {
+            isolate_picking(ctx, p, &iso, None, &mut out)
+        });
+        bench.frame(vec![], |ctx, p| isolate_picking(ctx, p, &iso, None, &mut out));
+        assert!(out.is_empty());
+        iso.set_picking(true);
+        let hover = ("Someone".to_owned(), false);
+        for events in [vec![], vec![], vec![Bench::button(at, true)], vec![Bench::button(at, false)]] {
+            bench.frame(events, |ctx, p| isolate_picking(ctx, p, &iso, Some(&hover), &mut out));
+        }
+        assert!(out.contains(&Isolate::Hover(at)), "the pointer asks what is under it");
+        assert_eq!(out.iter().filter(|o| **o == Isolate::Click(at)).count(), 1, "one click, one choice");
     }
 
     #[test]

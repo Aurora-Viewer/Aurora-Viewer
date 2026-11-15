@@ -1071,7 +1071,7 @@ when unfocused") is ignored during a screenshot.
   in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
   thousand frames a second and frame 700 is still under the loading fade.
   With `1` and a capture at frame 900: the window on the right (Camera,
-  Lock, Keyframe 3 and Path open, Playback, Picture and Environment folded,
+  Lock, Keyframe 3 and Path open, Playback, Picture, Isolate and Environment folded,
   the body scrolling when the viewer's window is short),
   the timeline strip above the bottom bar with four diamonds, the third
   violet, the playhead on it and the camera's speed written on each segment

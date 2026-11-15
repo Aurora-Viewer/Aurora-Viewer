@@ -4,12 +4,14 @@
 
 use super::App;
 use crate::camera::track::Pose;
-use crate::director::{self, Director, Mode, Target};
+use crate::director::{self, Director, History, Mode, Target};
+use crate::keybinds::Mods;
 use crate::ui;
 use crate::ui::director::Action;
 use crate::ui::environment::EnvAction;
 use glam::Vec3;
 use std::time::Instant;
+use winit::keyboard::{Key, KeyCode};
 
 /// "Go to" with the avatar's camera: how far ahead of the keyframe the
 /// alt-camera's focus is put, metres.
@@ -33,6 +35,11 @@ pub(super) struct DirectorState {
     aim: Option<Vec3>,
     /// The playback hid the mouse pointer.
     pointer_hidden: bool,
+    /// The changes of the track, for Ctrl+Z and Ctrl+Y.
+    history: History,
+    /// The Director has the keyboard (`ui::director::keys`): Delete, Ctrl+Z
+    /// and Ctrl+Y are its own.
+    keys: bool,
     demo_done: bool,
 }
 
@@ -72,6 +79,10 @@ impl App {
         // (what a frame without the window's turn left behind)
         let pending = std::mem::take(&mut self.director.pending);
         self.director_actions(pending);
+        // what the last frame changed in the track is a step to undo, a
+        // whole drag one step
+        let at_rest = !self.egui_ctx.input(|i| i.pointer.any_down());
+        self.director.history.observe(&self.director.d, at_rest);
         let open = self.panels.director && self.in_world();
         match (open, self.director.before) {
             (true, None) => self.director.before = Some((self.settings.camera.fov, self.camera.roll)),
@@ -151,12 +162,47 @@ impl App {
         }
     }
 
-    /// Escape ends a playback or a scrub; true when it did.
+    /// Escape ends a playback or a scrub, or the choosing in the scene the
+    /// Director's isolation started; true when it did.
     pub(super) fn director_escape(&mut self) -> bool {
-        if self.director.d.mode == Mode::Editing {
+        if self.director.d.mode != Mode::Editing {
+            self.director.d.stop();
+            return true;
+        }
+        if self.panels.director && !self.panels.snapshot && self.world.photo_isolation.picking {
+            self.world.photo_isolation.set_picking(false);
+            return true;
+        }
+        false
+    }
+
+    /// A key while the Director has the keyboard (the last click was on its
+    /// timeline, its window or a keyframe in the world) and no field is being
+    /// typed in: Delete removes the selected keyframe, Ctrl+Z undoes the
+    /// track's last change, Ctrl+Y or Ctrl+Shift+Z does it again. The letters
+    /// are the layout's (Z is not where a QWERTY keyboard has it everywhere).
+    /// True when the key was the Director's.
+    pub(super) fn director_key(&mut self, code: KeyCode, logical: &Key, pressed: bool, mods: Mods) -> bool {
+        if !self.panels.director || !self.director.keys || self.director.d.playing() {
             return false;
         }
-        self.director.d.stop();
+        let letter = |wanted: &str| matches!(logical, Key::Character(text) if text.eq_ignore_ascii_case(wanted));
+        let undo = mods.ctrl && !mods.alt && !mods.shift && letter("z");
+        let redo = mods.ctrl && !mods.alt && (letter("y") || (mods.shift && letter("z")));
+        let delete = code == KeyCode::Delete && !mods.ctrl && !mods.alt && self.director.d.selected.is_some();
+        if !(undo || redo || delete) {
+            return false;
+        }
+        if pressed {
+            if undo {
+                self.director.history.undo(&mut self.director.d);
+            } else if redo {
+                self.director.history.redo(&mut self.director.d);
+            } else if let Some(index) = self.director.d.selected {
+                self.director.d.remove(index);
+            }
+        }
+        // (the release is the Director's too: it must not reach a shortcut)
         true
     }
 
@@ -171,6 +217,8 @@ impl App {
             restricted: self.director_restricted(),
             focus: self.camera.focus_object_id().is_some(),
             target: self.director.aim,
+            can_undo: self.director.history.can_undo(),
+            can_redo: self.director.history.can_redo(),
         }
     }
 
@@ -184,6 +232,13 @@ impl App {
         let aspect = self.director.d.picture_aspect(self.camera_aspect());
         let target = self.director.aim;
         ui::director::guides(ctx, p, projector, &self.director.d, target);
+        // choosing in the scene for the isolation, as the photo mode does
+        let (_, hover) = self.photo_isolate_rows();
+        let mut chosen = Vec::new();
+        ui::director::isolate_picking(ctx, p, &self.world.photo_isolation, hover.as_ref(), &mut chosen);
+        for choice in chosen {
+            self.photo_isolate_out(choice, ctx.pixels_per_point());
+        }
         ui::director::world(ctx, p, projector, &mut self.director.d, aspect, target, &mut actions);
         self.director_actions(actions);
     }
@@ -195,6 +250,8 @@ impl App {
         let mut env = Vec::new();
         let mut actions = std::mem::take(&mut self.director.pending);
         let live = self.director_live();
+        let (rows, _) = self.photo_isolate_rows();
+        let mut isolate = Vec::new();
         let mut open = self.panels.director;
         ui::director::window(
             ctx,
@@ -202,6 +259,11 @@ impl App {
             &mut open,
             &mut self.director.d,
             &live,
+            ui::director::IsolateView {
+                isolation: &self.world.photo_isolation,
+                rows: &rows,
+                out: &mut isolate,
+            },
             ui::director::Env {
                 ui: &mut self.env_ui,
                 view: self.world.eep.local_view(),
@@ -214,6 +276,10 @@ impl App {
         );
         self.panels.director = open;
         self.director_actions(actions);
+        for choice in isolate {
+            self.photo_isolate_out(choice, ctx.pixels_per_point());
+        }
+        self.director.keys = open && ui::director::keys(ctx, self.director.keys, self.director.d.track.len());
         env
     }
 
@@ -249,6 +315,12 @@ impl App {
                 Action::Free(on) => self.director.free = on,
                 Action::FreeSpeed(speed) => self.snapshots.ui.free.speed = speed,
                 Action::LockFocus => self.director_lock_focus(),
+                Action::Undo => {
+                    self.director.history.undo(&mut self.director.d);
+                }
+                Action::Redo => {
+                    self.director.history.redo(&mut self.director.d);
+                }
             }
         }
     }

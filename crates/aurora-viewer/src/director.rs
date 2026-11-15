@@ -399,6 +399,105 @@ impl Director {
     }
 }
 
+/// How many changes of the track can be undone.
+pub const HISTORY: usize = 100;
+
+/// The track as it was, with the keyframe then selected and the playhead.
+#[derive(Debug, Clone, PartialEq)]
+struct Snapshot {
+    track: Track,
+    selected: Option<usize>,
+    time: f32,
+}
+
+impl Snapshot {
+    fn of(d: &Director) -> Snapshot {
+        Snapshot {
+            track: d.track.clone(),
+            selected: d.selected,
+            time: d.time,
+        }
+    }
+
+    fn restore(&self, d: &mut Director) {
+        d.track = self.track.clone();
+        d.selected = self.selected.filter(|index| *index < d.track.len());
+        d.time = self.time;
+    }
+}
+
+/// The changes of the track, to undo and redo them (Ctrl+Z, Ctrl+Y). A
+/// change is noticed, not announced: whatever edits the track (the timeline,
+/// the window, a key) is seen by `observe`, once the mouse is released so
+/// that a whole drag is one step. The keyframes, their times and views, the
+/// curve and its options are the track; the playback's options, the lock's
+/// target and the picture's format are not undone.
+#[derive(Debug, Clone, Default)]
+pub struct History {
+    /// The track as it was last seen at rest.
+    settled: Option<Snapshot>,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+}
+
+impl History {
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Each frame, after the interface; `at_rest`: no mouse button is held.
+    pub fn observe(&mut self, d: &Director, at_rest: bool) {
+        let Some(settled) = &mut self.settled else {
+            self.settled = Some(Snapshot::of(d));
+            return;
+        };
+        if settled.track == d.track {
+            // the selection and the playhead follow without making a step
+            settled.selected = d.selected;
+            settled.time = d.time;
+            return;
+        }
+        if !at_rest {
+            return;
+        }
+        self.undo.push(std::mem::replace(settled, Snapshot::of(d)));
+        if self.undo.len() > HISTORY {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    /// The track as it was before its last change. False with nothing to undo.
+    pub fn undo(&mut self, d: &mut Director) -> bool {
+        // a change not seen yet (the key pressed in the frame of the change)
+        // is a step of its own first
+        self.observe(d, true);
+        let Some(back) = self.undo.pop() else {
+            return false;
+        };
+        self.redo.push(Snapshot::of(d));
+        back.restore(d);
+        self.settled = Some(back);
+        true
+    }
+
+    /// The change last undone, done again. False with nothing to redo.
+    pub fn redo(&mut self, d: &mut Director) -> bool {
+        self.observe(d, true);
+        let Some(again) = self.redo.pop() else {
+            return false;
+        };
+        self.undo.push(Snapshot::of(d));
+        again.restore(d);
+        self.settled = Some(again);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,6 +685,84 @@ mod tests {
         let far = Vec3::X * 50.0;
         assert_eq!(follow(Some(from), far, 0.2, 0.016), far);
         assert_eq!(follow(Some(from), to, 0.2, f32::NAN), to);
+    }
+
+    #[test]
+    fn a_change_of_the_track_is_undone_and_done_again() {
+        let mut d = Director::default();
+        let mut history = History::default();
+        history.observe(&d, true);
+        assert!(!history.can_undo() && !history.undo(&mut d));
+        for x in [0.0, 10.0, 20.0] {
+            d.add_key(at(x));
+            history.observe(&d, true);
+        }
+        // selecting and moving the playhead are no steps
+        d.select(0);
+        history.observe(&d, true);
+        d.remove(1);
+        history.observe(&d, true);
+        assert_eq!(times(&d), [0.0, 6.0]);
+        assert!(history.undo(&mut d));
+        assert_eq!(times(&d), [0.0, 3.0, 6.0]);
+        // the keyframe that was selected before the change is selected again
+        assert_eq!((d.selected, d.time), (Some(0), 0.0));
+        assert!(history.undo(&mut d));
+        assert_eq!(times(&d), [0.0, 3.0]);
+        assert!(history.redo(&mut d) && history.redo(&mut d));
+        assert_eq!(times(&d), [0.0, 6.0]);
+        assert!(!history.redo(&mut d));
+        // a new change after an undo forgets what was undone
+        history.undo(&mut d);
+        d.track.set_span(1, 1.0);
+        history.observe(&d, true);
+        assert!(!history.can_redo());
+        assert_eq!(times(&d), [0.0, 1.0, 4.0]);
+        // clearing the track is a step like another
+        d.clear();
+        history.observe(&d, true);
+        assert!(history.undo(&mut d));
+        assert_eq!(d.track.len(), 3);
+    }
+
+    #[test]
+    fn a_whole_drag_is_one_step() {
+        let mut d = three();
+        let mut history = History::default();
+        history.observe(&d, true);
+        // the mouse held: the keyframe moves frame after frame
+        for time in [3.5, 4.0, 4.5] {
+            d.track.set_time(1, time);
+            history.observe(&d, false);
+        }
+        assert!(!history.can_undo());
+        history.observe(&d, true);
+        assert!(history.can_undo());
+        assert!(history.undo(&mut d));
+        assert_eq!(times(&d), [0.0, 3.0, 6.0]);
+        assert!(!history.can_undo());
+        // undone in the very frame of a change: that change first
+        d.track.set_time(1, 5.0);
+        assert!(history.undo(&mut d));
+        assert_eq!(times(&d), [0.0, 3.0, 6.0]);
+        assert!(history.redo(&mut d));
+        assert_eq!(times(&d), [0.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn the_history_keeps_a_hundred_steps() {
+        let mut d = three();
+        let mut history = History::default();
+        history.observe(&d, true);
+        for step in 0..HISTORY + 20 {
+            d.track.set_time(2, 7.0 + step as f32);
+            history.observe(&d, true);
+        }
+        let mut undone = 0;
+        while history.undo(&mut d) {
+            undone += 1;
+        }
+        assert_eq!(undone, HISTORY);
     }
 
     #[test]

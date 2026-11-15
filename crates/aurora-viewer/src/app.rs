@@ -23391,6 +23391,12 @@ impl ApplicationHandler for App {
                         self.down.remove(&Input::key(code));
                         return;
                     }
+                    // the Director's keys while it has the keyboard (Delete,
+                    // undo, redo)
+                    if !self.egui_ctx.egui_wants_keyboard_input() && self.director_key(code, &ke.logical_key, pressed, mods) {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
                     // The command table is shared with egui's dispatcher:
                     // an editing accelerator must never become a held move.
                     let input = Input::key(code);
