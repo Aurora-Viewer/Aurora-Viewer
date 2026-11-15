@@ -114,7 +114,10 @@ Japanese, beyond the plural:
   projected texture), メタル (metal), ＨＤ画像 (the paid HD picture of an
   outfit), ベイク (bake) and 再ベイク (rebake), 樹木 (a tree), 水面 (water:
   the water settings, a water preset, swimming in it; underwater fog is
-  水中のフォグ), 飛行カメラ (flycam), 天候 (weather);
+  水中のフォグ), 飛行カメラ (flycam), 天候 (weather), 撮影モード (Photo:
+  the window and the mode), 撮影 (taking it: 撮影品質, 撮影時の時刻) and
+  スナップショット (the picture it takes; an outfit's or a profile's
+  picture stays 写真 or 画像);
   look an existing one up in `ja.ftl` before choosing a new one. Never
   持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, モニタ,
   ベーク, リベーク, フライカム nor ライト or ライティング for a light: they are the
