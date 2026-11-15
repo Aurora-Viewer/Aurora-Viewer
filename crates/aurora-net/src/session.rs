@@ -3622,7 +3622,7 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let tx = sim.interest_tx.get_or_insert_with(|| {
             let (tx, rx) = mpsc::unbounded_channel();
-            tokio::spawn(interest_list_worker(rx, move |url, mode| {
+            tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |url, mode| {
                 let http = http.clone();
                 async move {
                     let body = caps::interest_list_body(mode);
@@ -5806,11 +5806,18 @@ fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
     )
 }
 
+/// How long one InterestList post may take: the caps client only bounds
+/// the connection, and a region that takes the request and never answers
+/// must not hold the next mode (the closing `default`) for good.
+const INTEREST_LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// One region's InterestList posts, in the order asked and one at a time
 /// (the Legacy Viewer's posts are independent coroutines; a slow reply
 /// must not reorder the modes here). Modes queued while one is being
 /// posted are folded into the last, which is the one the region must end on.
-async fn interest_list_worker<F, Fut>(mut rx: mpsc::UnboundedReceiver<(String, InterestListMode)>, post: F)
+/// A post with no reply after `timeout` ([`INTEREST_LIST_TIMEOUT`]) is
+/// given up.
+async fn interest_list_worker<F, Fut>(mut rx: mpsc::UnboundedReceiver<(String, InterestListMode)>, timeout: Duration, post: F)
 where
     F: Fn(String, InterestListMode) -> Fut,
     Fut: std::future::Future<Output = ()>,
@@ -5819,7 +5826,10 @@ where
         while let Ok(next) = rx.try_recv() {
             latest = next;
         }
-        post(latest.0, latest.1).await;
+        let mode = latest.1;
+        if tokio::time::timeout(timeout, post(latest.0, mode)).await.is_err() {
+            log::warn!("InterestList mode {} had no reply in {timeout:?}: given up", mode.as_str());
+        }
     }
 }
 
@@ -7778,7 +7788,7 @@ mod interest_list_tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let log = Arc::new(Mutex::new(Vec::new()));
         let seen = log.clone();
-        let worker = tokio::spawn(interest_list_worker(rx, move |_url, mode| {
+        let worker = tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
             let seen = seen.clone();
             async move {
                 if mode == InterestListMode::Capture360 {
@@ -7795,6 +7805,30 @@ mod interest_list_tests {
         assert_eq!(*log.lock(), vec![InterestListMode::Capture360, InterestListMode::Default]);
     }
 
+    /// A post that never answers is given up, and the mode asked after it
+    /// (the closing `default`) is still sent.
+    #[tokio::test]
+    async fn a_post_with_no_reply_does_not_hold_the_next_mode() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, Duration::from_millis(50), move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    std::future::pending::<()>().await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Default]);
+    }
+
     /// Modes queued behind a post in flight fold into the last one.
     #[tokio::test]
     async fn queued_modes_fold_into_the_last() {
@@ -7809,7 +7843,7 @@ mod interest_list_tests {
         drop(tx);
         let log = Arc::new(Mutex::new(Vec::new()));
         let seen = log.clone();
-        interest_list_worker(rx, move |_url, mode| {
+        interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
             let seen = seen.clone();
             async move { seen.lock().push(mode) }
         })
