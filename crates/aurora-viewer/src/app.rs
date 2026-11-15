@@ -6078,6 +6078,11 @@ impl App {
         // only people's lines count and alert (#741; AURORA_DEMO_OBJECT_CHAT=…:on
         // for the run)
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+        // FSShowMutedChatHistory (AURORA_DEMO_MUTED_CHAT=…:<mode>: for the run)
+        w.blocked_chat = match crate::demo::muted_chat::scene() {
+            Some((_, Some(mode))) if self.demo => mode,
+            _ => self.settings.blocked_chat,
+        };
         // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
         w.set_script_dialog_limit(self.settings.script_dialog_limit);
@@ -10262,6 +10267,10 @@ impl App {
             }
             // AURORA_DEMO_SOUND_REVERB: the clapper above our avatar
             if let Some(e) = crate::demo::sound_reverb::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
+            // AURORA_DEMO_MUTED_CHAT: the blocked resident among Nova's lines
+            if let Some(e) = crate::demo::muted_chat::tick(self.world.agent.position).and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
             // AURORA_DEMO_CHAT_RANGE: near and far speakers around us
@@ -21471,6 +21480,19 @@ impl ApplicationHandler for App {
                 self.panels.chat = scene.style.is_some();
                 if let Some(style) = scene.style {
                     self.chat_ui.selected = scene.im.then_some(crate::demo::DEMO_FRIEND);
+                    self.chat_ui.demo_style = Some(style);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
+                }
+            }
+            // AURORA_DEMO_MUTED_CHAT=<style>|lines[:mode]: the same, for the
+            // blocked resident's lines
+            if let Some((style, _)) = crate::demo::muted_chat::scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = style.is_some();
+                if let Some(style) = style {
+                    self.chat_ui.selected = None;
                     self.chat_ui.demo_style = Some(style);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }

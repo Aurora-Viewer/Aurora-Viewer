@@ -664,7 +664,8 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
         return t;
     }
     let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count);
-    match world.chat.iter().rev().find(|l| !l.kind.is_notice()) {
+    // (never a blocked resident's line)
+    match world.chat.iter().rev().find(|l| !l.kind.is_notice() && !l.blocked) {
         Some(l) => format!("{near} · {}", preview(world, l, true)),
         None => near,
     }
