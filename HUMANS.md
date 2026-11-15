@@ -391,6 +391,9 @@ built.
   as with PowerShell 7.
 - `build-release.bat 42` builds PR no. 42 (to test its performance before
   merging it).
+- The OpenXR loader is built in, like in the published zip, when CMake is
+  installed (`winget install Kitware.CMake`); without CMake the script says so,
+  and VR then needs an `openxr_loader.dll` on the PC.
 - Close the viewer of that folder before rebuilding (the script says so).
 
 ## Building and launching by hand
