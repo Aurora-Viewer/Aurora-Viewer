@@ -8454,7 +8454,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `-Beta` serves `0.2.101-beta.20261025.1` as a GitHub pre-release and starts
   the isolated profile on the Beta channel: the offer shows; Preferences ›
   Language and updates › Versions › Stable hides it, Beta brings it back.
-  The script needs PowerShell 7 (`pwsh`).
+  The script needs PowerShell 7 (`pwsh`). On Linux, `scripts/test-update-linux.py`
+  (`python3 scripts/test-update-linux.py`) prepares the same two packages as
+  `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
+  tarball on loopback: the same checks, with `--beta`, `--clear-cache`,
+  `--reset-settings` and `--required` in place of the switches, and no
+  server PID to stop: the feed runs inside the script, which keeps serving
+  while the viewer it launched, or the one the update restarted, runs and
+  stops three seconds after the last of them is closed — a Check for updates
+  made after the restart therefore answers "up to date", as on a real
+  installation. Keep the viewer's folder path plain and writable: that is
+  what lets it replace itself. To see the refusal of a protected folder, copy
+  the package into a folder root owns (`sudo cp -r`) and run it from there:
+  the update window says the folder belongs to a sandbox or another account,
+  links the release page, and nothing is downloaded or replaced.
   Add `-ClearCache` and/or `-ResetSettings` to the script to test the
   publishing choices. The dialog must announce the effects before download
   and restart. After the new viewer is closed, `cache/update-marker.txt`
