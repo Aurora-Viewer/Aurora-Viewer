@@ -1750,8 +1750,9 @@ impl App {
                 paths,
                 choice,
                 include_textures,
+                entry_ids,
             } => {
-                let resp = self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures);
+                let resp = self.handle_mcp_asset_upload(&action, paths, choice.as_deref(), include_textures, entry_ids);
                 let _ = reply_tx.send(resp);
             }
             ViewerRequest::InventoryRezObject { item_id, position, select } => {
@@ -3788,8 +3789,19 @@ impl App {
         paths: Vec<String>,
         choice_str: Option<&str>,
         include_textures: Option<bool>,
+        entry_ids: Vec<String>,
     ) -> Result<ViewerResponse, McpError> {
         let act = action.trim().to_ascii_lowercase();
+        let wanted: Vec<Uuid> = entry_ids.iter().filter_map(|s| Uuid::parse_str(s.trim()).ok()).collect();
+        if wanted.len() != entry_ids.len() {
+            return Err(McpError::InvalidParams(
+                "entry_ids must be entry ids from asset_upload status".into(),
+            ));
+        }
+        if let Some(missing) = wanted.iter().find(|id| self.imports.entries.iter().all(|e| e.id != **id)) {
+            return Err(McpError::InvalidParams(format!("no staged entry {missing}")));
+        }
+        let picked = |id: Uuid| wanted.is_empty() || wanted.contains(&id);
         let parse_choice = |s: Option<&str>, first_path: Option<&str>| -> crate::imports::Choice {
             match s.unwrap_or("").trim().to_ascii_lowercase().as_str() {
                 "mesh" => crate::imports::Choice::Mesh,
@@ -3846,6 +3858,9 @@ impl App {
                 let inc_tex = include_textures.unwrap_or(true);
                 let mut ids = Vec::new();
                 for entry in &mut self.imports.entries {
+                    if !picked(entry.id) {
+                        continue;
+                    }
                     if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
                         draft.options.textures = inc_tex;
                         ids.push(entry.id);
@@ -3858,6 +3873,23 @@ impl App {
                 }
             }
             "upload" | "start" => {
+                if !wanted.is_empty() {
+                    for entry in &mut self.imports.entries {
+                        entry.selected = wanted.contains(&entry.id);
+                    }
+                }
+                // the builder's rule: nothing is sent before its fee and land
+                // impact have been read
+                if let Some(e) = self.imports.entries.iter().find(|e| {
+                    e.selected
+                        && matches!(e.status, crate::imports::Status::Ready)
+                        && matches!(&e.source, Some(crate::imports::Source::Mesh(d)) if d.quote.is_none())
+                }) {
+                    return Err(McpError::InvalidParams(format!(
+                        "'{}' has no quote yet: run asset_upload quote, read upload_price_l$ and land_impact in status, then upload",
+                        e.name
+                    )));
+                }
                 if let Some(inc_tex) = include_textures {
                     for entry in &mut self.imports.entries {
                         if let Some(crate::imports::Source::Mesh(draft)) = &mut entry.source {
@@ -3883,10 +3915,28 @@ impl App {
                 self.imports
                     .start_confirmed(&self.world, &self.settings.inventory, &self.settings.imports, &prices);
             }
+            "clear" | "remove" => {
+                if self.imports.busy() {
+                    return Err(McpError::InvalidParams("the importer is uploading: wait, then clear".into()));
+                }
+                for index in (0..self.imports.entries.len()).rev() {
+                    if picked(self.imports.entries[index].id) && !self.imports.entries[index].local {
+                        let entry = self.imports.entries.remove(index);
+                        self.scene.jobs.discard(entry);
+                    }
+                }
+                if self
+                    .imports
+                    .active
+                    .is_some_and(|id| self.imports.entries.iter().all(|e| e.id != id))
+                {
+                    self.imports.active = self.imports.entries.first().map(|e| e.id);
+                }
+            }
             "status" => {}
             other => {
                 return Err(McpError::InvalidParams(format!(
-                    "Unknown asset_upload action '{other}'. Use status, stage, quote, or upload."
+                    "Unknown asset_upload action '{other}'. Use status, stage, quote, upload, or clear."
                 )));
             }
         }
@@ -4103,6 +4153,7 @@ impl App {
     // ---- Phase 6: Suite 2 — Remaining 13 Legacy Viewer MCP Tools (43/43 Parity) ----
 
     fn handle_mcp_mesh_upload_status(&self) -> Result<ViewerResponse, McpError> {
+        const LEVEL_NAMES: [&str; 4] = ["lowest", "low", "medium", "high"];
         let mut entries_json = Vec::new();
         for entry in &self.imports.entries {
             let mut item = json!({
@@ -4125,15 +4176,42 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(level, lod)| {
+                        let tris = |s: &aurora_assets::import_mesh::Scene| {
+                            s.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>()
+                        };
+                        // a level from a file reports that file's triangles; a
+                        // generated one reports its target
+                        let file = match (&lod.file, level) {
+                            (Some(scene), _) => Some(tris(scene)),
+                            (None, 3) if matches!(lod.source, crate::imports::mesh::LodSource::File) => Some(tris(&draft.scene)),
+                            _ => None,
+                        };
                         json!({
                             "level": level,
+                            "name": LEVEL_NAMES[level],
                             "source": format!("{:?}", lod.source),
-                            "triangles": lod.triangles,
+                            "triangles": file.unwrap_or(lod.triangles),
+                            "from_file": file.is_some(),
+                            "path": lod.path.as_ref().map(|p| p.display().to_string()),
                             "error": lod.error,
                         })
                     })
                     .collect();
                 obj.insert("lods".into(), json!(lod_counts));
+                obj.insert(
+                    "links".into(),
+                    json!(draft.scene.models.iter().map(|m| m.name.clone()).collect::<Vec<_>>()),
+                );
+                obj.insert(
+                    "physics".into(),
+                    json!({
+                        "path": draft.physics_path.as_ref().filter(|_| draft.physics_file.is_some()).map(|p| p.display().to_string()),
+                        "source": draft.options.physics_source,
+                    }),
+                );
+                if draft.quote.is_none() {
+                    obj.insert("quote".into(), json!(null));
+                }
                 obj.insert("scale".into(), json!(draft.options.scale));
                 obj.insert("include_textures".into(), json!(draft.options.textures));
                 obj.insert("warnings".into(), json!(draft.scene.warnings));
@@ -4362,9 +4440,9 @@ impl App {
         } else if p.ends_with("/blender_live/stop") {
             let _ = self.handle_mcp_livemesh_control("stop", None)?;
         } else if p.ends_with("/calculate_fees") {
-            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None)?;
+            let _ = self.handle_mcp_asset_upload("quote", Vec::new(), None, None, Vec::new())?;
         } else if p.ends_with("/local_mesh/import") {
-            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None)?;
+            let _ = self.handle_mcp_asset_upload("upload", Vec::new(), None, None, Vec::new())?;
         } else if p.ends_with("/local_mesh/cancel") {
             self.imports.cancel_remaining();
         } else if let Some(floater_name) = p.strip_prefix("/main_view/floaters/")
@@ -4405,7 +4483,7 @@ impl App {
         if (path.contains("local_mesh") || path.contains("import"))
             && let Some(choice_str) = value.as_str()
         {
-            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None);
+            let _ = self.handle_mcp_asset_upload("status", Vec::new(), Some(choice_str), None, Vec::new());
         }
         Ok(ViewerResponse::Json(json!({
             "ok": true,

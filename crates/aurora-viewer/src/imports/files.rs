@@ -880,8 +880,17 @@ impl Imports {
                 wake.request_repaint();
                 return;
             }
+            // As a folder import and Firestorm's one pick: a mesh picked with
+            // its own _LOD2/_LOD1/_LOD0/_PHYS files takes them as its levels,
+            // and they do not become entries of their own.
+            let mut consumed = HashSet::new();
+            let order = lods::order(&paths, &prefs);
+            let paths: Vec<PathBuf> = order.into_iter().map(|i| paths[i].clone()).collect();
             let mut entries = Vec::new();
             for (index, path) in paths.into_iter().enumerate() {
+                if consumed.contains(&lods::identity(&path)) {
+                    continue;
+                }
                 if index >= 256 || existing + entries.len() >= 512 {
                     entries.push(Entry::new(path, Err(aurora_i18n::tr!("import-batch-limit").into()), options));
                     break;
@@ -901,6 +910,22 @@ impl Imports {
                             break;
                         }
                         retained += size;
+                        let own = lods::identity(&path);
+                        for entry in &loaded {
+                            if let Some(Source::Mesh(draft)) = &entry.source {
+                                for companion in draft.lods[..3]
+                                    .iter()
+                                    .filter(|lod| lod.file.is_some())
+                                    .filter_map(|lod| lod.path.as_ref())
+                                    .chain(draft.physics_path.iter().filter(|_| draft.physics_file.is_some()))
+                                {
+                                    let companion = lods::identity(companion);
+                                    if companion != own {
+                                        consumed.insert(companion);
+                                    }
+                                }
+                            }
+                        }
                         entries.append(&mut loaded);
                     }
                     Err(error) => entries.push(Entry::new(path, Err(error.to_string()), options)),

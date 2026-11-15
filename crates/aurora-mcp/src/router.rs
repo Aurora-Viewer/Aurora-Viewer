@@ -1311,6 +1311,11 @@ impl McpRouter {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let include_textures = args.get("include_textures").and_then(Value::as_bool);
+                let entry_ids: Vec<String> = args
+                    .get("entry_ids")
+                    .and_then(Value::as_array)
+                    .map(|arr| arr.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                    .unwrap_or_default();
                 let resp = self
                     .send_to_viewer(
                         lease_id,
@@ -1319,6 +1324,7 @@ impl McpRouter {
                             paths,
                             choice,
                             include_textures,
+                            entry_ids,
                         },
                         25_000,
                     )
@@ -3183,7 +3189,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["status", "stage", "quote", "upload"],
+                        "enum": ["status", "stage", "quote", "upload", "clear"],
                         "default": "status"
                     },
                     "paths": { "type": "array", "items": { "type": "string" } },
@@ -3192,7 +3198,8 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                         "type": "string",
                         "enum": ["mesh", "texture", "sound", "animation", "material", "bulk", "local"]
                     },
-                    "include_textures": { "type": "boolean", "default": true }
+                    "include_textures": { "type": "boolean", "default": true },
+                    "entry_ids": { "type": "array", "items": { "type": "string" }, "description": "clear / upload / quote: only these entries (ids from status); upload deselects every other entry" }
                 }
             }),
             in_compact_profile: false,
