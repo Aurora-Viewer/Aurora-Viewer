@@ -13533,6 +13533,22 @@ impl App {
                 }
             }
         }
+        // AURORA_DEMO_CONV_OPTIONS: the group, the conference, Tess's IM
+        if self.demo && crate::demo::conv_options::scene().is_some() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::conv_options::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            crate::demo::conv_options::own_lines(&mut self.world, self.frame_count);
+            if self.frame_count == crate::demo::conv_options::SHOW_AT
+                && let Some(id) = crate::demo::conv_options::scene().and_then(|s| s.show)
+            {
+                self.panels.chat = true;
+                self.chat_ui.open(id);
+            }
+        }
         if self.demo
             && let Some(mode) = crate::demo::delivery::mode()
         {
@@ -18365,6 +18381,18 @@ impl App {
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
+                // the Legacy Viewer's conversation options, read by the tabs
+                // and the lines drawn after this (AURORA_DEMO_CONV_OPTIONS=…:on
+                // turns them all on for the run, nothing saved)
+                let mut conversation_options = self.settings.conversation_options;
+                if self.demo {
+                    crate::demo::conv_options::force(&mut conversation_options);
+                }
+                ui::chat::conversation_options::publish(conversation_options);
+                // FSOpenIMContainerOnOfflineMessage
+                if std::mem::take(&mut self.world.social.offline_ims) && conversation_options.open_on_offline {
+                    crate::ui::notifications::open_conversations(&ctx, &mut open);
+                }
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 self.chat_ui.follow_column_setting(self.settings.chat_column_collapsed);
                 self.chat_ui.own_windows = self.settings.conversations_own_windows
@@ -21216,6 +21244,13 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
                 self.chat_ui.show_profile = true;
             }
+            // AURORA_DEMO_CONV_OPTIONS=<style>[:on]: the window closed (the
+            // offline messages open it with the option), at a known size
+            if let Some(scene) = crate::demo::conv_options::scene() {
+                self.panels.perf = false;
+                self.chat_ui.demo_style = Some(scene.style);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+            }
             // AURORA_DEMO_GIFS=open|klipy|sent|menu|nokey|net: the GIF picker of
             // the friend's conversation (#932), with AURORA_DEMO_CONV or alone
             if let Some(mode) = crate::demo::gifs_scenario() {
@@ -21550,6 +21585,10 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            // AURORA_DEMO_CONV_OPTIONS: Nova's conversation and its history
+            if crate::demo::conv_options::scene().is_some() {
+                crate::demo::conv_options::lines(&mut self.world);
             }
             // AURORA_DEMO_AREA_SEARCH: a native object list and filter fixtures.
             if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {

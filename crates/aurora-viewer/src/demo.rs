@@ -87,6 +87,9 @@ pub mod contact_markers;
 /// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
 #[path = "demo_conv_button.rs"]
 pub mod conv_button;
+/// The Legacy Viewer's conversation options (AURORA_DEMO_CONV_OPTIONS).
+#[path = "demo_conv_options.rs"]
+pub mod conv_options;
 /// A blended face lying exactly on an opaque face of the same mesh
 /// (AURORA_DEMO_COPLANAR_DECAL).
 #[path = "demo_coplanar_decal.rs"]
@@ -3410,6 +3413,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
             Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            // AURORA_DEMO_CONV_OPTIONS: Orion's and a group's
+            _ if conv_options::scene().is_some() => conv_options::offline_messages(DEMO_AGENT),
             _ => Vec::new(),
         },
         // a conference started by message (AURORA_DEMO_CALL=conference-legacy)

@@ -81,6 +81,7 @@ fn volume_emphasis_reaches_conversations_toasts_links_emoji_and_search() {
                             menu: None,
                             bubbles: (renderer == 2).then_some(true),
                             previews: None,
+                            moderators: None,
                         };
                         let look = view::Look {
                             header: true,

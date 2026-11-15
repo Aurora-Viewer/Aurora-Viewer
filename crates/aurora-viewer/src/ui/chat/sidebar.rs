@@ -77,11 +77,14 @@ pub(super) fn section(world: &World, id: &Uuid) -> Section {
 }
 
 /// The sections from top to bottom: the sets shown apart (highest
-/// priority first), the private messages, the groups, the conferences.
+/// priority first), the private messages, the groups, the conferences; the
+/// kinds in the order of Preferences › Chat when the tabs are ordered by
+/// kind (`conversation_options::section_kinds`).
 fn sections(world: &World) -> impl Iterator<Item = Section> {
+    let kinds = super::conversation_options::section_kinds(&super::conversation_options::current());
     (0..world.contact_sets.chat_sections().len())
         .map(Section::Set)
-        .chain([Kind::Private, Kind::Group, Kind::Conference].map(Section::Kind))
+        .chain(kinds.map(Section::Kind))
 }
 
 /// The insignia of a group conversation's group: our membership's, else
@@ -771,10 +774,20 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
 }
 
 pub(super) fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
-    if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
-        return world.social.display_name_of(id);
+    let names = &world.social.avatar_names;
+    if kind == Kind::Private
+        && let Some(name) = names.get(id)
+    {
+        // FSIMTabNameFormat (Preferences › Chat), the display name by default
+        let format = super::conversation_options::current().tab_names;
+        return super::conversation_options::tab_name(name, &names.options, format);
     }
     world.session_title(id)
+}
+
+/// The name on a conversation's tab or window: `entry_name` for its kind.
+pub(super) fn tab_title(world: &World, id: &Uuid) -> String {
+    entry_name(world, id, kind(world, id))
 }
 
 /// The head of a section (a conversation is started from the button beside
