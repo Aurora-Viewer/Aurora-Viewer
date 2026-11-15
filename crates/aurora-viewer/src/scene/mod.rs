@@ -1067,6 +1067,8 @@ pub struct Scene {
     debug_alpha: Option<bool>,
     beacon_highlights: HashSet<usize>,
     pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
+    /// The lights' boxes while Beacons > Bounding boxes for lights is on.
+    pub light_boxes: Vec<crate::world::beacons::LightBox>,
     land_overlays: world_overlays::LandOverlays,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pass_view: bool,
@@ -1678,6 +1680,7 @@ impl Scene {
             debug_alpha: None,
             beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
+            light_boxes: Vec::new(),
             land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
