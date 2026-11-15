@@ -566,6 +566,16 @@ impl InventoryUi {
                     folder: "Accessories/Wings".into(),
                     ..Default::default()
                 });
+                // a new Pre-Trash rule (red, unticked) and two options that
+                // differ (old → new; the sort folder name unticked)
+                theirs.rules.push(Rule {
+                    words: "old gift".into(),
+                    mode: Match::All,
+                    pre_trash: true,
+                    ..Default::default()
+                });
+                theirs.base = "Tidy".into();
+                theirs.stores = !prefs.stores;
                 let text = sorter::share::export(&theirs, &sorter::share::Share::all(&theirs)) + "store: Somewhere = not-a-category\n";
                 state.import = Some(ImportWindow {
                     text,
@@ -1348,6 +1358,20 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
                     );
                     ui.add_space(2.0);
                 }
+                // the options it changes first: what the user had, what the
+                // file sets
+                for (which, now, then) in found.changes(prefs) {
+                    let (ticked, name) = match which {
+                        OptionKind::Base => (&mut import.pick.base, aurora_i18n::tr!("inventory-sorter-base")),
+                        OptionKind::Stores => (&mut import.pick.stores, aurora_i18n::tr!("inventory-sorter-by-store")),
+                        OptionKind::Folders => (&mut import.pick.folders, aurora_i18n::tr!("inventory-import-folders")),
+                        OptionKind::Kinds => (&mut import.pick.kinds, aurora_i18n::tr!("inventory-sorter-kinds")),
+                    };
+                    let none = aurora_i18n::tr!("inventory-import-none").to_string();
+                    let shown = |s: &str| if s.is_empty() { none.clone() } else { s.to_owned() };
+                    let label = RichText::new(format!("{name}:  {}  →  {}", shown(&now), shown(&then))).color(p.warn);
+                    row(ui, p, ticked, label, false);
+                }
                 for (index, rule) in found.rules.iter().enumerate() {
                     let label = if rule.pre_trash {
                         // towards the Trash: red, and never ticked for the user
@@ -1370,18 +1394,6 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
                         RichText::new(hint_line(hint)),
                         dup_hints[index],
                     );
-                }
-                for (which, now, then) in found.changes(prefs) {
-                    let (ticked, name) = match which {
-                        OptionKind::Base => (&mut import.pick.base, aurora_i18n::tr!("inventory-sorter-base")),
-                        OptionKind::Stores => (&mut import.pick.stores, aurora_i18n::tr!("inventory-sorter-by-store")),
-                        OptionKind::Folders => (&mut import.pick.folders, aurora_i18n::tr!("inventory-import-folders")),
-                        OptionKind::Kinds => (&mut import.pick.kinds, aurora_i18n::tr!("inventory-sorter-kinds")),
-                    };
-                    let none = aurora_i18n::tr!("inventory-import-none").to_string();
-                    let shown = |s: &str| if s.is_empty() { none.clone() } else { s.to_owned() };
-                    let label = RichText::new(format!("{name}:  {}  →  {}", shown(&now), shown(&then))).color(p.warn);
-                    row(ui, p, ticked, label, false);
                 }
                 if found.skipped > 0 {
                     ui.label(

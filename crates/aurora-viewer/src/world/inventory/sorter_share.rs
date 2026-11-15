@@ -311,10 +311,13 @@ impl Imported {
     pub fn changes(&self, prefs: &Preferences) -> Vec<(OptionKind, String, String)> {
         let kinds = |k: &[Kind]| k.iter().map(|k| k.key()).collect::<Vec<_>>().join(", ");
         let mut out = Vec::new();
+        // an empty name is the default one: compared and shown as it is used
+        let mine = prefs.base_name();
         if let Some(base) = &self.base
-            && base.trim() != prefs.base.trim()
+            && !base.trim().is_empty()
+            && base.trim() != mine
         {
-            out.push((OptionKind::Base, prefs.base.trim().to_owned(), base.trim().to_owned()));
+            out.push((OptionKind::Base, mine, base.trim().to_owned()));
         }
         if let Some(stores) = self.stores
             && stores != prefs.stores
@@ -335,9 +338,12 @@ impl Imported {
     }
 
     /// How many of the user's defaults the text changes: each option that
-    /// differs, and each Pre-Trash rule (it sends things towards the Trash).
+    /// differs, and each Pre-Trash rule the user does not have yet (it sends
+    /// things towards the Trash).
     pub fn defaults_changed(&self, prefs: &Preferences) -> usize {
-        self.changes(prefs).len() + self.rules.iter().filter(|r| r.pre_trash).count()
+        let (known, _) = self.duplicates(prefs);
+        let new_pre_trash = self.rules.iter().zip(known).filter(|(r, known)| r.pre_trash && !known).count();
+        self.changes(prefs).len() + new_pre_trash
     }
 }
 

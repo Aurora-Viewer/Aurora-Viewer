@@ -1814,4 +1814,8 @@ fn import_lists_every_changed_default_and_ticks_none_of_the_risky_ones() {
         false,
     );
     assert_eq!(kept, mine);
+    // a Pre-Trash rule the user already has changes nothing
+    let mut has_it = mine.clone();
+    has_it.rules.push(found.rules[0].clone());
+    assert_eq!(found.defaults_changed(&has_it), 2);
 }
