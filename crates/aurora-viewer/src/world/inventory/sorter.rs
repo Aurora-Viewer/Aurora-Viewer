@@ -1181,6 +1181,27 @@ pub fn creator_of(inv: &Inventory, id: Uuid) -> Option<Uuid> {
         .map(|(creator, _)| creator)
 }
 
+/// What a plan reads of the inventory, copied for a background planner:
+/// the folders, the items, the roots and what decides the hands-off and
+/// held places (Marketplace holds, unlocked default folders, broken links).
+/// The fetch queue, caches and repair state stay with the live inventory.
+pub fn snapshot(inv: &Inventory) -> Inventory {
+    Inventory {
+        owner: inv.owner,
+        root: inv.root,
+        lib_root: inv.lib_root,
+        lib_owner: inv.lib_owner,
+        folders: inv.folders.clone(),
+        items: inv.items.clone(),
+        generation: inv.generation,
+        missing_items: inv.missing_items.clone(),
+        too_big: inv.too_big.clone(),
+        listing_holds: inv.listing_holds.clone(),
+        sorter_unlocked: inv.sorter_unlocked.clone(),
+        ..Default::default()
+    }
+}
+
 /// The creator hint the right-click "Sort by this creator" adds for `id`:
 /// its creator (a folder's majority creator), the store its name gives and
 /// the category its name gives (Furniture when it says nothing; the user

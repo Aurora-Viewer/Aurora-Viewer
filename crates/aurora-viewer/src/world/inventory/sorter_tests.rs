@@ -1605,6 +1605,10 @@ fn four_hundred_thousand_items_timings() {
     let started = std::time::Instant::now();
     let inv = big_inventory(400_000, 40_000);
     eprintln!("build: {:?}", started.elapsed());
+    let t = std::time::Instant::now();
+    let copy = snapshot(&inv);
+    eprintln!("snapshot: {:?} ({} items)", t.elapsed(), copy.items.len());
+    drop(copy);
     let none = HashSet::new();
     let prefs = Preferences::default();
     let t = std::time::Instant::now();

@@ -20,7 +20,7 @@ use std::time::Instant;
 const TRASH_BATCH: usize = 200;
 
 /// What the window sorts.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Source {
     /// The direct contents of a folder.
     Folder(Uuid),
@@ -34,7 +34,7 @@ enum Source {
 }
 
 /// Where saved moves come from.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Restoring {
     Undo,
     Snapshot(i64),
@@ -49,7 +49,7 @@ fn unix_now() -> i64 {
 }
 
 /// A confirmation on top of the window.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Confirm {
     Whole,
     /// Pre-Trash's entries and the folder they wait in.
@@ -64,7 +64,7 @@ enum Confirm {
 }
 
 /// The folder picker: for the folder to sort or for a rule's destination.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Pick {
     Source,
     Rule(usize),
@@ -138,7 +138,68 @@ pub(super) struct State {
     to_request: Vec<Uuid>,
     /// What waits in Pre-Trash and where, at an inventory generation.
     waiting: Option<(u64, std::sync::Arc<Vec<Uuid>>, Option<Uuid>)>,
+    /// The preview and Clean up's list being made off the frame, for a
+    /// large inventory.
+    planning: Option<Planning<Plan>>,
+    cleaning: Option<Planning<CleanupPlan>>,
 }
+
+/// A plan made on another thread from a copy of the inventory
+/// (`sorter::snapshot`): what it was made for, and where it arrives.
+struct Planning<T> {
+    generation: u64,
+    options: sorter::Preferences,
+    source: Source,
+    cleanup: Option<(sorter::Cleanup, Uuid, i64)>,
+    result: std::sync::mpsc::Receiver<T>,
+}
+
+impl<T: Send + 'static> Planning<T> {
+    /// Copy what the plan reads and make it on another thread. The copy is
+    /// the only work left on the frame (about 60 ms for 400,000 items,
+    /// against about a second for the plan itself).
+    fn spawn(
+        inv: &Inventory,
+        options: &sorter::Preferences,
+        source: &Source,
+        cleanup: Option<(sorter::Cleanup, Uuid, i64)>,
+        make: impl FnOnce(&Inventory) -> T + Send + 'static,
+    ) -> Self {
+        let copy = sorter::snapshot(inv);
+        let (send, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // the window may be gone by now: nobody to tell
+            let _ = send.send(make(&copy));
+        });
+        Self {
+            generation: inv.generation,
+            options: options.clone(),
+            source: source.clone(),
+            cleanup,
+            result,
+        }
+    }
+
+    /// The plan once it is made; None while it is being made. A planner
+    /// that died (a bug) is dropped and logged, and the next frame plans
+    /// again.
+    fn take(slot: &mut Option<Self>) -> Option<(Self, T)> {
+        let task = slot.as_ref()?;
+        match task.result.try_recv() {
+            Ok(plan) => slot.take().map(|task| (task, plan)),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                log::warn!("auto-sort: a background plan stopped without a result");
+                *slot = None;
+                None
+            }
+        }
+    }
+}
+
+/// From this many folders and items on, plans are made off the frame; a
+/// smaller inventory plans in a few milliseconds, at once.
+const PLAN_IN_BACKGROUND: usize = 20_000;
 
 /// The inventory unchanged this long before a plan is made again.
 const QUIET: std::time::Duration = std::time::Duration::from_millis(600);
@@ -158,7 +219,7 @@ struct ImportWindow {
     done: String,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum CleanupAction {
     PreTrash,
     Trash,
@@ -772,28 +833,46 @@ pub(super) fn show(
             inv.request(id);
         }
     }
+    let settled = state.quiet_since.is_none_or(|q| now.duration_since(q) >= QUIET)
+        && state.planned_at.is_none_or(|at| now.duration_since(at) >= REPLAN);
+    // A plan made off the frame arrives: kept when it is still for this
+    // source (its options and inventory are compared below, like any
+    // preview's, and a newer one is made when they moved on).
+    if let Some((task, plan)) = Planning::take(&mut state.planning)
+        && task.source == source
+    {
+        state.to_request.extend(plan.unfetched.iter().copied());
+        state.preview = Some((task.generation, task.options, plan));
+    }
     let options_changed = state.preview.as_ref().is_some_and(|(_, options, _)| *options != prefs.sorter);
     let inventory_changed = state
         .preview
         .as_ref()
         .is_some_and(|(generation, _, _)| *generation != inv.generation);
-    let settled = state.quiet_since.is_none_or(|q| now.duration_since(q) >= QUIET)
-        && state.planned_at.is_none_or(|at| now.duration_since(at) >= REPLAN);
-    state.updating = inventory_changed && !settled;
-    if loaded && !busy && (state.preview.is_none() || options_changed || inventory_changed && settled) {
+    state.updating = inventory_changed && !settled || state.planning.is_some();
+    if loaded && !busy && state.planning.is_none() && (state.preview.is_none() || options_changed || inventory_changed && settled) {
         state.planned_at = Some(now);
-        let plan = match &source {
-            Source::Folder(id) => sorter::plan(inv, *id, &prefs.sorter, &prefs.protected, worn),
-            Source::Entries(ids) => sorter::plan_entries(inv, ids, &prefs.sorter, &prefs.protected, worn),
-            Source::Whole => sorter::plan_whole(inv, &prefs.sorter, &prefs.protected, worn),
-            Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &prefs.protected, worn),
+        let make = {
+            let (source, options, protected, worn) = (source.clone(), prefs.sorter.clone(), prefs.protected.clone(), worn.clone());
+            move |inv: &Inventory| match &source {
+                Source::Folder(id) => sorter::plan(inv, *id, &options, &protected, &worn),
+                Source::Entries(ids) => sorter::plan_entries(inv, ids, &options, &protected, &worn),
+                Source::Whole => sorter::plan_whole(inv, &options, &protected, &worn),
+                Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &protected, &worn),
+            }
         };
-        // A Pre-Trash rule reads the whole folder sorted at any depth (and
-        // the sort folder's tree): what is not loaded yet is asked for, and
-        // the preview fills in as it arrives (it follows the inventory's
-        // generation). Nothing waits for it.
-        state.to_request.extend(plan.unfetched.iter().copied());
-        state.preview = Some((inv.generation, prefs.sorter.clone(), plan));
+        if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
+            state.planning = Some(Planning::spawn(inv, &prefs.sorter, &source, None, make));
+            state.updating = true;
+        } else {
+            let plan = make(inv);
+            // A Pre-Trash rule reads the whole folder sorted at any depth (and
+            // the sort folder's tree): what is not loaded yet is asked for, and
+            // the preview fills in as it arrives (it follows the inventory's
+            // generation). Nothing waits for it.
+            state.to_request.extend(plan.unfetched.iter().copied());
+            state.preview = Some((inv.generation, prefs.sorter.clone(), plan));
+        }
     }
     // Clean up's list, read on its tab only: once per inventory change (a
     // folder arriving included), choice, source or day.
@@ -801,7 +880,13 @@ pub(super) fn show(
         Source::Folder(id) => *id,
         Source::Entries(_) | Source::Whole | Source::Saved(..) => inv.root,
     };
-    if state.tab == CLEANUP && !busy {
+    if let Some((task, plan)) = Planning::take(&mut state.cleaning)
+        && let Some((choices, from, day)) = task.cleanup
+    {
+        state.to_request.extend(plan.unfetched.iter().copied());
+        state.cleanup = Some((task.generation, choices, from, day, plan));
+    }
+    if state.tab == CLEANUP && !busy && state.cleaning.is_none() {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -814,17 +899,18 @@ pub(super) fn show(
         });
         if stale {
             state.cleaned_at = Some(instant);
-            let plan = sorter::plan_cleanup(
-                inv,
-                &prefs.sorter,
-                &prefs.sorter.cleanup,
-                cleanup_source,
-                now,
-                &prefs.protected,
-                worn,
-            );
-            state.to_request.extend(plan.unfetched.iter().copied());
-            state.cleanup = Some((inv.generation, prefs.sorter.cleanup.clone(), cleanup_source, day, plan));
+            let make = {
+                let (options, protected, worn) = (prefs.sorter.clone(), prefs.protected.clone(), worn.clone());
+                move |inv: &Inventory| sorter::plan_cleanup(inv, &options, &options.cleanup, cleanup_source, now, &protected, &worn)
+            };
+            if inv.items.len() + inv.folders.len() >= PLAN_IN_BACKGROUND {
+                let about = Some((prefs.sorter.cleanup.clone(), cleanup_source, day));
+                state.cleaning = Some(Planning::spawn(inv, &prefs.sorter, &source, about, make));
+            } else {
+                let plan = make(inv);
+                state.to_request.extend(plan.unfetched.iter().copied());
+                state.cleanup = Some((inv.generation, prefs.sorter.cleanup.clone(), cleanup_source, day, plan));
+            }
         }
     }
     if state.autostart && state.preview.is_some() {
@@ -1676,7 +1762,13 @@ fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut I
 }
 
 fn start(state: &mut State, prefs: &InventoryPreferences) {
-    let Some((_, _, plan)) = state.preview.as_ref() else { return };
+    let Some((_, options, plan)) = state.preview.as_ref() else { return };
+    // never a run from a preview of other options, or while a newer one is
+    // being made: the user sorts what they saw
+    if state.planning.is_some() || *options != prefs.sorter {
+        state.status = aurora_i18n::tr!("inventory-sorter-updating").into();
+        return;
+    }
     state.status.clear();
     if plan.moves.is_empty() {
         state.status = aurora_i18n::tr!("inventory-sorter-nothing").into();

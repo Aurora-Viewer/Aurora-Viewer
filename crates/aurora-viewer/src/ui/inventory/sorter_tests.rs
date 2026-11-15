@@ -146,3 +146,44 @@ fn a_batch_the_app_never_took_goes_back_to_the_queue() {
     }
     assert_eq!(st.sorter.job.as_ref().map(|job| job.queue.len()), Some(3));
 }
+
+/// A large inventory's plan is made on another thread from a copy: the
+/// same plan as on the frame, and one made for another source is dropped.
+#[test]
+fn a_background_plan_matches_the_frames_and_follows_its_source() {
+    let mut inv = Inventory::default();
+    let agent = Uuid::from_u128(2);
+    crate::world::inventory::sorter::demo::seed(&mut inv, agent, 1);
+    let objects = crate::world::inventory::sorter::demo::OBJECTS;
+    let options = sorter::Preferences::default();
+    let (none, worn) = (HashSet::new(), HashSet::new());
+    let on_frame = sorter::plan(&inv, objects, &options, &none, &worn);
+    let source = Source::Folder(objects);
+    let make = {
+        let options = options.clone();
+        move |inv: &Inventory| sorter::plan(inv, objects, &options, &HashSet::new(), &HashSet::new())
+    };
+    let mut slot = Some(Planning::spawn(&inv, &options, &source, None, make));
+    let started = Instant::now();
+    let (task, plan) = loop {
+        if let Some(done) = Planning::take(&mut slot) {
+            break done;
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(30), "the plan arrives");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(slot.is_none());
+    assert_eq!(task.source, source);
+    assert_eq!(task.generation, inv.generation);
+    assert_eq!(plan.moves, on_frame.moves);
+    assert_eq!(plan.kept, on_frame.kept);
+    // the window keeps it only for the source it still shows
+    let mut st = InventoryUi::default();
+    st.sorter.planning = Some(Planning::spawn(&inv, &options, &Source::Whole, None, |_: &Inventory| {
+        Plan::default()
+    }));
+    st.sorter.source = Some(source.clone());
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let arrived = Planning::take(&mut st.sorter.planning).expect("arrived");
+    assert_ne!(arrived.0.source, source, "a plan for another source is not shown");
+}
