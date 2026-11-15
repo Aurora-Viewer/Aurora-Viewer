@@ -17,7 +17,7 @@ pub const HISTORY: usize = 120;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FrameParts {
     pub cpu: [f32; 7],
-    pub gpu: Option<[f32; 7]>,
+    pub gpu: Option<[f32; aurora_render::GpuElement::ALL.len()]>,
     /// The render thread's time per frame (ms); None without one.
     pub render_thread: Option<f32>,
 }
@@ -169,11 +169,40 @@ pub struct ObjectRow {
     pub features: Vec<Feature>,
 }
 
+/// One object the agent wears, a body attachment or a HUD: the Legacy
+/// Viewer's Performance window lists them with Detach
+/// (panel_performance_complexity, panel_performance_huds).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WornRow {
+    /// The root prim (Detach).
+    pub key: crate::world::objects::ObjKey,
+    /// Its full id (Inspect).
+    pub id: uuid::Uuid,
+    /// Its inventory item's name (getAttachmentItemName), else the
+    /// object's; None until one is known.
+    pub name: Option<String>,
+    /// Where it is worn, as the attachment menus name it.
+    pub point: String,
+    /// Its share of the avatar's complexity; None on a HUD, which does
+    /// not count.
+    pub complexity: Option<u32>,
+    pub prims: usize,
+    pub triangles: u64,
+    /// Video memory of its textures at the size shown (bytes).
+    pub vram: u64,
+    /// It can be taken off: worn from an inventory item that no RLVa
+    /// restriction keeps on (the object menu's enable_detach).
+    pub detachable: bool,
+}
+
 /// The scene around.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SceneInfo {
     pub avatars: Vec<AvatarRow>,
     pub objects: Vec<ObjectRow>,
+    /// What the agent wears on the body, and on the screen.
+    pub worn: Vec<WornRow>,
+    pub huds: Vec<WornRow>,
     pub avatar_count: usize,
     pub full: usize,
     pub impostors: usize,

@@ -262,6 +262,14 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             true,
             CtxAction::EditLinkedParts(!f.edit_linked),
         );
+        // Not in the Legacy Viewer's object menu (only Build › Object):
+        // added under Edit linked parts, which greys it, for quicker reach.
+        ui.item_if(
+            "package-import",
+            aurora_i18n::tr!("ui-bars-save-to-object-contents"),
+            o.save_to_contents,
+            CtxAction::SaveToObjectContents,
+        );
         ui.separator();
         // Tools.SelectedScriptAction (EditableSelected)
         for (icon, label, action) in [
@@ -325,7 +333,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     }
     ui.item_if("coin-filled", aurora_i18n::tr!("common-pay"), o.pay, CtxAction::Pay(id));
     ui.item_if("shopping-cart-filled", aurora_i18n::tr!("common-buy"), o.buy, CtxAction::Buy(id));
-    ui.todo("device-floppy-filled", aurora_i18n::tr!("common-save-as"));
+    save_as_submenu(ui, id);
     ui.separator();
     ui.item_if("trash-filled", aurora_i18n::tr!("common-delete"), o.delete, CtxAction::Delete(id));
     ui.separator();
@@ -540,7 +548,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.detach,
         CtxAction::Detach(key),
     );
-    save_as_submenu(ui);
+    save_as_submenu(ui, f.object.id);
     ui.separator();
     sit_stand(ui, f);
     appearance_submenu(ui, f);
@@ -593,11 +601,13 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::ObjectInfo(f.object.id),
     );
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
+        // Object.EnableDerender of menu_attachment_self.xml: never while
+        // RLVa is on (enable_derender_object, FIRE-10082)
         derender_items(
             ui,
             f.object.id,
             aurora_i18n::tr!("ui-context-derender-temporarily"),
-            !f.object.id.is_nil(),
+            !f.object.id.is_nil() && !f.rlva_enabled,
         );
         particles_submenu(ui, f);
     });
@@ -748,7 +758,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
                 aurora_i18n::tr!("ui-context-refresh-textures"),
                 CtxAction::RefreshTextures(object),
             );
-            save_as_submenu(ui);
+            save_as_submenu(ui, object);
         });
     }
     avatar_moderation(ui, f, id);
@@ -765,15 +775,7 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         })
         .unwrap_or_else(|| aurora_i18n::tr!("ui-context-display-options").into());
     ui.submenu("gauge-filled", &display, true, |ui| {
-        for (mode, icon, label) in [
-            (2u8, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
-            (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
-            (
-                0,
-                "adjustments-filled",
-                aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
-            ),
-        ] {
+        for (mode, icon, label) in super::render_choices() {
             ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
         }
         ui.separator();
@@ -945,12 +947,20 @@ fn derender_items(ui: &mut Builder, id: Uuid, temporary: &str, enabled: bool) {
     );
 }
 
-/// "Save as" (Export Menu): the export has its own task and
-/// rules of rights; its two entries wait for it.
-fn save_as_submenu(ui: &mut Builder) {
+/// "Save as" (Export Menu) on the prim `id`: Collada and OBJ open the
+/// export window, which shows what the rights let through
+/// (Object.EnableExport only asks for a selection). Backup waits for its
+/// own task.
+fn save_as_submenu(ui: &mut Builder, id: Uuid) {
+    use crate::build::export::Format;
     ui.submenu("device-floppy-filled", aurora_i18n::tr!("common-save-as"), true, |ui| {
         ui.todo("device-floppy-filled", aurora_i18n::tr!("ui-context-save-backup"));
-        ui.todo("box", aurora_i18n::tr!("ui-context-save-collada"));
+        ui.item(
+            "box",
+            aurora_i18n::tr!("ui-context-save-collada"),
+            CtxAction::SaveAs(id, Format::Collada),
+        );
+        ui.item("box", aurora_i18n::tr!("ui-context-save-obj"), CtxAction::SaveAs(id, Format::Obj));
     });
 }
 
@@ -1284,6 +1294,29 @@ mod tests {
                 .iter()
                 .any(|e| e.label == aurora_i18n::tr!("scene-particles-menu"))
         );
+    }
+
+    #[test]
+    fn save_back_to_object_contents_follows_edit_linked_parts_in_the_object_submenu() {
+        for enabled in [false, true] {
+            let mut facts = Facts::default();
+            facts.object.id = ID;
+            facts.object.save_to_contents = enabled;
+            let menu = world_menu(&object_target(), &facts, Vec3::ZERO);
+            let object = menu
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("common-object"))
+                .expect("Object submenu");
+            let Kind::Submenu(children) = object.kind else { panic!("submenu") };
+            let at = children
+                .iter()
+                .position(|e| matches!(e.kind, Kind::Action(CtxAction::EditLinkedParts(_))))
+                .expect("Edit linked parts");
+            let save = &children[at + 1];
+            assert!(matches!(save.kind, Kind::Action(CtxAction::SaveToObjectContents)));
+            assert_eq!(save.label, aurora_i18n::tr!("ui-bars-save-to-object-contents"));
+            assert_eq!(save.enabled, enabled);
+        }
     }
 
     #[test]
@@ -1823,14 +1856,25 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Unavailable))
             .map(|e| e.label)
             .collect();
-        // The pathfinding windows and exporters are separate subsystems. Script info
-        // is available through the Aurora bridge.
-        let expected = tr(&["common-save-as"]);
+        // The backup exporter is a separate subsystem. Script info is
+        // available through the Aurora bridge.
+        let expected = tr(&["ui-context-save-backup"]);
         let mut left_sorted = left.clone();
         left_sorted.sort();
         let mut expected_sorted = expected;
         expected_sorted.sort();
         assert_eq!(left_sorted, expected_sorted, "{left:?}");
+    }
+
+    #[test]
+    fn save_as_opens_the_collada_and_obj_export_of_the_prim() {
+        use crate::build::export::Format;
+        let f = Facts::default();
+        let menu = || world_menu(&object_target(), &f, Vec3::ZERO);
+        let collada = row(menu(), "ui-context-save-collada");
+        assert!(collada.enabled && matches!(collada.kind, Kind::Action(CtxAction::SaveAs(id, Format::Collada)) if id == ID));
+        let obj = row(menu(), "ui-context-save-obj");
+        assert!(obj.enabled && matches!(obj.kind, Kind::Action(CtxAction::SaveAs(id, Format::Obj)) if id == ID));
     }
 
     #[test]
@@ -2227,5 +2271,24 @@ mod rlva_sit_tests {
         assert!(!enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
         f.ground_sit_blocked = false;
         assert!(enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
+    }
+
+    #[test]
+    fn rlva_greys_derender_on_our_own_attachments() {
+        let worn = Target::Attachment {
+            key: ObjKey { region: 1, local_id: 2 },
+        };
+        let temporary = aurora_i18n::tr!("ui-context-derender-temporarily");
+        let blacklist = aurora_i18n::tr!("ui-context-derender-blacklist");
+        let mut f = Facts {
+            me: Uuid::from_u128(1),
+            ..Facts::default()
+        };
+        f.object.id = Uuid::from_u128(2);
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
+        f.rlva_enabled = true;
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), temporary));
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), blacklist));
     }
 }

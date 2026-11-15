@@ -1,11 +1,14 @@
 //! Scene: what costs the most around the camera, the avatars (complexity,
 //! triangles, attachments, the video memory of their textures, how they are
 //! drawn) or the objects (triangles, faces, texture memory, what makes them
-//! dearer), each sortable, each with Inspect.
+//! dearer), each sortable, each with Inspect; or what the agent wears, its
+//! worn objects and its HUDs, with Detach (the Legacy Viewer's Performance
+//! window: panel_performance_complexity, panel_performance_huds,
+//! FSFloaterPerformance::populateObjectList / populateHUDList).
 
 use super::draw::{self, Col, ROW_H};
-use super::snapshot::{AvatarMode, AvatarRow, Feature, ObjectRow, Snapshot};
-use super::{Action, Monitor, fmt};
+use super::snapshot::{AvatarMode, AvatarRow, Feature, ObjectRow, Snapshot, WornRow};
+use super::{Action, Monitor, SceneView, fmt};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use aurora_i18n::tr;
@@ -90,6 +93,43 @@ fn object_figures() -> Vec<Figure<ObjectRow>> {
     ]
 }
 
+/// The figures of a worn object; a HUD has no complexity (it does not
+/// count). The Legacy Viewer measures each one's drawing time on the
+/// graphics card instead (LLPipeline::profileAvatar): Aurora has no such
+/// per-object timing, its triangles and texture memory say the same.
+fn worn_figures(huds: bool) -> Vec<Figure<WornRow>> {
+    let mut figures: Vec<Figure<WornRow>> = Vec::new();
+    if !huds {
+        figures.push(Figure {
+            title: tr!("monitor-col-complexity"),
+            nearest_first: false,
+            value: |w: &WornRow| w.complexity.map_or(0.0, f64::from),
+            text: |w: &WornRow| w.complexity.map_or("–".into(), |c| aurora_i18n::integer(i64::from(c))),
+        });
+    }
+    figures.extend([
+        Figure {
+            title: tr!("ui-perf-triangles"),
+            nearest_first: false,
+            value: |w: &WornRow| w.triangles as f64,
+            text: |w: &WornRow| tr!("monitor-thousands", value = aurora_i18n::number(w.triangles as f64 / 1000.0, 1)),
+        },
+        Figure {
+            title: tr!("monitor-col-prims"),
+            nearest_first: false,
+            value: |w: &WornRow| w.prims as f64,
+            text: |w: &WornRow| fmt::count(w.prims),
+        },
+        Figure {
+            title: tr!("monitor-col-texture-vram"),
+            nearest_first: false,
+            value: |w: &WornRow| w.vram as f64,
+            text: |w: &WornRow| if w.vram > 0 { fmt::bytes(w.vram as f64) } else { "–".into() },
+        },
+    ]);
+    figures
+}
+
 fn mode(p: &Palette, m: AvatarMode) -> (Color32, &'static str) {
     match m {
         AvatarMode::Full => (p.teal, tr!("monitor-mode-full")),
@@ -117,15 +157,58 @@ fn features(f: &[Feature]) -> String {
 
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, out: &mut Vec<Action>) {
     super::heading(ui, p, tr!("monitor-tab-scene"), tr!("monitor-scene-sub"), |ui| {
-        let mut sel = usize::from(m.scene_objects);
-        if widgets::segmented(ui, p, &mut sel, &[(tr!("monitor-avatars"), true), (tr!("common-objects"), true)]) {
-            m.scene_objects = sel == 1;
-            m.scene_sort = 1;
+        const VIEWS: [SceneView; 4] = [SceneView::Avatars, SceneView::Objects, SceneView::Worn, SceneView::Huds];
+        let mut sel = VIEWS.iter().position(|v| *v == m.scene_view).unwrap_or(0);
+        let names = [
+            (tr!("monitor-avatars"), true),
+            (tr!("common-objects"), true),
+            (tr!("monitor-worn"), true),
+            (tr!("monitor-huds"), true),
+        ];
+        if widgets::segmented(ui, p, &mut sel, &names) {
+            m.scene_view = VIEWS[sel];
+            // the dearest first: by distance's neighbour, or the first figure
+            m.scene_sort = match m.scene_view {
+                SceneView::Avatars | SceneView::Objects => 1,
+                SceneView::Worn | SceneView::Huds => 0,
+            };
         }
     });
     let sc = &s.scene;
-    let chips: Vec<(String, &str)> = if m.scene_objects {
-        vec![
+    let worn_total = |rows: &[WornRow]| {
+        (
+            rows.iter().map(|w| w.triangles).sum::<u64>(),
+            rows.iter().map(|w| w.vram).sum::<u64>(),
+        )
+    };
+    let chips: Vec<(String, &str)> = match m.scene_view {
+        SceneView::Worn => {
+            let (tris, vram) = worn_total(&sc.worn);
+            vec![
+                (
+                    sc.own_complexity.map_or("–".into(), |c| aurora_i18n::integer(i64::from(c))),
+                    tr!("monitor-chip-own-complexity"),
+                ),
+                (fmt::count(sc.worn.len()), tr!("monitor-chip-attachments")),
+                (
+                    tr!("monitor-thousands", value = aurora_i18n::number(tris as f64 / 1000.0, 1)),
+                    tr!("monitor-chip-triangles"),
+                ),
+                (fmt::bytes(vram as f64), tr!("monitor-chip-texture-vram")),
+            ]
+        }
+        SceneView::Huds => {
+            let (tris, vram) = worn_total(&sc.huds);
+            vec![
+                (fmt::count(sc.huds.len()), tr!("monitor-chip-huds")),
+                (
+                    tr!("monitor-thousands", value = aurora_i18n::number(tris as f64 / 1000.0, 1)),
+                    tr!("monitor-chip-triangles"),
+                ),
+                (fmt::bytes(vram as f64), tr!("monitor-chip-texture-vram")),
+            ]
+        }
+        SceneView::Objects => vec![
             (fmt::count(sc.object_count), tr!("monitor-chip-objects")),
             (fmt::count(sc.visible), tr!("monitor-chip-visible")),
             (
@@ -165,9 +248,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                 .to_owned(),
                 "",
             ),
-        ]
-    } else {
-        vec![
+        ],
+        SceneView::Avatars => vec![
             (fmt::count(sc.avatar_count), tr!("monitor-chip-avatars")),
             (fmt::count(sc.full), tr!("monitor-chip-full")),
             (fmt::count(sc.impostors), tr!("monitor-chip-impostors")),
@@ -181,7 +263,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                 sc.own_complexity.map_or("–".into(), |c| aurora_i18n::integer(i64::from(c))),
                 tr!("monitor-chip-own-complexity"),
             ),
-        ]
+        ],
     };
     // (two rows at most: egui does not wrap framed items by itself)
     for row in chips.chunks(chips.len().div_ceil(2).max(1)) {
@@ -205,10 +287,21 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
             }
         });
     }
-    if m.scene_objects {
-        table(ui, p, m, &sc.objects, &object_figures(), out, true);
-    } else {
-        table(ui, p, m, &sc.avatars, &avatar_figures(), out, false);
+    // the Legacy Viewer's advice on these two panels
+    match m.scene_view {
+        SceneView::Worn => {
+            draw::text(ui, tr!("monitor-worn-help"), draw::BODY, p.muted);
+        }
+        SceneView::Huds => {
+            draw::text(ui, tr!("monitor-huds-help"), draw::BODY, p.muted);
+        }
+        _ => {}
+    }
+    match m.scene_view {
+        SceneView::Objects => table(ui, p, m, &sc.objects, &object_figures(), out, SceneView::Objects),
+        SceneView::Avatars => table(ui, p, m, &sc.avatars, &avatar_figures(), out, SceneView::Avatars),
+        SceneView::Worn => table(ui, p, m, &sc.worn, &worn_figures(false), out, SceneView::Worn),
+        SceneView::Huds => table(ui, p, m, &sc.huds, &worn_figures(true), out, SceneView::Huds),
     }
 }
 
@@ -216,6 +309,28 @@ trait SceneRow {
     fn name(&self) -> String;
     fn last(&self, p: &Palette) -> (Option<Color32>, String);
     fn action(&self) -> Action;
+    /// Take it off: the agent's worn objects only.
+    fn detach(&self) -> Option<Action> {
+        None
+    }
+}
+
+impl SceneRow for WornRow {
+    fn name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| tr!("common-attachment").to_owned())
+    }
+
+    fn last(&self, _p: &Palette) -> (Option<Color32>, String) {
+        (None, self.point.clone())
+    }
+
+    fn action(&self) -> Action {
+        Action::Inspect(self.id)
+    }
+
+    fn detach(&self) -> Option<Action> {
+        self.detachable.then_some(Action::Detach(self.key))
+    }
 }
 
 impl SceneRow for AvatarRow {
@@ -258,31 +373,21 @@ fn table<T: SceneRow>(
     rows: &[T],
     figures: &[Figure<T>],
     out: &mut Vec<Action>,
-    objects: bool,
+    view: SceneView,
 ) {
     let sort = m.scene_sort.min(figures.len() - 1);
-    let mut cols = vec![Col::new(
-        if objects {
-            tr!("monitor-col-object")
-        } else {
-            tr!("monitor-col-avatar")
-        },
-        0.0,
-        false,
-    )];
+    let (first, last, last_w) = match view {
+        SceneView::Objects => (tr!("monitor-col-object"), tr!("monitor-col-features"), 190.0),
+        SceneView::Avatars => (tr!("monitor-col-avatar"), tr!("monitor-col-drawn"), 120.0),
+        SceneView::Worn | SceneView::Huds => (tr!("common-attachment"), tr!("monitor-col-worn-on"), 150.0),
+    };
+    let detach = matches!(view, SceneView::Worn | SceneView::Huds);
+    let mut cols = vec![Col::new(first, 0.0, false)];
     for (i, f) in figures.iter().enumerate() {
         cols.push(Col::new(f.title, 100.0, true).sort(i == sort));
     }
-    cols.push(Col::new(
-        if objects {
-            tr!("monitor-col-features")
-        } else {
-            tr!("monitor-col-drawn")
-        },
-        if objects { 190.0 } else { 120.0 },
-        false,
-    ));
-    cols.push(Col::new("", 40.0, true));
+    cols.push(Col::new(last, last_w, false));
+    cols.push(Col::new("", if detach { 64.0 } else { 40.0 }, true));
     let mut order: Vec<&T> = rows.iter().collect();
     let f = &figures[sort];
     if f.nearest_first {
@@ -313,7 +418,7 @@ fn table<T: SceneRow>(
             return;
         }
         egui::ScrollArea::vertical()
-            .id_salt(("monitor-scene", objects))
+            .id_salt(("monitor-scene", view as u8))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 for row in order {
@@ -341,22 +446,136 @@ fn table<T: SceneRow>(
                         None => draw::cell_text(ui, last, cy, &text, false, p.muted, draw::BODY),
                     }
                     let btn = r[figures.len() + 2];
-                    let b = egui::Rect::from_center_size(pos2((btn.0 + btn.1) / 2.0, cy), vec2(24.0, 24.0));
-                    let br = ui.interact(b, ui.scope_id().with(("monitor-inspect", row.name(), cy as i32)), Sense::click());
-                    if br.hovered() {
-                        ui.painter().rect_filled(b, widgets::inner_radius(ui.visuals()), p.raised);
+                    let mut buttons = vec![("focus-2", tr!("monitor-inspect", name = row.name()), row.action())];
+                    if let Some(a) = row.detach().filter(|_| detach) {
+                        buttons.push(("paperclip", tr!("monitor-detach", name = row.name()), a));
                     }
-                    widgets::paint_glyph(
-                        ui.painter(),
-                        "focus-2",
-                        b.center(),
-                        14.0,
-                        if br.hovered() { p.ink } else { p.muted },
-                    );
-                    if br.on_hover_text(tr!("monitor-inspect", name = row.name())).clicked() {
-                        out.push(row.action());
+                    let mid = (btn.0 + btn.1) / 2.0;
+                    for (k, (glyph, tip, action)) in buttons.iter().enumerate() {
+                        let x = if buttons.len() == 1 { mid } else { mid + (k as f32 - 0.5) * 28.0 };
+                        let b = egui::Rect::from_center_size(pos2(x, cy), vec2(24.0, 24.0));
+                        let br = ui.interact(
+                            b,
+                            ui.scope_id().with(("monitor-row", *glyph, row.name(), cy as i32)),
+                            Sense::click(),
+                        );
+                        if br.hovered() {
+                            ui.painter().rect_filled(b, widgets::inner_radius(ui.visuals()), p.raised);
+                        }
+                        widgets::paint_glyph(ui.painter(), glyph, b.center(), 14.0, if br.hovered() { p.ink } else { p.muted });
+                        if br.on_hover_text(tip.as_str()).clicked() {
+                            out.push(action.clone());
+                        }
                     }
                 }
             });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::monitor::model::{Attribution, Vram};
+    use crate::ui::monitor::snapshot::*;
+    use crate::ui::widgets::elide_tests::Frames;
+
+    fn worn(local_id: u32, name: &str, complexity: Option<u32>, detachable: bool) -> WornRow {
+        WornRow {
+            key: crate::world::objects::ObjKey { region: 0, local_id },
+            id: uuid::Uuid::from_u128(u128::from(local_id)),
+            name: Some(name.into()),
+            point: "Spine".into(),
+            complexity,
+            prims: 2,
+            triangles: 1200,
+            vram: 0,
+            detachable,
+        }
+    }
+
+    fn snapshot(scene: SceneInfo) -> Snapshot {
+        Snapshot {
+            attribution: Attribution::default(),
+            cpu: None,
+            probes: None,
+            fps: 60.0,
+            frame_ms: 16.7,
+            parts: FrameParts::default(),
+            memory: None,
+            page_faults_per_s: None,
+            vram: Vram::default(),
+            texture: TextureInfo::default(),
+            geometry: GeometryInfo::default(),
+            net: NetInfo::default(),
+            regions: Vec::new(),
+            disk: DiskInfo::default(),
+            scene,
+            region: None,
+        }
+    }
+
+    /// A HUD has no complexity column (it does not count), a worn object
+    /// leads with it; only a row that may be taken off offers Detach.
+    #[test]
+    fn worn_rows_offer_detach_unless_locked() {
+        assert_eq!(worn_figures(false)[0].title, tr!("monitor-col-complexity"));
+        assert!(worn_figures(true).iter().all(|f| f.title != tr!("monitor-col-complexity")));
+        let free = worn(10, "Hair", Some(300), true);
+        assert_eq!(free.detach(), Some(Action::Detach(free.key)));
+        assert_eq!(worn(11, "Collar", Some(300), false).detach(), None, "an RLVa lock keeps it on");
+        assert_eq!(free.action(), Action::Inspect(free.id));
+    }
+
+    /// Worn lists the dearest first and its Detach asks to take that one off.
+    #[test]
+    fn the_worn_view_sorts_by_complexity_and_detaches_a_row() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let mut m = Monitor::default();
+        m.show_scene_worn(false);
+        let s = snapshot(SceneInfo {
+            worn: vec![worn(10, "Light hair", Some(200), true), worn(11, "Heavy boots", Some(9000), true)],
+            ..SceneInfo::default()
+        });
+        let mut out = Vec::new();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = frames.run(Vec::new(), |ui| show(ui, &p, &mut m, &s, &mut out));
+        }
+        let y = |name: &str| {
+            texts
+                .iter()
+                .find(|t| t.source == name)
+                .unwrap_or_else(|| panic!("{name}"))
+                .rect
+                .center()
+                .y
+        };
+        assert!(y("Heavy boots") < y("Light hair"), "the dearest first");
+        assert!(out.is_empty());
+        // the row's buttons sit at its right end: find Detach from there
+        let row_y = y("Heavy boots");
+        let right = texts.iter().map(|t| t.rect.right()).fold(0.0, f32::max) + 80.0;
+        let mut x = right;
+        while x > right - 160.0 && out.is_empty() {
+            let at = egui::pos2(x, row_y);
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ] {
+                frames.run(events, |ui| show(ui, &p, &mut m, &s, &mut out));
+            }
+            x -= 4.0;
+        }
+        let key = crate::world::objects::ObjKey { region: 0, local_id: 11 };
+        assert_eq!(out.first(), Some(&Action::Detach(key)), "{out:?}");
+    }
 }
