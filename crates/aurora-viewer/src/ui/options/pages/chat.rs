@@ -24,6 +24,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
                     "×",
                 );
+                // FSBeyondNearbyChatColorDiminishFactor (0.8, 0 to 1; on the
+                // Legacy Viewer's Colors › Chat page): the lines said beyond
+                // the say range, in every chat style
+                cx.slider(
+                    tr!("ui-options-chat-beyond-range"),
+                    tr!("ui-options-chat-beyond-range-hint"),
+                    &field!(colors.chat_beyond_range),
+                    0.0..=1.0,
+                    "",
+                );
                 // FSShowTimestampsNearbyChat (on): the lines and the cards
                 // over the world
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_nearby));
@@ -76,6 +86,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // FSMarkObjects (off)
+                cx.toggle(
+                    tr!("ui-options-mark-unnamed-objects"),
+                    tr!("ui-options-mark-unnamed-objects-hint"),
+                    &field!(mark_unnamed_objects),
+                );
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
@@ -100,6 +116,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colon-emote"),
                     tr!("ui-options-colon-emote-hint"),
                     &field!(colon_emote),
+                );
+                // AutoCloseOOC (off)
+                cx.toggle(
+                    tr!("ui-options-auto-close-ooc"),
+                    tr!("ui-options-auto-close-ooc-hint"),
+                    &field!(auto_close_ooc),
                 );
                 cx.toggle(
                     tr!("ui-options-mention-autocomplete"),
@@ -745,6 +767,24 @@ fn notifications(cx: &mut Cx) {
                             });
                     });
                     changed
+                },
+            );
+            // NotificationTipToastLifeTime (User Interface › 2D Overlay,
+            // "Tip Toast life"): the Legacy toasts only
+            let hint = if center {
+                tr!("ui-options-toast-friends-seconds-aurora")
+            } else {
+                tr!("ui-options-toast-friends-seconds-hint")
+            };
+            cx.row(
+                tr!("ui-options-toast-friends-seconds"),
+                hint,
+                &field!(tip_toast_seconds),
+                |ui, s| {
+                    ui.add_enabled_ui(!center, |ui| {
+                        super::super::slider_whole(ui, &mut s.tip_toast_seconds, 1.0..=30.0, " s")
+                    })
+                    .inner
                 },
             );
         });

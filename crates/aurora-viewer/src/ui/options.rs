@@ -294,6 +294,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "group-titles" => row(Page::Avatars, 1, tr!("ui-options-group-titles")),
         "plates" => row(Page::Avatars, 0, tr!("ui-options-plate-click")),
         "attention" => row(Page::Chat, 1, tr!("ui-options-flash-on-message")),
+        "tip-toast" | "tip-toast-legacy" => row(Page::Chat, 1, tr!("ui-options-toast-friends-seconds")),
         "keywords" => row(Page::Chat, 2, tr!("ui-options-keywords-on")),
         "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
@@ -952,6 +953,45 @@ fn maturity_choice(ui: &mut egui::Ui, p: &Palette, access: aurora_net::search::A
         super::widgets::maturity_badges_up_to(ui, p, access.preferred, 16.0);
     });
     (picked != access.preferred).then_some(picked)
+}
+
+/// The order of the transparent surfaces (`Settings::blend_order`): its
+/// three methods in a list and, beside it while the exact order is chosen,
+/// that order's precision side by side, as the graphics levels. The
+/// precision comes back as it was left when the exact order is chosen again.
+fn blend_order_choice(ui: &mut egui::Ui, p: &Palette, order: &mut u8) -> bool {
+    use crate::graphics_presets::BlendMethod;
+    use aurora_i18n::tr;
+    let before = *order;
+    let kept = egui::Id::unique("preferences blend order precision");
+    let mut method = BlendMethod::of(*order);
+    if method == BlendMethod::Exact {
+        ui.data_mut(|d| d.insert_temp(kept, *order));
+    }
+    let methods = [
+        (BlendMethod::Standard, tr!("ui-options-blend-order-standard")),
+        (BlendMethod::Exact, tr!("ui-options-blend-order-exact")),
+        (BlendMethod::Stochastic, tr!("ui-options-blend-order-stochastic")),
+    ];
+    if combo(ui, &mut method, &methods) {
+        let precision = ui.data(|d| d.get_temp::<u8>(kept)).unwrap_or(0);
+        *order = method.order(precision);
+    }
+    if method == BlendMethod::Exact {
+        segmented(ui, p, order, &blend_precisions().map(|(v, label)| (v, label, true)));
+    }
+    *order != before
+}
+
+/// The precisions of the exact order, lightest first.
+fn blend_precisions() -> [(u8, &'static str); 4] {
+    use aurora_i18n::tr;
+    [
+        (1, tr!("ui-options-blend-order-fast")),
+        (2, tr!("ui-options-blend-order-balanced")),
+        (3, tr!("ui-options-blend-order-high")),
+        (4, tr!("ui-options-blend-order-full")),
+    ]
 }
 
 /// The five graphics levels, side by side; none is lit once a setting of

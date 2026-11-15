@@ -153,8 +153,6 @@ pub struct MiniMap {
     objects: Option<Raster>,
     parcels: Option<Raster>,
     terrain: HashMap<RegionHandle, LocalTerrain>,
-    /// Avatars marked from the context menu (Mark ▸ color).
-    marks: HashMap<Uuid, Color32>,
     /// Right click: global position and avatars under the pointer.
     popup: Option<((f64, f64), Vec<Uuid>)>,
     /// Shift + drag pan in progress.
@@ -632,18 +630,10 @@ impl MiniMap {
             if !rect.expand(dot_r).contains(sp) {
                 continue;
             }
+            // the mark first, then the contact set, then the relation
+            // (LLNetMap::getAvatarColor): the same in every mini-map
             let name = avatar_name(world, &id);
-            let col = self
-                .marks
-                .get(&id)
-                .copied()
-                .unwrap_or_else(|| super::colors::map_color(world, &id, &name));
-            let col = world
-                .contact_sets
-                .appearance(&id)
-                .minimap
-                .map(super::colors::set_color)
-                .unwrap_or(col);
+            let col = super::colors::map_color(world, &id, &name);
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
                 Some(pos.z - cam.pos.z)
@@ -811,31 +801,8 @@ impl MiniMap {
                     context::request(ui.ctx(), CtxAction::ZoomAvatar(first));
                 }
                 menu::todo(ui, p, "eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
-                menu::submenu(ui, p, "tag-filled", aurora_i18n::tr!("ui-minimap-markers"), true, |ui| {
-                    for (name, col) in [
-                        (aurora_i18n::tr!("ui-minimap-red"), Color32::from_rgb(186, 0, 31)),
-                        (aurora_i18n::tr!("ui-minimap-green"), Color32::from_rgb(0, 255, 0)),
-                        (aurora_i18n::tr!("ui-minimap-blue"), Color32::from_rgb(0, 0, 255)),
-                        (aurora_i18n::tr!("ui-minimap-purple"), Color32::from_rgb(255, 0, 255)),
-                        (aurora_i18n::tr!("ui-minimap-yellow"), Color32::from_rgb(255, 255, 201)),
-                    ] {
-                        if menu::swatch(ui, p, col, name) {
-                            for id in &avs {
-                                self.marks.insert(*id, col);
-                            }
-                        }
-                    }
-                    menu::separator(ui, p);
-                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-marker")) {
-                        for id in &avs {
-                            self.marks.remove(id);
-                        }
-                    }
-                    menu::separator(ui, p);
-                    if menu::item(ui, p, "backspace-filled", aurora_i18n::tr!("ui-minimap-clear-all-markers")) {
-                        self.marks.clear();
-                    }
-                });
+                // Mark ▸ (Minimap.Mark): the avatars under the pointer
+                super::avatar_marks::submenu(ui, p, world, &avs);
                 // "More…": the radar menu of the nearest avatar
                 menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("ui-minimap-more"), true, |ui| {
                     context::avatar_list_menu(ui, p, world, first, AvatarList::Nearby)
@@ -1451,7 +1418,7 @@ pub(super) fn beacon_segment(a: glam::Vec4, b: glam::Vec4, proj: &super::hud::Pr
     (lo <= hi).then(|| [beacon_screen(a.lerp(b, lo), proj), beacon_screen(a.lerp(b, hi), proj)])
 }
 
-fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
+pub(super) fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) -> Option<(Pos2, bool, Vec2)> {
     if !clip.is_finite() || !inner.is_positive() {
         return None;
     }

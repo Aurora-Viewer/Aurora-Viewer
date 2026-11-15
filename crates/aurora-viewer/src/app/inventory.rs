@@ -122,7 +122,7 @@ impl App {
         self.inventory_ui.message = aurora_i18n::tr!("task-transfer-requested").into();
     }
 
-    fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
+    pub(super) fn document_state(&mut self, editor: Uuid) -> Option<&mut crate::ui::inventory::InventoryUi> {
         if self.inventory_ui.ui_id == editor {
             return Some(&mut self.inventory_ui);
         }
@@ -163,6 +163,7 @@ impl App {
     }
 
     pub(super) fn open_notecard_attachment(&mut self, editor: Uuid, notecard: Uuid, marker: char, copy: bool, object: Uuid) {
+        let texture_preview = self.world.inventory.can_preview(0);
         let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) else {
             return;
         };
@@ -215,7 +216,14 @@ impl App {
             return;
         }
         match item.asset_type {
-            0 => st.attachment_preview = Some(item),
+            // RLVa @viewtexture blocks the "preview_texture" floater from any
+            // source, a notecard's embedded texture included (rlvui.cpp,
+            // RlvUIEnabler::filterFloaterViewXXX)
+            0 => {
+                if texture_preview {
+                    st.attachment_preview = Some(item);
+                }
+            }
             2 => {
                 let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
                 if !avatar.is_nil() {
@@ -285,6 +293,34 @@ impl App {
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
             self.inventory_ui.consume_clipboard = cut;
             self.submit_inventory_change(change);
+        }
+    }
+
+    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
+    /// a preview played stops first, then `asset` plays for everyone or
+    /// locally. An object's contents use it without opening the inventory's
+    /// own animation window.
+    pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
+        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
+            if was_local || self.demo {
+                self.world.preview_animation(playing, false);
+            }
+            if !was_local {
+                self.send(NetCommand::AgentAnimation {
+                    anim: playing,
+                    start: false,
+                });
+            }
+        }
+        if start {
+            self.record_library_asset(asset, 20);
+            if local || self.demo {
+                self.world.preview_animation(asset, true);
+            }
+            if !local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: true });
+            }
+            self.inventory_ui.playing = Some((asset, local));
         }
     }
 
@@ -358,28 +394,10 @@ impl App {
                 self.apply_appearance_action(action);
             }
             InvAction::Animation { asset, local, start } => {
-                if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-                    if was_local || self.demo {
-                        self.world.preview_animation(playing, false);
-                    }
-                    if !was_local {
-                        self.send(NetCommand::AgentAnimation {
-                            anim: playing,
-                            start: false,
-                        });
-                    }
-                }
                 if start {
-                    self.record_library_asset(asset, 20);
                     self.inventory_ui.open_animation(&self.egui_ctx, &self.world.inventory, asset);
-                    if local || self.demo {
-                        self.world.preview_animation(asset, true);
-                    }
-                    if !local {
-                        self.send(NetCommand::AgentAnimation { anim: asset, start: true });
-                    }
-                    self.inventory_ui.playing = Some((asset, local));
                 }
+                self.play_preview_animation(asset, local, start);
             }
             InvAction::Sound(asset) => {
                 self.record_library_asset(asset, 1);
