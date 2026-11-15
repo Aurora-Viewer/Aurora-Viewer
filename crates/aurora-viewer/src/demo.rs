@@ -94,6 +94,8 @@ pub mod conv_button;
 /// The Legacy Viewer's conversation options (AURORA_DEMO_CONV_OPTIONS).
 #[path = "demo_conv_options.rs"]
 pub mod conv_options;
+#[path = "demo_conversation_log.rs"]
+pub mod conversation_log;
 /// A blended face lying exactly on an opaque face of the same mesh
 /// (AURORA_DEMO_COPLANAR_DECAL).
 #[path = "demo_coplanar_decal.rs"]
