@@ -115,7 +115,7 @@ fn build(both: bool, f: impl Fn(&World, &Ctx, aurora_net::RegionHandle, Vec<u32>
         let prims: Vec<&Prim> = c.prims.iter().take(if both { 2 } else { 1 }).collect();
         match prims.first() {
             Some(first) if !both || prims.len() == 2 => {
-                Cmd::Send(NetCommand::Build(f(w, c, first.handle, prims.iter().map(|p| p.local_id).collect())))
+                Cmd::send(NetCommand::Build(f(w, c, first.handle, prims.iter().map(|p| p.local_id).collect())))
             }
             _ => Cmd::Missing("the test's prim"),
         }
@@ -165,14 +165,14 @@ fn rename() -> Make {
 
 fn add_item() -> Make {
     make(|w, c| match c.prims.first() {
-        Some(p) => Cmd::Send(super::factory::relay_item(w, c, p.handle, p.local_id, p.id)),
+        Some(p) => Cmd::send(super::factory::relay_item(w, c, p.handle, p.local_id, p.id)),
         None => Cmd::Missing("the test's prim"),
     })
 }
 
 fn sit_request() -> Make {
     make(|_, c| match c.prims.first() {
-        Some(p) => Cmd::Send(NetCommand::RequestSit {
+        Some(p) => Cmd::send(NetCommand::RequestSit {
             handle: p.handle,
             target: p.id,
             offset: Vec3::ZERO,
@@ -182,12 +182,12 @@ fn sit_request() -> Make {
 }
 
 fn stand_up() -> Make {
-    make(|_, _| Cmd::Send(NetCommand::OneShotControl(aurora_net::control::STAND_UP)))
+    make(|_, _| Cmd::send(NetCommand::OneShotControl(aurora_net::control::STAND_UP)))
 }
 
 fn grab() -> Make {
     make(|_, c| match c.prims.first() {
-        Some(p) => Cmd::Send(NetCommand::ObjectGrab {
+        Some(p) => Cmd::send(NetCommand::ObjectGrab {
             handle: p.handle,
             local_id: p.local_id,
             offset: Vec3::ZERO,
@@ -232,7 +232,7 @@ fn rez(prim: usize, label: &'static str) -> [Step; 3] {
         ),
         Step::Sent(
             label,
-            make(move |w, c| Cmd::Send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[prim])))))),
+            make(move |w, c| Cmd::send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[prim])))))),
         ),
         Step::Expect(
             "the simulator answers with the new prim",
@@ -524,7 +524,7 @@ pub(super) fn phase2() -> Vec<Case> {
                 ),
                 Step::Refused(
                     "creating a prim is refused",
-                    make(|w, c| Cmd::Send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z)))))),
+                    make(|w, c| Cmd::send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z)))))),
                 ),
                 Step::Pause(Duration::from_millis(1500)),
                 Step::Now(
@@ -546,7 +546,7 @@ pub(super) fn phase2() -> Vec<Case> {
                 ),
                 Step::Refused(
                     "creating a prim is refused under @interact",
-                    make(|w, c| Cmd::Send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z)))))),
+                    make(|w, c| Cmd::send(NetCommand::Build(BuildCmd::Add(Box::new(new_prim(w, c.spots[0] + Vec3::Z)))))),
                 ),
                 Step::Say(Who::Controller, "@interact=y"),
                 Step::Expect("allowed again once released", holds(|w, _| w.rlva_can_rez(None), "still refused")),

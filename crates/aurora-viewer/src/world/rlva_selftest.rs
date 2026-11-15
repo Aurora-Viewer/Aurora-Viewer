@@ -317,11 +317,17 @@ pub(crate) type Skip = Box<dyn Fn(&World, &Ctx) -> Option<String>>;
 
 /// The command of a probe.
 pub(crate) enum Cmd {
-    Send(NetCommand),
+    Send(Box<NetCommand>),
     /// Nothing to do (the object is already worn, already off).
     Nothing,
     /// It cannot be built: the step fails.
     Missing(&'static str),
+}
+
+impl Cmd {
+    pub(crate) fn send(command: NetCommand) -> Self {
+        Cmd::Send(Box::new(command))
+    }
 }
 
 pub(crate) enum Step {
@@ -907,6 +913,7 @@ impl Run {
                             Cmd::Nothing => Flow::Next,
                             Cmd::Missing(what) => Flow::Fail((*label).to_owned(), format!("{what} is missing")),
                             Cmd::Send(command) => {
+                                let command = *command;
                                 if !guard::allows(&command, ctx, world, refused) {
                                     log::error!("rlva-selftest: {} wanted a command outside the test's own objects", active.case.id);
                                     Flow::Fail(

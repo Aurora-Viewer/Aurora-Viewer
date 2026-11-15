@@ -58,7 +58,7 @@ pub(super) fn wear(it: It, point: u8) -> [Step; 2] {
                     return Cmd::Nothing;
                 }
                 match w.inventory.items.get(&c.item(it)) {
-                    Some(item) => Cmd::Send(NetCommand::RezAttachments(vec![attach_request(item, c.agent, point)])),
+                    Some(item) => Cmd::send(NetCommand::RezAttachments(vec![attach_request(item, c.agent, point)])),
                     None => Cmd::Missing("the test object"),
                 }
             }),
@@ -77,7 +77,7 @@ pub(super) fn take_off(its: &'static [It]) -> [Step; 2] {
                 if worn.is_empty() {
                     Cmd::Nothing
                 } else {
-                    Cmd::Send(NetCommand::DetachAttachments(worn))
+                    Cmd::send(NetCommand::DetachAttachments(worn))
                 }
             }),
         ),
@@ -730,7 +730,7 @@ fn only_b_left() -> Test {
 }
 
 fn detach_both() -> Make {
-    make(|_, c| Cmd::Send(NetCommand::DetachAttachments(vec![c.item(It::A), c.item(It::B)])))
+    make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::A), c.item(It::B)])))
 }
 
 /// B was replaced on Tail Tip by the tagged object.
@@ -880,7 +880,7 @@ fn round_trips() -> Vec<Case> {
                 ),
                 Step::Refused(
                     "taking it off is refused",
-                    make(|_, c| Cmd::Send(NetCommand::DetachAttachments(vec![c.item(It::A)]))),
+                    make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::A)]))),
                 ),
                 Step::Pause(Duration::from_millis(500)),
                 Step::Now("it is still worn", holds(|w, c| c.worn(w, It::A), "it was taken off")),
@@ -904,7 +904,7 @@ fn round_trips() -> Vec<Case> {
                     Step::Refused(
                         "wearing it is refused",
                         make(|w, c| match w.inventory.items.get(&c.item(It::B)) {
-                            Some(item) => Cmd::Send(NetCommand::RezAttachments(vec![attach_request(item, c.agent, POINT_B)])),
+                            Some(item) => Cmd::send(NetCommand::RezAttachments(vec![attach_request(item, c.agent, POINT_B)])),
                             None => Cmd::Missing("the test object"),
                         }),
                     ),
@@ -942,7 +942,7 @@ fn round_trips() -> Vec<Case> {
                         ),
                         Step::Refused(
                             "taking it off is refused",
-                            make(|_, c| Cmd::Send(NetCommand::DetachAttachments(vec![c.item(It::B)]))),
+                            make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::B)]))),
                         ),
                     ],
                 ]),
@@ -959,7 +959,7 @@ fn round_trips() -> Vec<Case> {
                     Step::Expect("the rule is set", holds(|w, _| w.rlva.has("fly"), "not set")),
                     Step::Sent(
                         "the controller is taken off",
-                        make(|_, c| Cmd::Send(NetCommand::DetachAttachments(vec![c.item(It::Controller)]))),
+                        make(|_, c| Cmd::send(NetCommand::DetachAttachments(vec![c.item(It::Controller)]))),
                     ),
                     Step::Expect(
                         "the controller is off",
