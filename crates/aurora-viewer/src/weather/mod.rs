@@ -66,9 +66,10 @@ pub const PUDDLE_DISTANCE_DEFAULT: f32 = 38.0;
 pub const SNOW_DISTANCE: std::ops::RangeInclusive<f32> = 20.0..=256.0;
 pub const SNOW_DISTANCE_DEFAULT: f32 = 60.0;
 /// Deep snow's reach around my avatar (m, at High weather quality): as far
-/// as the rain's shelter map, which its surface is read from. The same
-/// cells whatever it is, coarser toward its edge: farther costs nothing
-/// measurable (2026-11-14, `scripts/weather-profile.py`).
+/// as the rain's shelter map, which its surface is read from. Its cells
+/// grow coarser toward its edge, one more ring of them past each doubling
+/// (4 at 15 m, 5 at 40 m): 40 m costs about 0.12 ms of GPU more than 15 m
+/// (RTX 3090, 1080p, 2026-11-15).
 pub const DEEP_SNOW_REACH: std::ops::RangeInclusive<f32> = 10.0..=40.0;
 pub const DEEP_SNOW_REACH_DEFAULT: f32 = 15.0;
 

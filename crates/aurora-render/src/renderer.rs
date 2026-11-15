@@ -12265,7 +12265,10 @@ mod tests {
                 assert!(0.1 * m.cells as f32 * 0.5 >= 2.0);
                 // one fewer would not do: no square drawn for nothing
                 let s = s * 0.5;
-                assert!(m.levels == 1 || m.cells as f32 * 0.5 * s - 2.0 * s < m.reach * SNOW_MESH_EDGE_END, "{q} {reach}");
+                assert!(
+                    m.levels == 1 || m.cells as f32 * 0.5 * s - 2.0 * s < m.reach * SNOW_MESH_EDGE_END,
+                    "{q} {reach}"
+                );
             }
         }
     }
@@ -12305,7 +12308,10 @@ mod tests {
         // turning, or going up and down less than a metre, moves nothing
         let c = Vec3::new(10.0, 10.0, 22.0);
         assert_eq!(shelter_centre_after(Some(c), c + Vec3::new(0.4, -0.6, 0.9)), None);
-        assert_eq!(shelter_centre_after(Some(c), c + Vec3::new(0.0, 0.0, 1.2)), Some(c + Vec3::new(0.0, 0.0, 1.2)));
+        assert_eq!(
+            shelter_centre_after(Some(c), c + Vec3::new(0.0, 0.0, 1.2)),
+            Some(c + Vec3::new(0.0, 0.0, 1.2))
+        );
     }
 
     #[test]

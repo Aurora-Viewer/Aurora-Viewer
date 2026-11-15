@@ -20,7 +20,7 @@ pub fn enabled() -> bool {
 
 /// Where the canopies stand: a row north of the demo's arrival.
 fn place(i: u32) -> Vec3 {
-    let x = [126.0, 131.0, 136.0, 141.0][i as usize % 4];
+    let x = [126.0, 131.0, 136.0, 121.0][i as usize % 4];
     let y = 134.0;
     Vec3::new(x, y, floor_at(x, y) + 3.0)
 }
@@ -45,13 +45,14 @@ fn canopy(id: u32, at: Vec3, color: [f32; 4], top_alpha: f32) -> ObjectUpdate {
 }
 
 /// The camera on the row at frame 61, from the side and above: the tops and
-/// the floor under each seen at once.
+/// the floor under each seen at once, the row left of the screen's middle
+/// (the demo's Inventory window covers its right quarter).
 pub fn view(frame: u64) -> Option<(Vec3, Vec3)> {
     if !enabled() || frame != 61 {
         return None;
     }
-    let mid = (place(1) + place(2)) * 0.5 - Vec3::new(0.0, 0.0, 3.0);
-    Some((mid + Vec3::new(0.0, -11.0, 7.0), mid))
+    let mid = place(1) + Vec3::new(-1.0, 0.0, -3.0);
+    Some((mid + Vec3::new(0.0, -14.0, 9.0), mid))
 }
 
 pub fn tick(world: &mut crate::world::World, frame: u64) {
