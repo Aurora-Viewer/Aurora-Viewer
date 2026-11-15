@@ -319,6 +319,7 @@ impl State {
         })
     }
 
+    #[cfg(test)]
     fn landing(&self, grab: Grab, at: Pos2, clip: Rect) -> Option<Landing> {
         self.spot(grab, at, clip).map(|spot| spot.landing)
     }
