@@ -32,7 +32,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, view: &ControlView) -> Option<Agen
         return None;
     }
     let mut out = None;
-    egui::Area::new(egui::Id::new("agent_control_bar"))
+    egui::Area::new(egui::Id::unique("agent_control_bar"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 44.0))
         .constrain(true)

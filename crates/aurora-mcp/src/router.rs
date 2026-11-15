@@ -3927,19 +3927,18 @@ fn attach_lease_metadata(mut defs: Vec<ToolDefinition>) -> Vec<ToolDefinition> {
     for def in &mut defs {
         let is_unconditional = REQUIRES_LEASE_TOOLS.contains(&def.name.as_str());
         let is_conditional = CONDITIONAL_LEASE_TOOLS.contains(&def.name.as_str());
-        if !is_unconditional && !is_conditional {
-            continue;
-        }
 
         if let Some(obj) = def.input_schema.as_object_mut() {
             let props = obj.entry("properties").or_insert_with(|| json!({}));
             if let Some(props_obj) = props.as_object_mut()
                 && !props_obj.contains_key("lease_id")
             {
-                let desc = if is_conditional {
+                let desc = if is_unconditional {
+                    "Active control lease ID acquired via control_acquire or viewer_control_acquire."
+                } else if is_conditional {
                     "Active control lease ID acquired via control_acquire or viewer_control_acquire (required for mutating operations)."
                 } else {
-                    "Active control lease ID acquired via control_acquire or viewer_control_acquire."
+                    "Active control lease ID (control_acquire / viewer_control_acquire); required by tools that change anything."
                 };
                 props_obj.insert(
                     "lease_id".to_string(),
@@ -3960,7 +3959,7 @@ fn attach_lease_metadata(mut defs: Vec<ToolDefinition>) -> Vec<ToolDefinition> {
             }
         }
 
-        if !def.description.contains("lease_id") {
+        if (is_unconditional || is_conditional) && !def.description.contains("lease_id") {
             if is_conditional {
                 def.description.push_str(" Mutating actions require lease_id from control_acquire.");
             } else {
@@ -4167,6 +4166,19 @@ mod tests {
             let parsed: Value = serde_json::from_str(text).expect("valid JSON");
             assert_eq!(parsed.get("screen").and_then(Value::as_str), Some("Login"));
             assert!(parsed.get("frame_ms").and_then(Value::as_f64).is_some(), "expected scalar frame_ms");
+        }
+    }
+
+    #[test]
+    fn every_listed_tool_takes_lease_id() {
+        for profile in [McpProfile::All, McpProfile::Compact] {
+            for t in list_tools_for_profile(profile) {
+                assert!(
+                    t.input_schema["properties"].get("lease_id").is_some(),
+                    "{} does not list lease_id",
+                    t.name
+                );
+            }
         }
     }
 }

@@ -3168,6 +3168,25 @@ impl App {
                 return;
             }
             item.item_id
+        } else if let Some(id) = script_item_id {
+            // An item named by id is never a reason to make a new script. Its
+            // object's contents may simply not be fetched yet (straight after a
+            // login they are not): save to it, and let the simulator refuse an
+            // id the object does not hold. If the contents ARE known and lack
+            // it, say so instead.
+            let known = self
+                .build
+                .contents
+                .objects
+                .get(&object_uuid)
+                .is_some_and(|inv| !inv.loading && !inv.items.is_empty());
+            if known {
+                let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
+                    "script_item_id {id} is not in object {object_local_id}: lsl_inspect_object_scripts lists its scripts"
+                ))));
+                return;
+            }
+            id
         } else {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i32);
             let wanted_name: String = if script_name.trim().is_empty() {
@@ -4616,22 +4635,40 @@ impl App {
             ));
         }
         let name = item.name.clone();
-        let text = if self.inventory_ui.preview == Some(item_id) {
-            self.inventory_ui
-                .preview_text
-                .as_ref()
-                .and_then(|r| r.as_ref().ok())
-                .cloned()
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        Ok(ViewerResponse::Json(json!({
-            "ok": true,
-            "item_id": item_id.to_string(),
-            "name": name,
-            "text": text,
-        })))
+        // The text is only held while the notecard is the inventory preview. If it
+        // is not, start fetching it (as opening it in inventory does) and say so,
+        // rather than answer "" as if the notecard were empty.
+        if self.inventory_ui.preview != Some(item_id) {
+            let item = item.clone();
+            self.inventory_ui.preview = Some(item_id);
+            self.inventory_ui.preview_text = None;
+            self.send(NetCommand::PreviewInventoryItem(item));
+            return Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "item_id": item_id.to_string(),
+                "name": name,
+                "loading": true,
+                "text": null,
+                "note": "fetching the notecard: call notecard_read again in a moment",
+            })));
+        }
+        match self.inventory_ui.preview_text.as_ref() {
+            None => Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "item_id": item_id.to_string(),
+                "name": name,
+                "loading": true,
+                "text": null,
+                "note": "still fetching: call notecard_read again in a moment",
+            }))),
+            Some(Err(e)) => Err(McpError::InvalidParams(format!("notecard {item_id} could not be read: {e}"))),
+            Some(Ok(text)) => Ok(ViewerResponse::Json(json!({
+                "ok": true,
+                "item_id": item_id.to_string(),
+                "name": name,
+                "text": text,
+            }))),
+        }
     }
 
     fn resolve_notecard_parent_folder(&self, folder_id: Option<Uuid>) -> Result<Uuid, McpError> {
