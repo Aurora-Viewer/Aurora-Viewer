@@ -269,6 +269,7 @@ impl Ctx {
         text.replace("{ch}", &self.channel.to_string())
             .replace("{f}", FOLDER)
             .replace("{seat}", &seat.to_string())
+            .replace("{other}", &self.other.to_string())
             .replace("{layer}", cases::worn_layer(world).map_or("shirt", |(_, name)| name))
     }
 

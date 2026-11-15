@@ -6,6 +6,7 @@
 use super::super::rlva::{LAYERS, POINTS};
 use super::{Case, Cmd, Ctx, It, LINKED, Make, POINT_A, POINT_B, POINT_CONTROLLER, SUBFOLDERS, Skip, Step, Test, Who, World};
 use crate::world::bridge::factory::attach_request;
+use crate::world::names::NameScope;
 use aurora_net::NetCommand;
 use aurora_net::build::BuildCmd;
 use std::time::Duration;
@@ -463,6 +464,63 @@ fn rules() -> Vec<Case> {
                     |w, c| w.rlva_can_add(c.item(It::B), 43, Uuid::nil()) && w.rlva_can_remove(c.item(It::Controller), Uuid::nil()),
                     "the other point is locked too",
                 ),
+            ),
+        ],
+    ));
+    // the made-up resident is nobody's friend and stands nowhere: the rule
+    // of each place is asked, no window is opened
+    let named = |scope: fn(&Ctx) -> NameScope| move |w: &World, c: &Ctx| w.rlva_shows_name(scope(c), c.other);
+    cases.push(case(
+        "A31",
+        "@shownames hides by place, and an exception names again (#3547)",
+        vec![
+            skip_if(|w, c| {
+                (!w.rlva_can_name(c.other) && c.foreign_rules(w)).then(|| "already refused by a restriction of another object".to_owned())
+            }),
+            Step::Say(Who::Controller, "@shownames=n"),
+            Step::Expect(
+                "hidden in the world and as an object's owner",
+                holds(
+                    |w, c| !w.rlva_shows_name(NameScope::World, c.other) && !w.rlva_shows_name(NameScope::Owner, c.other),
+                    "still named",
+                ),
+            ),
+            Step::Now(
+                "named in the friends list and a group's members",
+                holds(named(|_| NameScope::Roster), "hidden there too"),
+            ),
+            Step::Now(
+                "a creator who owns the object is hidden",
+                holds(|w, c| !w.rlva_shows_name(NameScope::Creator { owner: c.other }, c.other), "named"),
+            ),
+            Step::Now(
+                "a creator who neither owns it nor is around is named",
+                holds(named(|c| NameScope::Creator { owner: c.agent }), "hidden"),
+            ),
+            Step::Now(
+                "oneself is named everywhere",
+                holds(
+                    |w, c| w.rlva_shows_name(NameScope::World, c.agent) && w.rlva_shows_name(NameScope::Owner, c.agent),
+                    "hidden",
+                ),
+            ),
+            Step::Say(Who::Controller, "@shownames:{other}=add"),
+            Step::Expect(
+                "an exception is named in the world and as an owner",
+                holds(
+                    |w, c| w.rlva_shows_name(NameScope::World, c.other) && w.rlva_shows_name(NameScope::Owner, c.other),
+                    "still hidden",
+                ),
+            ),
+            Step::Say(Who::Controller, "@shownames:{other}=rem"),
+            Step::Expect(
+                "hidden again without the exception",
+                holds(|w, c| !w.rlva_shows_name(NameScope::World, c.other), "still named"),
+            ),
+            Step::Say(Who::Controller, "@shownames=y"),
+            Step::Expect(
+                "every name is back once released",
+                holds(named(|_| NameScope::World), "still hidden"),
             ),
         ],
     ));
