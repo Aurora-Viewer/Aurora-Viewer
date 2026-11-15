@@ -12,11 +12,15 @@
 //! on the GPU for any of it.
 //!
 //! A cube map's faces are mirror images of what a camera draws looking
-//! the same way (the cube is laid out as seen from outside). Rather than
-//! flipping six images, the faces are drawn by ordinary cameras
-//! ([`CAPTURE_CAMERAS`]), the +X and -X captures swap layers, and the cube
-//! is sampled at (-x, y, z): `cube_layout_matches_the_capture_cameras`
-//! proves it against the cube face formulas.
+//! the same way (the cube is laid out as seen from outside), and its side
+//! faces are y-up while the world is z-up. Rather than flipping or turning
+//! six images, the faces are drawn by ordinary cameras with the Legacy
+//! Viewer's up vectors ([`CAPTURE_CAMERAS`]: z up for the four horizontal
+//! faces, so that what turns to the camera, particles and billboards, has
+//! the same roll in each), each into the layer that holds its view, and the
+//! cube is sampled at (x, z, y) of the world direction ([`cube_read`]):
+//! `cube_layout_matches_the_capture_cameras` proves it against the cube
+//! face formulas.
 
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
@@ -37,39 +41,50 @@ pub struct CaptureCamera {
 }
 
 /// The six cameras of a 360° capture, square and 90° wide, in the Legacy
-/// Viewer's order (+X, +Y, +Z, -X, -Y, -Z).
+/// Viewer's order and with its up vectors (`look_dirs` and `look_upvecs`
+/// of LLFloater360Capture::capture360Images): +X, +Y, -X and -Y with z up,
+/// +Z with -y up, -Z with +y up.
 pub const CAPTURE_CAMERAS: [CaptureCamera; 6] = [
     CaptureCamera {
         forward: Vec3::X,
-        up: Vec3::Y,
-        layer: 1,
+        up: Vec3::Z,
+        layer: 0,
     },
     CaptureCamera {
         forward: Vec3::Y,
-        up: Vec3::NEG_Z,
-        layer: 2,
-    },
-    CaptureCamera {
-        forward: Vec3::Z,
-        up: Vec3::Y,
+        up: Vec3::Z,
         layer: 4,
     },
     CaptureCamera {
+        forward: Vec3::Z,
+        up: Vec3::NEG_Y,
+        layer: 2,
+    },
+    CaptureCamera {
         forward: Vec3::NEG_X,
-        up: Vec3::Y,
-        layer: 0,
+        up: Vec3::Z,
+        layer: 1,
     },
     CaptureCamera {
         forward: Vec3::NEG_Y,
         up: Vec3::Z,
-        layer: 3,
+        layer: 5,
     },
     CaptureCamera {
         forward: Vec3::NEG_Z,
         up: Vec3::Y,
-        layer: 5,
+        layer: 3,
     },
 ];
+
+/// Where the cube is read for the world direction `d`: the shader's
+/// `textureSampleLevel(cube, …, d.xzy)`. The swap of y and z both turns
+/// the z-up world onto the cube's y-up side faces and undoes the mirror
+/// of its layout.
+#[cfg(test)]
+fn cube_read(d: Vec3) -> Vec3 {
+    Vec3::new(d.x, d.z, d.y)
+}
 
 /// The direction a pixel of the panorama looks at, in the z-up world: the
 /// centre column north (+Y), east (+X) a quarter of the width to its
@@ -547,7 +562,7 @@ mod tests {
 
     /// Every direction inside a capture camera's view lands on the layer
     /// its image fills, at the texel the camera drew it, once the cube is
-    /// read at (-x, y, z): the panorama shows each thing where it is.
+    /// read at [`cube_read`]: the panorama shows each thing where it is.
     #[test]
     fn cube_layout_matches_the_capture_cameras() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
@@ -563,7 +578,7 @@ mod tests {
                 let clip = vp * (origin + d).extend(1.0);
                 let ndc = clip.xy() / clip.w;
                 let (col, row) = ((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
-                let (layer, s, t) = cube_lookup(Vec3::new(-d.x, d.y, d.z));
+                let (layer, s, t) = cube_lookup(cube_read(d));
                 assert_eq!(layer, cam.layer, "{cam:?} at {d:?}");
                 assert!(
                     (s - col).abs() < 1e-4 && (t - row).abs() < 1e-4,
@@ -572,6 +587,19 @@ mod tests {
             }
         }
         assert!(layers.iter().all(|l| *l), "every layer is filled");
+    }
+
+    /// The faces are drawn as the Legacy Viewer draws them
+    /// (llfloater360capture.cpp, `look_dirs` and `look_upvecs`): what turns
+    /// to the camera (particles, billboards) has the same roll on the four
+    /// horizontal faces, with no break where they meet.
+    #[test]
+    fn capture_cameras_are_the_legacy_ones() {
+        let dirs = [Vec3::X, Vec3::Y, Vec3::Z, Vec3::NEG_X, Vec3::NEG_Y, Vec3::NEG_Z];
+        let ups = [Vec3::Z, Vec3::Z, Vec3::NEG_Y, Vec3::Z, Vec3::Z, Vec3::Y];
+        for (i, cam) in CAPTURE_CAMERAS.iter().enumerate() {
+            assert_eq!((cam.forward, cam.up), (dirs[i], ups[i]), "face {i}");
+        }
     }
 
     /// The panorama's columns go around the compass from the west edge,
