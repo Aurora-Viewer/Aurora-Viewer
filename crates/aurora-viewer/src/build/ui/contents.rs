@@ -5,7 +5,7 @@
 
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::AT_LSL_TEXT;
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -20,6 +20,8 @@ use egui::{RichText, Vec2};
 fn display_name(i: &TaskItem) -> String {
     if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
         i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
+    } else if i.asset_type == AT_NOTECARD && i.name.starts_with("New Notecard") {
+        i.name.replacen("New Notecard", aurora_i18n::tr!("common-new-notecard"), 1)
     } else {
         i.name.clone()
     }
@@ -92,6 +94,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
     });
     ui.horizontal(|ui| {
+        // under New script, as floater_tools.xml stacks them; LLPanelContents::getState:
+        // only where the region has CreateTaskInventoryItem
+        if ui
+            .add_enabled(
+                editable && single && BuildTool::contents_create_cap(world, idx),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-notecard")).size(font_size)),
+            )
+            .clicked()
+        {
+            tool.new_notecard(world, idx);
+        }
         if ui
             .button(RichText::new(aurora_i18n::tr!("common-rights")).size(font_size))
             .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))
@@ -331,11 +344,13 @@ fn item_row(
             crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
         );
         let script = item.asset_type == AT_LSL_TEXT;
+        let preview =
+            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_allowed(world, idx, &it));
         menu::context_menu(&r, p, |ui| {
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            let can_open = script || item.asset_type == 7;
+            let can_open = script || item.asset_type == 7 || preview;
             let no_open = if can_open {
                 ""
             } else {
@@ -400,7 +415,7 @@ fn item_row(
                     object: object_id,
                     item: item.item_id,
                 });
-            } else if item.asset_type == 7 {
+            } else if item.asset_type == 7 || preview {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
             } else if editable && item_modify {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);

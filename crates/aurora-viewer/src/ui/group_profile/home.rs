@@ -243,6 +243,14 @@ fn setting_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, control:
     });
 }
 
+/// Titles listed in "Title shown". A blank role title is not offered here:
+/// the Legacy group profile never received one
+/// (`LLGroupMgr::processGroupTitlesReply`, `llgroupmgr.cpp`). The Group
+/// titles window lists it instead (#3147).
+fn profile_title_choices(titles: &[aurora_net::groups::GroupTitle]) -> impl Iterator<Item = &aurora_net::groups::GroupTitle> {
+    titles.iter().filter(|t| !t.title.is_empty())
+}
+
 /// Our settings in the group (LLPanelGroupGeneral's "My group settings"
 /// and LLGroupActions::activate, exoGroupMuteList for the chat).
 fn me(ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
@@ -265,14 +273,15 @@ fn me(ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) 
             });
             setting_row(ui, p, "tag-filled", aurora_i18n::tr!("ui-group-profile-title-shown"), |ui| {
                 let titles = v.data.map(|d| d.titles.as_slice()).unwrap_or_default();
+                let choices: Vec<_> = profile_title_choices(titles).collect();
                 let current = titles.iter().find(|t| t.selected);
                 let text = current.map_or_else(|| v.my_title().unwrap_or_default(), |t| t.title.clone());
-                ui.add_enabled_ui(!titles.is_empty(), |ui| {
+                ui.add_enabled_ui(!choices.is_empty(), |ui| {
                     egui::ComboBox::from_id_salt(("group_title", v.id))
                         .width(130.0)
                         .selected_text(text)
                         .show_ui(ui, |ui| {
-                            for t in titles {
+                            for t in &choices {
                                 if ui.selectable_label(t.selected, &t.title).clicked() && !t.selected {
                                     actions.push(GroupAction::SetTitle { group: v.id, role: t.role });
                                 }
@@ -314,6 +323,30 @@ fn me(ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aurora_net::groups::GroupTitle;
+
+    #[test]
+    fn a_blank_title_is_not_offered_in_the_profile_combo() {
+        let titles = [
+            GroupTitle {
+                title: "Member".into(),
+                role: uuid::Uuid::nil(),
+                selected: false,
+            },
+            GroupTitle {
+                title: String::new(),
+                role: uuid::Uuid::from_u128(6),
+                selected: true,
+            },
+            GroupTitle {
+                title: "Founder".into(),
+                role: uuid::Uuid::from_u128(5),
+                selected: false,
+            },
+        ];
+        let offered: Vec<&str> = profile_title_choices(&titles).map(|t| t.title.as_str()).collect();
+        assert_eq!(offered, ["Member", "Founder"]);
+    }
 
     #[test]
     fn notice_dates_read_today_yesterday_then_the_day() {

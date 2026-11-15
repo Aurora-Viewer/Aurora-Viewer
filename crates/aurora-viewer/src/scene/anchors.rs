@@ -823,6 +823,20 @@ impl Scene {
                 moved.push(range);
             }
         }
+        // the snow on each skeleton (Aurora Weather, none on animesh), sent
+        // whenever it changes: written at the pose, it reached the GPU only
+        // with a skeleton posed that frame, and one that was not kept
+        // whatever its entry held
+        for (id, slot) in &self.palette_slots {
+            let index = *slot as usize * PALETTE_JOINTS + super::anim::AVATAR_SNOW;
+            let entry = super::avatar_snow::palette_entry(self.avatar_snow.amount(id));
+            if let Some(m) = self.palettes.get_mut(index)
+                && *m != entry
+            {
+                *m = entry;
+                moved.push(index..index + 1);
+            }
+        }
         renderer.set_palette_slots(&self.palettes, &posed, PALETTE_JOINTS);
         for range in moved {
             renderer.set_palette_range(&self.palettes, range);
