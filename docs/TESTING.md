@@ -6297,6 +6297,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, Auto-sort, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_SORTER_TAB=preview\|rules\|options\|cleanup\|cleanup-custom\|share\|import\|picker\|confirm-whole` | With a `sorter` inventory mode: sample rules and store hints, and Auto-sort on one tab, window or confirmation |
+| `AURORA_SORTER_VOCAB=<path>` | Development builds: Auto-sort reads this vocabulary file instead of the built-in one |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
@@ -7144,7 +7145,7 @@ failure. Grid validation and any paid upload are performed by the human.
   in front). `aurora-folder-colors-follow`: the palette follows the selection;
   Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
   pink outlined) and 830 ("Select a folder to color it.", palette greyed).
-- **`AURORA_DEMO_INVENTORY=sorter|aurora-sorter|sorter-big|sorter-run`**: an Objects
+- **`AURORA_DEMO_INVENTORY=sorter|aurora-sorter|sorter-big|sorter-run|sorter-vocab`**: an Objects
   folder of about 700 entries named the way creators name them (made-up stores,
   body tags such as `[REBORN]`, `eBODY Reborn`, `Legacy F`, `Lara X`, unpackers,
   Squish and Squeeze versions, `[Store] +` and `*Store*` tags, acquired dates
@@ -7169,7 +7170,15 @@ failure. Grid validation and any paid upload are performed by the human.
   whole-inventory confirmation. Capture after about 700 frames. The Clean up tab: a delivery folder
   entirely from 2010 (`Retro Mall`) taken whole, the mixed Hex Dress FATPACK left
   whole, and two root folders (`Old freebies`, `Places I liked`) with every
-  item type, whose old items are listed one by one.
+  item type, whose old items are listed one by one. `sorter-vocab` opens the
+  Vocabulary check: every name of the golden corpus
+  (`assets/auto-sort/corpus.json`), where it should go and where the vocabulary
+  in use sends it, differences first in the warning colour, and how many match.
+  With **`AURORA_SORTER_VOCAB=<path>`** a development build (any profile but
+  `release`) reads that vocabulary file instead of the built-in one: change a
+  word, relaunch, and the window shows what moved. A file that does not read is
+  ignored, with the reason in the log. See
+  [Auto-sort vocabulary](AUTO_SORT_VOCABULARY.md).
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

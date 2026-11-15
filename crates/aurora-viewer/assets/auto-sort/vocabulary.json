@@ -1,0 +1,726 @@
+{
+  "about": "Auto-sort's vocabulary: the words creators use in item names. Lowercase words separated by single spaces, as sorter::words reads names. Categories are tried in this order; the first match wins. Check a change with the corpus test (cargo test --workspace vocabulary) and AURORA_DEMO_INVENTORY=sorter-vocab.",
+  "bodies": [
+    {
+      "body": "Reborn",
+      "strong": [
+        "reborn",
+        "ebody reborn",
+        "rebornf"
+      ],
+      "weak": [
+        "waifu",
+        "waifus",
+        "juicy"
+      ],
+      "hides": [
+        "eBODY"
+      ]
+    },
+    {
+      "body": "eBODY",
+      "strong": [
+        "ebody",
+        "ebody classic",
+        "ebody curvy"
+      ],
+      "weak": [],
+      "hides": []
+    },
+    {
+      "body": "Legacy Male",
+      "strong": [
+        "legacy m",
+        "legacym",
+        "legacy male",
+        "legacy men",
+        "legacy mens",
+        "legacy boy"
+      ],
+      "weak": [],
+      "hides": [
+        "Legacy"
+      ]
+    },
+    {
+      "body": "Legacy",
+      "strong": [
+        "legacy",
+        "legacy f",
+        "legacy perky",
+        "legacy pinup",
+        "legacyf"
+      ],
+      "weak": [],
+      "hides": []
+    },
+    {
+      "body": "Maitreya",
+      "strong": [
+        "maitreya",
+        "lara x",
+        "lara petite",
+        "maitreya lara",
+        "mait"
+      ],
+      "weak": [
+        "lara"
+      ],
+      "hides": []
+    },
+    {
+      "body": "Belleza Jake",
+      "strong": [
+        "belleza jake"
+      ],
+      "weak": [
+        "jake"
+      ],
+      "hides": [
+        "Belleza"
+      ]
+    },
+    {
+      "body": "Belleza",
+      "strong": [
+        "belleza"
+      ],
+      "weak": [
+        "freya",
+        "isis",
+        "venus"
+      ],
+      "hides": []
+    },
+    {
+      "body": "Slink",
+      "strong": [
+        "slink"
+      ],
+      "weak": [
+        "physique",
+        "hourglass"
+      ],
+      "hides": []
+    },
+    {
+      "body": "Kupra",
+      "strong": [
+        "kupra",
+        "inithium"
+      ],
+      "weak": [
+        "erika"
+      ],
+      "hides": []
+    },
+    {
+      "body": "Gianni",
+      "strong": [
+        "gianni",
+        "signature gianni"
+      ],
+      "weak": [],
+      "hides": []
+    },
+    {
+      "body": "Geralt",
+      "strong": [
+        "geralt",
+        "signature geralt"
+      ],
+      "weak": [],
+      "hides": []
+    },
+    {
+      "body": "Aesthetic",
+      "strong": [
+        "aesthetic body"
+      ],
+      "weak": [
+        "aesthetic"
+      ],
+      "hides": []
+    }
+  ],
+  "categories": [
+    {
+      "category": "tattoos",
+      "words": [
+        "tattoo",
+        "tattoos",
+        "tatoo",
+        "tatoos",
+        "tattoo layer",
+        "bandage",
+        "bandages",
+        "scar",
+        "scars",
+        "bruises"
+      ]
+    },
+    {
+      "category": "skins",
+      "words": [
+        "skin",
+        "skins"
+      ]
+    },
+    {
+      "category": "makeup",
+      "words": [
+        "makeup",
+        "make up",
+        "lipstick",
+        "lipsticks",
+        "lip gloss",
+        "gloss",
+        "eyeshadow",
+        "eyeshadows",
+        "eye shadow",
+        "eyeliner",
+        "eye liner",
+        "liner",
+        "blush",
+        "brows",
+        "eyebrows",
+        "freckles",
+        "lashes",
+        "contour",
+        "highlighter"
+      ]
+    },
+    {
+      "category": "hair",
+      "words": [
+        "hair",
+        "hairstyle",
+        "hairbase",
+        "hair base",
+        "ponytail",
+        "bangs",
+        "braids",
+        "updo"
+      ]
+    },
+    {
+      "category": "eyes",
+      "words": [
+        "eyes",
+        "eye",
+        "iris",
+        "irises"
+      ]
+    },
+    {
+      "category": "nails",
+      "words": [
+        "nails",
+        "nail",
+        "manicure",
+        "pedicure"
+      ]
+    },
+    {
+      "category": "shoes",
+      "words": [
+        "shoes",
+        "shoe",
+        "heels",
+        "heel",
+        "boots",
+        "boot",
+        "sneakers",
+        "sandals",
+        "pumps",
+        "stilettos",
+        "loafers",
+        "slippers",
+        "flats",
+        "wedges",
+        "mules"
+      ]
+    },
+    {
+      "category": "stockings",
+      "words": [
+        "stockings",
+        "stocking",
+        "tights",
+        "socks",
+        "sock",
+        "pantyhose",
+        "fishnets",
+        "fishnet",
+        "thigh highs",
+        "knee highs",
+        "leg warmers"
+      ]
+    },
+    {
+      "category": "lingerie",
+      "words": [
+        "lingerie",
+        "bra",
+        "bralette",
+        "panties",
+        "panty",
+        "thong",
+        "corset",
+        "garter",
+        "garters",
+        "bustier",
+        "babydoll",
+        "teddy",
+        "underwear",
+        "briefs",
+        "boxers",
+        "negligee"
+      ]
+    },
+    {
+      "category": "swimwear",
+      "words": [
+        "bikini",
+        "swimsuit",
+        "swimwear",
+        "monokini",
+        "bathing suit"
+      ]
+    },
+    {
+      "category": "bodysuits",
+      "words": [
+        "bodysuit",
+        "catsuit",
+        "leotard",
+        "jumpsuit",
+        "romper",
+        "playsuit",
+        "overalls"
+      ]
+    },
+    {
+      "category": "dresses",
+      "words": [
+        "dress",
+        "dresses",
+        "gown",
+        "sundress",
+        "minidress"
+      ]
+    },
+    {
+      "category": "skirts",
+      "words": [
+        "skirt",
+        "skirts",
+        "miniskirt",
+        "tutu"
+      ]
+    },
+    {
+      "category": "pants",
+      "words": [
+        "pants",
+        "jeans",
+        "trousers",
+        "leggings",
+        "joggers",
+        "slacks",
+        "cargos"
+      ]
+    },
+    {
+      "category": "shorts",
+      "words": [
+        "shorts",
+        "hotpants",
+        "hot pants"
+      ]
+    },
+    {
+      "category": "jackets",
+      "words": [
+        "jacket",
+        "jackets",
+        "coat",
+        "coats",
+        "blazer",
+        "parka",
+        "cardigan",
+        "bomber",
+        "trench"
+      ]
+    },
+    {
+      "category": "tops",
+      "words": [
+        "top",
+        "tops",
+        "shirt",
+        "shirts",
+        "tshirt",
+        "tee",
+        "blouse",
+        "tank",
+        "crop top",
+        "sweater",
+        "hoodie",
+        "pullover",
+        "vest",
+        "cami",
+        "turtleneck",
+        "jumper"
+      ]
+    },
+    {
+      "category": "sleepwear",
+      "words": [
+        "robe",
+        "kimono",
+        "pajamas",
+        "pyjamas",
+        "pajama",
+        "nightgown",
+        "sleepwear",
+        "nightie"
+      ]
+    },
+    {
+      "category": "gloves",
+      "words": [
+        "gloves",
+        "glove",
+        "mittens"
+      ]
+    },
+    {
+      "category": "jewelry",
+      "words": [
+        "necklace",
+        "necklaces",
+        "earrings",
+        "earring",
+        "ring",
+        "rings",
+        "bracelet",
+        "bracelets",
+        "bangles",
+        "choker",
+        "piercing",
+        "piercings",
+        "anklet",
+        "jewelry",
+        "jewellery",
+        "pendant",
+        "septum"
+      ]
+    },
+    {
+      "category": "accessories",
+      "words": [
+        "apron",
+        "bag",
+        "purse",
+        "handbag",
+        "backpack",
+        "glasses",
+        "sunglasses",
+        "hat",
+        "cap",
+        "beanie",
+        "belt",
+        "scarf",
+        "collar",
+        "mask",
+        "headband",
+        "headpiece",
+        "crown",
+        "tiara",
+        "bow",
+        "ribbon",
+        "harness",
+        "leash",
+        "wings",
+        "tail",
+        "ears",
+        "horns"
+      ]
+    },
+    {
+      "category": "body-addons",
+      "words": [
+        "mod",
+        "mods",
+        "addon",
+        "add on",
+        "addons",
+        "thighs",
+        "boobs",
+        "breasts",
+        "butt",
+        "rolls",
+        "belly",
+        "nipples",
+        "bump",
+        "body reflection",
+        "applier",
+        "appliers"
+      ]
+    },
+    {
+      "category": "shapes",
+      "words": [
+        "shape",
+        "shapes"
+      ]
+    },
+    {
+      "category": "heads",
+      "words": [
+        "head",
+        "heads",
+        "lelutka",
+        "catwa",
+        "genus",
+        "evox",
+        "evo x",
+        "akeruka",
+        "logo head"
+      ]
+    },
+    {
+      "category": "animations",
+      "words": [
+        "pose",
+        "poses",
+        "animation",
+        "animations",
+        "ao",
+        "dance",
+        "posestand"
+      ]
+    },
+    {
+      "category": "gestures",
+      "words": [
+        "gesture",
+        "gestures"
+      ]
+    },
+    {
+      "category": "huds",
+      "words": [
+        "hud",
+        "huds"
+      ]
+    },
+    {
+      "category": "furniture",
+      "words": [
+        "chair",
+        "chairs",
+        "sofa",
+        "couch",
+        "table",
+        "tables",
+        "bed",
+        "beds",
+        "desk",
+        "stool",
+        "bench",
+        "shelf",
+        "shelves",
+        "lamp",
+        "rug",
+        "cabinet",
+        "armchair",
+        "dresser",
+        "wardrobe",
+        "bathtub",
+        "sink"
+      ]
+    },
+    {
+      "category": "decor",
+      "words": [
+        "decor",
+        "plant",
+        "plants",
+        "vase",
+        "frame",
+        "painting",
+        "candle",
+        "candles",
+        "clutter",
+        "curtain",
+        "curtains",
+        "pillow",
+        "pillows",
+        "mirror"
+      ]
+    },
+    {
+      "category": "vehicles",
+      "words": [
+        "car",
+        "bike",
+        "motorbike",
+        "motorcycle",
+        "boat",
+        "yacht",
+        "vehicle",
+        "truck",
+        "scooter",
+        "skateboard",
+        "helicopter",
+        "plane"
+      ]
+    },
+    {
+      "category": "pets",
+      "words": [
+        "pet",
+        "pets",
+        "puppy",
+        "kitten",
+        "breedable",
+        "companion"
+      ]
+    },
+    {
+      "category": "outfits",
+      "words": [
+        "outfit",
+        "outfits",
+        "set",
+        "fatpack",
+        "fat pack",
+        "collection",
+        "bundle"
+      ]
+    }
+  ],
+  "skin_tones": [
+    "porcelain",
+    "pale",
+    "fair",
+    "light",
+    "tan",
+    "tanned",
+    "honey",
+    "caramel",
+    "cocoa",
+    "ebony",
+    "olive",
+    "mocha",
+    "bronze",
+    "ivory",
+    "sand",
+    "almond",
+    "espresso",
+    "chocolate"
+  ],
+  "unpackers": [
+    "unpack",
+    "unpacker",
+    "unpacking",
+    "packed",
+    "unboxer",
+    "unbox",
+    "boxed",
+    "box",
+    "wear to unpack",
+    "rez to unpack"
+  ],
+  "variants": {
+    "squish": [
+      "sq",
+      "squish",
+      "squishy",
+      "squished",
+      "squeeze",
+      "squeez",
+      "squeezed",
+      "squeezy"
+    ],
+    "waifus": [
+      "waifu",
+      "waifus"
+    ]
+  },
+  "store_tag_patterns": {
+    "enclosed": [
+      [
+        "[",
+        "]"
+      ],
+      [
+        "{",
+        "}"
+      ],
+      [
+        "(",
+        ")"
+      ],
+      [
+        "<",
+        ">"
+      ],
+      [
+        "«",
+        "»"
+      ],
+      [
+        "*",
+        "*"
+      ],
+      [
+        "~",
+        "~"
+      ],
+      [
+        ".",
+        "."
+      ],
+      [
+        ":",
+        ":"
+      ],
+      [
+        "^",
+        "^"
+      ],
+      [
+        "-",
+        "-"
+      ],
+      [
+        "+",
+        "+"
+      ],
+      [
+        "=",
+        "="
+      ],
+      [
+        "#",
+        "#"
+      ],
+      [
+        "|",
+        "|"
+      ]
+    ],
+    "separators": [
+      " - ",
+      " // ",
+      " | ",
+      " :: ",
+      " + ",
+      " ~ ",
+      ": "
+    ]
+  }
+}

@@ -1,0 +1,359 @@
+{
+ "about": "Auto-sort's golden corpus: names as creators write them, and the path each one sorts to with a folder per store and no rules. {category} is a category's folder (its key in vocabulary.json), {stores} the Stores folder; null: the name says nothing and the entry stays. type: the asset type (6 object, -1 a folder). The test vocabulary_corpus prints every difference.",
+ "cases": [
+  {
+   "name": "Tredente // Bento Money Envelope (Packed)",
+   "type": -1,
+   "expect": "{stores}/Tredente",
+   "why": "a delivery folder: store from the // tag"
+  },
+  {
+   "name": "TROLLINGAVATAR",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "TsVe 1.2.5 Box",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "uh-oh: Ali Fruity Striped Thigh Socks  - Licorice (Wear)",
+   "type": -1,
+   "expect": "{stockings}/uh-oh",
+   "why": "a store and a colon"
+  },
+  {
+   "name": "UnityCore Combat System V39.812",
+   "type": -1,
+   "expect": null
+  },
+  {
+   "name": "{UE} What a S****y Attack Hud [boxed]",
+   "type": -1,
+   "expect": "{huds}/UE"
+  },
+  {
+   "name": "~JJ~ The Chameleon Halo Set",
+   "type": -1,
+   "expect": "{outfits}/JJ"
+  },
+  {
+   "name": "[BS][GESTURES][1] AUSSIE MEAT PIE PACK (ADD+CLICK)",
+   "type": 6,
+   "expect": "{gestures}/BS",
+   "why": "a gesture pack worn as an object"
+  },
+  {
+   "name": "Kitoomi - Ryu Jeans - FATPACK",
+   "type": 6,
+   "expect": "{pants}/Kitoomi"
+  },
+  {
+   "name": "LeLUTKA Otto Head 4.0",
+   "type": 6,
+   "expect": "{heads}"
+  },
+  {
+   "name": "OnlyPixel_Terminal_Office_High1",
+   "type": 6,
+   "expect": "{stores}/OnlyPixel",
+   "why": "underscore names: a brand-like first part"
+  },
+  {
+   "name": "OnlyPx_Sign_F",
+   "type": 6,
+   "expect": "{stores}/OnlyPx"
+  },
+  {
+   "name": "Object",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "[Grazed] Rebellion Jacket // Fatpack",
+   "type": 6,
+   "expect": "{jackets}/Grazed"
+  },
+  {
+   "name": "Obsidian Homes ~ Eclipse (ADD)",
+   "type": 6,
+   "expect": "{stores}/Obsidian Homes"
+  },
+  {
+   "name": "OnlyPixel Deposit HUD",
+   "type": 6,
+   "expect": "{huds}"
+  },
+  {
+   "name": "P_Scaner_Salty",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Sera - Feelin Undone - Bom Bandages Fatpack",
+   "type": 6,
+   "expect": "{tattoos}/Sera"
+  },
+  {
+   "name": "[Grazed] Trauma Tee // Fatpack Hud",
+   "type": 6,
+   "expect": "{tops}/Grazed",
+   "why": "a product's HUD goes with the product"
+  },
+  {
+   "name": "[Grazed] Trauma Tee // Fatpack // LegacyM+AT",
+   "type": 6,
+   "expect": "Legacy Male/{tops}/Grazed",
+   "why": "LegacyM: the Legacy Male body"
+  },
+  {
+   "name": "MadPea Willy Wrappers - Glove",
+   "type": 6,
+   "expect": "{gloves}/MadPea Willy Wrappers"
+  },
+  {
+   "name": "Emy's Birthday Invitation",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Mouth Spitter (Light Pink)",
+   "type": 6,
+   "expect": null
+  },
+  {
+   "name": "Waifu REBORN - Waifus - Addon v2.0",
+   "type": 6,
+   "expect": "Reborn/{body-addons}",
+   "why": "the Waifus mod itself is an add-on"
+  },
+  {
+   "name": "Reborn Feat. Axolotl - Waifu Bikini - Top Slim",
+   "type": 6,
+   "expect": "Reborn/{swimwear}/Waifus"
+  },
+  {
+   "name": "Muse - Lovesick Darling - Reborn Waifus - Bra",
+   "type": 6,
+   "expect": "Reborn/{lingerie}/Muse/Waifus"
+  },
+  {
+   "name": "Rokins - Rihanna Top - Black - [Waifus size Squish]",
+   "type": 6,
+   "expect": "Reborn/{tops}/Rokins/Waifus Squish"
+  },
+  {
+   "name": "VELOUR: The \"Ipanema Body\" for eBody Reborn (Porcelain)",
+   "type": 6,
+   "expect": "Reborn/{skins}/VELOUR",
+   "why": "a body skin named by body and tone"
+  },
+  {
+   "name": "MAZE.mods - Soft Thighs V4.2 - eBody Reborn",
+   "type": 6,
+   "expect": "Reborn/{body-addons}/MAZE.mods",
+   "why": "a body mod maker's tag"
+  },
+  {
+   "name": "Velvet Lounge Chair",
+   "type": 6,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Moonlit Gown - Red",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "[Fernhollow] Leather Boots",
+   "type": 6,
+   "expect": "{shoes}/Fernhollow"
+  },
+  {
+   "name": "Cozy Knit Sweater (Fatpack)",
+   "type": 6,
+   "expect": "{tops}"
+  },
+  {
+   "name": "Silver Hoop Earrings",
+   "type": 6,
+   "expect": "{jewelry}"
+  },
+  {
+   "name": "Freckles BOM Layer",
+   "type": 6,
+   "expect": "{makeup}"
+  },
+  {
+   "name": "Short Bob Hair - Naturals",
+   "type": 6,
+   "expect": "{hair}"
+  },
+  {
+   "name": "Starter AO v3",
+   "type": 6,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Garden Plant Pot Set",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Little Puppy Companion",
+   "type": 6,
+   "expect": "{pets}"
+  },
+  {
+   "name": "Speedster Car HUD",
+   "type": 6,
+   "expect": "{huds}"
+  },
+  {
+   "name": "Rez to Unpack - Porch Set",
+   "type": 6,
+   "expect": "{outfits}"
+  },
+  {
+   "name": "Maitreya Lara X - Denim Shorts",
+   "type": 6,
+   "expect": "Maitreya/{shorts}"
+  },
+  {
+   "name": "Legacy Perky - Bikini sq",
+   "type": 6,
+   "expect": "Legacy/{swimwear}/Squish"
+  },
+  {
+   "name": "Kupra - Satin Robe",
+   "type": 6,
+   "expect": "Kupra/{sleepwear}"
+  },
+  {
+   "name": "eBODY Classic - Lace Bra",
+   "type": 6,
+   "expect": "eBODY/{lingerie}"
+  },
+  {
+   "name": "Gianni - Cargo Pants",
+   "type": 6,
+   "expect": "Gianni/{pants}"
+  },
+  {
+   "name": "Belleza Jake Tank Top",
+   "type": 6,
+   "expect": "Belleza Jake/{tops}"
+  },
+  {
+   "name": "Slink Hourglass Nails",
+   "type": 6,
+   "expect": "Slink/{nails}"
+  },
+  {
+   "name": "Bedroom Clutter Pack",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Neon Sign",
+   "type": 0,
+   "expect": "{textures}"
+  },
+  {
+   "name": "Welcome Notecard",
+   "type": 7,
+   "expect": "{notecards}"
+  },
+  {
+   "name": "Bow Gesture",
+   "type": 21,
+   "expect": "{gestures}"
+  },
+  {
+   "name": "Wave Hello",
+   "type": 20,
+   "expect": "{animations}"
+  },
+  {
+   "name": "Sunset Landmark",
+   "type": 3,
+   "expect": "{landmarks}"
+  },
+  {
+   "name": "Door Script",
+   "type": 10,
+   "expect": "{scripts}"
+  },
+  {
+   "name": "Rain Loop",
+   "type": 1,
+   "expect": "{sounds}"
+  },
+  {
+   "name": "Plaid Mini Skirt",
+   "type": 6,
+   "expect": "{skirts}"
+  },
+  {
+   "name": "Oversized Hoodie [Fernhollow]",
+   "type": 6,
+   "expect": "{tops}"
+  },
+  {
+   "name": "*Fernhollow* Pleated Skirt sq",
+   "type": 6,
+   "expect": "{skirts}/Fernhollow/Squish"
+  },
+  {
+   "name": "Reborn Squeeze Leggings",
+   "type": 6,
+   "expect": "Reborn/{pants}/Squish"
+  },
+  {
+   "name": "Mesh Head Shape",
+   "type": 6,
+   "expect": "{shapes}"
+  },
+  {
+   "name": "Fishnet Tights",
+   "type": 6,
+   "expect": "{stockings}"
+  },
+  {
+   "name": "Lace Garter Belt",
+   "type": 6,
+   "expect": "{lingerie}"
+  },
+  {
+   "name": "Bunny Ears Headband",
+   "type": 6,
+   "expect": "{accessories}"
+  },
+  {
+   "name": "Wooden Rowing Boat",
+   "type": 6,
+   "expect": "{vehicles}"
+  },
+  {
+   "name": "Unpacker - Wedding Gown",
+   "type": 6,
+   "expect": "{dresses}"
+  },
+  {
+   "name": "Ornate Mirror",
+   "type": 6,
+   "expect": "{decor}"
+  },
+  {
+   "name": "Dining Table Set",
+   "type": 6,
+   "expect": "{furniture}"
+  },
+  {
+   "name": "Silk Pajama Set",
+   "type": 6,
+   "expect": "{sleepwear}"
+  }
+ ]
+}

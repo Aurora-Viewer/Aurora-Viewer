@@ -112,6 +112,9 @@ pub(super) struct State {
     share: Option<sorter::share::Share>,
     /// The Import window.
     import: Option<ImportWindow>,
+    /// `AURORA_DEMO_INVENTORY=sorter-vocab`: the golden corpus sorted with
+    /// the vocabulary in use, expected against result.
+    vocab_check: Option<Vec<sorter::vocab::CorpusRow>>,
     /// The account whose journal, snapshots and unfinished run are loaded.
     account: Option<Uuid>,
     /// The last runs' confirmed moves, for Undo (saved per account).
@@ -458,6 +461,11 @@ impl InventoryUi {
     pub(crate) fn demo_run_sorter(&mut self, source: Uuid) {
         self.open_sorter(source);
         self.sorter.autostart = true;
+    }
+
+    /// `AURORA_DEMO_INVENTORY=sorter-vocab`: the vocabulary check window.
+    pub(crate) fn demo_vocab_check(&mut self) {
+        self.sorter.vocab_check = Some(sorter::vocab::corpus());
     }
 
     /// `AURORA_DEMO_SORTER_TAB`: the window on one tab, window or
@@ -987,7 +995,69 @@ pub(super) fn show(
     picker(ctx, p, inv, st, prefs);
     share_window(ctx, p, st, &prefs.sorter);
     import_window(ctx, p, st, &mut prefs.sorter);
+    vocab_window(ctx, p, st);
     confirm(ctx, p, st, prefs);
+}
+
+/// The vocabulary check (`sorter-vocab` demo): each corpus name, where it
+/// should go and where the vocabulary in use (`AURORA_SORTER_VOCAB` or the
+/// built-in one) sends it; differences first, in the warning colour.
+fn vocab_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi) {
+    let Some(rows) = st.sorter.vocab_check.as_ref() else { return };
+    let mut open = true;
+    let window_id = format!("inventory_sorter_vocab_{}", st.ui_id);
+    let mut window = crate::ui::widgets::Floater::new(
+        &window_id,
+        aurora_i18n::tr!("inventory-sorter-vocab-title"),
+        ctx.content_rect().center() - Vec2::new(330.0, 260.0),
+        Vec2::new(660.0, 520.0),
+    )
+    .steady_size();
+    window.min_size = Vec2::new(420.0, 300.0);
+    window.show(ctx, p, &mut open, |ui| {
+        let ok = rows.iter().filter(|r| r.matches()).count();
+        let colour = if ok == rows.len() { p.success } else { p.warn };
+        ui.label(
+            RichText::new(aurora_i18n::tr!("inventory-sorter-vocab-summary", ok = ok, total = rows.len()))
+                .strong()
+                .color(colour),
+        );
+        ui.add_space(4.0);
+        let stays = aurora_i18n::tr!("inventory-sorter-vocab-stays");
+        let shown = |p: &Option<String>| p.clone().unwrap_or_else(|| stays.to_owned());
+        egui::ScrollArea::vertical()
+            .id_salt("inventory_sorter_vocab_list")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new("inventory_sorter_vocab_grid")
+                    .num_columns(3)
+                    .striped(true)
+                    .spacing(Vec2::new(12.0, 4.0))
+                    .show(ui, |ui| {
+                        for header in [
+                            aurora_i18n::tr!("inventory-sorter-vocab-name"),
+                            aurora_i18n::tr!("inventory-sorter-vocab-expected"),
+                            aurora_i18n::tr!("inventory-sorter-vocab-got"),
+                        ] {
+                            ui.label(RichText::new(header).small().strong().color(p.muted));
+                        }
+                        ui.end_row();
+                        // differences first
+                        let mut order: Vec<&sorter::vocab::CorpusRow> = rows.iter().collect();
+                        order.sort_by_key(|r| r.matches());
+                        for row in order {
+                            let colour = if row.matches() { p.ink } else { p.warn };
+                            ui.label(RichText::new(&row.name).small().color(colour));
+                            ui.label(RichText::new(shown(&row.expected)).small().color(p.muted));
+                            ui.label(RichText::new(shown(&row.got)).small().color(colour));
+                            ui.end_row();
+                        }
+                    });
+            });
+    });
+    if !open {
+        st.sorter.vocab_check = None;
+    }
 }
 
 /// A rule as one line: its words and where it sends them.

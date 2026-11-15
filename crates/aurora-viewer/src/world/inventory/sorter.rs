@@ -19,6 +19,7 @@ use aurora_net::inventory::operations::{Mutation, Operation};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
+use vocab::{BodyWords, VOCABULARY};
 
 /// Moves sent in one mutation: well under the 2048 operations the network
 /// layer accepts, and small enough for steady progress on a large inventory.
@@ -272,94 +273,6 @@ impl Body {
     }
 }
 
-/// Each body, the words creators use for it, and the bodies a match rules
-/// out (eBODY Reborn is eBODY's Reborn body, not its older Classic one).
-/// Weak words only count when no other word names a body: "Lara" or "Juicy"
-/// are also ordinary words in item names.
-struct BodyWords {
-    body: &'static str,
-    strong: &'static [&'static str],
-    weak: &'static [&'static str],
-    hides: &'static [&'static str],
-}
-
-const BODIES: &[BodyWords] = &[
-    BodyWords {
-        body: "Reborn",
-        strong: &["reborn", "ebody reborn", "rebornf"],
-        // Waifus is a Reborn body mod: its clothes are Reborn's
-        weak: &["waifu", "waifus", "juicy"],
-        hides: &["eBODY"],
-    },
-    BodyWords {
-        body: "eBODY",
-        strong: &["ebody", "ebody classic", "ebody curvy"],
-        weak: &[],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Legacy Male",
-        // `LegacyM+AT`: the Legacy Male body, AT its Athletic shape
-        strong: &["legacy m", "legacym", "legacy male", "legacy men", "legacy mens", "legacy boy"],
-        weak: &[],
-        hides: &["Legacy"],
-    },
-    BodyWords {
-        body: "Legacy",
-        strong: &["legacy", "legacy f", "legacy perky", "legacy pinup", "legacyf"],
-        weak: &[],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Maitreya",
-        strong: &["maitreya", "lara x", "lara petite", "maitreya lara", "mait"],
-        weak: &["lara"],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Belleza Jake",
-        strong: &["belleza jake"],
-        weak: &["jake"],
-        hides: &["Belleza"],
-    },
-    BodyWords {
-        body: "Belleza",
-        strong: &["belleza"],
-        weak: &["freya", "isis", "venus"],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Slink",
-        strong: &["slink"],
-        weak: &["physique", "hourglass"],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Kupra",
-        strong: &["kupra", "inithium"],
-        weak: &["erika"],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Gianni",
-        strong: &["gianni", "signature gianni"],
-        weak: &[],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Geralt",
-        strong: &["geralt", "signature geralt"],
-        weak: &[],
-        hides: &[],
-    },
-    BodyWords {
-        body: "Aesthetic",
-        strong: &["aesthetic body"],
-        weak: &["aesthetic"],
-        hides: &[],
-    },
-];
-
 /// The category folders, in the order they are tried: the first match wins,
 /// so a "Lingerie Set" is lingerie and a "Garter" lingerie before an
 /// accessory. Sets come last.
@@ -403,297 +316,6 @@ pub enum Category {
     Textures,
     Gestures,
 }
-
-const CATEGORY_WORDS: &[(Category, &[&str])] = &[
-    (
-        Category::Tattoos,
-        &[
-            "tattoo",
-            "tattoos",
-            "tatoo",
-            "tatoos",
-            "tattoo layer",
-            "bandage",
-            "bandages",
-            "scar",
-            "scars",
-            "bruises",
-        ],
-    ),
-    (Category::Skins, &["skin", "skins"]),
-    (
-        Category::Makeup,
-        &[
-            "makeup",
-            "make up",
-            "lipstick",
-            "lipsticks",
-            "lip gloss",
-            "gloss",
-            "eyeshadow",
-            "eyeshadows",
-            "eye shadow",
-            "eyeliner",
-            "eye liner",
-            "liner",
-            "blush",
-            "brows",
-            "eyebrows",
-            "freckles",
-            "lashes",
-            "contour",
-            "highlighter",
-        ],
-    ),
-    (
-        Category::Hair,
-        &["hair", "hairstyle", "hairbase", "hair base", "ponytail", "bangs", "braids", "updo"],
-    ),
-    (Category::Eyes, &["eyes", "eye", "iris", "irises"]),
-    (Category::Nails, &["nails", "nail", "manicure", "pedicure"]),
-    (
-        Category::Shoes,
-        &[
-            "shoes",
-            "shoe",
-            "heels",
-            "heel",
-            "boots",
-            "boot",
-            "sneakers",
-            "sandals",
-            "pumps",
-            "stilettos",
-            "loafers",
-            "slippers",
-            "flats",
-            "wedges",
-            "mules",
-        ],
-    ),
-    (
-        Category::Stockings,
-        &[
-            "stockings",
-            "stocking",
-            "tights",
-            "socks",
-            "sock",
-            "pantyhose",
-            "fishnets",
-            "fishnet",
-            "thigh highs",
-            "knee highs",
-            "leg warmers",
-        ],
-    ),
-    (
-        Category::Lingerie,
-        &[
-            "lingerie",
-            "bra",
-            "bralette",
-            "panties",
-            "panty",
-            "thong",
-            "corset",
-            "garter",
-            "garters",
-            "bustier",
-            "babydoll",
-            "teddy",
-            "underwear",
-            "briefs",
-            "boxers",
-            "negligee",
-        ],
-    ),
-    (Category::Swimwear, &["bikini", "swimsuit", "swimwear", "monokini", "bathing suit"]),
-    (
-        Category::Bodysuits,
-        &["bodysuit", "catsuit", "leotard", "jumpsuit", "romper", "playsuit", "overalls"],
-    ),
-    (Category::Dresses, &["dress", "dresses", "gown", "sundress", "minidress"]),
-    (Category::Skirts, &["skirt", "skirts", "miniskirt", "tutu"]),
-    (
-        Category::Pants,
-        &["pants", "jeans", "trousers", "leggings", "joggers", "slacks", "cargos"],
-    ),
-    (Category::Shorts, &["shorts", "hotpants", "hot pants"]),
-    (
-        Category::Jackets,
-        &[
-            "jacket", "jackets", "coat", "coats", "blazer", "parka", "cardigan", "bomber", "trench",
-        ],
-    ),
-    (
-        Category::Tops,
-        &[
-            "top",
-            "tops",
-            "shirt",
-            "shirts",
-            "tshirt",
-            "tee",
-            "blouse",
-            "tank",
-            "crop top",
-            "sweater",
-            "hoodie",
-            "pullover",
-            "vest",
-            "cami",
-            "turtleneck",
-            "jumper",
-        ],
-    ),
-    (
-        Category::Sleepwear,
-        &[
-            "robe",
-            "kimono",
-            "pajamas",
-            "pyjamas",
-            "pajama",
-            "nightgown",
-            "sleepwear",
-            "nightie",
-        ],
-    ),
-    (Category::Gloves, &["gloves", "glove", "mittens"]),
-    (
-        Category::Jewelry,
-        &[
-            "necklace",
-            "necklaces",
-            "earrings",
-            "earring",
-            "ring",
-            "rings",
-            "bracelet",
-            "bracelets",
-            "bangles",
-            "choker",
-            "piercing",
-            "piercings",
-            "anklet",
-            "jewelry",
-            "jewellery",
-            "pendant",
-            "septum",
-        ],
-    ),
-    (
-        Category::Accessories,
-        &[
-            "apron",
-            "bag",
-            "purse",
-            "handbag",
-            "backpack",
-            "glasses",
-            "sunglasses",
-            "hat",
-            "cap",
-            "beanie",
-            "belt",
-            "scarf",
-            "collar",
-            "mask",
-            "headband",
-            "headpiece",
-            "crown",
-            "tiara",
-            "bow",
-            "ribbon",
-            "harness",
-            "leash",
-            "wings",
-            "tail",
-            "ears",
-            "horns",
-        ],
-    ),
-    (
-        Category::BodyAddons,
-        &[
-            "mod",
-            "mods",
-            "addon",
-            "add on",
-            "addons",
-            "thighs",
-            "boobs",
-            "breasts",
-            "butt",
-            "rolls",
-            "belly",
-            "nipples",
-            "bump",
-            "body reflection",
-            "applier",
-            "appliers",
-        ],
-    ),
-    (Category::Shapes, &["shape", "shapes"]),
-    (
-        Category::Heads,
-        &[
-            "head",
-            "heads",
-            "lelutka",
-            "catwa",
-            "genus",
-            "evox",
-            "evo x",
-            "akeruka",
-            "logo head",
-        ],
-    ),
-    (
-        Category::Animations,
-        &["pose", "poses", "animation", "animations", "ao", "dance", "posestand"],
-    ),
-    // a gesture pack rezzed or worn as an object (`[GESTURES] … PACK`)
-    (Category::Gestures, &["gesture", "gestures"]),
-    (Category::Huds, &["hud", "huds"]),
-    (
-        Category::Furniture,
-        &[
-            "chair", "chairs", "sofa", "couch", "table", "tables", "bed", "beds", "desk", "stool", "bench", "shelf", "shelves", "lamp",
-            "rug", "cabinet", "armchair", "dresser", "wardrobe", "bathtub", "sink",
-        ],
-    ),
-    (
-        Category::Decor,
-        &[
-            "decor", "plant", "plants", "vase", "frame", "painting", "candle", "candles", "clutter", "curtain", "curtains", "pillow",
-            "pillows", "mirror",
-        ],
-    ),
-    (
-        Category::Vehicles,
-        &[
-            "car",
-            "bike",
-            "motorbike",
-            "motorcycle",
-            "boat",
-            "yacht",
-            "vehicle",
-            "truck",
-            "scooter",
-            "skateboard",
-            "helicopter",
-            "plane",
-        ],
-    ),
-    (Category::Pets, &["pet", "pets", "puppy", "kitten", "breedable", "companion"]),
-    (
-        Category::Outfits,
-        &["outfit", "outfits", "set", "fatpack", "fat pack", "collection", "bundle"],
-    ),
-];
 
 impl Category {
     pub fn folder(self) -> &'static str {
@@ -784,45 +406,6 @@ pub struct Classified {
     pub waifus: bool,
 }
 
-const SQUISH_WORDS: &[&str] = &["sq", "squish", "squishy", "squished", "squeeze", "squeez", "squeezed", "squeezy"];
-
-const WAIFU_WORDS: &[&str] = &["waifu", "waifus"];
-
-/// Skin tones creators name their body skins with (`(Porcelain)`).
-const TONE_WORDS: &[&str] = &[
-    "porcelain",
-    "pale",
-    "fair",
-    "light",
-    "tan",
-    "tanned",
-    "honey",
-    "caramel",
-    "cocoa",
-    "ebony",
-    "olive",
-    "mocha",
-    "bronze",
-    "ivory",
-    "sand",
-    "almond",
-    "espresso",
-    "chocolate",
-];
-
-const UNPACKER_WORDS: &[&str] = &[
-    "unpack",
-    "unpacker",
-    "unpacking",
-    "packed",
-    "unboxer",
-    "unbox",
-    "boxed",
-    "box",
-    "wear to unpack",
-    "rez to unpack",
-];
-
 /// The lowercase words of a name: creators separate them with anything
 /// (`.SB.`, `[REBORN]`, `FemAvg_Dress_Cut_Long_Reborn_F`, `Reborn+Maze`).
 pub fn words(name: &str) -> Vec<String> {
@@ -841,14 +424,15 @@ fn has(words: &[String], phrase: &str) -> bool {
 }
 
 fn body(words: &[String]) -> Option<Body> {
-    let strong: Vec<&BodyWords> = BODIES.iter().filter(|b| b.strong.iter().any(|w| has(words, w))).collect();
+    let bodies = &VOCABULARY.bodies;
+    let strong: Vec<&'static BodyWords> = bodies.iter().filter(|b| b.strong.iter().any(|w| has(words, w))).collect();
     let found = if strong.is_empty() {
-        BODIES.iter().filter(|b| b.weak.iter().any(|w| has(words, w))).collect()
+        bodies.iter().filter(|b| b.weak.iter().any(|w| has(words, w))).collect()
     } else {
         strong
     };
-    let hidden: HashSet<&str> = found.iter().flat_map(|b| b.hides.iter().copied()).collect();
-    let mut bodies = found.iter().map(|b| b.body).filter(|b| !hidden.contains(b));
+    let hidden: HashSet<&str> = found.iter().flat_map(|b| b.hides.iter().map(String::as_str)).collect();
+    let mut bodies = found.iter().map(|b| b.body.as_str()).filter(|b| !hidden.contains(b));
     match (bodies.next(), bodies.next()) {
         (Some(one), None) => Some(Body::Named(one)),
         (Some(_), Some(_)) => Some(Body::Several),
@@ -866,7 +450,8 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
         .flatten();
     let category = typed
         .or_else(|| {
-            CATEGORY_WORDS
+            VOCABULARY
+                .categories
                 .iter()
                 .find(|(_, keys)| keys.iter().any(|k| has(&words, k)))
                 .map(|(c, _)| *c)
@@ -876,15 +461,15 @@ pub fn classify(name: &str, asset_type: i32, flags: u32) -> Classified {
     // A body skin says which body and how it looks, not what it is:
     // `The "Ipanema Body" for eBody Reborn (Porcelain)`.
     let category = category.or_else(|| {
-        let skin = has(&words, "body for") || TONE_WORDS.iter().any(|k| has(&words, k));
+        let skin = has(&words, "body for") || VOCABULARY.skin_tones.iter().any(|k| has(&words, k));
         (body.is_some() && skin).then_some(Category::Skins)
     });
     Classified {
         body,
         category,
-        unpacker: UNPACKER_WORDS.iter().any(|k| has(&words, k)),
-        squish: SQUISH_WORDS.iter().any(|k| has(&words, k)),
-        waifus: WAIFU_WORDS.iter().any(|k| has(&words, k)),
+        unpacker: VOCABULARY.unpackers.iter().any(|k| has(&words, k)),
+        squish: VOCABULARY.variants.squish.iter().any(|k| has(&words, k)),
+        waifus: VOCABULARY.variants.waifus.iter().any(|k| has(&words, k)),
     }
 }
 
@@ -1095,28 +680,12 @@ const WAIFUS: &str = "Waifus";
 /// (`[REBORN] Skirt`, `Dress - Reborn`) is not a store; neither is a long
 /// phrase before a dash, which is a product name.
 pub fn store(name: &str) -> Option<String> {
-    const ENCLOSED: &[(char, char)] = &[
-        ('[', ']'),
-        ('{', '}'),
-        ('(', ')'),
-        ('<', '>'),
-        ('«', '»'),
-        ('*', '*'),
-        ('~', '~'),
-        ('.', '.'),
-        (':', ':'),
-        ('^', '^'),
-        ('-', '-'),
-        ('+', '+'),
-        ('=', '='),
-        ('#', '#'),
-        ('|', '|'),
-    ];
-    // `uh-oh: Thigh Socks`, `VELOUR: The Body`: a store and a colon
-    const SEPARATORS: &[&str] = &[" - ", " // ", " | ", " :: ", " + ", " ~ ", ": "];
     let text = name.trim();
     let first = text.chars().next()?;
-    let tag = ENCLOSED
+    // `uh-oh: Thigh Socks`, `VELOUR: The Body`: a store and a colon
+    let tags = &VOCABULARY.store_tags;
+    let tag = tags
+        .enclosed
         .iter()
         .find(|(open, _)| *open == first)
         .and_then(|(open, close)| {
@@ -1124,7 +693,7 @@ pub fn store(name: &str) -> Option<String> {
             rest.find(*close).map(|end| &rest[..end])
         })
         .or_else(|| {
-            SEPARATORS
+            tags.separators
                 .iter()
                 .filter_map(|sep| text.find(sep).map(|at| &text[..at]))
                 .min_by_key(|tag| tag.len())
@@ -1690,7 +1259,7 @@ fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &Ha
 /// The names the sorter gives its own folders: a folder already named like
 /// one is a sorted folder, never moved into another.
 fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
-    let mut names: HashSet<String> = BODIES.iter().map(|b| b.body.to_lowercase()).collect();
+    let mut names: HashSet<String> = VOCABULARY.bodies.iter().map(|b| b.body.to_lowercase()).collect();
     names.insert(Body::Several.folder().to_lowercase());
     names.insert(prefs.base_name().to_lowercase());
     names.insert(pre_trash_name().to_lowercase());
@@ -1698,8 +1267,8 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
         names.insert(variant_folder(waifus, squish).to_lowercase());
     }
     names.insert(stores_folder().to_lowercase());
-    for (category, _) in CATEGORY_WORDS {
-        names.insert(category_folder(*category).to_lowercase());
+    for category in Category::ALL {
+        names.insert(category_folder(category).to_lowercase());
     }
     for rule in prefs.rules.iter().filter(|r| r.target.is_none()) {
         names.extend(split_path(&rule.folder).into_iter().map(|p| p.to_lowercase()));
@@ -2522,6 +2091,8 @@ pub mod demo;
 
 #[path = "sorter_share.rs"]
 pub mod share;
+#[path = "sorter_vocab.rs"]
+pub mod vocab;
 
 #[path = "sorter_journal.rs"]
 pub mod journal;

@@ -22989,13 +22989,23 @@ impl ApplicationHandler for App {
                     self.inventory_ui.expand_all = Some(true);
                 }
                 if matches!(view.as_str(), "sorter" | "aurora-sorter" | "sorter-big" | "sorter-run") {
+                }
+                if matches!(
+                    view.as_str(),
+                    "sorter" | "aurora-sorter" | "sorter-big" | "sorter-run" | "sorter-vocab"
+                ) {
                     // a large messy inventory, Auto-sort open on its Objects folder
                     let objects = crate::world::inventory::sorter::demo::OBJECTS;
                     let scale = if view == "sorter-big" { 8 } else { 1 };
                     crate::world::inventory::sorter::demo::seed(&mut self.world.inventory, self.world.agent_id, scale);
                     self.panels.inventory = true;
                     self.inventory_ui.show_original(&self.world.inventory, objects);
-                    if view == "sorter-run" {
+                    if view == "sorter-vocab" {
+                        // the golden corpus against the vocabulary in use
+                        // (AURORA_SORTER_VOCAB in a development build)
+                        self.inventory_ui.open_sorter(objects);
+                        self.inventory_ui.demo_vocab_check();
+                    } else if view == "sorter-run" {
                         self.inventory_ui.demo_run_sorter(objects);
                     } else {
                         self.inventory_ui.open_sorter(objects);
