@@ -143,6 +143,19 @@ pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
     text(v)
 }
 
+/// How opaque a nearby line is drawn: Preferences › Chat's factor for a
+/// line said beyond the say range, whole otherwise. LLViewerChat::getChatColor
+/// (indra/newview/llviewerchat.cpp) gives that factor as the line's alpha,
+/// which FSChatHistory::appendMessage and the console apply to the whole
+/// line, the sender's name included; so does Aurora, in every chat style.
+pub fn beyond_range_alpha(line: &ChatLine) -> f32 {
+    line_alpha(line, get().chat_beyond_range)
+}
+
+fn line_alpha(line: &ChatLine, factor: f32) -> f32 {
+    if line.beyond_range { factor.clamp(0.0, 1.0) } else { 1.0 }
+}
+
 /// Text of a script error (ScriptErrorColor), the Aurora red by default:
 /// the same in every style of the chat (#1263).
 pub fn script_error_color() -> Color32 {
@@ -225,4 +238,42 @@ pub fn map_color(world: &World, id: &Uuid, name: &str) -> Color32 {
         k.map_other
     };
     c(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::Origin;
+
+    fn line(kind: ChatKind, beyond_range: bool) -> ChatLine {
+        ChatLine {
+            time: std::time::SystemTime::UNIX_EPOCH,
+            from: "Jane".into(),
+            text: "hello".into(),
+            kind,
+            source: Uuid::from_u128(7),
+            origin: Origin::Live,
+            beyond_range,
+        }
+    }
+
+    #[test]
+    fn only_a_line_from_beyond_the_say_range_takes_the_factor() {
+        // the Legacy default, for a resident's and an object's line
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Shout), true), 0.8), 0.8);
+        assert_eq!(line_alpha(&line(ChatKind::Object(ChatType::Shout), true), 0.8), 0.8);
+        // within range, or an IM (no position): whole
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), false), 0.8), 1.0);
+        assert_eq!(line_alpha(&line(ChatKind::Im, false), 0.3), 1.0);
+        // the slider's ends, and a value out of them from a hand-edited file
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), 1.0), 1.0);
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), 0.0), 0.0);
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), 1.7), 1.0);
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), -0.5), 0.0);
+    }
+
+    #[test]
+    fn the_factor_defaults_to_the_legacy_viewers() {
+        assert_eq!(ColorSettings::default().chat_beyond_range, 0.8);
+    }
 }
