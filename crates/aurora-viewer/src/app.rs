@@ -10313,6 +10313,11 @@ impl App {
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            // a new account's outfit: worn like the Welcome Pack's folders
+            if let Some(outfit) = self.world.outfit.take_initial_outfit() {
+                self.welcome_wears
+                    .push(vec![avatar_welcome::initial_command(outfit)], Instant::now());
+            }
             let allow_links = self.world.outfit.is_done() && self.appearance_ui.pending.is_none() && self.inventory_ui.pending.is_none();
             for command in self.world.update_attachment_inventory(Instant::now(), allow_links) {
                 if let NetCommand::EditInventory { request, .. } = &command {
