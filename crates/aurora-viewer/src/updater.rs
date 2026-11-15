@@ -139,7 +139,7 @@ pub struct Updater {
     rollback_notice: bool,
     /// Why the update that restored this version failed, from its helper
     /// (`install::failed_update`); none from an older helper.
-    pub rollback_reason: Option<String>,
+    pub rollback_reason: Option<aurora_updater::install::FailedUpdate>,
     policy_pending: bool,
     cancel: Cancel,
     prepared: Option<Workspace>,

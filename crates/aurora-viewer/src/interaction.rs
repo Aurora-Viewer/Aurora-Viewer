@@ -39,7 +39,7 @@ pub mod code {
     pub const IGNORE: u8 = 9;
 }
 
-fn root(world: &World, idx: usize) -> Option<(usize, bool)> {
+pub(crate) fn root(world: &World, idx: usize) -> Option<(usize, bool)> {
     let mut current = idx;
     for _ in 0..64 {
         let o = world.objects.get(current)?;

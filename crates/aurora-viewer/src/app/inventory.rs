@@ -163,6 +163,7 @@ impl App {
     }
 
     pub(super) fn open_notecard_attachment(&mut self, editor: Uuid, notecard: Uuid, marker: char, copy: bool, object: Uuid) {
+        let texture_preview = self.world.inventory.can_preview(0);
         let Some(st) = self.document_state(editor).filter(|st| st.preview == Some(notecard)) else {
             return;
         };
@@ -215,7 +216,14 @@ impl App {
             return;
         }
         match item.asset_type {
-            0 => st.attachment_preview = Some(item),
+            // RLVa @viewtexture blocks the "preview_texture" floater from any
+            // source, a notecard's embedded texture included (rlvui.cpp,
+            // RlvUIEnabler::filterFloaterViewXXX)
+            0 => {
+                if texture_preview {
+                    st.attachment_preview = Some(item);
+                }
+            }
             2 => {
                 let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
                 if !avatar.is_nil() {

@@ -462,7 +462,7 @@ impl Scene {
                 bits(&object.rotation.to_array(), &mut hash);
                 // Calibration uses the reported pose, so use its full size
                 // too, without following temporary render damping.
-                let scale = object.render.local_scale.unwrap_or(object.scale);
+                let scale = object.local_preview_scale(object.scale);
                 bits(&scale.to_array(), &mut hash);
                 let volume = object.visual_volume();
                 if volume.is_mesh() {

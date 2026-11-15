@@ -1098,7 +1098,11 @@ pub fn request_tree(inv: &mut Inventory, root: Uuid) -> bool {
         if f.state != FetchState::Fetched {
             complete = false;
         }
-        if f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
+        // Only folders never asked for: this runs every frame while a window
+        // loads its tree, and a folder whose read failed would be asked
+        // again each frame. Failed reads come back through the background
+        // walk's retries and `Inventory::retry_failed`.
+        if !inv.too_big.contains(&id) && f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
             requests.push(id);
         }
         todo.extend(f.children.iter().copied());
