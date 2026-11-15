@@ -212,22 +212,17 @@ impl Binding {
     /// (egui names keys as winit's codes: `KeyA`, `Enter`, `ArrowUp`;
     /// Numpad Enter arrives as Enter). The modifiers must match exactly.
     /// Command counts as Control on macOS, as `control_down` does for a key
-    /// (LLKeyboardMacOSX::currentMask) and as the shortcut table labels it,
-    /// except with the keys a text field keeps (`text_field_keeps`):
-    /// Command + an arrow stays the field's (start / end of the text), as
-    /// the chat's fixed keys left it before they could be rebound. A mouse
+    /// and as the shortcut table labels it: the Legacy Viewer's MASK_CONTROL
+    /// is Command there (LLKeyboardMacOSX::currentMask), Command+Up included
+    /// (LLChatEntry's history). A navigation key also matches by what it
+    /// does: the keypad's 8 with Num Lock off is an Up arrow. A mouse
     /// binding never matches a key.
     pub fn matches_egui(&self, key: egui::Key, physical: Option<egui::Key>, m: egui::Modifiers) -> bool {
         let Input::Key(code) = &self.input else {
             return false;
         };
-        let ctrl = if kept_by_field(self) {
-            m.ctrl && !m.mac_cmd
-        } else {
-            control_down(m.ctrl, m.mac_cmd, false)
-        };
-        egui::Key::from_name(code).is_some_and(|bound| bound == physical.unwrap_or(key))
-            && self.ctrl == ctrl
+        egui::Key::from_name(code).is_some_and(|bound| bound == physical.unwrap_or(key) || (navigation(bound) && bound == key))
+            && self.ctrl == control_down(m.ctrl, m.mac_cmd, false)
             && self.shift == m.shift
             && self.alt == m.alt
     }
@@ -1116,22 +1111,69 @@ pub fn is_text_edit_key(code: KeyCode) -> bool {
     text_field_keeps(code, ctrl) || text_field_keeps(code, shifted)
 }
 
-/// Whether a focused text field keeps this binding's chord
-/// (`text_field_keeps`): the keys that function names, by their code.
-fn kept_by_field(b: &Binding) -> bool {
+/// Whether a chat field's shortcut (`is_chat`) may take this binding. The
+/// field reads its own key events, so refused are: a mouse button; a key
+/// egui has no name for (it never arrives as one); the fixed Send (Enter),
+/// Close (Ctrl+W) and Find (Ctrl+F), taken before the field; and, without
+/// Ctrl or Alt, a key that types or edits text (a letter, digit, space,
+/// punctuation, Tab, Backspace, the arrows…), which the field or its
+/// suggestion lists need. Without Ctrl or Alt only the function keys and
+/// Shift+Enter remain.
+pub fn chat_accepts(b: &Binding) -> bool {
+    let Input::Key(name) = &b.input else {
+        return false;
+    };
+    let Some(key) = egui::Key::from_name(name) else {
+        return false;
+    };
+    let fixed = match key {
+        egui::Key::Enter => !b.ctrl && !b.alt && !b.shift,
+        egui::Key::W | egui::Key::F => b.ctrl && !b.alt && !b.shift,
+        _ => false,
+    };
+    if fixed {
+        return false;
+    }
+    if b.ctrl || b.alt {
+        return true;
+    }
+    let function = name
+        .strip_prefix('F')
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    function || (key == egui::Key::Enter && b.shift)
+}
+
+/// Keys that move or edit rather than type: the keypad sends them with
+/// Num Lock off, from another physical place.
+fn navigation(key: egui::Key) -> bool {
+    use egui::Key as E;
+    matches!(
+        key,
+        E::ArrowUp
+            | E::ArrowDown
+            | E::ArrowLeft
+            | E::ArrowRight
+            | E::Home
+            | E::End
+            | E::PageUp
+            | E::PageDown
+            | E::Insert
+            | E::Delete
+            | E::Enter
+    )
+}
+
+/// Whether a focused text field keeps this binding's chord on every
+/// keyboard layout (`text_field_keeps`), so that a world shortcut on it
+/// never runs while typing. A letter is judged by the character it types
+/// at that moment (`text_field_keeps_key`): Ctrl + the Q place selects all
+/// on AZERTY but quits on QWERTY, so a letter is never counted as kept.
+fn kept_on_every_layout(b: &Binding) -> bool {
     use KeyCode as K;
     let Input::Key(name) = &b.input else {
         return false;
     };
     let code = match name.as_str() {
-        "KeyA" => K::KeyA,
-        "KeyQ" => K::KeyQ,
-        "KeyC" => K::KeyC,
-        "KeyX" => K::KeyX,
-        "KeyV" => K::KeyV,
-        "KeyY" => K::KeyY,
-        "KeyZ" => K::KeyZ,
-        "KeyW" => K::KeyW,
         "ArrowLeft" => K::ArrowLeft,
         "ArrowRight" => K::ArrowRight,
         "ArrowUp" => K::ArrowUp,
@@ -1555,12 +1597,13 @@ impl KeyBindings {
 
     /// The other actions using this binding that it conflicts with. A chat
     /// field's shortcut (`is_chat`) and a world's meet only on a Ctrl / Alt
-    /// chord the field does not keep: the world's runs first while typing
+    /// chord the field does not keep on every layout
+    /// (`kept_on_every_layout`): the world's runs first while typing
     /// (`shortcut_while_typing` in app.rs, as the Legacy Viewer's menu
     /// accelerators go before the focused field), so the chat's would
     /// never be seen.
     pub fn rivals(&self, a: Action, b: &Binding) -> Vec<Action> {
-        let meet_while_typing = (b.ctrl || b.alt) && !kept_by_field(b);
+        let meet_while_typing = (b.ctrl || b.alt) && !kept_on_every_layout(b);
         self.users(b)
             .into_iter()
             .filter(|x| *x != a && (is_chat(*x) == is_chat(a) || meet_while_typing))
@@ -2209,6 +2252,40 @@ mod tests {
     }
 
     #[test]
+    fn a_chat_shortcut_takes_only_keys_its_field_can_see() {
+        let key = |code: KeyCode, ctrl: bool, shift: bool, alt: bool| Binding::captured(Input::key(code), Mods { ctrl, shift, alt });
+        let accepts = |b: Binding| chat_accepts(&b);
+        // the chosen defaults, a function key, Ctrl / Alt chords
+        assert!(accepts(key(KeyCode::Enter, false, true, false)));
+        assert!(accepts(key(KeyCode::Enter, true, true, false)));
+        assert!(accepts(key(KeyCode::Enter, false, false, true)));
+        assert!(accepts(key(KeyCode::ArrowUp, true, false, false)));
+        assert!(accepts(key(KeyCode::Tab, true, false, false)));
+        assert!(accepts(key(KeyCode::F5, false, false, false)));
+        assert!(accepts(key(KeyCode::KeyP, true, false, false)));
+        // a mouse button, a key egui does not name
+        assert!(!chat_accepts(&Binding::captured(Input::Mouse("Middle".into()), Mods::default())));
+        assert!(!accepts(key(KeyCode::NumpadMultiply, true, false, false)));
+        // the fixed Send, Close and Find
+        assert!(!accepts(key(KeyCode::Enter, false, false, false)));
+        assert!(!accepts(key(KeyCode::KeyW, true, false, false)));
+        assert!(!accepts(key(KeyCode::KeyF, true, false, false)));
+        // what types or edits, without Ctrl or Alt: the field needs it
+        for code in [
+            KeyCode::KeyW,
+            KeyCode::Digit1,
+            KeyCode::Space,
+            KeyCode::Comma,
+            KeyCode::Tab,
+            KeyCode::Backspace,
+            KeyCode::ArrowUp,
+        ] {
+            assert!(!accepts(key(code, false, false, false)), "{code:?}");
+            assert!(!accepts(key(code, false, true, false)), "Shift+{code:?}");
+        }
+    }
+
+    #[test]
     fn hud_shortcuts_warn_of_conflicts_without_suppressing_other_held_actions() {
         let mut kb = KeyBindings::default();
         let ctrl = Mods {
@@ -2230,6 +2307,12 @@ mod tests {
         kb.set(Action::ChatWhisper, 0, Some(ctrl_p.clone()));
         assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_p), vec![Action::Preferences]);
         assert!(kb.rivals(Action::Preferences, &ctrl_p).contains(&Action::ChatWhisper));
+        // a letter too, even one a field keeps on some layout: Ctrl + the Q
+        // place selects all on AZERTY but quits on QWERTY
+        // (`text_field_keeps_key` judges the letter typed)
+        let ctrl_q = Binding::captured(Input::key(KeyCode::KeyQ), ctrl);
+        kb.set(Action::ChatWhisper, 0, Some(ctrl_q.clone()));
+        assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_q), vec![Action::Quit]);
         // a plain key never meets: the world's do not run while typing
         let f5 = Binding::captured(Input::key(KeyCode::F5), Mods::default());
         kb.set(Action::ChatWhisper, 0, Some(f5.clone()));

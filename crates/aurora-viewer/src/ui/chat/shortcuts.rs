@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn command_is_control_except_where_the_field_keeps_the_key() {
+    fn command_is_control_and_the_keypad_arrows_are_arrows() {
         let keys = ChatKeys::of(&KeyBindings::default());
         let cmd = Modifiers {
             mac_cmd: true,
@@ -227,8 +227,45 @@ mod tests {
         // MASK_CONTROL on macOS
         assert!(keys.pressed(Action::ChatNewLine, &press(Key::Enter, cmd | SHIFT)));
         assert!(keys.pressed(Action::ChatPreviousConversation, &press(Key::Tab, cmd | SHIFT)));
-        // Command+Up stays the field's: the start of the text
-        assert!(!keys.pressed(Action::ChatHistoryPrevious, &press(Key::ArrowUp, cmd)));
+        // Command+Up too: LLChatEntry's history on MASK_CONTROL, so the
+        // ⌘↑ the table shows (and records) is the key that works
+        assert!(keys.pressed(Action::ChatHistoryPrevious, &press(Key::ArrowUp, cmd)));
+        let up = Binding::captured(
+            Input::key(winit::keyboard::KeyCode::ArrowUp),
+            crate::keybinds::Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+        );
+        assert!(up.label_on(true).starts_with('⌘'), "{}", up.label_on(true));
+        // the keypad's 8 with Num Lock off: an Up arrow from another place
+        let keypad_up = egui::Event::Key {
+            key: Key::ArrowUp,
+            physical_key: Some(Key::Num8),
+            pressed: true,
+            repeat: false,
+            modifiers: CTRL,
+        };
+        assert!(keys.pressed(Action::ChatHistoryPrevious, &keypad_up));
+        // but a letter keeps its place: AZERTY's A (the Q place) is not KeyA
+        let mut kb = KeyBindings::default();
+        let ctrl = crate::keybinds::Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        kb.set(
+            Action::ChatOoc,
+            0,
+            Some(Binding::captured(Input::key(winit::keyboard::KeyCode::KeyA), ctrl)),
+        );
+        let azerty_a = egui::Event::Key {
+            key: Key::A,
+            physical_key: Some(Key::Q),
+            pressed: true,
+            repeat: false,
+            modifiers: CTRL,
+        };
+        assert!(!ChatKeys::of(&kb).pressed(Action::ChatOoc, &azerty_a));
     }
 
     #[test]

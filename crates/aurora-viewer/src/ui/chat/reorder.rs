@@ -144,15 +144,19 @@ impl State {
         if self.settling.is_some_and(|id| !self.order.contains(&id)) {
             self.settling = None;
         }
-        self.rows.clear();
-        self.local = None;
-        self.seeding = std::mem::take(&mut self.seed);
-        if self.grab.is_some()
+        // Escape, the window left, or the button let go outside the
+        // viewer: the carried entry glides home from its card, as a drop
+        // does (the rows are still the last pass's)
+        if let Some(grab) = self.grab
             && (ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
                 || ctx.input(|i| !i.focused || (!i.pointer.primary_down() && !i.pointer.primary_released())))
         {
+            self.release(grab.conversation.zip(self.last_pointer.map(|at| at - grab.offset)));
             self.cancel();
         }
+        self.rows.clear();
+        self.local = None;
+        self.seeding = std::mem::take(&mut self.seed);
     }
 
     fn cancel(&mut self) {

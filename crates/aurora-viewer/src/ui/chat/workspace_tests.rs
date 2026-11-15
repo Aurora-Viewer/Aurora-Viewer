@@ -898,10 +898,16 @@ fn the_entries_make_way_and_the_dropped_one_glides_into_place() {
     );
     assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))), jane, "her place keeps the pointer");
     h.frame(key(egui::Key::Escape, egui::Modifiers::NONE));
+    // Bob, carried, glides home from his card instead of snapping there
+    let home = h.st.reorder.offset_of(BOB);
+    assert!(home.y.abs() > 4.0, "Bob starts where his card was: {home:?}");
+    h.frame(Vec::new());
+    assert!(h.st.reorder.offset_of(BOB).y.abs() < home.y.abs(), "and eases home");
     for _ in 0..20 {
         h.frame(Vec::new());
     }
     assert_eq!(h.st.reorder.offset_of(JANE), egui::Vec2::ZERO, "she slid back");
+    assert_eq!(h.st.reorder.offset_of(BOB), egui::Vec2::ZERO, "he is home");
     h.frame(Harness::drop_at(jane.center()));
     h.settle();
     assert_eq!(order(&h), [JANE, BOB]);

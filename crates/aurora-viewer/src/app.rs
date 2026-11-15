@@ -7412,10 +7412,13 @@ impl App {
             return;
         };
         // the chat fields' shortcuts are read from their key events: a
-        // mouse button would never reach them
-        let input = input.filter(|input| !(crate::keybinds::is_chat(action) && matches!(input, Input::Mouse(_))));
+        // binding the field could never see, or that would break typing,
+        // is refused (`chat_accepts`)
         if let Some(input) = input {
             let b = crate::keybinds::Binding::captured(input, mods);
+            if crate::keybinds::is_chat(action) && !crate::keybinds::chat_accepts(&b) {
+                return;
+            }
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();

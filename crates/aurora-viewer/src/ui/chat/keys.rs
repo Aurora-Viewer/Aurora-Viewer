@@ -152,7 +152,12 @@ mod tests {
         let ctrl = Modifiers::CTRL;
         let ctrl_shift = ctrl | Modifiers::SHIFT;
         let alt = Modifiers::ALT;
-        let cmd = Modifiers::COMMAND;
+        // a real Command press on macOS
+        let cmd = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Modifiers::NONE
+        };
         // Physical Control on macOS reaches egui as Ctrl + Command.
         let mac_ctrl = Modifiers {
             ctrl: true,
@@ -162,7 +167,9 @@ mod tests {
         assert_eq!(cycle(egui::Key::Tab, ctrl), Some(true));
         assert_eq!(cycle(egui::Key::Tab, ctrl_shift), Some(false));
         assert_eq!(cycle(egui::Key::Tab, mac_ctrl), Some(true));
-        assert_eq!(cycle(egui::Key::Tab, cmd), None, "Command+Tab is the system's");
+        // Command is the Legacy Viewer's MASK_CONTROL there: Command+Tab is
+        // Ctrl+Tab (macOS takes it first for its app switcher)
+        assert_eq!(cycle(egui::Key::Tab, cmd), Some(true));
         assert_eq!(cycle(egui::Key::ArrowUp, alt), Some(false));
         assert_eq!(cycle(egui::Key::ArrowDown, alt), Some(true));
         // Alt+Left / Right stay the field's (two keys per shortcut)
