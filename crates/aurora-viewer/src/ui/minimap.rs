@@ -784,10 +784,10 @@ impl MiniMap {
             if !rect.expand(dot_r).contains(sp) {
                 continue;
             }
-		// the mark first, then the contact set, then the relation
-		// (LLNetMap::getAvatarColor): the same in every mini-map
-		let name = avatar_name(world, &id, opts.mini_avatar_name_format);
-		let col = super::colors::map_color(world, &id, &name);
+            // the mark first, then the contact set, then the relation
+            // (LLNetMap::getAvatarColor): the same in every mini-map
+            let name = avatar_name(world, &id, opts.mini_avatar_name_format);
+            let col = super::colors::map_color(world, &id, &name);
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
                 Some(pos.z - cam.pos.z)
