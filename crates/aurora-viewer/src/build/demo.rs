@@ -659,28 +659,36 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     } else {
         frame
     };
-    // linkset-stretch,0,0,fx,40,0: our own two-prim linkset, selected with
-    // the setting on; frames 250 and after are the common grab and drag of
-    // `handle`, so the capture shows the stretch itself, and frame 400 lets
-    // it go.
-    if parts[0] == "linkset-stretch" && frame < 250 {
+    // linkset-stretch,0,0,fx,40,0: our own two-prim linkset, selected with the
+    // setting on. The close view eases for up to a second, and a press during
+    // it misses the handle, so the grab waits for it at 330, where the common
+    // path presses at 250; the drag keeps the pointer on the handle and 470
+    // lets go, so the capture shows the stretched linkset and Ctrl+Z / Ctrl+Y
+    // can undo and redo it. Without a part, the linkset is only shown.
+    if parts[0] == "linkset-stretch" {
+        let part = handle.unwrap_or(Part::Face(0, true));
         return match frame {
             215 => vec![Step::Open(t, m, land), Step::StretchLinksets(true)],
             220 => vec![Step::LinksetSetup],
             227 => vec![Step::Focus(false)],
+            330 => {
+                let found = handle_px(tool, world, s, part);
+                if let Some((hx, hy)) = found {
+                    log::info!("demo build: grabbing {part:?} at {hx:.0},{hy:.0}");
+                }
+                found.map(|(hx, hy)| vec![Step::Cursor(hx, hy), Step::Press]).unwrap_or_default()
+            }
+            331..=370 if tool.manip.drag.is_some() => {
+                let k = (frame - 330) as f32 / 40.0;
+                let (x0, y0) = (x_start(tool), y_start(tool));
+                vec![Step::Cursor(x0 + dx * k, y0 + dy * k)]
+            }
+            // Held on the end of the drag, or the capture reads the real cursor
+            // and the stretch collapses (or blows up) before the screenshot.
+            371..=469 if tool.manip.drag.is_some() => vec![Step::Cursor(x_start(tool) + dx, y_start(tool) + dy)],
+            470 => vec![Step::Release],
             _ => Vec::new(),
         };
-    }
-    // The drag follows the pointer once its frames are over: keep it on the
-    // end of the drag, or the capture reads the real cursor and the stretch
-    // collapses (or blows up) before the screenshot.
-    if parts[0] == "linkset-stretch" && (291..=399).contains(&frame) && tool.manip.drag.is_some() {
-        return vec![Step::Cursor(x_start(tool) + dx, y_start(tool) + dy)];
-    }
-    // The handle is let go at 400: the stretch goes out and stays, so the
-    // linkset can be undone (Ctrl+Z) and redone (Ctrl+Y) as the demo leaves it.
-    if parts[0] == "linkset-stretch" && frame == 400 {
-        return vec![Step::Release];
     }
     match frame {
         215 => vec![Step::Open(t, m, land)],

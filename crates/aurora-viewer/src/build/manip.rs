@@ -668,35 +668,18 @@ impl Manip {
     }
 
     /// Mouse up: send the final transforms (LLManip*::handleMouseUp).
-    ///
-    /// Returns the prims the edit changed besides the roots (a linkset
-    /// stretched on one axis sends each child's own place and size), or `None`
-    /// when nothing went out (no drag, or a drag that changed nothing).
-    pub fn release(&mut self, world: &mut World, s: &BuildSettings, linked: bool, out: &mut Vec<BuildCmd>) -> Option<Vec<ObjKey>> {
-        let d = self.drag.take()?;
+    pub fn release(&mut self, world: &mut World, s: &BuildSettings, linked: bool, out: &mut Vec<BuildCmd>) {
+        let Some(d) = self.drag.take() else {
+            return;
+        };
         if !d.started || !d.changed || !d.movers.iter().all(|m| super::can_transform(world, m.idx, d.linked, d.mode)) {
-            return None;
+            return;
         }
         let _ = s;
         send_updates(world, &d, linked, out);
         if d.te_due {
             self.te_dirty.extend(d.textures.iter().map(|t| t.idx));
         }
-        // The simulator keeps one undo step per object: Ctrl+Z / Ctrl+Y name
-        // the children too, since the root's own step cannot give a child back
-        // its size (LLSelectMgr::undo names the roots alone with
-        // SEND_ONLY_ROOTS).
-        if !linkset_stretch(&d) {
-            return Some(Vec::new());
-        }
-        Some(
-            d.movers
-                .iter()
-                .flat_map(|m| m.children.iter())
-                .filter_map(|c| world.objects.get(c.idx))
-                .map(|o| o.key)
-                .collect(),
-        )
     }
 
     /// Prims whose texture entry the stretch changed and the simulator has
@@ -3553,11 +3536,11 @@ mod tests {
         }
     }
 
-    /// A face stretch of a linkset records the children it changed beside the
-    /// root, and Ctrl+Z names them with the selected root: the simulator keeps
-    /// one undo step per object, and the root's step cannot give a child turned
-    /// 90 degrees back its place and size (LLSelectMgr::undo names the roots
-    /// alone, SEND_ONLY_ROOTS).
+    /// A face stretch of a linkset records every prim it sent, and Ctrl+Z names
+    /// them with the selected root: the simulator keeps one undo step per
+    /// object, and the root's step cannot give a child turned 90 degrees back
+    /// its place and size (LLSelectMgr::undo names the roots alone,
+    /// SEND_ONLY_ROOTS). A later Transform of those prims drops the batch.
     #[test]
     fn a_face_stretch_release_names_the_linkset_children_for_undo() {
         let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
@@ -3600,15 +3583,38 @@ mod tests {
         assert_eq!(children, vec![world.objects.get(child).unwrap().key]);
         manip.drag = Some(drag);
         tool.manip = manip;
+        let root_key = world.objects.get(root).unwrap().key;
         tool.out.clear();
         tool.mouse_up(&mut world, &settings, None);
-        assert_eq!(tool.stretch_prims, children, "Ctrl+Z / Ctrl+Y must name the child too");
+        assert_eq!(
+            tool.stretch_prims,
+            vec![root_key, children[0]],
+            "Ctrl+Z / Ctrl+Y must name every prim the stretch sent"
+        );
         assert!(matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Transform { updates, .. })] if updates.len() == 2));
         tool.out.clear();
         tool.undo(&world, false);
         assert!(matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]));
+        // A later move of the root is a newer step: the next undo names the root alone.
+        tool.out.clear();
+        tool.send(BuildCmd::Transform {
+            handle: root_key.region,
+            updates: vec![TransformUpdate {
+                local_id: root_key.local_id,
+                position: Some(Vec3::Y),
+                rotation: None,
+                scale: None,
+                linked: true,
+                uniform: false,
+            }],
+        });
+        assert!(tool.stretch_prims.is_empty(), "a later Transform of those prims drops the batch");
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id]));
         // A selection without that linkset names its own roots alone.
         tool.selection.clear();
         tool.out.clear();

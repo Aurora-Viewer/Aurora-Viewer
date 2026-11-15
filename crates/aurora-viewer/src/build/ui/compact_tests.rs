@@ -1,7 +1,8 @@
 //! Native presentation regressions: actual panel content and pointer selection.
 use super::*;
-use aurora_net::build::{ObjectProps, perm};
+use aurora_net::build::{ObjectProps, TransformUpdate, perm};
 use egui::vec2;
+use glam::Vec3;
 use std::sync::Arc;
 
 #[path = "contents_keyboard_tests.rs"]
@@ -897,6 +898,71 @@ fn object_history_names_the_children_a_one_axis_linkset_stretch_changed() {
         vec![history_key(egui::Key::Z, false, false)],
     );
     assert!(tool.out.is_empty());
+}
+
+#[test]
+fn object_history_drops_the_stretch_children_after_a_later_transform_of_those_prims() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let root_idx = tool.roots(&world)[0];
+    let root = world.objects.get(root_idx).unwrap();
+    let (root_key, root_id) = (root.key, root.full_id);
+    let child_idx = world
+        .objects
+        .iter()
+        .find(|(idx, object)| *idx != root_idx && !object.is_avatar())
+        .unwrap()
+        .0;
+    let child = world.objects.get_mut(child_idx).unwrap();
+    child.parent_id = root_key.local_id;
+    child.parent_region = root_key.region;
+    let child_key = child.key;
+    tool.selection = vec![root_key];
+    tool.send(aurora_net::build::BuildCmd::Transform {
+        handle: root_key.region,
+        updates: vec![
+            TransformUpdate {
+                local_id: root_key.local_id,
+                position: Some(Vec3::ZERO),
+                rotation: None,
+                scale: Some(Vec3::ONE),
+                linked: false,
+                uniform: false,
+            },
+            TransformUpdate {
+                local_id: child_key.local_id,
+                position: Some(Vec3::X),
+                rotation: None,
+                scale: Some(Vec3::ONE),
+                linked: false,
+                uniform: false,
+            },
+        ],
+    });
+    // A later move of the root is a newer step: Ctrl+Z names the root alone.
+    tool.send(aurora_net::build::BuildCmd::Transform {
+        handle: root_key.region,
+        updates: vec![TransformUpdate {
+            local_id: root_key.local_id,
+            position: Some(Vec3::Y),
+            rotation: None,
+            scale: None,
+            linked: true,
+            uniform: false,
+        }],
+    });
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(matches!(
+        tool.out.as_slice(),
+        [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if ids == &vec![root_id]
+    ));
 }
 
 #[test]

@@ -944,9 +944,10 @@ pub struct BuildTool {
     pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
-    /// Prims the last released edit changed besides the roots: a linkset
-    /// stretched on one axis carries its own place and size per prim, so the
-    /// simulator holds an undo step for each of them (`undo`).
+    /// Prims the last one-axis linkset stretch named in its
+    /// MultipleObjectUpdate (no UPD_LINKED_SETS). Ctrl+Z / Ctrl+Y name them
+    /// with the selected roots (`undo`). A later Transform of any of them
+    /// drops the batch.
     stretch_prims: Vec<ObjKey>,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
@@ -1241,7 +1242,35 @@ pub fn grid_of(s: &BuildSettings, bounds: Option<&Bounds>, reference: Option<&Bo
 
 impl BuildTool {
     pub fn send(&mut self, c: BuildCmd) {
+        if let BuildCmd::Transform { handle, updates } = &c {
+            self.note_stretch_transform(*handle, updates);
+        }
         self.out.push(NetCommand::Build(c));
+    }
+
+    /// A one-axis linkset stretch sends each prim itself (no UPD_LINKED_SETS).
+    /// The simulator then holds an undo step per prim, so Ctrl+Z / Ctrl+Y name
+    /// every one. A later Transform of those prims is a newer step: drop the
+    /// batch so the next undo names the selection's roots alone
+    /// (LLSelectMgr::undo, SEND_ONLY_ROOTS).
+    fn note_stretch_transform(&mut self, handle: RegionHandle, updates: &[TransformUpdate]) {
+        let stretch = updates.len() >= 2 && updates.iter().any(|u| u.scale.is_some()) && updates.iter().all(|u| !u.linked);
+        if stretch {
+            self.stretch_prims = updates
+                .iter()
+                .map(|u| ObjKey {
+                    region: handle,
+                    local_id: u.local_id,
+                })
+                .collect();
+            return;
+        }
+        if updates
+            .iter()
+            .any(|u| self.stretch_prims.iter().any(|k| k.region == handle && k.local_id == u.local_id))
+        {
+            self.stretch_prims.clear();
+        }
     }
 
     /// The edit manipulator in use, with the modifier keys of the Edit tool
@@ -2477,9 +2506,7 @@ impl BuildTool {
             self.rect_select(world, s, scene, a, b, extend);
         }
         let mut cmds = Vec::new();
-        if let Some(prims) = self.manip.release(world, s, self.selection_linked, &mut cmds) {
-            self.stretch_prims = prims;
-        }
+        self.manip.release(world, s, self.selection_linked, &mut cmds);
         self.land.mouse_up();
         for c in cmds {
             self.send(c);
