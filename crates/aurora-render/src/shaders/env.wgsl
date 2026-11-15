@@ -3006,8 +3006,10 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     if (depth <= 0.002) { return vec4<f32>(0.0); }
     let cam = frame.camera_pos.xyz;
     let dist = distance(world, cam);
-    // its distance in snow (rain_look.y); twice the puddles' while melting
-    let far = select(frame.rain_look.y * 2.0, frame.rain_look.y, snowing());
+    // the snow's own distance, while it snows and while it melts after (it
+    // was twice the puddles' then: past the memory, the snow stopped in a
+    // line; and it jumped when the snow turned to rain)
+    let far = frame.snow_far.x;
     let slope = smoothstep(0.55, 0.85, n.z);
     let lying = depth * slope;
     if (lying <= 0.002) { return vec4<f32>(0.0); }

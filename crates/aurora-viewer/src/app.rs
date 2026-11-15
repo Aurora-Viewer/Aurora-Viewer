@@ -58,6 +58,7 @@ mod color_picker;
 mod contents_copy;
 mod context_menu;
 mod controls;
+mod conversation_log;
 mod crash_state;
 mod cursor_hold;
 mod derender;
@@ -910,6 +911,8 @@ pub struct App {
     grid_status_was_open: bool,
     /// The toolbar's pose stand (`app/pose_stand.rs`).
     pose_stand: crate::pose_stand::Stand,
+    /// The conversation log's window (`app/conversation_log.rs`).
+    conversation_log_ui: ui::conversation_log::ConversationLogUi,
     about: about::About,
     /// Preferences › Remove Aurora from this computer (`app/uninstall.rs`).
     uninstall: uninstall::Uninstall,
@@ -1971,6 +1974,7 @@ impl App {
             grid_status_listed: false,
             grid_status_was_open: false,
             pose_stand: Default::default(),
+            conversation_log_ui: Default::default(),
             about: Default::default(),
             uninstall: Default::default(),
             stream_titles: Default::default(),
@@ -3098,6 +3102,7 @@ impl App {
             // the demo never reads the PC's real Legacy Viewer folders: its
             // import scenario starts its own import on its own files
             import_at_login: s.log_import_at_login && !self.demo,
+            log_conversations: s.log_conversations,
         };
         // the demo keeps no transcripts unless its scenario asks for them:
         // a run must not change what the next one shows
@@ -3341,6 +3346,10 @@ impl App {
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
+        // the contact sets' windows, Quick sort's queue and the choices hold
+        // the last account's residents and sets: a relog as another account
+        // must not save them into its sets
+        self.contacts_ui = Default::default();
         self.contents_copies = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
@@ -3420,6 +3429,8 @@ impl App {
         self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
+        // and the conversation log's filter and selection
+        self.conversation_log_ui = Default::default();
         self.chat_import_closed();
         self.chat_ui = ChatUi::from_settings(&self.settings);
         self.ao_agent = uuid::Uuid::nil();
@@ -6979,7 +6990,9 @@ impl App {
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
         self.script_editors.back_up();
         crate::ui::scripts::backup::flush(Duration::from_secs(2));
+        // the conversation log as it is now (LLConversationLog::cache), then
         // the last lines of the conversations reach their files
+        self.world.chat_log.save_conversations(true);
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
@@ -9241,6 +9254,7 @@ impl App {
         wanted.extend(self.money_tracker_ui.wanted_pics.drain());
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
+        wanted.extend(self.conversation_log_ui.wanted_pics.drain());
         self.refine_ui_copies();
         for agent in wanted {
             self.world.want_profile(agent);
@@ -9295,6 +9309,7 @@ impl App {
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
+        images.extend(self.conversation_log_ui.wanted_images.drain());
         images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
@@ -13595,7 +13610,8 @@ impl App {
                 self.panels.appearance = false;
                 if mode.starts_with("config") {
                     self.panels.chat = false;
-                    self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                    self.contacts_ui
+                        .configure_set_at(aurora_i18n::tr!("demo-family"), ui::contacts::EditorTab::Behaviour);
                 } else {
                     self.panels.chat = true;
                 }
@@ -16944,6 +16960,7 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.conversation_log_entries = self.world.chat_log.conversations.list.len();
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
         self.options_ui.chat_log_shared = self.world.chat_log.shared();
         self.poll_folder_pick();
@@ -17121,6 +17138,9 @@ impl App {
         }
         if let Some(folders) = res.import_legacy_logs.take() {
             self.chat_import_start(folders);
+        }
+        if res.clear_conversation_log {
+            self.world.chat_log.clear_conversations();
         }
         if res.erase_chat_logs {
             self.options_ui.chat_log_status = if self.world.chat_log.busy() {
@@ -18939,7 +18959,13 @@ impl App {
                     log::warn!("cannot open the transcripts folder: {e}");
                 }
                 // their confirmations, also asked from the other menus
-                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
+                contact_actions.extend(ui::contacts::dialog_windows(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.contacts_ui,
+                    &self.avatar_pics,
+                ));
                 // residents added to a conversation: a conversation with one
                 // resident that became a conference closes (FSFloaterIM::
                 // addP2PSessionParticipants)
@@ -19030,6 +19056,9 @@ impl App {
                             self.contacts_ui.ask_modify_rights(friend, rights, grant)
                         }
                         ui::people::PeopleAction::PickFriend => self.contacts_ui.pick_new_friend(),
+                        ui::people::PeopleAction::ConversationLog => {
+                            ui::widgets::toggle_floater(&ctx, ui::conversation_log::WINDOW, &mut self.panels.conversation_log)
+                        }
                         ui::people::PeopleAction::Unblock(id, name) => self.world.unblock(id, &name, 0),
                         ui::people::PeopleAction::BlockByName(name) => {
                             if let Err(e) = self.world.block(uuid::Uuid::nil(), &name, crate::world::mutes::MuteType::ByName) {
@@ -19651,6 +19680,7 @@ impl App {
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 self.grid_status_window(&ctx, &p);
                 self.pose_stand_window(&ctx, &p);
+                self.conversation_log_window(&ctx, &p);
                 self.avatar_align_window(&ctx, &p);
                 if let Some(ui::voice_controls::Action::LeaveCall) = self.voice_controls_ui.show(
                     &ctx,
@@ -21117,8 +21147,44 @@ impl ApplicationHandler for App {
                         self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
                         self.settings.classic_name_tags = std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-legacy");
                     }
+                    use crate::demo::people::SetsScene;
+                    match crate::demo::people::sets_scene() {
+                        Some(SetsScene::Editor { tab, badges, marker }) => {
+                            self.contacts_ui.configure_set_at(aurora_i18n::tr!("demo-family"), tab);
+                            self.contacts_ui.demo_editor(badges, marker);
+                        }
+                        Some(SetsScene::ThinEditor) => {
+                            self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                            let work = ui::layout::work_area(&self.egui_ctx);
+                            ui::widgets::place_floater(
+                                &self.egui_ctx,
+                                "contact_set_config",
+                                work.center() - egui::vec2(280.0, 360.0),
+                                egui::vec2(560.0, 720.0),
+                            );
+                        }
+                        Some(SetsScene::QuickSort) => {
+                            self.contacts_ui.set_choice = Some(crate::world::contact_sets::NO_SETS.to_owned());
+                            self.people_ui.select(Vec::new());
+                            self.contacts_ui.open_quick_sort(&self.world);
+                        }
+                        Some(SetsScene::Options) => self.contacts_ui.open_set_options(),
+                        Some(SetsScene::Select) => self
+                            .people_ui
+                            .select(vec![crate::demo::people::NOVA, crate::demo::people::ORION_EXAMPLE]),
+                        None => {}
+                    }
                 }
-                self.panels.people = true;
+                // the windows of a set scene stand alone, People closed
+                self.panels.people = !matches!(
+                    crate::demo::people::sets_scene(),
+                    Some(
+                        crate::demo::people::SetsScene::Editor { .. }
+                            | crate::demo::people::SetsScene::ThinEditor
+                            | crate::demo::people::SetsScene::QuickSort
+                            | crate::demo::people::SetsScene::Options
+                    )
+                );
                 self.panels.people_tab = crate::demo::people::tab();
                 self.panels.inventory = false;
                 self.panels.chat = false;

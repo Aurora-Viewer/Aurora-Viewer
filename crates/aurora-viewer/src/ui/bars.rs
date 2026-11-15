@@ -1058,6 +1058,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), &gestures) {
             super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
         }
+        // menu_viewer.xml: Conversation Log… after Gestures (Floater.Toggle
+        // conversation, checked while it is open; always enabled, its
+        // logging check is left out of the Legacy Viewer's menu)
+        if menu::check(
+            ui,
+            p,
+            "file-text-filled",
+            aurora_i18n::tr!("ui-bars-conversation-log"),
+            panels.conversation_log,
+            true,
+        ) {
+            super::widgets::toggle_floater(ui.ctx(), super::conversation_log::WINDOW, &mut panels.conversation_log);
+        }
         for (tab, icon, label) in [
             (1, "users", aurora_i18n::tr!("common-friends")),
             (0, "radar-filled", aurora_i18n::tr!("common-nearby-people")),
@@ -2562,6 +2575,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // Floater.Toggle fs_posestand
         "pose_stand" => toggle(super::pose_stand::WINDOW, &mut panels.pose_stand),
+        // Floater.Toggle conversation
+        "conversation_log" => toggle(super::conversation_log::WINDOW, &mut panels.conversation_log),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
@@ -2676,6 +2691,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
         "pose_stand" => panels.pose_stand,
+        "conversation_log" => panels.conversation_log,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,

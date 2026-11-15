@@ -218,6 +218,9 @@ struct FrameU {
     tex_lod: [f32; 4],
     /// The soles' heights of `snow_stamps` (m), four to a vec4.
     snow_stamp_z: [[f32; 4]; crate::types::SNOW_STAMPS / 4],
+    /// x: how far the snow lying is drawn (m), whatever falls
+    /// (`RainLook::snow_distance`); yzw unused.
+    snow_far: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -7236,6 +7239,7 @@ impl Backend {
         }
         u.lightning = f.rain_look.lightning;
         u.aurora = f.rain_look.aurora;
+        u.snow_far = [f.rain_look.snow_distance, 0.0, 0.0, 0.0];
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
