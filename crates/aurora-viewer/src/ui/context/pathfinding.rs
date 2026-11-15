@@ -4,7 +4,7 @@
 use crate::{theme::Palette, ui::widgets, world::World};
 use aurora_net::{
     NetCommand, RegionHandle,
-    pathfinding::{Detail, Error, Kind, Row},
+    pathfinding::{Detail, Error, Kind, Row, linkset::Use},
 };
 use uuid::Uuid;
 
@@ -23,14 +23,14 @@ pub struct PathfindingUi {
     reveal: bool,
 }
 
-fn usage(category: u8, phantom: bool) -> &'static str {
-    aurora_i18n::text(match (category, phantom) {
-        (0, false) => "scene-nav-walkable",
-        (0, true) => "scene-nav-material",
-        (1, false) => "scene-nav-obstacle",
-        (1, true) => "scene-nav-exclusion",
-        (_, false) => "scene-nav-dynamic",
-        (_, true) => "scene-nav-phantom",
+fn usage(use_: Use) -> &'static str {
+    aurora_i18n::text(match use_ {
+        Use::Walkable => "scene-nav-walkable",
+        Use::MaterialVolume => "scene-nav-material",
+        Use::StaticObstacle => "scene-nav-obstacle",
+        Use::ExclusionVolume => "scene-nav-exclusion",
+        Use::MovableObstacle => "scene-nav-dynamic",
+        Use::MovablePhantom => "scene-nav-phantom",
     })
 }
 
@@ -57,6 +57,7 @@ impl PathfindingUi {
             request,
             region: self.region,
             kind: self.kind.unwrap_or(Kind::Objects),
+            terrain: false,
         }
     }
 
@@ -176,26 +177,23 @@ impl PathfindingUi {
                 ));
                 match &row.detail {
                     Detail::Object {
-                        category,
-                        phantom,
                         land_impact,
-                        walkability,
-                        modifiable,
                         scripted,
+                        linkset,
                     } => {
                         ui.label(aurora_i18n::tr!(
                             "scene-nav-object-detail",
-                            usage = usage(*category, *phantom),
+                            usage = usage(linkset.use_),
                             impact = *land_impact,
-                            a = walkability[0],
-                            b = walkability[1],
-                            c = walkability[2],
-                            d = walkability[3]
+                            a = linkset.walkability[0],
+                            b = linkset.walkability[1],
+                            c = linkset.walkability[2],
+                            d = linkset.walkability[3]
                         ));
                         ui.label(aurora_i18n::tr!(
                             "scene-nav-flags",
-                            modify = aurora_i18n::text(if *modifiable { "common-yes" } else { "common-no" }),
-                            scripts = aurora_i18n::text(if *scripted { "common-yes" } else { "common-no" })
+                            modify = aurora_i18n::text(if linkset.modifiable { "common-yes" } else { "common-no" }),
+                            scripts = aurora_i18n::text(if *scripted == Some(true) { "common-yes" } else { "common-no" })
                         ));
                     }
                     Detail::Character {
@@ -259,7 +257,7 @@ impl PathfindingUi {
     }
 
     pub(crate) fn demo(&mut self, world: &World, command: NetCommand) {
-        let NetCommand::FetchPathfinding { request, region, kind } = command else {
+        let NetCommand::FetchPathfinding { request, region, kind, .. } = command else {
             return;
         };
         let mut data = aurora_llsd::Llsd::new_map();

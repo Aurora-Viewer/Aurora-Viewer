@@ -196,6 +196,9 @@ pub struct Region {
     /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
     /// post links in chat applies here, so the role editor shows it.
     pub group_chat_post_links: bool,
+    /// SimulatorFeatures' DynamicPathfindingEnabled: scripted pathfinding runs
+    /// here (LLViewerRegion::dynamicPathfindingEnabled).
+    pub dynamic_pathfinding: bool,
     pub max_link_children: Option<u32>,
     /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
     /// window's "Region settings".
@@ -2408,6 +2411,7 @@ impl World {
             currency_symbol: String::new(),
             export_supported: false,
             group_chat_post_links: false,
+            dynamic_pathfinding: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -3031,6 +3035,7 @@ impl World {
                 currency_symbol,
                 export_supported,
                 group_chat_post_links,
+                dynamic_pathfinding,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
@@ -3042,6 +3047,7 @@ impl World {
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
                 r.group_chat_post_links = group_chat_post_links;
+                r.dynamic_pathfinding = dynamic_pathfinding;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -9488,6 +9494,7 @@ mod motion_tests {
                 currency_symbol: String::new(),
                 export_supported: false,
                 group_chat_post_links: false,
+                dynamic_pathfinding: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

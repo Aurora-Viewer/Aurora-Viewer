@@ -16,6 +16,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "AgentExperiences",
     "AgentPreferences",
     "AgentProfile",
+    // whether the agent may rebake the navmesh (LLPathfindingManager::requestGetAgentState)
+    "AgentState",
     // the scripts of my attachments (Script info)
     "AttachmentResources",
     "AvatarPickerSearch",
@@ -92,12 +94,17 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "MeshUploadFlag",
     "DirectDelivery",
     "ModifyMaterialParams",
+    // the navmesh's status and its rebake (LLPathfindingManager). The navmesh
+    // itself, RetrieveNavMeshSrc, is a Havok blob: never requested (test below).
+    "NavMeshGenerationStatus",
     // LLViewerRegionImpl::buildCapabilityNames (indra/newview/llviewerregion.cpp,
     // originally LGPL 2.1): advertise support so the simulator sends the
     // ObjectAnimation UDP messages. This capability needs no HTTP request.
     "ObjectAnimation",
     "ObjectMedia",
     "ObjectMediaNavigate",
+    // pathfinding linkset edits (LLPathfindingManager::requestSetLinksets)
+    "ObjectNavMeshProperties",
     // Legacy Viewer: LLViewerRegionImpl::buildCapabilityNames (llviewerregion.cpp).
     "ParcelPropertiesUpdate",
     "ParcelVoiceInfoRequest",
@@ -132,6 +139,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // nearby voice moderation by estate managers and parcel owners
     // (LLNearbyVoiceModeration)
     "SpatialVoiceModerationRequest",
+    // the terrain's pathfinding properties, for estate managers (requestGetLinksets)
+    "TerrainNavMeshProperties",
     "UpdateAvatarAppearance",
     // our own bakes, where the region does not bake (OpenSim)
     "UploadBakedTexture",
@@ -187,6 +196,23 @@ pub fn hover_height_body(value: f32) -> Option<Llsd> {
 #[cfg(test)]
 mod language_tests {
     use super::*;
+
+    /// The pathfinding tools use no Havok data: the navmesh source, which only
+    /// Linden's licensed Havok library reads, is never asked for.
+    #[test]
+    fn pathfinding_requests_its_capabilities_but_never_the_havok_navmesh() {
+        for cap in [
+            "AgentState",
+            "CharacterProperties",
+            "NavMeshGenerationStatus",
+            "ObjectNavMeshProperties",
+            "RegionObjects",
+            "TerrainNavMeshProperties",
+        ] {
+            assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
+        }
+        assert!(!REQUESTED_CAPS.contains(&"RetrieveNavMeshSrc"));
+    }
 
     #[test]
     fn parcel_rename_requests_the_properties_update_capability() {

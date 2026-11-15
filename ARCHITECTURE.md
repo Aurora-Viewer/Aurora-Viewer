@@ -806,8 +806,20 @@ sale and permission messages, target changes, HUD roots and selection lifetime.
 Group names use the existing cached GroupNames request and pathfinding attributes
 come from object flags. `context/pathfinding.rs`
 shows searchable, virtualized RegionObjects / CharacterProperties lists from
-`aurora-net/src/pathfinding.rs`, with correlated asynchronous requests scoped to
+`aurora-net/src/pathfinding/`, with correlated asynchronous requests scoped to
 the clicked object's region; this reader does not edit navmesh or terrain.
+`aurora-net/src/pathfinding/` holds the pathfinding wire types and parsers
+(`mod.rs`: the object, character and terrain rows), the linkset rules
+(`linkset.rs`: use ↔ phantom + navmesh category, the uses a selection allows,
+the edit warnings, the coefficient fields and the PUT bodies, from
+LLPathfindingLinkset / LLPathfindingLinksetList) and the navmesh status and
+agent state (`navmesh.rs`). `session/pathfinding_net.rs` sends the requests
+(LLPathfindingManager): the lists, the linkset edits to ObjectNavMeshProperties
+and TerrainNavMeshProperties, the navmesh status and the agent's right to
+rebake on arrival in a region, and the rebake; the event queue's
+NavMeshStatusUpdate and AgentStateUpdate arrive as `NetEvent`s. No Havok: the
+navmesh source (RetrieveNavMeshSrc) is never requested, which a `caps.rs` test
+enforces.
 `scene/mesh_inspection.rs` briefly requests the highest LOD for an avatar's worn
 meshes, bounds failed streaming to five seconds and restores the inspector's
 manual LOD without changing object or account preferences.

@@ -174,6 +174,7 @@ pub fn simulator_features() -> Option<NetEvent> {
         currency_symbol: String::new(),
         export_supported: false,
         group_chat_post_links: !v.split(':').any(|part| part == "no-links"),
+        dynamic_pathfinding: false,
     })
 }
 
