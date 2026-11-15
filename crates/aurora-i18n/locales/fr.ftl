@@ -4654,6 +4654,10 @@ ui-options-manual-terrain = Manuelles + terrain
 ui-bars-walk-arrow-keys-double-tap-to-run = Marcher : flèches (double appui = courir)
 common-plaza-market = Marché de la Place
 ui-minimap-markers = Marques
+ui-minimap-custom-marker = Couleur personnalisée…
+ui-avatar-mark-title = Couleur de la marque
+ui-avatar-mark-many = { $count } résidents
+ui-avatar-mark-private = Les marques ne sont visibles que par vous. Elles durent jusqu'à la déconnexion.
 build-ui-texture-masking = Masquage
 build-ui-texture-alpha-masking = Masquage alpha
 demo-mask-50-cutoff = Masque (seuil 50 %)

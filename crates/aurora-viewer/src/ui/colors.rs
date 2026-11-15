@@ -181,13 +181,24 @@ pub fn range_color_in(p: &crate::theme::Palette, range: Option<f32>, r: crate::w
 /// friend, blocked) rather than the match / mismatch one: the Legacy
 /// Viewer's tags colored by distance keep such a color
 /// (`special_color_override` in LLVOAvatar::idleUpdateNameTagText).
+/// A marked resident keeps their mark's color too (hasAvatarMarkColor).
 pub fn relation_tag(world: &World, id: &Uuid, name: &str) -> bool {
-    get().relation_names && (is_linden(name) || is_friend(world, id) || world.is_avatar_blocked(id))
+    world.avatar_marks.contains(id) || (get().relation_names && (is_linden(name) || is_friend(world, id) || world.is_avatar_blocked(id)))
+}
+
+/// The colour of a resident's mark (`world::avatar_marks`) as the world and
+/// the maps draw it, daltonised like the other configured colours.
+pub fn mark_color(world: &World, id: &Uuid) -> Option<Color32> {
+    world.avatar_marks.get(id).map(|[r, g, b]| c([r, g, b, 255]))
 }
 
 /// Name tag color of an avatar (own, Linden, friend while the names are
-/// colored by relation, else match / mismatch).
+/// colored by relation, else match / mismatch); a mark's color over all of
+/// them (LLNetMap::getAvatarMarkColor last in LLVOAvatar::getNameTagColor).
 pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool) -> Color32 {
+    if let Some([r, g, b]) = world.avatar_marks.get(id) {
+        return text([r, g, b, 255]);
+    }
     let k = get();
     let relation = k.relation_names;
     let v = if relation && *id == world.agent_id {
@@ -207,8 +218,13 @@ pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool
     text(v)
 }
 
-/// Minimap marker color of an avatar.
+/// Minimap marker color of an avatar: its mark first, then its contact
+/// set's, then its relation's (LLNetMap::getAvatarColor: the mark is applied
+/// last, over the contact sets).
 pub fn map_color(world: &World, id: &Uuid, name: &str) -> Color32 {
+    if let Some(color) = mark_color(world, id) {
+        return color;
+    }
     if let Some(color) = world.contact_sets.appearance(id).minimap {
         return set_color(color);
     }
