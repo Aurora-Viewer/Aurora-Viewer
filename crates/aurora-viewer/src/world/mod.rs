@@ -10,6 +10,7 @@ pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
+pub mod shape_tween;
 
 mod arrival_wait;
 pub mod beacons;
@@ -489,6 +490,8 @@ pub struct World {
     /// so ours shows them as LLVOAvatarSelf shows its own composites.
     local_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
+    /// Other avatars' shapes gliding to a new appearance (shape_tween.rs).
+    pub shape_tweens: shape_tween::ShapeTweens,
     pub alerts: VecDeque<String>,
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
@@ -957,6 +960,7 @@ impl World {
             preview_bakes: HashMap::new(),
             local_bakes: HashMap::new(),
             shape_preview_generation: 0,
+            shape_tweens: Default::default(),
             alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
@@ -2486,7 +2490,23 @@ impl World {
         {
             return Some(values);
         }
+        if let Some(values) = self.shape_tweens.shown(avatar) {
+            return Some(values);
+        }
         self.appearances.get(avatar).map(|(a, _)| a.visual_params.as_slice())
+    }
+
+    /// Whether `avatar` stands within `range` of the agent (a seated one:
+    /// its seat).
+    fn near_agent(&self, avatar: &Uuid, range: f32) -> bool {
+        let Some(mut o) = self.objects.index_of_uuid(avatar).and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        if let Some(seat) = self.objects.parent_of(o).and_then(|p| self.objects.get(p)) {
+            o = seat;
+        }
+        self.region_offset(o.key.region)
+            .is_some_and(|off| (o.position + off).distance(self.agent.position) < range)
     }
 
     /// A draft never replaces the authoritative appearance received meanwhile.
@@ -2675,6 +2695,7 @@ impl World {
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
+            + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {
                 self.shape_preview_generation
             } else {
@@ -3345,6 +3366,23 @@ impl World {
                             log::debug!("appearance of {id} without parameters ignored");
                         }
                         return None;
+                    }
+                }
+                // LLVOAvatar::processAvatarAppearance: another avatar's
+                // shape glides to its new values (setAnimationTarget), its
+                // first appearance lands at once; from what it shows now
+                // when a glide is under way. Within shape_tween::RANGE only.
+                if !own {
+                    let from = self
+                        .shape_tweens
+                        .shown(&id)
+                        .map(<[u8]>::to_vec)
+                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()));
+                    match from {
+                        Some(from) if self.near_agent(&id, shape_tween::RANGE) => {
+                            self.shape_tweens.start(id, from, a.visual_params.clone(), Instant::now());
+                        }
+                        _ => self.shape_tweens.cancel(&id),
                     }
                 }
                 self.appearance_counter += 1;
