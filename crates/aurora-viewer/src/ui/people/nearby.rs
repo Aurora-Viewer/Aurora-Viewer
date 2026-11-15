@@ -815,6 +815,7 @@ fn paint_rich(
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), RICH_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, identity.center().y), Vec2::splat(30.0));
     widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
@@ -914,6 +915,7 @@ fn paint_compact(
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), COMPACT_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 10.0, identity.center().y), Vec2::splat(20.0));
     widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);

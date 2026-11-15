@@ -4,7 +4,7 @@
 //! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{COMBO_W, preset_choice, stepped, toggle};
+use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
@@ -1012,17 +1012,20 @@ fn image(cx: &mut Cx) {
     // the order of the blended faces (scene/blend_order.rs), beyond the
     // Legacy Viewer's sort
     cx.group(tr!("ui-options-transparency"), |cx| {
-        cx.combo(
+        let p = cx.p;
+        // the search finds the row by its methods and the exact order's
+        // precisions
+        let mut words = vec![
+            tr!("ui-options-blend-order-standard"),
+            tr!("ui-options-blend-order-exact"),
+            tr!("ui-options-blend-order-stochastic"),
+        ];
+        words.extend(blend_precisions().map(|(_, label)| label));
+        cx.wide().keywords(&words.join(" ")).row(
             tr!("ui-options-blend-order"),
             tr!("ui-options-blend-order-help"),
             &field!(blend_order),
-            &[
-                (0, tr!("ui-options-blend-order-standard")),
-                (1, tr!("ui-options-blend-order-fast")),
-                (2, tr!("ui-options-blend-order-balanced")),
-                (3, tr!("ui-options-blend-order-high")),
-                (4, tr!("ui-options-blend-order-full")),
-            ],
+            |ui, s| blend_order_choice(ui, &p, &mut s.blend_order),
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another

@@ -8,8 +8,10 @@ pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
 pub mod avatar_align;
+pub mod avatar_marks;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
+pub mod avatar_welcome;
 pub mod backdrop;
 pub mod balance_gains;
 pub mod bars;
@@ -85,6 +87,7 @@ pub mod menu;
 pub mod minimap;
 pub mod money_tracker;
 pub mod monitor;
+pub mod mouselook_combat;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
@@ -220,6 +223,8 @@ pub struct Panels {
     pub avatar_align_mini: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Avatar Welcome Pack (toolbar `avatar`, Me › Avatar Welcome Pack…).
+    pub avatar_welcome: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
     pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
@@ -292,6 +297,7 @@ impl Panels {
             avatar_align: false,
             avatar_align_mini: settings.avatar_align_mini,
             web_browser: false,
+            avatar_welcome: false,
             destinations: false,
             quick_prefs: false,
             voice_controls: false,

@@ -834,6 +834,12 @@ pub struct AvatarSample {
     pub animations_max: usize,
 }
 
+/// How long an object drawn in a new pose stays out of the rain's shelter
+/// map (`Scene::moves_for_shelter`): longer than the map's refresh with the
+/// shadows off (renderer.rs SHELTER_REFRESH, 1 s) and than a script's usual
+/// timer, so a rotation stepped every few seconds never lands in it.
+pub(super) const MOVED_SHELTER_HOLD: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub struct Scene {
     /// Aurora Weather: the lying snow's detail texture.
     pub snow_detail: snow_detail::SnowDetail,
@@ -885,6 +891,10 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// Session-only keyframe animation rate for every avatar and animesh.
+    pub animation_speed: f32,
+    /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
+    pub slow_motion_animations: bool,
     pub ground_avatar_feet: bool,
     pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
@@ -1009,6 +1019,13 @@ pub struct Scene {
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
+    /// When objects were last drawn in a new place or turn by a move sync:
+    /// out of the rain's shelter map for a while after (`moves_for_shelter`).
+    moved_lately: HashMap<usize, Instant>,
+    /// This sync follows a shift of the render origin (a region crossing,
+    /// the GPU's recovery): every object is placed anew, none moved, so
+    /// `apply_move` records no move (`new_pose_for_shelter`).
+    origin_shifted: bool,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -1067,6 +1084,8 @@ pub struct Scene {
     debug_alpha: Option<bool>,
     beacon_highlights: HashSet<usize>,
     pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
+    /// The lights' boxes while Beacons > Bounding boxes for lights is on.
+    pub light_boxes: Vec<crate::world::beacons::LightBox>,
     land_overlays: world_overlays::LandOverlays,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pass_view: bool,
@@ -1610,6 +1629,8 @@ impl Scene {
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
@@ -1668,6 +1689,8 @@ impl Scene {
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
             mirror_objects: Default::default(),
+            moved_lately: HashMap::new(),
+            origin_shifted: false,
             selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
@@ -1678,6 +1701,7 @@ impl Scene {
             debug_alpha: None,
             beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
+            light_boxes: Vec::new(),
             land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
@@ -2303,6 +2327,8 @@ impl Scene {
         }
         self.removal_pending[i] = false;
         self.sets.forget(i);
+        // (a new object in the slot is not held out of the shelter map)
+        self.moved_lately.remove(&i);
         self.anchors.forget(i);
         self.pick.remove(i);
         self.list_index.remove(i);
@@ -2355,6 +2381,7 @@ impl Scene {
         // (our avatar is a first appearance again at the next login)
         self.loading = Default::default();
         self.last_origin = None;
+        self.moved_lately.clear();
         self.sets.clear();
         self.anchors.clear();
         self.hud_roots.clear();
@@ -2973,7 +3000,8 @@ impl Scene {
             }
         }
 
-        if self.update_origin(world) {
+        self.origin_shifted = self.update_origin(world);
+        if self.origin_shifted {
             renderer.cut_motion_history();
             self.water.clear(renderer);
         }
@@ -2992,6 +3020,17 @@ impl Scene {
         let now = self.held_at.unwrap_or_else(Instant::now);
         let n = world.objects.slots.len();
         let agent = world.agent_id;
+        // what stopped moving a while ago goes back into the rain's shelter
+        // map: synced once more (touched), which finds it still
+        if !self.moved_lately.is_empty() {
+            self.moved_lately.retain(|&idx, at| {
+                let held = now.saturating_duration_since(*at) < MOVED_SHELTER_HOLD;
+                if !held {
+                    world.objects.touch(idx);
+                }
+                held
+            });
+        }
         // objects changed since the last frame
         let mut touched = std::mem::take(&mut self.touched_tmp);
         world.objects.take_touched(&mut touched);
@@ -3429,8 +3468,14 @@ impl Scene {
     fn apply_move(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, m: MoveSync) {
         self.note_light(world, idx);
         let posed = self.posed_of(renderer, self.gpu.get(idx).and_then(|g| g.geom), m.posed_rest);
-        // (as `sync_object`: what moves is out of the rain's shelter map)
-        let physical = world.objects.get(idx).is_some_and(|o| o.update_flags & 1 != 0) || Self::linkset_moving(world, idx);
+        // (as `sync_object`: what moves is out of the rain's shelter map; a
+        // new pose drawn counts, whatever moved it: a script's llSetRot on a
+        // timer reports no motion)
+        let now = self.held_at.unwrap_or_else(Instant::now);
+        if Self::new_pose_for_shelter(m.changed, m.xf.2, m.anchor.is_some(), self.origin_shifted) {
+            self.moved_lately.insert(idx, now);
+        }
+        let physical = Self::moves_for_shelter(world, &self.moved_lately, idx, now);
         let Some(g) = self.gpu.get_mut(idx) else {
             return;
         };
@@ -3735,15 +3780,15 @@ impl Scene {
             },
             own: hud || wearer.is_some_and(|(id, _)| id == world.agent_id),
         };
+        // FLAGS_USE_PHYSICS, or moving now (`moves_for_shelter`): the snow
+        // is laid where it stands from the ground's memory, so on what moves
+        // it slid over it
+        let moving = Self::moves_for_shelter(world, &self.moved_lately, idx, self.held_at.unwrap_or_else(Instant::now));
         let g = &mut self.gpu[idx];
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         g.first_person_hidden = first_person_hidden;
-        // FLAGS_USE_PHYSICS, or moving now (its linkset reported with a
-        // velocity or a spin: keyframed motion, a scripted walker): the
-        // snow is laid where it stands from the ground's memory, so on what
-        // moves it slid over it
-        g.physical = o.update_flags & 1 != 0 || Self::linkset_moving(world, idx);
+        g.physical = moving;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -4044,6 +4089,8 @@ impl Scene {
                 continue;
             }
             let mut rec = te_record_base(model, &tf);
+            // the OIT tie-break: the object's id and this face
+            rec.identity[0] = aurora_render::oit_tie(*o.full_id.as_bytes(), fi as u32);
             // Linden plants cut at 0.5, not the 0.33 of other faces without a
             // material (LLDrawPoolTree, setMinimumAlpha(0.5))
             if plant.is_some() {
@@ -4337,14 +4384,37 @@ impl Scene {
         self.gpu[idx] = g;
     }
 
-    /// Whether object `idx` or a prim it is linked to (up to its root) was
-    /// last reported moving or turning.
-    fn linkset_moving(world: &World, mut idx: usize) -> bool {
+    /// Whether a move sync drew object `idx` in a new pose of its own, which
+    /// holds it out of the rain's shelter map (`MOVED_SHELTER_HOLD`): its
+    /// model matrix changed, it is no HUD and not placed by the GPU from an
+    /// anchor, and the render origin did not shift this sync. A region
+    /// crossing changes every object's matrix: counted as moves, nothing
+    /// stood in the map for 5 s, the rain fell inside every building and
+    /// the weather memory wetted (or snowed on) the floors under them.
+    pub(super) fn new_pose_for_shelter(changed: bool, hud: bool, anchored: bool, origin_shifted: bool) -> bool {
+        changed && !hud && !anchored && !origin_shifted
+    }
+
+    /// Whether object `idx` moves as far as the rain's shelter map is
+    /// concerned, it or a prim it is linked to (up to its root): physical
+    /// (FLAGS_USE_PHYSICS), drawn moving (`Object::has_motion`: a reported
+    /// velocity or spin however slow, a correction fading; the same test as
+    /// the drawing's, where a threshold of its own left a slow spin in the
+    /// map), or drawn in a new pose within `MOVED_SHELTER_HOLD` (a rotation
+    /// a script steps carries no motion). The map is drawn from what stands
+    /// still: what moves in it lays its old shape under the snow and the
+    /// rain, in the map's squares (#3642).
+    pub(super) fn moves_for_shelter(world: &World, moved_lately: &HashMap<usize, Instant>, mut idx: usize, now: Instant) -> bool {
+        let lately = |i: usize| {
+            moved_lately
+                .get(&i)
+                .is_some_and(|at| now.saturating_duration_since(*at) < MOVED_SHELTER_HOLD)
+        };
         for _ in 0..16 {
             let Some(o) = world.objects.get(idx) else {
                 return false;
             };
-            if o.velocity.length_squared() > 1e-4 || o.angular_velocity.length_squared() > 1e-4 {
+            if o.update_flags & 1 != 0 || o.has_motion() || lately(idx) {
                 return true;
             }
             let Some(parent) = world.objects.parent_of(o) else {
@@ -4596,6 +4666,9 @@ impl Scene {
                     model: record_model,
                     params: [0.0, 0.0, 0.8, minimum_alpha],
                     flags: [flags::SKINNED, palette, system_binds, 0],
+                    // the OIT tie-break: the avatar's id and the part, in a
+                    // range of its own above the faces of an object
+                    identity: [aurora_render::oit_tie(*o.full_id.as_bytes(), 0x8000 | pi as u32), 0, 0, 0],
                     ..Default::default()
                 };
                 if let Some((base, count, moving)) = self.live_morphs.parts.get(pi).copied().flatten() {
@@ -5149,19 +5222,31 @@ impl Scene {
             // Rigged meshes retain their attachment order. For ordinary faces,
             // use the exact placement written to the GPU, including this frame's
             // moving/worn anchor, without visiting the world's parent chain.
-            let face_depth = (face_sort && in_view && !g.rigged && !g.is_avatar && g.faces.iter().any(|f| f.pass == Pass::Blend))
-                .then(|| {
-                    let record = renderer.records.get(g.faces.first()?.record)?;
-                    let mut model = Mat4::from_cols_array_2d(&record.model);
-                    if let Some(anchor) = record.anchor() {
-                        model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
-                    }
-                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
-                        return None;
-                    };
-                    Some((blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom))
-                })
-                .flatten();
+            let face_place = ((face_sort || under_water_plane.is_some())
+                && in_view
+                && !g.rigged
+                && !g.is_avatar
+                && g.faces.iter().any(|f| f.pass == Pass::Blend))
+            .then(|| {
+                let record = renderer.records.get(g.faces.first()?.record)?;
+                let mut model = Mat4::from_cols_array_2d(&record.model);
+                if let Some(anchor) = record.anchor() {
+                    model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
+                }
+                let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                    return None;
+                };
+                Some((model, geom))
+            })
+            .flatten();
+            let face_depth = face_place
+                .filter(|_| face_sort)
+                .map(|(model, geom)| (blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom));
+            // the side of the water each face lies on, from its own height
+            // where its vertices are known (`water_sides_of`)
+            let face_height = face_place
+                .filter(|_| under_water_plane.is_some())
+                .map(|(model, geom)| (blend_order::FaceHeight::new(model), geom));
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -5309,7 +5394,13 @@ impl Scene {
                             face: f.te_index,
                             rig,
                         };
-                        let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
+                        let height = face_height.as_ref().and_then(|(height, geom)| {
+                            geom.pick_faces
+                                .get(f.te_index as usize)?
+                                .as_ref()
+                                .map(|face| height.of(face.bounds))
+                        });
+                        let (after, before) = blend_order::water_sides_of(sc.z, sr, height, under_water_plane);
                         if before {
                             l.blend_under.push(entry);
                         }
@@ -5579,22 +5670,6 @@ impl Scene {
         )
     }
 
-    /// Evaluate skeleton poses of every palette owner near the camera; the
-    /// sync of the same frame uploads their joint palettes
-    /// (`update_anchors`). Only our avatar reports timed animation stops
-    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
-    /// Objects our avatar wears (HUDs left out): a step of the teleport and
-    /// crossing timelines (AURORA_PROFILE).
-    pub fn own_attachment_count(&self) -> usize {
-        let Some(own) = self.agent_idx else {
-            return 0;
-        };
-        self.gpu
-            .iter()
-            .filter(|g| g.owner_avatar == Some(own) && !g.hud && !g.is_avatar)
-            .count()
-    }
-
     /// What the avatars wear and play (`avatar summary`, AURORA_PROFILE):
     /// one walk over the objects, every 10 s.
     pub fn avatar_sample(&self) -> AvatarSample {
@@ -5635,6 +5710,10 @@ impl Scene {
         s
     }
 
+    /// Evaluate skeleton poses of every palette owner near the camera; the
+    /// sync of the same frame uploads their joint palettes
+    /// (`update_anchors`). Only our avatar reports timed animation stops
+    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
     pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
@@ -5754,6 +5833,10 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_time_factor(
+                anim::effective_animation_speed(self.animation_speed, self.slow_motion_animations, owner == world.agent_id),
+                now,
+            );
             motions.set_synchronized(self.synchronize_animations);
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.

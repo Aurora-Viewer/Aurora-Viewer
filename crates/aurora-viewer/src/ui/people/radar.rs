@@ -445,15 +445,10 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
     rows
 }
 
-/// Color of a range (and of a name colored by distance): within the chat,
-/// within a shout, farther.
+/// Color of a range (and of a name colored by distance), shared with the
+/// name tags.
 fn range_color(p: &Palette, range: Option<f32>) -> Color32 {
-    let r = chat_ranges();
-    match range {
-        Some(d) if d <= r.say => p.success,
-        Some(d) if d <= r.shout => p.ink,
-        _ => p.muted,
-    }
+    crate::ui::colors::range_color(p, range)
 }
 
 /// "h:mm:ss" since the first sighting.
@@ -592,6 +587,7 @@ fn paint_row(
                 // by the human), then the name
                 let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
                 widgets::avatar_picture(ui, p, picture, data.pics.get(&row.id), &row.name, row.muted);
+                crate::ui::avatar_marks::ring(ui, world, &row.id, picture, false);
                 let cell = cell.with_min_x(picture.right());
                 // friends in bold, blocked residents in italics
                 let mut format = egui::TextFormat {
