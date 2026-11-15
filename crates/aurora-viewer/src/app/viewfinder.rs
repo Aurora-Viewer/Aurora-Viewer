@@ -26,10 +26,13 @@ impl App {
     /// The HUDs show (and take clicks): Preferences' switch and, in
     /// immersive mode, its button (#1190); a HUD locked by RLVa keeps them
     /// shown; in the viewfinder the photo's own, so that the screen shows
-    /// what the photo will hold.
+    /// what the photo will hold; none while the Director's track plays
+    /// with "Hide HUDs" (a HUD locked by RLVa still shows).
     pub(super) fn huds_shown(&self) -> bool {
         let wanted = self.settings.show_huds && (!self.interface.immersive || self.settings.immersive_huds);
-        (wanted || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        (wanted || self.world.rlva_has_locked_hud())
+            && (!self.viewfinder_on() || self.settings.snapshot.huds)
+            && !self.director_hides_huds()
     }
 
     fn vf_now(&self) -> f64 {
