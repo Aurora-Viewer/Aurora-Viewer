@@ -70,6 +70,10 @@ pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
+/// Nearby chat from near and from beyond the say range, the far lines
+/// dimmed (AURORA_DEMO_CHAT_RANGE).
+#[path = "demo_chat_range.rs"]
+pub mod chat_range;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -1474,6 +1478,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         kind,
         source,
         origin: Origin::Live,
+        beyond_range: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1711,6 +1716,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             kind,
             source,
             origin: Origin::Live,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1732,6 +1738,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             kind: crate::world::ChatKind::Im,
             source: DEMO_FRIEND,
             origin: crate::world::Origin::Live,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1893,6 +1900,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         kind,
         source,
         origin: Origin::Live,
+        beyond_range: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
