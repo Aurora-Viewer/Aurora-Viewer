@@ -1084,6 +1084,7 @@ rez-worn-contents = オブジェクトの中身に入れる前に、着用中の
 rez-hold-ctrl = オブジェクトの上でCtrlを押したままにすると、これらのアイテムをその中身に入れます。
 rez-task-single = オブジェクトの中身からは一度に1つのオブジェクトだけをドラッグしてください。
 rez-task-denied = 中身からRezできるのは、あなたがコピーでき、所有者が譲渡できるオブジェクトだけです。
+rez-notecard-unsaved = このオブジェクトを Rez する前にノートカードを保存してください。
 notecard-task-demo-object = デモオブジェクト
 notecard-task-title = { $note }（{ $object }）
 notecard-task-unavailable = このノートカードまたはそのオブジェクトはもう利用できません。
