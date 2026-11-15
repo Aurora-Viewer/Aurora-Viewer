@@ -148,7 +148,7 @@ pub(crate) fn two_lines_gap(ui: &egui::Ui, top: &egui::FontId, bottom: &egui::Fo
     ui.fonts_mut(|f| (f.row_height(top) + f.row_height(bottom)) / 2.0 + 1.0).max(base)
 }
 
-fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
+pub(crate) fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
     let text = text.into();
     if !super::bidi::has_rtl(text.text()) {
         return text.into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body);

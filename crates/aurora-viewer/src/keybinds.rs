@@ -206,6 +206,26 @@ impl Binding {
         }
     }
 
+    /// Whether an egui key press is this binding: the chat fields'
+    /// shortcuts (`is_chat`), read from the field's own events. The key
+    /// is compared by its physical place, as the world's bindings are
+    /// (egui names keys as winit's codes: `KeyA`, `Enter`, `ArrowUp`;
+    /// Numpad Enter arrives as Enter). The modifiers must match exactly.
+    /// Control is the Control key alone: on macOS Command + an arrow stays
+    /// the field's (start / end of the text), as the chat's fixed keys
+    /// left it before they could be rebound. A mouse binding never
+    /// matches a key.
+    pub fn matches_egui(&self, key: egui::Key, physical: Option<egui::Key>, m: egui::Modifiers) -> bool {
+        let Input::Key(code) = &self.input else {
+            return false;
+        };
+        egui::Key::from_name(code).is_some_and(|bound| bound == physical.unwrap_or(key))
+            && self.ctrl == m.ctrl
+            && !m.mac_cmd
+            && self.shift == m.shift
+            && self.alt == m.alt
+    }
+
     pub fn label(&self) -> String {
         self.label_on(cfg!(target_os = "macos"))
     }
@@ -485,6 +505,47 @@ pub enum Action {
     EnvSunset,
     EnvMidnight,
     EnvShared,
+    /// The chat fields' own shortcuts (`ui/chat/shortcuts.rs`), read there
+    /// from the field's key events and never by the world (`is_chat`). The
+    /// Legacy Viewer hard-codes them (FSFloaterIM::handleKeyHere,
+    /// FSNearbyChatControl::handleKeyHere, LLChatEntry and
+    /// LLFloaterIMContainer::handleKeyHere, indra/newview); Aurora lets
+    /// them be rebound (human request of 2026-11-15). A line break: the
+    /// Legacy Ctrl+Shift+Enter second, Shift+Enter first.
+    ChatNewLine,
+    /// Shout in nearby chat (FSUseCtrlShout: Ctrl+Enter).
+    ChatShout,
+    /// Whisper in nearby chat. The Legacy Viewer's Shift+Enter
+    /// (FSUseShiftWhisper) is the line break here: unbound by default.
+    ChatWhisper,
+    /// Send as ((OOC)) (FSUseAltOOC: Alt+Enter).
+    ChatOoc,
+    /// The sent message before / after the one shown (LLChatEntry's
+    /// Ctrl+Up / Ctrl+Down history).
+    ChatHistoryPrevious,
+    ChatHistoryNext,
+    /// The conversation below / above in the list, round it
+    /// (LLFloaterIMContainer::handleKeyHere's Alt+Down / Alt+Up, and
+    /// Ctrl+Tab / Ctrl+Shift+Tab).
+    ChatNextConversation,
+    ChatPreviousConversation,
+}
+
+/// The chat fields' shortcuts: matched on the fields' key events
+/// (`Binding::matches_egui`), never by the world's dispatch, and they only
+/// conflict with each other.
+pub fn is_chat(a: Action) -> bool {
+    matches!(
+        a,
+        Action::ChatNewLine
+            | Action::ChatShout
+            | Action::ChatWhisper
+            | Action::ChatOoc
+            | Action::ChatHistoryPrevious
+            | Action::ChatHistoryNext
+            | Action::ChatNextConversation
+            | Action::ChatPreviousConversation
+    )
 }
 
 impl Action {
@@ -654,6 +715,22 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::PhotoWindow, aurora_i18n::tr!("keybinds-photo-window")),
                     (Action::PhotoToDisk, aurora_i18n::tr!("keybinds-photo-to-disk")),
+                ],
+            ),
+            (
+                aurora_i18n::tr!("keybinds-chat-typing"),
+                vec![
+                    (Action::ChatNewLine, aurora_i18n::tr!("keybinds-chat-new-line")),
+                    (Action::ChatShout, aurora_i18n::tr!("keybinds-chat-shout")),
+                    (Action::ChatWhisper, aurora_i18n::tr!("keybinds-chat-whisper")),
+                    (Action::ChatOoc, aurora_i18n::tr!("keybinds-chat-ooc")),
+                    (Action::ChatHistoryPrevious, aurora_i18n::tr!("keybinds-chat-history-previous")),
+                    (Action::ChatHistoryNext, aurora_i18n::tr!("keybinds-chat-history-next")),
+                    (Action::ChatNextConversation, aurora_i18n::tr!("keybinds-chat-next-conversation")),
+                    (
+                        Action::ChatPreviousConversation,
+                        aurora_i18n::tr!("keybinds-chat-previous-conversation"),
+                    ),
                 ],
             ),
             (
@@ -995,6 +1072,23 @@ impl KeyBindings {
             (Action::EnvSunset, [kmod(K::KeyN, true, true), None]),
             (Action::EnvMidnight, [kmod(K::KeyX, true, true), None]),
             (Action::EnvShared, [kmod(K::KeyJ, true, true), None]),
+            // the chat fields' (`is_chat`): the defaults the human chose on
+            // 2026-11-15. Send (Enter), Close (Ctrl+W) and Find (Ctrl+F)
+            // stay fixed.
+            (Action::ChatNewLine, [kmod(K::Enter, false, true), kmod(K::Enter, true, true)]),
+            (Action::ChatShout, [kmod(K::Enter, true, false), None]),
+            (Action::ChatWhisper, [None, None]),
+            (Action::ChatOoc, [kalt(K::Enter, false, false), None]),
+            (Action::ChatHistoryPrevious, [kmod(K::ArrowUp, true, false), None]),
+            (Action::ChatHistoryNext, [kmod(K::ArrowDown, true, false), None]),
+            (
+                Action::ChatNextConversation,
+                [kmod(K::Tab, true, false), kalt(K::ArrowDown, false, false)],
+            ),
+            (
+                Action::ChatPreviousConversation,
+                [kmod(K::Tab, true, true), kalt(K::ArrowUp, false, false)],
+            ),
         ];
         KeyBindings { map: defaults }
     }
@@ -1321,7 +1415,7 @@ impl KeyBindings {
                 // a new action's default key may already be the user's own
                 // choice for another action (Space for jumping): theirs stays
                 for slot in &mut b {
-                    if slot.as_ref().is_some_and(|d| !self.users(d).is_empty()) {
+                    if slot.as_ref().is_some_and(|d| !self.rivals(a, d).is_empty()) {
                         *slot = None;
                     }
                 }
@@ -1371,7 +1465,7 @@ impl KeyBindings {
                 let (Some(old), Some(new)) = (&old[slot], &new[slot]) else {
                     continue;
                 };
-                if old == new || self.get(*action)[slot].as_ref() != Some(old) || self.users(new).iter().any(|a| a != action) {
+                if old == new || self.get(*action)[slot].as_ref() != Some(old) || !self.rivals(*action, new).is_empty() {
                     continue;
                 }
                 self.set(*action, slot, Some(new.clone()));
@@ -1414,6 +1508,12 @@ impl KeyBindings {
             .collect()
     }
 
+    /// The other actions using this binding that it conflicts with: the
+    /// chat fields' shortcuts and the world's never meet (`is_chat`).
+    pub fn rivals(&self, a: Action, b: &Binding) -> Vec<Action> {
+        self.users(b).into_iter().filter(|x| *x != a && is_chat(*x) == is_chat(a)).collect()
+    }
+
     /// Is a held action active? A binding needs its modifiers and accepts
     /// more (Shift makes arrows strafe in SL), but the held binding of the
     /// same key with the most matching modifiers wins (LLViewerInput::scanKey:
@@ -1448,6 +1548,7 @@ impl KeyBindings {
     pub fn triggered(&self, input: &Input, m: Mods) -> Option<Action> {
         let exact = self.map.iter().find(|(a, bs)| {
             !is_held(*a)
+                && !is_chat(*a)
                 && bs
                     .iter()
                     .flatten()
@@ -1461,7 +1562,7 @@ impl KeyBindings {
         }
         self.map
             .iter()
-            .find(|(a, bs)| !is_held(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
+            .find(|(a, bs)| !is_held(*a) && !is_chat(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
             .map(|(a, _)| *a)
     }
 
@@ -1493,7 +1594,10 @@ impl KeyBindings {
                 .flatten()
                 .any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift)
             && !self.map.iter().any(|(a, bs)| {
-                *a != Action::Up && *a != Action::HudDrag && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
+                *a != Action::Up
+                    && *a != Action::HudDrag
+                    && !is_chat(*a)
+                    && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
             })
     }
 
@@ -2062,7 +2166,11 @@ mod tests {
         let b = Binding::captured(input.clone(), ctrl);
         kb.set(Action::HudDrag, 0, Some(b.clone()));
         kb.set(Action::PushToTalk, 1, Some(b.clone()));
-        assert_eq!(kb.users(&b), vec![Action::PushToTalk, Action::HudDrag]);
+        assert_eq!(kb.rivals(Action::HudDrag, &b), vec![Action::PushToTalk]);
+        // the chat's Ctrl+Up (sent messages) is no conflict: it is the chat
+        // field's alone (`is_chat`)
+        assert!(kb.users(&b).contains(&Action::ChatHistoryPrevious));
+        assert!(kb.rivals(Action::ChatHistoryPrevious, &b).is_empty());
         let down = [input].into_iter().collect();
         assert!(kb.held(Action::HudDrag, &down, ctrl));
         assert!(kb.held(Action::PushToTalk, &down, ctrl));
@@ -2415,10 +2523,11 @@ mod tests {
             ] {
                 assert_eq!(kb.get(action)[1], k(key), "{action:?} on layout {i}");
             }
-            // and no default steals another's key
+            // and no default steals another's key (the chat fields' keys
+            // only meet each other: `is_chat`)
             for (action, binds) in &kb.map {
                 for b in binds.iter().flatten() {
-                    assert_eq!(kb.users(b), vec![*action], "{b:?} on layout {i}");
+                    assert_eq!(kb.rivals(*action, b), Vec::<Action>::new(), "{b:?} on layout {i}");
                 }
             }
         }

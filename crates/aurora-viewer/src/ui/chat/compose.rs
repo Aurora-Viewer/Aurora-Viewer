@@ -158,10 +158,13 @@ pub(super) fn show(
                         let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = super::input::hint(
                             ui,
+                            conv_input,
                             match st.selected {
                                 None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                                 Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                             },
+                            field_w,
+                            false,
                         );
                         super::input::prepare(ui, conv_input, local);
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
@@ -188,10 +191,9 @@ pub(super) fn show(
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
-                        output
-                            .response
-                            .response
-                            .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
+                        output.response.response.on_hover_ui(|ui| {
+                            ui.label(super::shortcuts::tip(&super::shortcuts::get(ui.ctx()), local, false));
+                        })
                     })
                     .inner
                 });
@@ -240,7 +242,8 @@ pub(super) fn show(
             let send = if send_clicked {
                 Some(SendKey::Normal)
             } else if resp.has_focus() || resp.lost_focus() {
-                ui.input(send_enter)
+                let keys = super::shortcuts::get(ui.ctx());
+                ui.input(|i| send_enter(i, &keys))
             } else {
                 None
             };
@@ -374,7 +377,9 @@ fn volume_button(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, named: bool) {
         egui::Rect::from_min_size(egui::pos2(x + 3.0, rect.center().y - 6.0), egui::Vec2::splat(12.0)),
         tint,
     );
-    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-chat-volume-tip"));
+    let resp = resp.on_hover_ui(|ui| {
+        ui.label(super::shortcuts::volume_tip(&super::shortcuts::get(ui.ctx())));
+    });
     if std::mem::take(&mut st.demo_volume_menu) {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }

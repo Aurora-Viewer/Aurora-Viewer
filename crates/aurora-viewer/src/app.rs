@@ -7411,6 +7411,9 @@ impl App {
         let Some(ui::options::Capture::Binding(action, slot)) = self.options_ui.take_capture() else {
             return;
         };
+        // the chat fields' shortcuts are read from their key events: a
+        // mouse button would never reach them
+        let input = input.filter(|input| !(crate::keybinds::is_chat(action) && matches!(input, Input::Mouse(_))));
         if let Some(input) = input {
             let b = crate::keybinds::Binding::captured(input, mods);
             self.settings.keybinds.set(action, slot, Some(b));
@@ -12388,6 +12391,8 @@ impl App {
             self.sound_cues.pass_start(ui.ctx());
             // before any field reads its keys: Ctrl+W is the frontmost window's
             ui::close_key::begin(ui.ctx());
+            // the chat fields' shortcuts, as Preferences › Shortcuts set them
+            ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             // A discarded pass (`request_discard`) is followed by one that

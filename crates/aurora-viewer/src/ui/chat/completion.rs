@@ -125,7 +125,8 @@ mod tests {
 
     #[test]
     fn typing_selects_the_suffix_and_enter_sends_the_completed_trigger() {
-        for modifiers in [egui::Modifiers::NONE, egui::Modifiers::CTRL, egui::Modifiers::SHIFT] {
+        // (Shift+Enter is the line break now, whisper unbound by default)
+        for modifiers in [egui::Modifiers::NONE, egui::Modifiers::CTRL] {
             let mut f = Fixture::new();
             f.text("/ej");
             assert_eq!(f.chat.input, "/eject");
@@ -137,8 +138,6 @@ mod tests {
                 sent.chat_type,
                 if modifiers.ctrl {
                     aurora_net::ChatType::Shout
-                } else if modifiers.shift {
-                    aurora_net::ChatType::Whisper
                 } else {
                     aurora_net::ChatType::Normal
                 }

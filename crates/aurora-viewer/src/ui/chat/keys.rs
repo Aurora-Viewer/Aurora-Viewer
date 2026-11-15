@@ -1,15 +1,17 @@
 //! The keyboard of the Conversations window's tabs (#651).
 //!
-//! Ctrl + Tab shows the conversation below in the list, Ctrl + Shift + Tab
-//! the one above, round the list, while the keyboard is in the window.
-//! Alt + Up / Left and Alt + Down / Right do the same, as in the Legacy
-//! Viewer (LLFloaterIMContainer::handleKeyHere,
+//! Next conversation shows the conversation below in the list, Previous
+//! conversation the one above, round the list, while the keyboard is in
+//! the window. Their keys are the user's (`shortcuts.rs`): Ctrl + Tab and
+//! Alt + Down, Ctrl + Shift + Tab and Alt + Up by default, as in the
+//! Legacy Viewer (LLFloaterIMContainer::handleKeyHere,
 //! indra/newview/llfloaterimcontainer.cpp; LLTabContainer::handleKeyHere
 //! and selectNextTab, which goes round, indra/llui/lltabcontainer.cpp,
-//! originally LGPL 2.1). On macOS Option + Left / Right stay in the field
-//! to move by word, so only Option + Up / Down keep cycling there. Its field
-//! takes the keyboard, so the next press goes on; elsewhere these keys stay
-//! the camera's. Contacts is not a conversation and is left out.
+//! originally LGPL 2.1). Its Alt + Left / Right no longer cycle: a shortcut
+//! holds two keys (human choice of 2026-11-15), and they stay the field's
+//! (Option + Left / Right move by word on macOS). Its field takes the
+//! keyboard, so the next press goes on; elsewhere these keys stay the
+//! camera's. Contacts is not a conversation and is left out.
 //!
 //! Ctrl+W, the window being the frontmost (`close_key`), closes the
 //! conversation shown, and the window itself when that tab cannot be closed
@@ -59,26 +61,20 @@ pub(super) fn after_close(order: &[Tab], closed: Uuid) -> Tab {
 
 /// Whether a pressed key cycles the conversations, and which way: `true`
 /// goes to the one below in the list, `false` to the one above.
-///
-/// Ctrl + Tab and Ctrl + Shift + Tab work everywhere. The arrows are the
-/// Legacy Viewer's: Alt + Up / Left and Alt + Down / Right. On macOS
-/// Option + Left / Right belong to the text field (word moves), so only
-/// Option + Up / Down keep cycling there.
-pub(super) fn cycle(key: egui::Key, modifiers: egui::Modifiers, mac: bool) -> Option<bool> {
-    if key == egui::Key::Tab && modifiers.ctrl && !modifiers.alt && !modifiers.mac_cmd {
-        // Ctrl+Tab next, Ctrl+Shift+Tab previous.
-        return Some(!modifiers.shift);
+pub(super) fn cycle(
+    keys: &super::shortcuts::ChatKeys,
+    key: egui::Key,
+    physical: Option<egui::Key>,
+    modifiers: egui::Modifiers,
+) -> Option<bool> {
+    use crate::keybinds::Action;
+    if keys.hit(Action::ChatNextConversation, key, physical, modifiers) {
+        Some(true)
+    } else if keys.hit(Action::ChatPreviousConversation, key, physical, modifiers) {
+        Some(false)
+    } else {
+        None
     }
-    if modifiers.alt && !modifiers.ctrl && !modifiers.shift && !modifiers.command && !modifiers.mac_cmd {
-        return match key {
-            egui::Key::ArrowUp => Some(false),
-            egui::Key::ArrowDown => Some(true),
-            egui::Key::ArrowLeft if !mac => Some(false),
-            egui::Key::ArrowRight if !mac => Some(true),
-            _ => None,
-        };
-    }
-    None
 }
 
 /// The keys of this frame, before the window's field reads them. `order`:
@@ -107,17 +103,18 @@ pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], action
         return;
     }
     // (held down, each repeat goes one further, as in a list)
-    let mac = cfg!(target_os = "macos");
+    let keys = super::shortcuts::get(ctx);
     let mut forward = None;
     ctx.input_mut(|i| {
         i.events.retain(|event| {
             if let egui::Event::Key {
                 key,
+                physical_key,
                 pressed: true,
                 modifiers,
                 ..
             } = event
-                && let Some(next) = cycle(*key, *modifiers, mac)
+                && let Some(next) = cycle(&keys, *key, *physical_key, *modifiers)
             {
                 forward.get_or_insert(next);
                 false
@@ -148,8 +145,10 @@ mod tests {
     const C: Uuid = Uuid::from_u128(3);
 
     #[test]
-    fn ctrl_tab_cycles_everywhere_and_option_left_right_only_off_mac() {
+    fn the_cycling_keys_are_ctrl_tab_and_alt_up_down() {
         use egui::Modifiers;
+        let keys = super::super::shortcuts::ChatKeys::of(&crate::keybinds::KeyBindings::default());
+        let cycle = |key, modifiers| cycle(&keys, key, None, modifiers);
         let ctrl = Modifiers::CTRL;
         let ctrl_shift = ctrl | Modifiers::SHIFT;
         let alt = Modifiers::ALT;
@@ -160,22 +159,18 @@ mod tests {
             command: true,
             ..Modifiers::NONE
         };
-        for mac in [true, false] {
-            assert_eq!(cycle(egui::Key::Tab, ctrl, mac), Some(true));
-            assert_eq!(cycle(egui::Key::Tab, ctrl_shift, mac), Some(false));
-            assert_eq!(cycle(egui::Key::Tab, mac_ctrl, mac), Some(true));
-            assert_eq!(cycle(egui::Key::Tab, cmd, mac), None, "Command+Tab is the system's");
-            assert_eq!(cycle(egui::Key::ArrowUp, alt, mac), Some(false));
-            assert_eq!(cycle(egui::Key::ArrowDown, alt, mac), Some(true));
-        }
-        assert_eq!(cycle(egui::Key::ArrowLeft, alt, true), None, "Option+Left moves by word");
-        assert_eq!(cycle(egui::Key::ArrowRight, alt, true), None, "Option+Right moves by word");
-        assert_eq!(cycle(egui::Key::ArrowLeft, alt, false), Some(false));
-        assert_eq!(cycle(egui::Key::ArrowRight, alt, false), Some(true));
-        assert_eq!(cycle(egui::Key::ArrowLeft, alt | Modifiers::SHIFT, true), None);
-        assert_eq!(cycle(egui::Key::ArrowLeft, alt | Modifiers::SHIFT, false), None);
-        assert_eq!(cycle(egui::Key::ArrowLeft, alt | ctrl, false), None);
-        assert_eq!(cycle(egui::Key::Tab, ctrl | alt, true), None);
+        assert_eq!(cycle(egui::Key::Tab, ctrl), Some(true));
+        assert_eq!(cycle(egui::Key::Tab, ctrl_shift), Some(false));
+        assert_eq!(cycle(egui::Key::Tab, mac_ctrl), Some(true));
+        assert_eq!(cycle(egui::Key::Tab, cmd), None, "Command+Tab is the system's");
+        assert_eq!(cycle(egui::Key::ArrowUp, alt), Some(false));
+        assert_eq!(cycle(egui::Key::ArrowDown, alt), Some(true));
+        // Alt+Left / Right stay the field's (two keys per shortcut)
+        assert_eq!(cycle(egui::Key::ArrowLeft, alt), None);
+        assert_eq!(cycle(egui::Key::ArrowRight, alt), None);
+        assert_eq!(cycle(egui::Key::ArrowUp, alt | Modifiers::SHIFT), None);
+        assert_eq!(cycle(egui::Key::ArrowUp, alt | ctrl), None);
+        assert_eq!(cycle(egui::Key::Tab, ctrl | alt), None);
     }
 
     #[test]

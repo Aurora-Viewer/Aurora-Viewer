@@ -1,9 +1,12 @@
 //! Paragraph entry shared by conversations and nearby chat. Follow
 //! FSFloaterIM::handleKeyHere and FSNearbyChatControl::handleKeyHere
-//! (indra/newview): Ctrl+Shift+Enter inserts a line break, while the ordinary
-//! send/shout/whisper keys retain their actions. LLChatEntry::expandText
-//! (indra/llui/llchatentry.cpp) bounds expansion before scrolling.
+//! (indra/newview): the New line shortcut inserts a line break (Shift+Enter,
+//! and the Legacy Viewer's Ctrl+Shift+Enter, rebindable: `shortcuts.rs`),
+//! while the send/shout/whisper keys retain their actions.
+//! LLChatEntry::expandText (indra/llui/llchatentry.cpp) bounds expansion
+//! before scrolling.
 
+use crate::keybinds::Action;
 use crate::ui::emoji::Emoji;
 use crate::ui::fonts::chat_size;
 use egui::{Context, Id, TextEdit, Ui};
@@ -17,25 +20,20 @@ pub(super) fn prepare(ui: &Ui, field: Id, local: bool) {
     if !ui.memory(|m| m.has_focus(field)) {
         return;
     }
+    let keys = super::shortcuts::get(ui.ctx());
     ui.input_mut(|i| {
         i.events.retain_mut(|event| {
+            if keys.pressed(Action::ChatNewLine, event) {
+                *event = egui::Event::Paste("\n".into());
+                return true;
+            }
+            // Whisper belongs only to nearby chat. Consume its keys in
+            // IMs/sessions before completion can accept them either (shout
+            // sends there as an ordinary message, as it always did).
+            if !local && keys.pressed(Action::ChatWhisper, event) {
+                return false;
+            }
             match event {
-                // Whisper belongs only to nearby chat. Consume this chord
-                // in IMs/sessions before completion can accept it either.
-                egui::Event::Key {
-                    key: egui::Key::Enter,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if !local && modifiers.shift && !modifiers.ctrl && !modifiers.alt && !modifiers.mac_cmd => return false,
-                egui::Event::Key {
-                    key: egui::Key::Enter,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if modifiers.ctrl && modifiers.shift && !modifiers.alt && !modifiers.mac_cmd => {
-                    *event = egui::Event::Paste("\n".into());
-                }
                 egui::Event::Paste(text) if text.contains('\r') => {
                     *text = text.replace("\r\n", "\n").replace('\r', "\n");
                 }
@@ -55,10 +53,25 @@ pub(crate) fn height(ctx: &Context, field: Id, minimum: f32) -> f32 {
         .max(minimum)
 }
 
-/// A field's placeholder at the interface's text size: only what is typed
-/// takes the chat's (`show`). Built from the field's parent `ui`.
-pub(super) fn hint(ui: &Ui, text: impl Into<String>) -> egui::RichText {
-    egui::RichText::new(text).size(egui::TextStyle::Body.resolve(ui.style()).size)
+/// A field's placeholder at the interface's text size (only what is typed
+/// takes the chat's, `show`), on one line: egui wraps a multiline field's
+/// placeholder, and "Write to" a long display name and its username took
+/// two lines in the field. It ends with "…" instead, as the conversation's
+/// name does in the list. `width` is the field's; `framed` when it keeps
+/// the theme's frame, whose margins the text loses. Built from the field's
+/// parent `ui`.
+pub(super) fn hint(ui: &Ui, field: Id, text: impl Into<String>, width: f32, framed: bool) -> egui::WidgetText {
+    let style: egui::widget_style::TextEditStyle = ui.widget_style(field, &egui::class::Classes::default());
+    let margin = if framed {
+        style.atom_layout.frame.total_margin().sum().x
+    } else {
+        0.0
+    };
+    let text = egui::RichText::new(text)
+        .size(egui::TextStyle::Body.resolve(ui.style()).size)
+        .color(style.hint_text_color);
+    // a point to spare: the editor's own galley rounds its width
+    crate::ui::widgets::elided_galley(ui, text, (width - margin - 1.0).max(0.0)).into()
 }
 
 /// A wrapping editor with at most four visible rows. Its full galley feeds

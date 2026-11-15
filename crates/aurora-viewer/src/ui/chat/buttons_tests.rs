@@ -928,9 +928,11 @@ fn pasted_transcripts_keep_paragraphs_in_the_nearby_chat_bar() {
     assert_eq!(sent.message, text);
 }
 
-/// The explicit paragraph chord wins over completion and sending, including
-/// in the narrower detached panes. Shift+Enter whispers only in nearby chat;
-/// in IMs and sessions it neither completes, inserts nor sends anything.
+/// The New line keys (Shift+Enter, and the Legacy Viewer's Ctrl+Shift+Enter)
+/// win over completion and sending in every conversation, the nearby chat
+/// included, including in the narrower detached panes (human request of
+/// 2026-11-15: Shift+Enter whispered in nearby chat and did nothing
+/// elsewhere).
 #[test]
 fn paragraph_chord_edits_without_sending_in_every_conversation_style() {
     for style in ALL {
@@ -950,34 +952,29 @@ fn paragraph_chord_edits_without_sending_in_every_conversation_style() {
                     h.settle();
                 }
                 h.type_text("first :hea");
-                if conversation.is_some() {
-                    h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
-                    assert_eq!(h.st.draft_mut(conversation), "first :hea", "Shift+Enter leaves completion alone");
-                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
-                }
-                h.history_key(egui::Key::Enter, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
-                assert_eq!(h.st.draft_mut(conversation), "first :hea\n", "{style:?}, detached={detached}");
+                h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
+                assert_eq!(
+                    h.st.draft_mut(conversation),
+                    "first :hea\n",
+                    "{style:?}, {conversation:?}, detached={detached}: Shift+Enter breaks the line, completion left alone"
+                );
                 assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
                 h.type_text("second 🙂");
-                h.history_key(egui::Key::Enter, egui::Modifiers::SHIFT);
-                if conversation.is_some() {
-                    assert_eq!(
-                        h.st.draft_mut(conversation),
-                        "first :hea\nsecond 🙂",
-                        "Shift+Enter preserves the draft"
-                    );
-                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
-                    let field = egui::Id::unique(("conv_input", conversation));
-                    assert!(h.frames.ctx.memory(|m| m.has_focus(field)), "Shift+Enter preserves focus");
-                    h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
-                }
+                h.history_key(egui::Key::Enter, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+                assert_eq!(h.st.draft_mut(conversation), "first :hea\nsecond 🙂\n", "the Legacy chord too");
+                assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                let field = egui::Id::unique(("conv_input", conversation));
+                assert!(h.frames.ctx.memory(|m| m.has_focus(field)), "a line break keeps the focus");
+                h.type_text("third");
+                h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
+                let text = "first :hea\nsecond 🙂\nthird";
                 assert!(
                     h.take().iter().any(|a| match a {
-                        ConvAction::Local(out) => out.message == "first :hea\nsecond 🙂" && out.chat_type == aurora_net::ChatType::Whisper,
-                        ConvAction::Im { to, text } => Some(*to) == conversation && text == "first :hea\nsecond 🙂",
+                        ConvAction::Local(out) => out.message == text && out.chat_type == aurora_net::ChatType::Normal,
+                        ConvAction::Im { to, text: sent } => Some(*to) == conversation && sent == text,
                         _ => false,
                     }),
-                    "{style:?}, {conversation:?}, detached={detached}: the expected send shortcut"
+                    "{style:?}, {conversation:?}, detached={detached}: Enter sends the paragraphs"
                 );
             }
         }
@@ -1054,8 +1051,27 @@ fn nearby_bar_paragraph_chord_keeps_focus_and_volume_shortcuts() {
     assert_eq!(sent.chat_type, aurora_net::ChatType::Shout);
     h.bar_frame(Vec::new());
     h.bar_frame(vec![egui::Event::Text("whisper".into())]);
-    let sent = h.bar_frame(history_events(egui::Key::Enter, egui::Modifiers::SHIFT)).unwrap();
+    // Shift+Enter is the line break: whisper has no key until one is set
+    assert!(h.bar_frame(history_events(egui::Key::Enter, egui::Modifiers::SHIFT)).is_none());
+    assert_eq!(h.st.input, "whisper\n");
+    // Preferences › Shortcuts › Chat: Whisper on F5, New line taken off
+    let mut kb = crate::keybinds::KeyBindings::default();
+    let f5 = crate::keybinds::Binding::captured(
+        crate::keybinds::Input::key(winit::keyboard::KeyCode::F5),
+        crate::keybinds::Mods::default(),
+    );
+    kb.set(crate::keybinds::Action::ChatWhisper, 0, Some(f5));
+    kb.set(crate::keybinds::Action::ChatNewLine, 0, None);
+    kb.set(crate::keybinds::Action::ChatNewLine, 1, None);
+    super::shortcuts::publish(&h.frames.ctx, &kb);
+    let sent = h.bar_frame(history_events(egui::Key::F5, egui::Modifiers::NONE)).unwrap();
     assert_eq!(sent.chat_type, aurora_net::ChatType::Whisper);
+    assert_eq!(sent.message, "whisper");
+    h.bar_frame(Vec::new());
+    h.bar_frame(vec![egui::Event::Text("plain".into())]);
+    // with no New line key, Shift+Enter sends at the selected volume
+    let sent = h.bar_frame(history_events(egui::Key::Enter, egui::Modifiers::SHIFT)).unwrap();
+    assert_eq!(sent.chat_type, aurora_net::ChatType::Normal);
 }
 
 /// A long conversation just opened still measures the rows above the end,
@@ -2436,7 +2452,8 @@ fn ooc_shortcut_uses_the_enter_events_modifiers() {
 }
 
 /// The bar/island shares event classification with conversations. Wrapping
-/// comes before channel parsing, and Ctrl/Shift retain their event's volume.
+/// comes before channel parsing, and Ctrl retains its event's volume
+/// (Shift+Enter is the line break: `paragraph_chord_edits_…`).
 #[test]
 fn ooc_shortcut_keeps_bar_channel_focus_and_event_volume() {
     use aurora_net::ChatType as C;
@@ -2446,7 +2463,6 @@ fn ooc_shortcut_keeps_bar_channel_focus_and_event_volume() {
         (M::CTRL | M::ALT, M::ALT, None),
         (M::SHIFT | M::ALT, M::ALT, None),
         (M::CTRL, M::NONE, Some((5, "brb", C::Shout))),
-        (M::SHIFT, M::NONE, Some((5, "brb", C::Whisper))),
     ];
     for (pressed, after, expected) in cases {
         let mut h = H::new(ChatStyle::Aurora);

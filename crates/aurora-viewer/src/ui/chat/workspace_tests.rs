@@ -833,36 +833,106 @@ fn a_drop_in_the_window_off_the_list_does_nothing() {
     );
 }
 
-/// While an entry is held over its new place, the entries move apart
-/// there; Escape closes the gap and moves nothing.
+/// A long name in the field's placeholder stays on one line and ends with
+/// "…", in the workspace's field and the Legacy style's (human report of
+/// 2026-11-15: "Write to Ødesså Drækåvik (OdessaDraekavik)" took two lines).
 #[test]
-fn the_entries_move_apart_where_the_dragged_one_lands() {
+fn a_long_name_in_the_placeholder_stays_on_one_line() {
+    let name = "Ødesså Drækåvik Ødesså Drækåvik (OdessaDraekavik.Resident)";
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(520.0, 420.0));
+        h.world.social.names.insert(JANE, name.into());
+        h.st.select_tab(Some(JANE));
+        let texts = h.settle();
+        let hint = if style.workspace() {
+            aurora_i18n::tr!("ui-chat-write-to", name = h.world.session_title(&JANE))
+        } else {
+            aurora_i18n::tr!("ui-chat-at", value0 = h.world.session_title(&JANE))
+        };
+        let long = painted(&texts, &hint);
+        assert!(long.cut && long.shown.ends_with('…'), "{style:?}: shown as {:?}", long.shown);
+        let long = long.rect;
+        // a short one is left whole, and the long one is as tall: one line
+        h.world.social.names.insert(JANE, "Jane".into());
+        let texts = h.settle();
+        let hint = if style.workspace() {
+            aurora_i18n::tr!("ui-chat-write-to", name = h.world.session_title(&JANE))
+        } else {
+            aurora_i18n::tr!("ui-chat-at", value0 = h.world.session_title(&JANE))
+        };
+        let short = painted(&texts, &hint);
+        assert!(!short.cut, "{style:?}");
+        assert!(
+            (long.height() - short.rect.height()).abs() < 0.5,
+            "{style:?}: {:?} vs {:?}",
+            long,
+            short.rect
+        );
+    }
+}
+
+/// While an entry is carried over its new place, the entries between slide
+/// out of its way (their places, which keep the pointer, stay); Escape
+/// slides them back and moves nothing. Let go, the entry glides from where
+/// it was dropped into its place, and the others from where they were
+/// drawn: nothing snaps (human report of 2026-11-15).
+#[test]
+fn the_entries_make_way_and_the_dropped_one_glides_into_place() {
     let mut h = Harness::new(ChatStyle::Aurora);
     crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(300.0, 40.0), egui::vec2(800.0, 560.0));
     h.settle();
     let jane = h.conversation_rect(JANE);
     let bob = h.conversation_rect(BOB);
+    let order = |h: &Harness| h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>();
     // Bob taken up above Jane, held there
-    h.drag_conversation(bob.center(), egui::pos2(jane.center().x, jane.top() + 6.0), Vec::new());
+    let to = egui::pos2(jane.center().x + 12.0, jane.top() + 6.0);
+    h.drag_conversation(bob.center(), to, Vec::new());
     for _ in 0..20 {
         h.frame(Vec::new());
     }
-    let moved = h.rect(entry_id(Pinned::Conversation(JANE)));
+    let slid = h.st.reorder.offset_of(JANE);
     assert!(
-        (moved.top() - bob.top()).abs() < 1.0,
-        "Jane moved down by a whole entry, to Bob's place: {moved:?} from {jane:?}"
+        (slid.y - (bob.top() - jane.top())).abs() < 1.0,
+        "Jane slid down by a whole entry, to Bob's place: {slid:?}"
     );
+    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))), jane, "her place keeps the pointer");
     h.frame(key(egui::Key::Escape, egui::Modifiers::NONE));
     for _ in 0..20 {
         h.frame(Vec::new());
     }
-    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))).top(), jane.top(), "the gap closed");
+    assert_eq!(h.st.reorder.offset_of(JANE), egui::Vec2::ZERO, "she slid back");
     h.frame(Harness::drop_at(jane.center()));
     h.settle();
-    assert_eq!(
-        h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-        [JANE, BOB]
+    assert_eq!(order(&h), [JANE, BOB]);
+    // the same carry, let go this time
+    h.drag_conversation(bob.center(), to, Vec::new());
+    for _ in 0..20 {
+        h.frame(Vec::new());
+    }
+    h.frame(Harness::drop_at(to));
+    h.frame(Vec::new());
+    assert_eq!(order(&h), [BOB, JANE]);
+    // laid out in the new order, Bob still stands where his card was let go
+    let card = to - (bob.center() - bob.min);
+    // (his new place is Jane's old one)
+    let place = jane;
+    let first = h.st.reorder.offset_of(BOB);
+    assert!(
+        ((place.min + first) - card).length() < 1.5,
+        "Bob starts at his card: {:?} vs {card:?}",
+        place.min + first
     );
+    assert!(first.length() > 5.0, "a real glide, not a snap");
+    assert!(h.st.reorder.offset_of(JANE).length() < 1.0, "Jane was already at her new place");
+    let mut last = first.length();
+    for _ in 0..40 {
+        h.frame(Vec::new());
+        let now = h.st.reorder.offset_of(BOB).length();
+        assert!(now <= last + 0.01, "it only moves toward its place");
+        last = now;
+    }
+    assert_eq!(h.st.reorder.offset_of(BOB), egui::Vec2::ZERO, "landed");
 }
 
 /// The nearby chat drags out of the window into its own (#910); the chat
