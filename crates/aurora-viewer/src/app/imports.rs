@@ -152,12 +152,7 @@ impl App {
                     self.settings.imports.permissions_for(aurora_net::inventory::upload::Kind::Mesh),
                 );
             }
-            let prices = Prices {
-                texture: Some(10),
-                large_texture: Some(40),
-                sound: Some(10),
-                animation: Some(10),
-            };
+            let prices = self.imports.demo_prices();
             if self.imports.total(&prices).is_some() {
                 self.imports.demo_upload_started = true;
                 self.imports
@@ -437,12 +432,7 @@ impl App {
                         self.imports.choice
                     };
                     let prices = if self.demo {
-                        Prices {
-                            texture: Some(10),
-                            large_texture: Some(40),
-                            sound: Some(10),
-                            animation: Some(10),
-                        }
+                        self.imports.demo_prices()
                     } else {
                         self.world.login.as_ref().map(|l| Prices::from_login(&l.raw)).unwrap_or_default()
                     };
