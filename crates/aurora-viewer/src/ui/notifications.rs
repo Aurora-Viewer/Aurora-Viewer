@@ -1491,9 +1491,31 @@ mod tests {
 
     /// In the Legacy toast style, French Mute Owner wraps under Accept /
     /// Discard and must keep the same left edge as those buttons (#2932).
+    /// The interface language belongs to the whole process: switched here,
+    /// it turned the texts of the tests running beside this one French
+    /// halfway through. So this test runs again, alone, in a test process
+    /// of its own, and checks that run.
     #[test]
     fn legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french() {
-        let previous = aurora_i18n::language().to_owned();
+        const ALONE: &str = "AURORA_TEST_FRENCH_OFFER_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            // the name libtest gives this test: its path without the crate
+            let path = concat!(
+                module_path!(),
+                "::legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french"
+            );
+            let name = path.split_once("::").map_or(path, |(_, rest)| rest);
+            let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+                .args([name, "--exact", "--test-threads=1"])
+                .env(ALONE, "1")
+                .output()
+                .expect("the test binary starts");
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(run.status.success(), "the French run failed:\n{stdout}\n{stderr}");
+            assert!(stdout.contains("1 passed"), "the French run ran this test:\n{stdout}");
+            return;
+        }
         aurora_i18n::select("fr", Some("fr"));
         let mute = aurora_i18n::tr!("ui-notifications-mute-owner");
         let accept = aurora_i18n::tr!("ui-notifications-accept");
@@ -1587,8 +1609,6 @@ mod tests {
             mute_rect.min.x > accept_rect.min.x - 8.0,
             "wrapped Mute Owner must not lose the Legacy indent: mute={mute_rect:?} accept={accept_rect:?}"
         );
-
-        aurora_i18n::select(&previous, Some(&previous));
     }
 
     #[test]
