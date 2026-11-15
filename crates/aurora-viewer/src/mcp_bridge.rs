@@ -568,11 +568,15 @@ impl App {
                 }
             }
 
-            // Expire timed-out rez transactions (5s)
+            // Expire unconfirmed rez transactions (10 s). Not a failure: the
+            // simulator may still carry the rez out (a stuck avatar's rezzes were
+            // queued and all landed after a teleport, so retries made copies).
             while let Some(front) = self.mcp_bridge.build_tx_mgr.pending_rez.front() {
-                if now.duration_since(front.started_at) > Duration::from_secs(5) {
+                if now.duration_since(front.started_at) > Duration::from_secs(10) {
                     if let Some(expired) = self.mcp_bridge.build_tx_mgr.pending_rez.pop_front() {
-                        let _ = expired.reply_tx.send(Err(McpError::Timeout(5000)));
+                        let _ = expired.reply_tx.send(Err(McpError::Internal(
+                            "not confirmed within 10 s, which is NOT a failure: the simulator may still rez it. Do not retry: scan with radar_scan_objects in about 10 s. If nothing appears and the avatar does not walk either, the region has stopped acting on this avatar: a short teleport (nav_move_and_teleport) clears it, then try once more.".into(),
+                        )));
                     }
                 } else {
                     break;

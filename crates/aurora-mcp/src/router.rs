@@ -968,7 +968,7 @@ impl McpRouter {
                             pcode,
                             name,
                         },
-                        6000,
+                        15_000,
                     )
                     .await?;
                 Ok(text_block(into_json(resp)))
@@ -1353,7 +1353,7 @@ impl McpRouter {
                 let position = parse_vec3(args, "position")?;
                 let select = args.get("select").and_then(Value::as_bool).unwrap_or(false);
                 let resp = self
-                    .send_to_viewer(lease_id, ViewerRequest::InventoryRezObject { item_id, position, select }, 8000)
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryRezObject { item_id, position, select }, 15_000)
                     .await?;
                 Ok(text_block(into_json(resp)))
             }
