@@ -2672,7 +2672,13 @@ impl World {
             .login
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
+        // LLStartUp's sInitialOutfit, read from the login response
+        let initial_outfit = self.login.as_ref().filter(|_| first_login).and_then(|l| {
+            let outfit = l.raw["initial-outfit"].at(0);
+            outfit::registration_outfit(outfit["folder_name"].as_str(), outfit["gender"].as_str())
+        });
         let inputs = outfit::OutfitInputs {
+            initial_outfit,
             worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,

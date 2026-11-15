@@ -197,6 +197,28 @@ pub fn cof(inv: &Inventory) -> Option<Uuid> {
     system_folder(inv, super::outfit::FT_CURRENT_OUTFIT)
 }
 
+/// findDescendentCategoryIDByName (indra/newview/llappearancemgr.cpp): the
+/// first folder under `root` named `name`, case-insensitive
+/// (LLNameCategoryCollector), depth first in the folders' order.
+pub fn descendant_named(inv: &Inventory, root: Uuid, name: &str) -> Option<Uuid> {
+    let wanted = name.to_lowercase();
+    let mut stack: Vec<Uuid> = inv.folders.get(&root)?.children.iter().rev().copied().collect();
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else {
+            continue;
+        };
+        if folder.info.name.to_lowercase() == wanted {
+            return Some(id);
+        }
+        stack.extend(folder.children.iter().rev());
+    }
+    None
+}
+
 /// Confirmed clothing only: required body parts never enter Take Off.
 pub fn worn_clothing(inv: &Inventory) -> Vec<(Uuid, u8)> {
     let Some(cof) = cof(inv) else { return Vec::new() };
