@@ -3487,6 +3487,8 @@ impl App {
         self.place_confirm = None;
         self.places_ui.forget_question();
         self.url_confirm = None;
+        // an Auto-sort run's confirmed moves are kept for Undo and Resume
+        self.inventory_ui.flush_sorter();
         self.inventory_ui = Default::default();
         // the contact sets' windows, Quick sort's queue and the choices hold
         // the last account's residents and sets: a relog as another account

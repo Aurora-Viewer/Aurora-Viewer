@@ -156,8 +156,9 @@ pub fn export(prefs: &Preferences, share: &Share) -> String {
     for (index, rule) in prefs.rules.iter().enumerate() {
         let words = clean(&rule.words);
         if !shareable(rule) {
-            // a folder of this inventory: it means nothing elsewhere
-            out.push(format!("# not shared (it points at one of my folders): {words}"));
+            // a folder of this inventory: it means nothing elsewhere, and its
+            // words are the user's own business
+            out.push("# a rule to one of my own folders is not shared".to_owned());
             continue;
         }
         if !share.rules.get(index).copied().unwrap_or(false) {
@@ -320,6 +321,9 @@ impl Imported {
         let mine = prefs.base_name();
         if let Some(base) = &self.base
             && !base.trim().is_empty()
+            // a name the sort would refuse (a viewer or system folder's) is
+            // no change: it would never be used
+            && !super::base_refused(&super::inventory_name(base.trim(), ""))
             && base.trim() != mine
         {
             out.push((OptionKind::Base, mine, base.trim().to_owned()));
@@ -525,7 +529,8 @@ pub fn import(text: &str) -> Imported {
                             .filter(|k| !k.is_empty())
                             .map(|k| Kind::from_key(&k.to_lowercase()))
                             .collect();
-                        kinds.map(|mut kinds| {
+                        // an empty list would sort nothing at all: not read
+                        kinds.filter(|kinds| !kinds.is_empty()).map(|mut kinds| {
                             kinds.sort();
                             kinds.dedup();
                             found.kinds = Some(kinds);

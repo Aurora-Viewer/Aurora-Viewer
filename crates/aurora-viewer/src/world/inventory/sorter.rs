@@ -556,8 +556,13 @@ pub fn split_path(path: &str) -> Vec<String> {
         .filter_map(|part| actions::clean_name(part).ok())
         .map(|part| inventory_name(&crate::text_validation::generated_name(&part, 63), ""))
         .filter(|part| !part.is_empty())
+        // a rule's path is a few folders, never a hundred nested ones
+        .take(MAX_PATH_DEPTH)
         .collect()
 }
+
+/// The most folders a rule's path makes below the sort folder.
+const MAX_PATH_DEPTH: usize = 8;
 
 /// Where an entry goes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

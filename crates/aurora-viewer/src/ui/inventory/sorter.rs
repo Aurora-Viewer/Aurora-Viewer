@@ -199,6 +199,34 @@ impl<T: Send + 'static> Planning<T> {
     }
 }
 
+/// Auto-sort's files (journal, run to resume, snapshots) are written by one
+/// thread, one after the other: two saves never write the same file at
+/// once, and a newer one is never overtaken by an older one.
+fn in_order(job: impl FnOnce() + Send + 'static) {
+    type Job = Box<dyn FnOnce() + Send>;
+    static WRITER: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<Job>>> = std::sync::OnceLock::new();
+    let writer = WRITER.get_or_init(|| {
+        let (send, jobs) = std::sync::mpsc::channel::<Job>();
+        std::thread::Builder::new()
+            .name("auto-sort files".into())
+            .spawn(move || {
+                for job in jobs {
+                    job();
+                }
+            })
+            .map_err(|e| log::warn!("auto-sort: no writer thread ({e}): files are written on the frame"))
+            .ok();
+        std::sync::Mutex::new(send)
+    });
+    let sent = writer.lock().map(|send| send.send(Box::new(job)));
+    match sent {
+        Ok(Ok(())) => {}
+        // no thread (it could not start): written here, late rather than never
+        Ok(Err(std::sync::mpsc::SendError(job))) => job(),
+        Err(_) => log::warn!("auto-sort: the writer is unavailable: a save was skipped"),
+    }
+}
+
 /// From this many folders and items on, plans are made off the frame; a
 /// smaller inventory plans in a few milliseconds, at once.
 const PLAN_IN_BACKGROUND: usize = 20_000;
@@ -430,7 +458,7 @@ impl State {
                 .cloned()
                 .collect(),
         });
-        std::thread::spawn(move || {
+        in_order(move || {
             use sorter::journal as j;
             if let Err(error) = j::save(&j::journal_path(&dir), &journal) {
                 log::warn!("auto-sort: the journal could not be saved: {error}");
@@ -458,13 +486,28 @@ impl State {
         let snapshot = sorter::journal::Snapshot::take(inv, at, account);
         self.snapshots.insert(0, (at, sorter::journal::snapshot_path(&dir, at)));
         self.snapshots.truncate(sorter::journal::SNAPSHOTS);
-        std::thread::spawn(move || {
+        in_order(move || {
             use sorter::journal as j;
             if let Err(error) = j::save(&j::snapshot_path(&dir, at), &snapshot) {
                 log::warn!("auto-sort: the snapshot could not be saved: {error}");
             }
             j::prune_snapshots(&dir);
         });
+    }
+
+    /// What a run has confirmed so far is written before the inventory
+    /// goes away (logout): Undo and Resume find it at the next session.
+    fn flush(&mut self) {
+        if let Some(job) = self.job.as_mut()
+            && !job.confirmed.is_empty()
+        {
+            let confirmed = std::mem::take(&mut job.confirmed);
+            self.journal.record(confirmed);
+            self.unsaved += 1;
+        }
+        if self.unsaved > 0 || self.job.is_some() {
+            self.save_progress();
+        }
     }
 
     pub(super) fn active(&self) -> bool {
@@ -624,6 +667,15 @@ impl InventoryUi {
     /// its way (recognised by its first move), that batch takes the request
     /// id, so only its own result completes it. True for a sorter's batch:
     /// its new folders are neither shown nor renamed like a "New folder".
+    /// Before the inventory window state is dropped (logout): every
+    /// window's Auto-sort run written to its journal.
+    pub(crate) fn flush_sorter(&mut self) {
+        self.sorter.flush();
+        for window in &mut self.windows {
+            window.state.sorter.flush();
+        }
+    }
+
     pub(crate) fn claim_sorter_request(&mut self, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
         fn claim(state: &mut State, request: Uuid, change: &aurora_net::inventory::operations::Mutation) -> bool {
             let Some(batch) = state.job.as_mut().and_then(|job| job.in_flight.as_mut()) else {
@@ -760,6 +812,13 @@ pub(super) fn show(
     if state.unsaved >= SAVE_EVERY {
         state.save_progress();
     }
+    // paused or held, a destination's wait starts again afterwards: the
+    // pause is not counted against it
+    if (hold || state.job.as_ref().is_some_and(|job| job.paused))
+        && let Some(job) = state.job.as_mut()
+    {
+        job.waiting_since = None;
+    }
     // while a teleport runs or no region is connected, nothing is sent and
     // no retry is spent: the job resumes on its own
     if free
@@ -785,11 +844,16 @@ pub(super) fn show(
                 // a destination that never loads: its move is skipped
                 let since = *job.waiting_since.get_or_insert(now);
                 if now.duration_since(since) > WAIT_LIMIT {
-                    if job.queue.pop_front().is_some() {
-                        job.skipped += 1;
+                    if let Some(first) = job.queue.pop_front() {
+                        // every move to the same place waits on the same
+                        // folder: they stay too, instead of 30 s each
+                        let before = job.queue.len();
+                        job.queue.retain(|m| m.to != first.to);
+                        job.skipped += 1 + before - job.queue.len();
                         log::warn!(
-                            "auto-sort: a destination folder did not load in {} s: the entry stays",
-                            WAIT_LIMIT.as_secs()
+                            "auto-sort: a destination folder did not load in {} s: {} entries stay",
+                            WAIT_LIMIT.as_secs(),
+                            1 + before - job.queue.len()
                         );
                     }
                     job.waiting_since = None;
@@ -1488,7 +1552,8 @@ fn import_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: 
     if add {
         import.found.apply(prefs, &import.pick, false);
         import.done = aurora_i18n::tr!("inventory-import-done").to_owned();
-        import.read.clear();
+        // what was added now reads "already in yours"
+        import.pick = sorter::share::Pick::new(&import.found, prefs);
     }
     if replace {
         st.sorter.confirm = Some(Confirm::Replace);
@@ -1836,7 +1901,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
             if let Some(import) = st.sorter.import.as_mut() {
                 import.found.apply(&mut prefs.sorter, &import.pick, true);
                 import.done = aurora_i18n::tr!("inventory-import-done").to_owned();
-                import.read.clear();
+                import.pick = sorter::share::Pick::new(&import.found, &prefs.sorter);
             }
         }
         Confirm::Trash(ids) => {

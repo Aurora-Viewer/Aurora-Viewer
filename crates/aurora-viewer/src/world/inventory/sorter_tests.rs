@@ -1147,7 +1147,10 @@ fn shared_settings_round_trip_without_my_folders() {
     let text = export(&prefs, &Share::all(&prefs));
     assert!(text.starts_with(super::share::HEADER));
     assert!(!text.contains(&id(30).to_string()), "no folder id leaves");
-    assert!(text.contains("# not shared"));
+    assert!(
+        text.contains("is not shared") && !text.contains("secret stash"),
+        "a private rule's words stay private"
+    );
     let found = import(&text);
     assert!(found.recognised);
     assert_eq!(found.skipped, 0);
@@ -2008,4 +2011,21 @@ fn lost_and_found_opens_by_its_switch_only() {
     inv.sorter_unlocked = switched.unlocked_set(&inv);
     assert!(folder_open(&inv, lost) && source_allowed(&inv, lost));
     assert!(hands_off(&inv, lost), "the folder itself never moves");
+}
+
+/// Imported text can neither make a rule a hundred folders deep nor turn
+/// every type off with an empty list, nor show a refused sort folder name
+/// as a change.
+#[test]
+fn imported_paths_types_and_names_are_bounded() {
+    use super::share::{OptionKind, import};
+    let deep = "a/".repeat(100);
+    let found = import(&format!(
+        "{}\nrule: any | chair | {deep}\noption: kinds =\noption: base = #RLV\n",
+        super::share::HEADER
+    ));
+    assert!(split_path(&found.rules[0].folder).len() <= 8);
+    assert!(found.kinds.is_none(), "an empty list is not read");
+    let mine = Preferences::default();
+    assert!(!found.changes(&mine).iter().any(|(k, _, _)| *k == OptionKind::Base));
 }
