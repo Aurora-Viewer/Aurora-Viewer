@@ -32,6 +32,19 @@ pub enum FloatingTextBackground {
     All,
 }
 
+/// A blocked resident's nearby chat (FSShowMutedChatHistory, fsfloaternearbychat.cpp):
+/// hidden as in the Legacy Viewer by default; or kept in the nearby chat's
+/// history only, either folded into one "n messages hidden" row that opens
+/// on a click, or greyed, as the Legacy Viewer's option shows them. Never
+/// above the chat bar, in a bubble, a sound, an alert or an unread count.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BlockedChat {
+    #[default]
+    Hidden,
+    Collapsed,
+    Greyed,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -498,6 +511,21 @@ pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
 /// The nearest reach of the automatic reflection probes (`probe_range`).
 pub const PROBE_RANGE_MIN: f32 = 32.0;
 
+/// ToastGap's default (settings.xml) and its slider's top
+/// (panel_preferences_UI.xml).
+pub const TOAST_GAP: f32 = 7.0;
+pub const TOAST_GAP_MAX: f32 = 30.0;
+
+/// A gap between toasts as the toasts use it: whole points, 0 to 30, the
+/// default for a value that is not a number.
+pub fn toast_gap(gap: f32) -> f32 {
+    if gap.is_finite() {
+        gap.round().clamp(0.0, TOAST_GAP_MAX)
+    } else {
+        TOAST_GAP
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -538,6 +566,9 @@ pub struct Settings {
     pub sun_beacon: bool,
     pub moon_beacon: bool,
     pub beacons: crate::world::beacons::Beacons,
+    /// The Director's recording: the film's format, quality and rate, and
+    /// the ffmpeg chosen by hand (`recorder.rs`).
+    pub director_record: crate::recorder::Options,
     pub world_overlays: crate::world::beacons::Overlays,
     /// Debug overlays (not saved).
     #[serde(skip)]
@@ -909,6 +940,9 @@ pub struct Settings {
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
+    /// What the nearby chat shows of a blocked resident's lines
+    /// (FSShowMutedChatHistory, off: hidden; Preferences › Chat).
+    pub blocked_chat: BlockedChat,
     /// An object with an empty name speaks in the nearby chat as "(no
     /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
     /// off; Preferences > Chat).
@@ -1094,6 +1128,9 @@ pub struct Settings {
     /// Viewer's toasts (NotificationTipToastLifeTime, 10, its slider 1–30);
     /// Aurora's center keeps its own timing.
     pub tip_toast_seconds: f32,
+    /// Points between two stacked toasts, in both notification styles
+    /// (ToastGap, 7, its slider 0–30; LLScreenChannel::redrawToasts).
+    pub toast_gap: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -1902,6 +1939,9 @@ pub struct ColorSettings {
     pub chat_slurl: Rgba,
     /// llRegionSayTo.
     pub chat_direct: Rgba,
+    /// FSBeyondNearbyChatColorDiminishFactor (0.8): the opacity of a nearby
+    /// line said beyond the say range, 1 as bright as the others.
+    pub chat_beyond_range: f32,
     // sender names
     pub sender_avatar: Rgba,
     pub sender_object: Rgba,
@@ -1948,6 +1988,7 @@ impl Default for ColorSettings {
             // shares the brand teal
             chat_slurl: hex(0x5EEAD4),
             chat_direct: hex(0xFB923C),
+            chat_beyond_range: 0.8,
             sender_avatar: hex(0xC4B5FD),
             sender_object: hex(0x4ADE80),
             mention_text: hex(0xFCD34D),
@@ -2175,6 +2216,7 @@ impl Default for Settings {
             sun_beacon: false,
             moon_beacon: false,
             beacons: Default::default(),
+            director_record: Default::default(),
             world_overlays: Default::default(),
             debug: DebugView::default(),
             dev_toolbox: None,
@@ -2334,6 +2376,7 @@ impl Default for Settings {
             script_errors_channel: 1,
             compact_automated_chat: false,
             compact_im_system_lines: false,
+            blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,
             chat_keep_focus: true,
             chat_gesture_autocomplete: true,
@@ -2394,6 +2437,7 @@ impl Default for Settings {
             ims_in_notification_center: false,
             im_toast_seconds: 30.0,
             tip_toast_seconds: 10.0,
+            toast_gap: TOAST_GAP,
             log_im: true,
             log_nearby: false,
             reopen_ims: false,
@@ -3471,6 +3515,7 @@ impl Settings {
         } else {
             10.0
         };
+        self.toast_gap = toast_gap(self.toast_gap);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)
@@ -4031,6 +4076,23 @@ mod tests {
             .sanitized();
             assert_eq!(s.probe_range, kept, "{asked} m");
         }
+    }
+
+    #[test]
+    fn the_toast_gap_starts_at_the_legacy_seven_and_stays_on_its_slider() {
+        // ToastGap: 7 px by default, whole pixels from 0 to 30
+        assert_eq!(super::Settings::default().toast_gap, 7.0);
+        for (asked, kept) in [(-4.0, 0.0), (0.0, 0.0), (12.4, 12.0), (30.0, 30.0), (99.0, 30.0), (f32::NAN, 7.0)] {
+            let s = super::Settings {
+                toast_gap: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.toast_gap, kept, "{asked} px");
+        }
+        // preferences saved before the setting existed take the default
+        let old: super::Settings = serde_json::from_str("{}").expect("empty settings");
+        assert_eq!(old.toast_gap, 7.0);
     }
 
     #[test]

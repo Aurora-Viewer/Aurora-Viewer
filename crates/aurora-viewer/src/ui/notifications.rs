@@ -24,6 +24,9 @@ const WIDTH: f32 = 320.0;
 const PIC: f32 = 32.0;
 /// Characters of a message shown on its card (the rest is in the conversation).
 const MESSAGE_CHARS: usize = 160;
+/// Between the rows inside a toast's card. The gap between two cards is
+/// ToastGap (`ToastEnv::toast_gap`), and does not reach inside them.
+pub(crate) const CARD_ROW_SPACING: f32 = 6.0;
 
 #[derive(Default)]
 pub struct NotifUi {
@@ -66,6 +69,10 @@ pub struct ToastEnv<'a> {
     /// (NotificationTipToastLifeTime): these toasts only, Aurora's center
     /// keeps its own timing (`notification_center::PRESENCE`).
     pub tip_seconds: f64,
+    /// Points between two stacked toasts (ToastGap, `settings::toast_gap`),
+    /// in both styles: the Legacy toasts, the cards under Aurora's bell
+    /// and its friends' toasts.
+    pub toast_gap: f32,
     /// The region restart counting down: its card in Aurora's center shows
     /// the live count (`ui::region_restart::bell_card`).
     pub restart: Option<super::region_restart::BellInfo>,
@@ -1084,7 +1091,9 @@ pub fn show(
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-10.0, anchor.y.min(screen.height()) + 6.0))
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
+                // ToastGap between the toasts of the channel
+                // (LLScreenChannel::redrawToasts)
+                ui.spacing_mut().item_spacing.y = env.toast_gap;
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
@@ -1093,11 +1102,18 @@ pub fn show(
                             nui.toasts.retain(|(t, _)| *t != id);
                             continue;
                         }
-                        let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
-                            person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
-                        } else {
-                            card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
-                        };
+                        // the card keeps its own row spacing; the stack's
+                        // spacing stands only between the cards
+                        let r = ui
+                            .scope(|ui| {
+                                ui.spacing_mut().item_spacing.y = CARD_ROW_SPACING;
+                                if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
+                                    person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
+                                } else {
+                                    card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
+                                }
+                            })
+                            .inner;
                         match r {
                             // closing a toast only hides it: the offer waits in
                             // the list (a scripted window too, until answered)
@@ -1281,6 +1297,65 @@ mod tests {
                 "{lines:?}: {rects:?}"
             );
         }
+    }
+
+    /// ToastGap: the Legacy toasts' stack grows by the gap chosen between
+    /// each two of its toasts, and by nothing else.
+    #[test]
+    fn the_legacy_toasts_stand_the_toast_gap_apart() {
+        let height = |gap: f32| {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let mut list = Notifications::default();
+            for i in 0..3 {
+                list.push(Kind::Info, format!("Tip {i}"), "A short line", Data::None);
+            }
+            let (mut hist, mut nui) = (Default::default(), NotifUi::default());
+            let pics = HashMap::new();
+            let images = HashMap::new();
+            for frame in 0..6 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(frame as f64 * 0.016),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let mut env = ToastEnv {
+                            pics: &pics,
+                            images: &images,
+                            emoji: &mut emoji,
+                            hidden: false,
+                            message_seconds: 30.0,
+                            tip_seconds: TOAST_TIP,
+                            restart: None,
+                            presence_at: Default::default(),
+                            classic_bars: true,
+                            toast_gap: gap,
+                        };
+                        show(ui.ctx(), &p, &icons, &world, &mut list, &mut hist, &mut nui, &mut env, false);
+                    },
+                );
+                out.textures_delta.clear();
+            }
+            let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("notification_toasts"));
+            ctx.memory(|m| m.area_rect(layer.id)).expect("the toasts are shown").height()
+        };
+        let (none, legacy, widest) = (
+            height(0.0),
+            height(crate::settings::TOAST_GAP),
+            height(crate::settings::TOAST_GAP_MAX),
+        );
+        assert!((legacy - none - 2.0 * crate::settings::TOAST_GAP).abs() < 0.5, "{none} / {legacy}");
+        assert!(
+            (widest - none - 2.0 * crate::settings::TOAST_GAP_MAX).abs() < 0.5,
+            "{none} / {widest}"
+        );
     }
 
     #[test]

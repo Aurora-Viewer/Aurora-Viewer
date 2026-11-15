@@ -311,6 +311,9 @@ impl WeatherSettings {
             snow_detail: 0,
             // and a region's snow so far (weather/region.rs)
             snow_lying: 0.0,
+            // whatever falls: in rain or clear weather `puddles` is the
+            // puddles' own switch, and the snow melting away still showed
+            snow_settles: self.snow_settles,
             footprints: self.snow_footprints && self.snow_settles,
             trail_extent: self.snow_footprints_reach.clamp(32.0, 64.0),
             // the app centres it on my avatar
@@ -482,6 +485,28 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snow_settles_off_hides_the_lying_snow_whatever_falls() {
+        use super::region::{RegionDay, SkyWeather};
+        for precipitation in [Precipitation::Rain, Precipitation::Snow] {
+            let off = WeatherSettings {
+                precipitation,
+                amount: 0.5,
+                snow_settles: false,
+                touched: true,
+                ..WeatherSettings::default()
+            };
+            let look = off.rain_look(&Wind::default());
+            assert!(!look.snow_settles, "{precipitation:?}");
+            assert!(!look.footprints && !look.deep_snow);
+            // a region or a sky setting the weather keeps my switch
+            let applied = RegionDay::fixed(SkyWeather::CLEAR).apply(&off, uuid::Uuid::nil(), 0.0, false);
+            assert!(!applied.rain_look(&Wind::default()).snow_settles);
+            let on = WeatherSettings { snow_settles: true, ..off };
+            assert!(on.rain_look(&Wind::default()).snow_settles, "{precipitation:?}");
+        }
+    }
 
     #[test]
     fn the_northern_lights_reach_the_renderer_only_while_on() {

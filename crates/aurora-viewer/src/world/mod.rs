@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod appearance_xml;
 pub mod attachment_inventory;
 pub mod attention;
+pub mod avatar_marks;
 pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
@@ -320,6 +321,14 @@ pub struct ChatLine {
     pub kind: ChatKind,
     pub source: Uuid,
     pub origin: Origin,
+    /// A blocked resident's line, kept for the nearby chat's history only
+    /// (FSShowMutedChatHistory, `settings::BlockedChat`): never above the
+    /// chat bar, never counted, logged or alerted.
+    pub blocked: bool,
+    /// Said beyond the say range from where we stood when it arrived
+    /// (LLViewerChat::getChatColor, indra/newview/llviewerchat.cpp): drawn
+    /// dimmed by Preferences › Chat's factor (`ui::colors::beyond_range_alpha`).
+    pub beyond_range: bool,
 }
 
 /// The name an object speaks under in the nearby chat. A name of nothing but
@@ -439,6 +448,9 @@ pub struct World {
     /// Lines not sent by a person neither count as unread nor alert
     /// (Preferences › Chat, #741, off), given every frame by the app.
     pub quiet_automated_chat: bool,
+    /// What becomes of a blocked resident's nearby chat (Preferences ›
+    /// Chat, hidden by default), given every frame by the app.
+    pub blocked_chat: crate::settings::BlockedChat,
     /// A resident starting to type to us opens the conversation with an
     /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
     /// frame by the app.
@@ -593,6 +605,9 @@ pub struct World {
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
+    /// The residents marked with a colour this session (radar and
+    /// mini-map Mark menus, LLNetMap::sAvatarMarksMap).
+    pub avatar_marks: avatar_marks::AvatarMarks,
     /// The residents we dealt with lately (People › Recent).
     pub recent: recent::RecentPeople,
     /// Contact sets generation whose aliases the name cache has.
@@ -925,6 +940,7 @@ impl World {
             last_speaker: None,
             chat_badge: 0,
             quiet_automated_chat: false,
+            blocked_chat: crate::settings::BlockedChat::Hidden,
             announce_incoming_im: false,
             script_dialog_limit: None,
             fly_override: false,
@@ -991,6 +1007,7 @@ impl World {
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
+            avatar_marks: Default::default(),
             recent: Default::default(),
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
@@ -1105,11 +1122,13 @@ impl World {
         chat_log.logout();
         // a setting, not the session's: the arrival's lines follow it too
         let quiet = self.quiet_automated_chat;
+        let blocked_chat = self.blocked_chat;
         let fly_override = self.fly_override;
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
+        self.blocked_chat = blocked_chat;
         self.fly_override = fly_override;
     }
 
@@ -2282,6 +2301,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2297,6 +2318,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -2660,7 +2683,13 @@ impl World {
             .login
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
+        // LLStartUp's sInitialOutfit, read from the login response
+        let initial_outfit = self.login.as_ref().filter(|_| first_login).and_then(|l| {
+            let outfit = l.raw["initial-outfit"].at(0);
+            outfit::registration_outfit(outfit["folder_name"].as_str(), outfit["gender"].as_str())
+        });
         let inputs = outfit::OutfitInputs {
+            initial_outfit,
             worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,
@@ -4692,7 +4721,15 @@ impl World {
         if !own_attachment && !self.rlva.receive_chat(&mut c, self.agent_id) {
             return;
         }
-        if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
+        if c.message.is_empty() || self.lsl_bridge.hides(&c) {
+            return;
+        }
+        // a blocked resident's line goes to the history alone, if at all
+        if self.chat_blocked(&c) {
+            self.blocked_chat_line(c);
+            return;
+        }
+        if self.object_chat_filtered(&c) {
             return;
         }
         if self.receive_hand_contacts(&c, Instant::now()) {
@@ -4814,6 +4851,13 @@ impl World {
                 slurl,
             });
         }
+        // LLViewerChat::getChatColor: a resident's or an object's line said
+        // beyond the say range from where we stand now is dimmed (ours is
+        // said where we stand; a line of an unknown region is not judged)
+        let beyond_range = !kind.is_own()
+            && c.region
+                .and_then(|h| self.region_offset(h))
+                .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
         self.push_chat(ChatLine {
             time,
             from,
@@ -4821,6 +4865,8 @@ impl World {
             kind,
             source: c.source_id,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range,
         });
     }
 
@@ -4907,6 +4953,8 @@ impl World {
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
                 origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
             };
             self.conversation_push(im.from_agent_id, line, true);
             if rlva_filter != rlva::communication::Received::Masked {
@@ -5001,6 +5049,8 @@ impl World {
             kind,
             source,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         });
     }
 
@@ -5984,6 +6034,8 @@ impl World {
             kind: ChatKind::OWN,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.conversation_push(to, line, false);
     }

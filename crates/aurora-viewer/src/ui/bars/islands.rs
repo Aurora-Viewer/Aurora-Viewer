@@ -1188,6 +1188,7 @@ mod tests {
             slow_motion_animations: false,
             release_keys: false,
             marketplace: false,
+            avatar_welcome: false,
             linden_home: false,
             destinations: false,
             parcel_landmark: None,
