@@ -14470,8 +14470,6 @@ inventory-sorter-whole-text = { $count ->
    *[other] { $count } éléments de tout votre inventaire vont être déplacés dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé, mais tout remettre en place à la main prend du temps.
     }
 inventory-sorter-whole-check = J’ai vérifié l’aperçu et je veux trier tout mon inventaire
-inventory-sorter-rule-before = Acquis avant le
-inventory-sorter-rule-before-hint = 2020-01-01
 inventory-sorter-to-pre-trash = Pré-corbeille
 inventory-sorter-rule-pre-trash-hint = Vérifie tout le dossier trié, déjà rangé ou non, à toute profondeur. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
 inventory-sorter-rule-pre-trash-unsorted-hint = Vérifie tout le dossier trié, à toute profondeur, sauf le dossier { $folder }. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
@@ -14488,6 +14486,85 @@ inventory-sorter-pre-trash-title = Mettre la Pré-corbeille à la corbeille ?
 inventory-sorter-pre-trash-text = { $count ->
     [one] { $count } élément du dossier Pré-corbeille part à la corbeille. Vous pouvez encore l’en sortir tant qu’elle n’est pas vidée.
    *[other] { $count } éléments du dossier Pré-corbeille partent à la corbeille. Vous pouvez encore les en sortir tant qu’elle n’est pas vidée.
+    }
+inventory-cleanup-tab = Nettoyer
+inventory-cleanup-intro = Envoyez tout ce qui a été acquis avant une date dans Pré-corbeille, ou à la corbeille. Un dossier de livraison n'est jamais divisé : il part entier, ou reste entier.
+inventory-cleanup-when = Acquis avant
+inventory-cleanup-age-1 = Plus d'un an
+inventory-cleanup-age-2 = 2 ans
+inventory-cleanup-age-3 = 3 ans
+inventory-cleanup-age-5 = 5 ans
+inventory-cleanup-age-custom = Personnalisé
+inventory-cleanup-before = Acquis avant le { $date }
+inventory-cleanup-date = { $day } { $month } { $year }
+inventory-cleanup-month-1 = janvier
+inventory-cleanup-month-2 = février
+inventory-cleanup-month-3 = mars
+inventory-cleanup-month-4 = avril
+inventory-cleanup-month-5 = mai
+inventory-cleanup-month-6 = juin
+inventory-cleanup-month-7 = juillet
+inventory-cleanup-month-8 = août
+inventory-cleanup-month-9 = septembre
+inventory-cleanup-month-10 = octobre
+inventory-cleanup-month-11 = novembre
+inventory-cleanup-month-12 = décembre
+inventory-cleanup-types = Types
+inventory-cleanup-all = Tous
+inventory-cleanup-none = Aucun
+inventory-cleanup-kind-objects = Objets
+inventory-cleanup-kind-clothing = Vêtements
+inventory-cleanup-kind-body-parts = Parties du corps
+inventory-cleanup-kind-notecards = Notes
+inventory-cleanup-kind-landmarks = Repères
+inventory-cleanup-kind-textures = Textures et photos
+inventory-cleanup-kind-scripts = Scripts
+inventory-cleanup-kind-sounds = Sons
+inventory-cleanup-kind-animations = Animations
+inventory-cleanup-kind-gestures = Gestes
+inventory-cleanup-kind-materials = Matériaux et réglages
+inventory-cleanup-kind-calling-cards = Cartes de visite
+inventory-cleanup-where = Où
+inventory-cleanup-whole = Tout l'inventaire
+inventory-cleanup-this-folder = Ce dossier
+inventory-cleanup-include-sorted = Inclure le dossier { $folder }
+inventory-cleanup-never = Jamais touchés : la corbeille, Marketplace Listings, la bibliothèque, les tenues, les favoris, les dossiers exclus et verrouillés, les objets portés et les liens.
+inventory-cleanup-loading = { $count ->
+    [one] Chargement d'un dossier…
+   *[other] Chargement de { $count } dossiers…
+    }
+inventory-cleanup-summary = { $count ->
+    [one] 1 objet acquis avant le { $date }
+   *[other] { $count } objets acquis avant le { $date }
+    }
+inventory-cleanup-nothing = Rien de ces types n'a été acquis avant le { $date }.
+inventory-cleanup-folders = Dossiers, pris entiers
+inventory-cleanup-folder-items = { $count ->
+    [one] 1 objet
+   *[other] { $count } objets
+    }
+inventory-cleanup-more = { $count ->
+    [one] …et 1 de plus
+   *[other] …et { $count } de plus
+    }
+inventory-cleanup-keep-tip = Décochez pour le garder
+inventory-cleanup-to-pre-trash = { $count ->
+    [one] Déplacer 1 dans Pré-corbeille
+   *[other] Déplacer { $count } dans Pré-corbeille
+    }
+inventory-cleanup-to-trash = { $count ->
+    [one] Mettre 1 à la corbeille…
+   *[other] Mettre { $count } à la corbeille…
+    }
+inventory-cleanup-trash-title = Mettre à la corbeille ?
+inventory-cleanup-trash-text = { $count ->
+    [one] 1 élément part à la corbeille. Vous pouvez le récupérer tant que la corbeille n'est pas vidée.
+   *[other] { $count } éléments partent à la corbeille. Vous pouvez les récupérer tant que la corbeille n'est pas vidée.
+    }
+inventory-cleanup-trash-progress = Mise à la corbeille : { $done } / { $total }
+inventory-cleanup-trash-done = { $count ->
+    [one] 1 élément mis à la corbeille
+   *[other] { $count } éléments mis à la corbeille
     }
 parcel-visibility-mode = Masquer le contenu hors de la parcelle actuelle
 parcel-visibility-help = Le terrain, votre avatar et vos HUD restent visibles. Les objets, les autres avatars et leurs effets visuels hors de la parcelle sont masqués. La liste choisit où ce filtre s’applique.

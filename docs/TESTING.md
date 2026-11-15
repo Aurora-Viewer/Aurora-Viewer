@@ -7146,8 +7146,8 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_INVENTORY=sorter|aurora-sorter|sorter-big|sorter-run`**: an Objects
   folder of about 700 entries named the way creators name them (made-up stores,
   body tags such as `[REBORN]`, `eBODY Reborn`, `Legacy F`, `Lara X`, unpackers,
-  Squish and Squeeze versions, `[Store] +` and `*Store*` tags, one item in
-  seven acquired in 2017, a texture named like a chair, a FATPACK folder with
+  Squish and Squeeze versions, `[Store] +` and `*Store*` tags, acquired dates
+  spread over 2008–2026, a texture named like a chair, a FATPACK folder with
   its HUD, card and landmark, furniture, names nothing can read), 24 unpacked
   delivery folders, clothing
   layers that only their wearable type names, and a `Sorted/Reborn` folder from
@@ -7157,9 +7157,12 @@ failure. Grid validation and any paid upload are performed by the human.
   entries; `sorter-run` starts the sort by itself (capture after about 900
   frames). What to look for: `Sorted` and `Reborn` reused, not doubled; each
   folder created once; worn, locked or linked entries kept; Objects left with
-  only the names nothing can read; the FATPACK folder moved whole. A rule
-  "acquired before 2020" to Pre-Trash fills a root `Pre-Trash` folder that only
-  its own confirmation sends to the Trash; Whole inventory asks twice.
+  only the names nothing can read; the FATPACK folder moved whole. A Pre-Trash
+  word rule fills a root `Pre-Trash` folder that only its own confirmation sends
+  to the Trash; Whole inventory asks twice. The Clean up tab: a delivery folder
+  entirely from 2010 (`Retro Mall`) taken whole, the mixed Hex Dress FATPACK left
+  whole, and two root folders (`Old freebies`, `Places I liked`) with every
+  item type, whose old items are listed one by one.
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

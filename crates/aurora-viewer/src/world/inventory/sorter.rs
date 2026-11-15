@@ -14,6 +14,7 @@
 
 use super::{FetchState, Inventory, actions};
 use aurora_llsd::llsd_map;
+use aurora_net::inventory::InvItem;
 use aurora_net::inventory::operations::{Mutation, Operation};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -91,42 +92,28 @@ pub fn date_start(text: &str) -> Option<i64> {
 }
 
 impl Rule {
-    /// The rule can take entries: words, and somewhere to put them.
-    /// The rule can take entries: words or a valid date, and somewhere to
-    /// put them. A date that does not read leaves the rule incomplete
-    /// rather than matching everything.
+    /// The rule can take entries: words, and somewhere to put them. The
+    /// date of the first version (`before`) is no longer read: dates belong
+    /// to Clean up ([`Cleanup`]), and an old dated rule without words stays
+    /// incomplete rather than taking everything.
     pub fn usable(&self) -> bool {
-        let dated = !self.before.trim().is_empty();
-        self.enabled
-            && (dated || !words(&self.words).is_empty())
-            && (!dated || date_start(&self.before).is_some())
-            && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
+        self.enabled && !words(&self.words).is_empty() && (self.pre_trash || self.target.is_some() || !split_path(&self.folder).is_empty())
     }
 
-    /// `created` is the item's acquired date; a folder has none, so a dated
-    /// rule never takes a folder.
-    pub fn matches(&self, name_words: &[String], created: Option<i64>) -> bool {
-        let dated = match self.before.trim() {
-            "" => true,
-            text => date_start(text).is_some_and(|limit| created.is_some_and(|c| c > 0 && c < limit)),
-        };
-        self.named(name_words) && dated
+    /// The rule's words meet the name's.
+    pub fn matches(&self, name_words: &[String], _created: Option<i64>) -> bool {
+        self.named(name_words)
     }
 
-    /// The words alone (a rule without words takes any name).
+    /// The words alone.
     pub fn named(&self, name_words: &[String]) -> bool {
         let wanted = words(&self.words);
-        wanted.is_empty()
-            || match self.mode {
+        !wanted.is_empty()
+            && match self.mode {
                 Match::All => wanted.iter().all(|w| name_words.contains(w)),
                 Match::Any => wanted.iter().any(|w| name_words.contains(w)),
                 Match::Phrase => has(name_words, &wanted.join(" ")),
             }
-    }
-
-    /// The date limit of a dated rule.
-    pub fn limit(&self) -> Option<i64> {
-        date_start(&self.before)
     }
 }
 
@@ -146,6 +133,8 @@ pub struct Preferences {
     pub stores: bool,
     /// Folders Auto-sort never takes anything from, at any depth.
     pub excluded: Vec<Uuid>,
+    /// The Clean up tab's choices.
+    pub cleanup: Cleanup,
 }
 
 impl Default for Preferences {
@@ -156,6 +145,7 @@ impl Default for Preferences {
             rules: Vec::new(),
             stores: false,
             excluded: Vec::new(),
+            cleanup: Cleanup::default(),
         }
     }
 }
@@ -1159,18 +1149,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
             if !system && !made && movable(inv, *sub, protected, &holds_worn) {
                 let name_words = words(name);
                 let rules = rules_for_place(&prefs.rules, in_sorted(*sub));
-                let taken = match first_rule(&rules, &name_words, None) {
-                    Some(rule) => rule.pre_trash,
-                    // no word rule names it: a dated Pre-Trash rule takes it
-                    // whole when everything in it is old
-                    None => rules.iter().any(|r| {
-                        r.pre_trash
-                            && r.usable()
-                            && r.named(&name_words)
-                            && r.limit().is_some_and(|limit| all_before(inv, *sub, limit, &mut scan.unfetched))
-                    }),
-                };
-                if taken {
+                if first_rule(&rules, &name_words, None).is_some_and(|rule| rule.pre_trash) {
                     scan.found.push(*sub);
                     continue;
                 }
@@ -1187,10 +1166,10 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
     scan
 }
 
-/// Every item in `folder`, at any depth, was acquired before `limit`, and
-/// there is at least one. A folder not loaded yet answers no (and is listed
-/// in `unfetched`).
-fn all_before(inv: &Inventory, folder: Uuid, limit: i64, unfetched: &mut Vec<Uuid>) -> bool {
+/// Every item in `folder`, at any depth, passes `keep`, and there is at
+/// least one. A folder not loaded yet answers no (and is listed in
+/// `unfetched`).
+fn all_items(inv: &Inventory, folder: Uuid, unfetched: &mut Vec<Uuid>, keep: impl Fn(&InvItem) -> bool) -> bool {
     let mut stack = vec![folder];
     let mut seen = HashSet::new();
     let mut any = false;
@@ -1205,13 +1184,320 @@ fn all_before(inv: &Inventory, folder: Uuid, limit: i64, unfetched: &mut Vec<Uui
         }
         for item in &f.items {
             match inv.items.get(item) {
-                Some(it) if it.created_at > 0 && it.created_at < limit => any = true,
+                Some(it) if keep(it) => any = true,
                 _ => return false,
             }
         }
         stack.extend(f.children.iter().copied());
     }
     any
+}
+
+/// The item kinds Clean up filters on, by asset type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Kind {
+    Objects,
+    Clothing,
+    BodyParts,
+    Notecards,
+    Landmarks,
+    Textures,
+    Scripts,
+    Sounds,
+    Animations,
+    Gestures,
+    Materials,
+    CallingCards,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 12] = [
+        Kind::Objects,
+        Kind::Clothing,
+        Kind::BodyParts,
+        Kind::Notecards,
+        Kind::Landmarks,
+        Kind::Textures,
+        Kind::Scripts,
+        Kind::Sounds,
+        Kind::Animations,
+        Kind::Gestures,
+        Kind::Materials,
+        Kind::CallingCards,
+    ];
+
+    /// The kind of an asset type; links (24, 25) and the rest have none and
+    /// are never cleaned up.
+    pub fn of(asset_type: i32) -> Option<Kind> {
+        Some(match asset_type {
+            6 => Kind::Objects,
+            5 => Kind::Clothing,
+            13 => Kind::BodyParts,
+            7 => Kind::Notecards,
+            3 => Kind::Landmarks,
+            0 => Kind::Textures,
+            10 => Kind::Scripts,
+            1 => Kind::Sounds,
+            20 => Kind::Animations,
+            21 => Kind::Gestures,
+            56 | 57 => Kind::Materials,
+            2 => Kind::CallingCards,
+            _ => return None,
+        })
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Objects => aurora_i18n::tr!("inventory-cleanup-kind-objects"),
+            Kind::Clothing => aurora_i18n::tr!("inventory-cleanup-kind-clothing"),
+            Kind::BodyParts => aurora_i18n::tr!("inventory-cleanup-kind-body-parts"),
+            Kind::Notecards => aurora_i18n::tr!("inventory-cleanup-kind-notecards"),
+            Kind::Landmarks => aurora_i18n::tr!("inventory-cleanup-kind-landmarks"),
+            Kind::Textures => aurora_i18n::tr!("inventory-cleanup-kind-textures"),
+            Kind::Scripts => aurora_i18n::tr!("inventory-cleanup-kind-scripts"),
+            Kind::Sounds => aurora_i18n::tr!("inventory-cleanup-kind-sounds"),
+            Kind::Animations => aurora_i18n::tr!("inventory-cleanup-kind-animations"),
+            Kind::Gestures => aurora_i18n::tr!("inventory-cleanup-kind-gestures"),
+            Kind::Materials => aurora_i18n::tr!("inventory-cleanup-kind-materials"),
+            Kind::CallingCards => aurora_i18n::tr!("inventory-cleanup-kind-calling-cards"),
+        }
+    }
+}
+
+/// How old Clean up's entries are: a chip of the tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Age {
+    #[default]
+    OneYear,
+    TwoYears,
+    ThreeYears,
+    FiveYears,
+    /// The year and month chosen in the tab.
+    Custom,
+}
+
+/// Clean up: everything acquired before a date, of the chosen kinds, sent to
+/// Pre-Trash or the Trash. Saved with the inventory preferences.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cleanup {
+    pub age: Age,
+    /// The custom date: acquired before the first day of `month` (1–12) of
+    /// `year`.
+    pub year: i32,
+    pub month: u32,
+    pub kinds: Vec<Kind>,
+    /// All of My Inventory rather than the folder the window sorts.
+    pub whole: bool,
+    /// Read the sort folder's tree too.
+    pub include_sorted: bool,
+}
+
+impl Default for Cleanup {
+    fn default() -> Self {
+        Self {
+            age: Age::default(),
+            year: 2020,
+            month: 1,
+            kinds: Kind::ALL.to_vec(),
+            whole: true,
+            include_sorted: true,
+        }
+    }
+}
+
+impl Cleanup {
+    /// The cutoff in seconds since 1970, UTC: entries acquired strictly
+    /// before it go. The chips count back from `now`'s day (29 February
+    /// falls back to the 28th).
+    pub fn cutoff(&self, now: i64) -> Option<i64> {
+        use chrono::Datelike;
+        let years = match self.age {
+            Age::OneYear => 1,
+            Age::TwoYears => 2,
+            Age::ThreeYears => 3,
+            Age::FiveYears => 5,
+            Age::Custom => return date_start(&format!("{}-{:02}", self.year, self.month.clamp(1, 12))),
+        };
+        let today = chrono::DateTime::from_timestamp(now, 0)?.date_naive();
+        let year = today.year() - years;
+        let day = today
+            .with_year(year)
+            .or_else(|| chrono::NaiveDate::from_ymd_opt(year, today.month(), 28))?;
+        Some(day.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
+    }
+
+    fn takes(&self, it: &InvItem, cutoff: i64) -> bool {
+        it.created_at > 0 && it.created_at < cutoff && Kind::of(it.asset_type).is_some_and(|k| self.kinds.contains(&k))
+    }
+}
+
+/// One entry Clean up would take: an item, or a folder that goes whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupRow {
+    pub id: Uuid,
+    pub folder: bool,
+    pub from: Uuid,
+    pub name: String,
+    /// The item's kind; a folder has none.
+    pub kind: Option<Kind>,
+    /// The acquired date; for a folder, its newest item's.
+    pub created: i64,
+    /// The items a folder holds, at any depth (1 for an item).
+    pub items: usize,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct CleanupPlan {
+    pub rows: Vec<CleanupRow>,
+    pub cutoff: i64,
+    /// Folders not loaded yet: the window asks for them, the list fills in.
+    pub unfetched: Vec<Uuid>,
+}
+
+impl CleanupPlan {
+    /// The moves to Pre-Trash of the rows not in `skipped`.
+    pub fn moves(&self, skipped: &HashSet<Uuid>) -> Vec<Move> {
+        self.rows
+            .iter()
+            .filter(|r| !skipped.contains(&r.id))
+            .map(|r| Move {
+                id: r.id,
+                folder: r.folder,
+                name: r.name.clone(),
+                from: r.from,
+                to: Dest::PreTrash,
+                label: pre_trash_name(),
+                unpacker: false,
+            })
+            .collect()
+    }
+}
+
+/// What Clean up takes from `source` (My Inventory for `cleanup.whole`), at
+/// any depth: the items acquired before the cutoff and of the chosen kinds.
+/// Folders are read like the Pre-Trash rules read them
+/// ([`pre_trash_scan`]): a folder whose items all match goes whole and is
+/// not opened; a product's folder (its name reads as a product: a delivery,
+/// a fatpack) with one item that does not match stays whole, old items
+/// included; the user's own folders, the system folders and the folders
+/// Auto-sort made are opened and their matching items go one by one. Never
+/// read: the Trash, Marketplace Listings, the Library, Favorites, outfits,
+/// the Current Outfit, the Pre-Trash folder, excluded and locked folders,
+/// and the sort folder's tree unless `include_sorted`; worn entries and
+/// links stay.
+pub fn plan_cleanup(
+    inv: &Inventory,
+    prefs: &Preferences,
+    cleanup: &Cleanup,
+    source: Uuid,
+    now: i64,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+) -> CleanupPlan {
+    let mut plan = CleanupPlan::default();
+    let Some(cutoff) = cleanup.cutoff(now) else { return plan };
+    plan.cutoff = cutoff;
+    if cleanup.kinds.is_empty() {
+        return plan;
+    }
+    let source = if cleanup.whole { inv.root } else { source };
+    let base = child(inv, inv.root, &prefs.base_name());
+    let reserved = sorter_folder_names(prefs);
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let pre_trash_at = pre_trash(inv);
+    let closed = |id: Uuid| {
+        inv.folders
+            .get(&id)
+            .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
+            || Some(id) == pre_trash_at
+            || protected.contains(&id)
+            || untouchable(inv, id)
+            || prefs.excludes(inv, id)
+            || !cleanup.include_sorted && base.is_some_and(|b| id == b || actions::under(inv, id, b))
+    };
+    let mut stack = vec![source];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) || closed(id) {
+            continue;
+        }
+        let Some(folder) = inv.folders.get(&id) else { continue };
+        if folder.state != FetchState::Fetched {
+            plan.unfetched.push(id);
+            continue;
+        }
+        for item in &folder.items {
+            if let Some(it) = inv.items.get(item)
+                && cleanup.takes(it, cutoff)
+                && movable(inv, *item, protected, &holds_worn)
+            {
+                plan.rows.push(CleanupRow {
+                    id: *item,
+                    folder: false,
+                    from: id,
+                    name: it.name.clone(),
+                    kind: Kind::of(it.asset_type),
+                    created: it.created_at,
+                    items: 1,
+                });
+            }
+        }
+        for sub in &folder.children {
+            let Some(f) = inv.folders.get(sub) else { continue };
+            if closed(*sub) {
+                continue;
+            }
+            let name = f.info.name.trim();
+            let system = f.info.type_default != -1;
+            let made = reserved.contains(&name.to_lowercase());
+            if !system
+                && !made
+                && movable(inv, *sub, protected, &holds_worn)
+                && all_items(inv, *sub, &mut plan.unfetched, |it| cleanup.takes(it, cutoff))
+            {
+                let (count, newest) = folder_items(inv, *sub);
+                plan.rows.push(CleanupRow {
+                    id: *sub,
+                    folder: true,
+                    from: id,
+                    name: f.info.name.clone(),
+                    kind: None,
+                    created: newest,
+                    items: count,
+                });
+                continue;
+            }
+            // a product's folder stays whole: its old items are not pulled out
+            let product = !system && !made && target(name, -1, 0, None, &[], false).is_some();
+            if !product {
+                stack.push(*sub);
+            }
+        }
+    }
+    plan.unfetched.sort_unstable();
+    plan.unfetched.dedup();
+    plan.rows
+        .sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.name.cmp(&b.name)));
+    plan
+}
+
+/// How many items `folder` holds at any depth, and the newest acquired date.
+fn folder_items(inv: &Inventory, folder: Uuid) -> (usize, i64) {
+    let mut stack = vec![folder];
+    let mut seen = HashSet::new();
+    let (mut count, mut newest) = (0, 0);
+    while let Some(id) = stack.pop() {
+        let Some(f) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for it in f.items.iter().filter_map(|i| inv.items.get(i)) {
+            count += 1;
+            newest = newest.max(it.created_at);
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    (count, newest)
 }
 
 /// The direct contents of `source` a sort reads: its items, and its folders

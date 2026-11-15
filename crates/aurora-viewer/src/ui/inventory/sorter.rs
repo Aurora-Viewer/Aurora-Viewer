@@ -12,8 +12,11 @@
 //! through the ordinary delete path.
 
 use super::*;
-use crate::world::inventory::sorter::{self, Match, Move, Plan, Rule, Step};
+use crate::world::inventory::sorter::{self, Age, CleanupPlan, Kind, Match, Move, Plan, Rule, Step};
 use std::collections::VecDeque;
+
+/// Entries sent to the Trash in one delete request.
+const TRASH_BATCH: usize = 200;
 
 /// What the window sorts.
 #[derive(Clone, PartialEq)]
@@ -32,6 +35,8 @@ enum Source {
 enum Confirm {
     Whole,
     PreTrash(Vec<Uuid>),
+    /// Clean up's entries, straight to the Trash.
+    Trash(Vec<Uuid>),
 }
 
 /// The folder picker: for the folder to sort or for a rule's destination.
@@ -70,6 +75,27 @@ pub(super) struct State {
     confirm: Option<Confirm>,
     /// The whole-inventory confirmation's "I understand" box.
     understood: bool,
+    /// Clean up's list, kept until the inventory, its choices, the source or
+    /// the day change.
+    cleanup: Option<(u64, sorter::Cleanup, Uuid, i64, CleanupPlan)>,
+    /// Clean up's rows unchecked: they stay.
+    skipped: HashSet<Uuid>,
+    /// Clean up's entries on their way to the Trash, a batch at a time.
+    trash: Option<TrashJob>,
+    /// A Clean up button pressed this frame.
+    cleanup_action: Option<CleanupAction>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CleanupAction {
+    PreTrash,
+    Trash,
+}
+
+struct TrashJob {
+    queue: VecDeque<Uuid>,
+    total: usize,
+    sent: usize,
 }
 
 struct Job {
@@ -83,14 +109,15 @@ struct Job {
 const PREVIEW: usize = 0;
 const RULES: usize = 1;
 const OPTIONS: usize = 2;
+const CLEANUP: usize = 3;
 
 impl State {
     pub(super) fn active(&self) -> bool {
-        self.open || self.job.is_some() || self.submitted || self.requested.is_some()
+        self.open || self.job.is_some() || self.submitted || self.requested.is_some() || self.trash.is_some()
     }
 
     fn busy(&self) -> bool {
-        self.job.is_some() || self.submitted
+        self.job.is_some() || self.submitted || self.trash.is_some()
     }
 
     fn set_source(&mut self, source: Source) {
@@ -216,9 +243,12 @@ pub(super) fn show(
                 state.status = aurora_i18n::tr!("inventory-sorter-done", count = job.done);
                 state.job = None;
                 state.preview = None;
+                state.cleanup = None;
             }
         }
     }
+    send_trash_batch(inv, st, prefs, worn, actions, free);
+    let state = &mut st.sorter;
     if !state.open {
         return;
     }
@@ -271,6 +301,38 @@ pub(super) fn show(
         }
         state.preview = Some((inv.generation, prefs.sorter.clone(), plan));
     }
+    // Clean up's list, read on its tab only: once per inventory change (a
+    // folder arriving included), choice, source or day.
+    let cleanup_source = match &source {
+        Source::Folder(id) => *id,
+        Source::Entries(_) | Source::Whole => inv.root,
+    };
+    if state.tab == CLEANUP && !busy {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let day = now / 86_400;
+        let stale = state.cleanup.as_ref().is_none_or(|(generation, choices, from, at, _)| {
+            *generation != inv.generation || *choices != prefs.sorter.cleanup || *from != cleanup_source || *at != day
+        });
+        if stale {
+            let plan = sorter::plan_cleanup(
+                inv,
+                &prefs.sorter,
+                &prefs.sorter.cleanup,
+                cleanup_source,
+                now,
+                &prefs.protected,
+                worn,
+            );
+            for id in &plan.unfetched {
+                if inv.folders.get(id).is_some_and(|f| f.state == FetchState::Unknown) {
+                    inv.request(*id);
+                }
+            }
+            state.cleanup = Some((inv.generation, prefs.sorter.cleanup.clone(), cleanup_source, day, plan));
+        }
+    }
     if state.autostart && state.preview.is_some() {
         state.autostart = false;
         start(state, prefs);
@@ -285,6 +347,7 @@ pub(super) fn show(
     // `steady_size` lays the body out in the window's own rect, like the
     // World Map's side panel (#2815); the minimum keeps the tabs, a few rows
     // and the footer whole.
+    let free_now = st.pending.is_none() && st.pending_delete.is_none();
     let window_id = format!("inventory_sorter_{}", st.ui_id);
     let mut window = crate::ui::widgets::Floater::new(
         &window_id,
@@ -312,6 +375,7 @@ pub(super) fn show(
                 (aurora_i18n::tr!("inventory-sorter-preview"), true),
                 (&rules_label, true),
                 (aurora_i18n::tr!("inventory-sorter-options"), true),
+                (aurora_i18n::tr!("inventory-cleanup-tab"), true),
             ],
         );
         ui.add_space(6.0);
@@ -326,6 +390,7 @@ pub(super) fn show(
                         .inner
                 }
                 OPTIONS => ui.add_enabled_ui(!busy, |ui| options(ui, p, inv, state, &mut prefs.sorter)).inner,
+                CLEANUP => cleanup_tab(ui, p, state, &mut prefs.sorter, matches!(source, Source::Folder(_)), busy, free_now),
                 _ => {
                     if !waiting.is_empty() {
                         pre_trash_card(ui, p, state, &waiting, busy);
@@ -343,6 +408,36 @@ pub(super) fn show(
         crate::ui::widgets::divider(ui, p);
         footer_row(ui, p, state, st.pending.is_none(), &mut go, &mut stop);
     });
+    // Clean up's buttons: Pre-Trash through the sort's own batches, the
+    // Trash after its confirmation
+    match st.sorter.cleanup_action.take() {
+        Some(CleanupAction::PreTrash) => {
+            let state = &mut st.sorter;
+            if let Some((.., plan)) = state.cleanup.as_ref() {
+                let moves = plan.moves(&state.skipped);
+                if !moves.is_empty() && state.job.is_none() {
+                    state.status.clear();
+                    state.job = Some(Job {
+                        total: moves.len(),
+                        queue: moves.into(),
+                        base: prefs.sorter.base_name(),
+                        done: 0,
+                        sending: 0,
+                    });
+                }
+            }
+        }
+        Some(CleanupAction::Trash) => {
+            let state = &mut st.sorter;
+            if let Some((.., plan)) = state.cleanup.as_ref() {
+                let ids: Vec<Uuid> = plan.rows.iter().map(|r| r.id).filter(|id| !state.skipped.contains(id)).collect();
+                if !ids.is_empty() {
+                    state.confirm = Some(Confirm::Trash(ids));
+                }
+            }
+        }
+        None => {}
+    }
     let state = &mut st.sorter;
     if go && state.job.is_none() {
         if source == Source::Whole {
@@ -357,6 +452,9 @@ pub(super) fn show(
         // the batch on its way finishes; nothing after it is sent
         job.queue.clear();
     }
+    if stop && let Some(trash) = state.trash.as_mut() {
+        trash.queue.clear();
+    }
     state.open = open;
     if !open {
         state.picker = None;
@@ -364,6 +462,52 @@ pub(super) fn show(
     }
     picker(ctx, p, inv, st, prefs);
     confirm(ctx, p, inv, st, prefs, worn, actions);
+}
+
+/// Clean up's Trash: one delete request of at most [`TRASH_BATCH`] entries
+/// at a time, through the ordinary delete path (the Trash's own rules decide
+/// what goes), the next one once the inventory is free again.
+fn send_trash_batch(
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    worn: &HashSet<Uuid>,
+    actions: &mut Vec<InvAction>,
+    free: bool,
+) {
+    let free = free && st.pending_delete.is_none() && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
+    let Some(trash) = st.sorter.trash.as_mut() else { return };
+    if !free {
+        return;
+    }
+    if trash.queue.is_empty() {
+        st.sorter.status = aurora_i18n::tr!("inventory-cleanup-trash-done", count = trash.sent);
+        st.sorter.trash = None;
+        st.sorter.cleanup = None;
+        st.sorter.skipped.clear();
+        return;
+    }
+    let take = trash.queue.len().min(TRASH_BATCH);
+    let batch: Vec<Uuid> = trash.queue.drain(..take).collect();
+    trash.sent += batch.len();
+    // what left or can no longer go is dropped, like a sort's moves
+    let batch: Vec<Uuid> = batch
+        .into_iter()
+        .filter(|id| inv.items.contains_key(id) || inv.folders.contains_key(id))
+        .collect();
+    if batch.is_empty() {
+        return;
+    }
+    let change = rules::system(inv, 14)
+        .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
+        .and_then(|trash| rules::move_selection(inv, &batch, trash, &prefs.protected, worn));
+    match change {
+        Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::new(inv, st, &batch, change)))),
+        Err(reason) => {
+            st.sorter.status = reason;
+            st.sorter.trash = None;
+        }
+    }
 }
 
 /// What waits in Pre-Trash, and the step that sends it to the Trash.
@@ -440,15 +584,21 @@ fn confirm(
                     }
                 });
             }
-            Confirm::PreTrash(ids) => {
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("inventory-sorter-pre-trash-title"))
-                        .size(15.0)
-                        .strong()
-                        .color(p.ink),
-                );
+            Confirm::PreTrash(ids) | Confirm::Trash(ids) => {
+                let (title, text) = if matches!(asked, Confirm::Trash(_)) {
+                    (
+                        aurora_i18n::tr!("inventory-cleanup-trash-title"),
+                        aurora_i18n::tr!("inventory-cleanup-trash-text", count = ids.len()),
+                    )
+                } else {
+                    (
+                        aurora_i18n::tr!("inventory-sorter-pre-trash-title"),
+                        aurora_i18n::tr!("inventory-sorter-pre-trash-text", count = ids.len()),
+                    )
+                };
+                ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
                 ui.add_space(8.0);
-                ui.label(aurora_i18n::tr!("inventory-sorter-pre-trash-text", count = ids.len()));
+                ui.label(text);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let free = st.pending.is_none() && st.pending_delete.is_none();
@@ -482,6 +632,14 @@ fn confirm(
     }
     match asked {
         Confirm::Whole => start(&mut st.sorter, prefs),
+        Confirm::Trash(ids) => {
+            st.sorter.status.clear();
+            st.sorter.trash = Some(TrashJob {
+                total: ids.len(),
+                queue: ids.into(),
+                sent: 0,
+            });
+        }
         Confirm::PreTrash(ids) => {
             // the ordinary delete: the Trash's own rules decide what goes
             let change = rules::system(inv, 14)
@@ -552,6 +710,42 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
 
 fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: bool, go: &mut bool, stop: &mut bool) {
     ui.add_space(4.0);
+    if let Some(trash) = &state.trash {
+        let fraction = if trash.total == 0 {
+            1.0
+        } else {
+            trash.sent as f32 / trash.total as f32
+        };
+        let text = aurora_i18n::tr!("inventory-cleanup-trash-progress", done = trash.sent, total = trash.total);
+        ui.horizontal(|ui| {
+            crate::ui::widgets::progress(
+                ui,
+                p,
+                "inventory_cleanup_trash",
+                fraction,
+                (ui.available_width() - 110.0).max(60.0),
+                &text,
+                None,
+            );
+            *stop = crate::ui::widgets::action_button(
+                ui,
+                p,
+                "player-stop-filled",
+                aurora_i18n::tr!("common-stop"),
+                crate::ui::widgets::ActionKind::Flat,
+                Vec2::new(96.0, 26.0),
+            )
+            .clicked();
+        });
+        return;
+    }
+    if state.tab == CLEANUP && state.job.is_none() {
+        // Clean up has its own buttons in the tab
+        if !state.status.is_empty() {
+            ui.label(RichText::new(&state.status).color(p.muted));
+        }
+        return;
+    }
     if let Some(job) = &state.job {
         let fraction = if job.total == 0 { 1.0 } else { job.done as f32 / job.total as f32 };
         let text = aurora_i18n::tr!("inventory-sorter-progress", done = job.done, total = job.total);
@@ -590,6 +784,253 @@ fn footer_row(ui: &mut egui::Ui, p: &Palette, state: &State, inventory_free: boo
             ui.label(RichText::new(&state.status).color(p.muted));
         }
     });
+}
+
+fn month_name(month: u32) -> &'static str {
+    match month {
+        1 => aurora_i18n::tr!("inventory-cleanup-month-1"),
+        2 => aurora_i18n::tr!("inventory-cleanup-month-2"),
+        3 => aurora_i18n::tr!("inventory-cleanup-month-3"),
+        4 => aurora_i18n::tr!("inventory-cleanup-month-4"),
+        5 => aurora_i18n::tr!("inventory-cleanup-month-5"),
+        6 => aurora_i18n::tr!("inventory-cleanup-month-6"),
+        7 => aurora_i18n::tr!("inventory-cleanup-month-7"),
+        8 => aurora_i18n::tr!("inventory-cleanup-month-8"),
+        9 => aurora_i18n::tr!("inventory-cleanup-month-9"),
+        10 => aurora_i18n::tr!("inventory-cleanup-month-10"),
+        11 => aurora_i18n::tr!("inventory-cleanup-month-11"),
+        _ => aurora_i18n::tr!("inventory-cleanup-month-12"),
+    }
+}
+
+/// "1 March 2020", in the catalogue's order (UTC, like the cutoff).
+fn date_text(at: i64) -> String {
+    use chrono::Datelike;
+    let Some(day) = chrono::DateTime::from_timestamp(at, 0).map(|t| t.date_naive()) else {
+        return String::new();
+    };
+    // as text, so no number formatting groups the year's digits
+    let (number, year) = (day.day().to_string(), day.year().to_string());
+    aurora_i18n::tr!(
+        "inventory-cleanup-date",
+        day = number.as_str(),
+        month = month_name(day.month()),
+        year = year.as_str()
+    )
+}
+
+/// A row's acquired date, `2014-06-03`.
+fn short_date(at: i64) -> String {
+    chrono::DateTime::from_timestamp(at, 0).map_or_else(String::new, |t| t.date_naive().format("%Y-%m-%d").to_string())
+}
+
+/// Rows drawn per group: the rest is counted, so a large cleanup stays
+/// smooth (the groups open one at a time).
+const CLEANUP_ROWS: usize = 300;
+
+/// The Clean up tab: how old (chips, or a month and a year), which kinds,
+/// where, then the list by kind with a box per row (unchecked rows stay) and
+/// the two ways out: Pre-Trash, or the Trash after a confirmation.
+fn cleanup_tab(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    state: &mut State,
+    options: &mut sorter::Preferences,
+    has_folder: bool,
+    busy: bool,
+    free: bool,
+) {
+    use crate::ui::widgets::{ActionKind, action_button, checkbox, collapsing, flat_button, section_header, segmented, switch_labeled};
+    let base = options.base_name();
+    let cleanup = &mut options.cleanup;
+    ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-intro")).small().color(p.muted));
+    ui.add_space(6.0);
+    ui.add_enabled_ui(!busy, |ui| {
+        section_header(ui, p, "calendar-filled", aurora_i18n::tr!("inventory-cleanup-when"));
+        const AGES: [Age; 5] = [Age::OneYear, Age::TwoYears, Age::ThreeYears, Age::FiveYears, Age::Custom];
+        let mut age = AGES.iter().position(|a| *a == cleanup.age).unwrap_or(0);
+        if segmented(
+            ui,
+            p,
+            &mut age,
+            &[
+                (aurora_i18n::tr!("inventory-cleanup-age-1"), true),
+                (aurora_i18n::tr!("inventory-cleanup-age-2"), true),
+                (aurora_i18n::tr!("inventory-cleanup-age-3"), true),
+                (aurora_i18n::tr!("inventory-cleanup-age-5"), true),
+                (aurora_i18n::tr!("inventory-cleanup-age-custom"), true),
+            ],
+        ) {
+            cleanup.age = AGES[age.min(AGES.len() - 1)];
+        }
+        let now = chrono::Utc::now();
+        if cleanup.age == Age::Custom {
+            use chrono::Datelike;
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("inventory_cleanup_month")
+                    .selected_text(month_name(cleanup.month))
+                    .show_ui(ui, |ui| {
+                        for month in 1..=12 {
+                            ui.selectable_value(&mut cleanup.month, month, month_name(month));
+                        }
+                    });
+                egui::ComboBox::from_id_salt("inventory_cleanup_year")
+                    .selected_text(cleanup.year.to_string())
+                    .show_ui(ui, |ui| {
+                        for year in (2003..=now.year()).rev() {
+                            ui.selectable_value(&mut cleanup.year, year, year.to_string());
+                        }
+                    });
+            });
+        }
+        if let Some(cutoff) = cleanup.cutoff(now.timestamp()) {
+            ui.add_space(2.0);
+            let date = date_text(cutoff);
+            ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-before", date = date.as_str())).strong());
+        }
+        ui.add_space(8.0);
+        section_header(ui, p, "category-filled", aurora_i18n::tr!("inventory-cleanup-types"));
+        ui.horizontal(|ui| {
+            if flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-all")).clicked() {
+                cleanup.kinds = Kind::ALL.to_vec();
+            }
+            if flat_button(ui, p, aurora_i18n::tr!("inventory-cleanup-none")).clicked() {
+                cleanup.kinds.clear();
+            }
+        });
+        egui::Grid::new("inventory_cleanup_kinds")
+            .num_columns(2)
+            .spacing([18.0, 2.0])
+            .show(ui, |ui| {
+                for (index, kind) in Kind::ALL.iter().enumerate() {
+                    let was = cleanup.kinds.contains(kind);
+                    let mut on = was;
+                    checkbox(ui, p, &mut on, kind.label());
+                    if on != was {
+                        if on {
+                            cleanup.kinds.push(*kind);
+                            cleanup.kinds.sort();
+                        } else {
+                            cleanup.kinds.retain(|k| k != kind);
+                        }
+                    }
+                    if index % 2 == 1 {
+                        ui.end_row();
+                    }
+                }
+            });
+        ui.add_space(8.0);
+        section_header(ui, p, "folder-filled", aurora_i18n::tr!("inventory-cleanup-where"));
+        let mut place = usize::from(!cleanup.whole && has_folder);
+        if segmented(
+            ui,
+            p,
+            &mut place,
+            &[
+                (aurora_i18n::tr!("inventory-cleanup-whole"), true),
+                (aurora_i18n::tr!("inventory-cleanup-this-folder"), has_folder),
+            ],
+        ) {
+            cleanup.whole = place == 0;
+        }
+        switch_labeled(
+            ui,
+            p,
+            &mut cleanup.include_sorted,
+            aurora_i18n::tr!("inventory-cleanup-include-sorted", folder = base.as_str()),
+        );
+        ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-never")).small().color(p.muted));
+    });
+    crate::ui::widgets::divider(ui, p);
+    let State {
+        cleanup: list,
+        skipped,
+        cleanup_action,
+        ..
+    } = state;
+    let Some((.., plan)) = list.as_ref() else { return };
+    if !plan.unfetched.is_empty() {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("inventory-cleanup-loading", count = plan.unfetched.len()))
+                .small()
+                .color(p.muted),
+        );
+    }
+    let date = date_text(plan.cutoff);
+    if plan.rows.is_empty() {
+        ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-nothing", date = date.as_str())).color(p.muted));
+        return;
+    }
+    let going: Vec<_> = plan.rows.iter().filter(|r| !skipped.contains(&r.id)).collect();
+    let items: usize = going.iter().map(|r| r.items).sum();
+    ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-summary", count = items, date = date.as_str())).strong());
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let size = Vec2::new(0.0, 26.0);
+        let enabled = !going.is_empty() && !busy && free;
+        let label = aurora_i18n::tr!("inventory-cleanup-to-pre-trash", count = going.len());
+        if ui
+            .add_enabled_ui(enabled, |ui| {
+                action_button(ui, p, "trash-filled", &label, ActionKind::Primary, size)
+            })
+            .inner
+            .clicked()
+        {
+            *cleanup_action = Some(CleanupAction::PreTrash);
+        }
+        let label = aurora_i18n::tr!("inventory-cleanup-to-trash", count = going.len());
+        if ui
+            .add_enabled_ui(enabled, |ui| {
+                action_button(ui, p, "trash-x-filled", &label, ActionKind::Danger, size)
+            })
+            .inner
+            .clicked()
+        {
+            *cleanup_action = Some(CleanupAction::Trash);
+        }
+    });
+    ui.add_space(6.0);
+    // folders first (they go whole), then each kind in the filter's order
+    let mut groups: Vec<(String, Vec<&sorter::CleanupRow>)> = Vec::new();
+    let folders: Vec<_> = plan.rows.iter().filter(|r| r.folder).collect();
+    if !folders.is_empty() {
+        groups.push((aurora_i18n::tr!("inventory-cleanup-folders").to_owned(), folders));
+    }
+    for kind in Kind::ALL {
+        let rows: Vec<_> = plan.rows.iter().filter(|r| r.kind == Some(kind)).collect();
+        if !rows.is_empty() {
+            groups.push((kind.label().to_owned(), rows));
+        }
+    }
+    for (label, rows) in groups {
+        let title = format!("{label}  ({})", rows.len());
+        collapsing(ui, p, ("inventory_cleanup_group", &label), title, false, |ui| {
+            for row in rows.iter().take(CLEANUP_ROWS) {
+                ui.horizontal(|ui| {
+                    let mut on = !skipped.contains(&row.id);
+                    checkbox(ui, p, &mut on, &row.name).on_hover_text(aurora_i18n::tr!("inventory-cleanup-keep-tip"));
+                    if on {
+                        skipped.remove(&row.id);
+                    } else {
+                        skipped.insert(row.id);
+                    }
+                    let mut when = short_date(row.created);
+                    if row.folder {
+                        when = format!("{when} · {}", aurora_i18n::tr!("inventory-cleanup-folder-items", count = row.items));
+                    }
+                    ui.label(RichText::new(when).small().color(p.muted));
+                });
+            }
+            if rows.len() > CLEANUP_ROWS {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("inventory-cleanup-more", count = rows.len() - CLEANUP_ROWS))
+                        .small()
+                        .color(p.muted),
+                );
+            }
+        });
+    }
 }
 
 fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, options: &mut sorter::Preferences) {
@@ -715,21 +1156,6 @@ fn rules_editor(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Sta
                     ) {
                         rule.mode = [Match::All, Match::Any, Match::Phrase][mode.min(2)];
                     }
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        crate::ui::widgets::glyph(ui, "calendar-filled", p.muted, 14.0);
-                        ui.label(
-                            RichText::new(aurora_i18n::tr!("inventory-sorter-rule-before"))
-                                .small()
-                                .color(p.muted),
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(&mut rule.before)
-                                .char_limit(10)
-                                .hint_text(aurora_i18n::tr!("inventory-sorter-rule-before-hint"))
-                                .desired_width(110.0),
-                        );
-                    });
                     ui.add_space(4.0);
                     ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-rule-to")).small().color(p.muted));
                     let mut kind = if rule.pre_trash { 2 } else { usize::from(rule.target.is_some()) };

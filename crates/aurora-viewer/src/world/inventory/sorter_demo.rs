@@ -175,10 +175,21 @@ fn item(id: u128, parent: Uuid, name: String, asset_type: i32, flags: u32, agent
         base_mask: owner_mask,
         owner_mask,
         next_owner_mask: owner_mask,
-        // one in seven acquired in 2017, for the "acquired before" rules
-        created_at: if id.is_multiple_of(7) { 1_500_000_000 } else { 1_700_000_000 } + id as i64,
+        created_at: acquired(id),
         ..Default::default()
     }
+}
+
+/// 1 January 2008, 00:00 UTC.
+const Y2008: i64 = 1_199_145_600;
+/// About a year, in seconds.
+const YEAR: i64 = 31_556_952;
+
+/// An acquired date between 2008 and the end of 2026, the same on every run,
+/// for Clean up's chips and custom dates.
+fn acquired(id: u128) -> i64 {
+    let spread = (id.wrapping_mul(2_654_435_761) % (19 * YEAR as u128)) as i64;
+    Y2008 + spread
 }
 
 /// Seed the folders and about 700 entries. `scale` multiplies the Objects
@@ -263,14 +274,59 @@ pub fn seed(inv: &mut Inventory, agent: Uuid, scale: usize) {
     if let Some(f) = inv.folders.get_mut(&OBJECTS) {
         f.children.push(fatpack);
     }
-    for (name, kind) in [
-        ("Lumen - Hex Dress (Reborn Squish) - FATPACK", 6),
-        ("Lumen - Hex Dress - FATPACK HUD", 6),
-        ("Lumen - INFO CARD", 7),
-        ("Lumen - Mainstore", 3),
+    // mixed: one item from 2025, the rest from 2012 (Clean up keeps it whole)
+    for (name, kind, year) in [
+        ("Lumen - Hex Dress (Reborn Squish) - FATPACK", 6, 17),
+        ("Lumen - Hex Dress - FATPACK HUD", 6, 4),
+        ("Lumen - INFO CARD", 7, 4),
+        ("Lumen - Mainstore", 3, 4),
     ] {
-        items.push(item(next, fatpack, name.into(), kind, 0, agent));
+        let mut it = item(next, fatpack, name.into(), kind, 0, agent);
+        it.created_at = Y2008 + year * YEAR + 86_400;
+        items.push(it);
         next += 1;
+    }
+    // A delivery entirely from 2010: Clean up takes it whole.
+    let retro = Uuid::from_u128(8_605_101);
+    inv.folders
+        .insert(retro, folder(retro, OBJECTS, "Retro Mall - Skater Outfit - FATPACK", -1));
+    if let Some(f) = inv.folders.get_mut(&OBJECTS) {
+        f.children.push(retro);
+    }
+    for (name, kind) in [
+        ("Retro Mall - Skater Outfit", 6),
+        ("Retro Mall - Skater Outfit HUD", 6),
+        ("Retro Mall - read me", 7),
+        ("Retro Mall - mainstore", 3),
+    ] {
+        let mut it = item(next, retro, name.into(), kind, 0, agent);
+        it.created_at = Y2008 + 2 * YEAR + 3_600 * next as i64 % 86_400;
+        items.push(it);
+        next += 1;
+    }
+    // The user's own folders at the root, with every kind of item, old and
+    // new: Clean up opens them and takes their old items one by one.
+    for (n, name) in ["Old freebies", "Places I liked"].into_iter().enumerate() {
+        let id = Uuid::from_u128(8_605_200 + n as u128);
+        inv.folders.insert(id, folder(id, root, name, -1));
+        if let Some(f) = inv.folders.get_mut(&root) {
+            f.children.push(id);
+        }
+        for (kind, label) in [
+            (7, "Notecard"),
+            (3, "Landmark"),
+            (0, "Snapshot"),
+            (10, "Script"),
+            (1, "Sound"),
+            (20, "Dance"),
+            (21, "Gesture"),
+            (6, "Gift"),
+        ] {
+            for k in 0..3 {
+                items.push(item(next, id, format!("{label} {}", k + 1), kind, 0, agent));
+                next += 1;
+            }
+        }
     }
     inv.add_items(items);
     inv.generation += 1;

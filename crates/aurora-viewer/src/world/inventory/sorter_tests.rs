@@ -454,52 +454,30 @@ fn an_items_type_wins_over_furniture_words_in_its_name() {
 }
 
 #[test]
-fn dated_rules_take_items_acquired_before_the_date_into_pre_trash() {
+fn rules_read_words_only_and_an_old_dated_rule_takes_nothing() {
     assert_eq!(date_start("2020"), Some(1_577_836_800));
     assert_eq!(date_start("2020-06"), Some(1_590_969_600));
     assert_eq!(date_start("2020/06/15"), Some(1_592_179_200));
     assert_eq!(date_start("June 2020"), None);
     assert_eq!(date_start("2020-13"), None);
-    let mut inv = fixture(&["Old freebie dress", "New skirt Reborn", "Old Reborn skirt"]);
-    for (n, created) in [(100, 1_400_000_000), (101, 1_700_000_000), (102, 1_400_000_000)] {
-        if let Some(it) = inv.items.get_mut(&id(n)) {
-            it.created_at = created;
-        }
-    }
-    inv.generation += 1;
-    let rule = Rule {
+    // a rule saved by the first version with a date and no words: dates are
+    // Clean up's now, so it is incomplete rather than taking everything
+    let dated = Rule {
         before: "2020".into(),
         pre_trash: true,
         ..Default::default()
     };
-    assert!(rule.usable());
-    assert!(
-        !Rule {
-            before: "someday".into(),
-            ..rule.clone()
-        }
-        .usable()
-    );
+    assert!(!dated.usable());
+    let inv = fixture(&["Old freebie dress"]);
     let prefs = Preferences {
-        rules: vec![rule],
+        rules: vec![dated],
         ..Default::default()
     };
     let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
-    let to: Vec<_> = plan.moves.iter().map(|m| (m.name.as_str(), m.to.clone())).collect();
-    assert!(to.contains(&("Old freebie dress", Dest::PreTrash)));
-    assert!(to.contains(&("Old Reborn skirt", Dest::PreTrash)));
-    assert!(to.contains(&("New skirt Reborn", Dest::Path(vec!["Reborn".into(), "Skirts".into()]))));
-    let mut queue: VecDeque<Move> = plan.moves.into();
-    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
-        actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
-    }
-    // Pre-Trash sits at the root, apart from the Trash, with both old items
-    let waiting = pre_trash(&inv).expect("Pre-Trash");
-    assert_eq!(inv.folders[&waiting].info.parent, id(1));
-    let mut entries = pre_trash_entries(&inv);
-    entries.sort();
-    assert_eq!(entries, [id(100), id(102)]);
-    assert!(inv.folders[&id(11)].items.is_empty(), "nothing reached the Trash");
+    assert!(plan.moves.iter().all(|m| m.to != Dest::PreTrash));
+    // old preferences with the date still load
+    let old: Rule = serde_json::from_str(r#"{"words":"chair","folder":"Home","before":"2019","variants":true}"#).expect("old rule");
+    assert_eq!(old.words, "chair");
 }
 
 #[test]
@@ -575,23 +553,30 @@ fn add_folder(inv: &mut Inventory, at: u128, parent: u128, name: &str) {
     inv.folders.get_mut(&id(parent)).expect("parent").children.push(id(at));
 }
 
-fn add_item(inv: &mut Inventory, at: u128, parent: u128, name: &str, created: i64) {
+fn add_typed(inv: &mut Inventory, at: u128, parent: u128, name: &str, created: i64, asset_type: i32) {
     inv.add_items(vec![InvItem {
         id: id(at),
         parent: id(parent),
         name: name.into(),
-        asset_type: 6,
-        inv_type: 6,
+        asset_type,
+        inv_type: asset_type,
         owner: id(AGENT),
         created_at: created,
         ..Default::default()
     }]);
 }
 
-fn old_rule(skip_sorted: bool) -> Preferences {
+fn add_item(inv: &mut Inventory, at: u128, parent: u128, name: &str, created: i64) {
+    add_typed(inv, at, parent, name, created, 6);
+}
+
+/// A Pre-Trash word rule taking denim, freebies, the Hex dress and anything
+/// called old.
+fn word_rule(skip_sorted: bool) -> Preferences {
     Preferences {
         rules: vec![Rule {
-            before: "2020".into(),
+            words: "denim freebie hex old".into(),
+            mode: Match::Any,
             pre_trash: true,
             skip_sorted,
             ..Default::default()
@@ -632,16 +617,14 @@ fn sorted_fixture() -> Inventory {
 #[test]
 fn pre_trash_rules_reach_sorted_items_and_the_users_own_folders() {
     let inv = sorted_fixture();
-    let plan = plan(&inv, id(OBJECTS), &old_rule(false), &HashSet::new(), &HashSet::new());
+    let plan = plan(&inv, id(OBJECTS), &word_rule(false), &HashSet::new(), &HashSet::new());
     let trashed = pre_trashed(&plan);
-    // the old skirt already sorted, the old item of the user's folder and
-    // the delivery whose items are all old (whole)
+    // the denim skirt already sorted, the freebie in the user's folder, and
+    // the Hex dress delivery whole (named by the rule, never opened)
     assert_eq!(trashed, [id(40), id(200), id(300)]);
     for kept in [201, 301, 400, 401, 50, 500, 501] {
         assert!(!trashed.contains(&id(kept)), "{kept} stays");
     }
-    // a delivery with one new item is never split: its old HUD stays in it
-    assert!(!plan.moves.iter().any(|m| m.id == id(500)));
     // Pre-Trash comes first in the preview
     assert!(plan.groups().first().is_some_and(|(label, _)| label.ends_with("Pre-Trash")));
 }
@@ -649,26 +632,33 @@ fn pre_trash_rules_reach_sorted_items_and_the_users_own_folders() {
 #[test]
 fn everywhere_except_sorted_leaves_the_sorted_tree_alone() {
     let inv = sorted_fixture();
-    let plan = plan(&inv, id(OBJECTS), &old_rule(true), &HashSet::new(), &HashSet::new());
+    let plan = plan(&inv, id(OBJECTS), &word_rule(true), &HashSet::new(), &HashSet::new());
     let trashed = pre_trashed(&plan);
     assert!(!trashed.contains(&id(200)), "sorted skirt stays");
     assert!(trashed.contains(&id(300)) && trashed.contains(&id(40)));
     // the same rule run on the Sorted folder itself takes nothing there
-    let plan = super::plan(&inv, id(22), &old_rule(true), &HashSet::new(), &HashSet::new());
+    let plan = super::plan(&inv, id(22), &word_rule(true), &HashSet::new(), &HashSet::new());
     assert!(pre_trashed(&plan).is_empty());
-    let plan = super::plan(&inv, id(22), &old_rule(false), &HashSet::new(), &HashSet::new());
+    let plan = super::plan(&inv, id(22), &word_rule(false), &HashSet::new(), &HashSet::new());
     assert_eq!(pre_trashed(&plan), [id(200)]);
 }
 
-#[test]
-fn pre_trash_never_reads_the_trash_marketplace_or_excluded_folders() {
+/// The never-touched folders around [`sorted_fixture`]: an old item in the
+/// Trash, an old listing in Marketplace Listings.
+fn guarded_fixture() -> Inventory {
     let mut inv = sorted_fixture();
     add_item(&mut inv, 110, 11, "Old thing in the trash", OLD);
     inv.folders.insert(id(80), folder(id(80), id(1), "Marketplace Listings", 53));
     inv.folders.get_mut(&id(1)).expect("root").children.push(id(80));
     add_folder(&mut inv, 81, 80, "Old listing");
     add_item(&mut inv, 810, 81, "Old listed dress", OLD);
-    let mut prefs = old_rule(false);
+    inv
+}
+
+#[test]
+fn pre_trash_never_reads_the_trash_marketplace_or_excluded_folders() {
+    let inv = guarded_fixture();
+    let mut prefs = word_rule(false);
     prefs.excluded = vec![id(30)];
     let whole = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
     let trashed = pre_trashed(&whole);
@@ -688,10 +678,217 @@ fn pre_trash_never_reads_the_trash_marketplace_or_excluded_folders() {
 fn unloaded_folders_are_listed_for_the_window_to_request() {
     let mut inv = sorted_fixture();
     inv.folders.get_mut(&id(21)).expect("Reborn").state = FetchState::Unknown;
-    let plan = plan(&inv, id(OBJECTS), &old_rule(false), &HashSet::new(), &HashSet::new());
+    let plan = plan(&inv, id(OBJECTS), &word_rule(false), &HashSet::new(), &HashSet::new());
     assert!(plan.unfetched.contains(&id(21)));
     assert!(!pre_trashed(&plan).contains(&id(200)));
     // without a Pre-Trash rule nothing is read beyond the direct contents
     let plan = super::plan(&inv, id(OBJECTS), &Preferences::default(), &HashSet::new(), &HashSet::new());
     assert!(plan.unfetched.is_empty());
+}
+
+/// 15 November 2026, the day the Clean up tests count back from.
+fn today() -> i64 {
+    date_start("2026-11-15").expect("date")
+}
+
+/// Everything acquired before January 2020, of every kind.
+fn before_2020() -> Cleanup {
+    Cleanup {
+        age: Age::Custom,
+        year: 2020,
+        month: 1,
+        ..Default::default()
+    }
+}
+
+fn cleaned(plan: &CleanupPlan) -> Vec<Uuid> {
+    let mut ids: Vec<_> = plan.rows.iter().map(|r| r.id).collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn the_date_chips_count_back_from_today() {
+    let cutoff = |age: Age, now: i64| Cleanup { age, ..Default::default() }.cutoff(now);
+    assert_eq!(cutoff(Age::OneYear, today()), date_start("2025-11-15"));
+    assert_eq!(cutoff(Age::TwoYears, today()), date_start("2024-11-15"));
+    assert_eq!(cutoff(Age::ThreeYears, today()), date_start("2023-11-15"));
+    assert_eq!(cutoff(Age::FiveYears, today()), date_start("2021-11-15"));
+    // the middle of a day counts from that day; 29 February falls back
+    assert_eq!(cutoff(Age::OneYear, today() + 50_000), date_start("2025-11-15"));
+    assert_eq!(
+        cutoff(Age::OneYear, date_start("2028-02-29").expect("leap")),
+        date_start("2027-02-28")
+    );
+    let custom = Cleanup {
+        age: Age::Custom,
+        year: 2020,
+        month: 3,
+        ..Default::default()
+    };
+    assert_eq!(custom.cutoff(today()), date_start("2020-03"));
+}
+
+#[test]
+fn clean_up_takes_old_items_everywhere_and_never_splits_a_delivery() {
+    let inv = sorted_fixture();
+    let prefs = Preferences::default();
+    let plan = plan_cleanup(&inv, &prefs, &before_2020(), id(OBJECTS), today(), &HashSet::new(), &HashSet::new());
+    // the old sorted skirt, the old item of the user's folder (alone), and
+    // the delivery whose items are all old, whole
+    assert_eq!(cleaned(&plan), [id(40), id(200), id(300)]);
+    let folder = plan.rows.iter().find(|r| r.id == id(40)).expect("folder row");
+    assert!(folder.folder && folder.items == 2);
+    // the mixed delivery stays whole, its old HUD included
+    assert!(!cleaned(&plan).contains(&id(500)) && !cleaned(&plan).contains(&id(50)));
+    // "This folder" reads Objects only, "Include Sorted" off skips Sorted
+    let here = Cleanup {
+        whole: false,
+        ..before_2020()
+    };
+    assert_eq!(
+        cleaned(&plan_cleanup(
+            &inv,
+            &prefs,
+            &here,
+            id(OBJECTS),
+            today(),
+            &HashSet::new(),
+            &HashSet::new()
+        )),
+        [id(40), id(300)]
+    );
+    let unsorted = Cleanup {
+        include_sorted: false,
+        ..before_2020()
+    };
+    assert_eq!(
+        cleaned(&plan_cleanup(
+            &inv,
+            &prefs,
+            &unsorted,
+            id(OBJECTS),
+            today(),
+            &HashSet::new(),
+            &HashSet::new()
+        )),
+        [id(40), id(300)]
+    );
+    // unchecked rows stay
+    let skipped: HashSet<Uuid> = [id(200)].into();
+    let moves = plan.moves(&skipped);
+    assert_eq!(moves.len(), 2);
+    assert!(moves.iter().all(|m| m.to == Dest::PreTrash && m.id != id(200)));
+}
+
+#[test]
+fn clean_up_filters_by_type() {
+    let mut inv = sorted_fixture();
+    add_typed(&mut inv, 302, 30, "Old store landmark", OLD, 3);
+    add_typed(&mut inv, 303, 30, "Old notecard", OLD, 7);
+    let landmarks = Cleanup {
+        kinds: vec![Kind::Landmarks],
+        ..before_2020()
+    };
+    let plan = plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &landmarks,
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    );
+    assert_eq!(cleaned(&plan), [id(302)]);
+    // a delivery is taken whole only when every item in it is of a chosen kind
+    let objects = Cleanup {
+        kinds: vec![Kind::Objects],
+        ..before_2020()
+    };
+    let plan = plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &objects,
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    );
+    assert_eq!(cleaned(&plan), [id(40), id(200), id(300)]);
+    let none = Cleanup {
+        kinds: Vec::new(),
+        ..before_2020()
+    };
+    assert!(
+        plan_cleanup(
+            &inv,
+            &Preferences::default(),
+            &none,
+            id(1),
+            today(),
+            &HashSet::new(),
+            &HashSet::new()
+        )
+        .rows
+        .is_empty()
+    );
+}
+
+#[test]
+fn clean_up_never_touches_guarded_folders_worn_items_or_links() {
+    let mut inv = guarded_fixture();
+    add_typed(&mut inv, 304, 30, "Old link", OLD, 24);
+    let mut prefs = Preferences::default();
+    let plan = plan_cleanup(&inv, &prefs, &before_2020(), id(1), today(), &HashSet::new(), &HashSet::new());
+    let rows = cleaned(&plan);
+    for untouched in [110, 80, 81, 810, 304] {
+        assert!(!rows.contains(&id(untouched)), "{untouched} untouched");
+    }
+    assert!(rows.contains(&id(300)));
+    // worn, locked and excluded stay
+    let worn: HashSet<Uuid> = [id(300)].into();
+    let protected: HashSet<Uuid> = [id(40)].into();
+    let rows = cleaned(&plan_cleanup(&inv, &prefs, &before_2020(), id(1), today(), &protected, &worn));
+    assert!(!rows.contains(&id(300)) && !rows.contains(&id(40)));
+    prefs.excluded = vec![id(30)];
+    let rows = cleaned(&plan_cleanup(
+        &inv,
+        &prefs,
+        &before_2020(),
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    assert!(!rows.contains(&id(300)));
+    // the Pre-Trash folder itself is never read again
+    add_folder(&mut inv, 60, 1, "Pre-Trash");
+    add_item(&mut inv, 600, 60, "Waiting", OLD);
+    let rows = cleaned(&plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &before_2020(),
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    assert!(!rows.contains(&id(600)) && !rows.contains(&id(60)));
+}
+
+#[test]
+fn clean_up_lists_unloaded_folders_and_waits_for_them() {
+    let mut inv = sorted_fixture();
+    inv.folders.get_mut(&id(30)).expect("My stuff").state = FetchState::Unknown;
+    let plan = plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &before_2020(),
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    );
+    assert!(plan.unfetched.contains(&id(30)));
+    assert!(!cleaned(&plan).contains(&id(300)) && !cleaned(&plan).contains(&id(30)));
 }

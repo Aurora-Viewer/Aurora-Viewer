@@ -14465,8 +14465,6 @@ inventory-sorter-whole-text = { $count ->
    *[other] { $count } entries from across your inventory will move into the sort folders. Folders move as a whole and nothing is deleted, but putting them back by hand takes a while.
     }
 inventory-sorter-whole-check = I checked the preview and want to sort my whole inventory
-inventory-sorter-rule-before = Acquired before
-inventory-sorter-rule-before-hint = 2020-01-01
 inventory-sorter-to-pre-trash = Pre-Trash
 inventory-sorter-rule-pre-trash-hint = Checks everything in the folder you sort, sorted or not, at any depth. Matches wait in Pre-Trash until you confirm.
 inventory-sorter-rule-pre-trash-unsorted-hint = Checks everything in the folder you sort, at any depth, except the { $folder } folder. Matches wait in Pre-Trash until you confirm.
@@ -14483,6 +14481,85 @@ inventory-sorter-pre-trash-title = Move Pre-Trash to the Trash?
 inventory-sorter-pre-trash-text = { $count ->
     [one] 1 entry of the Pre-Trash folder goes to the Trash. You can still take it back from the Trash until it is emptied.
    *[other] { $count } entries of the Pre-Trash folder go to the Trash. You can still take them back from the Trash until it is emptied.
+    }
+inventory-cleanup-tab = Clean up
+inventory-cleanup-intro = Send everything acquired before a date to Pre-Trash, or to the Trash. A delivery folder is never split: it goes whole, or stays whole.
+inventory-cleanup-when = Acquired before
+inventory-cleanup-age-1 = Older than 1 year
+inventory-cleanup-age-2 = 2 years
+inventory-cleanup-age-3 = 3 years
+inventory-cleanup-age-5 = 5 years
+inventory-cleanup-age-custom = Custom
+inventory-cleanup-before = Acquired before { $date }
+inventory-cleanup-date = { $day } { $month } { $year }
+inventory-cleanup-month-1 = January
+inventory-cleanup-month-2 = February
+inventory-cleanup-month-3 = March
+inventory-cleanup-month-4 = April
+inventory-cleanup-month-5 = May
+inventory-cleanup-month-6 = June
+inventory-cleanup-month-7 = July
+inventory-cleanup-month-8 = August
+inventory-cleanup-month-9 = September
+inventory-cleanup-month-10 = October
+inventory-cleanup-month-11 = November
+inventory-cleanup-month-12 = December
+inventory-cleanup-types = Types
+inventory-cleanup-all = All
+inventory-cleanup-none = None
+inventory-cleanup-kind-objects = Objects
+inventory-cleanup-kind-clothing = Clothing
+inventory-cleanup-kind-body-parts = Body parts
+inventory-cleanup-kind-notecards = Notecards
+inventory-cleanup-kind-landmarks = Landmarks
+inventory-cleanup-kind-textures = Textures and snapshots
+inventory-cleanup-kind-scripts = Scripts
+inventory-cleanup-kind-sounds = Sounds
+inventory-cleanup-kind-animations = Animations
+inventory-cleanup-kind-gestures = Gestures
+inventory-cleanup-kind-materials = Materials and settings
+inventory-cleanup-kind-calling-cards = Calling cards
+inventory-cleanup-where = Where
+inventory-cleanup-whole = Whole inventory
+inventory-cleanup-this-folder = This folder
+inventory-cleanup-include-sorted = Include the { $folder } folder
+inventory-cleanup-never = Never touched: the Trash, Marketplace Listings, the Library, outfits, Favorites, excluded and locked folders, worn items and links.
+inventory-cleanup-loading = { $count ->
+    [one] Loading 1 folder…
+   *[other] Loading { $count } folders…
+    }
+inventory-cleanup-summary = { $count ->
+    [one] 1 item acquired before { $date }
+   *[other] { $count } items acquired before { $date }
+    }
+inventory-cleanup-nothing = Nothing of these types was acquired before { $date }.
+inventory-cleanup-folders = Folders, taken whole
+inventory-cleanup-folder-items = { $count ->
+    [one] 1 item
+   *[other] { $count } items
+    }
+inventory-cleanup-more = { $count ->
+    [one] …and 1 more
+   *[other] …and { $count } more
+    }
+inventory-cleanup-keep-tip = Uncheck to keep it
+inventory-cleanup-to-pre-trash = { $count ->
+    [one] Move 1 to Pre-Trash
+   *[other] Move { $count } to Pre-Trash
+    }
+inventory-cleanup-to-trash = { $count ->
+    [one] Move 1 to Trash…
+   *[other] Move { $count } to Trash…
+    }
+inventory-cleanup-trash-title = Move to the Trash?
+inventory-cleanup-trash-text = { $count ->
+    [one] 1 entry goes to the Trash. It stays recoverable there until the Trash is emptied.
+   *[other] { $count } entries go to the Trash. They stay recoverable there until the Trash is emptied.
+    }
+inventory-cleanup-trash-progress = Moving to the Trash: { $done } / { $total }
+inventory-cleanup-trash-done = { $count ->
+    [one] 1 entry moved to the Trash
+   *[other] { $count } entries moved to the Trash
     }
 parcel-visibility-mode = Hide content outside the current parcel
 parcel-visibility-help = Keep the terrain, your avatar and your HUDs. Objects, other avatars and their visual effects outside the parcel are hidden. The list chooses where this filter applies.
