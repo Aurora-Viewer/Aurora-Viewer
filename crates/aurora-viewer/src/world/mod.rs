@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod appearance_xml;
 pub mod attachment_inventory;
 pub mod attention;
+pub mod avatar_marks;
 pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
@@ -320,6 +321,10 @@ pub struct ChatLine {
     pub kind: ChatKind,
     pub source: Uuid,
     pub origin: Origin,
+    /// Said beyond the say range from where we stood when it arrived
+    /// (LLViewerChat::getChatColor, indra/newview/llviewerchat.cpp): drawn
+    /// dimmed by Preferences › Chat's factor (`ui::colors::beyond_range_alpha`).
+    pub beyond_range: bool,
 }
 
 /// The name an object speaks under in the nearby chat. A name of nothing but
@@ -593,6 +598,9 @@ pub struct World {
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
+    /// The residents marked with a colour this session (radar and
+    /// mini-map Mark menus, LLNetMap::sAvatarMarksMap).
+    pub avatar_marks: avatar_marks::AvatarMarks,
     /// The residents we dealt with lately (People › Recent).
     pub recent: recent::RecentPeople,
     /// Contact sets generation whose aliases the name cache has.
@@ -991,6 +999,7 @@ impl World {
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
+            avatar_marks: Default::default(),
             recent: Default::default(),
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
@@ -2282,6 +2291,7 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2297,6 +2307,7 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -4814,6 +4825,13 @@ impl World {
                 slurl,
             });
         }
+        // LLViewerChat::getChatColor: a resident's or an object's line said
+        // beyond the say range from where we stand now is dimmed (ours is
+        // said where we stand; a line of an unknown region is not judged)
+        let beyond_range = !kind.is_own()
+            && c.region
+                .and_then(|h| self.region_offset(h))
+                .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
         self.push_chat(ChatLine {
             time,
             from,
@@ -4821,6 +4839,7 @@ impl World {
             kind,
             source: c.source_id,
             origin: Origin::Live,
+            beyond_range,
         });
     }
 
@@ -4906,6 +4925,7 @@ impl World {
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
                 origin: Origin::Live,
+                beyond_range: false,
             };
             self.conversation_push(im.from_agent_id, line, true);
             if rlva_filter != rlva::communication::Received::Masked {
@@ -5000,6 +5020,7 @@ impl World {
             kind,
             source,
             origin: Origin::Live,
+            beyond_range: false,
         });
     }
 
@@ -5983,6 +6004,7 @@ impl World {
             kind: ChatKind::OWN,
             source: Uuid::nil(),
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.conversation_push(to, line, false);
     }
