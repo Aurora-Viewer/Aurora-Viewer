@@ -55,6 +55,13 @@
 //! hair softer than in the sorted order and left a trail behind every
 //! blended face in motion.)
 //!
+//! The resolve and the composite run on the 8 x 8 pixel tiles that hold a
+//! blended face alone: after the total alpha a compute step (`cs_tiles`)
+//! lists them, from the pass's transmittance (every tile while glowing faces
+//! are drawn), and the depth spread, the three steps and the composite are
+//! dispatched or drawn for them through indirect arguments, the targets
+//! they write being cleared first.
+//!
 //! Everything here is made the first frame the method is on, on the render
 //! thread, and nothing while it is off: the passes' shaders are a module of
 //! their own (the `ST_BEGIN` to `ST_END` part of object.wgsl is left out of
@@ -89,6 +96,10 @@ const TILE_CELLS: usize = (TILE * TILE) as usize;
 /// The tile's ranks, 16 bits each, little-endian: `void_and_cluster` of the
 /// tests made it, a test compares them.
 const TILE_BYTES: &[u8; TILE_CELLS * 2] = include_bytes!("oit_stochastic_tile.bin");
+/// The tiles of the resolve's dispatch to a row (oit_stochastic.wgsl
+/// `TILE_ROW`): its rows are the tiles over this, far under a device's
+/// 65 535 workgroups of a dimension.
+const TILE_ROW: u32 = 256;
 /// The most samples a stochastic pass takes (the expand map's size).
 pub const MAX_PASS_SAMPLES: u32 = 8;
 /// The temporal blend's least weight of the current frame (where the
@@ -914,10 +925,11 @@ impl Stochastic {
         };
         queue.write_buffer(&self.resolve_params, 0, bytemuck::bytes_of(&rp));
         // the arguments of the tiles, counted again from nothing: the
-        // dispatch's workgroups, 1, 1, then the quads' 6 vertices and
-        // their instances
+        // dispatch's row of `TILE_ROW` workgroups, its rows (raised by
+        // `cs_tiles`) and 1, then the quads' 6 vertices and their
+        // instances (the tile count)
         if let Some(t) = &self.targets {
-            queue.write_buffer(&t.tiles, 0, bytemuck::cast_slice(&[0u32, 1, 1, 0, 6, 0, 0, 0]));
+            queue.write_buffer(&t.tiles, 0, bytemuck::cast_slice(&[TILE_ROW, 0, 1, 0, 6, 0, 0, 0]));
         }
         self.history_ready = true;
         self.glow = f.glow;
@@ -2010,6 +2022,52 @@ mod tests {
         assert_eq!(u64::from(MAX_PASS_SAMPLES * 4 + 16), 48);
     }
 
+    /// The rows of the resolve's dispatch for a target: the tiles over
+    /// `TILE_ROW`, rounded up.
+    fn tile_rows(width: u32, height: u32) -> u32 {
+        (width.div_ceil(8) * height.div_ceil(8)).div_ceil(TILE_ROW)
+    }
+
+    #[test]
+    fn the_dispatch_of_every_tile_stays_under_the_workgroup_limit() {
+        // 65 535 workgroups a dimension on DX12 and on AMD and Intel Vulkan
+        const LIMIT: u32 = 65_535;
+        assert_eq!(tile_rows(3840, 2160), 507);
+        // 4K, 8K, an ultrawide, and a scaled size (FSR's render size is
+        // smaller than the window: the target is the render's)
+        for (w, h) in [
+            (3840, 2160),
+            (7680, 4320),
+            (3440, 1440),
+            (2560, 1440),
+            (1920, 1080),
+            (1278, 1360),
+            (1, 1),
+        ] {
+            let rows = tile_rows(w, h);
+            assert!((1..=LIMIT).contains(&rows), "{w}x{h}: {rows} rows");
+            // every tile has a slot: the rows hold them, the last partly
+            assert!(rows * TILE_ROW >= w.div_ceil(8) * h.div_ceil(8));
+        }
+        // and the row's own width is a workgroup count
+        const { assert!(TILE_ROW <= LIMIT) };
+        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace("\r\n", "\n");
+        assert!(resolve.contains(&format!("const TILE_ROW = {TILE_ROW}u;")));
+        assert!(resolve.contains("atomicMax(&tile_out[1], i / TILE_ROW + 1u);"));
+        assert!(resolve.contains("atomicAdd(&tile_out[5], 1u);"));
+    }
+
+    /// Writes `oit_stochastic_tile.bin` again from `void_and_cluster`:
+    /// `cargo test --workspace write_the_tile_file -- --ignored`, then commit
+    /// the file (the test above compares it with the generator).
+    #[test]
+    #[ignore = "writes src/oit_stochastic_tile.bin"]
+    fn write_the_tile_file() {
+        let bytes: Vec<u8> = void_and_cluster().into_iter().flat_map(u16::to_le_bytes).collect();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/oit_stochastic_tile.bin");
+        std::fs::write(path, bytes).expect("write the tile file");
+    }
+
     #[test]
     fn the_shader_reads_the_tile_where_the_buffer_holds_it() {
         let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
@@ -2017,6 +2075,12 @@ mod tests {
         assert!(object.contains("const ST_SEEDS: u32 = 2048u;"));
         assert_eq!(SEEDS, 2048);
         assert!(object.contains("st_masks[(st.samples + 1u) * ST_SEEDS + (px.y & (ST_TILE - 1u)) * ST_TILE"));
+        // the lines the Rust copies above (`xi24`, `frame_fraction`) mirror:
+        // a source-text check, so that they cannot drift unseen (the shader's
+        // own arithmetic is not run by the tests)
+        assert!(object.contains("let xi24 = ((2u * rank + 1u) * 2048u + (layer >> 8u) + frame) & 0xffffffu;"));
+        assert!(object.contains("frame = st.frame_seed >> 8u;"));
+        assert!(object.contains("let dither = f32(xi24) / 16777216.0;"));
     }
 
     /// The shader's `st_hash` (PCG) and its per-pixel, per-layer subset index.

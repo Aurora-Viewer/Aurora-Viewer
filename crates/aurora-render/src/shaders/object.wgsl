@@ -1936,7 +1936,7 @@ fn st_hash(v: u32) -> u32 {
 
 // The whole S-bit mask of a fragment of alpha `a`: R = floor(a S + xi) of the
 // S samples, with xi in 24-bit fixed point, so that its mean over a tile is
-// exactly 1/2 and E[R] = a S.
+// 1/2 to within one stratum (1/4096) and E[R] = a S.
 fn st_mask(px: vec2<u32>, tie: u32, prim: u32, a: f32) -> u32 {
     // the primitive's own seed: it rotates the dither, so that layers stay
     // decorrelated, and (with the frame's when temporal) picks the subset

@@ -435,8 +435,10 @@ fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32, f32)> {
 fn glass_patch_spec(value: Option<&str>) -> Option<(f32, f32)> {
     let value = value?;
     let mut parts = value.split(',').map(str::trim);
-    let percent = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(10.0).clamp(1.0, 100.0);
-    let alpha = parts.next().and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.5).clamp(0.02, 1.0);
+    // (`nan` and `inf` parse as numbers: only finite values count)
+    let number = |s: &str| s.parse::<f32>().ok().filter(|v| v.is_finite());
+    let percent = parts.next().and_then(number).unwrap_or(10.0).clamp(1.0, 100.0);
+    let alpha = parts.next().and_then(number).unwrap_or(0.5).clamp(0.02, 1.0);
     Some((percent, alpha))
 }
 
@@ -8542,6 +8544,7 @@ mod sun_tests {
         // transparent
         assert_eq!(glass_patch_spec(Some("on")), Some((10.0, 0.5)));
         assert_eq!(glass_patch_spec(Some("500,0")), Some((100.0, 0.02)));
+        assert_eq!(glass_patch_spec(Some("nan,inf")), Some((10.0, 0.5)));
     }
 }
 

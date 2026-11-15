@@ -28,6 +28,12 @@
 // 4. fs_composite: per sample of the scene, the opaque colour dimmed by that
 //    sample's transparency (the blend's destination factor) plus the
 //    resolved colour.
+//
+// Steps 1 to 4 run on the 8 x 8 pixel tiles that hold a blended face alone
+// (`cs_tiles`, after the total alpha: the tiles are listed, the steps are
+// dispatched and the composite is drawn for them through indirect
+// arguments); the targets they write are cleared first, which is what they
+// write for a pixel with nothing.
 // 5. fs_composite_glow: the blended faces' glow, accumulated like their
 //    colour (object.wgsl fs_st_glow) and corrected the same way, added to
 //    the scene alpha (the glow amount) once the composite has dimmed it.
@@ -160,9 +166,21 @@ fn frame_weight(c: vec3<f32>, unsure: f32) -> f32 {
 @group(0) @binding(14) var<storage, read_write> tile_out: array<atomic<u32>>;
 const TILE_FIRST = 8u;
 
-// The pixel of invocation `l` of the workgroup `wg`: one workgroup a tile.
-fn tile_pixel(wg: u32, l: vec3<u32>) -> vec3<u32> {
-    let t = tile_list[TILE_FIRST + wg];
+// The tiles are dispatched 256 to a row (the arguments start at [256, 0, 1]
+// and `cs_tiles` raises the rows): a 1-D dispatch of every tile of a large
+// target would pass the 65 535 workgroups of a dimension. The count of the
+// tiles is the draw's instance count, word 5.
+const TILE_ROW = 256u;
+
+// The listed tile of the workgroup `wg` (the last row is partial: the steps
+// leave at once past the count, a decision of the workgroup alone).
+fn tile_index(wg: vec3<u32>) -> u32 {
+    return wg.x + wg.y * TILE_ROW;
+}
+
+// The pixel of invocation `l` of the listed tile `idx`: one workgroup a tile.
+fn tile_pixel(idx: u32, l: vec3<u32>) -> vec3<u32> {
+    let t = tile_list[TILE_FIRST + idx];
     return vec3<u32>((t & 0xffffu) * 8u + l.x, (t >> 16u) * 8u + l.y, 0u);
 }
 
@@ -200,16 +218,20 @@ fn cs_tiles(
     }
     workgroupBarrier();
     if (li == 0u && atomicLoad(&tile_blended) != 0u) {
-        // (the dispatch's count, the draw's instance count, then the tile)
-        let i = atomicAdd(&tile_out[0], 1u);
-        atomicAdd(&tile_out[5], 1u);
+        // (the draw's instance count, the rows the dispatch needs, then the tile)
+        let i = atomicAdd(&tile_out[5], 1u);
+        atomicMax(&tile_out[1], i / TILE_ROW + 1u);
         atomicStore(&tile_out[TILE_FIRST + i], wg.x | (wg.y << 16u));
     }
 }
 
 @compute @workgroup_size(8, 8)
 fn cs_resolve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-    let g = tile_pixel(wg.x, l);
+    let idx = tile_index(wg);
+    if (idx >= tile_list[5]) {
+        return;
+    }
+    let g = tile_pixel(idx, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -339,7 +361,11 @@ fn last_frame(px: vec2<i32>, aux: vec4<f32>, total: f32) -> vec4<f32> {
 
 @compute @workgroup_size(8, 8)
 fn cs_temporal(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-    let g = tile_pixel(wg.x, l);
+    let idx = tile_index(wg);
+    if (idx >= tile_list[5]) {
+        return;
+    }
+    let g = tile_pixel(idx, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -373,7 +399,11 @@ fn cs_temporal(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
 
 @compute @workgroup_size(8, 8)
 fn cs_smooth(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-    let g = tile_pixel(wg.x, l);
+    let idx = tile_index(wg);
+    if (idx >= tile_list[5]) {
+        return;
+    }
+    let g = tile_pixel(idx, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
