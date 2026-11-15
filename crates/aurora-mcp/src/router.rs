@@ -1055,6 +1055,7 @@ impl McpRouter {
             }
 
             "object_contents"
+            | "object_copy_contents_to_inventory"
             | "object_set_permissions"
             | "task_item_permissions"
             | "task_item_remove"
@@ -1076,6 +1077,7 @@ impl McpRouter {
                 let bool_arg = |key: &str| args.get(key).and_then(Value::as_bool);
                 let request = match name {
                     "object_contents" => ViewerRequest::ObjectContents { object_local_id },
+                    "object_copy_contents_to_inventory" => ViewerRequest::ObjectCopyContents { object_local_id },
                     "object_set_permissions" => ViewerRequest::ObjectSetPermissions {
                         object_local_id,
                         copy: bool_arg("next_owner_copy"),
@@ -1110,7 +1112,7 @@ impl McpRouter {
                     },
                 };
                 let lease = if name == "object_contents" { None } else { lease_id };
-                let resp = self.send_to_viewer(lease, request, 20_000).await?;
+                let resp = self.send_to_viewer(lease, request, 70_000).await?;
                 Ok(text_block(into_json(resp)))
             }
             "lsl_inspect_object_scripts" => {
@@ -2765,6 +2767,16 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
             in_compact_profile: true,
         },
         ToolDefinition {
+            name: "object_copy_contents_to_inventory".into(),
+            description: "What a buyer does with a product box: Open, then Copy to Inventory. The prim's whole contents go into a new top-level folder named after it (no-copy items MOVE out of the object, as in the viewer's window), and it answers with the folder's id and path and every item's id once they have all arrived.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "object_local_id": { "type": "integer" } },
+                "required": ["object_local_id"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "object_set_permissions".into(),
             description: "Set an object's OWN next-owner copy / modify / transfer (as on the build tool's General tab), and answer once its properties show them. A copy taken afterwards (take_copy) carries them. Omitted flags stay as they are.".into(),
             input_schema: json!({
@@ -3894,7 +3906,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 118, "expected 118 total tools (43 Legacy + 75 Aurora-native)");
+        assert_eq!(defs.len(), 119, "expected 119 total tools (43 Legacy + 76 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [

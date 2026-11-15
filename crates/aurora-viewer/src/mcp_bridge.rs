@@ -1356,6 +1356,9 @@ impl App {
             ViewerRequest::ObjectContents { object_local_id } => {
                 self.start_mcp_contents(object_local_id, contents::ContentsOp::List, reply_tx);
             }
+            ViewerRequest::ObjectCopyContents { object_local_id } => {
+                self.start_mcp_contents(object_local_id, contents::ContentsOp::CopyToInventory, reply_tx);
+            }
             ViewerRequest::TaskItemPermissions {
                 object_local_id,
                 item_id,
@@ -2430,7 +2433,9 @@ impl App {
                     })
                     .unwrap_or_else(|| format!("Prim {}", o.key.local_id));
                 let name_known = props.is_some_and(|p| !p.name.is_empty());
-                if !needle.is_empty() && !obj_name.to_ascii_lowercase().contains(&needle) {
+                // an object not named yet is kept (name_known: false) so the scan waits for
+                // its name instead of filtering it out under "Prim <id>"
+                if name_known && !needle.is_empty() && !obj_name.to_ascii_lowercase().contains(&needle) {
                     return None;
                 }
                 let desc = props.map(|p| p.description.clone()).unwrap_or_default();

@@ -93,6 +93,8 @@ pub(super) enum ContentsOp {
         body: String,
         replace: bool,
     },
+    /// "Copy to Inventory": the whole contents into a new folder.
+    CopyToInventory,
     /// The object's own next-owner permissions.
     ObjectNextOwner {
         copy: Option<bool>,
@@ -127,6 +129,15 @@ enum Check {
 }
 
 enum Stage {
+    /// Copy to Inventory sent: waiting for the folder to hold every item.
+    Copied {
+        /// The id asked for; the server may answer another (reply.created), so
+        /// the folder is also recognised by its name among new top-level ones.
+        folder: Uuid,
+        folder_name: String,
+        before: HashSet<Uuid>,
+        names: Vec<String>,
+    },
     /// Waiting for a fresh listing before acting.
     Fetch { op: ContentsOp, asked: bool },
     /// Waiting for a listing that shows the change.
@@ -267,9 +278,16 @@ impl App {
         let now = Instant::now();
         let pending = std::mem::take(&mut self.mcp_bridge.pending_contents);
         for mut p in pending {
-            if now.duration_since(p.started) > DEADLINE {
+            // a box's whole contents may take a while (the window allows 60 s)
+            let deadline = if matches!(p.stage, Stage::Copied { .. }) {
+                Duration::from_secs(60)
+            } else {
+                DEADLINE
+            };
+            if now.duration_since(p.started) > deadline {
                 let what = match &p.stage {
                     Stage::Fetch { .. } => "the object's contents never arrived",
+                    Stage::Copied { .. } => "the folder was made but not every item arrived in it",
                     Stage::Verify { .. } => "the change was sent but never showed in the object's contents",
                     Stage::NotecardMade { .. } => "the notecard was made but never appeared in inventory",
                     Stage::RemoveThenAdd { .. } => "the old item was never removed",
@@ -361,6 +379,46 @@ impl App {
                     self.relist(p.object_uuid);
                 }
                 None
+            }
+            Stage::Copied {
+                folder,
+                folder_name,
+                before,
+                names,
+            } => {
+                let inv = &self.world.inventory;
+                // the folder asked for, or a new top-level one of its name
+                let candidates: Vec<Uuid> = inv
+                    .folders
+                    .values()
+                    .filter(|f| {
+                        f.info.id == *folder
+                            || (!f.library && f.info.parent == inv.root && &f.info.name == folder_name && !before.contains(&f.info.id))
+                    })
+                    .map(|f| f.info.id)
+                    .collect();
+                let Some((found, arrived)) = candidates.into_iter().find_map(|fid| {
+                    let arrived: Vec<&aurora_net::inventory::InvItem> = inv.items.values().filter(|it| it.parent == fid).collect();
+                    names
+                        .iter()
+                        .all(|n| arrived.iter().any(|it| &it.name == n))
+                        .then_some((fid, arrived))
+                }) else {
+                    return None;
+                };
+                let folder = &found;
+                let items: Vec<Value> = arrived
+                    .iter()
+                    .map(|it| json!({ "item_id": it.id.to_string(), "name": it.name, "asset_type": it.asset_type }))
+                    .collect();
+                Some(Ok(ViewerResponse::Json(json!({
+                    "ok": true,
+                    "verified": true,
+                    "folder_id": folder.to_string(),
+                    "folder_path": self.inventory_folder_path(*folder),
+                    "item_count": items.len(),
+                    "items": items,
+                }))))
             }
             Stage::NotecardMade {
                 name,
@@ -541,6 +599,39 @@ impl App {
                     last_list: now,
                 };
                 None
+            }
+            ContentsOp::CopyToInventory => {
+                let items: Vec<TaskItem> = items.into_iter().filter(|it| !it.is_folder).collect();
+                if items.is_empty() {
+                    return Some(Err(McpError::InvalidParams("the object's contents are empty".into())));
+                }
+                let name = self
+                    .build
+                    .props
+                    .get(&p.object_uuid)
+                    .map(|pr| pr.name.clone())
+                    .filter(|n| !n.is_empty())?; // its name is on its way
+                let names: Vec<String> = items.iter().map(|it| it.name.clone()).collect();
+                let folder_name = crate::build::task_inventory::contents_folder_name(&name);
+                let inv = &self.world.inventory;
+                let before: HashSet<Uuid> = inv
+                    .folders
+                    .values()
+                    .filter(|f| f.info.parent == inv.root && f.info.name == folder_name)
+                    .map(|f| f.info.id)
+                    .collect();
+                match self.mcp_copy_contents(p.object_uuid, name, items) {
+                    Ok(folder) => {
+                        p.stage = Stage::Copied {
+                            folder,
+                            folder_name,
+                            before,
+                            names,
+                        };
+                        None
+                    }
+                    Err(reason) => Some(Err(McpError::PermissionDenied(reason))),
+                }
             }
             ContentsOp::Remove { item } => {
                 let it = match item.find(&items) {

@@ -287,6 +287,10 @@ pub enum ViewerRequest {
         modify: Option<bool>,
         transfer: Option<bool>,
     },
+    /// "Copy to Inventory" of a prim's whole contents into a new folder.
+    ObjectCopyContents {
+        object_local_id: u32,
+    },
     /// Move agent-inventory items to the Trash (never purged), read back.
     InventoryDelete {
         item_ids: Vec<Uuid>,
@@ -806,6 +810,7 @@ impl ViewerRequest {
             | ViewerRequest::TaskItemPermissions { .. }
             | ViewerRequest::ObjectSetPermissions { .. }
             | ViewerRequest::InventoryDelete { .. }
+            | ViewerRequest::ObjectCopyContents { .. }
             | ViewerRequest::TaskItemRemove { .. }
             | ViewerRequest::TaskItemAdd { .. }
             | ViewerRequest::TaskNotecardWrite { .. }

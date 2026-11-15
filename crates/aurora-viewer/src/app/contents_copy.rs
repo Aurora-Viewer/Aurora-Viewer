@@ -324,7 +324,31 @@ impl App {
     }
 
     /// createNewCategory under the root, or under Clothing for a copy to wear.
-    fn create_contents_folder(&mut self, request: CopyRequest) {
+    /// MCP (object_copy_contents_to_inventory): "Copy to Inventory" without the
+    /// move warning (the agent asked for exactly this; no-copy items move, as
+    /// in the window). Answers the new folder's id, or why it cannot.
+    pub(crate) fn mcp_copy_contents(
+        &mut self,
+        object: Uuid,
+        name: String,
+        items: Vec<aurora_net::build::TaskItem>,
+    ) -> Result<Uuid, String> {
+        let request = CopyRequest {
+            object,
+            name,
+            items,
+            transfer: crate::build::task_inventory::ContentsTransfer {
+                moved: Vec::new(),
+                scripted: false,
+            },
+            wear: None,
+        };
+        let request = refresh_copy(request, &self.build, &self.world)?;
+        self.create_contents_folder(request)
+            .ok_or_else(|| "the folder could not be made".to_owned())
+    }
+
+    fn create_contents_folder(&mut self, request: CopyRequest) -> Option<Uuid> {
         let id = Uuid::new_v4();
         let name = crate::build::task_inventory::contents_folder_name(&request.name);
         self.inventory_ui
@@ -337,18 +361,19 @@ impl App {
         };
         if !rules::destination(inv, parent) {
             self.contents_copy_failed(id, aurora_i18n::tr!("task-transfer-destination").to_owned());
-            return;
+            return None;
         }
         let change = match rules::create_folder(parent, &name) {
             Ok(change) => change,
             Err(reason) => {
                 self.contents_copy_failed(id, reason);
-                return;
+                return None;
             }
         };
         let Some(aurora_net::inventory::operations::Operation::Folder { id: folder, .. }) = change.operations.first() else {
-            return;
+            return None;
         };
+        let folder_id = *folder;
         log::info!("contents copy: folder for {} item(s) of {}", request.items.len(), request.object);
         self.contents_copies.folders.insert(
             id,
@@ -360,6 +385,7 @@ impl App {
             },
         );
         self.send(NetCommand::EditInventory { request: id, change });
+        Some(folder_id)
     }
 
     /// The folder is there: every item goes into it (MoveTaskInventory, one
