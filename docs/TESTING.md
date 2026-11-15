@@ -10299,8 +10299,8 @@ live in `#Aurora/Wearable Favorites`: nine wearables, five with a picture
 (round, wide and tall, cropped to the square), the others with their type
 icon, a long gown name cut to one line, seven folders (Spring is empty).
 A row's second line is the attachment point alone (none for clothing and
-body parts). Worn items have a violet ring and check badge on their
-picture. Double-click, or the button at the end of the hovered row, wears
+body parts). Worn rows have a faint violet wash and end with a violet
+check. Double-click, or the button at the end of the hovered row, wears
 or takes off, as the outfit lists, and a line at the bottom says so for a
 few seconds; right-click gives the wearable menu, Add to folder and Remove
 from favorites; drag a wearable from the inventory onto the list to add it

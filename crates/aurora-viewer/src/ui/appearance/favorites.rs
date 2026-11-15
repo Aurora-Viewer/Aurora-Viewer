@@ -11,9 +11,9 @@
 //! three buttons. It lists the folders downwards and never scrolls
 //! sideways, at any window width (human decision, 2026-11-15).
 //! A row's second line is the attachment point alone (human decision,
-//! 2026-11-15); the type is in its tooltip and the search. Worn shows on
-//! the picture, and a button on the hovered row wears or takes off, as a
-//! double-click does.
+//! 2026-11-15); the type is in its tooltip and the search. A worn row has
+//! a faint violet wash and a check at its end; on the hovered row a button
+//! there wears or takes off, as a double-click does.
 //! Rows can be dragged into a custom order (`widgets::reorder`; human
 //! request, 2026-11-15), which the Legacy window does not have.
 
@@ -419,10 +419,17 @@ fn list_area(
                     Some(p.violet.gamma_multiply(0.25))
                 } else if response.hovered() && !layout.busy() {
                     Some(p.raised)
+                } else if is_worn {
+                    // worn: a faint wash, the check says it at the end
+                    Some(p.violet.gamma_multiply(WORN_WASH))
                 } else {
                     None
                 };
-                paint_row(ui, p, at, it, texture, is_worn, point.as_deref(), face);
+                // the hovered row's Wear button takes the check's place
+                let toggle = (!layout.busy() && ui.rect_contains_pointer(at))
+                    .then(|| items::wear_toggle(world, it, is_worn))
+                    .flatten();
+                paint_row(ui, p, at, it, texture, is_worn && toggle.is_none(), point.as_deref(), face);
                 if response.clicked() || response.secondary_clicked() {
                     let modifiers = ui.input(|i| i.modifiers);
                     st.favorites.selection.click(it.id, order, modifiers, response.secondary_clicked());
@@ -432,9 +439,7 @@ fn list_area(
                 items::double_click(response, world, it, is_worn, actions);
                 // the same from a button on the hovered row, for those who
                 // would not guess the double-click (Aurora's own)
-                if !layout.busy()
-                    && ui.rect_contains_pointer(at)
-                    && let Some(action) = items::wear_toggle(world, it, is_worn)
+                if let Some(action) = toggle
                     && wear_button(ui, p, at, it, is_worn)
                 {
                     actions.push(action);
@@ -592,6 +597,8 @@ fn wear_button(ui: &mut egui::Ui, p: &Palette, row: Rect, it: &InvItem, worn: bo
 }
 
 const WEAR_BUTTON: f32 = 28.0;
+/// How strongly a worn row is washed in violet (a selected row is 0.25).
+const WORN_WASH: f32 = 0.07;
 
 /// "Wearing Boots", "Taking off Boots": the status line after a button or
 /// a double-click.
@@ -604,10 +611,10 @@ fn asked_status(it: &InvItem, worn: bool) -> String {
     }
 }
 
-/// One picture row at `rect`: its face (selected, hovered, none), the
-/// picture (or the type icon) ringed in violet with a check badge when
-/// worn, the name, and the attachment point below it when there is one.
-/// The right end is kept for the hovered row's Wear button.
+/// One picture row at `rect`: its face (selected, hovered, worn, none),
+/// the picture (or the type icon), the name, the attachment point below it
+/// when there is one, and a check at the right end when `check` (a worn
+/// row, unless its Wear button is shown there).
 #[allow(clippy::too_many_arguments)]
 fn paint_row(
     ui: &egui::Ui,
@@ -615,7 +622,7 @@ fn paint_row(
     rect: Rect,
     it: &InvItem,
     texture: Option<&egui::TextureHandle>,
-    worn: bool,
+    check: bool,
     point: Option<&str>,
     face: Option<egui::Color32>,
 ) {
@@ -638,19 +645,6 @@ fn paint_row(
             .tint(tint)
             .paint_at(ui, Rect::from_center_size(pic.center(), Vec2::splat(22.0)));
     }
-    if worn {
-        // the "equipped" mark on the item itself, as game inventories show it
-        ui.painter()
-            .rect_stroke(pic, radius, egui::Stroke::new(2.0, p.violet), egui::StrokeKind::Inside);
-        let badge = pic.right_bottom() + Vec2::splat(3.0);
-        ui.painter()
-            .circle_filled(badge, 8.5, face.map_or(p.panel, |face| p.panel.blend(face)));
-        if let Some(t) = icons::global("circle-check-filled") {
-            egui::Image::new(&t)
-                .tint(p.violet)
-                .paint_at(ui, Rect::from_center_size(badge, Vec2::splat(15.0)));
-        }
-    }
     let left = pic.right() + 10.0;
     let width = (rect.right() - left - WEAR_BUTTON - 10.0).max(20.0);
     let name_font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
@@ -661,6 +655,12 @@ fn paint_row(
     ui.painter().galley(egui::pos2(left, top), name.clone(), p.ink);
     if let Some(sub) = sub {
         ui.painter().galley(egui::pos2(left, top + name.size().y + 2.0), sub, p.muted);
+    }
+    if check && let Some(t) = icons::global("circle-check-filled") {
+        let center = egui::pos2(rect.right() - 6.0 - WEAR_BUTTON / 2.0, rect.center().y);
+        egui::Image::new(&t)
+            .tint(p.violet)
+            .paint_at(ui, Rect::from_center_size(center, Vec2::splat(15.0)));
     }
 }
 
