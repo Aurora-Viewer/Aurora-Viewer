@@ -1018,6 +1018,10 @@ pub struct Scene {
     /// When objects were last drawn in a new place or turn by a move sync:
     /// out of the rain's shelter map for a while after (`moves_for_shelter`).
     moved_lately: HashMap<usize, Instant>,
+    /// This sync follows a shift of the render origin (a region crossing,
+    /// the GPU's recovery): every object is placed anew, none moved, so
+    /// `apply_move` records no move (`new_pose_for_shelter`).
+    origin_shifted: bool,
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
@@ -1678,6 +1682,7 @@ impl Scene {
             rain_ground: Default::default(),
             mirror_objects: Default::default(),
             moved_lately: HashMap::new(),
+            origin_shifted: false,
             selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
@@ -2313,6 +2318,8 @@ impl Scene {
         }
         self.removal_pending[i] = false;
         self.sets.forget(i);
+        // (a new object in the slot is not held out of the shelter map)
+        self.moved_lately.remove(&i);
         self.anchors.forget(i);
         self.pick.remove(i);
         self.list_index.remove(i);
@@ -2365,6 +2372,7 @@ impl Scene {
         // (our avatar is a first appearance again at the next login)
         self.loading = Default::default();
         self.last_origin = None;
+        self.moved_lately.clear();
         self.sets.clear();
         self.anchors.clear();
         self.hud_roots.clear();
@@ -2983,7 +2991,8 @@ impl Scene {
             }
         }
 
-        if self.update_origin(world) {
+        self.origin_shifted = self.update_origin(world);
+        if self.origin_shifted {
             renderer.cut_motion_history();
             self.water.clear(renderer);
         }
@@ -3008,7 +3017,7 @@ impl Scene {
             self.moved_lately.retain(|&idx, at| {
                 let held = now.saturating_duration_since(*at) < MOVED_SHELTER_HOLD;
                 if !held {
-                    let _ = world.objects.get_mut(idx);
+                    world.objects.touch(idx);
                 }
                 held
             });
@@ -3454,7 +3463,7 @@ impl Scene {
         // new pose drawn counts, whatever moved it: a script's llSetRot on a
         // timer reports no motion)
         let now = self.held_at.unwrap_or_else(Instant::now);
-        if m.changed && !m.xf.2 && m.anchor.is_none() {
+        if Self::new_pose_for_shelter(m.changed, m.xf.2, m.anchor.is_some(), self.origin_shifted) {
             self.moved_lately.insert(idx, now);
         }
         let physical = Self::moves_for_shelter(world, &self.moved_lately, idx, now);
@@ -4362,6 +4371,17 @@ impl Scene {
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
         self.gpu[idx] = g;
+    }
+
+    /// Whether a move sync drew object `idx` in a new pose of its own, which
+    /// holds it out of the rain's shelter map (`MOVED_SHELTER_HOLD`): its
+    /// model matrix changed, it is no HUD and not placed by the GPU from an
+    /// anchor, and the render origin did not shift this sync. A region
+    /// crossing changes every object's matrix: counted as moves, nothing
+    /// stood in the map for 5 s, the rain fell inside every building and
+    /// the weather memory wetted (or snowed on) the floors under them.
+    pub(super) fn new_pose_for_shelter(changed: bool, hud: bool, anchored: bool, origin_shifted: bool) -> bool {
+        changed && !hud && !anchored && !origin_shifted
     }
 
     /// Whether object `idx` moves as far as the rain's shelter map is

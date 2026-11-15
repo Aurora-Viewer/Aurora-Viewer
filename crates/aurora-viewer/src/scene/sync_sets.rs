@@ -987,6 +987,19 @@ mod tests {
         assert!(moving(&f, other, &none, now));
     }
 
+    #[test]
+    fn a_region_crossing_moves_nothing_out_of_the_shelter_map() {
+        use crate::scene::Scene;
+        // a new pose of its own
+        assert!(Scene::new_pose_for_shelter(true, false, false, false));
+        // the origin shifted: every matrix changed, nothing moved
+        assert!(!Scene::new_pose_for_shelter(true, false, false, true));
+        // unchanged, a HUD, or placed from an anchor
+        assert!(!Scene::new_pose_for_shelter(false, false, false, false));
+        assert!(!Scene::new_pose_for_shelter(true, true, false, false));
+        assert!(!Scene::new_pose_for_shelter(true, false, true, false));
+    }
+
     /// Test double of the scene state: rigged meshes, objects needing a
     /// sync beyond their flags, pending geometry.
     #[derive(Default)]

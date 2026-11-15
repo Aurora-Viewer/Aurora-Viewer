@@ -123,7 +123,7 @@ struct Frame {
     rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
     rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
     rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
-    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it, w the detail texture's slot (0: none)
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z flags (1 rain melts it, 2 the puddles may freeze, 4 deep snow, 8 lying snow hidden), w the detail texture's slot (0: none)
     snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
     snow_trail_step: vec4<f32>, // xy my avatar (the footprints' and deep snow's centre), zw unused
     snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
