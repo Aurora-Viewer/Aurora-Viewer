@@ -165,6 +165,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         show_name_tags: true,
         fly_override: false,
         quiet_snapshots: false,
+        animation_speed: 1.0,
+        slow_motion_animations: false,
         release_keys: false,
         marketplace: false,
         avatar_welcome: false,
