@@ -296,6 +296,34 @@ impl App {
         }
     }
 
+    /// An animation preview's Play buttons (LLPreviewAnim::play): whatever
+    /// a preview played stops first, then `asset` plays for everyone or
+    /// locally. An object's contents use it without opening the inventory's
+    /// own animation window.
+    pub(super) fn play_preview_animation(&mut self, asset: Uuid, local: bool, start: bool) {
+        if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
+            if was_local || self.demo {
+                self.world.preview_animation(playing, false);
+            }
+            if !was_local {
+                self.send(NetCommand::AgentAnimation {
+                    anim: playing,
+                    start: false,
+                });
+            }
+        }
+        if start {
+            self.record_library_asset(asset, 20);
+            if local || self.demo {
+                self.world.preview_animation(asset, true);
+            }
+            if !local {
+                self.send(NetCommand::AgentAnimation { anim: asset, start: true });
+            }
+            self.inventory_ui.playing = Some((asset, local));
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
@@ -366,28 +394,10 @@ impl App {
                 self.apply_appearance_action(action);
             }
             InvAction::Animation { asset, local, start } => {
-                if let Some((playing, was_local)) = self.inventory_ui.playing.take() {
-                    if was_local || self.demo {
-                        self.world.preview_animation(playing, false);
-                    }
-                    if !was_local {
-                        self.send(NetCommand::AgentAnimation {
-                            anim: playing,
-                            start: false,
-                        });
-                    }
-                }
                 if start {
-                    self.record_library_asset(asset, 20);
                     self.inventory_ui.open_animation(&self.egui_ctx, &self.world.inventory, asset);
-                    if local || self.demo {
-                        self.world.preview_animation(asset, true);
-                    }
-                    if !local {
-                        self.send(NetCommand::AgentAnimation { anim: asset, start: true });
-                    }
-                    self.inventory_ui.playing = Some((asset, local));
                 }
+                self.play_preview_animation(asset, local, start);
             }
             InvAction::Sound(asset) => {
                 self.record_library_asset(asset, 1);

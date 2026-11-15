@@ -84,6 +84,24 @@ pub fn task_notecard_mask(item: &InvItem, agent: Uuid, member: bool, manipulate:
     }
 }
 
+/// Whether an item of an object's contents opens in a preview
+/// (indra/newview/llpanelobjectinventory.cpp): a texture always
+/// (LLTaskTextureBridge::openItem); a sound only when the agent may copy it
+/// (LLTaskSoundBridge::buildContextMenu greys Task Open out without
+/// isItemCopyable: LLAgent::allowOperation with object manipulation, the
+/// reading of [`task_notecard_mask`]); an animation only from an object the
+/// agent may modify, or for a god (LLTaskAnimationBridge::openItem: the
+/// preview gets no item otherwise, so nothing could play). Notecards and
+/// scripts keep their own rules.
+pub fn task_preview_allowed(item: &InvItem, agent: Uuid, member: bool, manipulate: bool, object_modify: bool, god_level: u8) -> bool {
+    match item.asset_type {
+        0 => true,
+        1 => with_god(task_notecard_mask(item, agent, member, manipulate), god_level) & COPY != 0,
+        20 => object_modify || god_level > 0,
+        _ => false,
+    }
+}
+
 /// [`agent_mask`] for the agent whose inventory `inv` is.
 pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
     agent_mask(item, inv.owner)

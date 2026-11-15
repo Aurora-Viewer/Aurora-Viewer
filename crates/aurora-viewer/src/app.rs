@@ -22295,6 +22295,8 @@ impl ApplicationHandler for App {
                             };
                         }
                         self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
+                    } else if view == "task-preview" {
+                        self.demo_task_previews();
                     } else if view.starts_with("note-task") {
                         self.demo_task_notecard(&view);
                     } else if view.starts_with("note-") {

@@ -10786,6 +10786,11 @@ separate searches enabled and disabled; that preference controls only the text.
   after frame 740. Any added item must be saved before it is opened.
   Landmarks are fetched into the inventory before their place is opened,
   as in Firestorm; a landmark already present for the same asset is reused.
+- `task-preview`: an object of ours gets a texture, a sound and an
+  animation of the demo inventory in its contents, and all three open as from
+  its Contents tab: the texture's picture, the sound's Play button and the
+  animation's Play for everyone / Play locally, each window titled
+  "item (object)". Capture after frame 700.
 - `note-rez`: the notecard of `note-embedded`; its object is dragged out
   of the text from frame 650 and released over the world at frame 680. A
   new box appears where the pointer let go (RezObjectFromNotecard, the
