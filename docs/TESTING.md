@@ -6407,6 +6407,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   over a sound or a material that reuses one image in multiple maps. Only the
   material shows the shared-texture note. The note follows selected files and
   effective texture encoding, not merely the presence of a texture or material.
+- **`AURORA_DEMO_IMPORTS=texture-free`** opens the texture flow with every
+  upload price at L$0, like an account whose benefits make uploads free. The
+  total reads L$0 and Upload starts at once, with no payment confirmation; the
+  paid flows (`texture`, `sound-confirm`…) still ask. The confirmation only
+  shows for a free upload when it has destination folders to create, without
+  a price line.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
 - **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
