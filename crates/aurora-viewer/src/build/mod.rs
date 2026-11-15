@@ -946,13 +946,18 @@ pub struct BuildTool {
     pub selection_linked: bool,
     /// Prims the last one-axis linkset stretch named in its
     /// MultipleObjectUpdate (no UPD_LINKED_SETS). Ctrl+Z / Ctrl+Y name them
-    /// with the selected roots (`undo`). A later Transform of any of them
-    /// drops the batch.
+    /// with the selected roots (`undo`) once later edits of those prims have
+    /// been undone.
     stretch_prims: Vec<ObjKey>,
-    /// Pose those prims went out with. The Object tab restating the same
-    /// numbers is not a later edit: keep the batch so the first Ctrl+Z still
-    /// names the children.
+    /// Pose the last recorded step went out with. The Object tab restating
+    /// the same numbers is not a later edit.
     stretch_sent: Vec<StretchSent>,
+    /// Later Transforms of `stretch_prims` still on the simulator undo stack.
+    stretch_later: u32,
+    /// Those later Transforms already undone (simulator redo stack).
+    stretch_later_undone: u32,
+    /// The stretch itself has been undone; Ctrl+Y must name the children again.
+    stretch_undone: bool,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
     /// Mesh-header estimates refreshed from the scene before editor input.
@@ -1024,6 +1029,9 @@ impl Default for BuildTool {
             selection_linked: false,
             stretch_prims: Vec::new(),
             stretch_sent: Vec::new(),
+            stretch_later: 0,
+            stretch_later_undone: 0,
+            stretch_undone: false,
             pending_link: None,
             link_triangles: HashMap::new(),
             link_properties: HashSet::new(),
@@ -1255,10 +1263,13 @@ impl BuildTool {
 
     /// A one-axis linkset stretch sends each prim itself (no UPD_LINKED_SETS).
     /// The simulator then holds an undo step per prim, so Ctrl+Z / Ctrl+Y name
-    /// every one. A later Transform of those prims is a newer step: drop the
-    /// batch so the next undo names the selection's roots alone
-    /// (LLSelectMgr::undo, SEND_ONLY_ROOTS). Restating the numbers the stretch
-    /// already sent (the Object tab as the drag ends) is not that later step.
+    /// every one. A later Transform of those prims is a newer step: the next
+    /// undo names the selection's roots alone (LLSelectMgr::undo,
+    /// SEND_ONLY_ROOTS); the stretch batch stays, so the undo after that names
+    /// the children again. Restating the numbers the last step already sent
+    /// (the Object tab as the drag ends) is not that later step. A later
+    /// Transform after the stretch itself has been undone drops the batch:
+    /// the simulator has cleared that redo.
     fn note_stretch_transform(&mut self, handle: RegionHandle, updates: &[TransformUpdate]) {
         let stretch = updates.len() >= 2 && updates.iter().any(|u| u.scale.is_some()) && updates.iter().all(|u| !u.linked);
         if stretch {
@@ -1270,6 +1281,9 @@ impl BuildTool {
                 })
                 .collect();
             self.stretch_sent = updates.iter().map(StretchSent::from_update).collect();
+            self.stretch_later = 0;
+            self.stretch_later_undone = 0;
+            self.stretch_undone = false;
             return;
         }
         if updates
@@ -1279,8 +1293,17 @@ impl BuildTool {
             if self.restates_stretch(updates) {
                 return;
             }
-            self.stretch_prims.clear();
-            self.stretch_sent.clear();
+            if self.stretch_undone {
+                self.stretch_prims.clear();
+                self.stretch_sent.clear();
+                self.stretch_later = 0;
+                self.stretch_later_undone = 0;
+                self.stretch_undone = false;
+                return;
+            }
+            self.stretch_later += 1;
+            self.stretch_later_undone = 0;
+            self.stretch_sent = updates.iter().map(StretchSent::from_update).collect();
         }
     }
 
@@ -2022,7 +2045,8 @@ impl BuildTool {
 
     /// Ctrl+Z / Ctrl+Y: the simulator's undo history of the selected roots
     /// (LLSelectMgr::undo / redo, SEND_ONLY_ROOTS for a whole linkset), and of
-    /// the prims a one-axis linkset stretch changed beside them.
+    /// the prims a one-axis linkset stretch changed beside them, once later
+    /// edits of those prims have been undone.
     pub fn undo(&mut self, world: &World, redo: bool) {
         let units: Vec<usize> = if self.selection_linked {
             self.highlighted(world).into_iter().map(|(i, _)| i).collect()
@@ -2035,10 +2059,18 @@ impl BuildTool {
                 by_region.entry(o.key.region).or_default().push(o.full_id);
             }
         }
+        let applies = !self.selection_linked
+            && self
+                .stretch_prims
+                .iter()
+                .any(|key| world.objects.index_of(key).is_some_and(|idx| units.contains(&root_of(world, idx))));
         // A linkset stretched on one axis has an undo step of its own on every
         // prim: the roots alone would leave the children stretched, and a child
         // turned 90 degrees cannot get its size back from the root's step.
-        if !self.selection_linked {
+        // Later edits sit on top of that step: name the roots until those are
+        // undone, then the children again.
+        let name_children = applies && self.stretch_later == 0 && redo == self.stretch_undone;
+        if name_children {
             for key in &self.stretch_prims {
                 let Some(idx) = world.objects.index_of(key) else {
                     continue;
@@ -2053,6 +2085,24 @@ impl BuildTool {
                 if !ids.contains(&o.full_id) {
                     ids.push(o.full_id);
                 }
+            }
+        }
+        if by_region.is_empty() {
+            return;
+        }
+        if applies {
+            if redo {
+                if self.stretch_undone {
+                    self.stretch_undone = false;
+                } else if self.stretch_later_undone > 0 {
+                    self.stretch_later_undone -= 1;
+                    self.stretch_later += 1;
+                }
+            } else if self.stretch_later > 0 {
+                self.stretch_later -= 1;
+                self.stretch_later_undone += 1;
+            } else if !self.stretch_undone {
+                self.stretch_undone = true;
             }
         }
         for (handle, ids) in by_region {

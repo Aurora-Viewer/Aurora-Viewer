@@ -901,7 +901,7 @@ fn object_history_names_the_children_a_one_axis_linkset_stretch_changed() {
 }
 
 #[test]
-fn object_history_drops_the_stretch_children_after_a_later_transform_of_those_prims() {
+fn object_history_names_the_stretch_children_on_the_second_undo_after_a_later_move() {
     let (mut world, mut tool, mut settings) = fixture();
     let ctx = egui::Context::default();
     let root_idx = tool.roots(&world)[0];
@@ -916,7 +916,7 @@ fn object_history_drops_the_stretch_children_after_a_later_transform_of_those_pr
     let child = world.objects.get_mut(child_idx).unwrap();
     child.parent_id = root_key.local_id;
     child.parent_region = root_key.region;
-    let child_key = child.key;
+    let (child_key, child_id) = (child.key, child.full_id);
     tool.selection = vec![root_key];
     tool.send(aurora_net::build::BuildCmd::Transform {
         handle: root_key.region,
@@ -939,7 +939,8 @@ fn object_history_drops_the_stretch_children_after_a_later_transform_of_those_pr
             },
         ],
     });
-    // A later move of the root is a newer step: Ctrl+Z names the root alone.
+    // A later move of the root is a newer step: the first Ctrl+Z names the
+    // root alone, the second names every prim the stretch sent.
     tool.send(aurora_net::build::BuildCmd::Transform {
         handle: root_key.region,
         updates: vec![TransformUpdate {
@@ -962,6 +963,18 @@ fn object_history_drops_the_stretch_children_after_a_later_transform_of_those_pr
     assert!(matches!(
         tool.out.as_slice(),
         [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if ids == &vec![root_id]
+    ));
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(matches!(
+        tool.out.as_slice(),
+        [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if ids == &vec![root_id, child_id]
     ));
 }
 

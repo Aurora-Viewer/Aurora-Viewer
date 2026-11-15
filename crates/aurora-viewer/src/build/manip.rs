@@ -3540,7 +3540,8 @@ mod tests {
     /// them with the selected root: the simulator keeps one undo step per
     /// object, and the root's step cannot give a child turned 90 degrees back
     /// its place and size (LLSelectMgr::undo names the roots alone,
-    /// SEND_ONLY_ROOTS). A later Transform of those prims drops the batch.
+    /// SEND_ONLY_ROOTS). A later Transform of those prims is a newer step: the
+    /// next undo names the root alone, then the next names the children again.
     #[test]
     fn a_face_stretch_release_names_the_linkset_children_for_undo() {
         let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
@@ -3597,6 +3598,10 @@ mod tests {
         tool.undo(&world, false);
         assert!(matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]));
+        tool.out.clear();
+        tool.undo(&world, true);
+        assert!(matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Redo { ids, .. })] if ids == &[root_id, child_id]));
         // The Object tab restates the live numbers as the drag ends. That is
         // not a newer step: sending it as UPD_LINKED_SETS of the root would
         // drop the children and rescale them uniformly.
@@ -3632,7 +3637,12 @@ mod tests {
         tool.undo(&world, false);
         assert!(matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]));
-        // A later move of the root is a newer step: the next undo names the root alone.
+        tool.out.clear();
+        tool.undo(&world, true);
+        assert!(matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Redo { ids, .. })] if ids == &[root_id, child_id]));
+        // A later move of the root is a newer step: the next undo names the
+        // root alone, then the next names every prim the stretch changed.
         tool.out.clear();
         tool.send(BuildCmd::Transform {
             handle: root_key.region,
@@ -3645,11 +3655,43 @@ mod tests {
                 uniform: false,
             }],
         });
-        assert!(tool.stretch_prims.is_empty(), "a later Transform of those prims drops the batch");
+        assert_eq!(
+            tool.stretch_prims,
+            vec![root_key, children[0]],
+            "a later move keeps the stretch batch for the undo after that"
+        );
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(
+            matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id]),
+            "the first undo after a move names the root alone"
+        );
+        tool.out.clear();
+        tool.undo(&world, true);
+        assert!(
+            matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Redo { ids, .. })] if ids == &[root_id]),
+            "redoing the move names the root alone"
+        );
         tool.out.clear();
         tool.undo(&world, false);
         assert!(matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id]));
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(
+            matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]),
+            "the second undo names every prim the stretch sent"
+        );
+        tool.out.clear();
+        tool.undo(&world, true);
+        assert!(
+            matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Redo { ids, .. })] if ids == &[root_id, child_id]),
+            "redoing the stretch names the children again"
+        );
         // A selection without that linkset names its own roots alone.
         tool.selection.clear();
         tool.out.clear();
