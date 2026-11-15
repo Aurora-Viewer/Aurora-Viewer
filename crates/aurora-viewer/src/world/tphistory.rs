@@ -465,16 +465,19 @@ pub fn history_sections() -> [&'static str; 9] {
     ]
 }
 
-/// LLTeleportHistoryPanel::getNextTab with FSTPHistoryTZ "utc" (the
-/// default): the first six sections are days starting at midnight UTC,
-/// "6 days ago or earlier" goes back to the same day of the previous month and
-/// "1 month ago or earlier" to six months ago. A date in the future counts as
-/// today. Returns the index in HISTORY_SECTIONS.
-pub fn history_section(date: f64, now: f64) -> usize {
+/// LLTeleportHistoryPanel::getNextTab with FSTPHistoryTZ: the first six
+/// sections are days starting at midnight in the history's zone (`offset`:
+/// seconds to add to UTC there, 0 for UTC), "6 days ago or earlier" goes
+/// back to the same day of the previous month and "1 month ago or earlier"
+/// to six months ago, both from midnight UTC as the source counts them. A
+/// date in the future counts as today. Returns the index in
+/// HISTORY_SECTIONS.
+pub fn history_section(date: f64, now: f64, offset: f64) -> usize {
     use aurora_net::profile::{civil_from_days, days_from_civil};
     const DAY: f64 = 86_400.0;
-    let today = (now / DAY).floor();
-    let (y, m, d) = civil_from_days(today as i64);
+    let (y, m, d) = civil_from_days((now / DAY).floor() as i64);
+    // the zone's day, back in UTC seconds below
+    let today = ((now + offset) / DAY).floor();
     // LLDate::fromYMDHMS normalizes a day past the month's end, as does
     // days_from_civil
     let months_back = |n: i64| {
@@ -483,7 +486,7 @@ pub fn history_section(date: f64, now: f64) -> usize {
     };
     for i in 0..history_sections().len() - 1 {
         let lower = match i {
-            0..=5 => (today - i as f64) * DAY,
+            0..=5 => (today - i as f64) * DAY - offset,
             6 => months_back(1),
             _ => months_back(6),
         };
@@ -637,26 +640,56 @@ mod tests {
         // 2026-10-10 15:00 UTC
         let now = days_from_civil(2026, 10, 10) as f64 * DAY + 15.0 * 3600.0;
         let midnight = days_from_civil(2026, 10, 10) as f64 * DAY;
-        assert_eq!(history_section(now, now), 0);
-        assert_eq!(history_section(midnight, now), 0);
-        assert_eq!(history_section(midnight - 1.0, now), 1);
-        assert_eq!(history_section(now + DAY, now), 0, "future dates count as today");
+        assert_eq!(history_section(now, now, 0.0), 0);
+        assert_eq!(history_section(midnight, now, 0.0), 0);
+        assert_eq!(history_section(midnight - 1.0, now, 0.0), 1);
+        assert_eq!(history_section(now + DAY, now, 0.0), 0, "future dates count as today");
         for days in 2..=5 {
-            assert_eq!(history_section(midnight - (days as f64 - 0.5) * DAY, now), days);
+            assert_eq!(history_section(midnight - (days as f64 - 0.5) * DAY, now, 0.0), days);
         }
-        assert_eq!(history_section(midnight - 5.5 * DAY, now), 6);
+        assert_eq!(history_section(midnight - 5.5 * DAY, now, 0.0), 6);
         // one month back: 2026-09-10 00:00
         let month = days_from_civil(2026, 9, 10) as f64 * DAY;
-        assert_eq!(history_section(month, now), 6);
-        assert_eq!(history_section(month - 1.0, now), 7);
+        assert_eq!(history_section(month, now, 0.0), 6);
+        assert_eq!(history_section(month - 1.0, now, 0.0), 7);
         let six = days_from_civil(2026, 4, 10) as f64 * DAY;
-        assert_eq!(history_section(six, now), 7);
-        assert_eq!(history_section(six - 1.0, now), 8);
+        assert_eq!(history_section(six, now, 0.0), 7);
+        assert_eq!(history_section(six - 1.0, now, 0.0), 8);
         // January: the months before go back into the previous year
         let jan = days_from_civil(2027, 1, 31) as f64 * DAY;
-        assert_eq!(history_section(days_from_civil(2026, 12, 31) as f64 * DAY, jan), 6);
-        assert_eq!(history_section(days_from_civil(2026, 7, 31) as f64 * DAY, jan), 7);
-        assert_eq!(history_section(days_from_civil(2026, 7, 30) as f64 * DAY, jan), 8);
+        assert_eq!(history_section(days_from_civil(2026, 12, 31) as f64 * DAY, jan, 0.0), 6);
+        assert_eq!(history_section(days_from_civil(2026, 7, 31) as f64 * DAY, jan, 0.0), 7);
+        assert_eq!(history_section(days_from_civil(2026, 7, 30) as f64 * DAY, jan, 0.0), 8);
+    }
+
+    /// SLT and local time: the days start at the zone's midnight, the
+    /// months stay counted from midnight UTC.
+    #[test]
+    fn the_days_start_at_the_zones_midnight() {
+        use aurora_net::profile::days_from_civil;
+        const HOUR: f64 = 3600.0;
+        // 2026-11-14 03:00 UTC, 2026-11-13 19:00 PST
+        let utc_midnight = days_from_civil(2026, 11, 14) as f64 * DAY;
+        let now = utc_midnight + 3.0 * HOUR;
+        let pst = -8.0 * HOUR;
+        // 2026-11-13 09:00 UTC: today in SLT, yesterday in UTC
+        let morning = utc_midnight - 15.0 * HOUR;
+        assert_eq!(history_section(morning, now, pst), 0);
+        assert_eq!(history_section(morning, now, 0.0), 1);
+        // SLT's midnight is 08:00 UTC
+        let slt_midnight = utc_midnight - 16.0 * HOUR;
+        assert_eq!(history_section(slt_midnight, now, pst), 0);
+        assert_eq!(history_section(slt_midnight - 1.0, now, pst), 1);
+        // east of UTC (UTC+9): 2026-11-14 12:00 there, its day from 15:00 UTC the day before
+        let tokyo = 9.0 * HOUR;
+        assert_eq!(history_section(utc_midnight - 9.0 * HOUR, now, tokyo), 0);
+        assert_eq!(history_section(utc_midnight - 9.0 * HOUR - 1.0, now, tokyo), 1);
+        // a month back stays 2026-10-14 00:00 UTC in every zone
+        let month = days_from_civil(2026, 10, 14) as f64 * DAY;
+        for offset in [0.0, pst, tokyo] {
+            assert_eq!(history_section(month, now, offset), 6);
+            assert_eq!(history_section(month - 1.0, now, offset), 7);
+        }
     }
 
     #[test]

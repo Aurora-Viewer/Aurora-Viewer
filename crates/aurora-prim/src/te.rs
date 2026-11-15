@@ -65,6 +65,10 @@ impl TextureFace {
     pub fn planar(&self) -> bool {
         (self.media_flags >> 1) & 0x3 == 1
     }
+    /// LLTextureEntry::hasMedia: the face carries prim media (TEM_MEDIA_MASK).
+    pub fn has_media(&self) -> bool {
+        self.media_flags & 0x1 != 0
+    }
 }
 
 /// Parsed texture entry: one face record per possible face.

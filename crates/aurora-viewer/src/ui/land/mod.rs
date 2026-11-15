@@ -21,6 +21,8 @@ pub(crate) use access::import_csv;
 mod general;
 mod manage;
 mod media;
+#[cfg(test)]
+mod name_tests;
 mod objects;
 mod options;
 mod overview;
@@ -126,26 +128,56 @@ const KEY_W: f32 = 140.0;
 struct Draft {
     text: String,
     base: String,
-    editing: bool,
+    editing: Option<egui::Id>,
 }
 
 impl Draft {
     fn sync(&mut self, server: &str) {
-        if !self.editing && self.base != server {
+        if self.editing.is_none() && self.base != server {
             self.base = server.to_owned();
             self.text = server.to_owned();
         }
     }
 
+    fn reset(&mut self, server: &str) {
+        self.text = server.to_owned();
+        self.base = server.to_owned();
+        self.editing = None;
+    }
+
     /// Track the widget's focus; Some(text) when a change is committed.
     fn after(&mut self, r: &egui::Response) -> Option<String> {
-        self.editing = r.has_focus();
-        if r.lost_focus() && self.text != self.base {
-            self.base = self.text.clone();
-            return Some(self.text.clone());
+        // The name appears in both the header and Manage. An unfocused copy
+        // must not end the other editor's draft or let a refresh erase it.
+        if r.has_focus() {
+            self.editing = Some(r.id);
+        } else if self.editing.is_some_and(|id| !r.ctx.memory(|m| m.has_focus(id))) {
+            self.editing = None;
+        }
+        if r.lost_focus() {
+            return self.take_pending();
         }
         None
     }
+
+    /// Commits an edit when its widget is about to disappear, even if egui
+    /// cannot report lost focus from a widget that is no longer rendered.
+    fn take_pending(&mut self) -> Option<String> {
+        self.editing = None;
+        if self.text == self.base {
+            return None;
+        }
+        self.base.clone_from(&self.text);
+        Some(self.text.clone())
+    }
+}
+
+/// Legacy Viewer LLPanelLandGeneral: printable ASCII without pipes, at most
+/// 63 bytes (floater_about_land.xml). ASCII makes the character limit a byte limit.
+fn parcel_name_field(ui: &mut egui::Ui, editable: bool, draft: &mut Draft, width: f32) -> egui::Response {
+    widgets::restricted_text_field(ui, editable, &mut draft.text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+        egui::TextEdit::singleline(b).desired_width(width).char_limit(63)
+    })
 }
 
 /// What the tabs read about the selection, its region and the agent.
@@ -155,6 +187,8 @@ struct View {
     handle: RegionHandle,
     region: Option<RegionView>,
     agent: Uuid,
+    /// We hold a god level: every parcel is ours to edit.
+    god: bool,
     groups: Vec<GroupMembership>,
     /// The selection is in the agent's region.
     same_region: bool,
@@ -179,6 +213,7 @@ impl View {
         AgentRights {
             id: self.agent,
             groups: &self.groups,
+            god: self.god,
         }
     }
 
@@ -260,6 +295,7 @@ pub struct LandUi {
     covenant_open: bool,
     was_open: bool,
     name: Draft,
+    name_target: Option<(RegionHandle, i32)>,
     desc: Draft,
     clean_time: Draft,
     media_desc: Draft,
@@ -307,6 +343,60 @@ pub struct LandUi {
 }
 
 impl LandUi {
+    fn sync_name_target(&mut self, handle: RegionHandle, parcel: Option<&ParcelInfo>) {
+        let target = parcel.map(|parcel| (handle, parcel.local_id));
+        if self.name_target != target {
+            self.name.reset(parcel.map_or("", |parcel| parcel.name.as_str()));
+            self.name_target = target;
+        } else if let Some(parcel) = parcel {
+            self.name.sync(&parcel.name);
+        }
+    }
+
+    fn commit_name(&mut self, world: &mut World) {
+        let pending = self.name.take_pending();
+        self.apply_name(world, pending);
+    }
+
+    fn apply_name(&mut self, world: &mut World, pending: Option<String>) {
+        let Some(name) = pending else {
+            return;
+        };
+        let selected = world.land.sel.as_ref().and_then(|selection| {
+            selection
+                .parcel
+                .as_deref()
+                .map(|parcel| ((selection.handle, parcel.local_id), parcel))
+        });
+        let target = selected.map(|(target, _)| target);
+        // LLPanelLandGeneral::refresh / isParcelModifiableByAgent with
+        // GP_LAND_CHANGE_IDENTITY (llfloaterland.cpp, llviewerparcelmgr.cpp).
+        // Ownership, group powers and lease status may change while typing.
+        let can_identity = selected.is_some_and(|(_, parcel)| {
+            modifiable_by_agent(
+                parcel,
+                &AgentRights {
+                    id: world.agent_id,
+                    groups: &world.groups.groups,
+                    god: world.god_level > 0,
+                },
+                crate::world::land::powers::LAND_CHANGE_IDENTITY,
+            )
+        });
+        if target != self.name_target || !can_identity {
+            self.name.reset(selected.map_or("", |(_, parcel)| parcel.name.as_str()));
+            self.name_target = target;
+            return;
+        }
+        world.land.update(|u| u.name = name);
+    }
+
+    fn commit_name_for_transition(&mut self, page: Page, view_as_visitor: bool, world: &mut World) {
+        if page != self.page || view_as_visitor != self.view_as_visitor {
+            self.commit_name(world);
+        }
+    }
+
     /// Open on the parcel at a global position (right-click on land, mini-map).
     pub fn select_at_global(world: &mut World, gx: f64, gy: f64) {
         if let Some((h, pos, size)) = Self::region_at_global(world, gx, gy) {
@@ -492,6 +582,7 @@ impl LandUi {
         let mut streams_changed = false;
         if !*open {
             if self.was_open {
+                self.commit_name(world);
                 // onVisibilityChanged: the selection is dropped with the
                 // floater, and the objects "Show" highlighted (unhighlightAll);
                 // the pass question keeps it until answered (EXT-6464)
@@ -533,6 +624,10 @@ impl LandUi {
         }
         self.demo = demo;
         let view = self.view(world);
+        // Once before either editor: committing the header must not be
+        // undone by Manage syncing the same frame's older snapshot. A new
+        // parcel target also discards the previous parcel's unfinished draft.
+        self.sync_name_target(view.handle, view.parcel.as_deref());
         let screen = ctx.content_rect();
         // FIRE-17280: no experiences tab where the region has none
         let has_xp = demo
@@ -589,6 +684,11 @@ impl LandUi {
                 });
             });
         });
+        if !*open {
+            // The close button clears `open` after drawing the body, so flush
+            // here before the next frame takes the closed-state early return.
+            self.commit_name(world);
+        }
         dialogs::show(ctx, p, self, &view, world);
         scripts::show(ctx, p, &mut self.scripts, &view, world);
         if let Some(ids) = self.picker.show(ctx, p, world) {
@@ -647,7 +747,8 @@ impl LandUi {
             r.info.as_ref().map(|i| RegionView {
                 name: i.name.clone(),
                 owner: i.owner,
-                estate_manager: i.is_estate_manager,
+                // LLViewerRegion::canManageEstate counts a god
+                estate_manager: i.is_estate_manager || world.god_level > 0,
                 product: i.product_name.clone(),
                 sim_access: i.sim_access,
                 flags: i.region_flags,
@@ -660,6 +761,7 @@ impl LandUi {
             handle,
             region,
             agent: world.agent_id,
+            god: world.god_level > 0,
             groups: world.groups.groups.clone(),
             same_region: world.main_region == Some(handle),
             now: now_secs(),
@@ -1025,6 +1127,222 @@ fn money(v: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LAND_HANDLE: RegionHandle = 7;
+
+    fn selected_world() -> World {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        world.land.select_at(LAND_HANDLE, glam::Vec3::ZERO, (256.0, 256.0));
+        let parcel = Arc::new(ParcelInfo {
+            local_id: 3,
+            name: "Old name".into(),
+            owner_id: world.agent_id,
+            status: aurora_net::land::OS_LEASED,
+            ..Default::default()
+        });
+        world.land.apply(
+            aurora_net::land::LandEvent::Selected {
+                handle: LAND_HANDLE,
+                info: parcel,
+                result: aurora_net::land::PARCEL_RESULT_SUCCESS,
+            },
+            &crate::world::land::SelectionContext {
+                agent_region: Some(LAND_HANDLE),
+                region_id: Uuid::nil(),
+            },
+        );
+        world.land.take_commands();
+        world
+    }
+
+    fn type_name(ctx: &egui::Context, draft: &mut Draft) {
+        let (responses, _) = name_frame(ctx, draft, "Old name", vec![], true);
+        ctx.memory_mut(|m| m.request_focus(responses[0].id));
+        name_frame(ctx, draft, "Old name", vec![], true);
+        assert!(draft.editing.is_some());
+        // Model the edited field's value after the user's text entry. The
+        // next frame changes context before that response can report focus loss.
+        draft.text = "New name".into();
+        assert_eq!(draft.text, "New name");
+    }
+
+    fn sync_name_target(ui: &mut LandUi, world: &World) {
+        let parcel = world.land.sel.as_ref().and_then(|sel| sel.parcel.as_deref());
+        ui.sync_name_target(LAND_HANDLE, parcel);
+    }
+
+    fn name_frame(
+        ctx: &egui::Context,
+        draft: &mut Draft,
+        server: &str,
+        events: Vec<egui::Event>,
+        editable: bool,
+    ) -> (Vec<egui::Response>, Vec<String>) {
+        let mut responses = Vec::new();
+        let mut commits = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                draft.sync(server);
+                for location in ["header", "manage"] {
+                    ui.push_id(location, |ui| {
+                        let r = parcel_name_field(ui, editable, draft, 300.0);
+                        if let Some(name) = draft.after(&r) {
+                            commits.push(name);
+                        }
+                        responses.push(r);
+                    });
+                }
+            },
+        );
+        output.textures_delta.clear();
+        (responses, commits)
+    }
+
+    #[test]
+    fn parcel_rename_limits_typed_ascii_to_63_characters() {
+        for field in 0..2 {
+            let ctx = egui::Context::default();
+            let mut draft = Draft::default();
+            let (responses, _) = name_frame(&ctx, &mut draft, "", vec![], true);
+            ctx.memory_mut(|m| m.request_focus(responses[field].id));
+            name_frame(&ctx, &mut draft, "", vec![egui::Event::Text("a".repeat(70))], true);
+            assert_eq!(draft.text, "a".repeat(63));
+        }
+    }
+
+    #[test]
+    fn parcel_rename_shared_editors_keep_focus_and_commit_once() {
+        for field in 0..2 {
+            let ctx = egui::Context::default();
+            let mut draft = Draft::default();
+            let (responses, _) = name_frame(&ctx, &mut draft, "", vec![], true);
+            ctx.memory_mut(|m| m.request_focus(responses[field].id));
+            name_frame(&ctx, &mut draft, "", vec![egui::Event::Text("New".into())], true);
+            assert_eq!(draft.editing, Some(responses[field].id));
+            // A simulator refresh while either copy is focused cannot erase typing.
+            name_frame(&ctx, &mut draft, "Old name", vec![egui::Event::Text(" name".into())], true);
+            assert_eq!(draft.text, "New name");
+            let (_, commits) = name_frame(
+                &ctx,
+                &mut draft,
+                "Old name",
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                true,
+            );
+            assert_eq!(commits, ["New name"]);
+            assert_eq!(draft.text, "New name");
+            assert!(draft.editing.is_none());
+            let (_, commits) = name_frame(&ctx, &mut draft, "New name", vec![], true);
+            assert!(commits.is_empty());
+            assert_eq!(draft.text, "New name");
+        }
+    }
+
+    #[test]
+    fn parcel_rename_commits_before_page_or_visitor_preview_changes() {
+        for (page, visitor) in [(Page::Manage, false), (Page::Overview, true)] {
+            let ctx = egui::Context::default();
+            let mut ui = LandUi::default();
+            let mut world = selected_world();
+            sync_name_target(&mut ui, &world);
+            type_name(&ctx, &mut ui.name);
+
+            ui.page = page;
+            ui.view_as_visitor = visitor;
+            ui.commit_name_for_transition(Page::Overview, false, &mut world);
+
+            assert_eq!(
+                world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.as_str()),
+                Some("New name")
+            );
+            assert!(world.land.take_commands().iter().any(|cmd| matches!(
+                cmd,
+                aurora_net::NetCommand::Land(aurora_net::land::LandCommand::Update { update, .. }) if update.name == "New name"
+            )));
+        }
+    }
+
+    #[test]
+    fn parcel_rename_commits_when_the_about_land_window_closes() {
+        let ctx = egui::Context::default();
+        let mut ui = LandUi::default();
+        let mut world = selected_world();
+        sync_name_target(&mut ui, &world);
+        type_name(&ctx, &mut ui.name);
+
+        ui.commit_name(&mut world);
+        assert_eq!(
+            world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.as_str()),
+            Some("New name")
+        );
+        assert!(world.land.take_commands().iter().any(|cmd| matches!(
+            cmd,
+            aurora_net::NetCommand::Land(aurora_net::land::LandCommand::Update { update, .. }) if update.name == "New name"
+        )));
+    }
+
+    #[test]
+    fn parcel_rename_draft_never_moves_to_a_new_selection() {
+        let ctx = egui::Context::default();
+        let mut ui = LandUi::default();
+        let mut world = selected_world();
+        sync_name_target(&mut ui, &world);
+        type_name(&ctx, &mut ui.name);
+
+        world.land.apply(
+            aurora_net::land::LandEvent::Selected {
+                handle: LAND_HANDLE,
+                info: Arc::new(ParcelInfo {
+                    local_id: 4,
+                    name: "Another parcel".into(),
+                    owner_id: world.agent_id,
+                    ..Default::default()
+                }),
+                result: aurora_net::land::PARCEL_RESULT_SUCCESS,
+            },
+            &crate::world::land::SelectionContext {
+                agent_region: Some(LAND_HANDLE),
+                region_id: Uuid::nil(),
+            },
+        );
+        ui.commit_name(&mut world);
+
+        assert_eq!(ui.name.text, "Another parcel");
+        assert_eq!(
+            world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.as_str()),
+            Some("Another parcel")
+        );
+        assert!(
+            !world
+                .land
+                .take_commands()
+                .iter()
+                .any(|cmd| matches!(cmd, aurora_net::NetCommand::Land(aurora_net::land::LandCommand::Update { .. })))
+        );
+    }
+
+    #[test]
+    fn parcel_rename_without_identity_power_cannot_change_the_name() {
+        let ctx = egui::Context::default();
+        let mut draft = Draft::default();
+        let (responses, _) = name_frame(&ctx, &mut draft, "Original", vec![], false);
+        ctx.memory_mut(|m| m.request_focus(responses[0].id));
+        let (_, commits) = name_frame(&ctx, &mut draft, "Original", vec![egui::Event::Text("Replacement".into())], false);
+        assert_eq!(draft.text, "Original");
+        assert!(commits.is_empty());
+    }
 
     #[test]
     fn dates_like_the_french_skin() {

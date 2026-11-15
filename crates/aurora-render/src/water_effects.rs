@@ -138,6 +138,24 @@ pub struct WaterEvent {
     pub params: [f32; 4],
 }
 
+/// Rain prototype: the terrain's height in a square around the camera
+/// (`RAIN_GROUND_SIZE` cells a side, row by row from `origin`), for the
+/// puddles that gather in its dips. Empty: none.
+#[derive(Debug, Clone, Default)]
+pub struct RainGround {
+    pub origin: [f32; 2],
+    pub extent: f32,
+    pub heights: std::sync::Arc<[f32]>,
+}
+
+pub const RAIN_GROUND_SIZE: u32 = 128;
+/// Rain prototype: cells a side of the wetness memory (`fs_rain_wet_update`).
+pub const RAIN_WET_SIZE: u32 = 512;
+/// Snow footprints: texels a side of the trail map (`fs_snow_trail_update`)
+/// and the metres it covers around the camera (3 cm a texel).
+pub const SNOW_TRAIL_SIZE: u32 = 1024;
+pub const SNOW_TRAIL_EXTENT: f32 = 32.0;
+
 #[derive(Debug, Clone, Default)]
 pub struct WaterGround {
     pub region: u64,
@@ -226,6 +244,24 @@ pub(crate) struct WaterGpu {
     pub events: wgpu::Buffer,
     ground: wgpu::Texture,
     pub ground_view: wgpu::TextureView,
+    rain_ground: wgpu::Texture,
+    pub rain_ground_view: wgpu::TextureView,
+    rain_ground_snapshot: Option<std::sync::Arc<[f32]>>,
+    /// Where the uploaded rain ground is: origin x, y, extent (0: none).
+    pub rain_area: [f32; 3],
+    /// Rain prototype: the wetness memory, drawn into `rain_wet_target`
+    /// each frame and copied into `rain_wet` (frame group binding 27),
+    /// which the next update and the wet ground read.
+    pub rain_wet_target: wgpu::Texture,
+    pub rain_wet_target_view: wgpu::TextureView,
+    pub rain_wet: wgpu::Texture,
+    pub rain_wet_view: wgpu::TextureView,
+    /// Snow footprints: how deep the snow is pressed down (R), drawn into
+    /// `snow_trail_target` and copied into `snow_trail` (frame binding 28).
+    pub snow_trail_target: wgpu::Texture,
+    pub snow_trail_target_view: wgpu::TextureView,
+    pub snow_trail: wgpu::Texture,
+    pub snow_trail_view: wgpu::TextureView,
     ground_snapshot: Option<std::sync::Arc<[[f32; 2]]>>,
     group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
@@ -239,8 +275,45 @@ pub(crate) struct WaterGpu {
 }
 
 impl WaterGpu {
+    /// Rain prototype: the terrain heights around the camera, when they
+    /// changed.
+    pub fn upload_rain_ground(&mut self, queue: &wgpu::Queue, ground: &RainGround) {
+        let n = (RAIN_GROUND_SIZE * RAIN_GROUND_SIZE) as usize;
+        if ground.heights.len() != n || ground.extent.is_nan() || ground.extent <= 0.0 {
+            self.rain_area = [0.0; 3];
+            return;
+        }
+        self.rain_area = [ground.origin[0], ground.origin[1], ground.extent];
+        if self
+            .rain_ground_snapshot
+            .as_ref()
+            .is_some_and(|old| std::sync::Arc::ptr_eq(old, &ground.heights))
+        {
+            return;
+        }
+        self.rain_ground_snapshot = Some(ground.heights.clone());
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.rain_ground,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(ground.heights.as_ref()),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(RAIN_GROUND_SIZE * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: RAIN_GROUND_SIZE,
+                height: RAIN_GROUND_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
-        use wgpu::util::DeviceExt;
         let textures = std::array::from_fn(|index| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("water ripple/foam field"),
@@ -277,11 +350,12 @@ impl WaterGpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("water effects"),
-            contents: bytemuck::bytes_of(&Uniform::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform = crate::gpu_alloc::buffer_init(
+            device,
+            "water effects",
+            bytemuck::bytes_of(&Uniform::zeroed()),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let events = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("water interaction events"),
             size: (MAX_WATER_EVENTS * std::mem::size_of::<WaterEvent>()) as u64,
@@ -304,6 +378,71 @@ impl WaterGpu {
             cache: None,
         });
         let ground_view = ground.create_view(&Default::default());
+        let rain_ground = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("rain ground heights"),
+            size: wgpu::Extent3d {
+                width: RAIN_GROUND_SIZE,
+                height: RAIN_GROUND_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let rain_ground_view = rain_ground.create_view(&Default::default());
+        let wet = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: RAIN_WET_SIZE,
+                    height: RAIN_WET_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                // x the height reached, y how wet, z how deep the snow lies
+                format: wgpu::TextureFormat::Rgba32Float,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let rain_wet_target = wet(
+            "rain wetness (drawn)",
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let rain_wet_target_view = rain_wet_target.create_view(&Default::default());
+        let rain_wet = wet("rain wetness", wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+        let rain_wet_view = rain_wet.create_view(&Default::default());
+        let trail = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: SNOW_TRAIL_SIZE,
+                    height: SNOW_TRAIL_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R16Float,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let snow_trail_target = trail(
+            "snow footprints (drawn)",
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let snow_trail_target_view = snow_trail_target.create_view(&Default::default());
+        let snow_trail = trail(
+            "snow footprints",
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let snow_trail_view = snow_trail.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("water simulation"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -413,6 +552,18 @@ impl WaterGpu {
             events,
             ground,
             ground_view,
+            rain_ground,
+            rain_ground_view,
+            rain_ground_snapshot: None,
+            rain_area: [0.0; 3],
+            rain_wet_target,
+            rain_wet_target_view,
+            rain_wet,
+            rain_wet_view,
+            snow_trail_target,
+            snow_trail_target_view,
+            snow_trail,
+            snow_trail_view,
             ground_snapshot: None,
             group,
             pipeline,
@@ -721,7 +872,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: bytes,
+            size: crate::readback::readback_size(bytes),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -761,7 +912,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
             readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("atlas readback"));
             device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
             let mapped = readback.get_mapped_range(..).expect("mapped atlas");
-            let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+            let samples = crate::readback::f32x4s(&mapped);
             assert!(samples.iter().flatten().all(|v| v.is_finite()));
             if enabled && bed == 0.0 && level == 20.0 {
                 let at = |x: f32, y: f32| samples[((y + 16.0) * 8.0) as usize * 256 + ((x + 16.0) * 8.0) as usize];
@@ -840,7 +991,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         readback.map_async(wgpu::MapMode::Read, ..24 * 16, |r| r.expect("swell readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..24 * 16).expect("mapped swell");
-        let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+        let samples = crate::readback::f32x4s(&mapped);
         for (index, sample) in samples.iter().enumerate() {
             let query = index / 4;
             let quality = (index % 4) as u8;

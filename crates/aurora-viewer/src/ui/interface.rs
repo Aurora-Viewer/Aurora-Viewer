@@ -1,7 +1,8 @@
 //! Hiding the interface: Firestorm's Show User Interface (Alt+Shift+U;
 //! LLViewToggleUI, llviewermenu.cpp, and LLViewerWindow::setUIVisibility,
 //! llviewerwindow.cpp, originally LGPL 2.1) and the bars in mouselook
-//! (LLAgent::changeCameraToMouselook, FSShowInterfaceInMouselook). Hidden,
+//! (LLAgent::changeCameraToMouselook, FSShowInterfaceInMouselook), with the
+//! windows and the keyboard focus (`Interface::follow_mouselook`). Hidden,
 //! the interface keeps the world with its name tags, the HUDs, the toasts
 //! and the chat lines; the bars go, and the windows open then
 //! (`widgets::hide_windows`) come back with it. With the islands, a hint
@@ -49,6 +50,11 @@ pub struct Interface {
     /// The room the bars left the last time they were shown, and the top of
     /// the bottom bar: the windows keep it while they are hidden.
     pub last_room: Option<(Rect, f32)>,
+    /// Mouselook, as the last frame saw it (`follow_mouselook`).
+    mouselook: bool,
+    /// Mouselook put the open windows away (LLAgent::mViewsPushed): they
+    /// come back when it ends.
+    mouselook_pushed: bool,
 }
 
 /// What a frame knows of the bars.
@@ -99,10 +105,47 @@ impl Interface {
         self.peek_bottom = false;
         self.peek_sides = [false; 2];
         self.confirm = false;
-        super::widgets::hide_windows(ctx, hidden, self.immersive);
+        // the windows mouselook put away stay away until it ends
+        let (hide, keep_chat) = if self.mouselook_pushed {
+            (true, false)
+        } else {
+            (hidden, self.immersive)
+        };
+        super::widgets::hide_windows(ctx, hide, keep_chat);
         if hidden {
             egui::Popup::close_all(ctx);
         }
+    }
+
+    /// Once a frame, before the windows are drawn: mouselook begun or ended
+    /// since the last frame (LLAgent::endAnimationUpdateUI,
+    /// indra/newview/llagent.cpp). Begun, the menus close
+    /// (LLAgentCamera::changeCameraToMouselook) and, unless the interface
+    /// stays in mouselook (FSShowInterfaceInMouselook), the open windows go
+    /// (gFloaterView->pushVisibleAll), the conversations too: the Legacy
+    /// Viewer keeps them only with FSShowConvoAndRadarInML, off by default.
+    /// The mini-map, an area of its own, stays as there. Ended, they come
+    /// back (popVisibleAll), those hidden with the interface staying hidden.
+    /// Both ways, the fields let the keyboard go (gFocusMgr.
+    /// setKeyboardFocus(NULL)), so the movement keys move the avatar instead
+    /// of typing (#2897). The change is returned, for the caller's own
+    /// keyboard requests.
+    pub fn follow_mouselook(&mut self, ctx: &egui::Context, mouselook: bool, keep_interface: bool) -> Option<bool> {
+        if mouselook == self.mouselook {
+            return None;
+        }
+        self.mouselook = mouselook;
+        if mouselook {
+            egui::Popup::close_all(ctx);
+            if !keep_interface {
+                super::widgets::hide_windows(ctx, true, false);
+                self.mouselook_pushed = true;
+            }
+        } else if std::mem::take(&mut self.mouselook_pushed) {
+            super::widgets::hide_windows(ctx, self.hidden, self.immersive);
+        }
+        ctx.memory_mut(|m| m.stop_text_input());
+        Some(mouselook)
     }
 
     /// The bars this frame draws. In mouselook, Firestorm's: none, the chat
@@ -586,5 +629,87 @@ mod tests {
         assert_eq!(frame(), (true, true));
         ui.set_hidden(&ctx, true);
         assert_eq!(frame(), (false, false), "hidden: the chat goes too");
+    }
+
+    /// One frame with another window and the Conversations window open, a
+    /// field in the latter: which are shown.
+    fn mouselook_frame(ctx: &egui::Context) -> (bool, bool) {
+        let p = crate::theme::Theme::default().palette();
+        let mut shown = (false, false);
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let at = Pos2::new(100.0, 100.0);
+            let size = Vec2::new(200.0, 100.0);
+            let (mut a, mut b) = (true, true);
+            let floater = super::super::widgets::Floater::new("other", "other", at, size);
+            shown.0 = floater.show(ui.ctx(), &p, &mut a, |_| ()).is_some();
+            let chat = super::super::widgets::Floater::new("conversations", "chat", at, size).chat();
+            let mut text = String::new();
+            shown.1 = chat
+                .show(ui.ctx(), &p, &mut b, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut text).id(Id::unique("field")));
+                })
+                .is_some();
+        });
+        out.textures_delta.clear();
+        shown
+    }
+
+    /// Mouselook puts every open window away, the conversations too, and
+    /// takes the keyboard from the fields (#2897); ended, the windows come
+    /// back and the keyboard stays free (LLAgent::endAnimationUpdateUI).
+    #[test]
+    fn mouselook_puts_the_windows_away_and_frees_the_keyboard() {
+        let ctx = egui::Context::default();
+        let mut ui = Interface::default();
+        assert_eq!(mouselook_frame(&ctx), (true, true));
+        ctx.memory_mut(|m| m.request_focus(Id::unique("field")));
+        mouselook_frame(&ctx);
+        assert!(ctx.memory(|m| m.has_focus(Id::unique("field"))), "typing in the chat");
+        assert_eq!(ui.follow_mouselook(&ctx, false, false), None, "no change");
+        assert_eq!(ui.follow_mouselook(&ctx, true, false), Some(true));
+        assert_eq!(ctx.memory(|m| m.focused()), None, "the keyboard moves the avatar");
+        assert_eq!(mouselook_frame(&ctx), (false, false), "in mouselook");
+        assert_eq!(ui.follow_mouselook(&ctx, true, false), None);
+        assert_eq!(mouselook_frame(&ctx), (false, false), "still away");
+        assert_eq!(ui.follow_mouselook(&ctx, false, false), Some(false));
+        assert_eq!(mouselook_frame(&ctx), (true, true), "back");
+        assert_eq!(ctx.memory(|m| m.focused()), None, "the field does not take it back");
+    }
+
+    /// With the interface kept in mouselook (FSShowInterfaceInMouselook)
+    /// the windows stay, the keyboard is still taken from the fields.
+    #[test]
+    fn the_interface_kept_in_mouselook_keeps_the_windows() {
+        let ctx = egui::Context::default();
+        let mut ui = Interface::default();
+        mouselook_frame(&ctx);
+        ctx.memory_mut(|m| m.request_focus(Id::unique("field")));
+        mouselook_frame(&ctx);
+        ui.follow_mouselook(&ctx, true, true);
+        assert_eq!(ctx.memory(|m| m.focused()), None);
+        assert_eq!(mouselook_frame(&ctx), (true, true));
+        ui.follow_mouselook(&ctx, false, true);
+        assert_eq!(mouselook_frame(&ctx), (true, true));
+    }
+
+    /// The windows hidden with the interface (or by immersive mode) before
+    /// mouselook stay hidden after it; nothing shows them during it.
+    #[test]
+    fn mouselook_gives_back_the_interface_as_it_was() {
+        let ctx = egui::Context::default();
+        let mut ui = Interface::default();
+        mouselook_frame(&ctx);
+        ui.set_immersive(&ctx);
+        assert_eq!(mouselook_frame(&ctx), (false, true), "immersive");
+        ui.follow_mouselook(&ctx, true, false);
+        assert_eq!(mouselook_frame(&ctx), (false, false), "mouselook: the chat goes too");
+        ui.follow_mouselook(&ctx, false, false);
+        assert_eq!(mouselook_frame(&ctx), (false, true), "immersive again");
+        ui.set_hidden(&ctx, false);
+        ui.follow_mouselook(&ctx, true, false);
+        ui.set_hidden(&ctx, false);
+        assert_eq!(mouselook_frame(&ctx), (false, false), "still away in mouselook");
+        ui.follow_mouselook(&ctx, false, false);
+        assert_eq!(mouselook_frame(&ctx), (true, true));
     }
 }

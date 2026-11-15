@@ -60,9 +60,8 @@ impl World {
                 roots.is_some_and(|roots| self.rlva_can_link(&roots))
             }
             BuildCmd::Transform { handle, updates } => updates.iter().all(|u| local(*handle, u.local_id)),
-            BuildCmd::SetName { handle, local_id, .. }
-            | BuildCmd::SetDescription { handle, local_id, .. }
-            | BuildCmd::SetFlags { handle, local_id, .. }
+            BuildCmd::SetDescription { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
+            BuildCmd::SetFlags { handle, local_id, .. }
             | BuildCmd::SetPhysicsParams { handle, local_id, .. }
             | BuildCmd::SetTextures { handle, local_id, .. }
             | BuildCmd::SetExtraParam { handle, local_id, .. }
@@ -70,6 +69,7 @@ impl World {
             | BuildCmd::MoveTaskInventory { handle, local_id, .. }
             | BuildCmd::UpdateTaskInventory { handle, local_id, .. }
             | BuildCmd::RezScript { handle, local_id, .. } => local(*handle, *local_id),
+            BuildCmd::SetName { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
             BuildCmd::Select { handle, local_ids }
             | BuildCmd::Delink { handle, local_ids }
             | BuildCmd::DeRez { handle, local_ids, .. }
@@ -85,6 +85,7 @@ impl World {
             | BuildCmd::SpinUpdate { object_id, .. }
             | BuildCmd::ScriptReset { object_id, .. }
             | BuildCmd::SetScriptRunning { object_id, .. } => uuid(object_id),
+            BuildCmd::CreateTaskItem { item, .. } => uuid(&item.parent_id),
             BuildCmd::Undo { ids, .. } | BuildCmd::Redo { ids, .. } => ids.iter().all(uuid),
             BuildCmd::Cap { cap, body, .. } if cap == "ModifyMaterialParams" => {
                 body.as_array().iter().all(|entry| uuid(&entry["object_id"].as_uuid()))

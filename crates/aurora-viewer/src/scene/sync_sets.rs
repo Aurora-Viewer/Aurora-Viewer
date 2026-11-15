@@ -1824,18 +1824,18 @@ mod tests {
         let mut f = Fixture::new();
         let state = State::default();
         let objs: Vec<usize> = (0..100).map(|i| f.add(9000 + i, 0, false)).collect();
-        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         assert_eq!(f.frame_events(&state, &[], 0.0), objs);
         for &idx in &objs {
             f.sets.lod.watch(idx, if idx % 2 == 0 { 1.0 } else { 30.0 });
         }
         // the camera at rest: nobody, frame after frame
         for _ in 0..3 * LOD_PERIOD {
-            f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+            f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
             assert_eq!(f.frame_events(&state, &[], 0.0), Vec::<usize>::new());
         }
         // 2 m: those 1 m from a change of level, a slice of the slab per frame
-        f.sets.lod.advance(Vec3::X * 2.0, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::X * 2.0, 2.0, 1.0, 0.5);
         let n = f.world.objects.slots.len();
         let most = n.div_ceil(LOD_PERIOD as usize);
         let mut seen = Vec::new();
@@ -1850,7 +1850,7 @@ mod tests {
         assert_eq!(f.frame_events(&state, &[], 0.0), Vec::<usize>::new());
         // one waits for its first sync: its turn does not list it
         f.sets.arrivals.push(objs[1]);
-        f.sets.lod.advance(Vec3::X * 40.0, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::X * 40.0, 2.0, 1.0, 0.5);
         let mut seen = Vec::new();
         for _ in 0..LOD_PERIOD {
             seen.extend(f.frame_events(&state, &[], 0.0));
@@ -1879,7 +1879,7 @@ mod tests {
         let avatar = f.add(9000, 0, true);
         let worn: Vec<usize> = (0..60).map(|i| f.add(9001 + i, 9000, false)).collect();
         let still = f.add(9900, 0, false);
-        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0);
+        f.sets.lod.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         f.frame_events(&state, &[], 0.0);
         state.anchored.extend(worn.iter().copied());
         f.sets.lod.watch(still, 100.0);

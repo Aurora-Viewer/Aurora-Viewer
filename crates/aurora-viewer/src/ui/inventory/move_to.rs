@@ -166,7 +166,7 @@ pub(super) fn show(
         ui.add(egui::Label::new(summary).truncate())
             .on_hover_text(picker.ids.iter().map(|id| rules::name(inv, *id)).collect::<Vec<_>>().join("\n"));
         let width = ui.available_width();
-        let filter = search_field(ui, &mut picker.filter, aurora_i18n::tr!("inventory-move-filter"), width);
+        let filter = search_field(ui, p, &mut picker.filter, aurora_i18n::tr!("inventory-move-filter"), width);
         if picker.focus {
             filter.request_focus();
             picker.focus = false;
@@ -190,7 +190,11 @@ pub(super) fn show(
                 ui.label(RichText::new(aurora_i18n::tr!("inventory-move-no-folders")).color(p.muted));
             }
             ui.spacing_mut().item_spacing.y = 0.0;
-            egui::ScrollArea::vertical()
+            let selected_row = picker
+                .visible
+                .iter()
+                .position(|index| Some(picker.destinations[*index].id) == picker.selected);
+            crate::ui::widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, 40.0)
                 .id_salt(("inventory_move_destinations", st.ui_id))
                 .max_height(ui.available_height())
                 .auto_shrink([false, false])
