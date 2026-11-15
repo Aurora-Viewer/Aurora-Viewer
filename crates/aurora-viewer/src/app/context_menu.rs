@@ -440,6 +440,7 @@ impl App {
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)
                     && let Some(object) = self.world.objects.get(linkset_root(&self.world, index))
@@ -735,6 +736,11 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::BlockObjectOwner { owner, group_owned } => {
+                if let Err(error) = self.world.block_object_owner(owner, group_owned) {
+                    self.world.system_message(error);
+                }
+            }
             CtxAction::Edit(id) => {
                 // pie menu "Edit": select the object, build floater on Edit (handle_object_edit)
                 if let Some(idx) = self.world.objects.index_of_uuid(&id) {
@@ -964,6 +970,12 @@ impl App {
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
             CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
             CtxAction::NewContactSet(ids) => self.contacts_ui.ask_new_set_for(ids),
+            CtxAction::MarkAvatars(ids, rgb) => self.world.avatar_marks.set(&ids, rgb),
+            CtxAction::MarkCustom(ids) => {
+                self.avatar_mark_ui = Some(ui::avatar_marks::CustomMark::new(&self.world, ids, self.avatar_mark_last));
+            }
+            CtxAction::ClearMarks(ids) => self.world.avatar_marks.clear(&ids),
+            CtxAction::ClearAllMarks => self.world.avatar_marks.clear_all(),
             CtxAction::ShowHistory(conversation) => {
                 let (title, file) = self.world.transcript_of(conversation);
                 self.history_ui.show_file(title, file);

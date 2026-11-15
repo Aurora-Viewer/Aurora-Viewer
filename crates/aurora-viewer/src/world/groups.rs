@@ -264,6 +264,8 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     }
 }
 
@@ -665,6 +667,8 @@ impl World {
                 self.groups.active = id;
                 self.groups.active_title = title.clone();
                 self.groups.active_received = true;
+                // A blank worn title leaves the name tag without a title.
+                // The Group titles window still lists that role (#3147).
                 let active_title = (!id.is_nil() && !title.is_empty()).then_some(title.as_str());
                 if let Some(i) = self.objects.index_of_uuid(&self.agent_id)
                     && let Some(o) = self.objects.get_mut(i)
@@ -886,6 +890,8 @@ impl World {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
+            // FSOpenIMContainerOnOfflineMessage (`Social::offline_ims`)
+            self.social.offline_ims |= inv.offline;
             let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
             self.session_push(session, l, true);
         }

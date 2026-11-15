@@ -7,8 +7,11 @@ pub mod appearance;
 pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
+pub mod avatar_align;
+pub mod avatar_marks;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
+pub mod avatar_welcome;
 pub mod backdrop;
 pub mod balance_gains;
 pub mod bars;
@@ -39,6 +42,7 @@ pub mod debug_overlay;
 pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
+pub mod director;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -84,6 +88,7 @@ pub mod menu;
 pub mod minimap;
 pub mod money_tracker;
 pub mod monitor;
+pub mod mouselook_combat;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;
@@ -129,6 +134,7 @@ pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
+pub mod stand_fly;
 pub mod stream_title;
 pub mod surface_opacity;
 pub(crate) mod text_menu;
@@ -212,12 +218,20 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// The Compass (toolbar `avatar_align`, Me › Avatar alignment), in its
+    /// compact layout while `avatar_align_mini` (kept in the settings).
+    pub avatar_align: bool,
+    pub avatar_align_mini: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Avatar Welcome Pack (toolbar `avatar`, Me › Avatar Welcome Pack…).
+    pub avatar_welcome: bool,
     /// The Destination Guide (toolbar `destinations`, World › Destinations).
     pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
+    /// The Director (toolbar `director`): its window and its timeline.
+    pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
@@ -283,9 +297,13 @@ impl Panels {
             experiences: false,
             bumps: false,
             grid_status: false,
+            avatar_align: false,
+            avatar_align_mini: settings.avatar_align_mini,
             web_browser: false,
+            avatar_welcome: false,
             destinations: false,
             quick_prefs: false,
+            director: false,
             voice_controls: false,
             about: false,
             stream_title: settings.audio.stream_title_window,

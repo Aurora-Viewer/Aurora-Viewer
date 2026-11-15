@@ -410,7 +410,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
         }
         let (title, unread) = match w.conversation {
             None => (aurora_i18n::tr!("common-nearby-chat").to_owned(), world.chat_badge),
-            Some(id) => (world.session_title(&id), sessions.get(&id).copied().unwrap_or(0)),
+            Some(id) => (super::sidebar::tab_title(world, &id), sessions.get(&id).copied().unwrap_or(0)),
         };
         let mut open = true;
         let mut dock = super::docking::title_drop(ctx, p, &w.floater);
@@ -625,6 +625,8 @@ mod tests {
                         kind: crate::world::ChatKind::Im,
                         source: JANE,
                         origin: crate::world::Origin::Live,
+                        blocked: false,
+                        beyond_range: false,
                     },
                 );
             }
@@ -750,6 +752,8 @@ mod tests {
                         kind: crate::world::ChatKind::Im,
                         source: id,
                         origin: crate::world::Origin::Live,
+                        blocked: false,
+                        beyond_range: false,
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1035,6 +1039,8 @@ mod tests {
                             kind: crate::world::ChatKind::Im,
                             source: JANE,
                             origin: crate::world::Origin::Live,
+                            blocked: false,
+                            beyond_range: false,
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1146,6 +1152,8 @@ mod tests {
                     kind: crate::world::ChatKind::Im,
                     source: BOB,
                     origin: crate::world::Origin::Live,
+                    blocked: false,
+                    beyond_range: false,
                 },
             );
             kit.main_open = true;

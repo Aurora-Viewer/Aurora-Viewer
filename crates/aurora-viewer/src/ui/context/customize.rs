@@ -269,6 +269,8 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::LookAtAvatar(..) => "LookAtAvatar",
         CtxAction::EditPbr(..) => "EditPbr",
         CtxAction::ObjectProfile(..) => "ObjectProfile",
+        CtxAction::SaveAs(_, crate::build::export::Format::Collada) => "SaveCollada",
+        CtxAction::SaveAs(_, crate::build::export::Format::Obj) => "SaveObj",
         CtxAction::Pathfinding { characters: false, .. } => "RegionObjects",
         CtxAction::Pathfinding { characters: true, .. } => "PathfindingCharacters",
         CtxAction::ResetMeshLod(..) => "ResetMeshLod",
@@ -330,6 +332,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::CreateLandmark => "CreateLandmark",
         CtxAction::ReportAbuse(..) => "ReportAbuse",
         CtxAction::ToggleBlockObject { .. } => "ToggleBlockObject",
+        CtxAction::BlockObjectOwner { .. } => "BlockObjectOwner",
         CtxAction::Edit(..) => "Edit",
         CtxAction::Inspect(..) => "Inspect",
         CtxAction::InspectAvatar(..) => "InspectAvatar",
@@ -390,6 +393,10 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::GroupChatBlocked(..) => "GroupChatBlocked",
         CtxAction::ContactSet(..) => "ContactSet",
         CtxAction::NewContactSet(..) => "NewContactSet",
+        CtxAction::MarkAvatars(..) => "MarkAvatars",
+        CtxAction::MarkCustom(..) => "MarkCustom",
+        CtxAction::ClearMarks(..) => "ClearMarks",
+        CtxAction::ClearAllMarks => "ClearAllMarks",
     };
     match action {
         CtxAction::TakeOffClothing(kind) | CtxAction::DetachAt(kind) => format!("{base}:{kind}"),
