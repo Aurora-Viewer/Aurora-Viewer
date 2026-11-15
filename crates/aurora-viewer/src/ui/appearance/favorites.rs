@@ -183,16 +183,28 @@ fn header(
     sort: &mut Sort,
     actions: &mut Vec<Action>,
 ) {
+    // the buttons are as tall as the field, measured on the last frame
+    let height_id = search_height_id(ui);
+    let side = ui.data(|d| d.get_temp::<f32>(height_id)).unwrap_or(BUTTON);
     ui.horizontal(|ui| {
-        let width = (ui.available_width() - 2.0 * 30.0).max(80.0);
-        widgets::search_field(
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let width = (ui.available_width() - 2.0 * (side + 4.0)).max(80.0);
+        // the Search window's field: its icon in front, the clear button in it
+        widgets::clearable_search_box(
             ui,
             p,
             &mut st.favorites.filter,
             aurora_i18n::tr!("ui-wearable-favorites-search"),
             width,
         );
-        widgets::icon_menu(ui, p, "arrows-sort", aurora_i18n::tr!("ui-wearable-favorites-sort"), |ui| {
+        let measured = ui.min_rect().height().round();
+        if measured > 0.0 && measured != side {
+            ui.data_mut(|d| d.insert_temp(height_id, measured));
+            ui.ctx().request_repaint();
+        }
+        let sort_button = widgets::action_button(ui, p, "arrows-sort", "", widgets::ActionKind::Flat, Vec2::splat(side))
+            .on_hover_text(aurora_i18n::tr!("ui-wearable-favorites-sort"));
+        menu::dropdown(&sort_button, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             for (value, label) in [
                 (Sort::Name, aurora_i18n::tr!("ui-wearable-favorites-sort-name")),
                 (Sort::Recent, aurora_i18n::tr!("ui-wearable-favorites-sort-recent")),
@@ -206,13 +218,18 @@ fn header(
         });
         let selected = st.favorites.selection.ordered(order);
         let shown = st.favorites.shown.unwrap_or(root);
-        if widgets::icon_button(
+        if widgets::action_button_if(
             ui,
             p,
             "trash-filled",
-            aurora_i18n::tr!("ui-wearable-favorites-remove"),
+            "",
+            widgets::ActionKind::Flat,
+            Vec2::splat(side),
             !selected.is_empty(),
-        ) && let Some(change) = model::remove(&world.inventory, shown, &selected)
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-wearable-favorites-remove"))
+        .clicked()
+            && let Some(change) = model::remove(&world.inventory, shown, &selected)
         {
             actions.push(Action::Folders(change));
         }
@@ -239,12 +256,13 @@ fn folder_row(
         Some((id, name)) => ("folder-filled", p.violet_light, name.as_str(), model::entries(inv, *id).len()),
         None => ("heart-filled", p.violet_light, all_label, all),
     };
+    let side = ui.data(|d| d.get_temp::<f32>(search_height_id(ui))).unwrap_or(BUTTON);
     let open_id = ui.make_persistent_id("wearable_favorites_folder_menu");
     let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let width = (ui.available_width() - 30.0).max(80.0);
-        let button = widgets::select_button(ui, p, icon, tint, label, &count.to_string(), open, Vec2::new(width, 28.0))
+        let width = (ui.available_width() - side - 4.0).max(80.0);
+        let button = widgets::select_button(ui, p, icon, tint, label, &count.to_string(), open, Vec2::new(width, side))
             .on_hover_text(aurora_i18n::tr!("ui-wearable-favorites-folders"));
         if demo_mode().is_some() {
             ui.ctx().data_mut(|d| d.insert_temp(demo_picker_id(), button.rect));
@@ -270,11 +288,19 @@ fn folder_row(
         });
         ui.data_mut(|d| d.insert_temp(open_id, open));
         menu::context_menu_of_button(&button, p, |ui| folder_commands(ui, p, st, shown.as_ref()));
-        if widgets::icon_button(ui, p, "folder-plus", aurora_i18n::tr!("common-new-folder"), true) {
+        if widgets::action_button(ui, p, "folder-plus", "", widgets::ActionKind::Flat, Vec2::splat(side))
+            .on_hover_text(aurora_i18n::tr!("common-new-folder"))
+            .clicked()
+        {
             st.favorites.dialog = Some(Dialog::New(String::new()));
             st.favorites.focus = true;
         }
     });
+}
+
+/// The search field's height, which the buttons of both rows take.
+fn search_height_id(ui: &egui::Ui) -> egui::Id {
+    ui.make_persistent_id("wearable_favorites_search_height")
 }
 
 /// New folder, and Rename and Delete of the folder `shown`.
@@ -597,6 +623,9 @@ fn wear_button(ui: &mut egui::Ui, p: &Palette, row: Rect, it: &InvItem, worn: bo
 }
 
 const WEAR_BUTTON: f32 = 28.0;
+/// The folder button's height and the square buttons beside it and the
+/// search field (until the field's own height is measured).
+const BUTTON: f32 = 28.0;
 /// How strongly a worn row is washed in violet (a selected row is 0.25).
 const WORN_WASH: f32 = 0.07;
 
