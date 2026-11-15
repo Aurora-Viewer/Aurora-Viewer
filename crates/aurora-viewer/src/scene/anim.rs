@@ -484,7 +484,8 @@ pub fn adjusted_animation_speed(speed: f32, change: f32) -> f32 {
 /// The factor one skeleton plays at: Slow Motion Animations sets our avatar
 /// to 0.2 (handleSlowMotionAnimation), every other one follows the global
 /// speed. Unlike the Legacy Viewer, a later global step does not silently
-/// undo a ticked Slow Motion.
+/// undo a ticked Slow Motion, and unticking it returns our avatar to the
+/// global speed where handleSlowMotionAnimation sets 1.0.
 pub fn effective_animation_speed(speed: f32, slow_motion: bool, is_ours: bool) -> f32 {
     if slow_motion && is_ours { 0.2 } else { speed.clamp(0.1, 2.0) }
 }
@@ -899,7 +900,6 @@ impl Controller {
     /// receipt signals so the next sync does not undo the explicit restart.
     /// Stopped motions and completed one-shots must not be resurrected.
     pub fn resync_animations(&mut self, now: Instant) {
-        self.animation_clock.set_factor(self.animation_clock.factor, now);
         let now_anim = if self.synchronized {
             self.animation_clock.map(now)
         } else {
