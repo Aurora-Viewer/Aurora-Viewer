@@ -33,6 +33,14 @@ pub const SMOOTHING_RANGE: RangeInclusive<f32> = 0.0..=1.0;
 /// teleport, another target): the view goes to it at once.
 const FOLLOW_SNAP: f32 = 8.0;
 
+/// The Director's lens when its depth of field is turned on, and the
+/// f-numbers it can take (a wide aperture blurs the background most).
+pub const DEFAULT_APERTURE: f32 = 2.8;
+pub const APERTURE_RANGE: RangeInclusive<f32> = 1.0..=22.0;
+/// The distance it is focused at without a target, and its range (m).
+pub const DEFAULT_FOCUS: f32 = 5.0;
+pub const FOCUS_RANGE: RangeInclusive<f32> = 0.3..=100.0;
+
 /// The green of a green screen (the key color proposed first).
 pub const KEY_GREEN: [u8; 3] = [0, 177, 64];
 
@@ -234,6 +242,14 @@ pub struct Director {
     /// The color (sRGB) the isolation's empty background shows, to film
     /// against and key out; `None`: left empty.
     pub key_color: Option<[u8; 3]>,
+    /// A hand-held camera while the track plays: 0 (a steady one) to 1.
+    pub shake: f32,
+    /// The depth of field of the Director's lens: its f-number; `None`:
+    /// the viewer's own depth of field, as outside the Director.
+    pub dof: Option<f32>,
+    /// The distance (m) that lens is focused at when the view is not locked
+    /// on a target (locked, it focuses on the target).
+    pub focus: f32,
 }
 
 impl Default for Director {
@@ -252,6 +268,9 @@ impl Default for Director {
             format: Format::Window,
             thirds: false,
             key_color: None,
+            shake: 0.0,
+            dof: None,
+            focus: DEFAULT_FOCUS,
         }
     }
 }
@@ -401,10 +420,20 @@ impl Director {
             Mode::Editing => return None,
             Mode::Scrubbing | Mode::Playing { .. } => self.track.sample(self.time)?,
         };
-        Some(match target {
+        let pose = match target {
             Some(target) => pose.aimed(target, self.track.lock_weight(self.time)),
             None => pose,
-        })
+        };
+        Some(track::hand_held(pose, self.time, self.shake))
+    }
+
+    /// Replace the track by one loaded from a file: nothing selected, the
+    /// playhead at its start, whatever played or was held stopped.
+    pub fn load(&mut self, track: Track) {
+        self.track = track;
+        self.selected = None;
+        self.time = 0.0;
+        self.mode = Mode::Editing;
     }
 
     /// The proportions the picture has in a window of `aspect` (width over
@@ -790,6 +819,26 @@ mod tests {
         let green = linear(KEY_GREEN);
         assert!(green[1] > green[2] && green[2] > green[0]);
         assert_eq!(Director::default().key_color, None);
+    }
+
+    #[test]
+    fn a_loaded_track_replaces_the_one_being_edited() {
+        let mut d = three();
+        d.play();
+        let mut other = Director::default();
+        other.add_key(at(50.0));
+        other.add_key(at(60.0));
+        d.load(other.track.clone());
+        assert_eq!(d.track, other.track);
+        assert_eq!((d.selected, d.time, d.mode), (None, 0.0, Mode::Editing));
+        // a hand-held camera moves the played view, not the keyframes
+        d.shake = 1.0;
+        d.scrub(1.0);
+        let held = d.view(None).expect("view");
+        d.shake = 0.0;
+        let steady = d.view(None).expect("view");
+        assert!(held.position.distance(steady.position) > 1e-4);
+        assert_eq!(d.track, other.track);
     }
 
     #[test]

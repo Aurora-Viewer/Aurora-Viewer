@@ -12114,6 +12114,8 @@ impl App {
             cutout: self.world.photo_isolation.empty_background(),
             // (the Director's green screen, in place of the checkerboard)
             cutout_key: self.director_key_color(),
+            // (a film recorded with its transparency)
+            cutout_alpha: self.director_cutout_alpha(),
             // rain or snow: the drops pass draws either
             rain: self.weather_now.fall(),
             snow_prints: Some(self.scene.snow_trails.prints.clone()),
@@ -12957,6 +12959,9 @@ impl App {
             gfx.renderer.capture_scene = true;
             self.scene_capture_pending = true;
         }
+        // the Director's recording: the view of this frame, when one of the
+        // film's is due
+        self.director_record_frame(&mut gfx.renderer);
         self.frame_profile.lap(Lap::Actions);
         // ---- render: the frame is closed and leaves as a packet for the
         // render thread (aurora-render, main_thread.rs), which draws it
@@ -13630,6 +13635,7 @@ impl App {
         // {
         //     self.bug_report.captured(w, h, pixels);
         // }
+        self.director_recorded(&mut gfx.renderer);
         self.report_abuse_captured(&mut gfx.renderer);
         if self.inventory_images.capturing.is_some()
             && let Some((w, h, pixels)) = gfx.renderer.captured.take()

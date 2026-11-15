@@ -1012,7 +1012,8 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
-| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, or the avatar alone on a green screen (see Details) |
+| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, or a second of the track recorded (see Details) |
+| `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1065,7 +1066,7 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
-- **`AURORA_DEMO_DIRECTOR=1|play|lock|green`**: at frame 620, the Director (toolbar
+- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha`**: at frame 620, the Director (toolbar
   `director`) opens on a track of four keyframes around our avatar, 9 s
   long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
   in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
@@ -1092,7 +1093,16 @@ when unfocused") is ignored during a screenshot.
   avatar") on an empty background filled with the key green
   (`director demo: our avatar alone on a green screen`): the avatar alone,
   no sky, ground, water nor other avatar, on one flat green (0, 177, 64)
-  right up to its outline, the Director's interface over it.
+  right up to its outline, the Director's interface over it. `record`
+  shortens the track to a second and records its playback at 24 frames a
+  second (`director: recording <w>x<h> at 24 frames a second`), through the
+  ffmpeg found or, with `AURORA_DEMO_DIRECTOR_FILM=<file>`, as raw RGBA
+  frames one after the other in that file, with no encoder: the file weighs
+  the frames written times width times height times 4 (about 24 frames, the
+  log says how many: `director: film of <n> frames written`), each the 3D
+  view alone. `record-alpha` does the same with our avatar isolated on an
+  empty background and the format with transparency: the frames' alpha is 0
+  where nothing is drawn, 255 on the avatar.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:

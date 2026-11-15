@@ -8604,7 +8604,7 @@ impl Backend {
                 f.tonemap_mix.clamp(0.0, 1.0)
             },
             auto_exposure: 1.0,
-            cutout: match (f.cutout, snapshot.is_some(), f.cutout_key) {
+            cutout: match (f.cutout, snapshot.is_some() || f.cutout_alpha, f.cutout_key) {
                 (false, ..) => 0.0,
                 (true, true, _) => 1.0,
                 (true, false, None) => 2.0,

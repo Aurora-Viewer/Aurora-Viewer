@@ -17,6 +17,7 @@
 
 use crate::joystick::flycam::Flycam;
 use glam::{Quat, Vec3, Vec4};
+use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Sub};
 
 /// Seconds between two keyframes added one after the other.
@@ -27,6 +28,12 @@ pub const MIN_GAP: f32 = 0.1;
 pub const MAX_KEYS: usize = 200;
 /// The last keyframe is never later than this (seconds).
 pub const MAX_TIME: f32 = 3600.0;
+/// The version of the tracks' files (`TrackFile`).
+pub const FILE_VERSION: u32 = 1;
+/// A hand-held camera at its most: how far it turns (radians) and drifts
+/// (metres) around the view it is given.
+const HAND_TURN: f32 = 0.02;
+const HAND_DRIFT: f32 = 0.04;
 /// Straight pieces a span is cut into, to measure it.
 const MEASURE_STEPS: usize = 16;
 /// Under this many metres between two keyframes the camera turns or zooms
@@ -111,6 +118,79 @@ impl Pose {
             ..*self
         }
     }
+}
+
+/// The view as a hand-held camera gives it `time` seconds into the shot: a
+/// small drift of where it stands and how it is turned, by `amount` (0:
+/// none, 1: the most). The same at the same time: a track played twice
+/// moves alike. Sums of sines whose periods never line up within a shot.
+pub fn hand_held(pose: Pose, time: f32, amount: f32) -> Pose {
+    let amount = if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 };
+    if amount <= 0.0 || !time.is_finite() {
+        return pose;
+    }
+    let wave = |a: f32, b: f32, c: f32| (time * a).sin() * 0.5 + (time * b + 1.3).sin() * 0.3 + (time * c + 2.1).sin() * 0.2;
+    let turn = HAND_TURN * amount;
+    let (yaw, pitch, roll) = (
+        wave(1.3, 2.9, 4.7) * turn,
+        wave(1.7, 3.1, 5.3) * turn,
+        wave(0.9, 2.3, 3.7) * turn * 0.5,
+    );
+    let drift = (pose.left() * wave(1.1, 2.7, 4.3) + pose.up() * wave(1.9, 3.3, 5.9)) * (HAND_DRIFT * amount);
+    Pose {
+        position: pose.position + drift,
+        rotation: (pose.rotation * Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch) * Quat::from_rotation_x(roll)).normalize(),
+        fov: pose.fov,
+    }
+}
+
+/// A keyframe as a track's file keeps it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyFile {
+    pub time: f32,
+    /// Global metres (the grid's): the track comes back where it was laid,
+    /// whatever region the avatar is in when it is loaded.
+    pub position: [f64; 3],
+    pub rotation: [f32; 4],
+    pub fov: f32,
+    #[serde(default)]
+    pub rest: bool,
+    #[serde(default)]
+    pub locked: bool,
+}
+
+/// A track as its file keeps it (JSON, in the account's `director` folder).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrackFile {
+    pub version: u32,
+    #[serde(default)]
+    pub linear: bool,
+    #[serde(default)]
+    pub ease_ends: bool,
+    pub keys: Vec<KeyFile>,
+}
+
+/// The name a track is saved under, as a file's: letters, digits, spaces,
+/// `-` and `_` kept, anything else replaced, sixty characters at most.
+/// `None` for a name that leaves nothing, or that a system reserves.
+pub fn file_stem(name: &str) -> Option<String> {
+    let stem: String = name
+        .trim()
+        .chars()
+        .take(60)
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let stem = stem.trim().to_owned();
+    let reserved = ["con", "prn", "aux", "nul"];
+    let device = |s: &str| s.len() == 4 && (s.starts_with("com") || s.starts_with("lpt")) && s.ends_with(|c: char| c.is_ascii_digit());
+    let lower = stem.to_lowercase();
+    (!stem.is_empty() && !stem.chars().all(|c| c == '_') && !reserved.contains(&lower.as_str()) && !device(&lower)).then_some(stem)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -210,6 +290,70 @@ impl Track {
                 *rotation = -*rotation;
             }
         }
+    }
+
+    /// The track as its file keeps it; `origin`: the main region's corner
+    /// in global metres (`World::main_origin`).
+    pub fn to_file(&self, origin: (u32, u32)) -> TrackFile {
+        TrackFile {
+            version: FILE_VERSION,
+            linear: self.curve == Curve::Linear,
+            ease_ends: self.ease_ends,
+            keys: self
+                .keys
+                .iter()
+                .map(|key| KeyFile {
+                    time: key.time,
+                    position: super::presets::to_global(origin, key.pose.position),
+                    rotation: key.pose.rotation.to_array(),
+                    fov: key.pose.fov,
+                    rest: key.rest,
+                    locked: key.locked,
+                })
+                .collect(),
+        }
+    }
+
+    /// The track a file holds, for a main region at `origin`. A file is
+    /// data from outside: `None` when it holds no keyframe, too many, or a
+    /// value that is no number; times out of order or too close are put
+    /// right, a view angle out of range brought in.
+    pub fn from_file(file: &TrackFile, origin: (u32, u32)) -> Option<Track> {
+        if file.keys.is_empty() || file.keys.len() > MAX_KEYS {
+            return None;
+        }
+        let mut keys = Vec::with_capacity(file.keys.len());
+        for key in &file.keys {
+            let rotation = Quat::from_array(key.rotation);
+            let sound = key.time.is_finite()
+                && key.position.iter().all(|v| v.is_finite())
+                && rotation.is_finite()
+                && rotation.length_squared() > 1e-6
+                && key.fov.is_finite();
+            if !sound {
+                return None;
+            }
+            keys.push(Keyframe {
+                time: key.time.clamp(0.0, MAX_TIME),
+                pose: Pose {
+                    position: super::presets::from_global(origin, key.position),
+                    rotation: rotation.normalize(),
+                    fov: clamp_fov(key.fov),
+                },
+                rest: key.rest,
+                locked: key.locked,
+            });
+        }
+        let mut track = Track {
+            keys,
+            curve: if file.linear { Curve::Linear } else { Curve::Smooth },
+            ease_ends: file.ease_ends,
+        };
+        track.tidy();
+        for i in 1..track.keys.len() {
+            track.keys[i].time = track.keys[i].time.max(track.keys[i - 1].time + MIN_GAP);
+        }
+        Some(track)
     }
 
     /// A keyframe at `time`: a new one, or the view of the one already there
@@ -811,6 +955,97 @@ mod tests {
         one.append(looking(Vec3::ZERO, 0.0));
         one.set_locked(0, true);
         assert_eq!(one.lock_weight(5.0), 1.0);
+    }
+
+    #[test]
+    fn a_hand_held_camera_stays_near_its_view_and_repeats_itself() {
+        let pose = looking(Vec3::new(5.0, 5.0, 25.0), 0.4);
+        assert_eq!(hand_held(pose, 3.0, 0.0), pose);
+        assert_eq!(hand_held(pose, f32::NAN, 1.0), pose);
+        let mut moved = false;
+        for step in 0..200 {
+            let time = step as f32 * 0.05;
+            let held = hand_held(pose, time, 1.0);
+            assert!(held.position.distance(pose.position) <= HAND_DRIFT * 1.5);
+            assert!(held.rotation.angle_between(pose.rotation) <= HAND_TURN * 3.0);
+            assert_eq!(held.fov, pose.fov);
+            assert_eq!(held, hand_held(pose, time, 1.0), "the same at the same time");
+            moved |= held.position.distance(pose.position) > 1e-3;
+            // no jump from a frame to the next
+            let next = hand_held(pose, time + 0.016, 1.0);
+            assert!(next.position.distance(held.position) < 0.01);
+        }
+        assert!(moved);
+        // half the amount, half the drift
+        let (full, half) = (hand_held(pose, 2.0, 1.0), hand_held(pose, 2.0, 0.5));
+        assert!((half.position.distance(pose.position) * 2.0 - full.position.distance(pose.position)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_track_comes_back_from_its_file_where_it_was_laid() {
+        let mut track = three();
+        track.curve = Curve::Linear;
+        track.set_rest(1, true);
+        track.set_locked(2, true);
+        let origin = (256_000, 512_000);
+        let file = track.to_file(origin);
+        assert_eq!(file.version, FILE_VERSION);
+        assert!((file.keys[1].position[0] - 256_010.0).abs() < 1e-6);
+        let text = serde_json::to_string(&file).expect("json");
+        let read: TrackFile = serde_json::from_str(&text).expect("json");
+        let back = Track::from_file(&read, origin).expect("track");
+        assert_eq!(
+            (back.curve, back.ease_ends, back.len()),
+            (track.curve, track.ease_ends, track.len())
+        );
+        for (a, b) in back.keys().iter().zip(track.keys()) {
+            assert_eq!((a.time, a.rest, a.locked, a.pose.fov), (b.time, b.rest, b.locked, b.pose.fov));
+            assert!(close(a.pose.position, b.pose.position));
+            assert!(a.pose.rotation.angle_between(b.pose.rotation) < 1e-4);
+        }
+        // loaded from the next region east: 256 m to the west of that corner
+        let east = Track::from_file(&read, (origin.0 + 256, origin.1)).expect("track");
+        assert!(close(east.keys()[0].pose.position, Vec3::new(-256.0, 0.0, 20.0)));
+        // a file is data from outside
+        let mut bad = file.clone();
+        bad.keys[0].position[1] = f64::NAN;
+        assert_eq!(Track::from_file(&bad, origin), None);
+        let mut bad = file.clone();
+        bad.keys[2].rotation = [0.0; 4];
+        assert_eq!(Track::from_file(&bad, origin), None);
+        let empty = TrackFile {
+            keys: Vec::new(),
+            ..file.clone()
+        };
+        assert_eq!(Track::from_file(&empty, origin), None);
+        // times out of order or equal are put right, a lens brought in range
+        let mut odd = file.clone();
+        odd.keys[0].time = 6.0;
+        odd.keys[1].time = 6.0;
+        odd.keys[2].time = 2.0;
+        odd.keys[2].fov = 99.0;
+        let fixed = Track::from_file(&odd, origin).expect("track");
+        let times: Vec<f32> = fixed.keys().iter().map(|k| k.time).collect();
+        assert_eq!(times[0], 0.0);
+        assert!(times[1] >= 4.0 && times[2] >= times[1] + MIN_GAP - 1e-6);
+        assert_eq!(fixed.keys()[0].pose.fov, *crate::camera::FOV_RANGE.end());
+        // an older file without the newer fields still loads
+        let old = r#"{"version":1,"keys":[{"time":0.0,"position":[1.0,2.0,3.0],"rotation":[0.0,0.0,0.0,1.0],"fov":1.0}]}"#;
+        assert!(Track::from_file(&serde_json::from_str(old).expect("json"), (0, 0)).is_some());
+    }
+
+    #[test]
+    fn a_track_is_saved_under_a_name_a_file_can_have() {
+        assert_eq!(file_stem("  Dance shot 2  ").as_deref(), Some("Dance shot 2"));
+        assert_eq!(file_stem("a/b\\c:d").as_deref(), Some("a_b_c_d"));
+        assert_eq!(file_stem("../../etc").as_deref(), Some("______etc"));
+        assert_eq!(file_stem("Été à Paris").as_deref(), Some("Été à Paris"));
+        assert_eq!(file_stem(""), None);
+        assert_eq!(file_stem("   "), None);
+        assert_eq!(file_stem("..."), None);
+        assert_eq!(file_stem("NUL"), None);
+        assert_eq!(file_stem("com1"), None);
+        assert_eq!(file_stem(&"x".repeat(200)).map(|s| s.len()), Some(60));
     }
 
     #[test]

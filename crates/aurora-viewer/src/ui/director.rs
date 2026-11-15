@@ -19,6 +19,7 @@ use super::viewfinder::{Isolate, IsolateRow};
 use super::widgets::{self, ActionKind, Floater};
 use crate::camera::track::{self, Curve, Keyframe, Pose};
 use crate::director::{self, Director, Format, Joint, Mode, Target};
+use crate::recorder;
 use crate::snapshot::isolate::{Isolation, Mode as Shown};
 use crate::theme::Palette;
 use crate::world::eep_env::LocalView;
@@ -92,6 +93,30 @@ pub enum Action {
     /// The track as it was before its last change, and that change again.
     Undo,
     Redo,
+    /// Start a film, or end the one being recorded.
+    Record,
+    /// Choose the ffmpeg to record with, in a file dialog.
+    ChooseFfmpeg,
+    /// Look for ffmpeg again.
+    FindFfmpeg,
+    /// Open ffmpeg's download page.
+    FfmpegSite,
+    /// Show the last film in its folder.
+    RevealFilm,
+    /// Save the track under the name typed, or load the saved one at this
+    /// place of the list.
+    SaveTrack,
+    LoadTrack(usize),
+}
+
+/// The saved tracks as the window shows them.
+pub struct Tracks<'a> {
+    /// The name being typed.
+    pub name: &'a mut String,
+    /// The names of the tracks saved for this account.
+    pub saved: &'a [String],
+    /// What the last save or load did, or why it failed.
+    pub note: Option<Result<&'a str, &'a str>>,
 }
 
 /// The live camera and what restricts it, as the app gives them.
@@ -114,6 +139,28 @@ pub struct Live {
     /// The track has a change to undo, an undone one to redo.
     pub can_undo: bool,
     pub can_redo: bool,
+    /// An ffmpeg is there to record with.
+    pub can_record: bool,
+    /// A film is being recorded.
+    pub recording: bool,
+}
+
+/// The recording as the window shows it (`recorder.rs`).
+pub struct Record<'a> {
+    pub options: &'a mut recorder::Options,
+    /// The options changed: to be saved.
+    pub changed: &'a mut bool,
+    /// The ffmpeg found (its file), `Some(None)` when there is none; `None`
+    /// while it is looked for.
+    pub ffmpeg: Option<Option<&'a std::path::Path>>,
+    /// The formats that ffmpeg writes, in the order of `recorder::Format::ALL`.
+    pub formats: [bool; 5],
+    /// Seconds of film so far, while one is recorded.
+    pub recording: Option<f64>,
+    /// The encoder is finishing the last film's file.
+    pub finishing: bool,
+    /// The last film: its file, or why it could not be written.
+    pub last: Option<Result<&'a std::path::Path, &'a str>>,
 }
 
 /// The photo's isolation as the window shows it (`snapshot::isolate`): its
@@ -187,6 +234,8 @@ pub fn window(
     d: &mut Director,
     live: &Live,
     isolate: IsolateView<'_>,
+    record: Record<'_>,
+    tracks: Tracks<'_>,
     env: Env<'_>,
     actions: &mut Vec<Action>,
 ) {
@@ -224,7 +273,13 @@ pub fn window(
                         playback_section(ui, p, d);
                     });
                     widgets::collapsing(ui, p, "director_picture", aurora_i18n::tr!("director-picture"), false, |ui| {
-                        picture_section(ui, p, d);
+                        picture_section(ui, p, d, live.target.is_some());
+                    });
+                    widgets::collapsing(ui, p, "director_record", aurora_i18n::tr!("director-record"), true, |ui| {
+                        record_section(ui, p, record, live, actions);
+                    });
+                    widgets::collapsing(ui, p, "director_tracks", aurora_i18n::tr!("director-tracks"), false, |ui| {
+                        tracks_section(ui, p, tracks, d.track.is_empty(), actions);
                     });
                     widgets::collapsing(ui, p, "director_isolate", aurora_i18n::tr!("photo-isolate"), false, |ui| {
                         isolate_section(ui, p, isolate.isolation, isolate.rows, isolate.out, &mut d.key_color);
@@ -385,8 +440,10 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
     }
 }
 
-/// The picture's proportions and the guides drawn over it.
-fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
+/// The picture's proportions, the guides drawn over it and the lens's
+/// depth of field (`locked`: the view has a target in sight, it focuses
+/// on it).
+fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, locked: bool) {
     row(ui, p, aurora_i18n::tr!("director-format"), |ui| {
         egui::ComboBox::from_id_salt("director_format")
             .selected_text(format_label(d.format))
@@ -399,6 +456,238 @@ fn picture_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
             .on_hover_text(aurora_i18n::tr!("director-format-tip"));
     });
     widgets::checkbox(ui, p, &mut d.thirds, aurora_i18n::tr!("director-thirds"));
+    // the Director's own lens: its blur, and where it is sharp
+    let mut on = d.dof.is_some();
+    if widgets::checkbox(ui, p, &mut on, aurora_i18n::tr!("director-dof"))
+        .on_hover_text(aurora_i18n::tr!("director-dof-tip"))
+        .changed()
+    {
+        d.dof = on.then_some(director::DEFAULT_APERTURE);
+    }
+    if let Some(aperture) = &mut d.dof {
+        row(ui, p, aurora_i18n::tr!("director-dof-aperture"), |ui| {
+            ui.spacing_mut().slider_width = SLIDER_W;
+            ui.add(
+                egui::Slider::new(aperture, director::APERTURE_RANGE)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .fixed_decimals(1)
+                    .prefix("f/")
+                    .logarithmic(true),
+            );
+        });
+        if locked {
+            ui.label(RichText::new(aurora_i18n::tr!("director-dof-on-target")).size(12.0).color(p.muted));
+        } else {
+            row(ui, p, aurora_i18n::tr!("director-dof-focus"), |ui| {
+                ui.spacing_mut().slider_width = SLIDER_W;
+                ui.add(
+                    egui::Slider::new(&mut d.focus, director::FOCUS_RANGE)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .fixed_decimals(1)
+                        .suffix(" m")
+                        .logarithmic(true),
+                );
+            });
+        }
+    }
+}
+
+/// The saved tracks: a name to save this one under, and those saved
+/// before, each loaded by its button (the track being edited is replaced:
+/// Ctrl+Z brings it back).
+fn tracks_section(ui: &mut egui::Ui, p: &Palette, tracks: Tracks<'_>, empty: bool, actions: &mut Vec<Action>) {
+    let Tracks { name, saved, note } = tracks;
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(name)
+                .hint_text(aurora_i18n::tr!("director-track-name"))
+                .desired_width(170.0),
+        );
+        let valid = track::file_stem(name).is_some() && !empty;
+        if widgets::action_button_if(
+            ui,
+            p,
+            "device-floppy-filled",
+            aurora_i18n::tr!("director-track-save"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            valid,
+        )
+        .clicked()
+        {
+            actions.push(Action::SaveTrack);
+        }
+    });
+    if saved.is_empty() {
+        ui.label(RichText::new(aurora_i18n::tr!("director-track-none")).size(12.0).color(p.muted));
+    }
+    for (index, saved_name) in saved.iter().enumerate() {
+        ui.horizontal(|ui| {
+            if widgets::icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("director-track-load"), true) {
+                actions.push(Action::LoadTrack(index));
+            }
+            ui.add(egui::Label::new(RichText::new(saved_name).size(12.5).color(p.ink)).truncate());
+        });
+    }
+    match note {
+        Some(Ok(text)) => {
+            ui.label(RichText::new(text).size(12.0).color(p.success));
+        }
+        Some(Err(text)) => {
+            ui.label(RichText::new(text).size(12.0).color(p.warn));
+        }
+        None => {}
+    }
+}
+
+fn film_format(format: recorder::Format) -> &'static str {
+    match format {
+        recorder::Format::Mp4 => aurora_i18n::tr!("director-record-format-mp4"),
+        recorder::Format::ProRes => aurora_i18n::tr!("director-record-format-prores"),
+        recorder::Format::ProResAlpha => aurora_i18n::tr!("director-record-format-prores-alpha"),
+        recorder::Format::Webm => aurora_i18n::tr!("director-record-format-webm"),
+        recorder::Format::Lossless => aurora_i18n::tr!("director-record-format-lossless"),
+    }
+}
+
+/// The recording: the ffmpeg it goes through (or how to get one), the
+/// film's format, rate and quality, the button, and the last film.
+fn record_section(ui: &mut egui::Ui, p: &Palette, record: Record<'_>, live: &Live, actions: &mut Vec<Action>) {
+    let Record {
+        options,
+        changed,
+        ffmpeg,
+        formats,
+        recording,
+        finishing,
+        last,
+    } = record;
+    let size = Vec2::new(0.0, 26.0);
+    let note = |ui: &mut egui::Ui, text: &str, color: Color32| {
+        ui.label(RichText::new(text).size(12.0).color(color));
+    };
+    match ffmpeg {
+        None => note(ui, aurora_i18n::tr!("director-record-looking"), p.muted),
+        Some(None) => {
+            note(ui, aurora_i18n::tr!("director-record-missing"), p.warn);
+            note(ui, aurora_i18n::tr!("director-record-missing-hint"), p.muted);
+            ui.horizontal_wrapped(|ui| {
+                for (icon, label, action) in [
+                    ("external-link", aurora_i18n::tr!("director-record-site"), Action::FfmpegSite),
+                    (
+                        "folder-open-filled",
+                        aurora_i18n::tr!("director-record-choose"),
+                        Action::ChooseFfmpeg,
+                    ),
+                    ("refresh", aurora_i18n::tr!("director-record-again"), Action::FindFfmpeg),
+                ] {
+                    if widgets::action_button(ui, p, icon, label, ActionKind::Flat, size).clicked() {
+                        actions.push(action);
+                    }
+                }
+            });
+        }
+        Some(Some(path)) => {
+            ui.horizontal(|ui| {
+                let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("director-record-found", name = name.as_ref()))
+                        .size(12.0)
+                        .color(p.muted),
+                )
+                .on_hover_text(path.to_string_lossy());
+                if widgets::icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("director-record-choose"), true) {
+                    actions.push(Action::ChooseFfmpeg);
+                }
+            });
+        }
+    }
+    let before = options.clone();
+    row(ui, p, aurora_i18n::tr!("director-record-format"), |ui| {
+        egui::ComboBox::from_id_salt("director_record_format")
+            .selected_text(film_format(options.format))
+            .show_ui(ui, |ui| {
+                for (format, available) in recorder::Format::ALL.into_iter().zip(formats) {
+                    // (a format the ffmpeg found cannot write is shown, greyed)
+                    ui.add_enabled_ui(available || ffmpeg.is_none(), |ui| {
+                        ui.selectable_value(&mut options.format, format, film_format(format));
+                    });
+                }
+            });
+    });
+    row(ui, p, aurora_i18n::tr!("director-record-fps"), |ui| {
+        options.fps = options.rate();
+        egui::ComboBox::from_id_salt("director_record_fps")
+            .selected_text(options.fps.to_string())
+            .show_ui(ui, |ui| {
+                for rate in recorder::RATES {
+                    ui.selectable_value(&mut options.fps, rate, rate.to_string());
+                }
+            });
+    });
+    row(ui, p, aurora_i18n::tr!("director-record-quality"), |ui| {
+        let levels = [recorder::Quality::Light, recorder::Quality::Good, recorder::Quality::Best];
+        let mut level = levels.iter().position(|quality| *quality == options.quality).unwrap_or(1);
+        let names = [
+            (aurora_i18n::tr!("director-record-quality-light"), true),
+            (aurora_i18n::tr!("director-record-quality-good"), true),
+            (aurora_i18n::tr!("director-record-quality-best"), true),
+        ];
+        if widgets::segmented(ui, p, &mut level, &names) {
+            options.quality = levels[level];
+        }
+    });
+    *changed |= *options != before;
+    if options.format.alpha() {
+        note(ui, aurora_i18n::tr!("director-record-alpha-tip"), p.muted);
+    }
+    note(ui, aurora_i18n::tr!("director-record-no-sound"), p.muted);
+    let (icon, label, kind) = if recording.is_some() {
+        ("player-stop-filled", aurora_i18n::tr!("director-record-stop"), ActionKind::Danger)
+    } else {
+        ("player-record-filled", aurora_i18n::tr!("director-record-start"), ActionKind::Flat)
+    };
+    let tip = aurora_i18n::tr!("director-record-tip");
+    if widgets::action_button_if(ui, p, icon, label, kind, size, live.can_record && !finishing)
+        .on_hover_text(tip)
+        .on_disabled_hover_text(tip)
+        .clicked()
+    {
+        actions.push(Action::Record);
+    }
+    if let Some(seconds) = recording {
+        let text = aurora_i18n::tr!("director-record-recording", time = clock(seconds as f32, true));
+        note(ui, &text, p.danger);
+    } else if finishing {
+        note(ui, aurora_i18n::tr!("director-record-finishing"), p.muted);
+    } else if let Some(film) = last {
+        match film {
+            Ok(file) => {
+                let name = file.file_name().unwrap_or(file.as_os_str()).to_string_lossy();
+                let text = aurora_i18n::tr!("director-record-saved", name = name.as_ref());
+                ui.horizontal(|ui| {
+                    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.success)).truncate())
+                        .on_hover_text(file.to_string_lossy());
+                });
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "folder-open-filled",
+                    aurora_i18n::tr!("director-record-reveal"),
+                    ActionKind::Flat,
+                    size,
+                )
+                .clicked()
+                {
+                    actions.push(Action::RevealFilm);
+                }
+            }
+            Err(why) => {
+                let text = aurora_i18n::tr!("director-record-failed", why = why);
+                note(ui, &text, p.warn);
+            }
+        }
+    }
 }
 
 /// The photo mode's isolation, for the film: everything, our avatar alone,
@@ -725,6 +1014,18 @@ fn playback_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
             .trailing_fill(true);
         ui.add(slider).on_hover_text(aurora_i18n::tr!("director-start-delay-tip"));
     });
+    row(ui, p, aurora_i18n::tr!("director-shake"), |ui| {
+        ui.spacing_mut().slider_width = SLIDER_W;
+        let mut percent = (d.shake * 100.0).round();
+        let slider = egui::Slider::new(&mut percent, 0.0..=100.0)
+            .custom_parser(aurora_i18n::parse_number)
+            .fixed_decimals(0)
+            .suffix(" %")
+            .trailing_fill(true);
+        if ui.add(slider).on_hover_text(aurora_i18n::tr!("director-shake-tip")).changed() {
+            d.shake = percent / 100.0;
+        }
+    });
     widgets::checkbox(ui, p, &mut d.hide_huds, aurora_i18n::tr!("director-hide-huds"));
     widgets::checkbox(ui, p, &mut d.hide_pointer, aurora_i18n::tr!("director-hide-pointer"));
     widgets::checkbox(ui, p, &mut d.looping, aurora_i18n::tr!("director-loop"));
@@ -827,6 +1128,25 @@ fn strip_buttons(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, 
     .clicked()
     {
         actions.push(Action::Play);
+    }
+    let (icon, kind) = if live.recording {
+        ("player-stop-filled", ActionKind::Danger)
+    } else {
+        ("player-record-filled", ActionKind::Flat)
+    };
+    let tip = if !live.can_record {
+        aurora_i18n::tr!("director-record-unavailable")
+    } else if live.recording {
+        aurora_i18n::tr!("director-record-stop")
+    } else {
+        aurora_i18n::tr!("director-record-tip")
+    };
+    if widgets::action_button_if(ui, p, icon, "", kind, STRIP_BUTTON, live.can_record)
+        .on_hover_text(tip)
+        .on_disabled_hover_text(tip)
+        .clicked()
+    {
+        actions.push(Action::Record);
     }
     let kind = if d.looping { ActionKind::Primary } else { ActionKind::Flat };
     if widgets::action_button(ui, p, "repeat", "", kind, STRIP_BUTTON)
@@ -1223,8 +1543,22 @@ pub fn world(
 /// While the track plays: the bars of the chosen format, and the countdown
 /// of the start delay with the key that stops it. Once the camera leaves,
 /// nothing else.
-pub fn playing(ctx: &egui::Context, p: &Palette, d: &Director) {
+pub fn playing(ctx: &egui::Context, p: &Palette, d: &Director, recording: Option<f64>) {
     let screen = ctx.content_rect();
+    if let Some(seconds) = recording {
+        // (on the screen only: the film is the view without the interface)
+        egui::Area::new(Id::unique("director_recording"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min + egui::vec2(16.0, 16.0))
+            .constrain(false)
+            .interactable(false)
+            .show(ctx, |ui| {
+                widgets::overlay(ui, p, egui::Margin::symmetric(10, 6), |ui| {
+                    let text = aurora_i18n::tr!("director-record-recording", time = clock(seconds as f32, true));
+                    ui.label(RichText::new(text).size(12.0).strong().color(p.danger));
+                });
+            });
+    }
     if d.format != Format::Window {
         // under the countdown, which is in the foreground
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, Id::unique("director_bars")));
@@ -1278,6 +1612,8 @@ mod tests {
             target: None,
             can_undo: false,
             can_redo: false,
+            can_record: false,
+            recording: false,
         }
     }
 
@@ -1350,8 +1686,8 @@ mod tests {
         assert!(strip.bottom() <= BOTTOM_TOP && (strip.top() - top).abs() <= 1.0);
         assert!((strip.center().x - SCREEN.x / 2.0).abs() <= 1.0, "centred");
         assert!(actions.is_empty());
-        // the fourth button, after back to the start, play and loop
-        let keyframe = egui::pos2(strip.left() + 10.0 + 3.0 * (STRIP_BUTTON.x + 6.0) + 20.0, strip.center().y);
+        // the fifth button, after back to the start, play, record and loop
+        let keyframe = egui::pos2(strip.left() + 10.0 + 4.0 * (STRIP_BUTTON.x + 6.0) + 20.0, strip.center().y);
         for events in [
             vec![egui::Event::PointerMoved(keyframe)],
             vec![Bench::button(keyframe, true)],
@@ -1552,7 +1888,8 @@ mod tests {
             playing.add_key(Pose::from_view(Vec3::X * x, Vec3::Y, Vec3::Z, 1.0));
         }
         assert!(playing.play());
-        bench.frame(vec![], |ctx, p| super::playing(ctx, p, &playing));
+        bench.frame(vec![], |ctx, p| super::playing(ctx, p, &playing, Some(3.2)));
+        assert!(bench.ctx.memory(|m| m.area_rect(Id::unique("director_recording"))).is_some());
         assert!(
             bench.ctx.memory(|m| m.area_rect(Id::unique("director_countdown"))).is_some(),
             "the start delay counts down"

@@ -84,6 +84,7 @@ mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod raw_mouse;
+mod recorder;
 mod report_abuse;
 mod scene;
 mod screen_rate;

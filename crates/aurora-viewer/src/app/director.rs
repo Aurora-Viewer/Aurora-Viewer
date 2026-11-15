@@ -6,16 +6,57 @@ use super::App;
 use crate::camera::track::Pose;
 use crate::director::{self, Director, History, Mode, Target};
 use crate::keybinds::Mods;
+use crate::recorder::{self, Finishing, Recording, Sink, Tool};
 use crate::ui;
 use crate::ui::director::Action;
 use crate::ui::environment::EnvAction;
+use aurora_render::Renderer;
 use glam::Vec3;
+use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 use winit::keyboard::{Key, KeyCode};
 
 /// "Go to" with the avatar's camera: how far ahead of the keyframe the
 /// alt-camera's focus is put, metres.
 const GO_TO_FOCUS: f32 = 5.0;
+
+/// The ffmpeg the films are recorded with (`recorder.rs`).
+#[derive(Default)]
+enum Ffmpeg {
+    /// Not looked for yet.
+    #[default]
+    Unknown,
+    /// Found, and being asked what it encodes.
+    Asking(Receiver<Result<Tool, String>>),
+    Ready(Tool),
+    /// None on the PATH nor chosen, or the one there did not answer.
+    Missing,
+}
+
+/// What a thread did with the tracks' files.
+enum Filed {
+    /// The names of the tracks saved.
+    Listed(Vec<String>),
+    Saved(String),
+    /// A track's file, to be read.
+    Loaded(String, Vec<u8>),
+    Failed(String),
+}
+
+/// The names of the tracks saved in `folder`, sorted.
+fn saved_tracks(folder: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")))
+        .filter_map(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    names
+}
 
 /// The Director's track and what the app keeps beside it.
 #[derive(Default)]
@@ -35,6 +76,28 @@ pub(super) struct DirectorState {
     aim: Option<Vec3>,
     /// The playback hid the mouse pointer.
     pointer_hidden: bool,
+    ffmpeg: Ffmpeg,
+    /// The file dialog that chooses an ffmpeg, while it is open.
+    choosing: Option<Receiver<Option<PathBuf>>>,
+    /// The film being recorded, and whether it is the track's playback
+    /// (it ends with it) or the live view (it ends when asked).
+    recording: Option<(Recording, bool)>,
+    /// The film whose file the encoder is finishing.
+    finishing: Option<Finishing>,
+    /// Record was pressed: start, or stop, with the next frame.
+    record_request: bool,
+    /// A frame of the film was asked of the renderer this frame.
+    record_pending: bool,
+    /// The last film: its file, or why it could not be written.
+    film: Option<Result<PathBuf, String>>,
+    /// The tracks saved for this account (their names), once listed, and
+    /// the name typed to save this one under.
+    tracks: Option<Vec<String>>,
+    track_name: String,
+    /// The threads that list, save and load the tracks' files answer here.
+    filing: Option<Receiver<Filed>>,
+    /// What the last save or load did, or why it failed.
+    filed: Option<Result<String, String>>,
     /// The changes of the track, for Ctrl+Z and Ctrl+Y.
     history: History,
     /// The Director has the keyboard (`ui::director::keys`): Delete, Ctrl+Z
@@ -52,7 +115,314 @@ impl App {
     /// The HUDs go with the interface while the track plays, unless RLVa
     /// keeps one shown.
     pub(super) fn director_hides_huds(&self) -> bool {
-        self.director.d.playing() && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
+        (self.director.d.playing() || self.director.recording.is_some()) && self.director.d.hide_huds && !self.world.rlva_has_locked_hud()
+    }
+
+    /// The film being recorded keeps the transparency of the isolation's
+    /// empty background (a format with alpha): the frames carry it.
+    pub(super) fn director_cutout_alpha(&self) -> bool {
+        self.director.recording.is_some() && self.settings.director_record.format.alpha() && self.world.photo_isolation.empty_background()
+    }
+
+    /// The ffmpeg chosen by hand, else the PATH's, asked on a thread what it
+    /// encodes (it is a program to run: never on the frame's thread).
+    fn director_find_ffmpeg(&mut self) {
+        let chosen = self.settings.director_record.ffmpeg.clone();
+        let path = chosen.or_else(|| std::env::var_os("PATH").and_then(|path| recorder::find_on_path(&path)));
+        self.director.ffmpeg = match path {
+            None => Ffmpeg::Missing,
+            Some(path) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(Tool::probe(&path));
+                });
+                Ffmpeg::Asking(rx)
+            }
+        };
+    }
+
+    /// The Director's lens while its window is open with its depth of
+    /// field on: its f-number, and the distance it is focused at along the
+    /// view (the lock's target when one is in sight, else the distance set).
+    pub(super) fn director_dof(&self) -> Option<(f32, f32)> {
+        let f_number = self.director.d.dof.filter(|_| self.panels.director && self.in_world())?;
+        let (eye, at) = (self.camera.position, self.camera.target - self.camera.position);
+        let distance = match self.director.aim {
+            Some(point) => crate::dof::distance_along(eye, at, point),
+            None => self.director.d.focus,
+        };
+        Some((
+            f_number,
+            if distance.is_finite() {
+                distance.max(0.1)
+            } else {
+                self.director.d.focus
+            },
+        ))
+    }
+
+    /// The folder of this account's saved tracks.
+    fn director_tracks_folder(&self) -> PathBuf {
+        crate::settings::account_dir(&self.world.agent_id).join("director")
+    }
+
+    /// Run `work` on a thread, its answers taken by `director_tracks_poll`
+    /// (one such thread at a time: the last asked replaces the others).
+    fn director_file(&mut self, work: impl FnOnce(&std::sync::mpsc::Sender<Filed>) + Send + 'static) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || work(&tx));
+        self.director.filing = Some(rx);
+    }
+
+    /// Save the track under the name typed: a JSON file of the account's
+    /// `director` folder, written on a thread, then the list read again.
+    fn director_save_track(&mut self) {
+        let (Some(stem), Some(origin)) = (crate::camera::track::file_stem(&self.director.track_name), self.world.main_origin()) else {
+            self.director.filed = Some(Err(aurora_i18n::tr!("director-track-bad-name").to_owned()));
+            return;
+        };
+        let bytes = match serde_json::to_vec_pretty(&self.director.d.track.to_file(origin)) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.director.filed = Some(Err(e.to_string()));
+                return;
+            }
+        };
+        let folder = self.director_tracks_folder();
+        self.director_file(move |tx| {
+            let path = folder.join(format!("{stem}.json"));
+            let written = std::fs::create_dir_all(&folder).and_then(|()| crate::atomic_file::write(&path, &bytes));
+            let _ = tx.send(match written {
+                Ok(()) => Filed::Saved(stem),
+                Err(e) => Filed::Failed(format!("{}: {e}", path.display())),
+            });
+            let _ = tx.send(Filed::Listed(saved_tracks(&folder)));
+        });
+    }
+
+    /// Load the saved track at `index` of the list: its file read on a
+    /// thread, the track replaced when it comes back.
+    fn director_load_track(&mut self, index: usize) {
+        let Some(name) = self.director.tracks.as_ref().and_then(|names| names.get(index)).cloned() else {
+            return;
+        };
+        let path = self.director_tracks_folder().join(format!("{name}.json"));
+        self.director_file(move |tx| {
+            let _ = tx.send(match std::fs::read(&path) {
+                Ok(bytes) => Filed::Loaded(name, bytes),
+                Err(e) => Filed::Failed(format!("{}: {e}", path.display())),
+            });
+        });
+    }
+
+    /// Each frame: the saved tracks listed once the window opens, and what
+    /// the files' threads answered. A loaded file is data from outside: a
+    /// track only when it reads as one (`Track::from_file`).
+    fn director_tracks_poll(&mut self, open: bool) {
+        if open && self.director.tracks.is_none() && self.director.filing.is_none() {
+            self.director.tracks = Some(Vec::new());
+            let folder = self.director_tracks_folder();
+            self.director_file(move |tx| {
+                let _ = tx.send(Filed::Listed(saved_tracks(&folder)));
+            });
+        }
+        let Some(answers) = &self.director.filing else {
+            return;
+        };
+        let answer = match answers.try_recv() {
+            Ok(answer) => answer,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.director.filing = None;
+                return;
+            }
+        };
+        match answer {
+            Filed::Listed(names) => self.director.tracks = Some(names),
+            Filed::Saved(name) => {
+                log::info!("director: track saved as {name}");
+                self.director.filed = Some(Ok(aurora_i18n::tr!("director-track-saved", name = name.as_str())));
+            }
+            Filed::Failed(why) => {
+                log::warn!("director: track file: {why}");
+                self.director.filed = Some(Err(aurora_i18n::tr!("director-track-failed", why = why.as_str())));
+            }
+            Filed::Loaded(name, bytes) => {
+                let track = serde_json::from_slice::<crate::camera::track::TrackFile>(&bytes)
+                    .ok()
+                    .zip(self.world.main_origin())
+                    .and_then(|(file, origin)| crate::camera::track::Track::from_file(&file, origin));
+                self.director.filed = Some(match track {
+                    Some(track) => {
+                        log::info!("director: track {name} loaded, {} keyframes", track.len());
+                        self.director.d.load(track);
+                        self.director.track_name = name.clone();
+                        Ok(aurora_i18n::tr!("director-track-loaded", name = name.as_str()))
+                    }
+                    None => Err(aurora_i18n::tr!("director-track-failed", why = name.as_str())),
+                });
+            }
+        }
+    }
+
+    /// Each frame: the answers of the threads (the ffmpeg asked, the file
+    /// dialog, the encoder finishing a film).
+    fn director_record_poll(&mut self, open: bool) {
+        if open && matches!(self.director.ffmpeg, Ffmpeg::Unknown) {
+            self.director_find_ffmpeg();
+        }
+        if let Ffmpeg::Asking(answer) = &self.director.ffmpeg {
+            match answer.try_recv() {
+                Ok(Ok(tool)) => {
+                    log::info!("director: ffmpeg at {}", tool.path.display());
+                    self.director.ffmpeg = Ffmpeg::Ready(tool);
+                }
+                Ok(Err(why)) => {
+                    log::warn!("director: ffmpeg did not answer ({why})");
+                    self.director.ffmpeg = Ffmpeg::Missing;
+                }
+                Err(TryRecvError::Disconnected) => self.director.ffmpeg = Ffmpeg::Missing,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(dialog) = &self.director.choosing {
+            match dialog.try_recv() {
+                Ok(picked) => {
+                    self.director.choosing = None;
+                    if let Some(path) = picked {
+                        self.settings.director_record.ffmpeg = Some(path);
+                        self.settings.save();
+                        self.director.ffmpeg = Ffmpeg::Unknown;
+                    }
+                }
+                Err(TryRecvError::Disconnected) => self.director.choosing = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(done) = self.director.finishing.as_mut().and_then(Finishing::done) {
+            self.director.finishing = None;
+            match &done {
+                Ok((file, frames)) => log::info!("director: film of {frames} frames written to {}", file.display()),
+                Err(why) => log::warn!("director: the film could not be written ({why})"),
+            }
+            self.director.film = Some(done.map(|(file, _)| file));
+        }
+    }
+
+    /// Start a film of frames of `size`: through the ffmpeg found, in the
+    /// format chosen, into a new file of the films' folder. With a track to
+    /// play, the film is its playback (no start delay: nothing else films);
+    /// without one, the live view until Record is pressed again.
+    fn director_record_start(&mut self, size: (u32, u32)) {
+        let options = self.settings.director_record.clone();
+        let (format, fps) = (options.format, options.rate());
+        // AURORA_DEMO_DIRECTOR_FILM: the raw frames into that file, no encoder
+        let raw = self
+            .demo
+            .then(|| std::env::var_os("AURORA_DEMO_DIRECTOR_FILM"))
+            .flatten()
+            .map(PathBuf::from);
+        let (sink, out) = match (raw, &self.director.ffmpeg) {
+            (Some(raw), _) => (Sink::Raw(raw.clone()), raw),
+            (None, Ffmpeg::Ready(tool)) => {
+                let Some(encoder) = tool.encoder(format) else {
+                    self.director.film = Some(Err(aurora_i18n::tr!("director-record-no-encoder").to_owned()));
+                    return;
+                };
+                let folder = recorder::default_folder();
+                if let Err(e) = std::fs::create_dir_all(&folder) {
+                    self.director.film = Some(Err(format!("{}: {e}", folder.display())));
+                    return;
+                }
+                let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+                let out = recorder::free_path(&folder, &stamp, format);
+                let crop = recorder::picture(size, self.director.d.format.aspect(), format);
+                let args = recorder::arguments(encoder, format, options.quality, size, crop, fps, &out);
+                (Sink::Ffmpeg(tool.path.clone(), args), out)
+            }
+            _ => return,
+        };
+        let with_track = self.director.d.can_play() && !self.director_restricted();
+        if with_track {
+            self.director_play();
+            if !self.director.d.playing() {
+                return;
+            }
+            self.director.d.mode = Mode::Playing { wait: 0.0, hold: None };
+        }
+        log::info!(
+            "director: recording {}x{} at {fps} frames a second to {} ({})",
+            size.0,
+            size.1,
+            out.display(),
+            if with_track { "the track" } else { "the live view" }
+        );
+        self.director.film = None;
+        self.director.recording = Some((Recording::start(sink, size, fps, out), with_track));
+    }
+
+    /// End the film: the encoder finishes its file on its own thread.
+    fn director_record_stop(&mut self) {
+        if let Some((recording, _)) = self.director.recording.take() {
+            if recording.skipped > 0 {
+                log::info!("director: {} frames repeated, the encoder was behind", recording.skipped);
+            }
+            let finishing = recording.finish();
+            log::info!("director: recording ended, {} frames to finish", finishing.frames);
+            self.director.finishing = Some(finishing);
+        }
+    }
+
+    /// Before the frame is drawn: Record pressed starts or stops the film;
+    /// a film of the track ends with its playback (before the hold on the
+    /// last view), any film with the window; and when a frame of the film is
+    /// due, this frame's view is asked of the renderer (unless something
+    /// else captures it: that frame of the film is then the next one's).
+    pub(super) fn director_record_frame(&mut self, renderer: &mut Renderer) {
+        if std::mem::take(&mut self.director.record_request) {
+            if self.director.recording.is_some() {
+                self.director_record_stop();
+            } else if self.director.finishing.is_none() {
+                self.director_record_start(renderer.size());
+            }
+        }
+        let Some((recording, with_track)) = &self.director.recording else {
+            return;
+        };
+        let playing = matches!(self.director.d.mode, Mode::Playing { hold: None, .. });
+        if recording.failed() || (*with_track && !playing) || !self.panels.director {
+            self.director_record_stop();
+            return;
+        }
+        let free = !renderer.capture_scene
+            && !renderer.capture_request
+            && !self.scene_capture_pending
+            && self.inventory_images.capturing.is_none();
+        if free && recording.wants_frame(Instant::now()) {
+            renderer.capture_scene = true;
+            self.director.record_pending = true;
+        }
+    }
+
+    /// After the frame is drawn: the view asked for the film goes to it. A
+    /// view of another size (the window was resized) ends the film: its
+    /// frames all have one size.
+    pub(super) fn director_recorded(&mut self, renderer: &mut Renderer) {
+        if !std::mem::take(&mut self.director.record_pending) {
+            return;
+        }
+        let Some((width, height, pixels)) = renderer.captured.take() else {
+            return;
+        };
+        let kept = self
+            .director
+            .recording
+            .as_mut()
+            .is_none_or(|(recording, _)| recording.frame(Instant::now(), (width, height), pixels));
+        if !kept {
+            log::info!("director: the window changed size, the recording ends");
+            self.director_record_stop();
+        }
     }
 
     /// The key color (linear RGB) the isolation's empty background shows
@@ -106,6 +476,8 @@ impl App {
         if !open {
             self.director.free = false;
         }
+        self.director_record_poll(open);
+        self.director_tracks_poll(open);
         let was = self.director.d.mode;
         if !open || self.world.teleporting || self.director_restricted() {
             self.director.d.stop();
@@ -225,6 +597,9 @@ impl App {
             target: self.director.aim,
             can_undo: self.director.history.can_undo(),
             can_redo: self.director.history.can_redo(),
+            can_record: matches!(self.director.ffmpeg, Ffmpeg::Ready(_))
+                || (self.demo && std::env::var_os("AURORA_DEMO_DIRECTOR_FILM").is_some()),
+            recording: self.director.recording.is_some(),
         }
     }
 
@@ -258,6 +633,15 @@ impl App {
         let live = self.director_live();
         let (rows, _) = self.photo_isolate_rows();
         let mut isolate = Vec::new();
+        let (ffmpeg, formats) = match &self.director.ffmpeg {
+            Ffmpeg::Ready(tool) => (
+                Some(Some(tool.path.as_path())),
+                recorder::Format::ALL.map(|format| tool.encoder(format).is_some()),
+            ),
+            Ffmpeg::Missing => (Some(None), [false; 5]),
+            Ffmpeg::Unknown | Ffmpeg::Asking(_) => (None, [false; 5]),
+        };
+        let mut record_changed = false;
         let mut open = self.panels.director;
         ui::director::window(
             ctx,
@@ -270,6 +654,28 @@ impl App {
                 rows: &rows,
                 out: &mut isolate,
             },
+            ui::director::Record {
+                options: &mut self.settings.director_record,
+                changed: &mut record_changed,
+                ffmpeg,
+                formats,
+                recording: self.director.recording.as_ref().map(|(film, _)| film.elapsed(Instant::now())),
+                finishing: self.director.finishing.is_some(),
+                last: self
+                    .director
+                    .film
+                    .as_ref()
+                    .map(|film| film.as_ref().map(PathBuf::as_path).map_err(String::as_str)),
+            },
+            ui::director::Tracks {
+                name: &mut self.director.track_name,
+                saved: self.director.tracks.as_deref().unwrap_or_default(),
+                note: self
+                    .director
+                    .filed
+                    .as_ref()
+                    .map(|note| note.as_ref().map(String::as_str).map_err(String::as_str)),
+            },
             ui::director::Env {
                 ui: &mut self.env_ui,
                 view: self.world.eep.local_view(),
@@ -281,6 +687,9 @@ impl App {
             &mut actions,
         );
         self.panels.director = open;
+        if record_changed {
+            self.settings.save();
+        }
         self.director_actions(actions);
         for choice in isolate {
             self.photo_isolate_out(choice, ctx.pixels_per_point());
@@ -291,7 +700,8 @@ impl App {
 
     /// While the track plays: the countdown of its start delay, nothing else.
     pub(super) fn director_playing_ui(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        ui::director::playing(ctx, p, &self.director.d);
+        let recording = self.director.recording.as_ref().map(|(film, _)| film.elapsed(Instant::now()));
+        ui::director::playing(ctx, p, &self.director.d, recording);
     }
 
     fn director_actions(&mut self, actions: Vec<Action>) {
@@ -321,6 +731,27 @@ impl App {
                 Action::Free(on) => self.director.free = on,
                 Action::FreeSpeed(speed) => self.snapshots.ui.free.speed = speed,
                 Action::LockFocus => self.director_lock_focus(),
+                Action::Record => self.director.record_request = true,
+                Action::SaveTrack => self.director_save_track(),
+                Action::LoadTrack(index) => self.director_load_track(index),
+                Action::ChooseFfmpeg => {
+                    if self.director.choosing.is_none() {
+                        // (a dialog blocks its thread: not the frame's)
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let title = aurora_i18n::tr!("director-record-choose");
+                        std::thread::spawn(move || {
+                            let _ = tx.send(rfd::FileDialog::new().set_title(title).pick_file());
+                        });
+                        self.director.choosing = Some(rx);
+                    }
+                }
+                Action::FindFfmpeg => self.director.ffmpeg = Ffmpeg::Unknown,
+                Action::FfmpegSite => ui::chat::open_web_link(&self.egui_ctx, recorder::DOWNLOAD_PAGE),
+                Action::RevealFilm => {
+                    if let Some(Ok(file)) = &self.director.film {
+                        crate::snapshot::gallery::reveal(&recorder::default_folder(), Some(file));
+                    }
+                }
                 Action::Undo => {
                     self.director.history.undo(&mut self.director.d);
                 }
@@ -483,6 +914,20 @@ impl App {
             d.format = director::Format::Scope;
             d.thirds = true;
             log::info!("director demo: view locked on our avatar's neck, 2.39:1");
+        }
+        if mode.starts_with("record") {
+            // a second of film, into AURORA_DEMO_DIRECTOR_FILM as raw frames
+            self.director.d.track.set_duration(1.0);
+            self.director.d.time = 0.0;
+            self.settings.director_record.fps = 24;
+            if mode == "record-alpha" {
+                let isolation = &mut self.world.photo_isolation;
+                isolation.set_mode(crate::snapshot::isolate::Mode::Own);
+                isolation.set_transparent(true);
+                self.settings.director_record.format = recorder::Format::ProResAlpha;
+            }
+            self.director.record_request = true;
+            log::info!("director demo: recording a second of the track");
         }
         if mode == "green" {
             let isolation = &mut self.world.photo_isolation;
