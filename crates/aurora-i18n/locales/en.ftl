@@ -13478,6 +13478,7 @@ anti-spam-demo-object = Flood test object
 anti-spam-demo-resident = Flood Test
 anti-spam-demo-prompt = Offline flood test: this prompt should appear at most ten times.
 anti-spam-demo-offer = Offline flood test offer
+anti-spam-demo-chat = Offline flood test: free gifts, touch me!
 anti-spam-enable = Enable flood protection
 anti-spam-enable-hint = Limit repeated chat, messages, inventory and teleport offers, script prompts and sounds from each source, and texts with too many line breaks. Off by default.
 anti-spam-own = Include my own objects
@@ -13505,6 +13506,10 @@ anti-spam-dialogs = Script prompts
 anti-spam-sounds = Sounds
 anti-spam-preloads = Sound preloads
 anti-spam-blocked = Anti-spam blocked { $kind } from { $source } for this session. Manage blocks in Preferences > Protections > Anti-spam.
+anti-spam-blocked-burst = { $count ->
+    [one] { $count } source blocked by the anti-spam for this session ({ $kinds }). Manage blocks in Preferences > Protections > Anti-spam.
+   *[other] { $count } sources blocked by the anti-spam for this session ({ $kinds }). Manage blocks in Preferences > Protections > Anti-spam.
+}
 
 # Named IK authoring projects
 ik-profile-default = New IK profile
