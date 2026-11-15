@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+pub mod doppler;
 pub mod history;
 
 #[cfg(test)]
@@ -143,6 +144,8 @@ struct Playing {
     /// Direction last sent in the listener's frame, when rendered
     /// binaurally (3D sound for headphones); None when panned.
     direction: Option<Vec3>,
+    /// Doppler rate last sent (1 unshifted).
+    rate: f32,
 }
 
 /// Sound of an object (LLAudioSourceVO).
@@ -275,6 +278,9 @@ pub struct SoundManager {
     radius: HashMap<Uuid, f32>,
     /// The world sounds playing at a place, from the last update.
     audible: Vec<Audible>,
+    /// The Doppler shift's factor and the listener's velocity, set by the
+    /// app before each update.
+    pub doppler: doppler::Doppler,
 }
 
 /// The disk cache file of sound `id` in the store `cache_dir`.
@@ -322,6 +328,7 @@ impl SoundManager {
             next_voice: 1,
             radius: HashMap::new(),
             audible: Vec::new(),
+            doppler: Default::default(),
         }
     }
 
@@ -785,8 +792,8 @@ impl SoundManager {
         };
         let mut gone = Vec::new();
         // Candidates: (distance, kind, key, audio position, within cut-off,
-        // played at the listener).
-        let mut active: Vec<(f32, usize, Uuid, Vec3, bool, bool)> = Vec::new();
+        // played at the listener, velocity for the Doppler shift).
+        let mut active: Vec<(f32, usize, Uuid, Vec3, bool, bool, Vec3)> = Vec::new();
         for (id, s) in self.sources.iter_mut() {
             let Some((idx, pos, hud)) = pos_of(id) else {
                 gone.push(*id);
@@ -833,7 +840,8 @@ impl SoundManager {
             // position (getPosGlobal / updateMute, llaudiosourcevo.cpp).
             let within_radius = self.radius.get(id).is_none_or(|radius| origin.distance(l.pos) < *radius);
             let pos = if hud { l.pos } else { pos };
-            active.push((pos.distance(l.pos), 0, *id, pos, within_radius, hud));
+            let velocity = doppler::source_velocity(&world.objects, idx);
+            active.push((pos.distance(l.pos), 0, *id, pos, within_radius, hud, velocity));
         }
         for id in gone {
             if let Some(s) = self.sources.remove(&id)
@@ -859,13 +867,14 @@ impl SoundManager {
             false
         });
         for (i, t) in self.triggered.iter().enumerate() {
-            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true, false));
+            // (a triggered sound keeps a zero velocity, as LLAudioSource)
+            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true, false, Vec3::ZERO));
         }
         // the nearest within their cut-off radius play
         active.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut voices = 0usize;
         self.audible.clear();
-        for (_, kind, key, pos, within_radius, at_listener) in active {
+        for (_, kind, key, pos, within_radius, at_listener, velocity) in active {
             let (sound, gain, looped, playing, emitter) = if kind == 0 {
                 let Some(s) = self.sources.get(&key) else {
                     continue;
@@ -917,6 +926,16 @@ impl SoundManager {
                         // switched between panned and binaural
                         _ => true,
                     };
+                    let rate = self.doppler.rate(l.pos, pos, velocity, at_listener);
+                    if (p.rate - rate).abs() > doppler::RATE_RESEND {
+                        if let Some(e) = engine {
+                            e.world_rate(p.voice, rate);
+                        }
+                        p.rate = rate;
+                        if !resend {
+                            self.set_playing(kind, key, Some(p), false);
+                        }
+                    }
                     if resend {
                         if let Some(e) = engine {
                             match place {
@@ -942,10 +961,14 @@ impl SoundManager {
                     voices += 1;
                     let voice = self.next_voice;
                     self.next_voice += 1;
+                    let rate = self.doppler.rate(l.pos, pos, velocity, at_listener);
                     if let Some(e) = engine {
                         match place {
                             Placement::Panned(g) => e.play_world(voice, Channel::Sfx, &clip, looped, g),
                             Placement::Binaural(g, d) => e.play_world_binaural(voice, Channel::Sfx, &clip, looped, g, d.to_array()),
+                        }
+                        if rate != 1.0 {
+                            e.world_rate(voice, rate);
                         }
                     }
                     if !at_listener {
@@ -960,6 +983,7 @@ impl SoundManager {
                             Placement::Binaural(_, d) => Some(d),
                             Placement::Panned(_) => None,
                         },
+                        rate,
                     };
                     self.set_playing(kind, key, Some(p), false);
                 }
@@ -1096,6 +1120,7 @@ impl SoundManager {
                     length: Some(c.duration()),
                     gain: (1.0, 1.0),
                     direction: None,
+                    rate: 1.0,
                 });
             }
             true
