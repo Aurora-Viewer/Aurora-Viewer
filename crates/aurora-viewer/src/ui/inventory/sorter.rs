@@ -60,7 +60,7 @@ enum Confirm {
     Replace,
     /// Allow Auto-sort into a default folder (its id and name), or Lost
     /// and Found's switch (None).
-    Unlock(Option<Uuid>, String),
+    Unlock(Uuid, String),
 }
 
 /// The folder picker: for the folder to sort or for a rule's destination.
@@ -1811,12 +1811,11 @@ fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut Inventory
     }
     match asked {
         Confirm::Whole => start(&mut st.sorter, prefs),
-        Confirm::Unlock(Some(id), _) => {
+        Confirm::Unlock(id, _) => {
             if !prefs.sorter.unlocked.contains(&id) {
                 prefs.sorter.unlocked.push(id);
             }
         }
-        Confirm::Unlock(None, _) => prefs.sorter.include_lost_found = true,
         Confirm::Replace => {
             if let Some(import) = st.sorter.import.as_mut() {
                 import.found.apply(&mut prefs.sorter, &import.pick, true);
@@ -2400,28 +2399,7 @@ fn default_folders(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut 
             .small()
             .color(p.muted),
     );
-    let lost = crate::world::inventory::actions::system(inv, 16);
-    let mut lost_on = options.include_lost_found;
-    ui.push_id("inventory_sorter_lost_found", |ui| {
-        crate::ui::widgets::switch_labeled(ui, p, &mut lost_on, aurora_i18n::tr!("inventory-sorter-lost-found"))
-            .on_hover_text(aurora_i18n::tr!("inventory-sorter-lost-found-tip"));
-    });
-    if lost_on != options.include_lost_found {
-        if lost_on {
-            // turned on only after its warning
-            let name = lost.map_or_else(
-                || aurora_i18n::tr!("inventory-sorter-lost-found").to_owned(),
-                |id| rules::name(inv, id),
-            );
-            state.confirm = Some(Confirm::Unlock(None, name));
-        } else {
-            options.include_lost_found = false;
-        }
-    }
     for id in sorter::unlockable_folders(inv) {
-        if Some(id) == lost {
-            continue;
-        }
         let name = rules::name(inv, id);
         let allowed = options.unlocked.contains(&id);
         ui.horizontal(|ui| {
@@ -2438,7 +2416,7 @@ fn default_folders(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut 
                         options.unlocked.retain(|u| *u != id);
                     }
                 } else if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-unlock")).clicked() {
-                    state.confirm = Some(Confirm::Unlock(Some(id), name.clone()));
+                    state.confirm = Some(Confirm::Unlock(id, name.clone()));
                 }
             });
         });

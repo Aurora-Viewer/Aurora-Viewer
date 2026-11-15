@@ -1510,7 +1510,6 @@ fn an_allowed_default_folder_sorts_and_the_critical_ones_never_open() {
     let none = HashSet::new();
     let prefs = Preferences {
         unlocked: guarded.clone(),
-        include_lost_found: true,
         rules: vec![Rule {
             words: "denim".into(),
             folder: "Denim".into(),
@@ -1519,7 +1518,9 @@ fn an_allowed_default_folder_sorts_and_the_critical_ones_never_open() {
         ..Default::default()
     };
     inv.sorter_unlocked = prefs.unlocked_set(&inv);
-    assert!(inv.sorter_unlocked.contains(&clothing) && inv.sorter_unlocked.contains(&lost));
+    // Lost and Found never opens, even listed as unlocked
+    assert!(inv.sorter_unlocked.contains(&clothing) && !inv.sorter_unlocked.contains(&lost));
+    assert!(!folder_open(&inv, lost) && !source_allowed(&inv, lost));
     for g in &guarded {
         let kind = inv.folders[g].info.type_default;
         let allowed = unlockable(kind);
