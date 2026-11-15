@@ -63,6 +63,10 @@ pub struct Social {
     pub ims: Vec<ImSession>,
     /// IM session to focus in the conversations window.
     pub focus_im: Option<Uuid>,
+    /// A message kept while we were offline arrived, for
+    /// FSOpenIMContainerOnOfflineMessage (LLIMMgr::addMessage): the app
+    /// takes it and opens the Conversations window with the option.
+    pub offline_ims: bool,
     /// Residents whose last word was an automatic response
     /// (IM_DO_NOT_DISTURB_AUTO_RESPONSE), until their next ordinary IM: a
     /// hint of do not disturb for their status dot (`ui/presence.rs`).
