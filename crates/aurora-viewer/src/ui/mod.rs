@@ -42,6 +42,7 @@ pub mod debug_overlay;
 pub mod debug_settings;
 pub mod destinations;
 pub mod dev_toolbox;
+pub mod director;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -230,6 +231,8 @@ pub struct Panels {
     pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
+    /// The Director (toolbar `director`): its window and its timeline.
+    pub director: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
     pub voice_controls: bool,
     /// The Omnifilter Rules Editor (Communicate menu, toolbar `omnifilter`).
@@ -303,6 +306,7 @@ impl Panels {
             avatar_welcome: false,
             destinations: false,
             quick_prefs: false,
+            director: false,
             voice_controls: false,
             omnifilter: false,
             about: false,
