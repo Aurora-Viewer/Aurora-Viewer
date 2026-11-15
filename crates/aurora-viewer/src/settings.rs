@@ -32,6 +32,19 @@ pub enum FloatingTextBackground {
     All,
 }
 
+/// A blocked resident's nearby chat (FSShowMutedChatHistory, fsfloaternearbychat.cpp):
+/// hidden as in the Legacy Viewer by default; or kept in the nearby chat's
+/// history only, either folded into one "n messages hidden" row that opens
+/// on a click, or greyed, as the Legacy Viewer's option shows them. Never
+/// above the chat bar, in a bubble, a sound, an alert or an unread count.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BlockedChat {
+    #[default]
+    Hidden,
+    Collapsed,
+    Greyed,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -927,6 +940,9 @@ pub struct Settings {
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
+    /// What the nearby chat shows of a blocked resident's lines
+    /// (FSShowMutedChatHistory, off: hidden; Preferences › Chat).
+    pub blocked_chat: BlockedChat,
     /// An object with an empty name speaks in the nearby chat as "(no
     /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
     /// off; Preferences > Chat).
@@ -2361,6 +2377,7 @@ impl Default for Settings {
             script_errors_channel: 1,
             compact_automated_chat: false,
             compact_im_system_lines: false,
+            blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,
             chat_keep_focus: true,
             chat_gesture_autocomplete: true,

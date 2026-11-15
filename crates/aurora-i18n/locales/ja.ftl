@@ -2808,6 +2808,11 @@ ui-options-compact-automated-chat = 人以外からのメッセージをコン�
 ui-options-compact-automated-chat-hint = オブジェクトやスクリプトの発言、ビューアーの通知を種類ごとのアイコン付きの小さな行で表示します。人のメッセージだけが通常のサイズになります。これらは未読に数えられず、通知（キーワード音、点滅、システム通知）も発生しません。通知されるのは人のメッセージだけです。
 ui-options-compact-im-system-lines = 会話のシステム行もコンパクトに表示
 ui-options-compact-im-system-lines-hint = 会話中のビューアーからの行（通話の開始・終了、自動返信の送信など）も、アイコン付きの小さな行で表示します。
+ui-options-blocked-chat = ブロックした住人のチャット
+ui-options-blocked-chat-hint = ブロックした住人が発言したときに、近くのチャットに表示する内容です。チャットバーの上、吹き出し、サウンド、未読数には出ません。
+ui-options-blocked-chat-hidden = 非表示
+ui-options-blocked-chat-collapsed = 折りたたむ
+ui-options-blocked-chat-greyed = グレー表示
 ui-options-mark-unnamed-objects = なりすまし防止のため、名前のないオブジェクトの発言に（名前なし）を付ける
 ui-options-mark-unnamed-objects-hint = 名前が空のオブジェクトは近くのチャットで「（名前なし）」として発言します。その行が住人の発言になりすますことはできません。
 ui-options-show-contacts-tab = コンタクトタブを表示
@@ -5329,6 +5334,11 @@ ui-chat-latest-new = { $count ->
     [one] 新着メッセージ{ $count }件
    *[other] 新着メッセージ{ $count }件
     }
+ui-chat-blocked-hidden = { $count ->
+    [one] 非表示のメッセージ{ $count }件
+   *[other] 非表示のメッセージ{ $count }件
+    }
+ui-chat-blocked-show = ブロックした住人の発言です。「表示」でここにグレーで表示します。
 ui-chat-copy-message = メッセージをコピー
 ui-chat-quote-message = 引用
 ui-chat-drop-to-give = ここにドロップして{ $name }に渡す
@@ -7163,6 +7173,14 @@ demo-bubbles-local-3 = 広場へようこそ。見学はここから始まりま
 demo-chat-lines-emote = /me がみんなに手を振る 👋
 demo-chat-lines-long = 見学は噴水から始まり、ギャラリーと屋上庭園へ上がります。途中で迷ったら、広場のマップは https://example.com/plaza-map にあります。
 demo-chat-lines-shout = あと5分で開場です！
+demo-muted-chat-near-1 = 今夜ギャラリーに来る人はいますか？
+demo-muted-chat-blocked-1 = みなさん、こんにちは！！
+demo-muted-chat-blocked-2 = 私の店を見て、グリッドで一番安いよ
+demo-muted-chat-blocked-3 = リンクをクリックして、今すぐ
+demo-muted-chat-object = 無料でお金がもらえる、タッチして！
+demo-muted-chat-near-2 = 9時に行きます。
+demo-muted-chat-blocked-4 = どうして誰も返事しないの
+demo-muted-chat-near-3 = またあとで！
 demo-chat-range-near = すぐ隣にいるよ。
 demo-chat-range-far = ここから聞こえる？
 demo-chat-range-stage = ステージのアナウンサー
