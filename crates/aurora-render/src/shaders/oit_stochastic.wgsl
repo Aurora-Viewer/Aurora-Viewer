@@ -152,8 +152,64 @@ fn frame_weight(c: vec3<f32>, unsure: f32) -> f32 {
     return clamp(2.0 * q2 / (unsure * unsure + q2), rp.temporal_weight, 1.0);
 }
 
+// The tiles of 8 x 8 pixels a step runs on (`cs_tiles`): the blended faces
+// are drawn in some of them only, and the others hold nothing (the targets
+// are cleared there). tile_list[0..8] are the indirect arguments, the tiles
+// follow, each its column and row (16 bits each).
+@group(0) @binding(13) var<storage, read> tile_list: array<u32>;
+@group(0) @binding(14) var<storage, read_write> tile_out: array<atomic<u32>>;
+const TILE_FIRST = 8u;
+
+// The pixel of invocation `l` of the workgroup `wg`: one workgroup a tile.
+fn tile_pixel(wg: u32, l: vec3<u32>) -> vec3<u32> {
+    let t = tile_list[TILE_FIRST + wg];
+    return vec3<u32>((t & 0xffffu) * 8u + l.x, (t >> 16u) * 8u + l.y, 0u);
+}
+
+var<workgroup> tile_blended: atomic<u32>;
+
+// Which tiles hold a blended face, from the total alpha of the pass before:
+// a sample with a transmittance under 1 has a fragment of alpha 0.004 or
+// more in it, and the passes after draw nothing else. The glow is drawn
+// after this, and its faces need no alpha: with glowing faces every tile is
+// listed.
 @compute @workgroup_size(8, 8)
-fn cs_resolve(@builtin(global_invocation_id) g: vec3<u32>) {
+fn cs_tiles(
+    @builtin(global_invocation_id) g: vec3<u32>,
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+) {
+    if (li == 0u) {
+        atomicStore(&tile_blended, 0u);
+    }
+    workgroupBarrier();
+    var used = (rp.flags & 2u) != 0u;
+    if (!used && g.x < rp.width && g.y < rp.height) {
+        let px = vec2<i32>(g.xy);
+        let tn = min(rp.trans_samples, 16u);
+        if (tn <= 1u) {
+            used = st_through(textureLoad(trans_one, px, 0).x) < 1.0;
+        } else {
+            for (var s = 0u; s < tn; s += 1u) {
+                used = used || st_through(textureLoad(trans_ms, px, i32(s)).x) < 1.0;
+            }
+        }
+    }
+    if (used) {
+        atomicOr(&tile_blended, 1u);
+    }
+    workgroupBarrier();
+    if (li == 0u && atomicLoad(&tile_blended) != 0u) {
+        // (the dispatch's count, the draw's instance count, then the tile)
+        let i = atomicAdd(&tile_out[0], 1u);
+        atomicAdd(&tile_out[5], 1u);
+        atomicStore(&tile_out[TILE_FIRST + i], wg.x | (wg.y << 16u));
+    }
+}
+
+@compute @workgroup_size(8, 8)
+fn cs_resolve(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
+    let g = tile_pixel(wg.x, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -282,7 +338,8 @@ fn last_frame(px: vec2<i32>, aux: vec4<f32>, total: f32) -> vec4<f32> {
 }
 
 @compute @workgroup_size(8, 8)
-fn cs_temporal(@builtin(global_invocation_id) g: vec3<u32>) {
+fn cs_temporal(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
+    let g = tile_pixel(wg.x, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -315,7 +372,8 @@ fn cs_temporal(@builtin(global_invocation_id) g: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8)
-fn cs_smooth(@builtin(global_invocation_id) g: vec3<u32>) {
+fn cs_smooth(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
+    let g = tile_pixel(wg.x, l);
     if (g.x >= rp.width || g.y >= rp.height) {
         return;
     }
@@ -354,10 +412,15 @@ fn cs_smooth(@builtin(global_invocation_id) g: vec3<u32>) {
     textureStore(resolved_w, px, vec4<f32>(mid, c.a));
 }
 
+// The listed tiles, a quad each (two triangles, 6 vertices an instance).
 @vertex
-fn vs_full(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
-    let uv = vec2<f32>(f32((v << 1u) & 2u), f32(v & 2u));
-    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+fn vs_tile(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> @builtin(position) vec4<f32> {
+    let t = tile_list[TILE_FIRST + i];
+    var corners = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);
+    let c = corners[v];
+    let at = vec2<f32>(f32(((t & 0xffffu) + (c & 1u)) * 8u), f32(((t >> 16u) + (c >> 1u)) * 8u));
+    let size = vec2<f32>(f32(rp.width), f32(rp.height));
+    return vec4<f32>(at.x / size.x * 2.0 - 1.0, 1.0 - at.y / size.y * 2.0, 0.0, 1.0);
 }
 
 // Per sample: the colour added over the scene, and in alpha this sample's

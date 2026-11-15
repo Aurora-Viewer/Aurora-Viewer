@@ -10601,6 +10601,8 @@ impl Backend {
                 draw_sided(&mut pass, &pipes.alpha[0], rigged, 0);
                 draw_sided(&mut pass, &pipes.alpha[1], others, n_depth);
             }
+            // (the tiles with a blended face: what follows runs on those)
+            st.mark_tiles(&mut encoder, resolve);
             mark(&mut encoder, MARK_ST_ALPHA_END);
             // 3 and 4: the stochastic depth, then the accumulation
             st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
