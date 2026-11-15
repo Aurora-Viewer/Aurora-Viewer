@@ -211,7 +211,10 @@ pub fn base_refused(name: &str) -> bool {
         "my inventory",
     ];
     let lower = name.trim().to_lowercase();
-    lower.is_empty() || lower.starts_with('#') || lower == pre_trash_name().to_lowercase() || DEFAULTS.contains(&lower.as_str())
+    lower.is_empty()
+        || VIEWER_FOLDERS.iter().any(|name| name.eq_ignore_ascii_case(&lower))
+        || lower == pre_trash_name().to_lowercase()
+        || DEFAULTS.contains(&lower.as_str())
 }
 
 /// The Pre-Trash folder, when it exists.
@@ -938,7 +941,7 @@ pub fn split_path(path: &str) -> Vec<String> {
 }
 
 /// Where an entry goes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Dest {
     /// A path below the sort folder, made when missing.
     Path(Vec<String>),
@@ -1121,7 +1124,7 @@ pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
 }
 
 /// One entry to move.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Move {
     pub id: Uuid,
     pub folder: bool,
@@ -1132,6 +1135,11 @@ pub struct Move {
     /// The destination as the preview names it.
     pub label: String,
     pub unpacker: bool,
+    /// Undo or a snapshot's layout: the entry goes back to a place it was,
+    /// out of the Trash included; it is checked like a drag rather than
+    /// by the hands-off rule, which still guards where it goes.
+    #[serde(default)]
+    pub restore: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1361,10 +1369,14 @@ fn open_container(inv: &Inventory, folder: &super::Folder) -> bool {
     !folder.library && (folder.info.id == inv.root || matches!(folder.info.type_default, -1 | OPEN_DEFAULT))
 }
 
-/// A viewer folder at the root (`#RLV`, `#Firestorm`, `#Aurora` and any
-/// other `#` folder): RLVa, the AO and the scripting bridge depend on it.
+/// The viewer folders at the root, never touched and never unlockable:
+/// RLVa reads `#RLV` (RlvInventory::getSharedRootID), the AO and the
+/// scripting bridge live in `#Firestorm` and `#Aurora`. Any other folder
+/// whose name starts with `#` is an ordinary folder of the user's.
+pub const VIEWER_FOLDERS: [&str; 3] = ["#RLV", "#Firestorm", "#Aurora"];
+
 fn viewer_folder(inv: &Inventory, folder: &super::Folder) -> bool {
-    folder.info.parent == inv.root && folder.info.name.trim_start().starts_with('#')
+    folder.info.parent == inv.root && VIEWER_FOLDERS.iter().any(|name| folder.info.name.trim().eq_ignore_ascii_case(name))
 }
 
 /// `folder` and every folder above it are open: nothing in it is hands-off
@@ -1413,6 +1425,57 @@ pub fn trash_ready(
     holds_worn: &HashSet<Uuid>,
 ) -> bool {
     actions::parent(inv, id) == Some(from) && !hands_off(inv, id) && !prefs.excludes(inv, id) && movable(inv, id, protected, holds_worn)
+}
+
+/// An entry Undo or a snapshot may put back: movable by a drag (out of the
+/// Trash or Pre-Trash too), nothing worn in it, no link, no locked folder
+/// above or below it, never a default or viewer folder itself.
+pub fn restorable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &HashSet<Uuid>) -> bool {
+    let own_folder = inv
+        .folders
+        .get(&id)
+        .is_none_or(|f| f.info.type_default == -1 && !viewer_folder(inv, f));
+    // it leaves an open place, the Trash or Pre-Trash only: never an outfit,
+    // the Current Outfit or any other hands-off folder
+    let trash = actions::system(inv, 14);
+    let leaves = actions::parent(inv, id).is_some_and(|p| folder_open(inv, p) || trash.is_some_and(|t| actions::under(inv, p, t)));
+    own_folder
+        && leaves
+        && !inv.folders.get(&id).is_some_and(|f| f.library)
+        && !actions::library(inv, id)
+        && actions::relocatable(inv, id, protected)
+        && !holds_worn.contains(&id)
+        && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 24 | 25))
+        && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
+        && !protected.iter().any(|p| actions::under(inv, *p, id))
+}
+
+/// The preview of saved moves (Undo, a snapshot's layout, a run to resume):
+/// each re-checked against the inventory now, what can no longer go is
+/// listed as kept.
+pub fn plan_saved(inv: &Inventory, moves: &[Move], protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let holds_worn = actions::worn_ancestors(inv, worn);
+    let mut plan = Plan::default();
+    for m in moves {
+        let here = actions::parent(inv, m.id) == Some(m.from);
+        let ok =
+            here && if m.restore {
+                restorable(inv, m.id, protected, &holds_worn)
+            } else {
+                movable(inv, m.id, protected, &holds_worn)
+            } && match m.to {
+                Dest::Folder(target) => target_allowed(inv, target),
+                Dest::Path(_) | Dest::PreTrash => true,
+            };
+        if ok {
+            plan.moves.push(m.clone());
+        } else if here {
+            plan.kept += 1;
+            plan.kept_list.push((m.name.clone(), Kept::Protected));
+        }
+    }
+    plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
+    plan
 }
 
 /// Why an entry the preview lists stays where it is.
@@ -1826,6 +1889,7 @@ impl CleanupPlan {
                 to: Dest::PreTrash,
                 label: pre_trash_name(),
                 unpacker: false,
+                restore: false,
             })
             .collect()
     }
@@ -2139,6 +2203,7 @@ fn plan_with(
             to,
             label,
             unpacker,
+            restore: false,
         });
     }
     plan.moves.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.name.cmp(&b.name)));
@@ -2185,7 +2250,11 @@ pub fn step(
         let Some(next) = queue.front() else { break };
         let still_here = actions::parent(inv, next.id) == Some(next.from)
             && inv.folders.contains_key(&next.id) == next.folder
-            && movable(inv, next.id, protected, &holds_worn);
+            && if next.restore {
+                restorable(inv, next.id, protected, &holds_worn)
+            } else {
+                movable(inv, next.id, protected, &holds_worn)
+            };
         if !still_here {
             queue.pop_front();
             *skipped += 1;
@@ -2294,6 +2363,9 @@ pub mod demo;
 
 #[path = "sorter_share.rs"]
 pub mod share;
+
+#[path = "sorter_journal.rs"]
+pub mod journal;
 
 #[cfg(test)]
 #[path = "sorter_tests.rs"]

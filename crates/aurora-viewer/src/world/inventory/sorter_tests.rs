@@ -1245,14 +1245,9 @@ fn hands_off_fixture() -> (Inventory, Vec<Uuid>) {
         add_item(&mut inv, folder_id + 1, folder_id, "Old denim freebie listed", OLD);
     }
     // the viewer folders: RLV shared folders, the AO, the bridge
-    for (n, (name, inside)) in [
-        ("#RLV", "Old denim freebie dress"),
-        ("#Firestorm", "#AO"),
-        ("#Aurora", "Aurora AO"),
-        ("#Mine", "Old denim stash"),
-    ]
-    .into_iter()
-    .enumerate()
+    for (n, (name, inside)) in [("#RLV", "Old denim freebie dress"), ("#Firestorm", "#AO"), ("#Aurora", "Aurora AO")]
+        .into_iter()
+        .enumerate()
     {
         let folder_id = 3000 + n as u128 * 10;
         add_folder(&mut inv, folder_id, 1, name);
@@ -1262,7 +1257,11 @@ fn hands_off_fixture() -> (Inventory, Vec<Uuid>) {
         add_folder(&mut inv, folder_id + 4, folder_id + 1, "Empty");
         guarded.push(id(folder_id));
     }
-    // sortable: Objects' contents and a folder of the user's
+    // sortable: Objects' contents, a folder of the user's, and a `#` folder
+    // that is not a viewer folder
+    add_folder(&mut inv, 4020, 1, "#Hair");
+    add_folder(&mut inv, 4021, 4020, "Bangs");
+    add_item(&mut inv, 4022, 4020, "Old denim freebie hair", OLD);
     add_item(&mut inv, 4000, OBJECTS, "Old denim freebie skirt", OLD);
     add_folder(&mut inv, 4010, 1, "My clothes");
     add_folder(&mut inv, 4011, 4010, "Tops");
@@ -1340,6 +1339,11 @@ fn hands_off_folders_are_never_read_moved_or_trashed_whatever_the_settings() {
     let whole = &plans[0];
     assert!(whole.moves.iter().any(|m| m.id == id(4000)), "Objects' contents sort");
     assert!(whole.moves.iter().any(|m| m.id == id(4012)), "the user's own folder sorts");
+    // ("#Hair" reads as a product: it moves whole into the sort folder)
+    assert!(
+        whole.moves.iter().any(|m| m.id == id(4020) || m.id == id(4022)),
+        "an ordinary # folder sorts"
+    );
     // the preview names the hands-off folders it leaves alone
     assert!(whole.kept_list.iter().any(|(name, why)| name == "#RLV" && *why == Kept::Protected));
     // Clean up, every option on

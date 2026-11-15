@@ -41,6 +41,7 @@ fn moves(range: std::ops::Range<u128>) -> Vec<Move> {
             to: crate::world::inventory::sorter::Dest::Path(vec!["Tops".into()]),
             label: "Sorted / Tops".into(),
             unpacker: false,
+            restore: false,
         })
         .collect()
 }

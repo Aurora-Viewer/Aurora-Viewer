@@ -24,11 +24,28 @@ const TRASH_BATCH: usize = 200;
 enum Source {
     /// The direct contents of a folder.
     Folder(Uuid),
-    /// Entries chosen in the inventory, sorted at once.
+    /// Entries chosen in the inventory, sorted once their preview is seen.
     Entries(Vec<Uuid>),
-    /// My Inventory's loose items and its system folders
+    /// My Inventory's loose items, Objects and the user's own folders
     /// (`sorter::whole_sources`), confirmed before it starts.
     Whole,
+    /// Saved moves: Undo, a snapshot's layout, a run to resume.
+    Saved(std::sync::Arc<Vec<Move>>, Restoring),
+}
+
+/// Where saved moves come from.
+#[derive(Clone, Copy, PartialEq)]
+enum Restoring {
+    Undo,
+    Snapshot(i64),
+    Resume,
+}
+
+/// The time now, in seconds since 1970.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// A confirmation on top of the window.
@@ -92,6 +109,15 @@ pub(super) struct State {
     share: Option<sorter::share::Share>,
     /// The Import window.
     import: Option<ImportWindow>,
+    /// The account whose journal, snapshots and unfinished run are loaded.
+    account: Option<Uuid>,
+    /// The last runs' confirmed moves, for Undo (saved per account).
+    journal: sorter::journal::Journal,
+    /// A run the viewer stopped before its end, to resume.
+    unfinished: Option<sorter::journal::Unfinished>,
+    snapshots: Vec<(i64, std::path::PathBuf)>,
+    /// Batches confirmed since the journal was last written.
+    unsaved: usize,
 }
 
 /// The Import window: the pasted text, what it holds and what is ticked.
@@ -123,6 +149,8 @@ struct TrashJob {
     /// whether the app took it (a delete pending).
     in_flight: Option<(Vec<(Uuid, Uuid)>, u32, bool)>,
     next_at: Option<Instant>,
+    /// The journal and the snapshot of its start are taken.
+    begun: bool,
 }
 
 /// The time between two batches of a job, after the server's reply: about
@@ -157,6 +185,12 @@ struct Job {
     started: Instant,
     /// Since when the next move waits for its destination to load.
     waiting_since: Option<Instant>,
+    /// Moves confirmed since the journal last took them.
+    confirmed: Vec<sorter::journal::Entry>,
+    /// Undo, a snapshot or a resumed run: what it ends.
+    restoring: Option<Restoring>,
+    /// The journal and the snapshot of its start are taken.
+    begun: bool,
 }
 
 struct InFlight {
@@ -183,6 +217,9 @@ impl Job {
             paused: false,
             started: Instant::now(),
             waiting_since: None,
+            confirmed: Vec::new(),
+            restoring: None,
+            begun: false,
         }
     }
 
@@ -199,6 +236,12 @@ impl Job {
         match error {
             None => {
                 self.done += batch.moves.len();
+                self.confirmed.extend(batch.moves.iter().map(|m| sorter::journal::Entry {
+                    id: m.id,
+                    folder: m.folder,
+                    from: m.from,
+                    name: m.name.clone(),
+                }));
                 self.retries = 0;
                 self.next_at = Some(now + PACE);
                 None
@@ -232,7 +275,87 @@ const RULES: usize = 1;
 const OPTIONS: usize = 2;
 const CLEANUP: usize = 3;
 
+/// Journal saves: every this many confirmed batches, and at a run's end.
+const SAVE_EVERY: usize = 20;
+
 impl State {
+    fn account_dir(&self) -> Option<std::path::PathBuf> {
+        self.account.map(|agent| crate::settings::account_dir(&agent))
+    }
+
+    /// Read the account's journal, unfinished run and snapshot list, once.
+    fn load_account(&mut self, agent: Uuid) {
+        if self.account == Some(agent) {
+            return;
+        }
+        self.account = Some(agent);
+        let dir = crate::settings::account_dir(&agent);
+        use sorter::journal as j;
+        self.journal = match j::load(&j::journal_path(&dir)) {
+            Ok(journal) => journal,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+            Err(error) => {
+                log::warn!("auto-sort: the journal could not be read: {error}");
+                Default::default()
+            }
+        };
+        self.unfinished = j::load(&j::unfinished_path(&dir))
+            .ok()
+            .filter(|u: &j::Unfinished| !u.moves.is_empty());
+        self.snapshots = j::snapshots(&dir);
+    }
+
+    /// Write the journal (and the run's moves still to send) off the frame.
+    fn save_progress(&mut self) {
+        self.unsaved = 0;
+        let Some(dir) = self.account_dir() else { return };
+        let journal = self.journal.clone();
+        let unfinished = self.job.as_ref().map(|job| sorter::journal::Unfinished {
+            base: job.base.clone(),
+            moves: job
+                .in_flight
+                .iter()
+                .flat_map(|batch| batch.moves.iter())
+                .chain(job.queue.iter())
+                .cloned()
+                .collect(),
+        });
+        std::thread::spawn(move || {
+            use sorter::journal as j;
+            if let Err(error) = j::save(&j::journal_path(&dir), &journal) {
+                log::warn!("auto-sort: the journal could not be saved: {error}");
+            }
+            let path = j::unfinished_path(&dir);
+            match unfinished.filter(|u| !u.moves.is_empty()) {
+                Some(unfinished) => {
+                    if let Err(error) = j::save(&path, &unfinished) {
+                        log::warn!("auto-sort: the run in progress could not be saved: {error}");
+                    }
+                }
+                None => {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        });
+    }
+
+    /// A snapshot of the layout before a large or Trash run, kept with the
+    /// account's last ones.
+    fn snapshot(&mut self, inv: &Inventory) {
+        let Some(dir) = self.account_dir() else { return };
+        let at = unix_now();
+        let snapshot = sorter::journal::Snapshot::take(inv, at);
+        self.snapshots.insert(0, (at, sorter::journal::snapshot_path(&dir, at)));
+        self.snapshots.truncate(sorter::journal::SNAPSHOTS);
+        std::thread::spawn(move || {
+            use sorter::journal as j;
+            if let Err(error) = j::save(&j::snapshot_path(&dir, at), &snapshot) {
+                log::warn!("auto-sort: the snapshot could not be saved: {error}");
+            }
+            j::prune_snapshots(&dir);
+        });
+    }
+
     pub(super) fn active(&self) -> bool {
         self.open || self.job.is_some() || self.submitted || self.requested.is_some() || self.trash.is_some()
     }
@@ -416,8 +539,12 @@ pub(super) fn show(
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     worn: &HashSet<Uuid>,
+    agent: Uuid,
     actions: &mut Vec<InvAction>,
 ) {
+    if st.sorter.open || st.sorter.job.is_some() || st.sorter.trash.is_some() {
+        st.sorter.load_account(agent);
+    }
     if let Some(shown) = st.sorter.requested.take() {
         let source = default_source(inv, st, shown);
         st.sorter.set_source(Source::Folder(source));
@@ -439,6 +566,28 @@ pub(super) fn show(
             job.requeue(batch.moves);
             state.submitted = false;
         }
+    }
+    // The journal takes what the server confirmed; saved every few batches
+    // with the moves still to send, so a run the viewer stops can resume.
+    let mut begin = false;
+    if let Some(job) = state.job.as_mut() {
+        if !job.confirmed.is_empty() {
+            let confirmed = std::mem::take(&mut job.confirmed);
+            state.journal.record(confirmed);
+            state.unsaved += 1;
+        }
+        if job.done == 0 && job.in_flight.is_none() && !job.begun {
+            job.begun = true;
+            begin = true;
+        }
+    }
+    if begin {
+        // a run starts: its journal, and a snapshot of the layout first
+        state.journal.begin(sorter::journal::RunKind::Move, unix_now());
+        state.snapshot(inv);
+    }
+    if state.unsaved >= SAVE_EVERY {
+        state.save_progress();
     }
     if free
         && !state.submitted
@@ -480,9 +629,20 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("inventory-sorter-done", count = job.done)
                 };
+                let restoring = job.restoring;
                 state.job = None;
                 state.preview = None;
                 state.cleanup = None;
+                if restoring == Some(Restoring::Undo) {
+                    // the undo run, then the run it undid: neither is undone again
+                    state.journal.drop_last();
+                    state.journal.drop_last();
+                }
+                if restoring == Some(Restoring::Resume) {
+                    state.unfinished = None;
+                }
+                // the journal written, and no run left to resume
+                state.save_progress();
             }
         }
     }
@@ -505,7 +665,7 @@ pub(super) fn show(
             }
             loaded
         }
-        Source::Entries(_) => true,
+        Source::Entries(_) | Source::Saved(..) => true,
         Source::Whole => {
             let mut loaded = true;
             for id in sorter::whole_sources(inv, &prefs.sorter) {
@@ -528,6 +688,7 @@ pub(super) fn show(
             Source::Folder(id) => sorter::plan(inv, *id, &prefs.sorter, &prefs.protected, worn),
             Source::Entries(ids) => sorter::plan_entries(inv, ids, &prefs.sorter, &prefs.protected, worn),
             Source::Whole => sorter::plan_whole(inv, &prefs.sorter, &prefs.protected, worn),
+            Source::Saved(moves, _) => sorter::plan_saved(inv, moves, &prefs.protected, worn),
         };
         // A Pre-Trash rule reads the whole folder sorted at any depth (and
         // the sort folder's tree): what is not loaded yet is asked for, and
@@ -544,7 +705,7 @@ pub(super) fn show(
     // folder arriving included), choice, source or day.
     let cleanup_source = match &source {
         Source::Folder(id) => *id,
-        Source::Entries(_) | Source::Whole => inv.root,
+        Source::Entries(_) | Source::Whole | Source::Saved(..) => inv.root,
     };
     if state.tab == CLEANUP && !busy {
         let now = std::time::SystemTime::now()
@@ -978,6 +1139,14 @@ fn send_trash_batch(
     let deleting = st.pending_delete.is_some();
     let free = free && !deleting && !actions.iter().any(|a| matches!(a, InvAction::Delete(_)));
     let now = Instant::now();
+    if st.sorter.trash.as_ref().is_some_and(|trash| !trash.begun) {
+        // a Trash run starts: its journal, and a snapshot of the layout first
+        st.sorter.journal.begin(sorter::journal::RunKind::Trash, unix_now());
+        st.sorter.snapshot(inv);
+        if let Some(trash) = st.sorter.trash.as_mut() {
+            trash.begun = true;
+        }
+    }
     let Some(trash) = st.sorter.trash.as_mut() else { return };
     // The batch on its way: done once the app took it and its delete is
     // over; never taken (another change went first), back in the queue.
@@ -986,6 +1155,13 @@ fn send_trash_batch(
         *taken |= deleting;
         if *taken && !deleting {
             trash.sent += batch.len();
+            st.sorter.journal.record(batch.iter().map(|(id, from)| sorter::journal::Entry {
+                id: *id,
+                folder: inv.folders.contains_key(id),
+                from: *from,
+                name: rules::name(inv, *id),
+            }));
+            st.sorter.unsaved += 1;
             trash.in_flight = None;
             trash.next_at = Some(now + PACE);
         } else if !*taken && *frames > 2 {
@@ -1203,6 +1379,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut I
                 skipped: 0,
                 in_flight: None,
                 next_at: None,
+                begun: false,
             });
         }
         Confirm::PreTrash(ids) => {
@@ -1216,6 +1393,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut I
                 skipped: 0,
                 in_flight: None,
                 next_at: None,
+                begun: false,
             });
         }
     }
@@ -1228,7 +1406,14 @@ fn start(state: &mut State, prefs: &InventoryPreferences) {
         state.status = aurora_i18n::tr!("inventory-sorter-nothing").into();
         return;
     }
-    state.job = Some(Job::new(plan.moves.iter().cloned().collect(), prefs.sorter.base_name()));
+    let mut job = Job::new(plan.moves.iter().cloned().collect(), prefs.sorter.base_name());
+    if let Some(Source::Saved(_, restoring)) = &state.source {
+        job.restoring = Some(*restoring);
+        if let (Restoring::Resume, Some(unfinished)) = (restoring, &state.unfinished) {
+            job.base.clone_from(&unfinished.base);
+        }
+    }
+    state.job = Some(job);
 }
 
 /// What is sorted: a folder (with Change…) or the selected entries.
@@ -1243,6 +1428,12 @@ fn source_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State
                     Source::Folder(id) => sorter::folder_path(inv, *id),
                     Source::Entries(ids) => aurora_i18n::tr!("inventory-sorter-selection", count = ids.len()),
                     Source::Whole => aurora_i18n::tr!("inventory-sorter-whole").to_owned(),
+                    Source::Saved(_, Restoring::Undo) => aurora_i18n::tr!("inventory-sorter-undo-source").to_owned(),
+                    Source::Saved(_, Restoring::Resume) => aurora_i18n::tr!("inventory-sorter-resume-source").to_owned(),
+                    Source::Saved(_, Restoring::Snapshot(at)) => {
+                        let date = snapshot_date(*at);
+                        aurora_i18n::tr!("inventory-sorter-snapshot-source", date = date.as_str())
+                    }
                 };
                 ui.label(RichText::new(text).strong());
             });
@@ -1703,6 +1894,8 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
         state.picker = Some(Picker::new(Pick::Exclude));
     }
     ui.add_space(10.0);
+    undo_and_snapshots(ui, p, inv, state, worn_none());
+    ui.add_space(10.0);
     crate::ui::widgets::section_header(ui, p, "share", aurora_i18n::tr!("inventory-share-section"));
     ui.label(
         RichText::new(aurora_i18n::tr!("inventory-share-section-hint"))
@@ -1729,6 +1922,88 @@ fn options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, o
             state.import = Some(ImportWindow::default());
         }
     });
+}
+
+/// No worn set where the Options tab has none: the preview re-checks every
+/// entry against what is worn before anything moves.
+fn worn_none() -> &'static HashSet<Uuid> {
+    static NONE: std::sync::OnceLock<HashSet<Uuid>> = std::sync::OnceLock::new();
+    NONE.get_or_init(HashSet::new)
+}
+
+/// A snapshot's or a run's date, "2026-11-15 12:30" (UTC).
+fn snapshot_date(at: i64) -> String {
+    chrono::DateTime::from_timestamp(at, 0).map_or_else(String::new, |t| t.format("%Y-%m-%d %H:%M").to_string())
+}
+
+/// Undo the last run, put a snapshot's layout back, resume a stopped run,
+/// take a snapshot: each opens its preview; nothing moves before Sort.
+fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut State, worn: &HashSet<Uuid>) {
+    use crate::ui::widgets::{ActionKind, action_button};
+    let size = Vec2::new(0.0, 26.0);
+    let protected = HashSet::new();
+    crate::ui::widgets::section_header(ui, p, "history", aurora_i18n::tr!("inventory-sorter-undo-section"));
+    ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-undo-hint")).small().color(p.muted));
+    if let Some(unfinished) = &state.unfinished {
+        let label = aurora_i18n::tr!("inventory-sorter-resume-run", count = unfinished.moves.len());
+        if action_button(ui, p, "player-play-filled", &label, ActionKind::Primary, size).clicked() {
+            let moves = std::sync::Arc::new(unfinished.moves.clone());
+            state.set_source(Source::Saved(moves, Restoring::Resume));
+            state.tab = PREVIEW;
+        }
+    }
+    match state.journal.last() {
+        Some(run) => {
+            let date = snapshot_date(run.at);
+            let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = run.entries.len(), date = date.as_str());
+            if action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked() {
+                let (moves, _) = sorter::journal::undo_moves(inv, run, &protected, worn);
+                state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
+                state.tab = PREVIEW;
+            }
+        }
+        None => {
+            ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-undo-none")).small().color(p.muted));
+        }
+    }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-snapshots")).strong());
+        if action_button(
+            ui,
+            p,
+            "camera-filled",
+            aurora_i18n::tr!("inventory-sorter-snapshot-take"),
+            ActionKind::Flat,
+            size,
+        )
+        .clicked()
+        {
+            state.snapshot(inv);
+        }
+    });
+    let mut restore = None;
+    for (at, path) in &state.snapshots {
+        ui.horizontal(|ui| {
+            ui.label(snapshot_date(*at));
+            if crate::ui::widgets::flat_button(ui, p, aurora_i18n::tr!("inventory-sorter-snapshot-restore")).clicked() {
+                restore = Some((*at, path.clone()));
+            }
+        });
+    }
+    if let Some((at, path)) = restore {
+        match sorter::journal::load::<sorter::journal::Snapshot>(&path) {
+            Ok(snapshot) => {
+                let (moves, _) = sorter::journal::restore_moves(inv, &snapshot, &protected, worn);
+                state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Snapshot(at)));
+                state.tab = PREVIEW;
+            }
+            Err(error) => {
+                log::warn!("auto-sort: the snapshot {} could not be read: {error}", path.display());
+                state.status = aurora_i18n::tr!("inventory-sorter-snapshot-unreadable").to_owned();
+            }
+        }
+    }
 }
 
 /// Store hints: a store whose names say nothing of what it sells, and the
