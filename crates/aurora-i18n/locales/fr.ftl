@@ -2843,6 +2843,11 @@ ui-options-compact-automated-chat = Messages compacts pour tout ce qui ne vient 
 ui-options-compact-automated-chat-hint = Ce que disent les objets et les scripts, et les avis du viewer, tiennent sur une petite ligne avec une icône de leur type ; seuls les messages des personnes gardent leur taille normale. Ils ne comptent plus comme non lus et ne vous alertent plus (son des mots-clés, clignotement, notification système) : seuls les messages des personnes le font.
 ui-options-compact-im-system-lines = Compacter aussi les lignes système des IM
 ui-options-compact-im-system-lines-hint = Les lignes du viewer dans une conversation (appel commencé ou terminé, réponse automatique envoyée) prennent la même petite ligne, avec leur icône.
+ui-options-blocked-chat = Chat des résidents bloqués
+ui-options-blocked-chat-hint = Ce que le chat local montre quand un résident que vous avez bloqué parle. Jamais au-dessus de la barre de chat, dans une bulle, un son ou un compteur de non-lus.
+ui-options-blocked-chat-hidden = Masqué
+ui-options-blocked-chat-collapsed = Replié
+ui-options-blocked-chat-greyed = En gris
 ui-options-mark-unnamed-objects = Marquer d'un (sans nom) les objets sans nom qui parlent, contre l'usurpation
 ui-options-mark-unnamed-objects-hint = Un objet dont le nom est vide parle dans le chat local sous « (sans nom) » : sa ligne ne peut pas se faire passer pour celle d'un résident.
 ui-options-show-contacts-tab = Afficher l'onglet Contacts
@@ -5378,6 +5383,11 @@ ui-chat-latest-new = { $count ->
     [one] { $count } nouveau message
    *[other] { $count } nouveaux messages
     }
+ui-chat-blocked-hidden = { $count ->
+    [one] { $count } message masqué
+   *[other] { $count } messages masqués
+    }
+ui-chat-blocked-show = Lignes de résidents que vous avez bloqués : Afficher les montre ici, en gris.
 ui-chat-copy-message = Copier le message
 ui-chat-quote-message = Citer
 ui-chat-drop-to-give = Déposez ici pour donner à { $name }
@@ -7227,6 +7237,14 @@ demo-bubbles-local-3 = Bienvenue sur la place, la visite commence ici.
 demo-chat-lines-emote = /me fait signe à tout le monde 👋
 demo-chat-lines-long = La visite commence à la fontaine, puis on monte à la galerie et au jardin sur le toit ; le plan de la place est sur https://example.com/plaza-map si vous vous perdez en route.
 demo-chat-lines-shout = Ouverture des portes dans cinq minutes !
+demo-muted-chat-near-1 = Qui vient à la galerie ce soir ?
+demo-muted-chat-blocked-1 = SALUT TOUT LE MONDE
+demo-muted-chat-blocked-2 = venez voir ma boutique, les meilleurs prix de la grille
+demo-muted-chat-blocked-3 = cliquez sur mon lien, cliquez maintenant
+demo-muted-chat-object = ARGENT GRATUIT, touchez-moi !
+demo-muted-chat-near-2 = J'y serai à neuf heures.
+demo-muted-chat-blocked-4 = pourquoi personne ne me répond
+demo-muted-chat-near-3 = À tout à l'heure !
 demo-chat-range-near = Je suis juste à côté de toi.
 demo-chat-range-far = Tu m'entends d'ici ?
 demo-chat-range-stage = Annonceur de la scène
