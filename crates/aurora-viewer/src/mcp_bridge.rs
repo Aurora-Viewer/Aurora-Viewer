@@ -1046,11 +1046,7 @@ impl App {
                             return None;
                         }
                         let desc = props.map(|p| p.description.clone()).unwrap_or_default();
-                        let owner_id = if !o.owner_id.is_nil() {
-                            o.owner_id
-                        } else {
-                            props.map(|p| p.owner_id).unwrap_or(Uuid::nil())
-                        };
+                        let owner_id = self.linkset_owner(idx);
                         let attach_pt = o.attachment_point();
                         let attach_name = (attach_pt != 0).then(|| {
                             self.world
@@ -1537,7 +1533,11 @@ impl App {
                     let _ = reply_tx.send(Ok(ViewerResponse::FrameCaptured(frame)));
                 }
                 CaptureBufferType::ColorRgb => {
-                    if renderer.is_none() {
+                    // Only a real CPU-headless run has no renderer at all. A
+                    // request handled between frames (about_to_wait) arrives
+                    // without this frame's renderer, but the window has one:
+                    // queue it, and the next frame takes the picture.
+                    if renderer.is_none() && self.gfx.is_none() && crate::cli::get().headless {
                         let _ = reply_tx.send(Err(McpError::Internal(
                             "viewport_capture ColorRgb is unavailable in CPU --headless mode; restart with --offscreen-gpu".into(),
                         )));
@@ -2699,20 +2699,46 @@ impl App {
         Ok((idx, root_uuid))
     }
 
+    /// Who owns a prim. A linkset has one owner, and the simulator sends
+    /// ObjectProperties for the root it was asked about, not for every
+    /// child: a child link with no owner of its own takes its root's.
+    fn linkset_owner(&self, idx: usize) -> Uuid {
+        let own = |i: usize| {
+            self.world.objects.get(i).map_or(Uuid::nil(), |o| {
+                if !o.owner_id.is_nil() {
+                    o.owner_id
+                } else {
+                    self.build.props.get(&o.full_id).map_or(Uuid::nil(), |p| p.owner_id)
+                }
+            })
+        };
+        let mine = own(idx);
+        if !mine.is_nil() {
+            return mine;
+        }
+        let Some(o) = self.world.objects.get(idx) else { return mine };
+        if o.parent_id == 0 {
+            return mine;
+        }
+        self.world
+            .objects
+            .index_of(&crate::world::objects::ObjKey {
+                region: o.key.region,
+                local_id: o.parent_id,
+            })
+            .map_or(mine, own)
+    }
+
     fn check_object_modify_permission(&self, obj_idx: usize) -> Result<(), McpError> {
         let Some(obj) = self.world.objects.get(obj_idx) else {
             return Err(McpError::InvalidParams("Object not found".into()));
         };
         if self.world.god_level == 0 {
             let props = self.build.props.get(&obj.full_id);
-            let owner_id = if !obj.owner_id.is_nil() {
-                obj.owner_id
-            } else {
-                props.map(|p| p.owner_id).unwrap_or(Uuid::nil())
-            };
+            let owner_id = self.linkset_owner(obj_idx);
             if owner_id.is_nil() {
                 return Err(McpError::PermissionDenied(
-                    "object ownership is unknown; fetch object properties before modifying".into(),
+                    "object ownership is unknown: fetch its root's properties first (radar_scan_objects near it, or object_contents on the root), then retry".into(),
                 ));
             }
             if owner_id != self.world.agent_id {

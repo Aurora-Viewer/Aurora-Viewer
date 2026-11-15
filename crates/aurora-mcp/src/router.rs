@@ -2954,7 +2954,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "prim_transform".into(),
-            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence.".into(),
+            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence. A root prim's position is region coordinates and its rotation region-relative; a child link's (parent_id != 0) are relative to its root, like LSL's PRIM_POS_LOCAL / PRIM_ROT_LOCAL (radar_scan_objects reports them as local_position and rotation_quat). A child link is moved on its own; its owner is its root's.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
