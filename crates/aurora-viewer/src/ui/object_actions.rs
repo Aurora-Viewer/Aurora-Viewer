@@ -277,6 +277,7 @@ fn ui_text_width(ctx: &egui::Context, text: &str) -> f32 {
 
 pub enum ContentsAction {
     Script(uuid::Uuid, uuid::Uuid),
+    /// a notecard, or the preview of a texture, a sound or an animation
     Notecard(uuid::Uuid, uuid::Uuid),
     Copy(Box<CopyRequest>),
     Take(uuid::Uuid, Vec<aurora_net::build::TaskItem>),
