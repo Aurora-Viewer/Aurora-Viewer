@@ -77,7 +77,7 @@ fn fixture() -> Inventory {
 
 fn with_favorites() -> (Inventory, Uuid) {
     let mut inv = fixture();
-    let change = create(&inv).expect("create");
+    let change = create(&inv, true).expect("create");
     demo_mutate(&mut inv, id(AGENT), change).expect("created");
     let root = root(&inv).expect("root");
     (inv, root)
@@ -86,7 +86,7 @@ fn with_favorites() -> (Inventory, Uuid) {
 #[test]
 fn the_folder_is_made_once_under_aurora_beside_an_existing_ao() {
     let mut inv = fixture();
-    let change = create(&inv).expect("missing folder");
+    let change = create(&inv, true).expect("missing folder");
     let names: Vec<_> = change
         .operations
         .iter()
@@ -99,13 +99,13 @@ fn the_folder_is_made_once_under_aurora_beside_an_existing_ao() {
     demo_mutate(&mut inv, id(AGENT), change).expect("created");
     let made = root(&inv).expect("root");
     assert_eq!(inv.folders[&made].info.name, FOLDER);
-    assert!(create(&inv).is_none(), "never a second folder");
+    assert!(create(&inv, true).is_none(), "never a second folder");
 
     // The AO's `#Aurora` already there: only the favorites folder, in it.
     let mut inv = fixture();
     folder(&mut inv, id(30), id(1), BRAND, false);
     folder(&mut inv, id(31), id(30), "Aurora AO", false);
-    let change = create(&inv).expect("missing folder");
+    let change = create(&inv, true).expect("missing folder");
     assert!(
         matches!(change.operations.as_slice(), [Operation::Folder { parent, name, .. }] if *parent == id(30) && name == FOLDER),
         "{:?}",
@@ -120,7 +120,23 @@ fn the_folder_is_made_once_under_aurora_beside_an_existing_ao() {
 
     // No root yet: nothing is created that the skeleton could duplicate.
     let inv = Inventory::default();
-    assert!(create(&inv).is_none());
+    assert!(create(&inv, true).is_none());
+}
+
+#[test]
+fn the_folder_waits_for_the_bridge_to_make_aurora() {
+    // The bridge is making `#Aurora`: no second `#Aurora` is asked for in
+    // the same seconds, and nothing is marked as done
+    let mut inv = fixture();
+    assert!(create(&inv, false).is_none());
+    // once its `#Aurora` is listed, only the favorites folder, in it
+    folder(&mut inv, id(30), id(1), BRAND, false);
+    let change = create(&inv, false).expect("missing folder");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Folder { parent, name, .. }] if *parent == id(30) && name == FOLDER),
+        "{:?}",
+        change.operations
+    );
 }
 
 #[test]

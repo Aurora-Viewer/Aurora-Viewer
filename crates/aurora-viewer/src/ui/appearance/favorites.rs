@@ -70,6 +70,9 @@ pub(crate) struct State {
     quiet_at: Option<egui::Pos2>,
     /// "Wearing Boots": what was asked last, and when (`input.time`).
     status: Option<(String, f64)>,
+    /// The bridge is about to make `#Aurora` (`Bridge::makes_brand_folder`):
+    /// the folder waits for it rather than asking for a second one.
+    pub(crate) brand_by_bridge: bool,
 }
 
 impl State {
@@ -85,11 +88,6 @@ enum Dialog {
     Delete(Uuid),
 }
 
-/// The window, while `open`. `sort` is the remembered order
-/// (`FSWearableFavoritesSortOrder`), `orders` the account's custom orders,
-/// `busy` while another inventory change is on its way (the app would
-/// drop a new one).
-#[allow(clippy::too_many_arguments)]
 /// initCategory, called once logged in whether or not the window is open
 /// (llstartup.cpp calls it at the end of the login, STATE_CLEANUP): the
 /// folder is made once per login, as soon as the inventory can take it.
@@ -102,13 +100,18 @@ pub fn init_category(world: &World, st: &mut AppearanceUi, busy: bool) -> Option
         return None;
     }
     // there already (or the inventory root not read yet: nothing to ask)
-    let change = model::create(inv);
+    let change = model::create(inv, !st.favorites.brand_by_bridge);
     if change.is_some() || model::root(inv).is_some() {
         st.favorites.requested = Some(inv.root);
     }
     change.map(Action::Folders)
 }
 
+/// The window, while `open`. `sort` is the remembered order
+/// (`FSWearableFavoritesSortOrder`), `orders` the account's custom orders,
+/// `busy` while another inventory change is on its way (the app would
+/// drop a new one).
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -997,7 +1000,7 @@ pub fn demo_seed(
     if mode == "new" {
         return;
     }
-    let Some(change) = model::create(inv) else {
+    let Some(change) = model::create(inv, true) else {
         return;
     };
     if let Err(e) = demo_mutate(inv, agent, change) {

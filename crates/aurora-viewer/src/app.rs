@@ -19134,6 +19134,7 @@ impl App {
                     crate::ao::demo::inventory_services(&mut self.world, true);
                 }
                 let busy = self.inventory_ui.pending.is_some();
+                self.appearance_ui.favorites.brand_by_bridge = self.bridge_runtime.makes_brand_folder(&self.world);
                 if let Some(action) = ui::appearance::favorites::init_category(&self.world, &mut self.appearance_ui, busy) {
                     self.apply_appearance_action(action);
                 }

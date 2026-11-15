@@ -80,15 +80,21 @@ pub fn root(inv: &Inventory) -> Option<Uuid> {
 }
 
 /// initCategory: the change that creates the folder, and `#Aurora` with it
-/// when it is missing. None while the folder exists, or while the inventory
-/// root is not loaded (a folder created then could duplicate one the
-/// skeleton has not listed yet).
-pub fn create(inv: &Inventory) -> Option<Mutation> {
+/// when it is missing and `make_brand` (false while the bridge is about to
+/// make `#Aurora`: two requests in the same seconds would leave two). None
+/// while the folder exists, while `#Aurora` is left to the bridge, or while
+/// the inventory root is not loaded (a folder created then could duplicate
+/// one the skeleton has not listed yet).
+pub fn create(inv: &Inventory, make_brand: bool) -> Option<Mutation> {
     if root(inv).is_some() || inv.root.is_nil() || !inv.folders.contains_key(&inv.root) {
         return None;
     }
+    let brand = crate::ao::inventory::child(inv, inv.root, BRAND);
+    if brand.is_none() && !make_brand {
+        return None;
+    }
     let mut change = Mutation::default();
-    let brand = crate::ao::inventory::child(inv, inv.root, BRAND).unwrap_or_else(|| folder(&mut change, inv.root, BRAND));
+    let brand = brand.unwrap_or_else(|| folder(&mut change, inv.root, BRAND));
     folder(&mut change, brand, FOLDER);
     Some(change)
 }
