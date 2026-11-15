@@ -285,6 +285,7 @@ impl World {
             kind: ChatKind::Payment(payment),
             source: other,
             origin: Origin::Live,
+            beyond_range: false,
         };
         self.conversation_card(other, line);
         if sent {
