@@ -15,6 +15,7 @@ fn contact_visuals_chat_colours_are_independent_and_reset_to_original() {
         kind: ChatKind::Local(ChatType::Normal),
         source: id,
         origin: Origin::Live,
+        blocked: false,
         beyond_range: false,
     };
     let job = |world: &World, line: &ChatLine, look| {
