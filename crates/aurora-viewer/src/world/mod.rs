@@ -689,6 +689,9 @@ pub struct World {
     /// Avatar Studio's display-only hover height (metres) that our avatar's
     /// entry of `avatar_poses` carries, as the scene last posed it.
     pub avatar_studio_lift: f32,
+    /// The base our avatar's IK edit session poses on, as the scene last
+    /// applied it (`scene::ik::EditBase`); `None` outside an edit session.
+    pub ik_edit_base: Option<std::sync::Arc<crate::scene::ik::EditBase>>,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -1053,6 +1056,7 @@ impl World {
             photo_isolation: Default::default(),
             avatar_studio: false,
             avatar_studio_lift: 0.0,
+            ik_edit_base: None,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
