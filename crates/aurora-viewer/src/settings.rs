@@ -2051,6 +2051,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
+    /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
+    pub doppler: f32,
     /// World sounds muffled behind walls and objects (Aurora's own, on;
     /// off: heard unobstructed, as in the Legacy Viewer).
     pub sound_occlusion: bool,
@@ -2115,6 +2118,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
             sound_reverb: false,
@@ -3284,6 +3288,11 @@ impl Settings {
             self.audio.mic_gain = 1.0;
         }
         self.audio.mic_gain = self.audio.mic_gain.clamp(0.0, 2.0);
+        self.audio.doppler = if self.audio.doppler.is_finite() {
+            self.audio.doppler.clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
         self.time_of_day = self.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);
         self.env_manual_transition = if self.env_manual_transition.is_finite() {
             self.env_manual_transition.clamp(0.0, 60.0)
