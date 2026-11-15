@@ -12260,6 +12260,19 @@ What the inventory must show with these scenarios:
   `split`; with `AURORA_DEMO_HAIR=1` (one mesh per avatar), 0.076 and
   0.082 ms. By default, against `split` (60 fps cap, `alt`): 0.52 → 0.66 ms
   with eight meshes each, 0.083 → 0.131 ms with one.
+- **The stochastic transparency only where there is transparency**
+  (`oit_stochastic.rs`, `cs_tiles`): after the total alpha, a compute step
+  lists the 8 x 8 pixel tiles in which a sample has a transmittance under 1
+  (every tile while glowing faces are drawn: their glow needs no alpha); the
+  spread of the opaque depth into the passes' samples (when the scene has
+  fewer), the resolve, the temporal blend, the smoothing and the composite
+  run on those tiles alone, through indirect dispatches and draws, and the
+  three targets the steps write are cleared first (nothing blended is what
+  they wrote for a pixel with nothing). The image does not change. Check
+  with `AURORA_DEMO_GLASS_PATCH=10` (a tenth of the view), `AURORA_BLEND_ORDER=5`,
+  `AURORA_PROFILE=1`: the `oit stochastic gpu ms` line, `resolve_composite`
+  (0.22 ms with the whole view resolved, about 0.05 ms with the tiles;
+  the whole method 0.44 → 0.22 ms on one NVIDIA card, 1278 x 1360).
 - **`AURORA_ST_SAMPLES=4|8`, `AURORA_ST_GUARDS=0`** (`oit_stochastic.rs`):
   measurement switches of the stochastic transparency, read once at the
   first use, for measurements (no setting, no user option). With
