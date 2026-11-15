@@ -4832,14 +4832,15 @@ impl Scene {
                     record: c.record,
                     bounds: [0.0; 4],
                 };
-                if shadows {
-                    self.lists.terrain_shadow_casters.push(ShadowCaster {
-                        cmd,
-                        center,
-                        radius: c.radius,
-                        alpha: r.surface.masked,
-                    });
-                }
+                // with the shadows off too: the rain's shelter map takes the
+                // terrain (deep snow stands on what it holds, and found no
+                // ground on bare land; only it draws them then)
+                self.lists.terrain_shadow_casters.push(ShadowCaster {
+                    cmd,
+                    center,
+                    radius: c.radius,
+                    alpha: r.surface.masked,
+                });
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
