@@ -143,6 +143,7 @@ mod tests {
                 menu: None,
                 bubbles: Some(false),
                 previews: None,
+                moderators: None,
             };
             if bubbles {
                 draw_card(ui, &mut env, line, payment, 0.0);
