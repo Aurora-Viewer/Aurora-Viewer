@@ -300,9 +300,16 @@ impl World {
 
     /// A line of the nearby chat, written when the nearby chat is logged
     /// (LogNearbyChat). Instant messages shown there are not
-    /// (FSLogIMInChatHistory is off by default), those of objects are.
+    /// (FSLogIMInChatHistory is off by default), those of objects are; a
+    /// blocked resident's never (FSFloaterNearbyChat::addMessage returns
+    /// before logging a muted line).
     pub(super) fn log_nearby(&mut self, line: &ChatLine) {
-        if line.origin != Origin::Live || !self.chat_log.cfg.log_nearby || line.kind == ChatKind::Im || self.chat_log.identity().is_none() {
+        if line.origin != Origin::Live
+            || line.blocked
+            || !self.chat_log.cfg.log_nearby
+            || line.kind == ChatKind::Im
+            || self.chat_log.identity().is_none()
+        {
             return;
         }
         let (from, text) = self.transcript_text(line);
@@ -414,6 +421,7 @@ impl World {
                     kind,
                     source,
                     origin: Origin::Log,
+                    blocked: false,
                     beyond_range: false,
                 }
             })
@@ -508,6 +516,7 @@ impl World {
                     kind: if mine { ChatKind::OWN } else { ChatKind::Im },
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
+                    blocked: false,
                     beyond_range: false,
                 }
             })
@@ -713,6 +722,7 @@ mod tests {
             kind: ChatKind::Local(ChatType::Shout),
             source: Uuid::from_u128(2),
             origin: Origin::Live,
+            blocked: false,
             beyond_range: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb

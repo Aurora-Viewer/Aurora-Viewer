@@ -135,6 +135,10 @@ pub(crate) struct FramePacket {
     pub histogram: Option<f32>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
+    /// How far every position moved since the last frame (m, x and y): a
+    /// border crossing made them relative to another region
+    /// (`Renderer::shift_world`). The weather's memories move with them.
+    pub world_shift: [f32; 2],
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,

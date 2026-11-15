@@ -2830,6 +2830,11 @@ ui-options-compact-automated-chat = Messages compacts pour tout ce qui ne vient 
 ui-options-compact-automated-chat-hint = Ce que disent les objets et les scripts, et les avis du viewer, tiennent sur une petite ligne avec une icône de leur type ; seuls les messages des personnes gardent leur taille normale. Ils ne comptent plus comme non lus et ne vous alertent plus (son des mots-clés, clignotement, notification système) : seuls les messages des personnes le font.
 ui-options-compact-im-system-lines = Compacter aussi les lignes système des IM
 ui-options-compact-im-system-lines-hint = Les lignes du viewer dans une conversation (appel commencé ou terminé, réponse automatique envoyée) prennent la même petite ligne, avec leur icône.
+ui-options-blocked-chat = Chat des résidents bloqués
+ui-options-blocked-chat-hint = Ce que le chat local montre quand un résident que vous avez bloqué parle. Jamais au-dessus de la barre de chat, dans une bulle, un son ou un compteur de non-lus.
+ui-options-blocked-chat-hidden = Masqué
+ui-options-blocked-chat-collapsed = Replié
+ui-options-blocked-chat-greyed = En gris
 ui-options-mark-unnamed-objects = Marquer d'un (sans nom) les objets sans nom qui parlent, contre l'usurpation
 ui-options-mark-unnamed-objects-hint = Un objet dont le nom est vide parle dans le chat local sous « (sans nom) » : sa ligne ne peut pas se faire passer pour celle d'un résident.
 ui-options-show-contacts-tab = Afficher l'onglet Contacts
@@ -5365,6 +5370,11 @@ ui-chat-latest-new = { $count ->
     [one] { $count } nouveau message
    *[other] { $count } nouveaux messages
     }
+ui-chat-blocked-hidden = { $count ->
+    [one] { $count } message masqué
+   *[other] { $count } messages masqués
+    }
+ui-chat-blocked-show = Lignes de résidents que vous avez bloqués : Afficher les montre ici, en gris.
 ui-chat-copy-message = Copier le message
 ui-chat-quote-message = Citer
 ui-chat-drop-to-give = Déposez ici pour donner à { $name }
@@ -7214,6 +7224,14 @@ demo-bubbles-local-3 = Bienvenue sur la place, la visite commence ici.
 demo-chat-lines-emote = /me fait signe à tout le monde 👋
 demo-chat-lines-long = La visite commence à la fontaine, puis on monte à la galerie et au jardin sur le toit ; le plan de la place est sur https://example.com/plaza-map si vous vous perdez en route.
 demo-chat-lines-shout = Ouverture des portes dans cinq minutes !
+demo-muted-chat-near-1 = Qui vient à la galerie ce soir ?
+demo-muted-chat-blocked-1 = SALUT TOUT LE MONDE
+demo-muted-chat-blocked-2 = venez voir ma boutique, les meilleurs prix de la grille
+demo-muted-chat-blocked-3 = cliquez sur mon lien, cliquez maintenant
+demo-muted-chat-object = ARGENT GRATUIT, touchez-moi !
+demo-muted-chat-near-2 = J'y serai à neuf heures.
+demo-muted-chat-blocked-4 = pourquoi personne ne me répond
+demo-muted-chat-near-3 = À tout à l'heure !
 demo-chat-range-near = Je suis juste à côté de toi.
 demo-chat-range-far = Tu m'entends d'ici ?
 demo-chat-range-stage = Annonceur de la scène
@@ -14683,7 +14701,7 @@ ui-weather-flake-size-tip = La taille des flocons : poudreuse fine à gauche, gr
 ui-weather-snow-settles = La neige tient
 ui-weather-snow-settles-tip = La neige s'accumule au sol en tombant : d'abord un saupoudrage, puis une couche blanche sur ce qui est tourné vers le haut
 ui-weather-snow-distance = Distance de la neige
-ui-weather-snow-distance-tip = Jusqu'où la neige au sol est dessinée : plus près, c'est plus rapide
+ui-weather-snow-distance-tip = Jusqu'où la neige au sol est dessinée : plus près, c'est plus rapide. Au-delà de 64 m, la mémoire de la météo s'agrandit pour la couvrir, jusqu'à 128 Mo de mémoire vidéo à 256 m
 ui-weather-footprints = Empreintes
 ui-weather-footprints-tip = Les avatars laissent des empreintes dans la neige au sol ; la neige qui tombe les recouvre peu à peu
 ui-weather-footprints-reach = Traces gardées
@@ -14696,6 +14714,8 @@ ui-weather-ice = Flaques gelées
 ui-weather-ice-tip = Les flaques laissées par la pluie gèlent tant qu'il neige ou que la neige tient : des plaques de glace lisses, qui ne s'écoulent ni ne sèchent
 ui-weather-deep-snow = Neige profonde
 ui-weather-deep-snow-tip = La neige au sol vue en relief : ses bosses et les empreintes semblent creusées quand on la regarde de biais (parallaxe). Plus coûteux à dessiner
+ui-weather-deep-snow-reach = Portée de la neige profonde
+ui-weather-deep-snow-reach-tip = Jusqu'où la neige profonde est dessinée autour de votre avatar. Plus loin coûte un peu plus : ses cellules grossissent vers le bord, où elle paraît la même
 ui-weather-northern-lights = Aurore boréale
 ui-weather-northern-lights-tip = Une aurore dans le ciel de nuit : des rideaux de lumière qui se plissent et dérivent, visibles seulement après le coucher du soleil. Sur ce viewer seulement ; le ciel d’une région peut en donner une (Laisser les régions choisir la météo)
 ui-weather-northern-lights-brightness = Luminosité
@@ -14736,7 +14756,7 @@ ui-weather-compass-nw = NO
 ui-weather-puddles = Flaques
 ui-weather-puddles-tip = Des flaques se forment sur le sol plat à mesure qu'il pleut
 ui-weather-distance = Sol mouillé
-ui-weather-distance-tip = Jusqu'où le sol mouillé et les flaques sont dessinés : plus près, c'est plus rapide
+ui-weather-distance-tip = Jusqu'où le sol mouillé et les flaques sont dessinés : plus près, c'est plus rapide. Au-delà de 64 m, la mémoire de la météo s'agrandit pour les couvrir, jusqu'à 128 Mo de mémoire vidéo à 256 m
 ui-weather-thunder = Orage
 ui-weather-thunder-tip = Tonnerre et éclairs sous une forte pluie
 ui-weather-strikes = Éclairs

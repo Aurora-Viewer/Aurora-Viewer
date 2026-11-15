@@ -2827,6 +2827,11 @@ ui-options-compact-automated-chat = Compact messages that do not come from a per
 ui-options-compact-automated-chat-hint = What objects and scripts say, and the viewer's notices, take one small row with an icon of their kind; only people's messages keep their full size. They no longer count as unread nor alert you (keyword sound, flash, system notification): only people's messages do.
 ui-options-compact-im-system-lines = Compact the conversations' system lines too
 ui-options-compact-im-system-lines-hint = The viewer's lines in a conversation (a call started or ended, an automatic reply sent) take the same small row, with their icon.
+ui-options-blocked-chat = Blocked residents' chat
+ui-options-blocked-chat-hint = What the nearby chat shows when a resident you blocked talks. Never above the chat bar, in a bubble, a sound or an unread count.
+ui-options-blocked-chat-hidden = Hidden
+ui-options-blocked-chat-collapsed = Collapsed
+ui-options-blocked-chat-greyed = Greyed
 ui-options-mark-unnamed-objects = Mark objects with (no name) when they speak, to avoid spoofing
 ui-options-mark-unnamed-objects-hint = An object whose name is empty speaks in nearby chat as "(no name)", so that its line cannot pass for a resident's.
 ui-options-show-contacts-tab = Show the Contacts tab
@@ -5359,6 +5364,11 @@ ui-chat-latest-new = { $count ->
     [one] { $count } new message
    *[other] { $count } new messages
     }
+ui-chat-blocked-hidden = { $count ->
+    [one] { $count } message hidden
+   *[other] { $count } messages hidden
+    }
+ui-chat-blocked-show = Lines from residents you blocked: Show puts them here, greyed.
 ui-chat-copy-message = Copy the message
 ui-chat-quote-message = Quote
 ui-chat-drop-to-give = Drop here to give to { $name }
@@ -7206,6 +7216,14 @@ demo-bubbles-local-3 = Welcome to the plaza, the visit starts here.
 demo-chat-lines-emote = /me waves at everyone 👋
 demo-chat-lines-long = The tour starts at the fountain, then we go up to the gallery and the roof garden; the map of the plaza is at https://example.com/plaza-map if you get lost on the way.
 demo-chat-lines-shout = Doors open in five minutes!
+demo-muted-chat-near-1 = Who's coming to the gallery tonight?
+demo-muted-chat-blocked-1 = HEY EVERYONE
+demo-muted-chat-blocked-2 = look at my store, best prices on the grid
+demo-muted-chat-blocked-3 = click my link, click it now
+demo-muted-chat-object = FREE MONEY, touch me!
+demo-muted-chat-near-2 = I'll be there at nine.
+demo-muted-chat-blocked-4 = why is nobody answering me
+demo-muted-chat-near-3 = See you there!
 demo-chat-range-near = I'm right next to you.
 demo-chat-range-far = Can you hear me from over here?
 demo-chat-range-stage = Stage Announcer
@@ -14680,7 +14698,7 @@ ui-weather-flake-size-tip = How big the snowflakes are: fine powder on the left,
 ui-weather-snow-settles = Snow settles
 ui-weather-snow-settles-tip = Snow builds up on the ground as it falls: a dusting first, then a white cover on what faces up
 ui-weather-snow-distance = Snow distance
-ui-weather-snow-distance-tip = How far away snow lying on the ground is drawn: nearer is faster
+ui-weather-snow-distance-tip = How far away snow lying on the ground is drawn: nearer is faster. Past 64 m the weather's memory grows to cover it, up to 128 MB of video memory at 256 m
 ui-weather-footprints = Footprints
 ui-weather-footprints-tip = Avatars leave footprints in the lying snow; falling snow fills them in again
 ui-weather-footprints-reach = Footprints kept
@@ -14693,6 +14711,8 @@ ui-weather-ice = Ice on puddles
 ui-weather-ice-tip = Puddles left by the rain freeze over while it snows or snow lies: smooth ice sheets that neither drain nor dry
 ui-weather-deep-snow = Deep snow
 ui-weather-deep-snow-tip = Lying snow seen with depth: its lumps and the footprints in it stand up from the ground as you look across them (parallax). Costs more to draw
+ui-weather-deep-snow-reach = Deep snow reach
+ui-weather-deep-snow-reach-tip = How far around your avatar deep snow is drawn. Farther costs a little more: its cells grow coarser toward the edge, where it looks the same
 ui-weather-northern-lights = Northern lights
 ui-weather-northern-lights-tip = An aurora in the night sky: curtains of light that fold and drift, seen only after sunset. On this viewer only; a region's sky can set its own (Let regions set the weather)
 ui-weather-northern-lights-brightness = Brightness
@@ -14733,7 +14753,7 @@ ui-weather-compass-nw = NW
 ui-weather-puddles = Puddles
 ui-weather-puddles-tip = Puddles gather on level ground as the rain goes on
 ui-weather-distance = Wet ground
-ui-weather-distance-tip = How far away wet ground and puddles are drawn: nearer is faster
+ui-weather-distance-tip = How far away wet ground and puddles are drawn: nearer is faster. Past 64 m the weather's memory grows to cover it, up to 128 MB of video memory at 256 m
 ui-weather-thunder = Thunder
 ui-weather-thunder-tip = Thunder and lightning in heavy rain
 ui-weather-strikes = Strikes

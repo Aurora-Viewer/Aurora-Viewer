@@ -2808,6 +2808,11 @@ ui-options-compact-automated-chat = 人以外からのメッセージをコン�
 ui-options-compact-automated-chat-hint = オブジェクトやスクリプトの発言、ビューアーの通知を種類ごとのアイコン付きの小さな行で表示します。人のメッセージだけが通常のサイズになります。これらは未読に数えられず、通知（キーワード音、点滅、システム通知）も発生しません。通知されるのは人のメッセージだけです。
 ui-options-compact-im-system-lines = 会話のシステム行もコンパクトに表示
 ui-options-compact-im-system-lines-hint = 会話中のビューアーからの行（通話の開始・終了、自動返信の送信など）も、アイコン付きの小さな行で表示します。
+ui-options-blocked-chat = ブロックした住人のチャット
+ui-options-blocked-chat-hint = ブロックした住人が発言したときに、近くのチャットに表示する内容です。チャットバーの上、吹き出し、サウンド、未読数には出ません。
+ui-options-blocked-chat-hidden = 非表示
+ui-options-blocked-chat-collapsed = 折りたたむ
+ui-options-blocked-chat-greyed = グレー表示
 ui-options-mark-unnamed-objects = なりすまし防止のため、名前のないオブジェクトの発言に（名前なし）を付ける
 ui-options-mark-unnamed-objects-hint = 名前が空のオブジェクトは近くのチャットで「（名前なし）」として発言します。その行が住人の発言になりすますことはできません。
 ui-options-show-contacts-tab = コンタクトタブを表示
@@ -5329,6 +5334,11 @@ ui-chat-latest-new = { $count ->
     [one] 新着メッセージ{ $count }件
    *[other] 新着メッセージ{ $count }件
     }
+ui-chat-blocked-hidden = { $count ->
+    [one] 非表示のメッセージ{ $count }件
+   *[other] 非表示のメッセージ{ $count }件
+    }
+ui-chat-blocked-show = ブロックした住人の発言です。「表示」でここにグレーで表示します。
 ui-chat-copy-message = メッセージをコピー
 ui-chat-quote-message = 引用
 ui-chat-drop-to-give = ここにドロップして{ $name }に渡す
@@ -7163,6 +7173,14 @@ demo-bubbles-local-3 = 広場へようこそ。見学はここから始まりま
 demo-chat-lines-emote = /me がみんなに手を振る 👋
 demo-chat-lines-long = 見学は噴水から始まり、ギャラリーと屋上庭園へ上がります。途中で迷ったら、広場のマップは https://example.com/plaza-map にあります。
 demo-chat-lines-shout = あと5分で開場です！
+demo-muted-chat-near-1 = 今夜ギャラリーに来る人はいますか？
+demo-muted-chat-blocked-1 = みなさん、こんにちは！！
+demo-muted-chat-blocked-2 = 私の店を見て、グリッドで一番安いよ
+demo-muted-chat-blocked-3 = リンクをクリックして、今すぐ
+demo-muted-chat-object = 無料でお金がもらえる、タッチして！
+demo-muted-chat-near-2 = 9時に行きます。
+demo-muted-chat-blocked-4 = どうして誰も返事しないの
+demo-muted-chat-near-3 = またあとで！
 demo-chat-range-near = すぐ隣にいるよ。
 demo-chat-range-far = ここから聞こえる？
 demo-chat-range-stage = ステージのアナウンサー
@@ -14594,7 +14612,7 @@ ui-weather-flake-size-tip = 雪片の大きさ：左ほど細かい粉雪、右�
 ui-weather-snow-settles = 雪が積もる
 ui-weather-snow-settles-tip = 雪が降るにつれて地面に積もります。最初はうっすらと、やがて上向きの面が白く覆われます
 ui-weather-snow-distance = 雪の描画距離
-ui-weather-snow-distance-tip = 地面に積もった雪をどこまで描くか。近いほど軽くなります
+ui-weather-snow-distance-tip = 地面に積もった雪をどこまで描くか。近いほど軽くなります。６４ｍを超えると天気の記憶がそこまで広がり、２５６ｍでビデオメモリを最大１２８ＭＢ使います
 ui-weather-footprints = 足跡
 ui-weather-footprints-tip = 積もった雪にアバターの足跡が残ります。降る雪がやがて埋めていきます
 ui-weather-footprints-reach = 足跡の範囲
@@ -14607,6 +14625,8 @@ ui-weather-ice = 水たまりの氷
 ui-weather-ice-tip = 雪が降る間や雪が積もっている間、雨でできた水たまりが凍ります。滑らかな氷は流れも乾きもしません
 ui-weather-deep-snow = 深い雪
 ui-weather-deep-snow-tip = 積もった雪を奥行きのある姿で描きます。斜めから見ると、雪のでこぼこや足跡が立体的に見えます（視差）。描画の負荷が増えます
+ui-weather-deep-snow-reach = 深い雪の範囲
+ui-weather-deep-snow-reach-tip = アバターの周りのどこまで深い雪を描くか。遠くするほど負荷が少し増えます。セルは端に向かって粗くなりますが、遠くでは見た目は同じです
 ui-weather-northern-lights = オーロラ
 ui-weather-northern-lights-tip = 夜空のオーロラ：折れ曲がりながら漂う光のカーテンで、日没後にだけ見えます。このビューアだけの表示です。リージョンの空が独自のオーロラを設定することもできます（「リージョンに天気を任せる」）
 ui-weather-northern-lights-brightness = 明るさ
@@ -14647,7 +14667,7 @@ ui-weather-compass-nw = 北西
 ui-weather-puddles = 水たまり
 ui-weather-puddles-tip = 雨が続くと平らな地面に水たまりができます
 ui-weather-distance = 濡れた地面
-ui-weather-distance-tip = 濡れた地面と水たまりを描く距離：近いほど軽くなります
+ui-weather-distance-tip = 濡れた地面と水たまりを描く距離：近いほど軽くなります。６４ｍを超えると天気の記憶がそこまで広がり、２５６ｍでビデオメモリを最大１２８ＭＢ使います
 ui-weather-thunder = 雷
 ui-weather-thunder-tip = 強い雨のときの雷鳴と稲妻
 ui-weather-strikes = 落雷
