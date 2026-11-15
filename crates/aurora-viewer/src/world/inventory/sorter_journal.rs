@@ -11,7 +11,7 @@
 //! The files are gzip-compressed JSON in the account's folder
 //! (`settings::account_dir`), under `auto-sort/`.
 
-use super::{Dest, Inventory, Move, actions, folder_path, restorable, target_allowed};
+use super::{Dest, Inventory, Move, actions, folder_path, restorable, restore_target_allowed};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -77,9 +77,23 @@ impl Journal {
         self.runs.iter().rev().find(|run| !run.entries.is_empty())
     }
 
-    /// Forget the last run once it is undone.
-    pub fn drop_last(&mut self) {
-        if let Some(index) = self.runs.iter().rposition(|run| !run.entries.is_empty()) {
+    /// After an Undo of the run that began at `undone`: the undo's own run
+    /// (the last one) goes, and from the undone run only the entries it put
+    /// back; that run goes once nothing is left in it. A stopped or partial
+    /// undo leaves the rest to undo later; an undo that moved nothing
+    /// forgets nothing.
+    pub fn forget_undone(&mut self, undone: i64) {
+        // the undo's run is the last one; the run it undid comes before it.
+        // Either missing (pruned, never begun): the journal stays as it is.
+        let Some(undo_index) = self.runs.len().checked_sub(1) else { return };
+        let Some(index) = self.runs.iter().take(undo_index).rposition(|run| run.at == undone) else {
+            return;
+        };
+        let Some(undo) = self.runs.remove(undo_index) else { return };
+        let back: HashSet<Uuid> = undo.entries.iter().map(|e| e.id).collect();
+        let run = &mut self.runs[index];
+        run.entries.retain(|e| !back.contains(&e.id));
+        if run.entries.is_empty() {
             self.runs.remove(index);
         }
     }
@@ -112,7 +126,7 @@ pub fn undo_moves(inv: &Inventory, run: &Run, protected: &HashSet<Uuid>, worn: &
         if now == entry.from {
             continue;
         }
-        if !where_run_left || !target_allowed(inv, entry.from) || !restorable(inv, entry.id, protected, &holds_worn) {
+        if !where_run_left || !restore_target_allowed(inv, entry.from) || !restorable(inv, entry.id, protected, &holds_worn) {
             skipped += 1;
             continue;
         }
@@ -236,7 +250,7 @@ pub fn restore_moves(
             summary.trashed += 1;
             return;
         }
-        if !inv.folders.contains_key(&was_in) || !target_allowed(inv, was_in) {
+        if !inv.folders.contains_key(&was_in) || !restore_target_allowed(inv, was_in) {
             summary.folder_gone += 1;
             return;
         }

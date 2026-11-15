@@ -266,8 +266,13 @@ impl Imported {
     /// never shared, so they stay either way.
     pub fn apply(&self, prefs: &mut Preferences, pick: &Pick, replace: bool) {
         if replace {
-            prefs.rules.clear();
-            prefs.store_hints.clear();
+            // what the file holds too stays (it is shown "already in
+            // yours", never ticked); so do the rules to the user's own
+            // folders, which no file can carry
+            prefs
+                .rules
+                .retain(|mine| mine.target.is_some() || self.rules.iter().any(|r| same_rule(mine, r)));
+            prefs.store_hints.retain(|mine| self.hints.iter().any(|h| same_hint(mine, h)));
         }
         for (index, rule) in self.rules.iter().enumerate() {
             let ticked = pick.rules.get(index).copied().unwrap_or(false);

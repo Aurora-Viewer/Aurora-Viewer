@@ -1819,3 +1819,124 @@ fn import_lists_every_changed_default_and_ticks_none_of_the_risky_ones() {
     has_it.rules.push(found.rules[0].clone());
     assert_eq!(found.defaults_changed(&has_it), 2);
 }
+
+fn move_of(inv: &Inventory, at: u128, to: Dest) -> Move {
+    Move {
+        id: id(at),
+        folder: inv.folders.contains_key(&id(at)),
+        name: String::new(),
+        from: actions::parent(inv, id(at)).expect("a parent"),
+        to,
+        label: String::new(),
+        unpacker: false,
+        restore: false,
+    }
+}
+
+/// The sort folder itself, sent to a path below it that does not exist
+/// yet, would go into a folder made inside itself: never sent.
+#[test]
+fn a_folder_never_goes_into_a_folder_made_inside_itself() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 50, 1, "Sorted");
+    let mut queue: VecDeque<Move> = [move_of(&inv, 50, Dest::Path(vec!["Furniture".into()]))].into();
+    let none = HashSet::new();
+    let mut skipped = 0;
+    let step = step(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped);
+    assert!(matches!(step, Step::Done), "nothing sent");
+    assert_eq!(skipped, 1);
+}
+
+/// A run read back from disk with a refused sort folder name (a viewer
+/// folder) sends nothing into it; a path through Pre-Trash is refused too.
+#[test]
+fn a_resumed_run_never_files_into_a_refused_or_closed_folder() {
+    let mut inv = fixture(&["Velvet Sofa", "Silk Lamp"]);
+    add_folder(&mut inv, 3000, 1, "#RLV");
+    let none = HashSet::new();
+    let mut queue: VecDeque<Move> = [move_of(&inv, 100, Dest::Path(vec!["Furniture".into()]))].into();
+    let mut skipped = 0;
+    assert!(matches!(step(&mut inv, "#RLV", &mut queue, &none, &none, &mut skipped), Step::Done));
+    assert_eq!(skipped, 1);
+    // a rule's own folder inside Pre-Trash is no destination
+    add_folder(&mut inv, 60, 1, &pre_trash_name());
+    add_folder(&mut inv, 61, 60, "Keep maybe");
+    assert!(!target_allowed(&inv, id(61)));
+    assert!(!target_allowed(&inv, id(60)));
+    // but Undo may put an entry back into Pre-Trash itself
+    assert!(restore_target_allowed(&inv, id(60)));
+    assert!(!restore_target_allowed(&inv, id(3000)));
+    let mut queue: VecDeque<Move> = [move_of(&inv, 101, Dest::Folder(id(61)))].into();
+    let mut skipped = 0;
+    assert!(matches!(
+        step(&mut inv, "Sorted", &mut queue, &none, &none, &mut skipped),
+        Step::Done
+    ));
+    assert_eq!(skipped, 1);
+}
+
+/// A folder of the user's that holds an outfit, a typed folder or an
+/// excluded folder never moves or goes to the Trash whole.
+#[test]
+fn a_folder_holding_an_outfit_or_an_excluded_folder_stays() {
+    let mut inv = fixture(&[]);
+    add_folder(&mut inv, 70, OBJECTS, "Old stuff - FATPACK");
+    add_item(&mut inv, 71, 70, "Old dress", OLD);
+    inv.folders.insert(id(72), folder(id(72), id(70), "Party outfit", 47));
+    inv.folders.get_mut(&id(70)).expect("old stuff").children.push(id(72));
+    add_folder(&mut inv, 80, OBJECTS, "Older stuff - FATPACK");
+    add_item(&mut inv, 81, 80, "Old dress", OLD);
+    add_folder(&mut inv, 82, 80, "Keep this");
+    add_item(&mut inv, 83, 82, "Old shoes", OLD);
+    let none = HashSet::new();
+    let prefs = Preferences {
+        folders: true,
+        excluded: vec![id(82)],
+        ..Default::default()
+    };
+    let plan = plan_entries(&inv, &[id(70), id(80)], &prefs, &none, &none);
+    assert!(plan.moves.iter().all(|m| m.id != id(70)), "the outfit's folder stays");
+    let holds = actions::worn_ancestors(&inv, &none);
+    assert!(!trash_ready(&inv, id(70), id(OBJECTS), &prefs, &none, &holds));
+    assert!(!trash_ready(&inv, id(80), id(OBJECTS), &prefs, &none, &holds));
+    // Clean up never takes them whole either
+    let cleanup = plan_cleanup(&inv, &prefs, &before_2020(), id(1), today(), &none, &none);
+    assert!(cleanup.rows.iter().all(|r| r.id != id(70) && r.id != id(80) && r.id != id(72)));
+}
+
+/// Replace keeps what the file holds too (shown "already in yours") and
+/// the rules to the user's own folders, which no file can carry.
+#[test]
+fn replace_keeps_what_the_file_holds_too_and_my_own_folders() {
+    use super::share::{Pick, import};
+    let found = import(&format!(
+        "{}\nrule: any | chair sofa | Home\nrule: any | lamp | Lights\n",
+        super::share::HEADER
+    ));
+    let mut mine = Preferences {
+        rules: vec![
+            Rule {
+                words: "chair sofa".into(),
+                mode: Match::Any,
+                folder: "Home".into(),
+                ..Default::default()
+            },
+            Rule {
+                words: "secret".into(),
+                target: Some(id(30)),
+                ..Default::default()
+            },
+            Rule {
+                words: "old thing".into(),
+                folder: "Attic".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let pick = Pick::new(&found, &mine);
+    assert_eq!(pick.rules, vec![false, true], "the duplicate is shown, not ticked");
+    found.apply(&mut mine, &pick, true);
+    let words: Vec<&str> = mine.rules.iter().map(|r| r.words.as_str()).collect();
+    assert_eq!(words, vec!["chair sofa", "secret", "lamp"]);
+}

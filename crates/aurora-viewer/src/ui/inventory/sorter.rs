@@ -142,6 +142,8 @@ pub(super) struct State {
     /// large inventory.
     planning: Option<Planning<Plan>>,
     cleaning: Option<Planning<CleanupPlan>>,
+    /// The run an Undo puts back (its start time in the journal).
+    undoing: Option<i64>,
 }
 
 /// A plan made on another thread from a copy of the inventory
@@ -279,6 +281,8 @@ struct Job {
     restoring: Option<Restoring>,
     /// The journal and the snapshot of its start are taken.
     begun: bool,
+    /// Stop was pressed: the batch on its way ends the run.
+    stopping: bool,
 }
 
 struct InFlight {
@@ -314,6 +318,7 @@ impl Job {
             confirmed: Vec::new(),
             restoring: None,
             begun: false,
+            stopping: false,
         }
     }
 
@@ -340,7 +345,7 @@ impl Job {
                 self.next_at = Some(now + PACE);
                 None
             }
-            Some(error) if self.retries < RETRIES => {
+            Some(error) if self.retries < RETRIES && !self.stopping => {
                 self.retries += 1;
                 self.requeue(batch.moves);
                 self.next_at = Some(now + std::time::Duration::from_secs(1 << self.retries));
@@ -492,6 +497,11 @@ impl InventoryUi {
             None => prefs.store_hints.push(hint),
         }
         self.sorter.open = true;
+        if self.sorter.source.is_none() {
+            // the window opens on its usual folder (the selected one or
+            // Objects), never on nothing
+            self.sorter.requested = Some(Uuid::nil());
+        }
         if !self.sorter.busy() {
             self.sorter.tab = OPTIONS;
         }
@@ -698,7 +708,12 @@ pub(super) fn show(
             batch.request.is_none() && batch.frames > 2
         });
         if dropped && let Some(batch) = job.in_flight.take() {
-            job.requeue(batch.moves);
+            if job.stopping {
+                // stopped: what was never taken is not sent later
+                job.skipped += batch.moves.len();
+            } else {
+                job.requeue(batch.moves);
+            }
             state.submitted = false;
         }
         let silent = job
@@ -782,10 +797,13 @@ pub(super) fn show(
                 state.job = None;
                 state.preview = None;
                 state.cleanup = None;
-                if restoring == Some(Restoring::Undo) {
-                    // the undo run, then the run it undid: neither is undone again
-                    state.journal.drop_last();
-                    state.journal.drop_last();
+                if restoring == Some(Restoring::Undo)
+                    && let Some(undone) = state.undoing.take()
+                {
+                    // the undo's own run goes, and from the run it undid
+                    // only the entries it put back: what it could not is
+                    // still there to undo
+                    state.journal.forget_undone(undone);
                 }
                 if restoring == Some(Restoring::Resume) {
                     state.unfinished = None;
@@ -1038,7 +1056,10 @@ pub(super) fn show(
     match st.sorter.cleanup_action.take() {
         Some(CleanupAction::PreTrash) => {
             let state = &mut st.sorter;
-            if let Some((.., plan)) = state.cleanup.as_ref() {
+            if let Some((_, choices, .., plan)) = state.cleanup.as_ref()
+                && *choices == prefs.sorter.cleanup
+                && state.cleaning.is_none()
+            {
                 let moves = plan.moves(&state.skipped);
                 if !moves.is_empty() && state.job.is_none() {
                     state.status.clear();
@@ -1048,7 +1069,11 @@ pub(super) fn show(
         }
         Some(CleanupAction::Trash) => {
             let state = &mut st.sorter;
-            if let Some((.., plan)) = state.cleanup.as_ref() {
+            // only the list the user sees, made for the choices shown
+            if let Some((_, choices, .., plan)) = state.cleanup.as_ref()
+                && *choices == prefs.sorter.cleanup
+                && state.cleaning.is_none()
+            {
                 let ids: Vec<(Uuid, Uuid)> = plan
                     .rows
                     .iter()
@@ -1077,7 +1102,10 @@ pub(super) fn show(
     }
     if stop && let Some(job) = state.job.as_mut() {
         job.paused = false;
-        // the batch on its way finishes; nothing after it is sent
+        // the batch on its way finishes; nothing after it is sent, not even
+        // its retries
+        job.stopping = true;
+        job.skipped += job.queue.len();
         job.queue.clear();
     }
     if stop && let Some(trash) = state.trash.as_mut() {
@@ -1092,7 +1120,7 @@ pub(super) fn show(
     share_window(ctx, p, st, &prefs.sorter);
     import_window(ctx, p, st, &mut prefs.sorter);
     vocab_window(ctx, p, st);
-    confirm(ctx, p, st, prefs);
+    confirm(ctx, p, inv, st, prefs);
 }
 
 /// The vocabulary check (`sorter-vocab` demo): each corpus name, where it
@@ -1193,6 +1221,10 @@ fn hint_line(hint: &sorter::StoreHint) -> String {
 fn share_window(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &sorter::Preferences) {
     use crate::ui::widgets::{ActionKind, action_button, checkbox};
     let Some(share) = st.sorter.share.as_mut() else { return };
+    // rules and hints added while Share is open (the rules tab, Import, a
+    // right-click) start unticked; removed ones take their box with them
+    share.rules.resize(prefs.rules.len(), false);
+    share.hints.resize(prefs.store_hints.len(), false);
     let mut open = true;
     let mut copy = false;
     let window_id = format!("inventory_sorter_share_{}", st.ui_id);
@@ -1587,9 +1619,54 @@ fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[
     });
 }
 
+/// Rows shown in a Trash confirmation; the rest are counted.
+const DOOMED_ROWS: usize = 300;
+
+/// The entries a Trash confirmation sends, each with the folder it is in,
+/// folders first, in a scrolled list.
+fn doomed_list(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, ids: &[(Uuid, Uuid)]) {
+    let mut rows: Vec<(bool, String, String)> = ids
+        .iter()
+        .take(DOOMED_ROWS)
+        .map(|(id, from)| {
+            let (folder, name) = match (inv.folders.get(id), inv.items.get(id)) {
+                (Some(f), _) => (true, f.info.name.clone()),
+                (None, Some(it)) => (false, it.name.clone()),
+                _ => (false, aurora_i18n::tr!("inventory-sorter-trash-gone").to_owned()),
+            };
+            let place = inv.folders.get(from).map(|f| f.info.name.clone()).unwrap_or_default();
+            (folder, name, place)
+        })
+        .collect();
+    rows.sort_by_key(|(folder, name, _)| (!*folder, name.to_lowercase()));
+    egui::ScrollArea::vertical()
+        .id_salt("inventory_sorter_doomed")
+        .max_height(220.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (folder, name, place) in &rows {
+                ui.horizontal(|ui| {
+                    let icon = if *folder { "folder-filled" } else { "file-description-filled" };
+                    crate::ui::widgets::glyph(ui, icon, p.muted, 13.0);
+                    ui.label(RichText::new(name).small().color(p.ink));
+                    if !place.is_empty() {
+                        ui.label(RichText::new(place).small().color(p.muted));
+                    }
+                });
+            }
+            if ids.len() > DOOMED_ROWS {
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("inventory-sorter-trash-more", count = ids.len() - DOOMED_ROWS))
+                        .small()
+                        .color(p.muted),
+                );
+            }
+        });
+}
+
 /// The confirmations: a whole-inventory sort (with its "I understand" box)
 /// and Pre-Trash to Trash. Escape or Cancel closes them, nothing moved.
-fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+fn confirm(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
     let Some(asked) = st.sorter.confirm.clone() else { return };
     let moves = st.sorter.preview.as_ref().map_or(0, |(_, _, plan)| plan.moves.len());
     let mut answer = None;
@@ -1638,6 +1715,9 @@ fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut I
                 ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
                 ui.add_space(8.0);
                 ui.label(text);
+                ui.add_space(6.0);
+                // what goes, by name: nothing reaches the Trash unseen
+                doomed_list(ui, p, inv, ids);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let free = st.pending.is_none() && st.pending_delete.is_none();
@@ -2399,6 +2479,7 @@ fn undo_and_snapshots(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &m
             let label = aurora_i18n::tr!("inventory-sorter-undo-run", count = run.entries.len(), date = date.as_str());
             if action_button(ui, p, "arrow-back-up", &label, ActionKind::Flat, size).clicked() {
                 let (moves, _) = sorter::journal::undo_moves(inv, run, &protected, worn);
+                state.undoing = Some(run.at);
                 state.set_source(Source::Saved(std::sync::Arc::new(moves), Restoring::Undo));
                 state.tab = PREVIEW;
             }

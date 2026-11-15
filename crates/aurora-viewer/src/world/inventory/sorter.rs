@@ -750,7 +750,40 @@ pub fn folder_path(inv: &Inventory, id: Uuid) -> String {
 /// A folder a rule may send entries to: the user's own, not a system
 /// folder that refuses moves (`actions::destination`).
 pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
-    folder_open(inv, id) && actions::destination(inv, id) && pre_trash(inv) != Some(id)
+    folder_open(inv, id) && actions::destination(inv, id) && !in_pre_trash(inv, id)
+}
+
+/// `id` is the Pre-Trash folder or inside it: what is there is on its way
+/// to the Trash, never a place to file things.
+fn in_pre_trash(inv: &Inventory, id: Uuid) -> bool {
+    pre_trash(inv).is_some_and(|p| id == p || actions::under(inv, id, p))
+}
+
+/// Where Undo or a snapshot may put an entry back: any rule destination,
+/// and the Pre-Trash folder itself (undoing "Move to Trash" puts its
+/// entries back there, where the user left them).
+pub fn restore_target_allowed(inv: &Inventory, id: Uuid) -> bool {
+    target_allowed(inv, id) || pre_trash(inv) == Some(id) && folder_open(inv, id) && actions::destination(inv, id)
+}
+
+/// A folder below `id` that Auto-sort may not carry along when `id` moves
+/// or goes to the Trash whole: a default or typed folder (an outfit, a
+/// stock folder…), a viewer folder, or one the user excluded.
+fn holds_closed(inv: &Inventory, id: Uuid, excluded: &[Uuid]) -> bool {
+    let Some(top) = inv.folders.get(&id) else { return false };
+    let mut stack: Vec<Uuid> = top.children.clone();
+    let mut seen = HashSet::new();
+    while let Some(child) = stack.pop() {
+        if !seen.insert(child) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&child) else { continue };
+        if f.info.type_default != -1 || f.library || excluded.contains(&child) {
+            return true;
+        }
+        stack.extend(f.children.iter().copied());
+    }
+    false
 }
 
 /// One entry to move.
@@ -1071,6 +1104,10 @@ fn viewer_folder(inv: &Inventory, folder: &super::Folder) -> bool {
 /// folders, the old Merchant Outbox, Received Items, the Library, and the
 /// `#` viewer folders.
 pub fn folder_open(inv: &Inventory, folder: Uuid) -> bool {
+    // the inventory's root not known yet: nothing is open
+    if inv.root.is_nil() {
+        return false;
+    }
     for id in actions::ancestors(inv, folder) {
         if id == inv.root {
             return true;
@@ -1108,7 +1145,11 @@ pub fn trash_ready(
     protected: &HashSet<Uuid>,
     holds_worn: &HashSet<Uuid>,
 ) -> bool {
-    actions::parent(inv, id) == Some(from) && !hands_off(inv, id) && !prefs.excludes(inv, id) && movable(inv, id, protected, holds_worn)
+    actions::parent(inv, id) == Some(from)
+        && !hands_off(inv, id)
+        && !prefs.excludes(inv, id)
+        && !holds_closed(inv, id, &prefs.excluded)
+        && movable(inv, id, protected, holds_worn)
 }
 
 /// An entry Undo or a snapshot may put back: movable by a drag (out of the
@@ -1148,6 +1189,7 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], protected: &HashSet<Uuid>, wo
             } else {
                 movable(inv, m.id, protected, &holds_worn)
             } && match m.to {
+                Dest::Folder(target) if m.restore => restore_target_allowed(inv, target),
                 Dest::Folder(target) => target_allowed(inv, target),
                 Dest::Path(_) | Dest::PreTrash => true,
             };
@@ -1275,6 +1317,9 @@ fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &Ha
         // one never moves whole with it
         && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
         && !protected.iter().any(|p| actions::under(inv, *p, id))
+        // an outfit, a stock folder or any other typed folder inside never
+        // travels with it
+        && !holds_closed(inv, id, &[])
 }
 
 /// The names the sorter gives its own folders: a folder already named like
@@ -1438,6 +1483,10 @@ fn all_items(inv: &Inventory, folder: Uuid, unfetched: &mut Vec<Uuid>, keep: imp
             continue;
         }
         let Some(f) = inv.folders.get(&id) else { return false };
+        // a typed folder inside (an outfit…) keeps the whole folder out
+        if id != folder && f.info.type_default != -1 {
+            return false;
+        }
         if f.state != FetchState::Fetched {
             unfetched.push(id);
             return false;
@@ -1721,6 +1770,7 @@ pub fn plan_cleanup(
                 && !system
                 && Some(*sub) != base
                 && movable(inv, *sub, protected, &holds_worn)
+                && !holds_closed(inv, *sub, &prefs.excluded)
                 && empty_tree(inv, *sub, &mut plan.unfetched)
             {
                 plan.rows.push(CleanupRow {
@@ -1737,6 +1787,8 @@ pub fn plan_cleanup(
             if !system
                 && !made
                 && movable(inv, *sub, protected, &holds_worn)
+                // an excluded folder inside keeps the whole folder out
+                && !holds_closed(inv, *sub, &prefs.excluded)
                 && all_items(inv, *sub, &mut plan.unfetched, |it| cleanup.takes(it, cutoff))
             {
                 let (count, newest) = folder_items(inv, *sub);
@@ -1894,7 +1946,7 @@ fn plan_with(
             // a kind left out of the sort stays where it is, unlisted
             continue;
         }
-        if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) {
+        if movable(inv, id, protected, &holds_worn) && !prefs.excludes(inv, id) && !holds_closed(inv, id, &prefs.excluded) {
             let sorted = base.is_some_and(|b| from == b || actions::under(inv, from, b));
             let creator = if by_creator { creator_of(inv, id) } else { None };
             candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted, creator));
@@ -1995,6 +2047,11 @@ pub fn step(
     let mut fresh: HashSet<Uuid> = HashSet::new();
     let mut sent: Vec<Move> = Vec::new();
     let base_path = [base_name.to_owned()];
+    // a sort folder name read back from disk (a resumed run) is checked
+    // again: never a viewer folder, a system folder or Pre-Trash
+    let base_ok = !base_refused(base_name);
+    // the nearest existing folder above each folder made in this batch
+    let mut anchor: HashMap<Uuid, Uuid> = HashMap::new();
     'moves: while sent.len() < BATCH {
         let Some(next) = queue.front() else { break };
         let still_here = actions::parent(inv, next.id) == Some(next.from)
@@ -2011,16 +2068,27 @@ pub fn step(
         }
         let path: Vec<String> = match &next.to {
             Dest::Folder(target) => {
-                if !target_allowed(inv, *target) {
+                let allowed = if next.restore {
+                    restore_target_allowed(inv, *target)
+                } else {
+                    target_allowed(inv, *target)
+                };
+                if !allowed {
                     queue.pop_front();
                     *skipped += 1;
                     continue;
                 }
                 Vec::new()
             }
+            Dest::Path(_) if !base_ok => {
+                queue.pop_front();
+                *skipped += 1;
+                continue;
+            }
             Dest::Path(path) => base_path.iter().chain(path).cloned().collect(),
             Dest::PreTrash => vec![pre_trash_name()],
         };
+        let to_pre_trash = matches!(next.to, Dest::PreTrash);
         let mut parent = match next.to {
             Dest::Folder(target) => target,
             Dest::Path(_) | Dest::PreTrash => inv.root,
@@ -2028,10 +2096,13 @@ pub fn step(
         // The folders this move would create: kept apart until the whole
         // path resolves, so a wait leaves no half-made path in `change`.
         let mut new_folders = Vec::new();
+        // every existing folder the path goes through (the start included)
+        let mut walked = vec![parent];
         for part in path {
             let key = (parent, part.to_lowercase());
             if let Some(id) = made.get(&key) {
                 parent = *id;
+                walked.push(anchor.get(id).copied().unwrap_or(*id));
                 continue;
             }
             if !fresh.contains(&parent) {
@@ -2052,12 +2123,23 @@ pub fn step(
                     }
                 }
                 if let Some(id) = child(inv, parent, &part) {
+                    // an existing folder on the way is re-checked like a
+                    // rule's destination: open, and not in Pre-Trash
+                    // (unless the move goes to Pre-Trash itself)
+                    let open = folder_open(inv, id) && (to_pre_trash || !in_pre_trash(inv, id));
+                    if !open {
+                        queue.pop_front();
+                        *skipped += 1;
+                        continue 'moves;
+                    }
                     made.insert(key, id);
+                    walked.push(id);
                     parent = id;
                     continue;
                 }
             }
             let id = Uuid::new_v4();
+            anchor.insert(id, anchor.get(&parent).copied().unwrap_or(parent));
             new_folders.push(Operation::Folder {
                 id,
                 parent,
@@ -2070,7 +2152,10 @@ pub fn step(
             parent = id;
         }
         let Some(m) = queue.pop_front() else { break };
-        if parent == m.id || actions::under(inv, parent, m.id) {
+        // into itself, or into a folder made inside itself: every existing
+        // folder on the way is checked, a new one has none of its own
+        let into_itself = walked.iter().any(|w| *w == m.id || actions::under(inv, *w, m.id));
+        if parent == m.id || into_itself || actions::under(inv, parent, m.id) {
             // into itself: dropped before any folder is made for it
             for op in &new_folders {
                 if let Operation::Folder { id, .. } = op {

@@ -3,7 +3,27 @@ use super::*;
 #[test]
 fn auto_sort_is_offered_on_one_folder_of_the_agent_and_one_item_sorts_alone() {
     let agent = Uuid::from_u128(2);
-    let mut inv = Inventory::default();
+    // a loaded inventory has its root (nothing is open before it)
+    let mut inv = Inventory {
+        root: Uuid::from_u128(1),
+        ..Default::default()
+    };
+    inv.folders.insert(
+        inv.root,
+        crate::world::inventory::Folder {
+            info: aurora_net::inventory::InvFolder {
+                id: inv.root,
+                name: "My Inventory".into(),
+                type_default: 8,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: crate::world::inventory::FetchState::Fetched,
+            library: false,
+        },
+    );
     crate::world::inventory::demo::seed(&mut inv, agent);
     let prefs = InventoryPreferences::default();
     let facts = Facts {
@@ -186,4 +206,22 @@ fn a_background_plan_matches_the_frames_and_follows_its_source() {
     std::thread::sleep(std::time::Duration::from_millis(50));
     let arrived = Planning::take(&mut st.sorter.planning).expect("arrived");
     assert_ne!(arrived.0.source, source, "a plan for another source is not shown");
+}
+
+/// After Stop, a refused batch is not retried: nothing more is sent.
+#[test]
+fn after_stop_a_refused_batch_is_not_sent_again() {
+    let mut st = InventoryUi::default();
+    st.open_sorter(Uuid::from_u128(8000));
+    let request = Uuid::from_u128(300);
+    in_flight(&mut st, 0..200, request);
+    if let Some(job) = st.sorter.job.as_mut() {
+        // Stop, as the footer's button does
+        job.stopping = true;
+        job.queue.clear();
+    }
+    st.finish_sorter(request, Some("network down"));
+    let job = st.sorter.job.as_ref().expect("the job ends on its own");
+    assert!(job.queue.is_empty(), "nothing put back to retry");
+    assert_eq!(job.failed, 200);
 }
