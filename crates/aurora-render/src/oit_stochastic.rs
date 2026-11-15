@@ -793,7 +793,10 @@ impl Stochastic {
         });
         let single = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
         let small = |label, format| crate::renderer::make_view(device, label, 1, 1, format, 1, single).1;
-        log::info!("oit stochastic: made; pass sample counts the device takes: {pass_supported:?}");
+        log::info!(
+            "oit stochastic: made; pass sample counts the device takes: {pass_supported:?}; workgroups per dimension: {}",
+            device.limits().max_compute_workgroups_per_dimension
+        );
         Stochastic {
             shared: Shared {
                 face_layout,
