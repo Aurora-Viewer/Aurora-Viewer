@@ -10321,8 +10321,9 @@ from favorites; drag a wearable from the inventory onto the list to add it
 - `drop`: the same, let go at frame 560: at frame 620 Black pants is fourth,
   the sort menu checks Custom order, and no tooltip covers the list;
 - `empty`: the folder with nothing in it: the empty state and its hint;
-- `new`: no folder yet: the window makes `#Aurora/Wearable Favorites` once
-  (one "inventory mutation: 2 operations" line in the log, never a second).
+- `new`: no folder yet: the viewer makes `#Aurora/Wearable Favorites` once
+  at login, as the Legacy Viewer does, window open or not (one "inventory
+  mutation: 2 operations" line in the log, never a second).
 
 **`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
 `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like

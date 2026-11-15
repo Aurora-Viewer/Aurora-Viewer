@@ -50,8 +50,11 @@ pub(crate) struct State {
     dialog: Option<Dialog>,
     focus: bool,
     /// The inventory root the folder was asked for, so that it is asked
-    /// once per account (initCategory) and again after a relog.
+    /// once per login (initCategory) and again after a relog.
     requested: Option<Uuid>,
+    /// The window was open last frame (an opening asks again for a
+    /// missing folder).
+    was_open: bool,
     message: String,
     /// The views' new custom orders (their folder, their wearables), for
     /// the app to keep in the settings.
@@ -87,6 +90,25 @@ enum Dialog {
 /// `busy` while another inventory change is on its way (the app would
 /// drop a new one).
 #[allow(clippy::too_many_arguments)]
+/// initCategory, called once logged in whether or not the window is open
+/// (llstartup.cpp calls it at the end of the login, STATE_CLEANUP): the
+/// folder is made once per login, as soon as the inventory can take it.
+/// Not while another inventory change is on its way (the app would drop
+/// this one): it is asked on a later frame instead. `show` asks again on
+/// opening the window while it is still missing (onOpen).
+pub fn init_category(world: &World, st: &mut AppearanceUi, busy: bool) -> Option<Action> {
+    let inv = &world.inventory;
+    if busy || !world.inventory_writable() || st.favorites.requested == Some(inv.root) {
+        return None;
+    }
+    // there already (or the inventory root not read yet: nothing to ask)
+    let change = model::create(inv);
+    if change.is_some() || model::root(inv).is_some() {
+        st.favorites.requested = Some(inv.root);
+    }
+    change.map(Action::Folders)
+}
+
 pub fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -100,22 +122,20 @@ pub fn show(
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     if !*open {
+        st.favorites.was_open = false;
         return actions;
     }
     st.favorites.busy = busy;
     let sort_before = *sort;
     let inv = &world.inventory;
     let root = model::root(inv);
-    // initCategory: made the first time the window opens, asked again
-    // after a change in flight instead of being lost behind it.
-    if root.is_none()
-        && !busy
-        && st.favorites.requested != Some(inv.root)
-        && let Some(change) = model::create(inv)
-    {
-        st.favorites.requested = Some(inv.root);
-        actions.push(Action::Folders(change));
+    // onOpen: the folder still missing (its login request lost or
+    // refused) is asked for again, once per opening
+    if !st.favorites.was_open && root.is_none() {
+        st.favorites.requested = None;
     }
+    st.favorites.was_open = true;
+    actions.extend(init_category(world, st, busy));
     let tabs = root.map(|root| model::folders(inv, root)).unwrap_or_default();
     if let Some(id) = st.favorites.select_new
         && tabs.iter().any(|(tab, _)| *tab == id)

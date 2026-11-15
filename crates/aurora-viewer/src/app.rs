@@ -18807,6 +18807,15 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                // initCategory at login, window open or not; the offline
+                // demo's inventory takes changes only in the `new` scenario
+                if self.demo && ui::appearance::favorites::demo_mode() == Some("new") && self.ao_demo.is_none() {
+                    crate::ao::demo::inventory_services(&mut self.world, true);
+                }
+                let busy = self.inventory_ui.pending.is_some();
+                if let Some(action) = ui::appearance::favorites::init_category(&self.world, &mut self.appearance_ui, busy) {
+                    self.apply_appearance_action(action);
+                }
                 let mut open = self.panels.wearable_favorites;
                 let mut sort = self.settings.wearable_favorites_sort;
                 for action in ui::appearance::favorites::show(
