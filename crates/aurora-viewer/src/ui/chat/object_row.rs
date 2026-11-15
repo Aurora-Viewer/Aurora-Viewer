@@ -266,6 +266,7 @@ pub(super) mod tests {
             source: uuid::Uuid::from_u128(9),
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         }
     }
 

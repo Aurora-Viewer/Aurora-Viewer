@@ -422,6 +422,7 @@ impl World {
                     source,
                     origin: Origin::Log,
                     blocked: false,
+                    beyond_range: false,
                 }
             })
             .collect()
@@ -516,6 +517,7 @@ impl World {
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
                     blocked: false,
+                    beyond_range: false,
                 }
             })
             .collect();
@@ -721,6 +723,7 @@ mod tests {
             source: Uuid::from_u128(2),
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)

@@ -68,6 +68,10 @@ pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
+/// Nearby chat from near and from beyond the say range, the far lines
+/// dimmed (AURORA_DEMO_CHAT_RANGE).
+#[path = "demo_chat_range.rs"]
+pub mod chat_range;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -274,6 +278,9 @@ pub mod sky;
 /// (AURORA_DEMO_SLIDESHOW).
 #[path = "demo_slideshow.rs"]
 pub mod slideshow;
+/// AURORA_DEMO_SNOW_SPIN: turning boxes in lying snow (#3642).
+#[path = "demo_snow_spin.rs"]
+pub mod snow_spin;
 /// A resident's "Invite to group", "Add to contact set" and "Block
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
@@ -1474,6 +1481,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         source,
         origin: Origin::Live,
         blocked: false,
+        beyond_range: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1712,6 +1720,7 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             source,
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1734,6 +1743,7 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             source: DEMO_FRIEND,
             origin: crate::world::Origin::Live,
             blocked: false,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1896,6 +1906,7 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         source,
         origin: Origin::Live,
         blocked: false,
+        beyond_range: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -9661,23 +9672,28 @@ fn demo_day(sky: Llsd) -> Llsd {
 }
 
 /// AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal
-/// scale>[,<fog r>,<fog g>,<fog b>]: the water of the demo's EEP day (with
-/// AURORA_DEMO_SKY), as a region's asset carries it, out-of-range values
-/// included; a missing or unreadable value keeps the default.
+/// scale>[,<fog r>,<fog g>,<fog b>[,<fog density>]]: the water of the demo's
+/// EEP day (with AURORA_DEMO_SKY), as a region's asset carries it,
+/// out-of-range values included; a missing or unreadable value keeps the
+/// default.
 fn demo_water_eep(v: &str) -> Llsd {
     use aurora_llsd::llsd_map;
     let n: Vec<Option<f64>> = v.split(',').map(|s| s.trim().parse::<f64>().ok()).collect();
     let at = |i: usize, default: f64| n.get(i).copied().flatten().unwrap_or(default);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
     let scale = at(3, 2.0);
-    llsd_map! {
+    let mut water = llsd_map! {
         "type" => "water",
         "fresnel_offset" => at(0, 0.5),
         "fresnel_scale" => at(1, 0.3999),
         "blur_multiplier" => at(2, 0.04),
         "normal_scale" => arr(&[scale, scale, scale]),
         "water_fog_color" => arr(&[at(4, 0.0156), at(5, 0.149), at(6, 0.2509), 1.0]),
+    };
+    if let Some(density) = n.get(7).copied().flatten() {
+        water.insert("water_fog_density", density);
     }
+    water
 }
 
 #[cfg(test)]

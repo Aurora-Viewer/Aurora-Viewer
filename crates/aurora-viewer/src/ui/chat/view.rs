@@ -861,6 +861,7 @@ mod tests {
             source: uuid::Uuid::from_u128(from.len() as u128),
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         }
     }
 

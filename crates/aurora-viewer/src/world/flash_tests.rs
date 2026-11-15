@@ -67,6 +67,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
                 source: JANE,
                 origin: Origin::Live,
                 blocked: false,
+                beyond_range: false,
             },
             true,
         );
@@ -91,6 +92,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
             source: BOX,
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         },
         true,
     );

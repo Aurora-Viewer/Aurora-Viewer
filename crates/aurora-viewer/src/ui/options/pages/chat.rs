@@ -24,6 +24,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     crate::settings::FONT_SCALE_MIN..=crate::settings::FONT_SCALE_MAX,
                     "×",
                 );
+                // FSBeyondNearbyChatColorDiminishFactor (0.8, 0 to 1; on the
+                // Legacy Viewer's Colors › Chat page): the lines said beyond
+                // the say range, in every chat style
+                cx.slider(
+                    tr!("ui-options-chat-beyond-range"),
+                    tr!("ui-options-chat-beyond-range-hint"),
+                    &field!(colors.chat_beyond_range),
+                    0.0..=1.0,
+                    "",
+                );
                 // FSShowTimestampsNearbyChat (on): the lines and the cards
                 // over the world
                 cx.toggle(tr!("ui-options-show-time"), "", &field!(chat_timestamps_nearby));

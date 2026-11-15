@@ -47,6 +47,7 @@ impl World {
             source: Uuid::nil(),
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         };
         log::info!("incoming IM announced (the sender started typing)");
         self.conversation_card(from, line);

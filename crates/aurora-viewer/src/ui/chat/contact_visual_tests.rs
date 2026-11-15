@@ -16,6 +16,7 @@ fn contact_visuals_chat_colours_are_independent_and_reset_to_original() {
         source: id,
         origin: Origin::Live,
         blocked: false,
+        beyond_range: false,
     };
     let job = |world: &World, line: &ChatLine, look| {
         line_job(

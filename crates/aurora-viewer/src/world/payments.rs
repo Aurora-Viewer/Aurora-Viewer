@@ -286,6 +286,7 @@ impl World {
             source: other,
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         };
         self.conversation_card(other, line);
         if sent {

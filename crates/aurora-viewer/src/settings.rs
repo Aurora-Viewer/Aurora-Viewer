@@ -1914,6 +1914,9 @@ pub struct ColorSettings {
     pub chat_slurl: Rgba,
     /// llRegionSayTo.
     pub chat_direct: Rgba,
+    /// FSBeyondNearbyChatColorDiminishFactor (0.8): the opacity of a nearby
+    /// line said beyond the say range, 1 as bright as the others.
+    pub chat_beyond_range: f32,
     // sender names
     pub sender_avatar: Rgba,
     pub sender_object: Rgba,
@@ -1960,6 +1963,7 @@ impl Default for ColorSettings {
             // shares the brand teal
             chat_slurl: hex(0x5EEAD4),
             chat_direct: hex(0xFB923C),
+            chat_beyond_range: 0.8,
             sender_avatar: hex(0xC4B5FD),
             sender_object: hex(0x4ADE80),
             mention_text: hex(0xFCD34D),

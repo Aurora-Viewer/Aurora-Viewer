@@ -102,6 +102,8 @@ impl World {
             source: c.source_id,
             origin: super::Origin::Live,
             blocked: true,
+            // already greyed as blocked: not dimmed a second time
+            beyond_range: false,
         });
     }
 

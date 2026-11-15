@@ -565,6 +565,7 @@ impl World {
             source: from,
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         };
         self.conversation_card(from, line);
     }
@@ -584,6 +585,7 @@ impl World {
             source: Uuid::nil(),
             origin: Origin::Live,
             blocked: false,
+            beyond_range: false,
         }
     }
 
