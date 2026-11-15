@@ -288,6 +288,9 @@ pub struct Held {
     pub target: Target,
     pub offset: glam::Vec3,
     pub position: glam::Vec3,
+    /// Camera-relative virtual point used by nonphysical grabs. `position`
+    /// is the current global point sent through the object's region frame.
+    pub grab_motion: Option<GrabMotion>,
     pub surface: aurora_net::TouchSurface,
     /// The surface was read from the faces the GPU drew (a rigged mesh, a
     /// worn mesh, a worn prim with an action: scene/drawn.rs): the CPU
@@ -305,6 +308,56 @@ pub struct Held {
     pub cursor: (f32, f32),
     pub last: Instant,
     pub physical: bool,
+}
+
+/// Camera-relative grab point from LLToolGrabBase::startGrab and
+/// handleHoverNonPhysical (indra/newview/lltoolgrab.cpp). It is virtual:
+/// moving it updates GrabPosition, never the object's transform.
+#[derive(Debug, Clone, Copy)]
+pub struct GrabMotion {
+    hidden_offset: glam::Vec3,
+    cursor: (f32, f32),
+}
+
+impl GrabMotion {
+    pub fn new(position: glam::Vec3, camera: glam::Vec3, cursor: (f32, f32)) -> Self {
+        Self {
+            hidden_offset: position - camera,
+            cursor,
+        }
+    }
+
+    /// Returns the virtual global point. Cursor deltas use logical pixels;
+    /// camera movement is included even with a stationary cursor.
+    pub fn update(
+        &mut self,
+        cursor: (f32, f32),
+        camera: glam::Vec3,
+        forward: glam::Vec3,
+        vertical: bool,
+        pixels_per_point: f32,
+    ) -> glam::Vec3 {
+        let left = glam::Vec3::Z.cross(forward).normalize_or(glam::Vec3::Y);
+        let up = forward.cross(left).normalize_or(glam::Vec3::Z);
+        let y_axis = if vertical {
+            up
+        } else {
+            left.cross(glam::Vec3::Z).normalize_or(glam::Vec3::X)
+        };
+        let scale = if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
+            pixels_per_point
+        } else {
+            1.0
+        };
+        let dx = (cursor.0 - self.cursor.0) / scale;
+        let dy = (self.cursor.1 - cursor.1) / scale;
+        if forward.is_finite() && left.is_finite() && y_axis.is_finite() {
+            self.hidden_offset += (left * -dx + y_axis * dy) * 0.0075;
+        }
+        self.cursor = cursor;
+        let point = camera + self.hidden_offset;
+        if point.is_finite() { point } else { camera }
+    }
 }
 
 impl Interactions {
