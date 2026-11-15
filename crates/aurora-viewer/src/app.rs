@@ -10460,7 +10460,7 @@ impl App {
         // part of it this frame draws, the height its details are chosen for
         self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
-        self.photo_update(&gfx.renderer);
+        self.photo_update(&mut gfx.renderer);
         self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.photo_isolate_frame(&mut gfx.renderer);
@@ -10877,7 +10877,7 @@ impl App {
                 self.start.elapsed().as_secs_f32(),
             )
         {
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
         }
         // the order of the blended faces: the user's, the exact one only
         // where the renderer draws it (not under MSAA, scene/blend_order.rs)
@@ -10889,7 +10889,7 @@ impl App {
         if let Some(mode) = crate::demo::aa_switch::due(&mut self.aa_switch_demo, self.frame_count) {
             log::info!("demo: anti-aliasing {mode} at frame {}", self.frame_count);
             self.settings.antialiasing = mode;
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
         }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
@@ -11895,9 +11895,9 @@ impl App {
                 frustum: CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y),
                 range: self.settings.draw_distance,
                 dt,
-                projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
+                projector_shadows: self.settings.projector_shadows && self.photo_shadow_quality() > 0,
                 projector_shadow_limit: aurora_render::projector_shadows::effective_limit(
-                    self.settings.shadow_params().0,
+                    Settings::shadow_params_of(self.photo_shadow_quality()).0,
                     self.settings.projector_shadow_limit,
                     gfx.renderer.max_texture_dimension(),
                 ),
@@ -12086,8 +12086,8 @@ impl App {
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
-            shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
-            shadow_distance: self.settings.shadow_params().1,
+            shadows: self.photo_shadow_quality() > 0 && matches!(self.screen, Screen::World),
+            shadow_distance: Settings::shadow_params_of(self.photo_shadow_quality()).1,
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
@@ -12819,7 +12819,7 @@ impl App {
             crate::link_trust::configure(&self.settings.trusted_sites);
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
             sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
-            gfx.renderer.apply_settings(self.settings.render_settings());
+            gfx.renderer.apply_settings(self.photo_render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
@@ -20330,7 +20330,7 @@ impl ApplicationHandler for App {
             apply_test_overrides(&mut self.settings);
             self.settings.save();
         }
-        renderer.apply_settings(self.settings.render_settings());
+        renderer.apply_settings(self.photo_render_settings());
         self.note_gpus(&renderer);
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.safe_graphics_at_start();

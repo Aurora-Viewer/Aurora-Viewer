@@ -793,17 +793,9 @@ fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<
 }
 
 /// Stepped slider with a named level shown next to it.
-fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
-    ui.spacing_mut().slider_width = SLIDER_W - 30.0;
+pub(super) fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
     let max = labels.len().saturating_sub(1) as u8;
-    let r = ui.add(
-        egui::Slider::new(v, 0..=max)
-            .custom_parser(aurora_i18n::parse_number)
-            .step_by(1.0)
-            .trailing_fill(true)
-            .show_value(false),
-    );
-    let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
+    let label_for = |v: u8| labels.get(v.min(max) as usize).copied().unwrap_or("");
     let font = egui::FontId::proportional(12.0);
     let width = labels
         .iter()
@@ -814,6 +806,16 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
                 .x
         })
         .fold(0.0, f32::max);
+    let available = ui.available_width() - width - ui.spacing().item_spacing.x;
+    ui.spacing_mut().slider_width = available.clamp(40.0, SLIDER_W - 30.0);
+    let r = ui.add(
+        egui::Slider::new(v, 0..=max)
+            .custom_parser(aurora_i18n::parse_number)
+            .step_by(1.0)
+            .trailing_fill(true)
+            .show_value(false),
+    );
+    let label = label_for(*v);
     ui.add_sized(
         vec2(width, ui.spacing().interact_size.y),
         egui::Label::new(RichText::new(label).size(12.0).color(p.violet_pale)).wrap_mode(egui::TextWrapMode::Extend),

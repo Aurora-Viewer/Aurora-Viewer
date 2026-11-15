@@ -151,6 +151,8 @@ pub struct View<'a> {
     pub email: Option<EmailView>,
     /// Preferences' exposure, under the photo's own.
     pub exposure: f32,
+    pub shadow_quality: u8,
+    pub ambient_occlusion: u8,
     /// HDR and Emissive is on: without it no exposure applies, the row is
     /// greyed.
     pub hdr: bool,
@@ -318,7 +320,7 @@ impl SnapshotUi {
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
+        light_rows(ui, p, &mut self.light, (view.exposure, view.hdr), &view.env, Some(view), out);
         if self.light != before && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
@@ -1073,6 +1075,15 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
+fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, labels: &[&str]) {
+    ui.horizontal(|ui| {
+        let mut level = value.unwrap_or(current);
+        if super::options::stepped(ui, p, &mut level, labels) {
+            *value = Some(level);
+        }
+    });
+}
+
 /// The photo's quick light (Phototools' Quick Environments, the sky, water
 /// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
 /// Exposure, and the sun of "Personal lighting"), for the photo only: closing
@@ -1082,15 +1093,44 @@ fn light_rows(
     ui: &mut egui::Ui,
     p: &Palette,
     l: &mut crate::snapshot::light::PhotoLight,
-    exposure: f32,
-    hdr: bool,
+    (exposure, hdr): (f32, bool),
     env: &EnvView,
+    quality: Option<&View>,
     out: &mut Vec<Action>,
 ) {
     use crate::snapshot::light::EXPOSURE;
     ui.add_enabled_ui(!env.locked, |ui| env_rows(ui, p, l, env))
         .response
         .on_disabled_hover_text(aurora_i18n::tr!("rlva-blocked"));
+    if let Some(view) = quality {
+        use aurora_i18n::tr;
+        ui.add_enabled_ui(view.busy.is_none(), |ui| {
+            row(ui, p, tr!("ui-options-shadow-quality"), None, |ui| {
+                quality_slider(
+                    ui,
+                    p,
+                    &mut l.shadow_quality,
+                    view.shadow_quality,
+                    &[
+                        tr!("ui-options-disabled-2"),
+                        tr!("ui-options-low"),
+                        tr!("common-medium"),
+                        tr!("ui-options-high"),
+                        tr!("ui-options-ultra"),
+                    ],
+                );
+            });
+            row(ui, p, tr!("ui-options-ambient-occlusion"), None, |ui| {
+                quality_slider(
+                    ui,
+                    p,
+                    &mut l.ambient_occlusion,
+                    view.ambient_occlusion,
+                    &[tr!("ui-options-disabled"), tr!("ui-options-low"), tr!("ui-options-high")],
+                );
+            });
+        });
+    }
     row(ui, p, aurora_i18n::tr!("photo-light-exposure"), None, |ui| {
         // (no exposure without HDR: LLPipeline::gammaCorrect)
         ui.add_enabled_ui(hdr, |ui| {
@@ -1771,7 +1811,7 @@ mod tests {
         };
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                light_rows(ui, &p, &mut light, 1.234, true, &env, &mut Vec::new())
+                light_rows(ui, &p, &mut light, (1.234, true), &env, None, &mut Vec::new())
             });
             output.textures_delta.clear();
         }

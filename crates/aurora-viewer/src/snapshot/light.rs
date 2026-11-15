@@ -20,6 +20,8 @@ pub struct PhotoLight {
     pub env: PhotoChoice,
     /// The exposure for the photo; None: Preferences' one.
     pub exposure: Option<f32>,
+    pub shadow_quality: Option<u8>,
+    pub ambient_occlusion: Option<u8>,
     /// The clouds stop moving (LLEnvironment::pauseCloudScroll).
     pub clouds_paused: bool,
     /// The lights worn by avatars light the scene
@@ -32,6 +34,8 @@ impl Default for PhotoLight {
         Self {
             env: PhotoChoice::default(),
             exposure: None,
+            shadow_quality: None,
+            ambient_occlusion: None,
             clouds_paused: false,
             attached_lights: true,
         }

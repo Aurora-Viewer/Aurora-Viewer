@@ -9,6 +9,7 @@
 //! LLWebProfile::uploadImage).
 
 use super::App;
+use crate::settings::Settings;
 use crate::snapshot::looks::{self, Placement, Resolved};
 use crate::snapshot::luts::{Imported, LutLibrary};
 use crate::snapshot::reel::Place;
@@ -551,7 +552,7 @@ impl App {
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
         let textures = &self.scene.textures;
         let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
-        let occlusion = self.settings.ssao > 0;
+        let occlusion = self.photo_ambient_occlusion() > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
         let job = s.job.as_mut()?;
@@ -1165,7 +1166,7 @@ impl App {
         // HUDs or the photo's looks, whatever the Photo window has chosen
         let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
-        let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
+        let context = ContextPass::plan(size, tiles.len(), self.photo_ambient_occlusion() > 0);
         // (the outfit's photo mode keeps the viewfinder's looks: the
         // square shows them)
         let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
@@ -1580,7 +1581,7 @@ impl App {
     }
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
-    pub(super) fn photo_update(&mut self, renderer: &Renderer) {
+    pub(super) fn photo_update(&mut self, renderer: &mut Renderer) {
         if std::mem::take(&mut self.snapshots.to_disk) {
             self.snapshots.quiet = !self.panels.snapshot;
             self.photo_take(renderer, None);
@@ -1590,6 +1591,7 @@ impl App {
         self.photo_luts_update();
         self.photo_quality(renderer);
         self.photo_light();
+        renderer.apply_settings(self.photo_render_settings());
         self.photo_free_camera();
         if let Some(t) = self.snapshots.detail_wait {
             let pending = self.scene.textures.pending_in_view();
@@ -2269,6 +2271,8 @@ LUT_3D_SIZE {n}
                 profile_posted: self.snapshots.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                shadow_quality: self.settings.shadow_quality,
+                ambient_occlusion: self.settings.ssao,
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
@@ -2346,6 +2350,8 @@ LUT_3D_SIZE {n}
                 profile_posted: s.message_profile,
                 email,
                 exposure: self.settings.exposure,
+                shadow_quality: self.settings.shadow_quality,
+                ambient_occlusion: self.settings.ssao,
                 hdr: self.settings.hdr_emissive,
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
@@ -2595,6 +2601,36 @@ LUT_3D_SIZE {n}
             self.env_ui.scan_left = usize::MAX;
         }
         self.env_ui.refresh(ctx, &self.world.inventory);
+    }
+
+    pub(super) fn photo_shadow_quality(&self) -> u8 {
+        if self.panels.snapshot
+            && let Some(quality) = self.snapshots.ui.light.shadow_quality
+        {
+            return quality;
+        }
+        self.settings.shadow_quality
+    }
+
+    fn photo_ambient_occlusion(&self) -> u8 {
+        if self.panels.snapshot
+            && let Some(quality) = self.snapshots.ui.light.ambient_occlusion
+        {
+            return quality;
+        }
+        self.settings.ssao
+    }
+
+    pub(super) fn photo_render_settings(&self) -> aurora_render::RenderSettings {
+        let mut settings = self.settings.render_settings();
+        settings.rain_surfaces = self.rain_last.is_some_and(|t| t.elapsed() < Duration::from_secs(1500));
+        let shadow_quality = self.photo_shadow_quality();
+        settings.shadow_resolution = Settings::shadow_params_of(shadow_quality).0;
+        settings.ssao = self.photo_ambient_occlusion();
+        if self.panels.snapshot && self.snapshots.ui.light.shadow_quality == Some(0) {
+            settings.contact_shadows = false;
+        }
+        settings
     }
 
     /// The exposure the frame is drawn with: the photo's, else Preferences'.
