@@ -306,6 +306,7 @@ mod tests {
                             emoji: &mut emoji,
                             hidden: false,
                             message_seconds: 30.0,
+                            tip_seconds: 10.0,
                             restart: None,
                             presence_at: Default::default(),
                             classic_bars: false,

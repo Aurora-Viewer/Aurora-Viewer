@@ -4,7 +4,7 @@ use super::*;
 use std::sync::Arc;
 
 #[derive(Default, Debug, PartialEq)]
-pub(super) struct Metadata {
+pub(crate) struct Metadata {
     pub uploader: Option<Uuid>,
     pub date: Option<String>,
 }
@@ -37,7 +37,8 @@ fn decode_source(ctx: &egui::Context, asset: Uuid, mut source: crate::scene::tex
 
 /// LLViewerFetchedTexture::createTexture parses `a=UUID&z=YYYYMMDDHHMMSS`
 /// in the JPEG2000 COM marker. Stop at the first tile, never scan image data.
-fn metadata(bytes: &[u8]) -> Metadata {
+/// The object exporter reads the uploader too (DAESaver::updateTextureInfo).
+pub(crate) fn metadata(bytes: &[u8]) -> Metadata {
     let mut result = Metadata::default();
     let Some(start) = bytes.windows(2).position(|b| b == [0xff, 0x4f]) else {
         return result;
@@ -95,8 +96,27 @@ pub(crate) struct ImageView {
     revision: Option<crate::scene::textures::PreviewRevision>,
     pending: Option<crossbeam_channel::Receiver<Decoded>>,
     export_reply: Option<crossbeam_channel::Receiver<String>>,
+    /// Copy UUID allowed for (asset, inventory generation, god): the rule
+    /// walks the whole inventory, so not on every frame (as the picker and
+    /// the material editor keep it).
+    uuid_shown: Option<(uuid::Uuid, u64, bool, bool)>,
 }
 impl ImageView {
+    /// Whether "Copy UUID" is offered for `asset`
+    /// (LLPreviewTexture::postBuild: full permissions; any god sees it),
+    /// computed again only when the asset, the inventory or the god state
+    /// changes.
+    pub(super) fn copy_uuid_allowed(&mut self, inventory: &crate::world::inventory::Inventory, asset: uuid::Uuid, god: bool) -> bool {
+        match self.uuid_shown {
+            Some((a, generation, g, shown)) if a == asset && generation == inventory.generation && g == god => shown,
+            _ => {
+                let shown = rules::asset_uuid_shown_to(inventory, asset, god);
+                self.uuid_shown = Some((asset, inventory.generation, god, shown));
+                shown
+            }
+        }
+    }
+
     pub(super) fn batch_export(path: std::path::PathBuf, png: bool) -> Self {
         Self {
             export_path: Some(path),
@@ -268,7 +288,8 @@ pub(super) fn toolbar(
     ui: &mut egui::Ui,
     p: &Palette,
     item: &aurora_net::inventory::InvItem,
-    held: u32,
+    inventory: &crate::world::inventory::Inventory,
+    copy_uuid: bool,
     dimensions: Option<(u32, u32)>,
     display: &mut Display,
     actions: &mut Vec<Action>,
@@ -278,11 +299,12 @@ pub(super) fn toolbar(
         if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("resource-preview-refresh"), true) {
             actions.push(Action::RefreshTexture(item.asset_id));
         }
-        // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
-        let full = held & rules::FULL == rules::FULL;
-        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), full) {
+        // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions
+        // only, or to a god (`ImageView::copy_uuid_allowed`)
+        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), copy_uuid) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }
+        let full = rules::held(inventory, item) & rules::FULL == rules::FULL;
         ui.add_enabled_ui(full, |ui| {
             egui::ComboBox::from_id_salt("texture_export")
                 .selected_text(aurora_i18n::tr!("common-save-as"))
@@ -448,6 +470,30 @@ fn checkerboard(ui: &egui::Ui, p: &Palette, image: egui::Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Copy UUID is decided once per asset, inventory generation and god
+    /// state, not by walking the inventory on every frame.
+    #[test]
+    fn copy_uuid_is_computed_again_only_when_its_inputs_change() {
+        use aurora_net::inventory::InvItem;
+        let asset = uuid::Uuid::from_u128(77);
+        let mut inventory = crate::world::inventory::Inventory::default();
+        let mut view = ImageView::default();
+        assert!(view.copy_uuid_allowed(&inventory, asset, true), "a god sees it");
+        assert!(!view.copy_uuid_allowed(&inventory, asset, false), "not held");
+        // a full-permission copy arrives, but the generation did not move: kept
+        let item = InvItem {
+            id: uuid::Uuid::from_u128(78),
+            asset_id: asset,
+            owner: inventory.owner,
+            owner_mask: rules::FULL,
+            ..Default::default()
+        };
+        inventory.items.insert(item.id, item);
+        assert!(!view.copy_uuid_allowed(&inventory, asset, false), "cached for this generation");
+        inventory.generation += 1;
+        assert!(view.copy_uuid_allowed(&inventory, asset, false), "read again after a change");
+    }
 
     #[test]
     fn batch_export_preserves_dimensions_and_never_overwrites_existing_files() {

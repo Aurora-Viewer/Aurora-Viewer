@@ -70,6 +70,45 @@ fn import_folder_discovery_mirrors_nested_sources_filters_formats_and_reports_li
 }
 
 #[test]
+fn import_folder_discovery_uses_case_insensitive_natural_path_order() {
+    let root = std::env::temp_dir().join(format!("aurora-folder-order-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("folder10")).unwrap();
+    std::fs::create_dir_all(root.join("Folder2")).unwrap();
+    std::fs::create_dir_all(root.join("zFolder")).unwrap();
+    for name in [
+        "texture10.png",
+        "Texture2.png",
+        "texture1.png",
+        "alpha.png",
+        "folder10/texture1.png",
+        "Folder2/texture10.png",
+        "zFolder/texture20.png",
+    ] {
+        std::fs::write(root.join(name), []).unwrap();
+    }
+
+    let files = discover(&root, 10).unwrap();
+    let ordered: Vec<_> = files
+        .iter()
+        .map(|(path, _)| path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        ordered,
+        [
+            "Folder2/texture10.png",
+            "folder10/texture1.png",
+            "zFolder/texture20.png",
+            "alpha.png",
+            "texture1.png",
+            "Texture2.png",
+            "texture10.png"
+        ]
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn import_folder_plan_edits_whole_subtrees_and_type_or_flat_layouts_keep_distinct_files() {
     let (mut imports, world, _) = fixture();
     let old = vec!["Project".into(), "Coat".into()];
