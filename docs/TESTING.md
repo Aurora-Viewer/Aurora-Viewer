@@ -6016,7 +6016,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
-| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences |
+| `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive\|edit\|scenes` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival; `scenes`: an experience's environment pushes, then its clear; also fills Me › Experiences; `edit` opens the club experience's Edit tab |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CONTACTS_FILTER=<query>` | Prefills the groups filter of Contacts (with `AURORA_DEMO_CONTACTS=groups`) |
 | `AURORA_DEMO_SET_NOTICES=config\|config-responses\|config-bottom\|chat` | A contact set's own online notices and automatic responses |
@@ -8657,7 +8657,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the account's page; `fail`: the settings never come, the switches stay
   greyed; `savefail`: a change is refused, a notice says so and the
   switches go back to what the grid has.
-- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|scenes`**: experiences
+- **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes`**: experiences
   asking for permissions; the demo plays the simulator, GetExperienceInfo and
   ExperiencePreferences. In SL a script may ask from any event (a click, a
   collision, the arrival on the parcel, a timer): the viewer only sees the
@@ -8693,6 +8693,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   answers (the tab moves when you Allow, Block or Forget in the profile).
   Each allowed script that acts (the door's teleport, the greeter) adds an
   entry to the Events tab; Search finds the demo's experiences by name.
+  `edit`: the club's experience is the agent's own (Owned tab, owner = you,
+  a logo and a marketplace address); at frame 420 its profile opens on the
+  Edit tab (the demo answers IsExperienceAdmin yes): the logo (a click opens
+  the texture picker, full-permission textures only, the others greyed;
+  a texture that is not full permission chosen by its UUID is refused with
+  a red line), name, description, rating, location (Set to current / Clear),
+  group (enabled: you are the owner), marketplace, Enable experience and
+  Hide in search. Save is greyed until a field changes; Save answers as
+  UpdateExperience and the Edit tab shows what was saved; Back or the close
+  button with changes asks "There are unsaved changes" (Save / Don't save /
+  Cancel). The profile's view shows the logo, the group and the marketplace
+  address, with an Edit button. Capture after frame 520.
 - **`AURORA_DEMO_LURE=offer|request|god|answers|reject|offer-card|request-card|card-answered|notification-answered|legacy|exceeded|exceeded-continue|blocked`**:
   teleports received from Tess Touch (issue #280, parts B1 and B2). Each
   offer and request opens her conversation (unread) with its card and has

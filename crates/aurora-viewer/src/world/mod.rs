@@ -1168,7 +1168,7 @@ impl World {
     /// is now, on the main region's grid. None before the first arrival,
     /// with no region name yet, or under RLVa `@showloc` (stricter than the
     /// Legacy Viewer, whose line names the place left even then).
-    fn back_slurl(&self) -> Option<String> {
+    pub(crate) fn back_slurl(&self) -> Option<String> {
         if !self.arrived_once || self.rlva.has("showloc") {
             return None;
         }
@@ -3785,6 +3785,14 @@ impl World {
             }
             NetEvent::ExperienceList { kind, ids } => {
                 self.experiences.list_arrived(kind, ids);
+                None
+            }
+            NetEvent::ExperienceAdmin { experience, admin } => {
+                self.experiences.admin_arrived(experience, admin);
+                None
+            }
+            NetEvent::ExperienceUpdated { experience, result } => {
+                self.experiences.updated(experience, result);
                 None
             }
             NetEvent::GroupExperiences { group, ids } => {
