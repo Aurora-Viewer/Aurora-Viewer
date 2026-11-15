@@ -1228,29 +1228,39 @@ fn cleanup_tab(
         ui.add_space(8.0);
         section_header(ui, p, "folder-filled", aurora_i18n::tr!("inventory-cleanup-where"));
         let mut place = usize::from(!cleanup.whole && has_folder);
-        if segmented(
-            ui,
-            p,
-            &mut place,
-            &[
-                (aurora_i18n::tr!("inventory-cleanup-whole"), true),
-                (aurora_i18n::tr!("inventory-cleanup-this-folder"), has_folder),
-            ],
-        ) {
+        let moved = ui.push_id("inventory_cleanup_where", |ui| {
+            segmented(
+                ui,
+                p,
+                &mut place,
+                &[
+                    (aurora_i18n::tr!("inventory-cleanup-whole"), true),
+                    (aurora_i18n::tr!("inventory-cleanup-this-folder"), has_folder),
+                ],
+            )
+        });
+        if moved.inner {
             cleanup.whole = place == 0;
         }
-        switch_labeled(
-            ui,
-            p,
-            &mut cleanup.include_sorted,
-            aurora_i18n::tr!("inventory-cleanup-include-sorted", folder = base.as_str()),
-        );
-        switch_labeled(
-            ui,
-            p,
-            &mut cleanup.empty_folders,
-            aurora_i18n::tr!("inventory-cleanup-empty-folders"),
-        );
+        // Each switch under its own id: its slide follows that id, and an
+        // id counted from the controls above (the custom date's dropdowns
+        // appearing) would change and replay the slide.
+        ui.push_id("inventory_cleanup_include_sorted", |ui| {
+            switch_labeled(
+                ui,
+                p,
+                &mut cleanup.include_sorted,
+                aurora_i18n::tr!("inventory-cleanup-include-sorted", folder = base.as_str()),
+            )
+        });
+        ui.push_id("inventory_cleanup_empty_folders", |ui| {
+            switch_labeled(
+                ui,
+                p,
+                &mut cleanup.empty_folders,
+                aurora_i18n::tr!("inventory-cleanup-empty-folders"),
+            )
+        });
         ui.label(RichText::new(aurora_i18n::tr!("inventory-cleanup-never")).small().color(p.muted));
     });
     crate::ui::widgets::divider(ui, p);
