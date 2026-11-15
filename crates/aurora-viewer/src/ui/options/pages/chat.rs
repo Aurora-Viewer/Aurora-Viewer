@@ -76,6 +76,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // FSMarkObjects (off)
+                cx.toggle(
+                    tr!("ui-options-mark-unnamed-objects"),
+                    tr!("ui-options-mark-unnamed-objects-hint"),
+                    &field!(mark_unnamed_objects),
+                );
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
@@ -100,6 +106,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colon-emote"),
                     tr!("ui-options-colon-emote-hint"),
                     &field!(colon_emote),
+                );
+                // AutoCloseOOC (off)
+                cx.toggle(
+                    tr!("ui-options-auto-close-ooc"),
+                    tr!("ui-options-auto-close-ooc-hint"),
+                    &field!(auto_close_ooc),
                 );
                 cx.toggle(
                     tr!("ui-options-mention-autocomplete"),
