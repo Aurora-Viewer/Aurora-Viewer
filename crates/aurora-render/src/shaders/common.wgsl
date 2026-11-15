@@ -1259,10 +1259,32 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
 }
 
+// Whether a surface takes the water's fog in its own shading (apply_fog):
+// everything seen from below the water, and from above what lies under it.
+// The Legacy Viewer hazes the opaque scene by its own depth before the
+// blended faces under the water (LLPipeline::renderGeomPostDeferred, "do
+// water haze just before pre water alpha"; doWaterHaze,
+// indra/newview/pipeline.cpp), and those faces fog themselves
+// (applySkyAndWaterFog, class2/deferred/alphaF.glsl): each layer by its own
+// depth, and the surface adds none (class3/environment/waterF.glsl). Aurora's
+// surface used to fog its whole copy of the scene by the first depth under
+// it: where a faint blended face lay just under the surface, the bed behind
+// it lost its fog, and a sheet crossing the water plane showed its triangles.
+fn water_fogs_source(world_pos: vec3<f32>) -> bool {
+    return camera_underwater() || world_pos.z < camera_water_level();
+}
+
+// Density of that fog: the under-water one from below (and for the enhanced
+// absorption, which is tuned on it), the plain one from above, as
+// LLSettingsVOWater::getModifiedWaterFogDensity(underwater).
+fn water_source_density() -> f32 {
+    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || water_fx_on(256u));
+}
+
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+    if (water_fogs_source(world_pos)) {
         if(!camera_underwater() && water_excluded(world_pos)){return apply_air_fog(col,world_pos);}
-        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
+        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,water_source_density());
         return col*wf.transmission+wf.color;
     }
     return apply_air_fog(col,world_pos);
