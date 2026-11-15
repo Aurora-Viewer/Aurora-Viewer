@@ -4956,7 +4956,12 @@ impl World {
                 blocked: false,
                 beyond_range: false,
             };
+            let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             self.conversation_push(im.from_agent_id, line, true);
+            // sessionAdded with has_offline_msg: the log marks it unread
+            if im.offline && opened {
+                self.log_conversation(im.from_agent_id, true);
+            }
             if rlva_filter != rlva::communication::Received::Masked {
                 self.send_autoresponse(&im, autoresponse);
             }

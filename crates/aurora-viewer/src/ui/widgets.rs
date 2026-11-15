@@ -2205,10 +2205,17 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 
 /// Choice between a few options side by side, in one track: the chosen
 /// segment is lit, in the accent when its option is `accent` (Aurora's own
-/// look), in `raised` otherwise (a legacy look). Returns true when the
-/// selection changed.
+/// look), in `raised` otherwise (a legacy look). The lit face slides from
+/// the segment chosen before, as the poser's tracks do (`tracks::icon_track`;
+/// none under Reduce animations). Returns true when the selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
-    segmented_with_disabled(ui, p, selected, options, &[])
+    segmented_track(ui, p, selected, options, &[], SEGMENT_H)
+}
+
+/// `segmented` with a track `height` tall, to line it up with the fields
+/// and buttons of a taller row.
+pub fn segmented_tall(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)], height: f32) -> bool {
+    segmented_track(ui, p, selected, options, &[], height)
 }
 
 /// `segmented` with some options out of reach: `disabled[i]` is the tooltip
@@ -2221,35 +2228,69 @@ pub fn segmented_with_disabled(
     options: &[(&str, bool)],
     disabled: &[Option<&str>],
 ) -> bool {
+    segmented_track(ui, p, selected, options, disabled, SEGMENT_H)
+}
+
+fn segmented_track(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    options: &[(&str, bool)],
+    disabled: &[Option<&str>],
+    height: f32,
+) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
-    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let size = Vec2::new(segmented_size(ui, options).x, height);
+    let (track, _) = ui.allocate_exact_size(size, Sense::hover());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(track, radius, p.bar);
-    let mut changed = false;
+    let off = |i: usize| disabled.get(i).copied().flatten();
+    let mut rects = Vec::with_capacity(widths.len());
     let mut x = track.left() + SEGMENT_PAD;
-    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
-        let rect = egui::Rect::from_min_size(
+    for w in &widths {
+        rects.push(egui::Rect::from_min_size(
             egui::pos2(x, track.top() + SEGMENT_PAD),
-            Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
-        );
-        x += widths[i];
-        let off = disabled.get(i).copied().flatten();
+            Vec2::new(*w, track.height() - SEGMENT_PAD * 2.0),
+        ));
+        x += w;
+    }
+    // the lit face, its edges sliding from the segment chosen before (kept
+    // from the track's left, so that moving the window does not slide it);
+    // none on a chosen option that is out of reach
+    if let Some(chosen) = rects.get(*selected).filter(|_| off(*selected).is_none()) {
+        let id = ui.scope_id().with(("segmented-slide", options.len(), options.first().map(|o| o.0)));
+        let time = ui.style().animation_time;
+        let left = ui
+            .ctx()
+            .animate_value_with_time(id.with("left"), chosen.left() - track.left(), time);
+        let right = ui
+            .ctx()
+            .animate_value_with_time(id.with("right"), chosen.right() - track.left(), time);
+        let face = if options[*selected].1 { p.violet } else { p.raised };
+        let lit = egui::Rect::from_x_y_ranges(track.left() + left..=track.left() + right, chosen.y_range());
+        ui.painter().rect_filled(lit, inner_radius(ui.visuals()), face);
+    }
+    let mut changed = false;
+    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
+        let rect = rects[i];
+        let off = off(i);
         let resp = ui.interact(
             rect,
             ui.scope_id().with(("segmented", i, *label)),
             if off.is_some() { Sense::hover() } else { Sense::click() },
         );
         let sel = *selected == i;
-        let (face, text) = match (sel, *accent) {
-            _ if off.is_some() => (None, p.muted_dim),
-            (true, true) => (Some(p.violet), p.on_accent),
-            (true, false) => (Some(p.raised), p.ink),
-            (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
-            (false, _) => (None, p.muted),
+        let text = match (sel, *accent) {
+            _ if off.is_some() => p.muted_dim,
+            (true, true) => p.on_accent,
+            (true, false) => p.ink,
+            (false, _) if resp.hovered() => p.ink,
+            (false, _) => p.muted,
         };
-        if let Some(face) = face {
-            ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
+        if !sel && off.is_none() && resp.hovered() {
+            ui.painter()
+                .rect_filled(rect, inner_radius(ui.visuals()), p.raised.gamma_multiply(0.5));
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
