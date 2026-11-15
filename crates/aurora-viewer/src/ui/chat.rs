@@ -2697,9 +2697,18 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 };
                 let mark = mark.filter(|_| row.hit);
                 find::forget_message(ui.ctx());
-                let mut draw = |ui: &mut egui::Ui| match &mut rows {
-                    Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
-                    Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
+                // a line from beyond the say range is drawn whole at the
+                // factor of Preferences › Chat (LLViewerChat::getChatColor's
+                // alpha, FSChatHistory::appendMessage), in every style
+                let dim = super::colors::beyond_range_alpha(line);
+                let mut draw = |ui: &mut egui::Ui| {
+                    let opacity = ui.opacity();
+                    ui.multiply_opacity(dim);
+                    match &mut rows {
+                        Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
+                        Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
+                    }
+                    ui.set_opacity(opacity);
                 };
                 if line.kind.is_card() {
                     // a card: its own labels and buttons
@@ -4157,6 +4166,9 @@ pub fn toasts(
             for line in recent {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
+                // the line's own, dimmed from beyond the say range: its
+                // text and picture, never its glass
+                let shown = alpha * super::colors::beyond_range_alpha(line);
                 let (console_tint, console_blur) =
                     crate::ui::surface_opacity::relative(crate::ui::surface_opacity::console(), crate::ui::surface_opacity::CONSOLE);
                 let tint =
@@ -4188,7 +4200,7 @@ pub fn toasts(
                             family.as_ref().map_or(JobLook::Line, JobLook::Pill),
                         );
                         for s in job.sections.iter_mut() {
-                            s.format.color = s.format.color.gamma_multiply(alpha);
+                            s.format.color = s.format.color.gamma_multiply(shown);
                         }
                         let base = bidi_base(&name, &line.from);
                         let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
@@ -4204,7 +4216,7 @@ pub fn toasts(
                             let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
                             let r =
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
-                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
+                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, shown);
                         }
                         // the islands' pills: the sender's name acts like the
                         // conversations' (Firestorm's toast links it)
@@ -4214,8 +4226,8 @@ pub fn toasts(
                         {
                             names.push((r, line));
                         }
-                        let col = color_for(line.kind, p).gamma_multiply(alpha);
-                        line_extras(ui, p, world, &visual, rect.min, size, alpha, badges, line_links, col, &mut links);
+                        let col = color_for(line.kind, p).gamma_multiply(shown);
+                        line_extras(ui, p, world, &visual, rect.min, size, shown, badges, line_links, col, &mut links);
                     });
                 if glass && let Some(slot) = slot {
                     let rect = bubble.response.rect;
@@ -5440,6 +5452,7 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
+            beyond_range: false,
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -5487,6 +5500,7 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(source),
             origin: Origin::Live,
+            beyond_range: false,
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -5521,6 +5535,7 @@ mod tests {
                 kind,
                 source: uuid::Uuid::from_u128(source),
                 origin: Origin::Live,
+                beyond_range: false,
             });
         }
         let ctx = egui::Context::default();
@@ -6067,6 +6082,7 @@ mod tests {
                 kind: ChatKind::Local(ChatType::Normal),
                 source: uuid::Uuid::from_u128(source),
                 origin: Origin::Live,
+                beyond_range: false,
             });
             world.chat_clock.pushed_back();
         }
