@@ -1038,10 +1038,12 @@ struct Pipelines {
     /// The two in one draw (`fs_blend_both`), where the device blends from
     /// two sources.
     blend_both: Option<wgpu::RenderPipeline>,
-    /// The blended faces under the water (`DrawLists::blend_under_water`),
-    /// and their depth into the single-sampled scene depth.
+    /// The blended faces under the water (`DrawLists::blend_under_water`):
+    /// their colour, which writes no depth, then their depth into the
+    /// single-sampled scene depth and, with MSAA, the multisampled one.
     blend_under: SidedPipelines,
     blend_under_depth_ss: SidedPipelines,
+    blend_under_depth_msaa: Option<SidedPipelines>,
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
@@ -4851,10 +4853,15 @@ impl Backend {
         // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
         let blend_depth = blend_pipe("blend rigged", true, true, 1.0, wgpu::CompareFunction::Greater);
         // POOL_ALPHA_PRE_WATER: the blended faces under the water, before it,
-        // their part on the far side of the surface, writing depth from
-        // 1/255 ("needed for accurate water fog", lldrawpoolalpha.cpp): the
-        // water's refraction and fog then reach them, not the ground behind
-        let blend_under = blend_pipe("blend under water", true, true, 2.0, static_compare);
+        // their part on the far side of the surface. The Legacy Viewer
+        // writes their depth as it draws them ("needed for accurate water
+        // fog", lldrawpoolalpha.cpp), so a faint layer sorted behind the
+        // ones it covers (two sheets crossing each other, a wide one over
+        // small ones) cuts them out along its triangles. Here the colour
+        // writes no depth and every layer blends; the depth the water's
+        // refraction and fog need is written once they are all drawn
+        // (`blend_under_depth_ss`, `blend_under_depth_msaa`)
+        let blend_under = blend_pipe("blend under water", true, false, 2.0, static_compare);
         // The rigged faces' depth only where at least half covered
         // (fs_depth_contact): a soft fringe no longer hides the glass behind
         // it (#556). Before their colour with `RiggedBlendDepth::HalfCovered`
@@ -5403,19 +5410,32 @@ impl Backend {
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = std::array::from_fn(|side| pre("prepass contact", "vs_main", Some("fs_depth_contact"), blend_cull(side != 0)));
-        // the depth of the blended faces under the water, from 1/255, into
-        // the single-sampled scene depth the water samples for its
-        // refraction and fog (with MSAA the scene pass writes another)
+        // the depth of the blended faces under the water, drawn after their
+        // colour: into the single-sampled scene depth the water samples for
+        // its refraction and its shallow-water fade, and with MSAA into the
+        // multisampled one too, which what is drawn after the water tests
         // (culled as their colour pass: a face seen from behind, which draws
-        // no colour, must not give the water a depth either)
-        let blend_under_depth_ss = sided_pipe(PipeDesc {
-            fs: Some("fs_depth_contact"),
-            samples: 1,
-            format: None,
-            depth_compare: wgpu::CompareFunction::Greater,
-            constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 2.0)],
-            ..base("blend under water depth", "vs_main", "fs_opaque")
-        });
+        // no colour, must not give the water a depth either). Only where a
+        // face is at least half covered (DEPTH_CONTACT_ALPHA's default), not
+        // from 1/255 as LLDrawPoolAlpha::forwardRender writes it
+        // (indra/newview/lldrawpoolalpha.cpp, "needed for accurate water
+        // fog"): the fog no longer reads this depth (common.wgsl
+        // water_fogs_source), and a faint sheet just under the surface,
+        // foam or a caustic, would take the water's reflection away over
+        // its whole shape (waterF.glsl's `fade`), which showed its triangles
+        // wherever it crossed the water plane
+        let under_depth = |label: &'static str, samples: u32| {
+            sided_pipe(PipeDesc {
+                fs: Some("fs_depth_contact"),
+                samples,
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("WATER_CLIP", 2.0)],
+                ..base(label, "vs_main", "fs_opaque")
+            })
+        };
+        let blend_under_depth_ss = under_depth("blend under water depth", 1);
+        let blend_under_depth_msaa = (samples > 1).then(|| under_depth("blend under water msaa depth", samples));
         // the same with GTAO's mesh normals (gtao.rs)
         let pre_n = |label: &'static str, vs: &'static str, fs: &'static str, cull: Option<wgpu::Face>| {
             pipe(PipeDesc {
@@ -5693,6 +5713,7 @@ impl Backend {
             blend_both,
             blend_under,
             blend_under_depth_ss,
+            blend_under_depth_msaa,
             particles,
             water_particles,
             water_particles_under,
@@ -10289,17 +10310,49 @@ impl Backend {
         }
         // ---- the blended faces under the water (POOL_ALPHA_PRE_WATER), while
         // the camera is above it: before the water and the copy it refracts,
-        // writing depth, without glow, each clipped to the far side of the
-        // surface (`DrawLists::blend_under_water`). The water's refraction
-        // and fog then cover them, instead of their being drawn over it.
+        // without glow, each clipped to the far side of the surface
+        // (`DrawLists::blend_under_water`). The water's refraction and fog
+        // then cover them, instead of their being drawn over it. Their
+        // colour writes no depth, so that none hides another whatever their
+        // order; their depth, from 1/255, follows in passes of its own, for
+        // the water and what is drawn after it.
         // (The frame group without the scene copy and the depth: the depth
-        // is written here.)
+        // passes write it.)
         let (_, n_under) = rg.blend_under;
         if n_under > 0 {
+            let under_depth =
+                |encoder: &mut wgpu::CommandEncoder, label: &'static str, view: &wgpu::TextureView, pipes: &SidedPipelines| {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some(label),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw_under(&mut pass, pipes, rg.blend_under);
+                };
             {
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "blend under water", false, true);
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "blend under water", false, false);
                 bind_mesh(&mut pass, &self.groups.a);
                 draw_under(&mut pass, &self.pipelines.blend_under, rg.blend_under);
+            }
+            match (&self.targets.depth_msaa, &self.pipelines.blend_under_depth_msaa) {
+                (Some(view), Some(pipes)) => under_depth(&mut encoder, "blend under water msaa depth", view, pipes),
+                _ => under_depth(
+                    &mut encoder,
+                    "blend under water depth",
+                    &self.targets.depth_ss,
+                    &self.pipelines.blend_under_depth_ss,
+                ),
             }
             if self.targets.color_msaa.is_some() {
                 // the copy reads the resolved colour, and the water samples
@@ -10321,23 +10374,12 @@ impl Backend {
                     multiview_mask: None,
                 });
                 drop(_resolve);
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("blend under water depth"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.targets.depth_ss,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                bind_mesh(&mut pass, &self.groups.a);
-                draw_under(&mut pass, &self.pipelines.blend_under_depth_ss, rg.blend_under);
+                under_depth(
+                    &mut encoder,
+                    "blend under water depth",
+                    &self.targets.depth_ss,
+                    &self.pipelines.blend_under_depth_ss,
+                );
             }
         }
         // ---- scene copy (refraction / SSR source)
