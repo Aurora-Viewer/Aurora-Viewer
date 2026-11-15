@@ -10,6 +10,7 @@ pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
+pub mod shape_tween;
 
 mod arrival_wait;
 pub mod beacons;
@@ -489,6 +490,8 @@ pub struct World {
     /// so ours shows them as LLVOAvatarSelf shows its own composites.
     local_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
+    /// Other avatars' shapes gliding to a new appearance (shape_tween.rs).
+    pub shape_tweens: shape_tween::ShapeTweens,
     pub alerts: VecDeque<String>,
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
@@ -957,6 +960,7 @@ impl World {
             preview_bakes: HashMap::new(),
             local_bakes: HashMap::new(),
             shape_preview_generation: 0,
+            shape_tweens: Default::default(),
             alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
@@ -1164,7 +1168,7 @@ impl World {
     /// is now, on the main region's grid. None before the first arrival,
     /// with no region name yet, or under RLVa `@showloc` (stricter than the
     /// Legacy Viewer, whose line names the place left even then).
-    fn back_slurl(&self) -> Option<String> {
+    pub(crate) fn back_slurl(&self) -> Option<String> {
         if !self.arrived_once || self.rlva.has("showloc") {
             return None;
         }
@@ -2486,7 +2490,23 @@ impl World {
         {
             return Some(values);
         }
+        if let Some(values) = self.shape_tweens.shown(avatar) {
+            return Some(values);
+        }
         self.appearances.get(avatar).map(|(a, _)| a.visual_params.as_slice())
+    }
+
+    /// Whether `avatar` stands within `range` of the agent (a seated one:
+    /// its seat).
+    fn near_agent(&self, avatar: &Uuid, range: f32) -> bool {
+        let Some(mut o) = self.objects.index_of_uuid(avatar).and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        if let Some(seat) = self.objects.parent_of(o).and_then(|p| self.objects.get(p)) {
+            o = seat;
+        }
+        self.region_offset(o.key.region)
+            .is_some_and(|off| (o.position + off).distance(self.agent.position) < range)
     }
 
     /// A draft never replaces the authoritative appearance received meanwhile.
@@ -2562,6 +2582,21 @@ impl World {
             .filter_map(|o| o.attachment_item_id())
             .filter(|id| !id.is_nil())
             .collect()
+    }
+
+    /// How many objects our avatar wears, HUDs included, each linkset once:
+    /// LLVOAvatar::getAttachmentCount (indra/newview/llvoavatar.cpp) adds up
+    /// the attached objects of every attachment point, never their child
+    /// prims. The arrival's patience counts 3 s for each (`arrival_wait.rs`).
+    pub fn own_attachment_count(&self) -> usize {
+        let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return 0;
+        };
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment()))
+            .count()
     }
 
     /// The root prim of the object our avatar wears from inventory item
@@ -2675,6 +2710,7 @@ impl World {
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
+            + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {
                 self.shape_preview_generation
             } else {
@@ -3347,6 +3383,23 @@ impl World {
                         return None;
                     }
                 }
+                // LLVOAvatar::processAvatarAppearance: another avatar's
+                // shape glides to its new values (setAnimationTarget), its
+                // first appearance lands at once; from what it shows now
+                // when a glide is under way. Within shape_tween::RANGE only.
+                if !own {
+                    let from = self
+                        .shape_tweens
+                        .shown(&id)
+                        .map(<[u8]>::to_vec)
+                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()));
+                    match from {
+                        Some(from) if self.near_agent(&id, shape_tween::RANGE) => {
+                            self.shape_tweens.start(id, from, a.visual_params.clone(), Instant::now());
+                        }
+                        _ => self.shape_tweens.cancel(&id),
+                    }
+                }
                 self.appearance_counter += 1;
                 if own {
                     // (with the outfit restore lines: when our bakes came)
@@ -3732,6 +3785,14 @@ impl World {
             }
             NetEvent::ExperienceList { kind, ids } => {
                 self.experiences.list_arrived(kind, ids);
+                None
+            }
+            NetEvent::ExperienceAdmin { experience, admin } => {
+                self.experiences.admin_arrived(experience, admin);
+                None
+            }
+            NetEvent::ExperienceUpdated { experience, result } => {
+                self.experiences.updated(experience, result);
                 None
             }
             NetEvent::GroupExperiences { group, ids } => {
@@ -8401,6 +8462,41 @@ mod motion_tests {
         world.flush_arrival(t);
         world.flush_arrival(t + std::time::Duration::from_secs(60));
         assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+    }
+
+    /// TELEPORT_EXPIRY_PER_ATTACHMENT counts attached objects
+    /// (getAttachmentCount), HUDs included, not their prims: two worn
+    /// linksets of 50 prims and a HUD give up a stuck arrival after
+    /// 15 + 3 x 3 s, not after minutes.
+    #[test]
+    fn the_arrival_waits_per_worn_object_not_per_prim() {
+        let (mut world, _, worn, here, _) = worn_fixture();
+        let mut objects = Vec::new();
+        for n in 0..49 {
+            objects.push(prim(&worn, worn.local_id + 100 + n, worn.local_id));
+        }
+        let mut second = worn.clone();
+        second.local_id = worn.local_id + 1000;
+        second.full_id = Uuid::from_u128(0xBEEF2);
+        for n in 0..49 {
+            objects.push(prim(&second, second.local_id + 1 + n, second.local_id));
+        }
+        let mut hud = worn.clone();
+        hud.local_id = worn.local_id + 2000;
+        hud.full_id = Uuid::from_u128(0xBEEF3);
+        hud.state = 0xF1;
+        objects.push(second);
+        objects.push(hud);
+        world.apply(NetEvent::ObjectUpdates { handle: here, objects });
+        assert_eq!(world.own_attachment_count(), 3);
+        world.arrived_once = true;
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
+        let t = Instant::now();
+        let count = world.own_attachment_count();
+        assert!(!world.arrival_overdue(t, count));
+        assert!(!world.arrival_overdue(t + Duration::from_secs(24), count));
+        assert!(world.arrival_overdue(t + Duration::from_secs(25), count));
     }
 
     #[test]
