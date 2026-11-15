@@ -149,11 +149,16 @@ impl Theme {
     }
 
     pub fn palette_for(&self, vision: crate::colorblind::Vision) -> Palette {
-        let base = if crate::high_contrast::current() {
+        let mut base = if crate::high_contrast::current() {
             crate::high_contrast::palette()
         } else {
             crate::interface_colors::apply(self.skin_palette(), &crate::interface_colors::current())
         };
+        // Disable glass (Preferences › Accessibility): keep the skin's
+        // colours, drop the frosted pass, the world never shows through.
+        if crate::disable_glass::current() {
+            base.panel_alpha = 255;
+        }
         crate::colorblind::palette(base, vision)
     }
 

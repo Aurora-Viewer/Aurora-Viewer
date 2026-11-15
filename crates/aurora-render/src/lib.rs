@@ -125,7 +125,7 @@ pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
-pub use ui_blur::blurred_backdrop;
+pub use ui_blur::{blurred_backdrop, set_ui_blur};
 pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
 pub use ui_glass::{glass_diamond, glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;

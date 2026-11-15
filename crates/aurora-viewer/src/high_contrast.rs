@@ -9,9 +9,10 @@
 //! - The states keep their hue but differ by lightness too: danger darkest,
 //!   then warning, then success, so they stay apart without colour.
 //! - Surfaces are opaque (`panel_alpha` 255): no glass, the world never
-//!   shows through a window. Buttons, fields, windows, islands and
-//!   dividers get a light border (`Palette::high_contrast`), which the
-//!   usual look leaves out.
+//!   shows through a window. Disable glass (`crate::disable_glass`) does
+//!   the same without changing the palette. Buttons, fields, windows,
+//!   islands and dividers get a light border (`Palette::high_contrast`),
+//!   which the usual look leaves out.
 //!
 //! The choice is process-wide (`set`), read where the palette is built,
 //! before the colour blindness adaptation (`crate::colorblind`), which

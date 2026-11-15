@@ -539,7 +539,7 @@ are planned or in progress: they are not in the viewer yet.
   credits.
 - **Made for every eye**: an Accessibility page gathers the settings that
   help (interface scale, text size up to twice the normal size, reduce
-  motion, sounds…), with a button on the login screen. A high-contrast palette, the OpenDyslexic font, and
+  motion, sounds…), with a button on the login screen. A high-contrast palette, a setting that turns off the glass, the OpenDyslexic font, and
   volume sliders that follow your ear are a click away, and the chat can
   have a text size of its own.
 - **Your colours**: pick the accent, window background and text colours in
@@ -727,7 +727,7 @@ frame on your own PC.
   overlays; an immersive mode that keeps only the chat; Aurora team and
   Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
-  palette, custom interface colours, text up to twice the size and the
+  palette, a setting that turns off the glass, custom interface colours, text up to twice the size and the
   OpenDyslexic font.
 - **Windows updates** — release checks, cancellable verified downloads,
   installation and restart with rollback. The prompt explains whether cache
