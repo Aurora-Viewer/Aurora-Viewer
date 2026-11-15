@@ -319,7 +319,11 @@ impl App {
                             .props
                             .get(&p.object_uuid)
                             .map(|pr| (pr.next_owner_mask & (perm::COPY | perm::MODIFY | perm::TRANSFER)) == *mask),
-                        Check::Named { item_id, name } => Some(items.iter().any(|it| it.item_id == *item_id && &it.name == name)),
+                        // listed under its name AND the simulator has said whether it runs
+                        Check::Named { item_id, name } => Some(
+                            items.iter().any(|it| it.item_id == *item_id && &it.name == name)
+                                && self.build.contents.running.contains_key(&(p.object_uuid, *item_id)),
+                        ),
                         Check::Appeared { name, before } => Some(
                             items
                                 .iter()
@@ -333,6 +337,19 @@ impl App {
                         {
                             out["item_id"] = json!(new.item_id.to_string());
                             out["type"] = json!(type_name(new.asset_type, new.inv_type));
+                        }
+                        if let Check::Named { item_id, .. } = check
+                            && let Some((running, target)) = self.build.contents.running.get(&(p.object_uuid, *item_id)).copied()
+                        {
+                            // what the simulator says it is, not what was asked for
+                            out["running"] = json!(running);
+                            out["mono"] = json!(matches!(target, Some(aurora_net::scripts::CompileTarget::Mono)));
+                            out["compile_target"] = json!(target.map(|t| match t {
+                                aurora_net::scripts::CompileTarget::Lsl2 => "lsl2",
+                                aurora_net::scripts::CompileTarget::Mono => "mono",
+                                aurora_net::scripts::CompileTarget::Luau => "luau",
+                                aurora_net::scripts::CompileTarget::LslLuau => "lsl_luau",
+                            }));
                         }
                         out["ok"] = json!(true);
                         out["verified"] = json!(true);

@@ -836,6 +836,26 @@ impl McpRouter {
             }
 
             // ---- Phase 4: Inventory & Appearance (COF State Machine) ----
+            "inventory_delete" => {
+                let ids: Vec<Uuid> = match args.get("item_ids").or_else(|| args.get("item_id")) {
+                    Some(Value::Array(a)) => a
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .and_then(|s| Uuid::parse_str(s).ok())
+                                .ok_or_else(|| McpError::InvalidParams("item_ids must be UUIDs".into()))
+                        })
+                        .collect::<Result<_, _>>()?,
+                    Some(Value::String(s)) => {
+                        vec![Uuid::parse_str(s).map_err(|_| McpError::InvalidParams("item_id must be a UUID".into()))?]
+                    }
+                    _ => return Err(McpError::InvalidParams("give item_ids (an array of UUIDs)".into())),
+                };
+                let resp = self
+                    .send_to_viewer(lease_id, ViewerRequest::InventoryDelete { item_ids: ids }, 20_000)
+                    .await?;
+                Ok(text_block(into_json(resp)))
+            }
             "inventory_browse" => {
                 let folder_id_or_path = args
                     .get("folder_id_or_path")
@@ -1176,6 +1196,16 @@ impl McpRouter {
             }
 
             "lsd_inspect" => {
+                // Second Life has no way for a viewer to read or write a linkset's
+                // data: only scripts in the object can (llLinksetDataRead / Write).
+                // These two tools are a viewer-side model of LSD, never the
+                // simulator's store; answering "0 keys" for a linkset whose scripts
+                // hold many misled an agent into thinking it was empty.
+                if !args.get("local_model").and_then(Value::as_bool).unwrap_or(false) {
+                    return Err(McpError::InvalidParams(
+                        "Second Life does not let a viewer read or write a linkset's data: only scripts in that object can (llLinksetDataRead / llLinksetDataWrite). This tool is a viewer-side model of linkset data, not the object's real store. To read the real data, have a script in the object say it (e.g. on a private channel, read with comms_read_history). Pass local_model: true only to use the model itself.".into(),
+                    ));
+                }
                 let object_local_id =
                     args.get("object_local_id")
                         .and_then(Value::as_u64)
@@ -1205,6 +1235,16 @@ impl McpRouter {
             }
 
             "lsd_mutate" => {
+                // Second Life has no way for a viewer to read or write a linkset's
+                // data: only scripts in the object can (llLinksetDataRead / Write).
+                // These two tools are a viewer-side model of LSD, never the
+                // simulator's store; answering "0 keys" for a linkset whose scripts
+                // hold many misled an agent into thinking it was empty.
+                if !args.get("local_model").and_then(Value::as_bool).unwrap_or(false) {
+                    return Err(McpError::InvalidParams(
+                        "Second Life does not let a viewer read or write a linkset's data: only scripts in that object can (llLinksetDataRead / llLinksetDataWrite). This tool is a viewer-side model of linkset data, not the object's real store. To read the real data, have a script in the object say it (e.g. on a private channel, read with comms_read_history). Pass local_model: true only to use the model itself.".into(),
+                    ));
+                }
                 let object_local_id =
                     args.get("object_local_id")
                         .and_then(Value::as_u64)
@@ -2898,8 +2938,20 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
 
         // Phase 4: Inventory & Appearance (COF Queue)
         ToolDefinition {
+            name: "inventory_delete".into(),
+            description: "Move items from your inventory to the Trash, as the inventory window's Delete does, and answer once they are there. Never purges: they can be restored from the Trash. Worn, Library and protected system items are refused.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "item_ids": { "type": "array", "items": { "type": "string" }, "description": "inventory item UUIDs (inventory_search finds them)" }
+                },
+                "required": ["item_ids"]
+            }),
+            in_compact_profile: true,
+        },
+        ToolDefinition {
             name: "inventory_browse".into(),
-            description: "Browse inventory folders by UUID or path (e.g. '/My Inventory/Objects') with bounded depth and item limit.".into(),
+            description: "Browse inventory folders by UUID or path (e.g. '/My Inventory/Objects'; the root's name may be left out) with bounded depth and item limit. A path that does not resolve, or is ambiguous, is an error naming the segment. Results carry each folder's path and each item's parent_path.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3090,10 +3142,11 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "lsd_inspect".into(),
-            description: "Inspect Linkset Data (LSD) keys, values, protected status, and 128 KiB byte quota usage on a linkset.".into(),
+            description: "VIEWER-SIDE MODEL ONLY: Second Life gives viewers no access to a linkset's real data (only its scripts can read it), so this refuses unless local_model: true. Inspect Linkset Data (LSD) keys, values, protected status, and 128 KiB byte quota usage on a linkset.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "local_model": { "type": "boolean", "description": "true to use the viewer-side model knowingly" },
                     "object_local_id": { "type": "integer" },
                     "filter_regex": { "type": "string" },
                     "include_protected": { "type": "boolean", "default": true },
@@ -3106,10 +3159,11 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "lsd_mutate".into(),
-            description: "Batch write, delete, reset, or import JSON into a linkset's 128 KiB Linkset Data store.".into(),
+            description: "VIEWER-SIDE MODEL ONLY: Second Life gives viewers no access to a linkset's real data (only its scripts can read it), so this refuses unless local_model: true. Batch write, delete, reset, or import JSON into a linkset's 128 KiB Linkset Data store.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "local_model": { "type": "boolean", "description": "true to use the viewer-side model knowingly" },
                     "object_local_id": { "type": "integer" },
                     "operations": { "type": "array", "items": { "type": "object" } }
                 },
@@ -3840,7 +3894,7 @@ mod tests {
     #[test]
     fn mcp_router_exposes_legacy_and_aurora_tools() {
         let defs = all_tool_definitions();
-        assert_eq!(defs.len(), 117, "expected 117 total tools (43 Legacy + 74 Aurora-native)");
+        assert_eq!(defs.len(), 118, "expected 118 total tools (43 Legacy + 75 Aurora-native)");
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         // Verify all 43 Legacy Viewer compatibility tools
         for legacy in [

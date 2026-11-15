@@ -287,6 +287,10 @@ pub enum ViewerRequest {
         modify: Option<bool>,
         transfer: Option<bool>,
     },
+    /// Move agent-inventory items to the Trash (never purged), read back.
+    InventoryDelete {
+        item_ids: Vec<Uuid>,
+    },
     /// Remove an item from a prim's contents, read back.
     TaskItemRemove {
         object_local_id: u32,
@@ -801,6 +805,7 @@ impl ViewerRequest {
             | ViewerRequest::ViewerLogin { .. }
             | ViewerRequest::TaskItemPermissions { .. }
             | ViewerRequest::ObjectSetPermissions { .. }
+            | ViewerRequest::InventoryDelete { .. }
             | ViewerRequest::TaskItemRemove { .. }
             | ViewerRequest::TaskItemAdd { .. }
             | ViewerRequest::TaskNotecardWrite { .. }
