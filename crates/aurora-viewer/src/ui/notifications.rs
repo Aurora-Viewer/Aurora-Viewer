@@ -18,14 +18,15 @@ pub(crate) mod text;
 /// Seconds a toast stays: information / waiting for an answer.
 const TOAST_INFO: f64 = 7.0;
 const TOAST_OFFER: f64 = 25.0;
-/// A friend online / offline (NotificationTipToastLifeTime).
-const TOAST_TIP: f64 = 10.0;
 const MAX_TOASTS: usize = 3;
 const WIDTH: f32 = 320.0;
 /// Side of the picture of a friend's or a message's card.
 const PIC: f32 = 32.0;
 /// Characters of a message shown on its card (the rest is in the conversation).
 const MESSAGE_CHARS: usize = 160;
+/// Between the rows inside a toast's card. The gap between two cards is
+/// ToastGap (`ToastEnv::toast_gap`), and does not reach inside them.
+pub(crate) const CARD_ROW_SPACING: f32 = 6.0;
 
 #[derive(Default)]
 pub struct NotifUi {
@@ -64,6 +65,14 @@ pub struct ToastEnv<'a> {
     pub hidden: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime).
     pub message_seconds: f64,
+    /// Seconds a friend's online / offline toast stays
+    /// (NotificationTipToastLifeTime): these toasts only, Aurora's center
+    /// keeps its own timing (`notification_center::PRESENCE`).
+    pub tip_seconds: f64,
+    /// Points between two stacked toasts (ToastGap, `settings::toast_gap`),
+    /// in both styles: the Legacy toasts, the cards under Aurora's bell
+    /// and its friends' toasts.
+    pub toast_gap: f32,
     /// The region restart counting down: its card in Aurora's center shows
     /// the live count (`ui::region_restart::bell_card`).
     pub restart: Option<super::region_restart::BellInfo>,
@@ -83,9 +92,10 @@ pub fn open_conversations(ctx: &egui::Context, open: &mut bool) {
 }
 
 /// How long the toast of `n` stays.
-fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
+fn toast_seconds(n: &Notification, message_seconds: f64, tip_seconds: f64) -> f64 {
     match n.data {
-        Data::Presence { .. } => TOAST_TIP,
+        // LLNotificationTipHandler::processNotification
+        Data::Presence { .. } => tip_seconds,
         Data::Message { .. } => message_seconds,
         // ShowMyComplexityChanges (the notice's expiry)
         Data::Complexity { seconds } => f64::from(seconds),
@@ -884,13 +894,13 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
 /// (`Notification::stays_until_answered`) has no time: its toast stays
 /// until answered, whatever comes after it, and is only kept in while the
 /// list is open, the view must stay clear or do not disturb holds it.
-fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool, dnd: bool) {
+fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, tip_seconds: f64, hidden: bool, dnd: bool) {
     // new arrivals become toasts (unless the list is open or the view must
     // stay clear, or they were already seen where they arrived: a card in
     // the conversation in sight)
     for n in list.list.iter().filter(|n| n.id > nui.last_seen && !n.stays_until_answered()) {
         if !nui.open && !hidden && !n.read && !n.quiet && (!dnd || super::notification_center::dnd_shows(n)) {
-            nui.toasts.push((n.id, now + toast_seconds(n, message_seconds)));
+            nui.toasts.push((n.id, now + toast_seconds(n, message_seconds, tip_seconds)));
         }
     }
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
@@ -968,7 +978,7 @@ pub fn show(
     // Firestorm's toasts keep their own place: the islands' column is for
     // Aurora's center only (not kept for a later frame of it)
     nui.column = None;
-    update_toasts(list, nui, now, env.message_seconds, env.hidden, dnd);
+    update_toasts(list, nui, now, env.message_seconds, env.tip_seconds, env.hidden, dnd);
 
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
     if nui.open {
@@ -1081,7 +1091,9 @@ pub fn show(
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-10.0, anchor.y.min(screen.height()) + 6.0))
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
+                // ToastGap between the toasts of the channel
+                // (LLScreenChannel::redrawToasts)
+                ui.spacing_mut().item_spacing.y = env.toast_gap;
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
@@ -1090,11 +1102,18 @@ pub fn show(
                             nui.toasts.retain(|(t, _)| *t != id);
                             continue;
                         }
-                        let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
-                            person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
-                        } else {
-                            card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
-                        };
+                        // the card keeps its own row spacing; the stack's
+                        // spacing stands only between the cards
+                        let r = ui
+                            .scope(|ui| {
+                                ui.spacing_mut().item_spacing.y = CARD_ROW_SPACING;
+                                if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
+                                    person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
+                                } else {
+                                    card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
+                                }
+                            })
+                            .inner;
                         match r {
                             // closing a toast only hides it: the offer waits in
                             // the list (a scripted window too, until answered)
@@ -1137,6 +1156,9 @@ fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NotificationTipToastLifeTime's default (settings.xml).
+    const TOAST_TIP: f64 = 10.0;
 
     #[test]
     fn bell_right_click_turns_do_not_disturb_over_and_keeps_the_rest() {
@@ -1275,6 +1297,65 @@ mod tests {
                 "{lines:?}: {rects:?}"
             );
         }
+    }
+
+    /// ToastGap: the Legacy toasts' stack grows by the gap chosen between
+    /// each two of its toasts, and by nothing else.
+    #[test]
+    fn the_legacy_toasts_stand_the_toast_gap_apart() {
+        let height = |gap: f32| {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let mut list = Notifications::default();
+            for i in 0..3 {
+                list.push(Kind::Info, format!("Tip {i}"), "A short line", Data::None);
+            }
+            let (mut hist, mut nui) = (Default::default(), NotifUi::default());
+            let pics = HashMap::new();
+            let images = HashMap::new();
+            for frame in 0..6 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(frame as f64 * 0.016),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let mut env = ToastEnv {
+                            pics: &pics,
+                            images: &images,
+                            emoji: &mut emoji,
+                            hidden: false,
+                            message_seconds: 30.0,
+                            tip_seconds: TOAST_TIP,
+                            restart: None,
+                            presence_at: Default::default(),
+                            classic_bars: true,
+                            toast_gap: gap,
+                        };
+                        show(ui.ctx(), &p, &icons, &world, &mut list, &mut hist, &mut nui, &mut env, false);
+                    },
+                );
+                out.textures_delta.clear();
+            }
+            let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("notification_toasts"));
+            ctx.memory(|m| m.area_rect(layer.id)).expect("the toasts are shown").height()
+        };
+        let (none, legacy, widest) = (
+            height(0.0),
+            height(crate::settings::TOAST_GAP),
+            height(crate::settings::TOAST_GAP_MAX),
+        );
+        assert!((legacy - none - 2.0 * crate::settings::TOAST_GAP).abs() < 0.5, "{none} / {legacy}");
+        assert!(
+            (widest - none - 2.0 * crate::settings::TOAST_GAP_MAX).abs() < 0.5,
+            "{none} / {widest}"
+        );
     }
 
     #[test]
@@ -1485,9 +1566,31 @@ mod tests {
 
     /// In the Legacy toast style, French Mute Owner wraps under Accept /
     /// Discard and must keep the same left edge as those buttons (#2932).
+    /// The interface language belongs to the whole process: switched here,
+    /// it turned the texts of the tests running beside this one French
+    /// halfway through. So this test runs again, alone, in a test process
+    /// of its own, and checks that run.
     #[test]
     fn legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french() {
-        let previous = aurora_i18n::language().to_owned();
+        const ALONE: &str = "AURORA_TEST_FRENCH_OFFER_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            // the name libtest gives this test: its path without the crate
+            let path = concat!(
+                module_path!(),
+                "::legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french"
+            );
+            let name = path.split_once("::").map_or(path, |(_, rest)| rest);
+            let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+                .args([name, "--exact", "--test-threads=1"])
+                .env(ALONE, "1")
+                .output()
+                .expect("the test binary starts");
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(run.status.success(), "the French run failed:\n{stdout}\n{stderr}");
+            assert!(stdout.contains("1 passed"), "the French run ran this test:\n{stdout}");
+            return;
+        }
         aurora_i18n::select("fr", Some("fr"));
         let mute = aurora_i18n::tr!("ui-notifications-mute-owner");
         let accept = aurora_i18n::tr!("ui-notifications-accept");
@@ -1581,8 +1684,6 @@ mod tests {
             mute_rect.min.x > accept_rect.min.x - 8.0,
             "wrapped Mute Owner must not lose the Legacy indent: mute={mute_rect:?} accept={accept_rect:?}"
         );
-
-        aurora_i18n::select(&previous, Some(&previous));
     }
 
     #[test]
@@ -1775,20 +1876,35 @@ mod tests {
         let friend = list.push_presence(JANE, "Jane Doe is online.", true);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
         let toast_only = list.push_message(JOHN, JOHN, "John Doe", "hi", false);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(
             nui.toasts.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
             vec![friend, message, toast_only]
         );
         assert_eq!(list.unread(), 1, "the toast alone is not counted");
         // the friend's toast ends after TOAST_TIP, the messages' after 30 s
-        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, TOAST_TIP, false, false);
         assert!(!list.list.iter().any(|n| n.id == friend));
         assert!(list.list.iter().any(|n| n.id == message));
-        update_toasts(&mut list, &mut nui, 31.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 31.0, 30.0, TOAST_TIP, false, false);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
         assert_eq!(list.unread(), 1);
+    }
+
+    /// The friend's toast lasts NotificationTipToastLifeTime, whatever the
+    /// message toasts' time.
+    #[test]
+    fn a_friend_toast_lasts_the_tip_lifetime() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        let friend = list.push_presence(JANE, "Jane Doe is online.", true);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, 3.0, false, false);
+        update_toasts(&mut list, &mut nui, 2.9, 30.0, 3.0, false, false);
+        assert!(nui.toasts.iter().any(|(id, _)| *id == friend));
+        update_toasts(&mut list, &mut nui, 3.1, 30.0, 3.0, false, false);
+        assert!(!nui.toasts.iter().any(|(id, _)| *id == friend));
+        assert!(!list.list.iter().any(|n| n.id == friend), "it leaves with its toast");
     }
 
     /// In mouselook or the photo's full frame no toast starts: a friend's
@@ -1799,7 +1915,7 @@ mod tests {
         let mut nui = NotifUi::default();
         list.push_presence(JANE, "Jane Doe is online.", true);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, true, false);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, TOAST_TIP, true, false);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
     }
@@ -1811,7 +1927,7 @@ mod tests {
         let mut list = Notifications::default();
         let mut nui = NotifUi::default();
         let early = list.push_message(JANE, JANE, "Jane Doe", "before", true);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![early]);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
         let menu = list.push(
@@ -1827,7 +1943,7 @@ mod tests {
                 buttons: vec!["Violet".into()],
             },
         );
-        update_toasts(&mut list, &mut nui, 1.0, 30.0, false, true);
+        update_toasts(&mut list, &mut nui, 1.0, 30.0, TOAST_TIP, false, true);
         assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![menu]);
         assert!(list.list.iter().any(|n| n.id == message));
     }
@@ -1841,38 +1957,38 @@ mod tests {
         let mut list = Notifications::default();
         let mut nui = NotifUi::default();
         let windows = super::super::notification_center::tests::scripted_windows(&mut list);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, TOAST_TIP, false, false);
         let infos: Vec<u64> = (0..4).map(|i| list.push(Kind::Info, format!("n{i}"), "", Data::None)).collect();
-        update_toasts(&mut list, &mut nui, 0.1, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 0.1, 30.0, TOAST_TIP, false, false);
         let ids = |nui: &NotifUi| nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>();
         // the oldest information gave way, not a scripted window
         assert_eq!(ids(&nui), [windows.clone(), infos[1..].to_vec()].concat());
         // the newest three scripted windows drawn, the rest behind
         assert_eq!(shown_toasts(&list, &nui, false), (windows[1..].to_vec(), 4));
         // long after: only they are left
-        update_toasts(&mut list, &mut nui, TOAST_OFFER * 4.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, TOAST_OFFER * 4.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows);
         // the list opened (everything read), then closed: back
         nui.toasts.clear();
         list.mark_all_read();
-        update_toasts(&mut list, &mut nui, 200.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 200.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows);
         // mouselook keeps them (drawn once it ends); do not disturb draws
         // only the text box
-        update_toasts(&mut list, &mut nui, 201.0, 30.0, true, false);
+        update_toasts(&mut list, &mut nui, 201.0, 30.0, TOAST_TIP, true, false);
         assert_eq!(ids(&nui), windows);
-        update_toasts(&mut list, &mut nui, 202.0, 30.0, false, true);
+        update_toasts(&mut list, &mut nui, 202.0, 30.0, TOAST_TIP, false, true);
         assert_eq!(shown_toasts(&list, &nui, true), (vec![windows[0]], 0));
         assert_eq!(shown_toasts(&list, &nui, false).0, windows[1..].to_vec());
         // hidden by its cross: stays in the list, not brought back
         nui.toasts.retain(|t| t.0 != windows[3]);
         nui.hidden.insert(windows[3]);
-        update_toasts(&mut list, &mut nui, 203.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 203.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows[..3].to_vec());
         assert!(list.listed().any(|n| n.id == windows[3]));
         // answered: gone
         list.list.retain(|n| n.id != windows[0]);
-        update_toasts(&mut list, &mut nui, 204.0, 30.0, false, false);
+        update_toasts(&mut list, &mut nui, 204.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows[1..3].to_vec());
     }
 

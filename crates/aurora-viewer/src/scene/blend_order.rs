@@ -113,6 +113,30 @@ impl FaceDepth {
     }
 }
 
+/// The height a face spans in the world, `(centre, half extent)` of its
+/// world AABB along Z, from its local bounds and the placement written to the
+/// GPU. Factored once per object, like [`FaceDepth`].
+pub struct FaceHeight {
+    axis: Vec3,
+    spread: Vec3,
+    offset: f32,
+}
+
+impl FaceHeight {
+    pub fn new(model: Mat4) -> Self {
+        let axis = Vec3::new(model.x_axis.z, model.y_axis.z, model.z_axis.z);
+        Self {
+            axis,
+            spread: axis.abs(),
+            offset: model.w_axis.z,
+        }
+    }
+
+    pub fn of(&self, bounds: FaceBounds) -> (f32, f32) {
+        (self.offset + bounds.center.dot(self.axis), bounds.half.dot(self.spread))
+    }
+}
+
 /// Keep the previous object-centre ordering for a controlled A/B launch.
 pub fn face_sort_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -530,6 +554,30 @@ pub fn water_sides(center_z: f32, radius: f32, plane: Option<f32>) -> (bool, boo
     match plane {
         Some(h) => (center_z + radius >= h, center_z - radius < h),
         None => (true, false),
+    }
+}
+
+/// Slack on a face's own height, for the rounding of its placement: a face
+/// within it of the plane is drawn on both sides, each clipped to its own.
+const FACE_HEIGHT_SLACK: f32 = 0.01;
+
+/// [`water_sides`] for one face: by the height the face itself spans
+/// (`(centre, half extent)`, [`FaceHeight`]) when its vertices are known,
+/// within what the object's sphere allows, and by the sphere alone otherwise
+/// (rigged meshes, avatars, a geometry without its vertices). An object's
+/// sphere reaches under the plane long before its faces do: a wide panel
+/// standing above the water was drawn a second time before it, every
+/// fragment clipped. The image is the same either way, each draw being
+/// clipped to its side of the plane.
+pub fn water_sides_of(center_z: f32, radius: f32, face: Option<(f32, f32)>, plane: Option<f32>) -> (bool, bool) {
+    let sphere = water_sides(center_z, radius, plane);
+    let Some((z, half)) = face.filter(|(z, half)| z.is_finite() && half.is_finite()) else {
+        return sphere;
+    };
+    let own = water_sides(z, half.max(0.0) + FACE_HEIGHT_SLACK, plane);
+    match (sphere.0 && own.0, sphere.1 && own.1) {
+        (false, false) => sphere,
+        sides => sides,
     }
 }
 
@@ -964,5 +1012,60 @@ mod tests {
         assert_eq!(water_sides(10.0, 2.0, h), (false, true), "below: before the water only");
         assert_eq!(water_sides(20.5, 2.0, h), (true, true), "crossing: both, clipped");
         assert_eq!(water_sides(10.0, 2.0, None), (true, false), "camera under water: as before");
+    }
+
+    /// A face is sorted by its own height where it is known: an object whose
+    /// sphere dips under the water does not send its faces above it before
+    /// the water.
+    #[test]
+    fn a_face_above_the_water_is_not_drawn_before_it_for_its_objects_sphere() {
+        let h = Some(20.0);
+        // a wide panel standing on the shore: sphere of 15 m centred at 30 m
+        assert_eq!(water_sides(30.0, 15.0, h), (true, true), "by the sphere: both sides");
+        assert_eq!(
+            water_sides_of(30.0, 15.0, Some((30.0, 4.0)), h),
+            (true, false),
+            "by its height: after only"
+        );
+        assert_eq!(
+            water_sides_of(30.0, 15.0, Some((12.0, 2.0)), h),
+            (false, true),
+            "a face of it under the water"
+        );
+        assert_eq!(
+            water_sides_of(30.0, 15.0, Some((20.5, 2.0)), h),
+            (true, true),
+            "a face crossing the plane"
+        );
+        // within the rounding of the placement: both sides, clipped
+        assert_eq!(water_sides_of(30.0, 15.0, Some((22.005, 2.0)), h), (true, true));
+        assert_eq!(water_sides_of(30.0, 15.0, Some((22.02, 2.0)), h), (true, false));
+        // no vertices known, or a height that is not a number: the sphere
+        assert_eq!(water_sides_of(30.0, 15.0, None, h), (true, true));
+        assert_eq!(water_sides_of(30.0, 15.0, Some((f32::NAN, 1.0)), h), (true, true));
+        assert_eq!(water_sides_of(30.0, 15.0, Some((30.0, f32::INFINITY)), h), (true, true));
+        // a height that contradicts the sphere never drops the face
+        assert_eq!(water_sides_of(30.0, 2.0, Some((10.0, 1.0)), h), (true, false));
+        assert_eq!(
+            water_sides_of(30.0, 15.0, Some((30.0, 4.0)), None),
+            (true, false),
+            "camera under water"
+        );
+    }
+
+    #[test]
+    fn a_faces_height_follows_its_placement() {
+        let bounds = FaceBounds {
+            center: Vec3::new(1.0, 0.0, 0.5),
+            half: Vec3::new(2.0, 0.1, 0.25),
+        };
+        // upright: the local Z extent, scaled and raised
+        let upright = Mat4::from_scale_rotation_translation(Vec3::new(1.0, 1.0, 4.0), glam::Quat::IDENTITY, Vec3::new(0.0, 0.0, 30.0));
+        let (z, half) = FaceHeight::new(upright).of(bounds);
+        assert!((z - 32.0).abs() < 1e-4 && (half - 1.0).abs() < 1e-4, "{z} {half}");
+        // laid on its side: the local X extent becomes the height
+        let side = Mat4::from_rotation_translation(glam::Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 0.0, 30.0));
+        let (z, half) = FaceHeight::new(side).of(bounds);
+        assert!((z - 31.0).abs() < 1e-4 && (half - 2.0).abs() < 1e-3, "{z} {half}");
     }
 }

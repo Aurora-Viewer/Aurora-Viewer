@@ -32,6 +32,19 @@ pub enum FloatingTextBackground {
     All,
 }
 
+/// A blocked resident's nearby chat (FSShowMutedChatHistory, fsfloaternearbychat.cpp):
+/// hidden as in the Legacy Viewer by default; or kept in the nearby chat's
+/// history only, either folded into one "n messages hidden" row that opens
+/// on a click, or greyed, as the Legacy Viewer's option shows them. Never
+/// above the chat bar, in a bubble, a sound, an alert or an unread count.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BlockedChat {
+    #[default]
+    Hidden,
+    Collapsed,
+    Greyed,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -498,6 +511,21 @@ pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
 /// The nearest reach of the automatic reflection probes (`probe_range`).
 pub const PROBE_RANGE_MIN: f32 = 32.0;
 
+/// ToastGap's default (settings.xml) and its slider's top
+/// (panel_preferences_UI.xml).
+pub const TOAST_GAP: f32 = 7.0;
+pub const TOAST_GAP_MAX: f32 = 30.0;
+
+/// A gap between toasts as the toasts use it: whole points, 0 to 30, the
+/// default for a value that is not a number.
+pub fn toast_gap(gap: f32) -> f32 {
+    if gap.is_finite() {
+        gap.round().clamp(0.0, TOAST_GAP_MAX)
+    } else {
+        TOAST_GAP
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -538,6 +566,9 @@ pub struct Settings {
     pub sun_beacon: bool,
     pub moon_beacon: bool,
     pub beacons: crate::world::beacons::Beacons,
+    /// The Director's recording: the film's format, quality and rate, and
+    /// the ffmpeg chosen by hand (`recorder.rs`).
+    pub director_record: crate::recorder::Options,
     pub world_overlays: crate::world::beacons::Overlays,
     /// Debug overlays (not saved).
     #[serde(skip)]
@@ -909,6 +940,9 @@ pub struct Settings {
     /// With it, the system lines of the conversations (calls, automatic
     /// replies) too (off, the human's choice of 2026-10-24).
     pub compact_im_system_lines: bool,
+    /// What the nearby chat shows of a blocked resident's lines
+    /// (FSShowMutedChatHistory, off: hidden; Preferences › Chat).
+    pub blocked_chat: BlockedChat,
     /// An object with an empty name speaks in the nearby chat as "(no
     /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
     /// off; Preferences > Chat).
@@ -1094,6 +1128,13 @@ pub struct Settings {
     pub ims_in_notification_center: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime, 30).
     pub im_toast_seconds: f32,
+    /// Seconds a friend's online / offline toast stays with the Legacy
+    /// Viewer's toasts (NotificationTipToastLifeTime, 10, its slider 1–30);
+    /// Aurora's center keeps its own timing.
+    pub tip_toast_seconds: f32,
+    /// Points between two stacked toasts, in both notification styles
+    /// (ToastGap, 7, its slider 0–30; LLScreenChannel::redrawToasts).
+    pub toast_gap: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -1371,6 +1412,10 @@ pub struct Settings {
     /// The GIF button of the Conversations field and its picker
     /// (Preferences › Chat; `gif_search.rs`).
     pub gifs: crate::gif_search::Settings,
+    /// The Legacy Viewer's conversation options of Preferences › Chat: tab
+    /// order and names, moderators, "(You)", brackets, history fade, opening
+    /// on offline messages (`ui/chat/conversation_options.rs`).
+    pub conversation_options: crate::ui::chat::conversation_options::Settings,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
     /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
@@ -1417,6 +1462,11 @@ pub struct Settings {
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
     pub world_mouse_walk: bool,
+    /// Aurora extension, MMO-style mouse buttons: the right button's drag
+    /// steers our avatar (the turn keys slide, the left button walks
+    /// forward) and the left button held on our avatar orbits the camera,
+    /// the other way round from the default. Off by default.
+    pub mmo_mouse_buttons: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
@@ -1893,6 +1943,9 @@ pub struct ColorSettings {
     pub chat_slurl: Rgba,
     /// llRegionSayTo.
     pub chat_direct: Rgba,
+    /// FSBeyondNearbyChatColorDiminishFactor (0.8): the opacity of a nearby
+    /// line said beyond the say range, 1 as bright as the others.
+    pub chat_beyond_range: f32,
     // sender names
     pub sender_avatar: Rgba,
     pub sender_object: Rgba,
@@ -1939,6 +1992,7 @@ impl Default for ColorSettings {
             // shares the brand teal
             chat_slurl: hex(0x5EEAD4),
             chat_direct: hex(0xFB923C),
+            chat_beyond_range: 0.8,
             sender_avatar: hex(0xC4B5FD),
             sender_object: hex(0x4ADE80),
             mention_text: hex(0xFCD34D),
@@ -2044,6 +2098,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
+    /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
+    pub doppler: f32,
     /// World sounds muffled behind walls and objects (Aurora's own, on;
     /// off: heard unobstructed, as in the Legacy Viewer).
     pub sound_occlusion: bool,
@@ -2108,6 +2165,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
             sound_reverb: false,
@@ -2162,6 +2220,7 @@ impl Default for Settings {
             sun_beacon: false,
             moon_beacon: false,
             beacons: Default::default(),
+            director_record: Default::default(),
             world_overlays: Default::default(),
             debug: DebugView::default(),
             dev_toolbox: None,
@@ -2321,6 +2380,7 @@ impl Default for Settings {
             script_errors_channel: 1,
             compact_automated_chat: false,
             compact_im_system_lines: false,
+            blocked_chat: BlockedChat::Hidden,
             mark_unnamed_objects: false,
             chat_keep_focus: true,
             chat_gesture_autocomplete: true,
@@ -2381,6 +2441,8 @@ impl Default for Settings {
             toast_group_im: false,
             ims_in_notification_center: false,
             im_toast_seconds: 30.0,
+            tip_toast_seconds: 10.0,
+            toast_gap: TOAST_GAP,
             log_im: true,
             log_nearby: false,
             reopen_ims: false,
@@ -2482,6 +2544,7 @@ impl Default for Settings {
             chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
+            conversation_options: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
@@ -2499,6 +2562,7 @@ impl Default for Settings {
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
+            mmo_mouse_buttons: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
@@ -3275,6 +3339,11 @@ impl Settings {
             self.audio.mic_gain = 1.0;
         }
         self.audio.mic_gain = self.audio.mic_gain.clamp(0.0, 2.0);
+        self.audio.doppler = if self.audio.doppler.is_finite() {
+            self.audio.doppler.clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
         self.time_of_day = self.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);
         self.env_manual_transition = if self.env_manual_transition.is_finite() {
             self.env_manual_transition.clamp(0.0, 60.0)
@@ -3445,6 +3514,13 @@ impl Settings {
             *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
         }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
+        self.conversation_options.sanitize();
+        self.tip_toast_seconds = if self.tip_toast_seconds.is_finite() {
+            self.tip_toast_seconds.clamp(1.0, 30.0)
+        } else {
+            10.0
+        };
+        self.toast_gap = toast_gap(self.toast_gap);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)
@@ -4005,6 +4081,23 @@ mod tests {
             .sanitized();
             assert_eq!(s.probe_range, kept, "{asked} m");
         }
+    }
+
+    #[test]
+    fn the_toast_gap_starts_at_the_legacy_seven_and_stays_on_its_slider() {
+        // ToastGap: 7 px by default, whole pixels from 0 to 30
+        assert_eq!(super::Settings::default().toast_gap, 7.0);
+        for (asked, kept) in [(-4.0, 0.0), (0.0, 0.0), (12.4, 12.0), (30.0, 30.0), (99.0, 30.0), (f32::NAN, 7.0)] {
+            let s = super::Settings {
+                toast_gap: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.toast_gap, kept, "{asked} px");
+        }
+        // preferences saved before the setting existed take the default
+        let old: super::Settings = serde_json::from_str("{}").expect("empty settings");
+        assert_eq!(old.toast_gap, 7.0);
     }
 
     #[test]

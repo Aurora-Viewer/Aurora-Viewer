@@ -605,7 +605,8 @@ impl NewLines {
                 .max(first);
             // (without the focus, what is shown is not seen yet)
             self.seen.insert(conv, from);
-            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own());
+            // (a blocked resident's line, kept in the history, is no news)
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind.is_own() || l.blocked);
             match (from..next).find(|&seq| !mine(seq)) {
                 Some(seq) => {
                     self.at.insert(conv, seq);

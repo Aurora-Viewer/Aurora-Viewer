@@ -59,12 +59,19 @@ pub enum WeatherQuality {
 }
 
 /// Puddle view distance, metres: the range of the slider and its default.
-pub const PUDDLE_DISTANCE: std::ops::RangeInclusive<f32> = 10.0..=60.0;
+pub const PUDDLE_DISTANCE: std::ops::RangeInclusive<f32> = 10.0..=256.0;
 pub const PUDDLE_DISTANCE_DEFAULT: f32 = 38.0;
 /// How far snow lying on the ground is drawn, metres: the slider's range
 /// and its default.
-pub const SNOW_DISTANCE: std::ops::RangeInclusive<f32> = 20.0..=120.0;
+pub const SNOW_DISTANCE: std::ops::RangeInclusive<f32> = 20.0..=256.0;
 pub const SNOW_DISTANCE_DEFAULT: f32 = 60.0;
+/// Deep snow's reach around my avatar (m, at High weather quality): as far
+/// as the rain's shelter map, which its surface is read from. Its cells
+/// grow coarser toward its edge, one more ring of them past each doubling
+/// (4 at 15 m, 5 at 40 m): 40 m costs about 0.12 ms of GPU more than 15 m
+/// (RTX 3090, 1080p, 2026-11-15).
+pub const DEEP_SNOW_REACH: std::ops::RangeInclusive<f32> = 10.0..=40.0;
+pub const DEEP_SNOW_REACH_DEFAULT: f32 = 15.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -115,6 +122,8 @@ pub struct WeatherSettings {
     pub ice: bool,
     /// Deep snow (experimental): parallax through the lying snow.
     pub snow_deep: bool,
+    /// How far around my avatar deep snow is drawn (m, `DEEP_SNOW_REACH`).
+    pub snow_deep_reach: f32,
     /// The aurora (northern lights) in the night sky.
     pub aurora: bool,
     /// How bright it is, 0 (faint) to 1 (a strong display).
@@ -152,6 +161,7 @@ impl Default for WeatherSettings {
             snow_on_avatars: true,
             ice: true,
             snow_deep: false,
+            snow_deep_reach: DEEP_SNOW_REACH_DEFAULT,
             aurora: false,
             aurora_intensity: 0.6,
             aurora_heading: 0.0,
@@ -294,6 +304,18 @@ impl WeatherSettings {
         ]
     }
 
+    /// How far the weather's memory of the ground must reach (m,
+    /// `RainLook::memory_reach`): the wet ground's distance (drawn in any
+    /// rain, puddles or not), and the snow's while it settles (with "Snow
+    /// settles" off none lies, and its hidden slider changes nothing).
+    /// Both whichever falls: the memory's square keeps its size from rain
+    /// to snow (a new size starts its texels again).
+    fn memory_reach(&self) -> f32 {
+        let wet = self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end());
+        let snow = self.snow_distance.clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end());
+        if self.snow_settles { wet.max(snow) } else { wet }
+    }
+
     pub fn rain_look(&self, wind: &Wind) -> aurora_render::RainLook {
         // in snow, the puddles' switch and distance are the lying snow's
         let snowing = self.snowing();
@@ -311,6 +333,14 @@ impl WeatherSettings {
             snow_detail: 0,
             // and a region's snow so far (weather/region.rs)
             snow_lying: 0.0,
+            memory_reach: self.memory_reach(),
+            deep_reach: env_snow_deep_reach()
+                .filter(|_| !self.touched)
+                .unwrap_or(self.snow_deep_reach)
+                .clamp(*DEEP_SNOW_REACH.start(), *DEEP_SNOW_REACH.end()),
+            // whatever falls: in rain or clear weather `puddles` is the
+            // puddles' own switch, and the snow melting away still showed
+            snow_settles: self.snow_settles,
             footprints: self.snow_footprints && self.snow_settles,
             trail_extent: self.snow_footprints_reach.clamp(32.0, 64.0),
             // the app centres it on my avatar
@@ -450,6 +480,13 @@ fn env_snow_deep() -> Option<bool> {
     *DEEP.get_or_init(|| std::env::var("AURORA_SNOW_DEEP").ok().map(|v| v.trim() == "1"))
 }
 
+/// `AURORA_SNOW_DEEP_REACH=<m>`: deep snow's reach until the menu is used
+/// (demo captures: the terrain past the plaza's floor).
+fn env_snow_deep_reach() -> Option<f32> {
+    static REACH: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *REACH.get_or_init(|| std::env::var("AURORA_SNOW_DEEP_REACH").ok().and_then(|v| v.trim().parse().ok()))
+}
+
 /// `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]`: the northern lights
 /// until the menu is used (demo captures).
 fn env_northern_lights() -> Option<(f32, f32, u8)> {
@@ -482,6 +519,72 @@ fn env_rain() -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_renderer_gets_both_distances_and_deep_snows_reach() {
+        let w = WeatherSettings {
+            puddle_distance: 200.0,
+            snow_distance: 60.0,
+            snow_deep_reach: 30.0,
+            touched: true,
+            ..WeatherSettings::default()
+        };
+        let look = w.rain_look(&Wind::default());
+        // the farther of the two, whatever falls now
+        assert_eq!(look.memory_reach, 200.0);
+        assert_eq!(look.deep_reach, 30.0);
+        // the snow's only while it settles: its hidden slider sizes nothing
+        let snow_far = WeatherSettings {
+            snow_distance: 250.0,
+            ..w.clone()
+        };
+        assert_eq!(snow_far.rain_look(&Wind::default()).memory_reach, 250.0);
+        let unsettled = WeatherSettings {
+            snow_settles: false,
+            ..snow_far
+        };
+        assert_eq!(unsettled.rain_look(&Wind::default()).memory_reach, 200.0);
+        // the defaults keep today's sizes
+        let d = WeatherSettings {
+            touched: true,
+            ..WeatherSettings::default()
+        }
+        .rain_look(&Wind::default());
+        assert_eq!((d.memory_reach, d.deep_reach), (SNOW_DISTANCE_DEFAULT, DEEP_SNOW_REACH_DEFAULT));
+        // out of range: clamped
+        let far = WeatherSettings {
+            snow_deep_reach: 500.0,
+            puddle_distance: 9000.0,
+            ..w
+        };
+        let look = far.rain_look(&Wind::default());
+        assert_eq!(
+            (look.memory_reach, look.deep_reach),
+            (*PUDDLE_DISTANCE.end(), *DEEP_SNOW_REACH.end())
+        );
+    }
+
+    #[test]
+    fn snow_settles_off_hides_the_lying_snow_whatever_falls() {
+        use super::region::{RegionDay, SkyWeather};
+        for precipitation in [Precipitation::Rain, Precipitation::Snow] {
+            let off = WeatherSettings {
+                precipitation,
+                amount: 0.5,
+                snow_settles: false,
+                touched: true,
+                ..WeatherSettings::default()
+            };
+            let look = off.rain_look(&Wind::default());
+            assert!(!look.snow_settles, "{precipitation:?}");
+            assert!(!look.footprints && !look.deep_snow);
+            // a region or a sky setting the weather keeps my switch
+            let applied = RegionDay::fixed(SkyWeather::CLEAR).apply(&off, uuid::Uuid::nil(), 0.0, false);
+            assert!(!applied.rain_look(&Wind::default()).snow_settles);
+            let on = WeatherSettings { snow_settles: true, ..off };
+            assert!(on.rain_look(&Wind::default()).snow_settles, "{precipitation:?}");
+        }
+    }
 
     #[test]
     fn the_northern_lights_reach_the_renderer_only_while_on() {

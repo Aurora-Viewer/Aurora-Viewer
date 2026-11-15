@@ -131,8 +131,19 @@ impl State {
     pub fn begin(&mut self, ctx: &egui::Context, world: &World) {
         let mut remaining: HashSet<_> = world.social.ims.iter().map(|s| s.other).collect();
         self.order.retain(|id| remaining.remove(id));
-        self.order
-            .extend(world.social.ims.iter().map(|s| s.other).filter(|id| remaining.remove(id)));
+        let new = world.social.ims.iter().map(|s| s.other).filter(|id| remaining.remove(id));
+        // FSAutoOrderIMTabs: among the tabs of its kind
+        // (`conversation_options::insertion`), else after the others
+        let options = super::conversation_options::current();
+        if options.auto_order {
+            for id in new {
+                let kinds: Vec<_> = self.order.iter().map(|o| super::sidebar::kind(world, o)).collect();
+                let at = super::conversation_options::insertion(&kinds, super::sidebar::kind(world, &id), options.order, options.new_first);
+                self.order.insert(at, id);
+            }
+        } else {
+            self.order.extend(new);
+        }
         let pass = ctx.cumulative_pass_nr();
         if self.laid_out.is_none_or(|last| last + 1 < pass) {
             self.offsets.clear();
