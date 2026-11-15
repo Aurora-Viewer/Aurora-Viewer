@@ -10,6 +10,13 @@ The ordinary scene geometry, culling, selection and picking paths consume
 that same visual scale. The registry saves the whole-scene choice separately
 from individual-model mode; older bindings retain their previous behavior.
 
+Experience generic-message documents accept standard spaced, case-insensitive
+LLSD codec headers. Full pushed environments retain receipt order independently
+for day, sky and water, so late asset responses cannot restore an older scene
+or erase newer independent halves. Clearing an unrelated experience leaves
+the active transition intact. `demo_experience` supplies the offline `scenes`
+sequence for two controller changes and return to shared lighting (#1805).
+
 Inventory Delete carries a `DeleteRequest` with its originating window and
 selection through the Marketplace guard. `app/inventory.rs` binds that intent
 to the mutation's request before sending it, including synchronous demo replies.
@@ -142,6 +149,23 @@ reads the latter's pose, so animation keys on an attachment point move
 rigid worn linksets as well as meshes skinned to that point (#1694).
 CPU transforms and GPU anchors share this frame; missing poses use the
 existing bone/rest fallback, and HUD points stay in screen space.
+
+`world/shape_tween.rs` glides another avatar's visual parameters to a new
+appearance over 0.65 s (the Legacy Viewer's appearance animation, its
+bouncy curve), for the avatars within 32 m of the agent: `World::visual_params`
+returns the values of the moment and `appearance_generation` moves at each
+step, so the scene rebuilds the skeleton and the morphs as for any new
+appearance. `demo_shape_morph.rs` (`AURORA_DEMO_SHAPE_MORPH`) changes the
+Wolf's and the crowd's shapes.
+
+`world/objects.rs` keeps a scripted object's accumulated angular rotation
+separate from the simulator's base angle. Repeated full and terse reports
+with that same angle preserve its spin, including a nonphysical speed change,
+as `LLViewerObject::processUpdateMessage` / `applyAngularVelocity` do.
+New base angles, stopping and physical speed changes reset it; changing the
+parent with the same base angle retains the turn, as in the Legacy Viewer.
+Motion corrections fade towards the base angle with that retained turn
+applied, rather than fading the turn away.
 
 `world/appearance_xml.rs` snapshots only the agent’s current visual parameters
 and joint palette for Legacy Viewer-compatible `linden_genepool` XML export.
@@ -3198,6 +3222,14 @@ are preallocated by the mixer (one per voice it holds): the callback neither
 allocates nor locks. About 0.5 ms per 10 ms buffer for 30 moving sounds.
 `demo_sound_hrtf.rs` (`AURORA_DEMO_SOUND_HRTF`) moves two sources around the
 camera.
+The Doppler shift (Preferences › Sound, "Doppler effect", 1 as the Legacy
+Viewer's fixed FMOD level) is computed once a frame per playing world sound
+by `scene/sounds/doppler.rs` from the agent's velocity and the source's (its
+parent's), and sent as a playback rate (`AudioEngine::world_rate`, kept
+within an octave); the mixer reads the clip at that rate with a fractional
+position and linear interpolation, the rate gliding over a buffer; at rate 1
+the read is the plain one, bit for bit. `demo_sound_doppler.rs`
+(`AURORA_DEMO_SOUND_DOPPLER`) passes a source in front of the listener.
 With the reverb of the surroundings (Preferences › Sound, Aurora's own, off),
 `scene/sound_reverb.rs` sends the mixer the parameters of the place
 (`AudioEngine::set_reverb`) and each world sound's send factor

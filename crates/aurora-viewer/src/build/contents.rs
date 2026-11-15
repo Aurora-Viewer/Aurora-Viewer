@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// GP_OBJECT_MANIPULATE (llroles.h).
+const GP_OBJECT_MANIPULATE: u64 = 1 << 38;
 /// AT_LSL_TEXT / IT_LSL.
 pub const AT_LSL_TEXT: i8 = 10;
 pub const IT_LSL: i8 = 10;
@@ -149,6 +151,21 @@ impl BuildTool {
             }
             self.contents.objects.retain(|k, _| keep.contains(k));
         }
+    }
+
+    /// Whether an item of the object `idx`'s contents opens in a preview
+    /// (`actions::task_preview_allowed`), and RLVa lets it be seen.
+    pub fn task_preview_allowed(&self, world: &World, idx: usize, item: &aurora_net::inventory::InvItem) -> bool {
+        let group = world.groups.group(&item.group_id);
+        world.inventory.can_preview(item.asset_type)
+            && crate::world::inventory::actions::task_preview_allowed(
+                item,
+                world.agent_id,
+                group.is_some(),
+                group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
+                self.can_modify(world, idx),
+                world.god_level,
+            )
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?

@@ -1090,6 +1090,10 @@ pub struct Settings {
     pub ims_in_notification_center: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime, 30).
     pub im_toast_seconds: f32,
+    /// Seconds a friend's online / offline toast stays with the Legacy
+    /// Viewer's toasts (NotificationTipToastLifeTime, 10, its slider 1–30);
+    /// Aurora's center keeps its own timing.
+    pub tip_toast_seconds: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -1413,6 +1417,11 @@ pub struct Settings {
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
     pub world_mouse_walk: bool,
+    /// Aurora extension, MMO-style mouse buttons: the right button's drag
+    /// steers our avatar (the turn keys slide, the left button walks
+    /// forward) and the left button held on our avatar orbits the camera,
+    /// the other way round from the default. Off by default.
+    pub mmo_mouse_buttons: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
@@ -2040,6 +2049,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
+    /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
+    pub doppler: f32,
     /// World sounds muffled behind walls and objects (Aurora's own, on;
     /// off: heard unobstructed, as in the Legacy Viewer).
     pub sound_occlusion: bool,
@@ -2104,6 +2116,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
             sound_reverb: false,
@@ -2376,6 +2389,7 @@ impl Default for Settings {
             toast_group_im: false,
             ims_in_notification_center: false,
             im_toast_seconds: 30.0,
+            tip_toast_seconds: 10.0,
             log_im: true,
             log_nearby: false,
             reopen_ims: false,
@@ -2494,6 +2508,7 @@ impl Default for Settings {
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
+            mmo_mouse_buttons: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
@@ -3270,6 +3285,11 @@ impl Settings {
             self.audio.mic_gain = 1.0;
         }
         self.audio.mic_gain = self.audio.mic_gain.clamp(0.0, 2.0);
+        self.audio.doppler = if self.audio.doppler.is_finite() {
+            self.audio.doppler.clamp(0.0, 2.0)
+        } else {
+            1.0
+        };
         self.time_of_day = self.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);
         self.env_manual_transition = if self.env_manual_transition.is_finite() {
             self.env_manual_transition.clamp(0.0, 60.0)
@@ -3440,6 +3460,11 @@ impl Settings {
             *opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { default };
         }
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
+        self.tip_toast_seconds = if self.tip_toast_seconds.is_finite() {
+            self.tip_toast_seconds.clamp(1.0, 30.0)
+        } else {
+            10.0
+        };
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)

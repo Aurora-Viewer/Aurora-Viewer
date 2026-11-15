@@ -885,6 +885,10 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// Session-only keyframe animation rate for every avatar and animesh.
+    pub animation_speed: f32,
+    /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
+    pub slow_motion_animations: bool,
     pub ground_avatar_feet: bool,
     pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
@@ -1067,6 +1071,8 @@ pub struct Scene {
     debug_alpha: Option<bool>,
     beacon_highlights: HashSet<usize>,
     pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
+    /// The lights' boxes while Beacons > Bounding boxes for lights is on.
+    pub light_boxes: Vec<crate::world::beacons::LightBox>,
     land_overlays: world_overlays::LandOverlays,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pass_view: bool,
@@ -1610,6 +1616,8 @@ impl Scene {
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
@@ -1678,6 +1686,7 @@ impl Scene {
             debug_alpha: None,
             beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
+            light_boxes: Vec::new(),
             land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
@@ -5584,22 +5593,6 @@ impl Scene {
         )
     }
 
-    /// Evaluate skeleton poses of every palette owner near the camera; the
-    /// sync of the same frame uploads their joint palettes
-    /// (`update_anchors`). Only our avatar reports timed animation stops
-    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
-    /// Objects our avatar wears (HUDs left out): a step of the teleport and
-    /// crossing timelines (AURORA_PROFILE).
-    pub fn own_attachment_count(&self) -> usize {
-        let Some(own) = self.agent_idx else {
-            return 0;
-        };
-        self.gpu
-            .iter()
-            .filter(|g| g.owner_avatar == Some(own) && !g.hud && !g.is_avatar)
-            .count()
-    }
-
     /// What the avatars wear and play (`avatar summary`, AURORA_PROFILE):
     /// one walk over the objects, every 10 s.
     pub fn avatar_sample(&self) -> AvatarSample {
@@ -5640,6 +5633,10 @@ impl Scene {
         s
     }
 
+    /// Evaluate skeleton poses of every palette owner near the camera; the
+    /// sync of the same frame uploads their joint palettes
+    /// (`update_anchors`). Only our avatar reports timed animation stops
+    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
     pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
@@ -5759,6 +5756,10 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_time_factor(
+                anim::effective_animation_speed(self.animation_speed, self.slow_motion_animations, owner == world.agent_id),
+                now,
+            );
             motions.set_synchronized(self.synchronize_animations);
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.

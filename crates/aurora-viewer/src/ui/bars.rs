@@ -46,6 +46,8 @@ pub enum BarAction {
     EditParticles,
     /// Build › Save back to object contents (Tools.SaveToObjectInventory).
     SaveToObjectContents,
+    /// Build › Options: the switches as the menu left them.
+    BuildOptions(crate::build::MenuOptions),
     Portals,
     CheckUpdates,
     ReportBug,
@@ -105,6 +107,10 @@ pub enum BarAction {
     FaceNearestAvatar,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Animation Speed: global session-only keyframe rate.
+    AnimationSpeed(f32),
+    /// Advanced › Animation Speed: local-avatar slow motion.
+    ToggleSlowMotionAnimations,
     /// Advanced › Release Keys (Tools.ReleaseKeys).
     ReleaseKeys,
     /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
@@ -298,6 +304,8 @@ pub struct StatusInfo<'a> {
     /// Photos are taken without the shutter sound nor the snapshot
     /// animation (Advanced › Quiet snapshots).
     pub quiet_snapshots: bool,
+    pub animation_speed: f32,
+    pub slow_motion_animations: bool,
     /// A script holds a control and no RLVa lock forbids letting it go:
     /// Advanced › Release Keys is enabled (`app::release_keys::enabled`).
     pub release_keys: bool,
@@ -372,6 +380,8 @@ pub struct StatusInfo<'a> {
     /// Build › Save back to object contents applies: the selection was
     /// rezzed from an object's contents (Tools.EnableSaveToObjectInventory).
     pub save_to_contents: bool,
+    /// Build > Options: the selection filters and displays.
+    pub build_options: crate::build::MenuOptions,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -1411,7 +1421,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, panels, action, &st.ik_keys, st.edit_particles, st.save_to_contents);
+        build_menu(
+            ui,
+            p,
+            panels,
+            action,
+            &st.ik_keys,
+            st.edit_particles,
+            st.save_to_contents,
+            st.build_options,
+        );
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1480,6 +1499,35 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if menu::check(ui, p, "camera-off", quiet, st.quiet_snapshots, true) {
                 *action = BarAction::ToggleQuietSnapshots;
             }
+            menu::submenu(
+                ui,
+                p,
+                "player-play-filled",
+                aurora_i18n::tr!("ui-bars-animation-speed"),
+                true,
+                |ui| {
+                    if menu::item(ui, p, "player-skip-forward-filled", aurora_i18n::tr!("ui-bars-animation-faster")) {
+                        *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, 0.1));
+                    }
+                    if menu::item(ui, p, "player-skip-back-filled", aurora_i18n::tr!("ui-bars-animation-slower")) {
+                        *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, -0.1));
+                    }
+                    if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-bars-animation-reset")) {
+                        *action = BarAction::AnimationSpeed(1.0);
+                    }
+                    menu::separator(ui, p);
+                    if menu::check(
+                        ui,
+                        p,
+                        "player-pause-filled",
+                        aurora_i18n::tr!("ui-bars-slow-motion-animations"),
+                        st.slow_motion_animations,
+                        true,
+                    ) {
+                        *action = BarAction::ToggleSlowMotionAnimations;
+                    }
+                },
+            );
             // Advanced › Media Streams Backup: the parcel stream list to
             // and from an XML file (Streamlist.xml_import / xml_export)
             menu::submenu(
@@ -1630,6 +1678,7 @@ fn build_menu(
     ik_keys: &str,
     edit_particles: bool,
     save_to_contents: bool,
+    options: crate::build::MenuOptions,
 ) {
     if menu::check(
         ui,
@@ -1689,12 +1738,78 @@ fn build_menu(
     ) {
         *action = BarAction::SaveToObjectContents;
     }
+    menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("build-options-menu"), true, |ui| {
+        build_options_menu(ui, p, action, options);
+    });
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
         *action = BarAction::Import;
     }
     if menu::item(ui, p, "cube-3d-sphere", aurora_i18n::tr!("blender-live-title")) {
         *action = BarAction::BlenderLive;
+    }
+}
+
+/// Build › Options of menu_viewer.xml: the selection filters, then what
+/// the selection shows. The entries stay open to set several in a row.
+fn build_options_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, options: crate::build::MenuOptions) {
+    let mut o = options;
+    menu::toggle(ui, p, "user-check", aurora_i18n::tr!("build-compact-owned-only"), &mut o.owned_only);
+    menu::toggle(
+        ui,
+        p,
+        "arrows-move",
+        aurora_i18n::tr!("build-compact-movable-only"),
+        &mut o.movable_only,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "lock-filled",
+        aurora_i18n::tr!("build-options-locked-only"),
+        &mut o.locked_only,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "copy-filled",
+        aurora_i18n::tr!("build-options-copyable-only"),
+        &mut o.copyable_only,
+    );
+    menu::toggle(ui, p, "sphere", aurora_i18n::tr!("build-compact-probes"), &mut o.probes);
+    menu::toggle(ui, p, "focus-2", aurora_i18n::tr!("build-compact-surrounding"), &mut o.surrounding);
+    menu::toggle(
+        ui,
+        p,
+        "users-group",
+        aurora_i18n::tr!("build-options-group-owned"),
+        &mut o.group_owned,
+    );
+    menu::separator(ui, p);
+    menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("build-compact-highlight"), &mut o.highlight);
+    menu::toggle(
+        ui,
+        p,
+        "eye-closed",
+        aurora_i18n::tr!("build-options-hidden-selection"),
+        &mut o.hidden_selection,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "bulb-filled",
+        aurora_i18n::tr!("build-options-light-radius"),
+        &mut o.light_radius,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "sphere",
+        aurora_i18n::tr!("build-options-probe-volumes"),
+        &mut o.probe_volumes,
+    );
+    if o != options {
+        *action = BarAction::BuildOptions(o);
     }
 }
 

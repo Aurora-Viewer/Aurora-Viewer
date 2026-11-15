@@ -3920,6 +3920,7 @@ impl App {
                 remove,
                 source_folder,
                 from_task: Uuid::nil(),
+                notecard: None,
             },
         ))));
         self.progress_mcp_state_machines(renderer);

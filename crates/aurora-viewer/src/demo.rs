@@ -251,6 +251,10 @@ pub mod seat_kill;
 /// (AURORA_DEMO_SET_NOTICES).
 #[path = "demo_set_notices.rs"]
 pub mod set_notices;
+/// The Wolf and the crowd changing shape every few seconds, for the
+/// progressive shape changes (AURORA_DEMO_SHAPE_MORPH).
+#[path = "demo_shape_morph.rs"]
+pub mod shape_morph;
 /// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
 /// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
 #[path = "demo_sim_extras.rs"]
@@ -270,6 +274,10 @@ pub mod slideshow;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// A sound passing in front of the listener, back and forth, for the
+/// Doppler shift (AURORA_DEMO_SOUND_DOPPLER).
+#[path = "demo_sound_doppler.rs"]
+pub mod sound_doppler;
 /// Sounds circling the listener and rising above it, for the 3D sound for
 /// headphones (AURORA_DEMO_SOUND_HRTF).
 #[path = "demo_sound_hrtf.rs"]
