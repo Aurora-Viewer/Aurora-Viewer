@@ -885,6 +885,10 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// Session-only keyframe animation rate for every avatar and animesh.
+    pub animation_speed: f32,
+    /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
+    pub slow_motion_animations: bool,
     pub ground_avatar_feet: bool,
     pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
@@ -1067,6 +1071,8 @@ pub struct Scene {
     debug_alpha: Option<bool>,
     beacon_highlights: HashSet<usize>,
     pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
+    /// The lights' boxes while Beacons > Bounding boxes for lights is on.
+    pub light_boxes: Vec<crate::world::beacons::LightBox>,
     land_overlays: world_overlays::LandOverlays,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pass_view: bool,
@@ -1610,6 +1616,8 @@ impl Scene {
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
@@ -1678,6 +1686,7 @@ impl Scene {
             debug_alpha: None,
             beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
+            light_boxes: Vec::new(),
             land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
@@ -2706,6 +2715,17 @@ impl Scene {
             }
             (p, r)
         };
+        // a seated avatar turned on purpose keeps that turn until the
+        // simulator reports its rotation
+        if o.parent_id != 0
+            && held.is_none()
+            && o.is_avatar()
+            && let Some(snap) = world.seat_snaps.get(&o.full_id)
+            && snap.parent_id == o.parent_id
+            && snap.reported == o.rotation
+        {
+            r = snap.local;
+        }
         // a standing avatar is drawn turned toward where it goes
         if o.parent_id == 0
             && o.is_avatar()
@@ -4033,6 +4053,8 @@ impl Scene {
                 continue;
             }
             let mut rec = te_record_base(model, &tf);
+            // the OIT tie-break: the object's id and this face
+            rec.identity[0] = aurora_render::oit_tie(*o.full_id.as_bytes(), fi as u32);
             // Linden plants cut at 0.5, not the 0.33 of other faces without a
             // material (LLDrawPoolTree, setMinimumAlpha(0.5))
             if plant.is_some() {
@@ -4585,6 +4607,9 @@ impl Scene {
                     model: record_model,
                     params: [0.0, 0.0, 0.8, minimum_alpha],
                     flags: [flags::SKINNED, palette, system_binds, 0],
+                    // the OIT tie-break: the avatar's id and the part, in a
+                    // range of its own above the faces of an object
+                    identity: [aurora_render::oit_tie(*o.full_id.as_bytes(), 0x8000 | pi as u32), 0, 0, 0],
                     ..Default::default()
                 };
                 if let Some((base, count, moving)) = self.live_morphs.parts.get(pi).copied().flatten() {
@@ -4972,6 +4997,9 @@ impl Scene {
 
         // objects in parallel
         let blend_casts = aurora_render::shadow_cull::blend_casts();
+        // the mirror the last frame drew (as the flexible prims): only then,
+        // and only on its side, are the blended faces gathered for it
+        let mirror_plane = self.mirror_plane;
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
@@ -5012,6 +5040,7 @@ impl Scene {
             casters: Vec<ShadowCaster>,
             shelter: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
+            refl_blend: Vec<blend_order::BlendEntry>,
             probe: Vec<ShadowCaster>,
             visible: usize,
             usage: Vec<(Uuid, f32, bool)>,
@@ -5039,6 +5068,7 @@ impl Scene {
             casters: Vec::new(),
             shelter: Vec::new(),
             refl: Vec::new(),
+            refl_blend: Vec::new(),
             probe: Vec::new(),
             visible: 0,
             usage: Vec::new(),
@@ -5250,6 +5280,20 @@ impl Scene {
                         }
                     }
                 }
+                // the mirror's blended faces, in view or not (the CPU lists
+                // hold every blended face, GPU culling or not: `is_special`)
+                if reflects && pass == Pass::Blend && mirror_plane.is_some_and(|(p, n)| n.dot(sc - p) > -sr) {
+                    l.refl_blend.push(blend_order::BlendEntry {
+                        distance: if g.rigged { blend_d } else { (sc - view.eye).length() },
+                        cmd,
+                        glow: false,
+                        double_sided: f.two_sided,
+                        rigged: g.rigged,
+                        object: idx as u32,
+                        face: f.te_index,
+                        rig,
+                    });
+                }
                 if usage {
                     // (out of view too: what memory pressure may not
                     // lower a texture under, see `note_usage_away`)
@@ -5321,6 +5365,7 @@ impl Scene {
             a.casters.append(&mut b.casters);
             a.shelter.append(&mut b.shelter);
             a.refl.append(&mut b.refl);
+            a.refl_blend.append(&mut b.refl_blend);
             a.probe.append(&mut b.probe);
             a.visible += b.visible;
             a.usage.append(&mut b.usage);
@@ -5359,6 +5404,10 @@ impl Scene {
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
+        self.lists.blend_precision = blend_order::precision();
+        if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Exact {
+            blend_order::nearest_first(&mut self.blend_tmp, self.lists.blend_depth);
+        }
         let runs = match self.lists.blend_depth_mode {
             aurora_render::RiggedBlendDepth::Layers => blend_order::each_object,
             aurora_render::RiggedBlendDepth::Split => blend_order::rig_objects,
@@ -5383,6 +5432,11 @@ impl Scene {
         self.lists.shadow_casters.extend(result.casters);
         self.lists.shelter_casters.extend(result.shelter);
         self.lists.reflection = result.refl;
+        // the rigged first, in the Legacy Viewer's order and writing depth as
+        // LLDrawPoolAlpha::forwardRender(true); the rest the mirror sorts
+        let mut refl_blend = result.refl_blend;
+        self.lists.reflection_blend_rigged = blend_order::sort(&mut refl_blend, true);
+        self.lists.reflection_blend = refl_blend.iter().map(|e| e.cmd).collect();
         self.lists.probe = result.probe;
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
@@ -5539,22 +5593,6 @@ impl Scene {
         )
     }
 
-    /// Evaluate skeleton poses of every palette owner near the camera; the
-    /// sync of the same frame uploads their joint palettes
-    /// (`update_anchors`). Only our avatar reports timed animation stops
-    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
-    /// Objects our avatar wears (HUDs left out): a step of the teleport and
-    /// crossing timelines (AURORA_PROFILE).
-    pub fn own_attachment_count(&self) -> usize {
-        let Some(own) = self.agent_idx else {
-            return 0;
-        };
-        self.gpu
-            .iter()
-            .filter(|g| g.owner_avatar == Some(own) && !g.hud && !g.is_avatar)
-            .count()
-    }
-
     /// What the avatars wear and play (`avatar summary`, AURORA_PROFILE):
     /// one walk over the objects, every 10 s.
     pub fn avatar_sample(&self) -> AvatarSample {
@@ -5595,6 +5633,10 @@ impl Scene {
         s
     }
 
+    /// Evaluate skeleton poses of every palette owner near the camera; the
+    /// sync of the same frame uploads their joint palettes
+    /// (`update_anchors`). Only our avatar reports timed animation stops
+    /// to the simulator (LLVOAvatarSelf::requestStopMotion).
     pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
@@ -5714,6 +5756,10 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_time_factor(
+                anim::effective_animation_speed(self.animation_speed, self.slow_motion_animations, owner == world.agent_id),
+                now,
+            );
             motions.set_synchronized(self.synchronize_animations);
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
@@ -5962,12 +6008,6 @@ impl Scene {
         // only the skeletons posed this frame are uploaded (the others
         // keep their last pose), by the sync: with the anchors of what they
         // wear, which need their owner's place in this frame
-        // the snow on each avatar, after its pose (which fills its entries)
-        for (id, slot) in &self.palette_slots {
-            if let Some(m) = self.palettes.get_mut(*slot as usize * anim::PALETTE_JOINTS + anim::AVATAR_SNOW) {
-                *m = [[self.avatar_snow.amount(id), 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
-            }
-        }
         self.posed_slots.clear();
         self.posed_slots.extend(posed.iter().map(|p| p.1));
         for (owner, slot) in posed {

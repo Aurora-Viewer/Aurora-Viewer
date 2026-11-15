@@ -1,8 +1,10 @@
-//! The Members tab, read only: the list of LLPanelGroupMembersSubTab
-//! (name, title, status, and for those who manage members their roles and
-//! donation), its filter, the selected member's roles beside it, and their
-//! profile or a conversation. Inviting, ejecting, banning and changing
-//! roles belong to the members' management.
+//! The Members tab: the list of LLPanelGroupMembersSubTab (name, title,
+//! status, and for those who manage members their roles and donation), its
+//! filter, the selected member's roles beside it, and their profile or a
+//! conversation; with a management ability, the ticks, Eject, Ban and the
+//! roles of the chosen. In a narrow window (the classic group profile, as
+//! the Legacy Viewer's 333-pixel panel) the cards go under the list and the
+//! list keeps the Legacy columns: name, status, donation.
 
 use super::GroupAction;
 use super::admin_members::{self, Me};
@@ -76,6 +78,22 @@ impl MembersState {
             self.checked.clone()
         }
     }
+}
+
+/// Below this width the roles and abilities cards go under the list.
+const STACKED: f32 = 620.0;
+
+/// Below this width the list drops its Title and Roles columns, the filter
+/// takes its own line and the profile and conversation buttons their icons.
+const COMPACT: f32 = 520.0;
+
+/// The list's share of the height when the cards are under it.
+const STACKED_LIST: f32 = 0.55;
+
+/// Whether we may manage the group's members: the management of the list
+/// (ticks, Eject, Ban, the roles of the chosen), shown in the classic look.
+pub fn manages(v: &View) -> bool {
+    v.member.is_some() && v.can(MANAGE)
 }
 
 /// Abilities that manage members: with one of them, the list also shows
@@ -208,9 +226,17 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, 
         ui.cursor().min + Vec2::new(4.0, 0.0),
         ui.max_rect().right_bottom() - Vec2::new(4.0, 0.0),
     );
-    let side_w = 290.0_f32.min(body.width() * 0.4);
-    let main = Rect::from_min_max(body.min, Pos2::new(body.right() - side_w - 12.0, body.bottom()));
-    let side = Rect::from_min_max(Pos2::new(main.right() + 12.0, body.top()), body.max);
+    let (main, side) = if body.width() < STACKED {
+        let split = body.top() + (body.height() * STACKED_LIST).max(220.0);
+        (
+            Rect::from_min_max(body.min, Pos2::new(body.right(), split)),
+            Rect::from_min_max(Pos2::new(body.left(), split + 10.0), body.max),
+        )
+    } else {
+        let side_w = 290.0_f32.min(body.width() * 0.4);
+        let main = Rect::from_min_max(body.min, Pos2::new(body.right() - side_w - 12.0, body.bottom()));
+        (main, Rect::from_min_max(Pos2::new(main.right() + 12.0, body.top()), body.max))
+    };
     ui.allocate_rect(body, Sense::hover());
 
     let mut m = ui.new_child(
@@ -332,17 +358,30 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     let p = c.p;
     let mut invite = false;
     let mut export = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        // room for the pills, Invite and Export
-        let w = (ui.available_width() - 350.0).max(120.0);
+    let compact = ui.available_width() < COMPACT;
+    if compact {
         widgets::search_field(
             ui,
             p,
             &mut st.members.filter,
             aurora_i18n::tr!("ui-group-profile-filter-members"),
-            w,
+            ui.available_width(),
         );
+        ui.add_space(4.0);
+    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        if !compact {
+            // room for the pills, Invite and Export
+            let w = (ui.available_width() - 350.0).max(120.0);
+            widgets::search_field(
+                ui,
+                p,
+                &mut st.members.filter,
+                aurora_i18n::tr!("ui-group-profile-filter-members"),
+                w,
+            );
+        }
         if pill(ui, p, aurora_i18n::tr!("common-all"), st.members.show == Show::All).clicked() {
             st.members.show = Show::All;
         }
@@ -461,14 +500,16 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     }
 
     // the columns: name, title, (roles), status, (donation), left of the
-    // list's scroll bar
+    // list's scroll bar; compact: the Legacy panel's name, status, donation
     let width = widgets::scrolled_width(ui);
+    let show_title = !compact;
+    let show_roles = manage && !compact;
     // (label, sort, fixed width, or share of the rest when the width is 0)
-    let mut cols: Vec<(&str, Option<Sort>, f32, f32)> = vec![
-        (aurora_i18n::tr!("ui-group-profile-col-member"), Some(Sort::Name), 0.0, 1.5),
-        (aurora_i18n::tr!("ui-group-profile-col-title"), Some(Sort::Title), 0.0, 1.0),
-    ];
-    if manage {
+    let mut cols: Vec<(&str, Option<Sort>, f32, f32)> = vec![(aurora_i18n::tr!("ui-group-profile-col-member"), Some(Sort::Name), 0.0, 1.5)];
+    if show_title {
+        cols.push((aurora_i18n::tr!("ui-group-profile-col-title"), Some(Sort::Title), 0.0, 1.0));
+    }
+    if show_roles {
         cols.push((aurora_i18n::tr!("ui-group-profile-col-roles"), None, 0.0, 1.3));
     }
     cols.push((aurora_i18n::tr!("ui-group-profile-col-status"), Some(Sort::Status), 110.0, 0.0));
@@ -539,7 +580,8 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
         return;
     };
-    let footer_h = 44.0;
+    // compact: the count's own line above the buttons
+    let footer_h = if compact { 64.0 } else { 44.0 };
     let list_h = (ui.available_height() - footer_h).max(ROW_H * 2.0);
     let today = today();
     let count = st.members.rows.len();
@@ -620,18 +662,19 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                 );
                 x += widths[col];
                 col += 1;
-                // title
-                widgets::paint_elided(
-                    ui,
-                    &m.title,
-                    Pos2::new(x + 8.0, row.center().y),
-                    widths[col] - 16.0,
-                    FontId::proportional(12.5),
-                    p.muted,
-                );
-                x += widths[col];
-                col += 1;
-                if manage {
+                if show_title {
+                    widgets::paint_elided(
+                        ui,
+                        &m.title,
+                        Pos2::new(x + 8.0, row.center().y),
+                        widths[col] - 16.0,
+                        FontId::proportional(12.5),
+                        p.muted,
+                    );
+                    x += widths[col];
+                    col += 1;
+                }
+                if show_roles {
                     let cell = Rect::from_min_max(Pos2::new(x + 8.0, row.top()), Pos2::new(x + widths[col] - 4.0, row.bottom()));
                     let mut chips = ui.new_child(
                         egui::UiBuilder::new()
@@ -694,19 +737,25 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     st.members.checked.retain(|id| d.members.contains_key(id));
     let targets: Vec<Uuid> = st.members.targets().into_iter().filter(|id| d.members.contains_key(id)).collect();
     let (can_eject, can_ban) = admin_members::eject_and_ban(d, &me(c, v), &targets);
+    let selected = (targets.len() == 1).then(|| targets[0]);
+    let text = if !targets.is_empty() {
+        aurora_i18n::tr!("ui-group-admin-selected", count = targets.len() as i64)
+    } else {
+        aurora_i18n::tr!(
+            "ui-group-profile-shown",
+            count = count as i64,
+            shown = aurora_i18n::integer(count as i64)
+        )
+    };
+    // compact: the count on its own line, the buttons under it
+    if compact {
+        ui.label(egui::RichText::new(text.as_str()).size(12.0).color(p.muted));
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
-        let selected = (targets.len() == 1).then(|| targets[0]);
-        let text = if !targets.is_empty() {
-            aurora_i18n::tr!("ui-group-admin-selected", count = targets.len() as i64)
-        } else {
-            aurora_i18n::tr!(
-                "ui-group-profile-shown",
-                count = count as i64,
-                shown = aurora_i18n::integer(count as i64)
-            )
-        };
-        ui.label(egui::RichText::new(text).size(12.0).color(p.muted));
+        if !compact {
+            ui.label(egui::RichText::new(text).size(12.0).color(p.muted));
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = Vec2::new(0.0, 28.0);
             // Eject / Ban with the abilities (handleMemberSelect's rules)
@@ -739,28 +788,35 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                 st.members.confirm = Some(Confirm::Eject(targets.clone()));
             }
             let me = selected == Some(c.world.agent_id);
-            if widgets::action_button_if(
-                ui,
-                p,
-                "user-filled",
-                aurora_i18n::tr!("common-profile"),
-                ActionKind::Flat,
-                size,
-                selected.is_some(),
+            // compact: the icons alone, their names on hover
+            let profile = aurora_i18n::tr!("common-profile");
+            let conversation = aurora_i18n::tr!("ui-group-profile-conversation");
+            let (profile_label, conversation_label, icon_size) = if compact {
+                ("", "", Vec2::new(30.0, size.y))
+            } else {
+                (profile, conversation, size)
+            };
+            let hint = |r: egui::Response, text: &str| if compact { r.on_hover_text(text) } else { r };
+            if hint(
+                widgets::action_button_if(ui, p, "user-filled", profile_label, ActionKind::Flat, icon_size, selected.is_some()),
+                profile,
             )
             .clicked()
                 && let Some(id) = selected
             {
                 context::request(ui.ctx(), CtxAction::Profile(id));
             }
-            if widgets::action_button_if(
-                ui,
-                p,
-                "message-circle-filled",
-                aurora_i18n::tr!("ui-group-profile-conversation"),
-                ActionKind::Flat,
-                size,
-                selected.is_some() && !me,
+            if hint(
+                widgets::action_button_if(
+                    ui,
+                    p,
+                    "message-circle-filled",
+                    conversation_label,
+                    ActionKind::Flat,
+                    icon_size,
+                    selected.is_some() && !me,
+                ),
+                conversation,
             )
             .clicked()
                 && let Some(id) = selected

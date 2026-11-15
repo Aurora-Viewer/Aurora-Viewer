@@ -71,6 +71,7 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
             owner_id: agent,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::Normal,
+            region: Some(crate::demo::HANDLE),
             position: Vec3::ZERO,
             message: text.clone(),
         }));

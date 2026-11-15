@@ -206,6 +206,7 @@ fn the_demo_reports_from_task_id_for_an_object_rezzed_from_contents() {
         remove: false,
         source_folder: source,
         from_task: source,
+        notecard: None,
     }));
     let mut rezzed = None;
     for event in sim.reply(&world, &rez) {

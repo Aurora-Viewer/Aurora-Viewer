@@ -281,6 +281,12 @@ pub const LIVE_MORPH_WEIGHTS: u32 = 256;
 /// The palette entry after a skeleton's live morph weights (four matrices)
 /// holding how much snow is on the avatar (Aurora Weather).
 pub const AVATAR_SNOW: u32 = 260;
+/// What the snow entry holds in its last element (w of its last column)
+/// when the viewer wrote it: anything else there (the identity a palette
+/// starts with, a joint's matrix, nothing written yet) is no snow. Read
+/// as snow, the identity's 1.0 whitened rigged meshes and animesh (cars)
+/// whose entry had not reached the GPU, whatever the weather.
+pub const AVATAR_SNOW_MARK: f32 = -2.0;
 /// Palette entries per skeleton (the viewer's `anim::PALETTE_JOINTS`).
 pub const PALETTE_STRIDE: u32 = 261;
 
@@ -323,6 +329,31 @@ pub struct DrawRecord {
     /// Finite portal cut: center.xyz and encoded horizontal entry direction.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
+    /// x: the face's identity for the order-independent transparency
+    /// ([`oit_tie`]: the object's full id and the face's index hashed, the
+    /// same on every launch; the stochastic masks are seeded by it and the
+    /// triangle, oit_stochastic.rs). y, z, w: spare.
+    pub identity: [u32; 4],
+}
+
+/// The identity of a face for the order-independent transparency
+/// (`DrawRecord::identity[0]`): a hash of the object's full id (its UUID,
+/// not the region's local id) and of the face's index, the same on every
+/// frame and every launch, whatever the order the objects were loaded in or
+/// where their geometry sits (the stochastic masks are seeded by it; the
+/// shader keeps the low 24 bits).
+pub fn oit_tie(id: [u8; 16], face: u32) -> u32 {
+    // FNV-1a over the id and the face, then a final mix so that every byte
+    // reaches the low 24 bits
+    let mut h: u32 = 0x811c_9dc5;
+    for b in id.into_iter().chain(face.to_le_bytes()) {
+        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    }
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^ (h >> 16)
 }
 
 /// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
@@ -361,6 +392,7 @@ impl Default for DrawRecord {
             spec_uv: [1.0, 1.0, 0.0, 0.0],
             legacy: [0.0; 4],
             spec_color: [1.0, 1.0, 1.0, 0.0],
+            identity: [0; 4],
             anim: [0; 4],
             anim_xf: [0.0; 4],
             rez: [0; 4],
@@ -484,6 +516,39 @@ pub struct ShadowCaster {
     pub alpha: bool,
 }
 
+/// How faint a blended fragment `RiggedBlendDepth::Exact` still composes in
+/// its exact place. A fainter one is of the haze of its pixel
+/// (blend_exact.rs): mixed with the other faint ones between the nearest and
+/// the farthest of them, at a fraction of the cost. What the haze gets wrong
+/// is the alpha of one of its fragments times another alpha, so the finer
+/// levels show no difference and the coarser ones a slight one where many
+/// soft layers lie on one another (hair, foliage, veils).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BlendPrecision {
+    /// From 8/255 of alpha (3 %).
+    #[default]
+    Full,
+    /// From 16/255 (6 %).
+    High,
+    /// From 32/255 (13 %).
+    Balanced,
+    /// From 64/255 (25 %).
+    Fast,
+}
+
+impl BlendPrecision {
+    /// The alpha, in 255ths, up to which a fragment takes no slot
+    /// (`BlendOrderInfo::faint` of object.wgsl).
+    pub fn faint(self) -> u32 {
+        match self {
+            BlendPrecision::Full => 8,
+            BlendPrecision::High => 16,
+            BlendPrecision::Balanced => 32,
+            BlendPrecision::Fast => 64,
+        }
+    }
+}
+
 /// How the blended faces of rigged meshes (`DrawLists::blend_depth`) write
 /// depth.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -547,6 +612,19 @@ pub enum RiggedBlendDepth {
     /// half covered only, for the glass, water and particles drawn after
     /// them (no halo, #556).
     Layers,
+    /// Every blended face of the view, rigged or not, composed in the true
+    /// order of its fragments at each pixel, whatever order the faces are
+    /// drawn in (blend_exact.rs): a pass files where each fragment lies and
+    /// its alpha in the front of its pixel, a second one adds each
+    /// fragment's colour scaled by what the fragments in front of it let
+    /// through. What is in front is in front, whatever the kind of object:
+    /// no shards (#935), no layer over another (#935), no halo (#556), and
+    /// faces that cross or fold over themselves are right too. Every layer
+    /// shows through the ones in front of it as far as their alpha lets it,
+    /// a body add-on under a sheer dress included (#1300). The scene depth
+    /// still takes the rigged faces where half covered, for the particles
+    /// drawn after them.
+    Exact,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -599,6 +677,9 @@ pub struct DrawLists {
     pub blend_depth: usize,
     /// How those rigged faces write their depth.
     pub blend_depth_mode: RiggedBlendDepth,
+    /// `RiggedBlendDepth::Exact`: from which alpha a fragment is composed
+    /// in its exact place.
+    pub blend_precision: BlendPrecision,
     /// `RiggedBlendDepth::Runs` (one attachment point), `Split` (one object
     /// per point) and `Layers` (one object): where each run of faces ends
     /// in the first `blend_depth` entries of `blend` (increasing, the last
@@ -629,6 +710,13 @@ pub struct DrawLists {
     /// (water and mirror); drawn without face culling, alpha tested.
     /// With their bounds: each reflection pass culls them to its own frustum.
     pub reflection: Vec<ShadowCaster>,
+    /// Blended faces for the mirror, in view or not, with their bounds
+    /// (`DrawCmd::bounds`): the first `reflection_blend_rigged` are rigged
+    /// faces in the Legacy Viewer's order (drawn first, writing depth, as
+    /// `blend_depth`), the others in any order (the mirror sorts them back
+    /// to front from its own camera).
+    pub reflection_blend: Vec<DrawCmd>,
+    pub reflection_blend_rigged: usize,
     /// `reflection` without avatars, their attachments and animesh: what a
     /// static reflection probe captures (LLViewerWindow::cubeSnapshot).
     pub probe: Vec<ShadowCaster>,
@@ -770,12 +858,15 @@ impl DrawLists {
         self.blend_under_double_sided.clone_from(&src.blend_under_double_sided);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
+        self.blend_precision = src.blend_precision;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
         self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.shelter_casters.clone_from(&src.shelter_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
+        self.reflection_blend.clone_from(&src.reflection_blend);
+        self.reflection_blend_rigged = src.reflection_blend_rigged;
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
         self.reflection_terrain_pbr.clone_from(&src.reflection_terrain_pbr);
@@ -823,12 +914,15 @@ impl DrawLists {
         self.blend_under_water.clear();
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
+        self.blend_precision = BlendPrecision::default();
         self.blend_depth_runs.clear();
         self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
         self.shelter_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
+        self.reflection_blend.clear();
+        self.reflection_blend_rigged = 0;
         self.probe.clear();
         self.reflection_terrain.clear();
         self.reflection_terrain_pbr.clear();
@@ -1144,6 +1238,13 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
+    /// The stochastic transparency (oit_stochastic.rs), the "Stochastic"
+    /// choice of the order of transparent surfaces: the blended faces drawn
+    /// with depth-based stochastic transparency rather than in the per-face
+    /// sorted order (`scene/blend_order.rs`, #3060) or the exact one
+    /// (blend_exact.rs), in every anti-aliasing mode. Off (the default),
+    /// nothing of the method is made, or kept.
+    pub oit: bool,
 }
 
 impl RenderSettings {
@@ -1182,6 +1283,7 @@ impl Default for RenderSettings {
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,
+            oit: false,
         }
     }
 }
@@ -2213,11 +2315,12 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 14 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 15 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, portal_clip), 64 + 13 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, identity), 64 + 14 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -2244,9 +2347,28 @@ mod tests {
                 "anim",
                 "anim_xf",
                 "rez",
-                "portal_clip"
+                "portal_clip",
+                "identity"
             ]
         );
+    }
+
+    /// The OIT tie-break depends on the object's id and the face's index
+    /// only: the same value whenever they are the same, another one when
+    /// either differs, nothing else in it (no slot, no offset, no order).
+    #[test]
+    fn oit_tie_depends_on_the_id_and_the_face_only() {
+        let a = [0x11; 16];
+        let b = [0x22; 16];
+        assert_eq!(oit_tie(a, 3), oit_tie(a, 3));
+        assert_ne!(oit_tie(a, 3), oit_tie(a, 4));
+        assert_ne!(oit_tie(a, 3), oit_tie(b, 3));
+        // the shader keeps 24 bits: distinct there too for these
+        let low = |v: u32| v & 0xff_ffff;
+        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(a, 4)));
+        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(b, 3)));
+        // a face of a system avatar part: its own namespace of indices
+        assert_ne!(low(oit_tie(a, 0)), low(oit_tie(a, 0x8000)));
     }
 
     #[test]
@@ -2264,6 +2386,25 @@ mod tests {
         assert!(destination.portal_clipping);
         destination.clear();
         assert!(!destination.portal_clipping);
+    }
+
+    /// The order of the blended faces and its precision reach the frame
+    /// that draws them; a cleared list is back to the defaults.
+    #[test]
+    fn the_order_of_the_blended_faces_survives_frame_handoff() {
+        let source = DrawLists {
+            blend_depth_mode: RiggedBlendDepth::Exact,
+            blend_precision: BlendPrecision::Balanced,
+            ..Default::default()
+        };
+        let mut destination = DrawLists::default();
+        destination.copy_from(&source);
+        assert_eq!(destination.blend_depth_mode, RiggedBlendDepth::Exact);
+        assert_eq!(destination.blend_precision, BlendPrecision::Balanced);
+        assert_eq!(destination.blend_precision.faint(), 32);
+        destination.clear();
+        assert_eq!(destination.blend_depth_mode, RiggedBlendDepth::default());
+        assert_eq!(destination.blend_precision, BlendPrecision::Full);
     }
 
     #[test]
