@@ -150,6 +150,10 @@ pub struct PrimTransformSpec {
     pub scale: Option<[f32; 3]>,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// A root prim moves its whole linkset (the build tool's default); true
+    /// moves the root prim alone, its children staying where they are.
+    #[serde(default)]
+    pub root_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

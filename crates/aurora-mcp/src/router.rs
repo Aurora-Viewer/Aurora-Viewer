@@ -1054,6 +1054,7 @@ impl McpRouter {
                         scale: parse_vec3(args, "scale").ok(),
                         name: args.get("name").and_then(Value::as_str).map(str::to_owned),
                         description: args.get("description").and_then(Value::as_str).map(str::to_owned),
+                        root_only: args.get("root_only").and_then(Value::as_bool).unwrap_or(false),
                     }]
                 };
                 let resp = self
@@ -2960,7 +2961,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "prim_transform".into(),
-            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence. A root prim's position is region coordinates and its rotation region-relative; a child link's (parent_id != 0) are relative to its root, like LSL's PRIM_POS_LOCAL / PRIM_ROT_LOCAL (radar_scan_objects reports them as local_position and rotation_quat). A child link is moved on its own; its owner is its root's.".into(),
+            description: "Transform one or more prims (position, rotation, scale, name, description) and wait for simulator echo convergence. A root prim's position is region coordinates and its rotation region-relative; a child link's (parent_id != 0) are relative to its root, like LSL's PRIM_POS_LOCAL / PRIM_ROT_LOCAL (radar_scan_objects reports them as local_position and rotation_quat). A child link is moved on its own; its owner is its root's. A root prim moves, turns or scales its whole linkset, as the build tool does; root_only: true moves the root prim alone and leaves its children where they are.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -2971,6 +2972,7 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
                     "scale": { "type": "array", "items": { "type": "number" } },
                     "name": { "type": "string" },
                     "description": { "type": "string" },
+                    "root_only": { "type": "boolean", "default": false, "description": "on a root prim: move it alone, not its linkset" },
                     "transforms": { "type": "array", "items": { "type": "object" } }
                 }
             }),

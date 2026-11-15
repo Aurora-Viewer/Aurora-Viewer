@@ -2762,6 +2762,10 @@ impl App {
         for spec in &transforms {
             let (idx, _) = self.resolve_prim_by_local_id(spec.local_id)?;
             self.check_object_modify_permission(idx)?;
+            // UPD_LINKED_SETS: without it a root's move left every child where
+            // it was (an Incubator's lamp and eggs stayed 23 cm up when its root
+            // was lowered, 15 Nov)
+            let is_root = self.world.objects.get(idx).is_some_and(|o| o.parent_id == 0);
             let new_pos = spec.position.map(Vec3::from_array);
             let new_rot = if let Some(q) = spec.rotation_quat {
                 Some(Quat::from_array(q).normalize())
@@ -2776,7 +2780,7 @@ impl App {
                     position: new_pos,
                     rotation: new_rot,
                     scale: new_scale,
-                    linked: false,
+                    linked: is_root && !spec.root_only,
                     uniform: false,
                 });
             }
