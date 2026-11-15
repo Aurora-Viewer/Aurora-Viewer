@@ -3540,8 +3540,9 @@ mod tests {
     /// them with the selected root: the simulator keeps one undo step per
     /// object, and the root's step cannot give a child turned 90 degrees back
     /// its place and size (LLSelectMgr::undo names the roots alone,
-    /// SEND_ONLY_ROOTS). A later Transform of those prims is a newer step: the
-    /// next undo names the root alone, then the next names the children again.
+    /// SEND_ONLY_ROOTS). Each stretch is its own step. A later Transform of
+    /// those prims is a newer step: the next undo names the root alone, then
+    /// the next names the children again.
     #[test]
     fn a_face_stretch_release_names_the_linkset_children_for_undo() {
         let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(false);
@@ -3691,6 +3692,43 @@ mod tests {
             matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Redo { ids, .. })] if ids == &[root_id, child_id]),
             "redoing the stretch names the children again"
+        );
+        // A second stretch is another step, not a replacement: two undos name
+        // the children twice.
+        tool.send(BuildCmd::Transform {
+            handle: root_key.region,
+            updates: vec![
+                TransformUpdate {
+                    local_id: root_key.local_id,
+                    position: Some(Vec3::ZERO),
+                    rotation: None,
+                    scale: Some(Vec3::splat(3.0)),
+                    linked: false,
+                    uniform: false,
+                },
+                TransformUpdate {
+                    local_id: children[0].local_id,
+                    position: Some(Vec3::X),
+                    rotation: None,
+                    scale: Some(Vec3::splat(3.0)),
+                    linked: false,
+                    uniform: false,
+                },
+            ],
+        });
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(
+            matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]),
+            "the first undo after a second stretch names the children"
+        );
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(
+            matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]),
+            "the second undo names the children of the first stretch"
         );
         // A selection without that linkset names its own roots alone.
         tool.selection.clear();

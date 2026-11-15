@@ -876,7 +876,7 @@ fn object_history_names_the_children_a_one_axis_linkset_stretch_changed() {
     let (child_key, child_id) = (child.key, child.full_id);
     // The stretch sent every prim itself: the child carries its own undo step.
     tool.selection = vec![root_key];
-    tool.stretch_prims = vec![child_key];
+    stretch_linkset(&mut tool, root_key, child_key, Vec3::ONE);
     for (key, redo) in [(egui::Key::Z, false), (egui::Key::Y, true)] {
         tool.out.clear();
         history_frame(&ctx, &mut world, &mut tool, &mut settings, vec![history_key(key, false, false)]);
@@ -978,6 +978,113 @@ fn object_history_names_the_stretch_children_on_the_second_undo_after_a_later_mo
     ));
 }
 
+fn linked_child(
+    world: &mut World,
+    tool: &BuildTool,
+) -> (crate::world::objects::ObjKey, uuid::Uuid, crate::world::objects::ObjKey, uuid::Uuid) {
+    let root_idx = tool.roots(world)[0];
+    let root = world.objects.get(root_idx).unwrap();
+    let (root_key, root_id) = (root.key, root.full_id);
+    let child_idx = world
+        .objects
+        .iter()
+        .find(|(idx, object)| *idx != root_idx && !object.is_avatar())
+        .unwrap()
+        .0;
+    let child = world.objects.get_mut(child_idx).unwrap();
+    child.parent_id = root_key.local_id;
+    child.parent_region = root_key.region;
+    let (child_key, child_id) = (child.key, child.full_id);
+    (root_key, root_id, child_key, child_id)
+}
+
+fn stretch_linkset(tool: &mut BuildTool, root: crate::world::objects::ObjKey, child: crate::world::objects::ObjKey, scale: Vec3) {
+    tool.send(aurora_net::build::BuildCmd::Transform {
+        handle: root.region,
+        updates: vec![
+            TransformUpdate {
+                local_id: root.local_id,
+                position: Some(Vec3::ZERO),
+                rotation: None,
+                scale: Some(scale),
+                linked: false,
+                uniform: false,
+            },
+            TransformUpdate {
+                local_id: child.local_id,
+                position: Some(Vec3::X),
+                rotation: None,
+                scale: Some(scale),
+                linked: false,
+                uniform: false,
+            },
+        ],
+    });
+}
+
+#[test]
+fn object_history_names_the_stretch_children_on_each_undo_of_two_stretches() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let (root_key, root_id, child_key, child_id) = linked_child(&mut world, &tool);
+    tool.selection = vec![root_key];
+    stretch_linkset(&mut tool, root_key, child_key, Vec3::ONE);
+    stretch_linkset(&mut tool, root_key, child_key, Vec3::splat(2.0));
+    for redo in [false, false, true, true] {
+        tool.out.clear();
+        history_frame(
+            &ctx,
+            &mut world,
+            &mut tool,
+            &mut settings,
+            vec![history_key(if redo { egui::Key::Y } else { egui::Key::Z }, false, false)],
+        );
+        let ids = match tool.out.as_slice() {
+            [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if !redo => ids,
+            [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Redo { ids, .. })] if redo => ids,
+            other => panic!("Unexpected history command: {other:?}"),
+        };
+        assert_eq!(ids, &vec![root_id, child_id], "redo={redo}");
+    }
+}
+
+#[test]
+fn object_history_names_the_stretch_children_for_a_move_between_two_stretches() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let (root_key, root_id, child_key, child_id) = linked_child(&mut world, &tool);
+    tool.selection = vec![root_key];
+    stretch_linkset(&mut tool, root_key, child_key, Vec3::ONE);
+    tool.send(aurora_net::build::BuildCmd::Transform {
+        handle: root_key.region,
+        updates: vec![TransformUpdate {
+            local_id: root_key.local_id,
+            position: Some(Vec3::Y),
+            rotation: None,
+            scale: None,
+            linked: true,
+            uniform: false,
+        }],
+    });
+    stretch_linkset(&mut tool, root_key, child_key, Vec3::splat(2.0));
+    let expect = [vec![root_id, child_id], vec![root_id], vec![root_id, child_id]];
+    for want in expect {
+        tool.out.clear();
+        history_frame(
+            &ctx,
+            &mut world,
+            &mut tool,
+            &mut settings,
+            vec![history_key(egui::Key::Z, false, false)],
+        );
+        let ids = match tool.out.as_slice() {
+            [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] => ids,
+            other => panic!("Unexpected history command: {other:?}"),
+        };
+        assert_eq!(ids, &want);
+    }
+}
+
 #[test]
 fn transform_fields_do_not_send_when_the_object_is_stretched_under_them() {
     let (mut world, mut tool, mut settings) = fixture();
@@ -1028,8 +1135,8 @@ fn transform_fields_keep_the_stretch_undo_batch_when_they_restate_the_root() {
     child.parent_region = root_key.region;
     let (child_key, child_id) = (child.key, child.full_id);
     tool.selection = vec![root_key];
-    tool.stretch_prims = vec![root_key, child_key];
     world.objects.get_mut(root_idx).unwrap().scale = Vec3::new(2.1234567, 2.0, 2.0);
+    stretch_linkset(&mut tool, root_key, child_key, Vec3::new(2.1234567, 2.0, 2.0));
     for _ in 0..4 {
         frame(&ctx, vec![], |ui| {
             object::show_transform(ui, &p, &mut tool, &mut world, &mut settings, Mods::default());
