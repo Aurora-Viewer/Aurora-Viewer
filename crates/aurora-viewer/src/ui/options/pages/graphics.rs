@@ -118,10 +118,14 @@ fn weather(cx: &mut Cx) {
             ],
         );
         // the puddles, and behind their cog how far the wet ground goes
+        // and whether they freeze
         cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
         let no_puddles = !cx.s.weather.puddles;
         cx.subs(no_puddles, |cx| {
-            cx.slider_whole(
+            // live with the puddles off: the wet ground is drawn in any rain
+            // (env.wgsl `rain_wet_surface`; the switch gates only the
+            // puddles), and it goes as far as this
+            cx.live(true).slider_whole(
                 tr!("ui-weather-distance"),
                 tr!("ui-weather-distance-tip"),
                 &field!(weather.puddle_distance),
