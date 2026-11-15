@@ -2479,7 +2479,8 @@ LUT_3D_SIZE {n}
             // the next opening of the window starts on the avatar
             self.snapshots.ui.free.on = false;
         }
-        let want = self.panels.snapshot && self.snapshots.ui.free.on && self.in_world();
+        // (the Director's window has the same switch, `director.free`)
+        let want = ((self.panels.snapshot && self.snapshots.ui.free.on) || self.director.free) && self.in_world();
         if want && !flying {
             let mouselook = self.camera.mouselook();
             self.camera.start_free(&mut self.world.agent, &self.settings.camera);
@@ -2504,6 +2505,7 @@ LUT_3D_SIZE {n}
     fn photo_free_finish(&mut self) {
         self.snapshots.free_flying = false;
         self.snapshots.ui.free.on = false;
+        self.director.free = false;
         if std::mem::take(&mut self.snapshots.free_opened_controls) {
             self.panels.camera_controls = false;
             self.panels.movement_controls = false;

@@ -1012,6 +1012,8 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, or a second of the track recorded (see Details) |
+| `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1064,6 +1066,48 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
+- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha`**: at frame 620, the Director (toolbar
+  `director`) opens on a track of four keyframes around our avatar, 9 s
+  long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
+  in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
+  thousand frames a second and frame 700 is still under the loading fade.
+  With `1` and a capture at frame 900: the window on the right (Camera,
+  Lock, Keyframe 3 and Path open, Playback, Picture, Isolate and Environment folded,
+  the body scrolling when the viewer's window is short),
+  the timeline strip above the bottom bar with four diamonds, the third
+  violet, the playhead on it and the camera's speed written on each segment
+  (`m/s`); in the world the turquoise path through four small cameras
+  numbered 1 to 4, each pointing at the avatar, a dot each second, the
+  selected camera violet with its two Bézier handles. `play` plays the
+  track at once without a start delay (`director: playing 4 keyframes`):
+  captures at frames 800 and 1000 show the world alone from two places of
+  the path, no bar, window, name tag or HUD; the
+  log says `director: playback ended at 9.0 s` once the last view has been
+  held a second, and the interface is back. `lock` turns the lock on, on our
+  avatar's neck (`director demo: view locked on our avatar's neck`): the
+  view turns so that the neck sits in the middle of the screen, under an
+  amber ring, wherever the camera stands; the second and third keyframes
+  are locked (their cameras point at the neck), the picture is 2.39:1 (the
+  frame outlined, what lies above and below it dimmed) with the rule of
+  thirds. `green` isolates our avatar (the photo mode's isolation, on "My
+  avatar") on an empty background filled with the key green
+  (`director demo: our avatar alone on a green screen`): the avatar alone,
+  no sky, ground, water nor other avatar, on one flat green (0, 177, 64)
+  right up to its outline, the Director's interface over it. `record`
+  shortens the track to a second and records its playback at 24 frames a
+  second (`director: recording <w>x<h> at 24 frames a second`), through the
+  ffmpeg found (the film starts once it has answered, `director: ffmpeg at
+  <file>`, and goes to `<Videos>/Aurora Viewer`; with none, `director demo:
+  no ffmpeg to record with`) or, with `AURORA_DEMO_DIRECTOR_FILM=<file>`, as
+  raw RGBA frames one after the other in that file, with no encoder: the
+  file weighs the frames written times width times height times 4 (about 24
+  frames, the log says how many: `director: film of <n> frames written`),
+  each the 3D view alone. `record-alpha` does the same with our avatar
+  isolated on an empty background and the format with transparency: the
+  frames' alpha is 0 where nothing is drawn, 255 on the avatar. Every format
+  and quality through the computer's own ffmpeg, each film read back by it
+  (its frames, their size, their colors, the transparency):
+  `cargo test --workspace the_ffmpeg_found -- --ignored --nocapture`.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -4591,6 +4635,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW_LYING=<0..1>` | Snow held at least this deep on the ground |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
+| `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
@@ -4618,7 +4663,11 @@ both open states and the selection count. Capture at frame 620.
   each second by plain updates with no motion reported, as a script's
   llSetRot on a timer. What moves stays out of the rain's shelter map, so
   none of them takes the ground's snow: no white squares on their tops or
-  sides, and none appearing or vanishing as they turn. `settles-off` turns the weather drawn to rain with "Snow settles"
+  sides, and none appearing or vanishing as they turn. `timer` steps the
+  third box every 600 frames instead (10 s with `AURORA_FPS_LIMIT=60`),
+  longer than a single move's hold: from its second step on it must stay
+  bare between its steps (capture around frame 2300, between the fourth
+  and the fifth). `settles-off` turns the weather drawn to rain with "Snow settles"
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them
@@ -5989,7 +6038,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR_MARKS=1\|legacy` | Radar marks: crowd residents pre-marked, People › Near you and the mini-map open |
 | `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
-| `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
+| `AURORA_DEMO_ANTI_SPAM=1\|off\|global\|text\|burst` | Synthetic offer, script prompt and sound floods with Protections controls; `burst` many sources at once, one grouped notice |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
@@ -14290,9 +14339,11 @@ Unread state is account-specific and survives reconnecting, restarting and clear
 
 ### Anti-spam validation (#678)
 
-`AURORA_DEMO_ANTI_SPAM=1` opens Preferences > Protections and enables the disabled-by-default protection for this demo run. At frame 700 it injects 15 script prompts, 15 scripted inventory offers, 15 teleport offers, 65 sounds and 65 sound preloads. Capture after frame 900. Modes `off` and `global` disable protection or combine the categories. Mode `text` sets the event allowance to 2, newline allowance to 5 and includes own objects: four own scripted gifts admit two notifications, then a six-LF object chat and a six-LF resident IM are suppressed. It lists three IM blocks (own gift owner, chat object and resident), with one notice each. Use both `--language en` and `--language fr` and compare `AURORA_DEMO_OPTIONS=protections` without this fixture for the normal disabled state.
+`AURORA_DEMO_ANTI_SPAM=1` opens Preferences > Protections and enables the disabled-by-default protection for this demo run. At frame 700 it injects 15 script prompts, 15 scripted inventory offers, 15 teleport offers, 65 sounds and 65 sound preloads. Capture after frame 900. Modes `off` and `global` disable protection or combine the categories. Mode `text` sets the event allowance to 2, newline allowance to 5 and includes own objects: four own scripted gifts admit two notifications, then a six-LF object chat and a six-LF resident IM are suppressed. It lists three IM blocks (own gift owner, chat object and resident), told in one notice with their count. Use both `--language en` and `--language fr` and compare `AURORA_DEMO_OPTIONS=protections` without this fixture for the normal disabled state.
 
-With protection enabled, ten prompts/offers of each source and sixty sounds/preloads pass; the next event blocks that source/category for the session and produces only one nearby-chat notice. Preferences lists five blocked pairs. The two sound queues stay independent. In global mode the sound and preload counts combine. Reset clears all counters/blocks; Unblock removes one listed source/category. Changing a setting clears the session counters and blocks. Existing accepted notifications stay available. Typing, saved text IMs, self/nil sources, known own objects (unless included), collision sounds and sound-stop commands are exempt. The object and its owner are both checked for sounds, preventing rotation of object UUIDs from bypassing the owner limit. A bounded source table falls back to a shared overflow counter at 8,192 active pairs rather than allocating without limit; reset also clears that fallback.
+Mode `burst` (`world::anti_spam::burst_window`) sets the event allowance to 2. At frame 700 twelve objects say three lines each in nearby chat, as a rezzer's temporary prims flood it: their first two lines each pass, then one notice reads "12 sources blocked by the anti-spam for this session (Nearby chat)", a single line whose count grows while the blocks come. 15 s later, past the 10 s window, Nova Example floods alone: a second notice names her. Preferences > Protections lists the thirteen blocked sources, each with Unblock.
+
+With protection enabled, ten prompts/offers of each source and sixty sounds/preloads pass; the next event blocks that source/category for the session. The blocks of one burst share one nearby-chat notice ("5 sources blocked by the anti-spam…", with the categories), edited in place as they come. Preferences lists five blocked pairs. The two sound queues stay independent. In global mode the sound and preload counts combine. Reset clears all counters/blocks; Unblock removes one listed source/category. Changing a setting clears the session counters and blocks. Existing accepted notifications stay available. Typing, saved text IMs, self/nil sources, known own objects (unless included), collision sounds and sound-stop commands are exempt. The object and its owner are both checked for sounds, preventing rotation of object UUIDs from bypassing the owner limit. A bounded source table falls back to a shared overflow counter at 8,192 active pairs rather than allocating without limit; reset also clears that fallback.
 
 Nearby chat has its own event queue. The single-message limit defaults to 70 LF characters (5–1,000 in Preferences), following checkNewlineFlood; the first line and visual wrapping do not count, so exactly 70 LF passes and 71 blocks. This check also covers saved text IMs, independently of their rate exemption. Both chat and IM newline floods create a persistent IM block, as in the Legacy Viewer; later chat checks consult it too. With own objects excluded, chat newline checks aggregate by owner; with them included they use the speaking source. System/self text, group invitations and IMs from known own objects retain the reference exemptions. Script/debug and internal bridge traffic keep their existing routing.
 
