@@ -248,11 +248,15 @@ struct PostU {
     tonemap_mix: f32,
     /// Written on the GPU by `Exposure::encode`; 1 until then.
     auto_exposure: f32,
-    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
+    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view over
+    /// its checkerboard, 3 the live view over `cutout_key`.
     cutout: f32,
     _pad: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
+    /// The key color of a cut-out live view (`FrameParams::cutout_key`),
+    /// linear RGB.
+    cutout_key: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -2594,15 +2598,9 @@ impl RainWet {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
         let snow = snow.clamp(0.0, 1.0);
-        // AURORA_SNOW_LYING=<0..1>: snow already lying that deep while it
-        // snows (demo captures, without waiting for it to build)
-        static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
-        let lying = *LYING.get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse::<f32>().ok()));
-        if snow > 0.0
-            && let Some(v) = lying
-        {
-            self.snow = self.snow.max(v.clamp(0.0, 1.0));
-        }
+        // (AURORA_SNOW_LYING reaches it as `RainLook::snow_lying`, the floor
+        // set before this step: the app reads it, and drops it with "Snow
+        // settles" off)
         if snow > 0.0 {
             self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
             self.snow = self.snow.max(1e-3);
@@ -8630,13 +8628,15 @@ impl Backend {
                 f.tonemap_mix.clamp(0.0, 1.0)
             },
             auto_exposure: 1.0,
-            cutout: match (f.cutout, snapshot.is_some()) {
-                (false, _) => 0.0,
-                (true, true) => 1.0,
-                (true, false) => 2.0,
+            cutout: match (f.cutout, snapshot.is_some() || f.cutout_alpha, f.cutout_key) {
+                (false, ..) => 0.0,
+                (true, true, _) => 1.0,
+                (true, false, None) => 2.0,
+                (true, false, Some(_)) => 3.0,
             },
             _pad: 0.0,
             photo_part: photo_part(f.photo_tile),
+            cutout_key: f.cutout_key.map_or([0.0; 4], |[r, g, b]| [r, g, b, 1.0]),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
