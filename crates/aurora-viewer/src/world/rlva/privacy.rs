@@ -211,6 +211,8 @@ impl World {
             }
         }
         self.social.avatar_names.set_rlva_privacy(private, allowed);
+        let nearby = if private { self.rlva_nearby_avatars() } else { Default::default() };
+        self.social.avatar_names.set_rlva_nearby(nearby);
         let mut filter = self.rlva_text_filter(false);
         filter.reuse_matcher(&self.rlva_privacy);
         for notification in &mut self.notifications.list {
@@ -441,6 +443,32 @@ impl World {
         } else {
             Cow::Borrowed(text)
         }
+    }
+}
+
+pub use super::super::names::NameScope;
+
+/// `@shownames` by the place a name is shown in (issue #3547): the Legacy
+/// Viewer hides the residents of the world around and the owners and
+/// creators its object windows name, and leaves the lists of people known
+/// otherwise alone.
+impl World {
+    /// The window or list `scope` shows the real name of `id`: the one rule
+    /// behind every scoped lookup (`NameScope::shows`, world/names.rs), as
+    /// `refresh_rlva_privacy` last fed it. What gives a name
+    /// (`AvatarNames::get_in`, `Social::name_in`) follows it by itself; ask
+    /// it for what goes with a shown name, such as opening a profile.
+    pub fn rlva_shows_name(&self, scope: NameScope, id: Uuid) -> bool {
+        self.social.avatar_names.shows(scope, &id)
+    }
+
+    /// The avatars of every region around, oneself left out
+    /// (RlvUtil::isNearbyAgent over LLWorld::getAvatars, rlvcommon.cpp):
+    /// the loaded ones and the coarse locations, whatever their distance.
+    fn rlva_nearby_avatars(&self) -> std::collections::HashSet<Uuid> {
+        let loaded = self.objects.avatars().map(|(_, o)| o.full_id);
+        let coarse = self.coarse.values().flatten().map(|(id, _)| *id);
+        loaded.chain(coarse).filter(|id| !id.is_nil() && *id != self.agent_id).collect()
     }
 }
 
@@ -770,5 +798,220 @@ mod tests {
         assert_eq!(world.region_name(), "Secret Region");
         assert_eq!(world.social.name_of(&id), "Élodie Meadows");
         assert!(matches!(world.rlva_filter_text(text), Cow::Borrowed(_)));
+    }
+
+    // ---- `@shownames` by the place a name is shown in (issue #3547)
+
+    const FRIEND: Uuid = Uuid::from_u128(0xF1);
+    const MEMBER: Uuid = Uuid::from_u128(0xF2);
+    const MAKER: Uuid = Uuid::from_u128(0xF3);
+
+    /// The demo's world under `@shownames=n`: an avatar around us, and a
+    /// friend, a group member and a creator who are in no region around.
+    fn shownames_world() -> (World, Uuid) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        for (id, first) in [(near, "Near"), (FRIEND, "Friend"), (MEMBER, "Member"), (MAKER, "Maker")] {
+            world.social.avatar_names.on_legacy(id, first, "Tester");
+        }
+        world.social.friends.push(crate::world::social::Friend {
+            id: FRIEND,
+            online: true,
+            rights_given: 0,
+            rights_has: 0,
+        });
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        (world, near)
+    }
+
+    fn named(world: &World, scope: NameScope, id: Uuid) -> bool {
+        let shown = world.rlva_shows_name(scope, id);
+        // the name read in that place follows the rule, in every form
+        let names = &world.social.avatar_names;
+        assert_eq!(world.social.name_in(scope, &id).contains("Tester"), shown);
+        assert_eq!(world.social.display_name_in(scope, &id).contains("Tester"), shown);
+        assert_eq!(names.get_in(scope, &id).unwrap().user_name().contains("Tester"), shown);
+        assert_eq!(names.complete_in(scope, &id).unwrap().contains("Tester"), shown);
+        shown
+    }
+
+    #[test]
+    fn shownames_rule_by_scope_exception_and_presence() {
+        let id = Uuid::from_u128(7);
+        let other = Uuid::from_u128(8);
+        let creator = |owner| NameScope::Creator { owner };
+        for nearby in [false, true] {
+            // an exception (or oneself) is named everywhere
+            for scope in [NameScope::World, NameScope::Owner, creator(id), creator(other), NameScope::Roster] {
+                assert!(scope.shows(&id, true, || nearby), "{scope:?}");
+            }
+            assert!(!NameScope::World.shows(&id, false, || nearby));
+            assert!(!NameScope::Owner.shows(&id, false, || nearby));
+            assert!(NameScope::Roster.shows(&id, false, || nearby));
+            // the creator who owns the object is its owner
+            assert!(!creator(id).shows(&id, false, || nearby));
+            assert_eq!(creator(other).shows(&id, false, || nearby), !nearby);
+            assert_eq!(creator(Uuid::nil()).shows(&id, false, || nearby), !nearby);
+        }
+    }
+
+    #[test]
+    fn shownames_hides_an_avatar_around_us_in_the_world() {
+        let (mut world, near) = shownames_world();
+        assert!(!named(&world, NameScope::World, near));
+        // a lookup naming no place is the world's
+        assert!(!world.social.name_of(&near).contains("Tester"));
+        assert!(!world.social.avatar_names.get(&near).unwrap().display_name.contains("Tester"));
+        // strict default: so is someone the world names while they are away
+        assert!(!named(&world, NameScope::World, FRIEND));
+        assert!(!named(&world, NameScope::World, MEMBER));
+        // ourselves, always
+        let me = world.agent_id;
+        assert!(world.rlva_shows_name(NameScope::World, me));
+        // nothing is hidden without the restriction, nor without RLVa
+        restrict(&mut world, "shownames=y");
+        world.refresh_rlva_privacy();
+        assert!(named(&world, NameScope::World, near));
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        assert!(!named(&world, NameScope::World, near));
+        world.rlva.configure(false);
+        world.refresh_rlva_privacy();
+        assert!(named(&world, NameScope::World, near));
+        assert!(named(&world, NameScope::Owner, near));
+    }
+
+    #[test]
+    fn shownames_leaves_a_friend_who_is_not_around_named_in_the_friends_list() {
+        let (world, _) = shownames_world();
+        assert!(named(&world, NameScope::Roster, FRIEND));
+        assert_eq!(world.social.name_in(NameScope::Roster, &FRIEND), "Friend Tester");
+        // the list alone: the same friend stays anonymous anywhere else
+        assert!(!named(&world, NameScope::World, FRIEND));
+        assert!(!named(&world, NameScope::Owner, FRIEND));
+    }
+
+    #[test]
+    fn shownames_leaves_a_friend_around_us_named_in_the_list_and_untold_in_the_world() {
+        let (mut world, near) = shownames_world();
+        world.social.friends.push(crate::world::social::Friend {
+            id: near,
+            online: true,
+            rights_given: 0,
+            rights_has: 0,
+        });
+        let handle = world.main_region.unwrap();
+        world.coarse.entry(handle).or_default().push((near, glam::Vec3::ONE));
+        world.refresh_rlva_privacy();
+        assert!(named(&world, NameScope::Roster, near));
+        assert!(!named(&world, NameScope::World, near));
+        // the row tells nothing of where they stand: around us they would
+        // read online, the list knows no status of theirs
+        use crate::ui::presence::{self, Status};
+        let told = presence::of(&world, &near);
+        assert_ne!(told, Status::Unknown);
+        assert_eq!(presence::of_in(&world, NameScope::Roster, &near), Status::Unknown);
+        // once named in the world (an exception), the row says it again
+        restrict(&mut world, &format!("shownames:{near}=add"));
+        world.refresh_rlva_privacy();
+        assert_eq!(presence::of_in(&world, NameScope::Roster, &near), told);
+    }
+
+    #[test]
+    fn shownames_leaves_a_group_member_named_in_the_member_list() {
+        let (world, near) = shownames_world();
+        // no friend of ours, around or not
+        assert!(named(&world, NameScope::Roster, MEMBER));
+        assert_eq!(world.social.display_name_in(NameScope::Roster, &MEMBER), "Member Tester");
+        assert!(named(&world, NameScope::Roster, near));
+        assert!(!named(&world, NameScope::World, MEMBER));
+    }
+
+    #[test]
+    fn shownames_hides_an_object_owner_around_us_or_not() {
+        let (world, near) = shownames_world();
+        assert!(!named(&world, NameScope::Owner, near));
+        // "nearby only" would name these two: the Legacy Viewer hides them
+        assert!(!named(&world, NameScope::Owner, FRIEND));
+        assert!(!named(&world, NameScope::Owner, MAKER));
+        let me = world.agent_id;
+        assert!(world.rlva_shows_name(NameScope::Owner, me));
+    }
+
+    #[test]
+    fn shownames_hides_an_object_creator_who_owns_it_or_is_around_us() {
+        let (mut world, near) = shownames_world();
+        let creator = |owner| NameScope::Creator { owner };
+        // away, and someone else's object (or a group's, or nobody's)
+        assert!(named(&world, creator(FRIEND), MAKER));
+        assert!(named(&world, creator(near), MAKER));
+        assert!(named(&world, creator(Uuid::nil()), MAKER));
+        // their own object
+        assert!(!named(&world, creator(MAKER), MAKER));
+        // around us, loaded as an avatar
+        assert!(!named(&world, creator(FRIEND), near));
+        // around us, known by the region's coarse locations alone
+        let handle = world.main_region.unwrap();
+        world.coarse.entry(handle).or_default().push((MAKER, glam::Vec3::ONE));
+        world.refresh_rlva_privacy();
+        assert!(!named(&world, creator(FRIEND), MAKER));
+        world.coarse.clear();
+        world.refresh_rlva_privacy();
+        assert!(named(&world, creator(FRIEND), MAKER));
+    }
+
+    #[test]
+    fn a_shownames_exception_names_its_resident_in_every_place() {
+        let (mut world, near) = shownames_world();
+        let creator = |owner| NameScope::Creator { owner };
+        for id in [near, MAKER] {
+            restrict(&mut world, &format!("shownames:{id}=add"));
+            world.refresh_rlva_privacy();
+            for scope in [NameScope::World, NameScope::Owner, creator(id), creator(FRIEND), NameScope::Roster] {
+                assert!(named(&world, scope, id), "{scope:?}");
+            }
+            assert!(world.social.name_of(&id).contains("Tester"));
+            // the exception names its resident alone
+            assert!(!named(&world, NameScope::World, FRIEND));
+            assert!(!named(&world, NameScope::Owner, FRIEND));
+            restrict(&mut world, &format!("shownames:{id}=rem"));
+            world.refresh_rlva_privacy();
+            assert!(!named(&world, NameScope::World, id));
+            assert!(!named(&world, NameScope::Owner, id));
+            assert!(!named(&world, creator(id), id));
+        }
+    }
+
+    #[test]
+    fn shownames_opens_a_profile_from_a_list_that_names_its_resident_only() {
+        let (mut world, near) = shownames_world();
+        let mut profiles = crate::ui::profile::ProfileUi::default();
+        // from the world: nothing opens, around us or not
+        profiles.open(&mut world, near);
+        profiles.open(&mut world, FRIEND);
+        profiles.open_in(&mut world, NameScope::Owner, FRIEND);
+        profiles.open_in(&mut world, NameScope::Creator { owner: MAKER }, MAKER);
+        assert_eq!(profiles.opened(), Vec::<(Uuid, NameScope)>::new());
+        // from the friends list or a group's members
+        profiles.open_in(&mut world, NameScope::Roster, FRIEND);
+        profiles.open_in(&mut world, NameScope::Roster, near);
+        assert_eq!(profiles.opened(), vec![(FRIEND, NameScope::Roster), (near, NameScope::Roster)]);
+        // a later world request does not turn the window into a world one
+        profiles.open(&mut world, FRIEND);
+        assert_eq!(profiles.opened().len(), 2);
+        // ours opens from anywhere
+        let me = world.agent_id;
+        profiles.open(&mut world, me);
+        assert_eq!(profiles.opened().last(), Some(&(me, NameScope::World)));
     }
 }

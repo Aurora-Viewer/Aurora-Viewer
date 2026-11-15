@@ -14,6 +14,7 @@
 use super::menu;
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::names::NameScope;
 use crate::world::objects::ObjKey;
 use glam::Vec3;
 use uuid::Uuid;
@@ -299,6 +300,10 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// "View profile" from a list of people known besides the world
+    /// (friends list, group members): it opens under RLVa's `@shownames`
+    /// too, as these lists name their residents (`NameScope::Roster`).
+    RosterProfile(Uuid),
     /// Save as › Collada / OBJ (Object.ExportCollada) of the prim's
     /// selection.
     SaveAs(Uuid, crate::build::export::Format),
@@ -825,13 +830,29 @@ fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::Voice
 /// the profile; a resident in our voice channel gets their voice volume
 /// first.
 pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, kind: AvatarList) {
-    avatar_menu_reporting(ui, p, world, id, kind, None);
+    avatar_menu_reporting(ui, p, world, id, kind, NameScope::World, None);
+}
+
+/// `avatar_list_menu` for a row of a list of people known besides the
+/// world (friends list, group members): RLVa's `@shownames` restricts
+/// neither their menu nor their profile there (menu_fs_contacts_friends.xml
+/// and the group panels have no RlvActions::canShowName test).
+pub fn avatar_roster_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, kind: AvatarList) {
+    avatar_menu_reporting(ui, p, world, id, kind, NameScope::Roster, None);
 }
 
 /// The menu of the sender of a chat line: its "Report abuse" carries the
 /// line (menu_avatar_icon.xml report_abuse, LLFloaterReporter::showFromChat).
 pub fn chat_sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, line: &crate::world::ChatLine) {
-    avatar_menu_reporting(ui, p, world, id, AvatarList::Name, Some(crate::report_abuse::chat_target(id, line)));
+    avatar_menu_reporting(
+        ui,
+        p,
+        world,
+        id,
+        AvatarList::Name,
+        NameScope::World,
+        Some(crate::report_abuse::chat_target(id, line)),
+    );
 }
 
 /// RlvActions::canPayAvatar (rlvactions.cpp): under @pay the "Pay" of a
@@ -857,6 +878,7 @@ fn avatar_menu_reporting(
     world: &World,
     id: Uuid,
     kind: AvatarList,
+    scope: NameScope,
     report: Option<crate::report_abuse::ReportTarget>,
 ) {
     let ctx = ui.ctx().clone();
@@ -875,8 +897,25 @@ fn avatar_menu_reporting(
     let travel = !world.agent.is_sitting() && crate::autopilot::avatar_position(world, id).is_some();
     let following = world.following_avatar == Some(id);
     let online = friend.as_ref().is_none_or(|f| f.online);
-    let name = world.social.name_of(&id);
-    if !world.rlva_can_name(id) {
+    // A list of people known besides the world names its resident: while
+    // RLVa hides them around us, nothing of the menu points at them in the
+    // world, or the row would tell which stranger they are. Stricter than
+    // the Legacy Viewer's friends menu (menu_fs_contacts_friends.xml), whose
+    // "Zoom in" has no `@shownames` test.
+    let unnamed_around = scope == NameScope::Roster && !world.rlva_shows_name(NameScope::World, id);
+    // The menu of a name (menu_url_agent.xml: names in a text and in a name
+    // list) greys "Show profile" and "Zoom in" under `@shownames`, for
+    // anyone but oneself (FSCommon::checkIsActionEnabled, fscommon.cpp).
+    let name_menu_restricted = kind == AvatarList::Name && id != world.agent_id && world.rlva.has("shownames");
+    let here = here && !unnamed_around && !name_menu_restricted;
+    let travel = travel && !unnamed_around;
+    let mappable = if unnamed_around {
+        world.social.can_map_friend(id)
+    } else {
+        mappable
+    };
+    let name = world.social.name_in(scope, &id);
+    if !world.rlva_shows_name(scope, id) {
         // RLVa's restricted nearby/name menu exposes no profile, identity
         // clipboard or conversation-history routes (RlvActions::canShowName).
         if menu::item_if(
@@ -905,8 +944,11 @@ fn avatar_menu_reporting(
         return;
     }
     let profile = |ui: &mut egui::Ui| {
-        if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
-            act(CtxAction::Profile(id));
+        if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), !name_menu_restricted) {
+            act(match scope {
+                NameScope::Roster => CtxAction::RosterProfile(id),
+                _ => CtxAction::Profile(id),
+            });
         }
     };
     // "can_send_im" of FSNameListAvatarMenu: RLVa @startim greys IM and the

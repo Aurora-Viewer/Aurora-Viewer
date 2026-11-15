@@ -17,7 +17,7 @@ use super::{menu, widgets};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::{self, ContactSets};
-use crate::world::names::{AvatarName, NameOptions};
+use crate::world::names::{AvatarName, NameOptions, NameScope};
 use crate::world::social::rights;
 use aurora_net::NetCommand;
 use egui::{Color32, RichText, Sense, Stroke, Vec2};
@@ -101,6 +101,10 @@ pub enum ContactsAction {
     /// (LLAvatarActions::startCall / startAdhocCall).
     Call(Vec<Uuid>),
     Profile(Uuid),
+    /// "Profile" of the friends tab: it opens under RLVa's `@shownames`
+    /// too, as the list names its friends (`NameScope::Roster`;
+    /// FSFloaterContacts::onViewProfileButtonClicked has no test).
+    RosterProfile(Uuid),
     OfferTeleport(Uuid),
     /// The OfferTeleport prompt was confirmed: send the invitation.
     SendTeleportOffer {
@@ -782,7 +786,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
         .friends
         .iter()
         .map(|f| {
-            let (user, display, full) = match names.get(&f.id) {
+            let (user, display, full) = match names.get_in(NameScope::Roster, &f.id) {
                 Some(n) => (
                     n.user_name_for_display(&o),
                     n.display(&o),
@@ -815,7 +819,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                 color,
             }
         })
-        .filter(|r| super::people::matches_name(world, &r.id, &r.full, filter))
+        .filter(|r| super::people::matches_name(world, NameScope::Roster, &r.id, &r.full, filter))
         .collect();
     // sortFriendList: by username or display name, then online first
     rows.sort_by_cached_key(|r| {
@@ -1067,7 +1071,17 @@ fn friend_menu(
 ) {
     let friend = world.social.friends.iter().find(|f| f.id == id);
     let online = friend.is_some_and(|f| f.online);
-    let here = context::avatar_position(world, &id).is_some();
+    // The list names the friend: while RLVa hides them around us, nothing
+    // of the menu points at them in the world, or it would tell which
+    // stranger they are (stricter than menu_fs_contacts_friends.xml, whose
+    // "Zoom in" has no `@shownames` test). Map rights still locate them.
+    let named_around = world.rlva_shows_name(NameScope::World, id);
+    let here = named_around && context::avatar_position(world, &id).is_some();
+    let locatable = if named_around {
+        world.can_locate_avatar(id)
+    } else {
+        world.social.can_map_friend(id)
+    };
     // the selection when the clicked row is part of it
     let ids = if st.friends_sel.contains(&id) {
         st.friends_sel.clone()
@@ -1075,7 +1089,7 @@ fn friend_menu(
         vec![id]
     };
     if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
-        actions.push(ContactsAction::Profile(id));
+        actions.push(ContactsAction::RosterProfile(id));
     }
     if menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-contacts-send-im")) {
         actions.push(ContactsAction::Im(id));
@@ -1103,16 +1117,10 @@ fn friend_menu(
     if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
         context::request(ui.ctx(), CtxAction::ZoomAvatar(id));
     }
-    if menu::item_if(
-        ui,
-        p,
-        "location-filled",
-        aurora_i18n::tr!("common-teleport-to"),
-        world.can_locate_avatar(id),
-    ) {
+    if menu::item_if(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-to"), locatable) {
         context::request(ui.ctx(), CtxAction::TeleportToAvatar(id));
     }
-    if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), world.can_locate_avatar(id)) {
+    if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), locatable) {
         context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }
     if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
@@ -1136,7 +1144,7 @@ fn friend_menu(
     }
     menu::separator(ui, p);
     if menu::item(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-name")) {
-        ui.ctx().copy_text(world.social.name_of(&id));
+        ui.ctx().copy_text(world.social.name_in(NameScope::Roster, &id));
     }
     if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-url")) {
         ui.ctx().copy_text(format!("secondlife:///app/agent/{id}/about"));
@@ -1303,7 +1311,7 @@ fn friend_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Contac
         aurora_i18n::tr!("ui-contacts-show-their-picture-groups-and-other-useful-information"),
         n == 1,
     ) {
-        actions.push(ContactsAction::Profile(sel[0]));
+        actions.push(ContactsAction::RosterProfile(sel[0]));
     }
     if side_button(
         ui,
@@ -1718,7 +1726,7 @@ fn sets_tab(
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
     let filter = st.set_filter.trim().to_lowercase();
-    members.retain(|id| super::people::matches_name(world, id, &name_of(id), &filter));
+    members.retain(|id| super::people::matches_name(world, NameScope::World, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
         members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));

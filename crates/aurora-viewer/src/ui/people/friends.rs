@@ -13,6 +13,7 @@ use super::rows::{self, RICH_GAP, RICH_H};
 use super::{Ctx, PeopleUi, SORT_NAME, SORT_STATUS, SORT_USERNAME};
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, widgets};
+use crate::world::names::NameScope;
 use crate::world::social::{Friend, rights};
 use egui::{Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
@@ -62,7 +63,23 @@ const RECEIVED: [(i32, &str, &str); 2] = [
 
 /// The friends tab: the list, and the sheet of the friend held.
 pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi) {
-    super::split(ui, c, data, st, "people-friends-list", list, super::person_sheet);
+    super::split(ui, c, data, st, "people-friends-list", list, friend_sheet);
+}
+
+/// The sheet of the friend held: it names them as the list does.
+fn friend_sheet(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, id: Uuid) -> bool {
+    super::sheet::show(
+        ui,
+        c.p,
+        c.world,
+        data,
+        st,
+        id,
+        NameScope::Roster,
+        false,
+        !c.contact_sheet_on_click,
+        c.actions,
+    )
 }
 
 /// A friend's place in the list, as the row shows it.
@@ -85,8 +102,11 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
     let names = &world.social.avatar_names;
     let o = names.options;
     // where the friends around us are (the radar's sightings)
+    // never of a friend RLVa hides around us: the list names them, and their
+    // region would tell which friend the stranger next to us is
     let regions: HashMap<Uuid, String> = crate::world::radar::sightings(world)
         .into_iter()
+        .filter(|s| world.rlva_shows_name(NameScope::World, s.id))
         .filter_map(|s| Some((s.id, world.regions.get(&s.region)?.name.clone())))
         .collect();
     let mut out: Vec<Line> = world
@@ -95,17 +115,17 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
         .iter()
         .filter(|f| set.is_none_or(|s| world.contact_sets.friend_sets(&f.id).iter().any(|x| x == s)))
         .map(|f| {
-            let (name, full, username) = match names.get(&f.id) {
+            let (name, full, username) = match names.get_in(NameScope::Roster, &f.id) {
                 Some(n) => {
                     let username = n.user_name_for_display(&o);
                     (n.display(&o), n.complete(&o), username)
                 }
                 None => {
-                    let legacy = world.social.name_of(&f.id);
+                    let legacy = world.social.name_in(NameScope::Roster, &f.id);
                     (legacy.clone(), legacy.clone(), legacy)
                 }
             };
-            let status = crate::ui::presence::of(world, &f.id);
+            let status = crate::ui::presence::of_in(world, NameScope::Roster, &f.id);
             let state = if f.online {
                 status.label()
             } else {
@@ -141,7 +161,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
                 set,
             }
         })
-        .filter(|l| super::matches_name(world, &l.friend.id, &l.full, filter))
+        .filter(|l| super::matches_name(world, NameScope::Roster, &l.friend.id, &l.full, filter))
         .collect();
     let sort = c.friends.sort;
     let mut friends: Vec<Friend> = out.iter().map(|l| l.friend.clone()).collect();
@@ -407,7 +427,17 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     // LLAvatarListItem::showPermissions / updateChildren reserve their slots.
     let slot = rows::actions_slot(rect, left, right, count, rows::BUTTON);
     let actions = hot.then(|| (quick_actions(f), slot));
-    rows::picture(ui, p, c.world, identity, data.pics.get(&f.id), f.id, &line.name, false);
+    rows::picture(
+        ui,
+        p,
+        c.world,
+        NameScope::Roster,
+        identity,
+        data.pics.get(&f.id),
+        f.id,
+        &line.name,
+        false,
+    );
     let mut clicked_right = false;
     if let Some(cell) = end.items.first() {
         received(ui, p, f, *cell);
@@ -488,7 +518,7 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
         .zip(rows::actions(ui, c.p, slot, buttons, ("people-friend-act", f.id)))
     {
         match *icon {
-            "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
+            "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::RosterProfile(f.id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
             "car-filled" if resp.clicked() => context::request(ui.ctx(), CtxAction::RequestTeleport(f.id)),
@@ -503,7 +533,7 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
             "dots-filled" => {
                 let (p, world) = (c.p, c.world);
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                    context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend);
+                    context::avatar_roster_menu(ui, p, world, f.id, AvatarList::Friend);
                 });
             }
             _ => {}

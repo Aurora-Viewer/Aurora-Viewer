@@ -756,6 +756,7 @@ pub fn settings_list(
             .to_owned(),
         Shown::Personal => aurora_i18n::tr!("ui-environment-personal-lighting").to_owned(),
     };
+    let selected_weather = matches!(shown, Shown::Item(id) if catalog.choice_of(kind, id).is_some_and(|c| c.weather));
     let mut picked = None;
     // `width` at most: a long name is cut, never widening its window
     let size = Vec2::new(width, ui.spacing().interact_size.y);
@@ -778,7 +779,7 @@ pub fn settings_list(
         egui::ComboBox::from_id_salt(salt)
             .width(width)
             .height(LIST_H + 40.0)
-            .selected_text(RichText::new(text).size(12.0).color(p.ink))
+            .selected_text(tagged_name(p, &text, selected_weather, p.ink))
             .truncate()
             // a click in the search field must not close the list
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -838,7 +839,7 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if widgets::search_list_item(ui, on, RichText::new(&c.name).size(12.0)).clicked() {
+                        if widgets::search_list_item(ui, on, tagged_name(p, &c.name, c.weather, ui.visuals().text_color())).clicked() {
                             if !on {
                                 picked = Some(c.asset);
                             }
@@ -856,6 +857,20 @@ pub fn settings_list(
         picked = env_select::step(list, env_select::shown_index(list, shown), true);
     }
     picked
+}
+
+/// A settings item's name as the lists show it (the catalog's, without its
+/// code): one carrying Aurora Weather tagged " [Aurora Weather]" as the
+/// inventory's rows are (testers looked for which of their skies set the
+/// weather); any other as it is.
+fn tagged_name(p: &Palette, name: &str, weather: bool, color: egui::Color32) -> egui::WidgetText {
+    if !weather {
+        return RichText::new(name).size(12.0).color(color).into();
+    }
+    let font = egui::FontId::proportional(12.0);
+    let mut job = widgets::name_with_suffix(name, "", font.clone(), color);
+    super::inventory::weather_tag(p, &mut job, font);
+    job.into()
 }
 
 /// A list to open on its next frame, with this text in its search field

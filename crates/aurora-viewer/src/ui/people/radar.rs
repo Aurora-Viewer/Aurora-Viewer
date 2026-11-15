@@ -424,7 +424,7 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
             let found = if anonymous {
                 filter.is_empty() || name.to_lowercase().contains(filter)
             } else {
-                super::matches_name(world, &e.id, &name, filter)
+                super::matches_name(world, crate::world::names::NameScope::World, &e.id, &name, filter)
             };
             if !found {
                 return None;
