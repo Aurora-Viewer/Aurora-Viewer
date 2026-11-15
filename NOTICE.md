@@ -80,6 +80,7 @@ LGPL 2.1, distributed here under GPL-3.0-or-later as described above.
 | Group titles, `newview/fsfloatergrouptitles.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/group_titles.rs` | Originally LGPL 2.1 |
 | Place details, `newview/fsfloaterplacedetails.cpp` — Copyright © 2012 Ansariel Hiller | `aurora-viewer/src/ui/place_details.rs`, `ui/places.rs`, `world/place_details.rs` | Originally LGPL 2.1 |
 | Partial inventory, `newview/fsfloaterpartialinventory.cpp` — Copyright © 2022 Ansariel Hiller | `aurora-viewer/src/ui/inventory.rs` | Originally LGPL 2.1 |
+| Favorite wearables, `newview/fsfloaterwearablefavorites.cpp` — Copyright © 2018 Ansariel Hiller | `aurora-viewer/src/world/wearable_favorites.rs`, `ui/appearance/favorites.rs` | Originally LGPL 2.1 |
 | Stream title, `newview/fsfloaterstreamtitle.cpp` — Copyright © 2022 Ansariel Hiller; `streamtitledisplay.cpp` — Copyright © 2010 Katharine Berry, © 2013 Cinder Roxley | `aurora-viewer/src/stream_title.rs`, `ui/stream_title.rs`, `app.rs` | Originally LGPL 2.1 |
 | Desktop notifications, `newview/growlmanager.cpp` — Copyright © 2010 Katharine Berry | `aurora-viewer/src/system_notify.rs`, `app/attention.rs`, `world/attention.rs` | Originally LGPL 2.1 |
 | Search, `newview/fsfloatersearch.cpp` — Copyright © 2012 Cinder Roxley | `aurora-net/src/search.rs`; `aurora-viewer/src/ui/search.rs`, `ui/search/details.rs`, `world/search.rs` | Originally LGPL 2.1 |
