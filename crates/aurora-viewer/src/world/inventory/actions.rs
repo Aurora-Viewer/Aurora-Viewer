@@ -84,6 +84,24 @@ pub fn task_notecard_mask(item: &InvItem, agent: Uuid, member: bool, manipulate:
     }
 }
 
+/// Whether an item of an object's contents opens in a preview
+/// (indra/newview/llpanelobjectinventory.cpp): a texture always
+/// (LLTaskTextureBridge::openItem); a sound only when the agent may copy it
+/// (LLTaskSoundBridge::buildContextMenu greys Task Open out without
+/// isItemCopyable: LLAgent::allowOperation with object manipulation, the
+/// reading of [`task_notecard_mask`]); an animation only from an object the
+/// agent may modify, or for a god (LLTaskAnimationBridge::openItem: the
+/// preview gets no item otherwise, so nothing could play). Notecards and
+/// scripts keep their own rules.
+pub fn task_preview_allowed(item: &InvItem, agent: Uuid, member: bool, manipulate: bool, object_modify: bool, god_level: u8) -> bool {
+    match item.asset_type {
+        0 => true,
+        1 => with_god(task_notecard_mask(item, agent, member, manipulate), god_level) & COPY != 0,
+        20 => object_modify || god_level > 0,
+        _ => false,
+    }
+}
+
 /// [`agent_mask`] for the agent whose inventory `inv` is.
 pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
     agent_mask(item, inv.owner)
@@ -1111,7 +1129,11 @@ pub fn request_tree(inv: &mut Inventory, root: Uuid) -> bool {
         if f.state != FetchState::Fetched {
             complete = false;
         }
-        if f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
+        // Only folders never asked for: this runs every frame while a window
+        // loads its tree, and a folder whose read failed would be asked
+        // again each frame. Failed reads come back through the background
+        // walk's retries and `Inventory::retry_failed`.
+        if !inv.too_big.contains(&id) && f.state == FetchState::Unknown && requests.len() + inv.queue.len() < 16 {
             requests.push(id);
         }
         todo.extend(f.children.iter().copied());

@@ -1,4 +1,4 @@
-//! AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit: experiences
+//! AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive|edit|scenes: experiences
 //! asking for permissions without a grid. In SL, llRequestExperiencePermissions
 //! can follow any event of the script: a click (touch_start), walking into
 //! an object or a phantom volume (collision_start, volume_detect), arriving
@@ -100,6 +100,7 @@ enum Mode {
     Walk,
     Arrive,
     Edit,
+    Scenes,
 }
 
 pub struct ExperienceDemo {
@@ -137,11 +138,15 @@ impl ExperienceDemo {
             "walk" => Mode::Walk,
             "arrive" => Mode::Arrive,
             "edit" => Mode::Edit,
+            "scenes" => Mode::Scenes,
             _ => Mode::Click,
         };
         let mut permissions = HashMap::new();
         if value == "blocked" {
             permissions.insert(EXPERIENCE, ExperiencePermission::Blocked);
+        }
+        if mode == Mode::Scenes {
+            permissions.insert(GREETER_EXPERIENCE, ExperiencePermission::Allowed);
         }
         Some(Self::new(mode, permissions))
     }
@@ -189,7 +194,7 @@ impl ExperienceDemo {
                 Mode::Walk => {
                     world.apply(pad());
                 }
-                Mode::Arrive => {}
+                Mode::Arrive | Mode::Scenes => {}
                 _ => {
                     world.apply(door(world.agent.position));
                 }
@@ -212,6 +217,15 @@ impl ExperienceDemo {
                 log::info!("demo experience: the club's profile opens on its Edit tab");
                 None
             }
+            Mode::Scenes => match frame {
+                620 => Some(Reply::Events(vec![environment_scene(GREETER_EXPERIENCE, false)])),
+                900 => Some(Reply::Events(vec![environment_scene(GREETER_EXPERIENCE, true)])),
+                1200 => Some(Reply::Events(vec![NetEvent::ExperienceEnvironment {
+                    experience: GREETER_EXPERIENCE,
+                    message: llsd_map! { "action" => "ClearEnvironment", "action_data" => llsd_map! { "transition_time" => 1.0 } },
+                }])),
+                _ => None,
+            },
             Mode::Auto | Mode::Profile | Mode::Arrive if !self.asked && frame >= AUTO_FRAME => {
                 self.asked = true;
                 let source = if self.mode == Mode::Arrive {
@@ -423,6 +437,11 @@ fn details(id: Uuid) -> ExperienceDetails {
 /// llSetEnvironment of a land experience: a violet sunset over the sky and a
 /// red water fog, over 3 s (PushPartialEnvironment).
 fn environment(experience: Uuid) -> NetEvent {
+    environment_scene(experience, false)
+}
+
+/// Alternate scenes of one controller, then restore the shared environment.
+fn environment_scene(experience: Uuid, blue: bool) -> NetEvent {
     let rgb = |r: f64, g: f64, b: f64| Llsd::Array(vec![r.into(), g.into(), b.into()]);
     NetEvent::ExperienceEnvironment {
         experience,
@@ -432,11 +451,11 @@ fn environment(experience: Uuid) -> NetEvent {
                 "transition_time" => 3.0,
                 "settings" => llsd_map! {
                     "sky" => llsd_map! {
-                        "sunlight_color" => rgb(2.0, 0.6, 1.4),
-                        "blue_horizon" => rgb(0.9, 0.2, 0.6),
-                        "blue_density" => rgb(0.5, 0.1, 0.5),
+                        "sunlight_color" => if blue { rgb(0.6, 1.2, 2.0) } else { rgb(2.0, 0.6, 1.4) },
+                        "blue_horizon" => if blue { rgb(0.1, 0.5, 1.0) } else { rgb(0.9, 0.2, 0.6) },
+                        "blue_density" => if blue { rgb(0.1, 0.3, 0.8) } else { rgb(0.5, 0.1, 0.5) },
                     },
-                    "water" => llsd_map! { "water_fog_color" => rgb(0.6, 0.05, 0.05) },
+                    "water" => llsd_map! { "water_fog_color" => if blue { rgb(0.1, 0.4, 0.7) } else { rgb(0.6, 0.05, 0.05) } },
                 },
             },
         },

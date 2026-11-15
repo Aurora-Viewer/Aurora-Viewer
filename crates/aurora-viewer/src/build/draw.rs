@@ -261,3 +261,72 @@ pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let f = |i: usize| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * t) as u8;
     Color32::from_rgba_unmultiplied(f(0), f(1), f(2), f(3))
 }
+
+/// Segments of each circle of `light_radius_circles`.
+pub const CIRCLE_SEGMENTS: usize = 48;
+
+/// Three great circles of a sphere (around X, Y and Z), as segments.
+pub fn light_radius_circles(center: Vec3, radius: f32) -> impl Iterator<Item = [Vec3; 2]> {
+    let step = std::f32::consts::TAU / CIRCLE_SEGMENTS as f32;
+    [(Vec3::Y, Vec3::Z), (Vec3::Z, Vec3::X), (Vec3::X, Vec3::Y)]
+        .into_iter()
+        .flat_map(move |(u, v)| {
+            let at = move |i: usize| {
+                let (s, c) = (i as f32 * step).sin_cos();
+                center + (u * c + v * s) * radius
+            };
+            (0..CIRCLE_SEGMENTS).map(move |i| [at(i), at(i + 1)])
+        })
+}
+
+/// A reflection probe's volume (LLReflectionMap::update): a box probe
+/// fills its prim's oriented box; a sphere probe reaches half the prim's
+/// X scale.
+pub fn probe_volume_edges(pos: Vec3, rot: glam::Quat, scale: Vec3, boxed: bool) -> Vec<[Vec3; 2]> {
+    if boxed {
+        let half = scale * 0.5;
+        let corner = |x: f32, y: f32, z: f32| pos + rot * (half * Vec3::new(x, y, z));
+        let mut out = Vec::with_capacity(12);
+        for a in [-1.0f32, 1.0] {
+            for b in [-1.0f32, 1.0] {
+                out.push([corner(-1.0, a, b), corner(1.0, a, b)]);
+                out.push([corner(a, -1.0, b), corner(a, 1.0, b)]);
+                out.push([corner(a, b, -1.0), corner(a, b, 1.0)]);
+            }
+        }
+        out
+    } else {
+        light_radius_circles(pos, scale.x * 0.5).collect()
+    }
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::*;
+
+    #[test]
+    fn light_radius_circles_stay_on_the_sphere_and_close() {
+        let c = Vec3::new(1.0, 2.0, 3.0);
+        let segments: Vec<_> = light_radius_circles(c, 4.0).collect();
+        assert_eq!(segments.len(), 3 * CIRCLE_SEGMENTS);
+        for circle in segments.chunks(CIRCLE_SEGMENTS) {
+            assert!(circle[0][0].abs_diff_eq(circle[CIRCLE_SEGMENTS - 1][1], 1e-4));
+            assert!(
+                circle
+                    .iter()
+                    .all(|[a, b]| (a.distance(c) - 4.0).abs() < 1e-4 && (b.distance(c) - 4.0).abs() < 1e-4)
+            );
+        }
+    }
+
+    #[test]
+    fn probe_volumes_follow_the_box_or_half_the_x_scale() {
+        let rot = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let edges = probe_volume_edges(Vec3::ZERO, rot, Vec3::new(4.0, 2.0, 6.0), true);
+        assert_eq!(edges.len(), 12);
+        let far = edges.iter().flatten().fold(Vec3::ZERO, |m, p| m.max(p.abs()));
+        assert!(far.abs_diff_eq(Vec3::new(1.0, 2.0, 3.0), 1e-4), "turned box: {far}");
+        let sphere = probe_volume_edges(Vec3::ZERO, rot, Vec3::new(10.0, 2.0, 2.0), false);
+        assert!(sphere.iter().flatten().all(|p| (p.length() - 5.0).abs() < 1e-4));
+    }
+}
