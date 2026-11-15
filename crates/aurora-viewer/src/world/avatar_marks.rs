@@ -133,7 +133,13 @@ mod tests {
         let names: Vec<MarkColor> = LEGACY_COLORS.iter().map(|(name, _)| *name).collect();
         assert_eq!(
             names,
-            [MarkColor::Red, MarkColor::Green, MarkColor::Blue, MarkColor::Purple, MarkColor::Yellow]
+            [
+                MarkColor::Red,
+                MarkColor::Green,
+                MarkColor::Blue,
+                MarkColor::Purple,
+                MarkColor::Yellow
+            ]
         );
         // colors.xml: Red 0.729 0 0.121, LtYellow 1 1 .79
         assert_eq!(LEGACY_COLORS[0].1, [186, 0, 31]);

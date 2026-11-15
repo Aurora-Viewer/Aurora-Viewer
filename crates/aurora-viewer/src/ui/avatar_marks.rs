@@ -23,7 +23,8 @@ const RING: f32 = 2.0;
 /// A mark's colour as the menus and the lists draw it.
 pub fn color(rgb: Rgb) -> Color32 {
     let [r, g, b] = rgb;
-    Color32::from_rgb(r, g, b) // theme-guard: content — the colour the user marked a resident with
+    // the colour the user marked a resident with: content, not theme
+    Color32::from_rgb(r, g, b)
 }
 
 fn label(name: MarkColor) -> &'static str {
@@ -109,7 +110,7 @@ impl CustomMark {
         CustomMark {
             ids,
             color,
-            state: widgets::color::ColorPickState::new(egui::Id::new(WINDOW), color),
+            state: widgets::color::ColorPickState::new(egui::Id::unique(WINDOW), color),
             raise: true,
         }
     }
@@ -150,11 +151,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, picker: &mut Op
             let rgb = mark.rgb();
             world.avatar_marks.set(&mark.ids, rgb);
         }
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-avatar-mark-private"))
-                .size(11.0)
-                .color(p.muted),
-        );
+        ui.label(RichText::new(aurora_i18n::tr!("ui-avatar-mark-private")).size(11.0).color(p.muted));
     });
     if std::mem::take(&mut mark.raise) {
         widgets::bring_floater_front(ctx, WINDOW);

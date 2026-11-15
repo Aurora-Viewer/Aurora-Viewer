@@ -93,8 +93,14 @@ fn the_radar_menus_mark_one_resident_or_several() {
     let mut w = world();
     let red = crate::world::avatar_marks::LEGACY_COLORS[0].1;
     // one resident (menu_fs_radar.xml's MarkAvatar)
-    let asked = mark_choice(&mut |ui| avatar_list_menu(ui, &p, &w, NOVA, AvatarList::Nearby), aurora_i18n::tr!("ui-minimap-red"));
-    assert!(matches!(&asked[..], [CtxAction::MarkAvatars(ids, c)] if ids == &[NOVA] && *c == red), "{asked:?}");
+    let asked = mark_choice(
+        &mut |ui| avatar_list_menu(ui, &p, &w, NOVA, AvatarList::Nearby),
+        aurora_i18n::tr!("ui-minimap-red"),
+    );
+    assert!(
+        matches!(&asked[..], [CtxAction::MarkAvatars(ids, c)] if ids == &[NOVA] && *c == red),
+        "{asked:?}"
+    );
     let asked = mark_choice(
         &mut |ui| avatar_list_menu(ui, &p, &w, NOVA, AvatarList::Nearby),
         aurora_i18n::tr!("ui-minimap-custom-marker"),
@@ -104,10 +110,16 @@ fn the_radar_menus_mark_one_resident_or_several() {
     let several = [NOVA, Uuid::from_u128(0x8)];
     let blue = crate::world::avatar_marks::LEGACY_COLORS[2].1;
     let asked = mark_choice(&mut |ui| avatars_menu(ui, &p, &w, &several), aurora_i18n::tr!("ui-minimap-blue"));
-    assert!(matches!(&asked[..], [CtxAction::MarkAvatars(ids, c)] if ids == &several && *c == blue), "{asked:?}");
+    assert!(
+        matches!(&asked[..], [CtxAction::MarkAvatars(ids, c)] if ids == &several && *c == blue),
+        "{asked:?}"
+    );
     // the clear entries once someone is marked
     w.avatar_marks.set(&several, blue);
-    let asked = mark_choice(&mut |ui| avatars_menu(ui, &p, &w, &several), aurora_i18n::tr!("ui-minimap-clear-marker"));
+    let asked = mark_choice(
+        &mut |ui| avatars_menu(ui, &p, &w, &several),
+        aurora_i18n::tr!("ui-minimap-clear-marker"),
+    );
     assert!(matches!(&asked[..], [CtxAction::ClearMarks(ids)] if ids == &several), "{asked:?}");
     let asked = mark_choice(
         &mut |ui| avatar_list_menu(ui, &p, &w, NOVA, AvatarList::Nearby),
