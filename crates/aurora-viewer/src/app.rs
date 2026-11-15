@@ -70,6 +70,7 @@ mod admin_status;
 mod avatar_studio;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
+mod director;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -868,6 +869,9 @@ pub struct App {
     /// Quick preferences (the toolbar's `quickprefs`).
     quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
     quick_prefs_demo_done: bool,
+    /// The Director (the toolbar's `director`): its camera track and its
+    /// playback (app/director.rs).
+    director: director::DirectorState,
     /// The prim our avatar sat on last frame (app/revoke_on_sit.rs).
     last_seat: Option<uuid::Uuid>,
     /// The login's first arrival is past (app/draw_stepping.rs).
@@ -1922,6 +1926,7 @@ impl App {
             debug_settings_demo_done: false,
             quick_prefs_ui: Default::default(),
             quick_prefs_demo_done: false,
+            director: Default::default(),
             last_seat: None,
             first_arrival_done: false,
             follow_ui: Default::default(),
@@ -5044,6 +5049,11 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
+        // the Director's playback (or a held playhead) ends on Escape,
+        // whatever Escape is bound to
+        if pressed && input == Input::key(winit::keyboard::KeyCode::Escape) && self.director_escape() {
+            return;
+        }
         if (self.avatar_studio.active || self.studio_transition.busy())
             && !self.viewfinder_on()
             && pressed
@@ -10149,6 +10159,7 @@ impl App {
         let shift = self.world.take_origin_shift();
         if shift != Vec3::ZERO {
             self.camera.shift(shift);
+            self.director.d.track.shift(shift);
             if let Some(session) = &mut self.studio_photo_session {
                 session.camera.shift(shift);
             }
@@ -10437,6 +10448,8 @@ impl App {
         self.photo_update(&gfx.renderer);
         self.studio_photo_frame(&mut gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
+        self.director_frame(dt);
+        self.director_pointer(&gfx.window);
         self.photo_isolate_frame(&mut gfx.renderer);
         self.studio_frame(&mut gfx.renderer, dt);
         let photo = self.photo_frame(&mut gfx.renderer);
@@ -10580,6 +10593,7 @@ impl App {
                     self.vr_counter_body_motion();
                 } else {
                     self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                    self.director_aim();
                 }
             }
             if self.demo
@@ -11172,12 +11186,14 @@ impl App {
                 mods,
             );
             self.build.refresh_link_geometry(&self.world, &self.scene);
-            let mut selection_wire = if self.photo_full_frame() {
+            // (nor while the Director's track plays: the world alone)
+            let bare = self.photo_full_frame() || self.director_playing();
+            let mut selection_wire = if bare {
                 Default::default()
             } else {
                 self.build.wire_selection(&self.world, &self.settings.build)
             };
-            if !self.photo_full_frame() {
+            if !bare {
                 // another avatar's attachment the open menu is about, outlined
                 // like a child prim of a selection (it cannot be selected)
                 for idx in self.menu_outline() {
@@ -11188,7 +11204,7 @@ impl App {
                 }
             }
             self.scene.set_wire_selection(&mut self.world, selection_wire);
-            self.scene.selection_silhouettes = if self.photo_full_frame() {
+            self.scene.selection_silhouettes = if bare {
                 Default::default()
             } else {
                 self.build.silhouette_selection(&self.world, &self.settings.build)
@@ -11236,6 +11252,7 @@ impl App {
                     self.vr_counter_body_motion();
                 } else {
                     self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                    self.director_aim();
                 }
                 if let Some(controls) = late_controls {
                     // AgentUpdate must describe the displayed eye and aim,
@@ -17241,6 +17258,18 @@ impl App {
                 );
             }
             Screen::World => {
+                // the Director's track plays: the world alone, and the
+                // countdown of its start delay
+                if self.director_playing() {
+                    if self.context_menu.take().is_some() || self.build.menu_selection {
+                        self.build.release_menu_selection(&self.world);
+                        self.flush_build();
+                    }
+                    self.director_playing_ui(&ctx, &p);
+                    // the exit's question still shows over it
+                    a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    return a;
+                }
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
                     if self.context_menu.take().is_some() || self.build.menu_selection {
@@ -17448,6 +17477,7 @@ impl App {
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
                 ui::beacons::draw_guides(&ctx, &p, &self.world, projector, &self.scene.light_boxes, &self.settings.beacons);
                 ui::portals::labels(&ctx, &p, &self.world, projector);
+                self.director_world(&ctx, &p, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 if self.demo && crate::demo::floating_text::scenario() {
@@ -18278,7 +18308,15 @@ impl App {
                 }
                 // LLPanelStandStopFlying: Stand, Stop flying, Flycam above the
                 // bottom bar
-                a.stand_fly = ui::stand_fly::show(&ctx, &p, self.stand_fly_buttons(), bottom_top);
+                // (the Director's timeline sits above the bar first; what it
+                // asks for is applied with its window, once the skin is free)
+                let strip_top = if self.panels.director {
+                    let live = self.director_live();
+                    ui::director::timeline(&ctx, &p, &mut self.director.d, bottom_top, &live, &mut self.director.pending)
+                } else {
+                    bottom_top
+                };
+                a.stand_fly = ui::stand_fly::show(&ctx, &p, self.stand_fly_buttons(), strip_top);
                 if self.fly_override_caution && ui::fly_override::caution(&ctx, &p) {
                     self.fly_override_caution = false;
                 }
@@ -19873,7 +19911,7 @@ impl App {
                 );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
-                if self.panels.environment || self.panels.quick_prefs {
+                if self.panels.environment || self.panels.quick_prefs || self.panels.director {
                     if !self.env_scan {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
@@ -19901,9 +19939,11 @@ impl App {
                 // Quick preferences' environment block shares the window's
                 // lists and "Personal lighting"
                 let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
+                // so does the Director's
+                let director_actions = self.director_window(&ctx, &p, &mut lighting);
                 self.debug_settings_window(&ctx, &p);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
-                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(reset));
+                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(director_actions).chain(reset));
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);

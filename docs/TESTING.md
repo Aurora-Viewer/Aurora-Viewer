@@ -1012,6 +1012,7 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_DEMO_DIRECTOR=1\|play\|lock` | The Director open on a track of four keyframes around the avatar, that track playing, or the view locked on the avatar's neck (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1064,6 +1065,26 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
+- **`AURORA_DEMO_DIRECTOR=1|play|lock`**: at frame 620, the Director (toolbar
+  `director`) opens on a track of four keyframes around our avatar, 9 s
+  long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
+  in the log). With `1` and a capture at frame 700: the window on the right
+  (Camera, Lock, Keyframe 3, Path, Playback, Picture, Environment folded),
+  the timeline strip above the bottom bar with four diamonds, the third
+  violet, the playhead on it and the camera's speed written on each segment
+  (`m/s`); in the world the turquoise path through four small cameras
+  numbered 1 to 4, each pointing at the avatar, a dot each second, the
+  selected camera violet with its two Bézier handles. `play` plays the
+  track at once without a start delay (`director: playing 4 keyframes`):
+  the capture shows the world alone, no bar, window, name tag or HUD; the
+  log says `director: playback ended at 9.0 s` once the last view has been
+  held a second, and the interface is back. `lock` turns the lock on, on our
+  avatar's neck (`director demo: view locked on our avatar's neck`): the
+  view turns so that the neck sits in the middle of the screen, under an
+  amber ring, wherever the camera stands; the second and third keyframes
+  are locked (their cameras point at the neck), the picture is 2.39:1 (the
+  frame outlined, what lies above and below it dimmed) with the rule of
+  thirds.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
