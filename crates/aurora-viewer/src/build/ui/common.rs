@@ -291,10 +291,18 @@ fn spinner(
         ..Edit::default()
     };
     // TextEdit also reports changed while only its uncommitted text changed.
+    // DragValue may round a number that is only shown to the field's decimals.
+    // That is not a user edit: LLPanelObject::sendScale sends a value that
+    // differs from the object's, so keep the incoming value and send nothing.
     if r.changed() && *v != before {
-        e.changed = true;
-        if !r.dragged() {
-            e.commit = true;
+        let display_same = crate::ui::widgets::clamp_precision(*v, decimals) == crate::ui::widgets::clamp_precision(before, decimals);
+        if display_same && !r.dragged() && !r.drag_stopped() {
+            *v = before;
+        } else {
+            e.changed = true;
+            if !r.dragged() {
+                e.commit = true;
+            }
         }
     }
     if r.drag_stopped() {

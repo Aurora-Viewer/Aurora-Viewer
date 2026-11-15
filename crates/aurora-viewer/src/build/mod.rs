@@ -1252,7 +1252,8 @@ impl BuildTool {
     /// The simulator then holds an undo step per prim, so Ctrl+Z / Ctrl+Y name
     /// every one. A later Transform of those prims is a newer step: drop the
     /// batch so the next undo names the selection's roots alone
-    /// (LLSelectMgr::undo, SEND_ONLY_ROOTS).
+    /// (LLSelectMgr::undo, SEND_ONLY_ROOTS). A spinner restating the live
+    /// numbers is not that later step (`set_transform` sends nothing then).
     fn note_stretch_transform(&mut self, handle: RegionHandle, updates: &[TransformUpdate]) {
         let stretch = updates.len() >= 2 && updates.iter().any(|u| u.scale.is_some()) && updates.iter().all(|u| !u.linked);
         if stretch {
@@ -2883,6 +2884,9 @@ impl BuildTool {
     /// Apply typed values from the Object tab (position / size / rotation
     /// in region coordinates; LLPanelObject::sendPosition / sendScale / sendRotation).
     /// Changed locally at once; sent when `commit` (typed value, end of drag).
+    /// A 3D handle drag owns the selection: the spinners still show the live
+    /// values, but they must not write them back (they round, and a linked
+    /// restatement of the root would scale a one-axis stretch uniformly).
     pub fn set_transform(
         &mut self,
         world: &mut World,
@@ -2892,6 +2896,9 @@ impl BuildTool {
         rot: Option<Quat>,
         commit: bool,
     ) {
+        if self.manip.dragging() {
+            return;
+        }
         let Some(key) = self.selection.first().copied() else { return };
         let Some(idx) = world.objects.index_of(&key) else { return };
         let mode = if size.is_some() { EditMode::Stretch } else { EditMode::Move };
@@ -2939,6 +2946,21 @@ impl BuildTool {
         };
         let limits = world.prim_limits();
         let scale = size.map(|v| limits.clamp3(v));
+        // LLPanelObject::sendPosition / sendScale / sendRotation send only a
+        // value that differs. A spinner restating the live numbers (rounded to
+        // the field's decimals) is not a new edit: sending it as UPD_LINKED_SETS
+        // of the root would drop a one-axis stretch's undo batch and rescale
+        // the children uniformly.
+        let eps = 0.6 * 10f32.powi(-(i32::from(s.decimal_precision.min(7))));
+        let eps = eps.max(1e-5);
+        if let Some(o) = world.objects.get(idx) {
+            let pos_same = pos.is_none() || local_pos.abs_diff_eq(o.position, eps);
+            let rot_same = rot.is_none() || local_rot.abs_diff_eq(o.rotation, 0.001);
+            let scale_same = scale.is_none_or(|sc| sc.abs_diff_eq(o.scale, eps));
+            if pos_same && rot_same && scale_same {
+                return;
+            }
+        }
         if let Some(o) = world.objects.get_mut(idx) {
             o.position = local_pos;
             o.rotation = local_rot;

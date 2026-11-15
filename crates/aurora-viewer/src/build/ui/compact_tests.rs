@@ -966,6 +966,78 @@ fn object_history_drops_the_stretch_children_after_a_later_transform_of_those_pr
 }
 
 #[test]
+fn transform_fields_do_not_send_when_the_object_is_stretched_under_them() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let p = crate::theme::Theme::default().palette();
+    let ctx = egui::Context::default();
+    let idx = world.objects.index_of(&tool.selection[0]).unwrap();
+    let show = |world: &mut World, tool: &mut BuildTool, settings: &mut BuildSettings| {
+        frame(&ctx, vec![], |ui| {
+            object::show_transform(ui, &p, tool, world, settings, Mods::default());
+        });
+    };
+    show(&mut world, &mut tool, &mut settings);
+    tool.out.clear();
+    // a face stretch writes an ugly size every frame while the fields stay open
+    world.objects.get_mut(idx).unwrap().scale = Vec3::new(2.1234567, 1.9876543, 0.5000001);
+    world.objects.get_mut(idx).unwrap().position += Vec3::new(0.01234567, 0.0, 0.0);
+    for _ in 0..4 {
+        show(&mut world, &mut tool, &mut settings);
+    }
+    assert!(
+        !tool.out.iter().any(|command| matches!(
+            command,
+            aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Transform { .. })
+        )),
+        "Live size/position must not be sent back as a linked Transform: {:?}",
+        tool.out
+    );
+    let object = world.objects.get(idx).unwrap();
+    assert!(object.scale.abs_diff_eq(Vec3::new(2.1234567, 1.9876543, 0.5000001), 1e-7));
+}
+
+#[test]
+fn transform_fields_keep_the_stretch_undo_batch_when_they_restate_the_root() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let p = crate::theme::Theme::default().palette();
+    let ctx = egui::Context::default();
+    let root_idx = tool.roots(&world)[0];
+    let root = world.objects.get(root_idx).unwrap();
+    let (root_key, root_id) = (root.key, root.full_id);
+    let child_idx = world
+        .objects
+        .iter()
+        .find(|(idx, object)| *idx != root_idx && !object.is_avatar())
+        .unwrap()
+        .0;
+    let child = world.objects.get_mut(child_idx).unwrap();
+    child.parent_id = root_key.local_id;
+    child.parent_region = root_key.region;
+    let (child_key, child_id) = (child.key, child.full_id);
+    tool.selection = vec![root_key];
+    tool.stretch_prims = vec![root_key, child_key];
+    world.objects.get_mut(root_idx).unwrap().scale = Vec3::new(2.1234567, 2.0, 2.0);
+    for _ in 0..4 {
+        frame(&ctx, vec![], |ui| {
+            object::show_transform(ui, &p, &mut tool, &mut world, &mut settings, Mods::default());
+        });
+    }
+    assert_eq!(tool.stretch_prims, vec![root_key, child_key]);
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(matches!(
+        tool.out.as_slice(),
+        [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if ids == &vec![root_id, child_id]
+    ));
+}
+
+#[test]
 fn focused_text_history_stays_in_singleline_and_multiline_fields_instead_of_the_object() {
     for multiline in [false, true] {
         let (mut world, mut tool, mut settings) = fixture();

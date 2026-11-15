@@ -617,7 +617,7 @@ pub fn show_transform(
             Vec3::new(v.x.clamp(0.0, region.0), v.y.clamp(0.0, region.1), v.z)
         };
         tool.set_transform(world, s, Some(v), None, None, true);
-    } else if e.changed {
+    } else if e.changed && !tool.manip.dragging() {
         tool.set_transform(world, s, Some(Vec3::from_array(pos)), None, None, e.commit);
     }
     let mut size = scale.to_array();
@@ -641,7 +641,7 @@ pub fn show_transform(
     }
     if let Some(v) = paste {
         tool.set_transform(world, s, None, Some(v), None, true);
-    } else if e.changed {
+    } else if e.changed && !tool.manip.dragging() {
         tool.set_transform(world, s, None, Some(Vec3::from_array(size)), None, e.commit);
     }
     let (e, paste, copy) = vec_block(
@@ -664,7 +664,7 @@ pub fn show_transform(
     let to_q = |r: [f32; 3]| Quat::from_euler(EulerRot::ZYX, r[2].to_radians(), r[1].to_radians(), r[0].to_radians());
     if let Some(v) = paste {
         tool.set_transform(world, s, None, None, Some(to_q(v.to_array())), true);
-    } else if e.changed {
+    } else if e.changed && !tool.manip.dragging() {
         tool.set_transform(world, s, None, None, Some(to_q(rot)), e.commit);
     }
 }

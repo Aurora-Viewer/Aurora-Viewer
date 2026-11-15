@@ -3597,6 +3597,23 @@ mod tests {
         tool.undo(&world, false);
         assert!(matches!(tool.out.as_slice(),
             [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]));
+        // The Object tab restates the live numbers as the drag ends. That is
+        // not a newer step: sending it as UPD_LINKED_SETS of the root would
+        // drop the children and rescale them uniformly.
+        tool.out.clear();
+        let (restated_pos, restated_scale, restated_rot) = {
+            let o = world.objects.get(root).unwrap();
+            (o.position, o.scale, o.rotation)
+        };
+        tool.set_transform(&mut world, &settings, Some(restated_pos), None, None, true);
+        tool.set_transform(&mut world, &settings, None, Some(restated_scale), None, true);
+        tool.set_transform(&mut world, &settings, None, None, Some(restated_rot), true);
+        assert!(tool.out.is_empty(), "restating the stretched root is not a new Transform");
+        assert_eq!(tool.stretch_prims, vec![root_key, children[0]]);
+        tool.out.clear();
+        tool.undo(&world, false);
+        assert!(matches!(tool.out.as_slice(),
+            [aurora_net::NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[root_id, child_id]));
         // A later move of the root is a newer step: the next undo names the root alone.
         tool.out.clear();
         tool.send(BuildCmd::Transform {
