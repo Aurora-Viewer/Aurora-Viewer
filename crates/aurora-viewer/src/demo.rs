@@ -281,6 +281,9 @@ pub mod sky;
 /// (AURORA_DEMO_SLIDESHOW).
 #[path = "demo_slideshow.rs"]
 pub mod slideshow;
+/// AURORA_DEMO_SNOW_ROOF: canopies in the snow, one open at its top.
+#[path = "demo_snow_roof.rs"]
+pub mod snow_roof;
 /// AURORA_DEMO_SNOW_SPIN: turning boxes in lying snow (#3642).
 #[path = "demo_snow_spin.rs"]
 pub mod snow_spin;
