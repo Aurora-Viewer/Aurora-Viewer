@@ -845,7 +845,9 @@ impl WorldMapUi {
                 if focus_search {
                     r.request_focus();
                 }
-                if !self.ov.query.is_empty() {
+                // only where room was kept before the field: the first
+                // characters typed fill the query after `hint_w` was measured
+                if hint_w > 0.0 {
                     let (hr, _) = ui.allocate_exact_size(Vec2::new(hint_w - 6.0, 22.0), Sense::hover());
                     ui.painter().text(
                         hr.right_center(),
