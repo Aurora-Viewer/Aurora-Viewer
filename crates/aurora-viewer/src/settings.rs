@@ -3278,9 +3278,8 @@ impl Settings {
             crate::graphics_presets::upgrade_blend_order(&mut self);
         }
         if self.settings_version < 40 {
-            // RecentItemsSortOrder is date only (indra/newview/app_settings/settings.xml,
-            // indra/newview/llinventoryfilter.h). Upgrade only the exact former default;
-            // other combinations were chosen, and later files keep every choice.
+            // Only the exact former Recent default migrates; preserve other combinations.
+            // Keep historical values explicit so future defaults cannot change this migration.
             let former = crate::ui::inventory::view::Sort {
                 by_date: true,
                 folders_by_name: false,
