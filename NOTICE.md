@@ -24,8 +24,9 @@ Many parts of this program are Rust ports of the Second Life viewer
 (Copyright © The Phoenix Firestorm Project, Inc.), both distributed under the
 GNU Lesser General Public License, version 2.1. Each ported file says which
 original sources it follows ("originally LGPL 2.1"). The exceptions, files
-under another licence, name it in the Licence column of "Authors of the ported
-code" below and have their own section (the pose stand, Beer-Ware Licence).
+under another licence, are named with their licence in the Licence column of
+"Authors of the ported code" below, and each has its own section (the pose
+stand, Beer-Ware Licence).
 
 As permitted by section 3 of the LGPL 2.1, the copy of that code included in
 this program is distributed under the GNU General Public License, version 3 or
