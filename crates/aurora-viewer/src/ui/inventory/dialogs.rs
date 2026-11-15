@@ -644,36 +644,17 @@ pub(super) fn preview(
                     .size(10.0)
                     .color(p.muted),
             );
-        } else if matches!(it.asset_type, 20 | 1) {
-            if flat_button(ui, p, aurora_i18n::tr!("common-play")).clicked() {
-                if it.asset_type == 20 {
-                    actions.push(InvAction::Animation {
-                        asset: it.asset_id,
-                        local: false,
-                        start: true,
-                    });
-                } else {
+        } else if it.asset_type == 1 {
+            // LLPreviewSound::{auditionSound,playSound} (indra/newview/llpreviewsound.cpp):
+            // audition stays local; world playback shares the inventory double-click trigger.
+            ui.horizontal(|ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
                     actions.push(InvAction::Sound(it.asset_id));
                 }
-            }
-            if it.asset_type == 20 {
-                if flat_button(ui, p, aurora_i18n::tr!("common-play-locally")).clicked() {
-                    actions.push(InvAction::Animation {
-                        asset: it.asset_id,
-                        local: true,
-                        start: true,
-                    });
+                if flat_button(ui, p, aurora_i18n::tr!("common-play-in-world")).clicked() {
+                    actions.push(InvAction::TriggerSound(it.asset_id));
                 }
-                if flat_button(ui, p, aurora_i18n::tr!("common-stop")).clicked()
-                    && let Some((asset, local)) = st.playing
-                {
-                    actions.push(InvAction::Animation {
-                        asset,
-                        local,
-                        start: false,
-                    });
-                }
-            }
+            });
         } else {
             if it.asset_type == 7 {
                 notecard_description(ui, inv, st, it, actions);
@@ -1303,6 +1284,28 @@ mod tests {
         };
         document_frame(ctx, inv, st, vec![egui::Event::PointerMoved(pos), button(true)]);
         document_frame(ctx, inv, st, vec![button(false)]).1
+    }
+
+    #[test]
+    fn sound_preview_separates_local_playback_from_the_inventory_world_trigger() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let item = Uuid::from_u128(8105);
+        let asset = inv.items[&item].asset_id;
+        let mut st = InventoryUi {
+            preview: Some(item),
+            ..Default::default()
+        };
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+        let local = label_center(&output, aurora_i18n::tr!("common-play-locally"));
+        let world = label_center(&output, aurora_i18n::tr!("common-play-in-world"));
+        assert!(matches!(&click_document(&ctx, &inv, &mut st, local)[..], [InvAction::Sound(id)] if *id == asset));
+        assert!(matches!(&click_document(&ctx, &inv, &mut st, world)[..], [InvAction::TriggerSound(id)] if *id == asset));
+        assert_eq!(st.preview, Some(item));
     }
 
     #[test]

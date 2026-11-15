@@ -4200,6 +4200,7 @@ ui-inventory-context-play-in-second-life = Play in Second Life
 ui-inventory-dialogs-play-for-everyone = Play for everyone
 ui-land-media-loop-media-when-playback-ends-it-starts-again = Loop media. When playback ends, it starts again.
 common-play-locally = Play locally
+common-play-in-world = Play in world
 ui-options-session-log = Session log
 ui-options-logs = Logs
 world-appearance-skirt = Skirt
