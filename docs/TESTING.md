@@ -6295,7 +6295,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, Auto-sort, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
@@ -7143,6 +7143,18 @@ failure. Grid validation and any paid upload are performed by the human.
   in front). `aurora-folder-colors-follow`: the palette follows the selection;
   Clothing selected at 700, an item at 780: capture 750 (Clothing named, its
   pink outlined) and 830 ("Select a folder to color it.", palette greyed).
+- **`AURORA_DEMO_INVENTORY=sorter|aurora-sorter|sorter-big|sorter-run`**: an Objects
+  folder of about 700 entries named the way creators name them (made-up stores,
+  body tags such as `[REBORN]`, `eBODY Reborn`, `Legacy F`, `Lara X`, unpackers,
+  furniture, names nothing can read), 24 unpacked delivery folders, clothing
+  layers that only their wearable type names, and a `Sorted/Reborn` folder from
+  an earlier run. Auto-sort opens on Objects: its preview lists each destination
+  (`Reborn / Skirts (12)`) and what stays. `sorter` and `sorter-run` use the
+  Legacy window, `aurora-sorter` Aurora's; `sorter-big` has eight times the
+  entries; `sorter-run` starts the sort by itself (capture after about 900
+  frames). What to look for: `Sorted` and `Reborn` reused, not doubled; each
+  folder created once; worn, locked or linked entries kept; Objects left with
+  only the names nothing can read.
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory

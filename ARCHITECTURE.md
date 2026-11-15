@@ -2564,6 +2564,16 @@ inventory operation/progress path. Library, protected, foreign-owned items and
 links are excluded. Its controls and type filters are shared with
 `build/ui/contents_permissions.rs`.
 
+`world/inventory/sorter.rs` is Auto-sort's pure part: it reads a creator's item
+name (body tags, category keywords, unpackers, then the asset or wearable type)
+and the user's rules into a `<base>/<body>/<category>` path, plans the moves of
+one folder's direct contents with the drag rules (`relocatable`, nothing worn,
+no link) and builds bounded mutations that create the missing folders and move
+the entries in one request. `sorter_demo.rs` seeds its demo inventory.
+`ui/inventory/sorter.rs` is its window (options, rules, preview by destination,
+progress); it sends one batch at a time through the ordinary pending inventory
+edit, like Bulk permissions, and the options live in `InventoryPreferences`.
+
 `ui/inventory/folder_colors.rs` keeps the user's folder icon colors in the
 inventory preferences, keyed by folder id and never sent to the grid. On by
 default (off hides the menu entry and the tints); a folder's menu opens its palette window, and the plain tree,

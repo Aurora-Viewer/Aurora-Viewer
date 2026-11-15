@@ -21,6 +21,7 @@ pub(super) enum Command {
     Batch(Vec<InvAction>),
     Properties(Uuid),
     BulkPermissions(Vec<Uuid>),
+    AutoSort(Uuid),
     Rename(Uuid),
     Image(Uuid),
     Protect(Vec<Uuid>),
@@ -739,6 +740,16 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 Command::BulkPermissions(ids.clone()),
             );
         }
+        if all || single && folder.is_some() {
+            c.add(
+                "auto-sort",
+                TEXT,
+                "wand",
+                aurora_i18n::tr!("inventory-sorter-menu"),
+                ready && crate::world::inventory::sorter::source_allowed(inv, id),
+                Command::AutoSort(id),
+            );
+        }
         c.add(
             "rename",
             TEXT,
@@ -1255,6 +1266,7 @@ pub(super) fn execute(
             st.dialog = Some(EditDialog::Properties(id));
         }
         Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
+        Command::AutoSort(id) => st.open_sorter(id),
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
         Command::Protect(ids) => {

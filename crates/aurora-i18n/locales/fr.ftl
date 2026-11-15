@@ -14352,6 +14352,78 @@ inventory-bulk-adjust = Modifier les permissions des éléments
 inventory-bulk-reading = Lecture des dossiers et sous-dossiers sélectionnés…
 inventory-bulk-load-failed = Impossible de lire tous les dossiers sélectionnés. Aucune permission n’a été modifiée. Réessayez.
 inventory-bulk-unchanged = Aucun élément admissible ne nécessite de modification.
+inventory-sorter-title = Tri automatique
+inventory-sorter-menu = Tri automatique…
+inventory-sorter-intro = Range les éléments et dossiers en vrac de « { $folder } » dans des dossiers par corps et par genre, d'après leur nom. Rien n'est copié, renommé ni modifié : les éléments sont seulement déplacés.
+inventory-sorter-base = Ranger dans
+inventory-sorter-base-hint = Un dossier à la racine de Mon inventaire
+inventory-sorter-folders = Trier aussi les dossiers, chacun en entier (livraisons déballées)
+inventory-sorter-rules = Mes règles
+inventory-sorter-rules-hint = Un nom qui contient tous les mots va dans le dossier, avant les règles intégrées.
+inventory-sorter-rule-words = Le nom contient
+inventory-sorter-rule-folder = Dossier, par exemple Maison/Chaises
+inventory-sorter-rule-add = Ajouter une règle
+inventory-sorter-rule-remove = Supprimer cette règle
+inventory-sorter-preview = Où va chaque élément
+inventory-sorter-not-recognised = Non reconnus, restent en place
+inventory-sorter-moves = { $count ->
+    [one] { $count } élément à déplacer
+   *[other] { $count } éléments à déplacer
+    }
+inventory-sorter-unpackers = { $count ->
+    [one] dont { $count } boîte à déballer
+   *[other] dont { $count } boîtes à déballer
+    }
+inventory-sorter-kept = { $count ->
+    [one] { $count } élément porté, lien ou verrouillé reste en place
+   *[other] { $count } éléments portés, liens ou verrouillés restent en place
+    }
+inventory-sorter-loading = Chargement du dossier…
+inventory-sorter-nothing = Rien à trier dans ce dossier.
+inventory-sorter-start = { $count ->
+    [one] Trier { $count } élément
+   *[other] Trier { $count } éléments
+    }
+inventory-sorter-progress = Tri : { $done } sur { $total }
+inventory-sorter-done = { $count ->
+    [one] { $count } élément trié.
+   *[other] { $count } éléments triés.
+    }
+inventory-sorter-default-base = Trié
+inventory-sorter-several-bodies = Plusieurs corps
+inventory-sorter-tattoos = Tatouages
+inventory-sorter-skins = Peaux
+inventory-sorter-makeup = Maquillage
+inventory-sorter-hair = Cheveux
+inventory-sorter-eyes = Yeux
+inventory-sorter-nails = Ongles
+inventory-sorter-shoes = Chaussures
+inventory-sorter-stockings = Bas et chaussettes
+inventory-sorter-lingerie = Lingerie
+inventory-sorter-swimwear = Maillots de bain
+inventory-sorter-bodysuits = Bodys et combinaisons
+inventory-sorter-dresses = Robes
+inventory-sorter-skirts = Jupes
+inventory-sorter-pants = Pantalons
+inventory-sorter-shorts = Shorts
+inventory-sorter-jackets = Vestes et manteaux
+inventory-sorter-tops = Hauts
+inventory-sorter-sleepwear = Peignoirs et nuit
+inventory-sorter-gloves = Gants
+inventory-sorter-jewelry = Bijoux
+inventory-sorter-accessories = Accessoires
+inventory-sorter-body-addons = Ajouts de corps
+inventory-sorter-shapes = Silhouettes
+inventory-sorter-animations = Animations et poses
+inventory-sorter-furniture = Meubles
+inventory-sorter-decor = Décoration
+inventory-sorter-outfits = Tenues et ensembles
+inventory-sorter-landmarks = Repères
+inventory-sorter-notecards = Notes
+inventory-sorter-scripts = Scripts
+inventory-sorter-sounds = Sons
+inventory-sorter-textures = Textures
+inventory-sorter-gestures = Gestes
 parcel-visibility-mode = Masquer le contenu hors de la parcelle actuelle
 parcel-visibility-help = Le terrain, votre avatar et vos HUD restent visibles. Les objets, les autres avatars et leurs effets visuels hors de la parcelle sont masqués. La liste choisit où ce filtre s’applique.
 parcel-visibility-always = Partout

@@ -724,6 +724,7 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        self.inventory_ui.finish_sorter(result.as_ref().err().map(String::as_str));
         self.inventory_ui
             .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());

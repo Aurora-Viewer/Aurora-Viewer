@@ -341,6 +341,8 @@ pub struct InventoryPreferences {
     pub context_menus: super::menu_layout::Preferences,
     pub notecard_view: super::markdown::View,
     pub protected: HashSet<Uuid>,
+    /// Auto-sort's destination folder, folder option and user rules.
+    pub sorter: crate::world::inventory::sorter::Preferences,
     pub upload_folders: [Uuid; 5],
     pub sort: Sort,
     pub received_sort: Sort,
@@ -392,6 +394,7 @@ impl Default for InventoryPreferences {
             context_menus: Default::default(),
             notecard_view: Default::default(),
             protected: HashSet::new(),
+            sorter: Default::default(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
             // RecentItemsSortOrder = SO_DATE only (indra/newview/app_settings/settings.xml,

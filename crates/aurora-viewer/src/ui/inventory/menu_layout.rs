@@ -172,6 +172,7 @@ impl Default for Profile {
                             "separator:metadata",
                             "properties",
                             "bulk-permissions",
+                            "auto-sort",
                             "rename",
                             "share",
                             "asset-uuid",

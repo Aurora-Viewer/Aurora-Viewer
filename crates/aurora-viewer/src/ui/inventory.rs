@@ -59,6 +59,7 @@ mod rows;
 pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
+mod sorter;
 pub(crate) mod task_drop;
 pub(crate) mod task_selection;
 pub mod thumbnail;
@@ -509,6 +510,7 @@ pub struct InventoryUi {
     was_open: bool,
     focus_search: bool,
     bulk_permissions: bulk_permissions::State,
+    sorter: sorter::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
     /// Library wearables being copied to be worn: copy request → replace.
@@ -2200,6 +2202,7 @@ pub fn show(
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
     let shown = *open
+        || st.sorter.active()
         || st.dialog.is_some()
         || st.move_to.is_some()
         || st.demo_menu.is_some()
@@ -2209,6 +2212,7 @@ pub fn show(
                 || w.state.move_to.is_some()
                 || w.state.thumbnail.item.is_some()
                 || w.state.bulk_permissions.active()
+                || w.state.sorter.active()
         });
     let mut facts = if shown {
         Facts::from_world(world, appearance_busy)
@@ -2289,6 +2293,7 @@ pub fn show(
     let inv = &mut world.inventory;
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
+    sorter::show(ctx, p, inv, st, prefs, &facts.worn, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
@@ -2493,6 +2498,7 @@ pub fn show(
             w.state.view = Default::default();
         }
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
+        sorter::show(ctx, p, &mut world.inventory, &mut w.state, prefs, &facts.worn, &mut actions);
         if w.id != listings::PANEL {
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }
@@ -2554,6 +2560,7 @@ pub fn show(
             || w.state.move_to.is_some()
             || w.state.thumbnail.item.is_some()
             || w.state.bulk_permissions.active()
+            || w.state.sorter.active()
     });
     windows.append(&mut spawned);
     st.windows = windows;

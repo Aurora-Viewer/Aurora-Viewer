@@ -16,6 +16,7 @@ mod lost;
 pub(crate) mod outgoing;
 mod parents;
 pub mod preview;
+pub mod sorter;
 mod system;
 pub mod wearable;
 

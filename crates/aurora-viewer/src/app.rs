@@ -22988,6 +22988,19 @@ impl ApplicationHandler for App {
                     self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
                     self.inventory_ui.expand_all = Some(true);
                 }
+                if matches!(view.as_str(), "sorter" | "aurora-sorter" | "sorter-big" | "sorter-run") {
+                    // a large messy inventory, Auto-sort open on its Objects folder
+                    let objects = crate::world::inventory::sorter::demo::OBJECTS;
+                    let scale = if view == "sorter-big" { 8 } else { 1 };
+                    crate::world::inventory::sorter::demo::seed(&mut self.world.inventory, self.world.agent_id, scale);
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, objects);
+                    if view == "sorter-run" {
+                        self.inventory_ui.demo_run_sorter(objects);
+                    } else {
+                        self.inventory_ui.open_sorter(objects);
+                    }
+                }
                 if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
                     crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view == "outfit-menu-loading" {

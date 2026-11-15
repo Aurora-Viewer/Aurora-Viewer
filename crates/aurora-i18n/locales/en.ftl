@@ -14347,6 +14347,78 @@ inventory-bulk-adjust = Adjust item permissions
 inventory-bulk-reading = Reading selected folders and subfolders…
 inventory-bulk-load-failed = Could not read all selected folders. No permissions were changed. Try again.
 inventory-bulk-unchanged = No eligible item needs a permission update.
+inventory-sorter-title = Auto-sort
+inventory-sorter-menu = Auto-sort…
+inventory-sorter-intro = Moves the loose items and folders of “{ $folder }” into folders by body and by kind, read from their names. Nothing is copied, renamed or changed: entries only move.
+inventory-sorter-base = Sort into
+inventory-sorter-base-hint = A folder at the root of My Inventory
+inventory-sorter-folders = Sort folders too, each as a whole (unpacked deliveries)
+inventory-sorter-rules = My rules
+inventory-sorter-rules-hint = A name holding every word goes to the folder, before the built-in rules.
+inventory-sorter-rule-words = Name contains
+inventory-sorter-rule-folder = Folder, such as Home/Chairs
+inventory-sorter-rule-add = Add a rule
+inventory-sorter-rule-remove = Remove this rule
+inventory-sorter-preview = Where everything goes
+inventory-sorter-not-recognised = Not recognised, stays in place
+inventory-sorter-moves = { $count ->
+    [one] 1 entry to move
+   *[other] { $count } entries to move
+    }
+inventory-sorter-unpackers = { $count ->
+    [one] including 1 unpacker
+   *[other] including { $count } unpackers
+    }
+inventory-sorter-kept = { $count ->
+    [one] 1 worn, linked or locked entry stays in place
+   *[other] { $count } worn, linked or locked entries stay in place
+    }
+inventory-sorter-loading = Loading the folder…
+inventory-sorter-nothing = Nothing to sort in this folder.
+inventory-sorter-start = { $count ->
+    [one] Sort 1 entry
+   *[other] Sort { $count } entries
+    }
+inventory-sorter-progress = Sorting: { $done } of { $total }
+inventory-sorter-done = { $count ->
+    [one] 1 entry sorted.
+   *[other] { $count } entries sorted.
+    }
+inventory-sorter-default-base = Sorted
+inventory-sorter-several-bodies = Several bodies
+inventory-sorter-tattoos = Tattoos
+inventory-sorter-skins = Skins
+inventory-sorter-makeup = Makeup
+inventory-sorter-hair = Hair
+inventory-sorter-eyes = Eyes
+inventory-sorter-nails = Nails
+inventory-sorter-shoes = Shoes
+inventory-sorter-stockings = Stockings & socks
+inventory-sorter-lingerie = Lingerie
+inventory-sorter-swimwear = Swimwear
+inventory-sorter-bodysuits = Bodysuits
+inventory-sorter-dresses = Dresses
+inventory-sorter-skirts = Skirts
+inventory-sorter-pants = Pants
+inventory-sorter-shorts = Shorts
+inventory-sorter-jackets = Jackets & coats
+inventory-sorter-tops = Tops
+inventory-sorter-sleepwear = Robes & sleepwear
+inventory-sorter-gloves = Gloves
+inventory-sorter-jewelry = Jewelry
+inventory-sorter-accessories = Accessories
+inventory-sorter-body-addons = Body add-ons
+inventory-sorter-shapes = Shapes
+inventory-sorter-animations = Animations & poses
+inventory-sorter-furniture = Furniture
+inventory-sorter-decor = Decor
+inventory-sorter-outfits = Outfits & sets
+inventory-sorter-landmarks = Landmarks
+inventory-sorter-notecards = Notecards
+inventory-sorter-scripts = Scripts
+inventory-sorter-sounds = Sounds
+inventory-sorter-textures = Textures
+inventory-sorter-gestures = Gestures
 parcel-visibility-mode = Hide content outside the current parcel
 parcel-visibility-help = Keep the terrain, your avatar and your HUDs. Objects, other avatars and their visual effects outside the parcel are hidden. The list chooses where this filter applies.
 parcel-visibility-always = Everywhere
