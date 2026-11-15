@@ -1573,6 +1573,13 @@ impl App {
             // Exercise a first launch without changing the user's bindings.
             settings.keybinds = Default::default();
         }
+        // AURORA_DEMO_GLASS: this run only, so Preferences shows the switch
+        // that matches the glass. Restored before save.
+        if std::env::var_os("AURORA_DEMO").is_some()
+            && let Some(on) = crate::disable_glass::demo_override()
+        {
+            settings.disable_glass = on;
+        }
         apply_test_overrides(&mut settings);
         external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
@@ -6976,6 +6983,9 @@ impl App {
         self.world.save_inventory_cache();
         if let Some(path) = self.name_cache_path() {
             self.world.social.avatar_names.save(&path);
+        }
+        if crate::disable_glass::demo_override().is_some() {
+            self.settings.disable_glass = false;
         }
         self.settings.save();
         // the copies of the script editors closed just before (ui/scripts/backup.rs)
