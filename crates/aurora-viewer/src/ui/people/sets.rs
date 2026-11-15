@@ -13,6 +13,7 @@ use super::{Ctx, PeopleUi};
 use crate::ui::context::{self, AvatarList};
 use crate::ui::{menu, widgets};
 use crate::world::contact_sets::{self, ContactSets, DN_REMOVED};
+use crate::world::names::NameScope;
 use egui::{Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -79,7 +80,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     let online = |id: &Uuid| world.social.friends.iter().any(|f| f.id == *id && f.online);
     let filter = st.filter.trim().to_lowercase();
     let mut members = world.contact_sets.members(&set, &friends, is_friend);
-    members.retain(|id| super::matches_name(world, id, &name_of(id), &filter));
+    members.retain(|id| super::matches_name(world, NameScope::World, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&set) {
         members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
@@ -248,7 +249,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let selected = st.sel.contains(&id) || st.sheet == Some(id);
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
-    let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
+    let left = rows::picture(ui, p, world, NameScope::World, rect, data.pics.get(&id), id, name, false);
     let friend = world.social.is_friend(&id);
     let mutable = !ContactSets::is_internal(set);
     // under the pointer: move, take out, the menu; else the friend's heart

@@ -259,6 +259,7 @@ pub fn tab(
             data,
             st,
             id,
+            crate::world::names::NameScope::World,
             true,
             true,
             actions,

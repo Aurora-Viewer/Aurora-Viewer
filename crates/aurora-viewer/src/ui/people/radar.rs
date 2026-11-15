@@ -380,7 +380,7 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
                 return None;
             }
             let name = radar_name(world, &e.id, settings.name_format);
-            if !super::matches_name(world, &e.id, &name, filter) {
+            if !super::matches_name(world, crate::world::names::NameScope::World, &e.id, &name, filter) {
                 return None;
             }
             let profile = world.profiles.get(&e.id);

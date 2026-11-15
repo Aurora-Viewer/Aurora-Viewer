@@ -9133,6 +9133,9 @@ impl App {
                 self.open_conversation_to_type(id);
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            ContactsAction::RosterProfile(id) => {
+                self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id);
+            }
             ContactsAction::OfferTeleport(id) => a.offer_tp.push(id),
             ContactsAction::SendTeleportOffer { to, message } => {
                 let cmd = self.world.offer_teleport(to, &message);
@@ -18851,6 +18854,9 @@ impl App {
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+                        ui::people::PeopleAction::RosterProfile(id) => {
+                            self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id);
+                        }
                         ui::people::PeopleAction::ZoomRefused { name, why } => {
                             let meters = |d: f32| aurora_i18n::number(f64::from(d), 0);
                             let text = match why {

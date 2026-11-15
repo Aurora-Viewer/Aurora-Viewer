@@ -669,6 +669,9 @@ impl App {
                 }
             }
             CtxAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            CtxAction::RosterProfile(id) => {
+                self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id);
+            }
             CtxAction::ToggleBlock(id) => {
                 let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
                 if let Err(e) = self.world.toggle_block_avatar(id, &name) {
