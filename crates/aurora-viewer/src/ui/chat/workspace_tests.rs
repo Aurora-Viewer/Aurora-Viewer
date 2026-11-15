@@ -20,6 +20,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
     }
 }
 

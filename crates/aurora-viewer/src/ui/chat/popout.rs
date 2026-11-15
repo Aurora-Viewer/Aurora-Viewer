@@ -625,6 +625,7 @@ mod tests {
                         kind: crate::world::ChatKind::Im,
                         source: JANE,
                         origin: crate::world::Origin::Live,
+                        blocked: false,
                     },
                 );
             }
@@ -750,6 +751,7 @@ mod tests {
                         kind: crate::world::ChatKind::Im,
                         source: id,
                         origin: crate::world::Origin::Live,
+                        blocked: false,
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1035,6 +1037,7 @@ mod tests {
                             kind: crate::world::ChatKind::Im,
                             source: JANE,
                             origin: crate::world::Origin::Live,
+                            blocked: false,
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1146,6 +1149,7 @@ mod tests {
                     kind: crate::world::ChatKind::Im,
                     source: BOB,
                     origin: crate::world::Origin::Live,
+                    blocked: false,
                 },
             );
             kit.main_open = true;

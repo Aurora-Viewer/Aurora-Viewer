@@ -25,7 +25,7 @@
 use crate::world::ChatLine;
 use crate::world::chat_log::format::Slt;
 use crate::world::transcripts::LineClock;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Space between two rows (the item spacing of the conversation).
@@ -110,6 +110,9 @@ pub struct Row {
     pub look: Look,
     /// It matches the find bar's text.
     pub hit: bool,
+    /// The "n messages hidden" row standing for a folded run of a blocked
+    /// resident's lines, this one first; 0 for a line drawn as itself.
+    pub folded: usize,
     /// Top, from the top of the content.
     y: f32,
     h: f32,
@@ -128,6 +131,58 @@ pub struct Source<'a> {
     /// The number of the first line unread when the conversation was
     /// opened, which carries the "New" marker.
     pub first_unread: Option<u64>,
+    /// How a blocked resident's lines show.
+    pub blocked: Blocked<'a>,
+}
+
+/// How the nearby chat shows a blocked resident's lines
+/// (`settings::BlockedChat`), and the folded runs opened by a click, by
+/// the number of their first line.
+#[derive(Debug, Clone, Copy)]
+pub struct Blocked<'a> {
+    pub mode: crate::settings::BlockedChat,
+    pub opened: &'a BTreeSet<u64>,
+}
+
+static NONE_OPENED: BTreeSet<u64> = BTreeSet::new();
+
+impl Default for Blocked<'_> {
+    fn default() -> Self {
+        Blocked {
+            mode: crate::settings::BlockedChat::Hidden,
+            opened: &NONE_OPENED,
+        }
+    }
+}
+
+/// The lines a conversation shows, with the size of the folded run each
+/// one stands for (0: drawn as itself). FSFloaterNearbyChat keeps a
+/// blocked resident's lines in a history of their own, shown in place of
+/// the other with FSShowMutedChatHistory; Aurora keeps them in the one
+/// history: left out (hidden), greyed, or folded by runs of consecutive
+/// blocked lines into one row until it is opened. A search never finds
+/// what a fold hides.
+pub fn blocked_rows(lines: &VecDeque<ChatLine>, first: u64, blocked: Blocked, searching: bool) -> Vec<(usize, usize)> {
+    use crate::settings::BlockedChat;
+    let mut rows = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].blocked {
+            rows.push((i, 0));
+            i += 1;
+            continue;
+        }
+        let end = (i..lines.len()).find(|&k| !lines[k].blocked).unwrap_or(lines.len());
+        match blocked.mode {
+            BlockedChat::Hidden => {}
+            BlockedChat::Greyed => rows.extend((i..end).map(|k| (k, 0))),
+            BlockedChat::Collapsed if blocked.opened.contains(&(first + i as u64)) => rows.extend((i..end).map(|k| (k, 0))),
+            BlockedChat::Collapsed if !searching => rows.push((i, end - i)),
+            BlockedChat::Collapsed => {}
+        }
+        i = end;
+    }
+    rows
 }
 
 #[derive(Default)]
@@ -142,6 +197,8 @@ pub struct View {
     find: String,
     layout: Layout,
     first_unread: Option<u64>,
+    /// The blocked lines' mode and how many folds were opened.
+    blocked: (crate::settings::BlockedChat, usize),
     today: (i64, i64, i64),
     rows: Vec<Row>,
     /// Measured height and look of the lines, by number, for this width
@@ -392,8 +449,12 @@ impl View {
         let today_key = (today.year, today.month, today.day);
         // heights hold for a width and for the texts that change the looks
         // (the filter) or split the labels (the find highlight)
-        let layout_changed =
-            self.token != s.clock.token || self.width != width || self.filter != s.filter || self.find != s.find || self.layout != s.layout;
+        let layout_changed = self.token != s.clock.token
+            || self.width != width
+            || self.filter != s.filter
+            || self.find != s.find
+            || self.layout != s.layout
+            || self.blocked != (s.blocked.mode, s.blocked.opened.len());
         if !layout_changed
             && self.revision == s.clock.revision
             && self.len == s.lines.len()
@@ -419,6 +480,7 @@ impl View {
         s.filter.clone_into(&mut self.filter);
         s.find.clone_into(&mut self.find);
         self.layout = s.layout;
+        self.blocked = (s.blocked.mode, s.blocked.opened.len());
         self.first_unread = s.first_unread;
         self.today = today_key;
 
@@ -427,11 +489,25 @@ impl View {
         self.hits.clear();
         self.unmeasured = 0;
         let mut grouping = Grouping::with(today, s.layout);
-        let shown: Vec<usize> = (0..s.lines.len())
-            .filter(|&i| s.filter.is_empty() || matches(&s.lines[i], s.filter))
+        let (shown, folds): (Vec<usize>, Vec<usize>) = blocked_rows(s.lines, first, s.blocked, !s.filter.is_empty())
+            .into_iter()
+            .filter(|&(i, _)| s.filter.is_empty() || matches(&s.lines[i], s.filter))
+            .unzip();
+        let mut looks: Vec<Look> = shown
+            .iter()
+            .zip(&folds)
+            .map(|(&i, &folded)| {
+                let mut look = grouping.look(&s.lines[i]);
+                if folded > 0 {
+                    // a fold stands alone, as a notice: no head, and the
+                    // line after it opens its own
+                    look.header = false;
+                    grouping.prev = None;
+                }
+                look
+            })
             .collect();
-        let mut looks: Vec<Look> = shown.iter().map(|&i| grouping.look(&s.lines[i])).collect();
-        mark_tails(&mut looks, |k| s.lines[shown[k]].kind.is_notice());
+        mark_tails(&mut looks, |k| folds[k] > 0 || s.lines[shown[k]].kind.is_notice());
         if let Some(look) = looks.first_mut() {
             look.first = true;
         }
@@ -443,7 +519,7 @@ impl View {
             looks[k].new = true;
         }
         let mut y = 0.0;
-        for (&i, look) in shown.iter().zip(looks) {
+        for ((&i, look), folded) in shown.iter().zip(looks).zip(folds) {
             let line = &s.lines[i];
             let seq = first + i as u64;
             let (h, measured) = match self.heights.get(&seq) {
@@ -454,7 +530,7 @@ impl View {
                 ),
             };
             self.unmeasured += usize::from(!measured);
-            let hit = !s.find.is_empty() && matches(line, s.find);
+            let hit = folded == 0 && !s.find.is_empty() && matches(line, s.find);
             if hit {
                 self.hits.push(self.rows.len());
             }
@@ -462,6 +538,7 @@ impl View {
                 line: i,
                 look,
                 hit,
+                folded,
                 y,
                 h,
                 measured,
@@ -761,6 +838,11 @@ impl View {
     pub fn lines(&self) -> impl Iterator<Item = usize> + '_ {
         self.rows.iter().map(|r| r.line)
     }
+
+    /// The lines whose text is shown, for a copy: never what a fold hides.
+    pub fn shown_lines(&self) -> impl Iterator<Item = usize> + '_ {
+        self.rows.iter().filter(|r| r.folded == 0).map(|r| r.line)
+    }
 }
 
 #[cfg(test)]
@@ -778,7 +860,89 @@ mod tests {
             kind: ChatKind::Im,
             source: uuid::Uuid::from_u128(from.len() as u128),
             origin: Origin::Live,
+            blocked: false,
         }
+    }
+
+    /// Nova, Violet three times, Nova, Violet, Nova (Violet blocked).
+    fn with_blocked() -> VecDeque<ChatLine> {
+        let mut lines = VecDeque::new();
+        for (n, from) in ["Nova", "Violet", "Violet", "Violet", "Nova", "Violet", "Nova"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut l = line(from, &format!("line {n}"), n as u64);
+            l.blocked = from == "Violet";
+            lines.push_back(l);
+        }
+        lines
+    }
+
+    #[test]
+    fn hidden_blocked_lines_leave_no_row() {
+        let rows = blocked_rows(&with_blocked(), 10, Blocked::default(), false);
+        assert_eq!(rows, [(0, 0), (4, 0), (6, 0)]);
+    }
+
+    #[test]
+    fn greyed_blocked_lines_are_rows_of_their_own() {
+        let none = BTreeSet::new();
+        let greyed = Blocked {
+            mode: crate::settings::BlockedChat::Greyed,
+            opened: &none,
+        };
+        let rows = blocked_rows(&with_blocked(), 10, greyed, false);
+        assert_eq!(rows, (0..7).map(|i| (i, 0)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn collapsed_blocked_lines_fold_by_run_until_opened() {
+        let lines = with_blocked();
+        let mut opened = BTreeSet::new();
+        let folded = |opened: &BTreeSet<u64>, searching| {
+            let blocked = Blocked {
+                mode: crate::settings::BlockedChat::Collapsed,
+                opened,
+            };
+            blocked_rows(&lines, 10, blocked, searching)
+        };
+        // one row for each run of consecutive lines, with its count
+        assert_eq!(folded(&opened, false), [(0, 0), (1, 3), (4, 0), (5, 1), (6, 0)]);
+        // a search never finds what a fold hides
+        assert_eq!(folded(&opened, true), [(0, 0), (4, 0), (6, 0)]);
+        // Show opens that run alone, its lines then drawn (greyed)
+        opened.insert(11);
+        assert_eq!(folded(&opened, false), [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 1), (6, 0)]);
+    }
+
+    #[test]
+    fn a_fold_stands_alone_and_its_text_is_never_copied() {
+        let lines = with_blocked();
+        let clock = LineClock::default();
+        let none = BTreeSet::new();
+        let mut view = View::default();
+        view.sync(
+            &Source {
+                lines: &lines,
+                clock,
+                filter: "",
+                find: "line 2",
+                layout: Layout::Aurora,
+                first_unread: None,
+                blocked: Blocked {
+                    mode: crate::settings::BlockedChat::Collapsed,
+                    opened: &none,
+                },
+            },
+            300.0,
+        );
+        let folds: Vec<usize> = view.rows.iter().map(|r| r.folded).collect();
+        assert_eq!(folds, [0, 3, 0, 1, 0]);
+        // no head on the fold, and Nova's line after it opens hers again
+        assert!(!view.rows[1].look.header && view.rows[2].look.header);
+        // the find bar's text is in the fold: no hit
+        assert!(view.hits.is_empty());
+        assert_eq!(view.shown_lines().collect::<Vec<_>>(), [0, 4, 6]);
     }
 
     #[test]
@@ -899,6 +1063,7 @@ mod tests {
                     find: "",
                     layout: Layout::Aurora,
                     first_unread,
+                    blocked: Blocked::default(),
                 },
                 300.0,
             );
@@ -945,6 +1110,7 @@ mod tests {
                     find,
                     layout: Layout::Classic,
                     first_unread: None,
+                    blocked: Blocked::default(),
                 },
                 300.0,
             )
@@ -1027,6 +1193,7 @@ mod tests {
                             find: "",
                             layout: Layout::Aurora,
                             first_unread: None,
+                            blocked: Blocked::default(),
                         };
                         view.sync(&source, width);
                         view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
@@ -1072,6 +1239,7 @@ mod tests {
                             find: "",
                             layout: Layout::Aurora,
                             first_unread: None,
+                            blocked: Blocked::default(),
                         };
                         view.sync(&source, 400.0);
                         view.show(ui, viewport, clock.first, &mut |ui, _, _| {

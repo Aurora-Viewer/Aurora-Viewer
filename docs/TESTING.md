@@ -6031,6 +6031,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
+| `AURORA_DEMO_MUTED_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:hidden\|collapsed\|greyed]` | A blocked resident talking in nearby chat: the history hides, folds or greys the lines |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -8378,6 +8379,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
   by frame.
+
+- **`AURORA_DEMO_MUTED_CHAT=aurora|compact|bubbles|legacy|lines[:hidden|collapsed|greyed]`**:
+  the demo's blocked resident, Violet Wolf (on the demo block list), talks
+  in nearby chat among Nova Example's lines, one line every 2 s from 3 s in
+  world: Nova, Violet three times in a row, the blocked spam box, Nova,
+  Violet once more, Nova. The mode named sets Preferences › Chat ›
+  "Blocked residents' chat" for the run, nothing saved; without one the
+  preference applies and can be changed while the lines come. Hidden (the
+  default, as the Legacy Viewer's FSShowMutedChatHistory off): Nova's three
+  lines only. Collapsed: Nova, "3 messages hidden · Show", Nova, "1 message
+  hidden · Show", Nova; consecutive blocked lines are grouped into one row,
+  and Show opens that row's lines, greyed. Greyed: every line of Violet's,
+  greyed. In every mode the spam box's line never shows, and none of
+  Violet's lines is ever above the chat bar (`lines`), in a bubble, a sound,
+  the unread count or the transcript; a search in the window never finds
+  what a fold hides.
 
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect][:unnamed|spoof]`**
   (#475, #741): nearby chat said at the arrival, two residents among a

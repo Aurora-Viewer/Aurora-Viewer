@@ -2682,6 +2682,11 @@ ui-options-compact-automated-chat = Compact messages that do not come from a per
 ui-options-compact-automated-chat-hint = What objects and scripts say, and the viewer's notices, take one small row with an icon of their kind; only people's messages keep their full size. They no longer count as unread nor alert you (keyword sound, flash, system notification): only people's messages do.
 ui-options-compact-im-system-lines = Compact the conversations' system lines too
 ui-options-compact-im-system-lines-hint = The viewer's lines in a conversation (a call started or ended, an automatic reply sent) take the same small row, with their icon.
+ui-options-blocked-chat = Blocked residents' chat
+ui-options-blocked-chat-hint = What the nearby chat shows when a resident you blocked talks. Never above the chat bar, in a bubble, a sound or an unread count.
+ui-options-blocked-chat-hidden = Hidden
+ui-options-blocked-chat-collapsed = Collapsed
+ui-options-blocked-chat-greyed = Greyed
 ui-options-mark-unnamed-objects = Mark objects with (no name) when they speak, to avoid spoofing
 ui-options-mark-unnamed-objects-hint = An object whose name is empty speaks in nearby chat as "(no name)", so that its line cannot pass for a resident's.
 ui-options-show-contacts-tab = Show the Contacts tab
@@ -5207,6 +5212,11 @@ ui-chat-latest-new = { $count ->
     [one] { $count } new message
    *[other] { $count } new messages
     }
+ui-chat-blocked-hidden = { $count ->
+    [one] { $count } message hidden
+   *[other] { $count } messages hidden
+    }
+ui-chat-blocked-show = Lines from residents you blocked: Show puts them here, greyed.
 ui-chat-copy-message = Copy the message
 ui-chat-quote-message = Quote
 ui-chat-drop-to-give = Drop here to give to { $name }
@@ -7054,6 +7064,14 @@ demo-bubbles-local-3 = Welcome to the plaza, the visit starts here.
 demo-chat-lines-emote = /me waves at everyone 👋
 demo-chat-lines-long = The tour starts at the fountain, then we go up to the gallery and the roof garden; the map of the plaza is at https://example.com/plaza-map if you get lost on the way.
 demo-chat-lines-shout = Doors open in five minutes!
+demo-muted-chat-near-1 = Who's coming to the gallery tonight?
+demo-muted-chat-blocked-1 = HEY EVERYONE
+demo-muted-chat-blocked-2 = look at my store, best prices on the grid
+demo-muted-chat-blocked-3 = click my link, click it now
+demo-muted-chat-object = FREE MONEY, touch me!
+demo-muted-chat-near-2 = I'll be there at nine.
+demo-muted-chat-blocked-4 = why is nobody answering me
+demo-muted-chat-near-3 = See you there!
 demo-chat-bubbles-whisper = Psst, the roof garden is already open
 demo-object-chat-greeter = Plaza Greeter
 demo-object-chat-welcome = Welcome to the plaza! Touch me for a notecard with this week's events.

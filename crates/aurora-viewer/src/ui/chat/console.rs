@@ -80,7 +80,9 @@ pub(super) fn recent(
         .chat
         .iter()
         .rev()
-        .filter(|l| residents || !super::said_by_resident(l))
+        // a blocked resident's line stays in the history (LLNearbyChatHandler
+        // never sees a muted line)
+        .filter(|l| !l.blocked && (residents || !super::said_by_resident(l)))
         // Bound the look-back even when every recent message has expired.
         .take(max_lines as usize)
         .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
@@ -485,6 +487,7 @@ mod tests {
             kind,
             source: uuid::Uuid::from_u128(source),
             origin: Origin::Live,
+            blocked: false,
         }
     }
 

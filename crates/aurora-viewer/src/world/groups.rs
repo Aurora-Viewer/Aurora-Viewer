@@ -264,6 +264,7 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
     }
 }
 

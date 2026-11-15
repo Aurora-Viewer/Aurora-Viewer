@@ -46,6 +46,7 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
         };
         log::info!("incoming IM announced (the sender started typing)");
         self.conversation_card(from, line);
