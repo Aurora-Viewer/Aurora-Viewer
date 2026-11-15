@@ -24,6 +24,9 @@ const WIDTH: f32 = 320.0;
 const PIC: f32 = 32.0;
 /// Characters of a message shown on its card (the rest is in the conversation).
 const MESSAGE_CHARS: usize = 160;
+/// Between the rows inside a toast's card. The gap between two cards is
+/// ToastGap (`ToastEnv::toast_gap`), and does not reach inside them.
+pub(crate) const CARD_ROW_SPACING: f32 = 6.0;
 
 #[derive(Default)]
 pub struct NotifUi {
@@ -1099,11 +1102,18 @@ pub fn show(
                             nui.toasts.retain(|(t, _)| *t != id);
                             continue;
                         }
-                        let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
-                            person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
-                        } else {
-                            card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
-                        };
+                        // the card keeps its own row spacing; the stack's
+                        // spacing stands only between the cards
+                        let r = ui
+                            .scope(|ui| {
+                                ui.spacing_mut().item_spacing.y = CARD_ROW_SPACING;
+                                if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
+                                    person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
+                                } else {
+                                    card(ui, p, icons, world, env.images, &mut nui.wanted_images, n, true, false)
+                                }
+                            })
+                            .inner;
                         match r {
                             // closing a toast only hides it: the offer waits in
                             // the list (a scripted window too, until answered)

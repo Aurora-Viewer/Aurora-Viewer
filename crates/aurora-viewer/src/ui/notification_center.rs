@@ -507,6 +507,8 @@ fn rolled_out(
         let top = ui.cursor().min;
         let width = nui.center.inner_width;
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(top, Vec2::new(width, 4000.0))));
+        // the card keeps its own row spacing; ToastGap stands between cards
+        child.spacing_mut().item_spacing.y = super::notifications::CARD_ROW_SPACING;
         if fold > 0.0 {
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
