@@ -46,6 +46,17 @@ const MAX_LIGHTS: usize = 64;
 const XR_RETRIES: u8 = 3;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(750);
+/// How often the runtime's events are read while no VR session runs: often
+/// enough to let a closing runtime go within its grace of a few seconds
+/// (`xr_frame::runtime_leaving`), one call to an in-process queue each time.
+/// `AURORA_DEMO_VR_CLOSED`: the frame the VR runtime is taken as closing at.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn demo_vr_closed() -> Option<u64> {
+    static AT: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *AT.get_or_init(|| std::env::var("AURORA_DEMO_VR_CLOSED").ok()?.trim().parse().ok())
+}
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -1826,6 +1837,10 @@ pub(crate) struct Backend {
     /// try may start (`XR_RETRIES`).
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     xr_retry: (u8, Option<std::time::Instant>),
+    /// When the runtime's events were last read between VR sessions
+    /// (`XR_IDLE_POLL`).
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    xr_polled: std::time::Instant,
     /// The window's size while a photo frame draws at its own size in
     /// `config` (`Capture::Snapshot`); put back by `result`.
     snapshot_window: Option<(u32, u32)>,
@@ -4096,6 +4111,8 @@ impl Backend {
             xr_finished: false,
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             xr_retry: (0, None),
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            xr_polled: std::time::Instant::now(),
             snapshot_window: None,
             target_bytes: None,
             taa_bytes: 0,
@@ -7380,7 +7397,12 @@ impl Backend {
             }
             Err(e) => {
                 log::info!("XR world ended: {e}");
-                self.vr.finish(false);
+                if world.session.runtime_lost {
+                    log::warn!("XR runtime closing: VR ends, the viewer goes on without it");
+                    self.vr.lose_runtime();
+                } else {
+                    self.vr.finish(false);
+                }
                 self.motion_cut = true;
                 crate::present::configure(&self.surface, &self.device, &self.config);
                 return Err(Box::new(packet));
@@ -7511,6 +7533,27 @@ impl Backend {
         if !self.xr_finished && self.xr_seed.is_some() && packet.index >= 600 && std::env::var_os("AURORA_DEMO_XR_WORLD").is_some() {
             self.xr_finished = true;
             self.vr.request(true);
+        }
+        // AURORA_DEMO_VR_CLOSED=<frame>: as if the VR runtime announced its
+        // closing at that frame (the viewer's renderer only, not an eye's)
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if !self.external && demo_vr_closed() == Some(packet.index) {
+            log::warn!("AURORA_DEMO_VR_CLOSED: the VR runtime is taken as closing");
+            self.vr.lose_runtime();
+        }
+        // between sessions, the runtime may announce it is closing
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        if self.xr_world.is_none()
+            && !self.vr.wanted()
+            && !self.vr.runtime_lost()
+            && self.xr_polled.elapsed() >= XR_IDLE_POLL
+            && let Some((runtime, _)) = self.xr_seed.as_ref().and_then(|seed| seed.xr.as_ref())
+        {
+            self.xr_polled = std::time::Instant::now();
+            if crate::xr_frame::runtime_leaving(runtime) {
+                log::warn!("XR runtime closing: the viewer goes on without it");
+                self.vr.lose_runtime();
+            }
         }
         // a new VR request starts its tries afresh
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
