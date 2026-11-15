@@ -4590,7 +4590,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow held at least this deep on the ground |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
-| `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
+| `AURORA_DEMO_SNOW_SPIN=1\|timer\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
@@ -4618,7 +4618,11 @@ both open states and the selection count. Capture at frame 620.
   each second by plain updates with no motion reported, as a script's
   llSetRot on a timer. What moves stays out of the rain's shelter map, so
   none of them takes the ground's snow: no white squares on their tops or
-  sides, and none appearing or vanishing as they turn. `settles-off` turns the weather drawn to rain with "Snow settles"
+  sides, and none appearing or vanishing as they turn. `timer` steps the
+  third box every 600 frames instead (10 s with `AURORA_FPS_LIMIT=60`),
+  longer than a single move's hold: from its second step on it must stay
+  bare between its steps (capture around frame 2300, between the fourth
+  and the fifth). `settles-off` turns the weather drawn to rain with "Snow settles"
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them

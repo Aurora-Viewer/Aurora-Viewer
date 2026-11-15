@@ -1,12 +1,15 @@
-//! AURORA_DEMO_SNOW_SPIN=1|settles-off: flat boxes turning in front of the
-//! avatar in lying snow (#3642), with `AURORA_SNOW` and `AURORA_SNOW_LYING`:
-//! one turning at 0.005 rad/s (0.3°/s, under the old threshold that left it
-//! in the rain's shelter map), one at 0.3 rad/s, and one a "script" steps by
-//! 15° every second with no motion reported (llSetRot on a timer). None
-//! takes the ground's snow: what moves is out of the shelter map, so the
-//! snow memory's surface stays the ground under them. `settles-off`: at frame 700
-//! the weather turns to rain with "Snow settles" off, for this run only
-//! (`weather`): the snow lying must go at once, not melt away in view.
+//! AURORA_DEMO_SNOW_SPIN=1|timer|settles-off: flat boxes turning in front of
+//! the avatar in lying snow (#3642), with `AURORA_SNOW` and
+//! `AURORA_SNOW_LYING`: one turning at 0.005 rad/s (0.3°/s, under the old
+//! threshold that left it in the rain's shelter map), one at 0.3 rad/s, and
+//! one a "script" steps by 15° every second with no motion reported
+//! (llSetRot on a timer). None takes the ground's snow: what moves is out of
+//! the shelter map, so the snow memory's surface stays the ground under
+//! them. `timer`: the stepped one turns every 600 frames instead (10 s at
+//! 60 fps), longer than a single move's hold: it must stay bare between its
+//! steps. `settles-off`: at frame 700 the weather turns to rain with "Snow
+//! settles" off, for this run only (`weather`): the snow lying must go at
+//! once, not melt away in view.
 
 use super::*;
 
@@ -52,21 +55,30 @@ pub fn view(frame: u64) -> Option<(Vec3, Vec3)> {
     Some((mid + Vec3::new(0.0, -3.0, 6.5), mid))
 }
 
+/// Frames between the stepped box's turns: a second, or ten (`timer`).
+fn step_frames(mode: &str) -> u64 {
+    if mode == "timer" { 600 } else { 60 }
+}
+
 /// Once a frame: the boxes at frame 60, then the stepped one turned once a
-/// second (60 frames), as a script's llSetRot: a new rotation, no spin.
+/// step (`step_frames`), as a script's llSetRot: a new rotation, no spin.
 pub fn tick(world: &mut crate::world::World, frame: u64) {
-    if mode().is_none() {
+    let Some(mode) = mode() else {
         return;
-    }
+    };
+    let every = step_frames(&mode);
     let objects = if frame == 60 {
         let mut slow = plank(SLOW, place(0), Quat::IDENTITY);
         slow.angular_velocity = Vec3::Z * 0.005;
         let mut fast = plank(FAST, place(1), Quat::IDENTITY);
         fast.angular_velocity = Vec3::Z * 0.3;
-        log::info!("demo snow spin: three planks (0.005 rad/s, 0.3 rad/s, stepped 15°/s)");
+        log::info!("demo snow spin: three planks (0.005 rad/s, 0.3 rad/s, stepped 15° every {every} frames)");
         vec![slow, fast, plank(STEPPED, place(2), Quat::IDENTITY)]
-    } else if frame > 60 && frame.is_multiple_of(60) {
-        let steps = (frame - 60) / 60;
+    } else if frame > 60 && (frame - 60).is_multiple_of(every) {
+        let steps = (frame - 60) / every;
+        if every > 60 {
+            log::info!("demo snow spin: stepped plank turned to {}° at frame {frame}", 15 * steps);
+        }
         let turn = Quat::from_rotation_z((15.0 * steps as f32).to_radians());
         vec![plank(STEPPED, place(2), turn)]
     } else {
@@ -91,6 +103,13 @@ pub fn weather(frame: u64, now: &mut crate::weather::WeatherSettings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_timer_steps_every_ten_seconds() {
+        assert_eq!(step_frames("1"), 60);
+        assert_eq!(step_frames("settles-off"), 60);
+        assert_eq!(step_frames("timer"), 600);
+    }
 
     #[test]
     fn the_stepped_plank_reports_no_motion() {
