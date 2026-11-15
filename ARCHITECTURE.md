@@ -3222,6 +3222,14 @@ are preallocated by the mixer (one per voice it holds): the callback neither
 allocates nor locks. About 0.5 ms per 10 ms buffer for 30 moving sounds.
 `demo_sound_hrtf.rs` (`AURORA_DEMO_SOUND_HRTF`) moves two sources around the
 camera.
+The Doppler shift (Preferences › Sound, "Doppler effect", 1 as the Legacy
+Viewer's fixed FMOD level) is computed once a frame per playing world sound
+by `scene/sounds/doppler.rs` from the agent's velocity and the source's (its
+parent's), and sent as a playback rate (`AudioEngine::world_rate`, kept
+within an octave); the mixer reads the clip at that rate with a fractional
+position and linear interpolation, the rate gliding over a buffer; at rate 1
+the read is the plain one, bit for bit. `demo_sound_doppler.rs`
+(`AURORA_DEMO_SOUND_DOPPLER`) passes a source in front of the listener.
 With the reverb of the surroundings (Preferences › Sound, Aurora's own, off),
 `scene/sound_reverb.rs` sends the mixer the parameters of the place
 (`AudioEngine::set_reverb`) and each world sound's send factor
