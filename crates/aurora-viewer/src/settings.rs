@@ -498,6 +498,21 @@ pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
 /// The nearest reach of the automatic reflection probes (`probe_range`).
 pub const PROBE_RANGE_MIN: f32 = 32.0;
 
+/// ToastGap's default (settings.xml) and its slider's top
+/// (panel_preferences_UI.xml).
+pub const TOAST_GAP: f32 = 7.0;
+pub const TOAST_GAP_MAX: f32 = 30.0;
+
+/// A gap between toasts as the toasts use it: whole points, 0 to 30, the
+/// default for a value that is not a number.
+pub fn toast_gap(gap: f32) -> f32 {
+    if gap.is_finite() {
+        gap.round().clamp(0.0, TOAST_GAP_MAX)
+    } else {
+        TOAST_GAP
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -1094,6 +1109,9 @@ pub struct Settings {
     /// Viewer's toasts (NotificationTipToastLifeTime, 10, its slider 1–30);
     /// Aurora's center keeps its own timing.
     pub tip_toast_seconds: f32,
+    /// Points between two stacked toasts, in both notification styles
+    /// (ToastGap, 7, its slider 0–30; LLScreenChannel::redrawToasts).
+    pub toast_gap: f32,
     /// Write instant messages, group chats and conferences to text files in
     /// the account's folder (Firestorm KeepConversationLogTranscripts = 2).
     pub log_im: bool,
@@ -2397,6 +2415,7 @@ impl Default for Settings {
             ims_in_notification_center: false,
             im_toast_seconds: 30.0,
             tip_toast_seconds: 10.0,
+            toast_gap: TOAST_GAP,
             log_im: true,
             log_nearby: false,
             reopen_ims: false,
@@ -3473,6 +3492,7 @@ impl Settings {
         } else {
             10.0
         };
+        self.toast_gap = toast_gap(self.toast_gap);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
             self.name_tag_show_seconds.clamp(1.0, 60.0)
@@ -4033,6 +4053,23 @@ mod tests {
             .sanitized();
             assert_eq!(s.probe_range, kept, "{asked} m");
         }
+    }
+
+    #[test]
+    fn the_toast_gap_starts_at_the_legacy_seven_and_stays_on_its_slider() {
+        // ToastGap: 7 px by default, whole pixels from 0 to 30
+        assert_eq!(super::Settings::default().toast_gap, 7.0);
+        for (asked, kept) in [(-4.0, 0.0), (0.0, 0.0), (12.4, 12.0), (30.0, 30.0), (99.0, 30.0), (f32::NAN, 7.0)] {
+            let s = super::Settings {
+                toast_gap: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.toast_gap, kept, "{asked} px");
+        }
+        // preferences saved before the setting existed take the default
+        let old: super::Settings = serde_json::from_str("{}").expect("empty settings");
+        assert_eq!(old.toast_gap, 7.0);
     }
 
     #[test]
