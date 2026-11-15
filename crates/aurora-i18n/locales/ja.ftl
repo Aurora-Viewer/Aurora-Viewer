@@ -13242,6 +13242,7 @@ anti-spam-demo-object = 大量送信テスト用オブジェクト
 anti-spam-demo-resident = Flood Test
 anti-spam-demo-prompt = オフラインの大量送信テスト：このプロンプトは最大１０回まで表示されるはずです。
 anti-spam-demo-offer = オフラインの大量送信テストのオファー
+anti-spam-demo-chat = オフラインの大量送信テスト：無料プレゼント、タッチしてね！
 anti-spam-enable = 大量送信からの保護を有効にする
 anti-spam-enable-hint = 送信元ごとに、繰り返されるチャット、メッセージ、インベントリとテレポートのオファー、スクリプトのプロンプト、サウンド、改行の多すぎるテキストを制限します。デフォルトでオフ。
 anti-spam-own = 自分のオブジェクトも含める
@@ -13269,6 +13270,10 @@ anti-spam-dialogs = スクリプトのプロンプト
 anti-spam-sounds = サウンド
 anti-spam-preloads = サウンドのプリロード
 anti-spam-blocked = スパム対策により、このセッションの間{ $source }からの{ $kind }をブロックしました。ブロックは「初期設定」＞「保護」＞「スパム対策」で管理できます。
+anti-spam-blocked-burst = { $count ->
+    [one] スパム対策により、このセッションの間{ $count }件の送信元をブロックしました（{ $kinds }）。ブロックは「初期設定」＞「保護」＞「スパム対策」で管理できます。
+   *[other] スパム対策により、このセッションの間{ $count }件の送信元をブロックしました（{ $kinds }）。ブロックは「初期設定」＞「保護」＞「スパム対策」で管理できます。
+}
 
 # Named IK authoring projects
 ik-profile-default = 新しいＩＫプロファイル

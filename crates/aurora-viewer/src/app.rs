@@ -9885,6 +9885,16 @@ impl App {
                 self.world.anti_spam.blocks().len()
             );
         }
+        // AURORA_DEMO_ANTI_SPAM=burst: the resident alone, after the burst
+        if self.demo
+            && let Some(events) = crate::demo::anti_spam::lone_events()
+        {
+            for event in events {
+                if let Some(event) = self.world.apply(event) {
+                    self.on_app_event(event);
+                }
+            }
+        }
         if self.demo {
             self.demo_uri_restore();
         }
@@ -20338,7 +20348,7 @@ impl ApplicationHandler for App {
                     enabled: mode != "off",
                     global: mode == "global",
                     own_objects: mode == "text",
-                    amount: if mode == "text" { 2 } else { 10 },
+                    amount: if mode == "text" || mode == "burst" { 2 } else { 10 },
                     newlines: if mode == "text" { 5 } else { 70 },
                     ..Default::default()
                 };

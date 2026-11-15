@@ -13317,6 +13317,7 @@ anti-spam-demo-object = Objet de test anti-spam
 anti-spam-demo-resident = Test Anti-spam
 anti-spam-demo-prompt = Test anti-spam hors ligne : cette demande doit apparaître dix fois au maximum.
 anti-spam-demo-offer = Offre de test anti-spam hors ligne
+anti-spam-demo-chat = Test anti-spam hors ligne : cadeaux gratuits, touchez-moi !
 anti-spam-enable = Activer la protection contre les envois répétés
 anti-spam-enable-hint = Limiter les chats, messages, offres d’inventaire et de téléportation, demandes de scripts et sons répétés de chaque source, ainsi que les textes avec trop de retours à la ligne. Désactivé par défaut.
 anti-spam-own = Inclure mes propres objets
@@ -13344,6 +13345,10 @@ anti-spam-dialogs = Demandes de scripts
 anti-spam-sounds = Sons
 anti-spam-preloads = Préchargements de sons
 anti-spam-blocked = L’anti-spam a bloqué « { $kind } » de { $source } pour cette session. Gérez les blocages dans Préférences > Protections > Anti-spam.
+anti-spam-blocked-burst = { $count ->
+    [one] { $count } source bloquée par l’anti-spam pour cette session ({ $kinds }). Gérez les blocages dans Préférences > Protections > Anti-spam.
+   *[other] { $count } sources bloquées par l’anti-spam pour cette session ({ $kinds }). Gérez les blocages dans Préférences > Protections > Anti-spam.
+}
 
 # Named IK authoring projects
 ik-profile-default = Nouveau profil IK
