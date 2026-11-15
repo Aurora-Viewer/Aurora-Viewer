@@ -96,7 +96,7 @@ fn portals_show_friends_by_default_and_our_own_whatever_the_setting() {
         },
         stranger,
         BuildRight::Allowed,
-        world.agent.position,
+        &world,
         Instant::now(),
         1000
     ));
@@ -186,6 +186,94 @@ fn friends_and_groups_shows_a_resident_once_the_grid_lists_a_shared_group() {
     world.portal_sources = Sources::Friends;
     state.sync(&world, None, 1000);
     assert!(state.entries.is_empty());
+}
+
+#[test]
+fn a_hidden_relay_loses_its_queued_private_request_even_when_another_relay_keeps_the_return_visible() {
+    let (mut world, mut state) = fixture();
+    let (creator, friend, stranger) = (Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+    world.social.form_friendship(creator);
+    world.social.form_friendship(friend);
+    let private = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    let mut invitation = private.announcement();
+    invitation.creator = Some(creator);
+    for relay in [friend, stranger] {
+        open(&mut state, &world, relay, invitation.clone());
+    }
+    let now = Instant::now();
+    state.update(&world, Vec3::ZERO, now);
+    let nonce = state.fetches[&(stranger, private.id)].nonce;
+    world.portal_sources = Sources::FriendsAndGroups;
+    // A delayed reply arriving before the next sync must also obey the new filter.
+    let mut details = private.details();
+    details.access = Access::Group(Uuid::from_u128(5));
+    state.receive(
+        &world,
+        &wire(
+            stranger,
+            Message::Details {
+                region: private.region,
+                id: private.id,
+                nonce,
+                details,
+            },
+        ),
+        now,
+        1000,
+    );
+    state.sync(&world, None, 1000);
+    assert_eq!(state.shown(&world).count(), 1);
+    assert!(state.entries[0].details.is_none());
+    assert!(!state.fetches.contains_key(&(stranger, private.id)));
+    assert!(state.fetches.contains_key(&(friend, private.id)));
+    assert!(
+        state
+            .out
+            .iter()
+            .all(|(peer, msg)| *peer != stranger || !matches!(msg, Message::Request { .. }))
+    );
+}
+
+#[test]
+fn a_return_covered_by_a_visible_source_cancels_private_requests_until_uncovered() {
+    let (world, mut state) = fixture();
+    let (creator, relay, other) = (Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+    let private = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    let mut invitation = private.announcement();
+    invitation.creator = Some(creator);
+    open(&mut state, &world, relay, invitation);
+    let now = Instant::now();
+    state.update(&world, Vec3::ZERO, now);
+    assert!(state.fetches.contains_key(&(relay, private.id)));
+    let source = Portal {
+        id: Uuid::from_u128(10),
+        ..portal()
+    };
+    open(&mut state, &world, other, source.announcement());
+    state.sync(&world, None, 1000);
+    state.update(&world, Vec3::ZERO, now + Duration::from_secs(1));
+    assert!(state.fetches.is_empty());
+    assert!(state.out.iter().all(|(_, msg)| !matches!(msg, Message::Request { .. })));
+    state.receive(
+        &world,
+        &wire(
+            other,
+            Message::Close {
+                region: source.region,
+                id: source.id,
+            },
+        ),
+        now,
+        1000,
+    );
+    state.update(&world, Vec3::ZERO, now + Duration::from_secs(2));
+    assert!(state.fetches.contains_key(&(relay, private.id)));
 }
 
 #[test]

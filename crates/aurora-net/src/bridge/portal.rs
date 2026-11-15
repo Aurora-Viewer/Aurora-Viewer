@@ -8,12 +8,13 @@ pub const LIFETIME: u64 = 120;
 pub const CLOCK_SKEW: u64 = 30;
 pub const MAX_WIRE: usize = 640;
 
-/// A short, one-way arrival effect. Identity always comes from the relay,
-/// never from this payload; no destination or return permission is carried.
+/// A short, one-way arrival effect. The relay identifies the traveler.
+/// The source creator is an additional visibility filter, never an avatar selector.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Arrival {
     pub id: Uuid,
+    pub creator: Uuid,
     pub region: u64,
     pub position: [f32; 3],
     pub floor: f32,
@@ -24,6 +25,7 @@ pub struct Arrival {
 impl Arrival {
     pub fn valid(&self) -> bool {
         !self.id.is_nil()
+            && !self.creator.is_nil()
             && self.region != 0
             && self.starts > 0
             && self.position.iter().all(|v| v.is_finite())
@@ -245,6 +247,7 @@ mod tests {
     fn one_way_arrival_wire_has_no_destination_or_avatar_selector_and_is_time_bounded() {
         let arrival = Arrival {
             id: Uuid::from_u128(17),
+            creator: Uuid::from_u128(23),
             region: 256,
             position: [10.0, 12.0, 25.0],
             floor: 24.0,
@@ -257,6 +260,10 @@ mod tests {
         let json = String::from_utf8(STANDARD.decode(&wire).unwrap()).unwrap();
         assert!(!json.contains("destination"));
         assert!(!json.contains("owner"));
+        // Older prototype broadcasts omitted provenance and did not check land.
+        let mut legacy: serde_json::Value = serde_json::from_str(&json).unwrap();
+        legacy["Arrival"].as_object_mut().unwrap().remove("creator");
+        assert!(Message::decode(&STANDARD.encode(serde_json::to_vec(&legacy).unwrap())).is_none());
         assert!(arrival.live(1000));
         assert!(!arrival.live(6000));
         assert!(!Arrival { floor: 22.9, ..arrival }.valid());

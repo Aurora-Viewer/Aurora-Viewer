@@ -1331,8 +1331,8 @@ pub struct Settings {
     /// a hovered name plate), and egui's transitions end at once
     /// (`theme::apply_motion`).
     pub reduce_motion: bool,
-    /// Keep a traversable return at portal arrivals instead of the one-shot
-    /// horizontal exit. Opt-in; existing returns are reused without stacking.
+    /// Leave a traversable return by default. Turning this off selects the
+    /// one-shot horizontal exit for our journeys.
     pub portal_returns: bool,
     /// Preferences › Accessibility › Colour blindness: the interface's
     /// colours adapted to a colour vision deficiency (`crate::colorblind`),
@@ -2461,7 +2461,7 @@ impl Default for Settings {
             region_restart: Default::default(),
             collisions: Default::default(),
             reduce_motion: false,
-            portal_returns: false,
+            portal_returns: true,
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,

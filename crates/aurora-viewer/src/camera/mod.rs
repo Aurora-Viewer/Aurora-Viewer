@@ -4519,7 +4519,7 @@ mod tests {
         portals.sync(&world, None, crate::world::portals::unix_time());
         let now = Instant::now();
         let physical = world.agent.position;
-        assert!(portals.begin_arrival(physical, physical.z - 0.84, 1.8, now));
+        assert!(portals.begin_arrival(world.agent_id, physical, physical.z - 0.84, 1.8, now));
         world.portals = portals;
         let settings = CameraSettings::default();
         let first = avatar_frame(&world, &settings, now, false);

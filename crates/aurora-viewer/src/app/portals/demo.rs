@@ -137,13 +137,12 @@ impl App {
             };
             let now = Instant::now();
             let unix = unix_time();
-            let build = self.build_right_at(root);
             let mut state = std::mem::take(&mut self.world.portals);
             let creator = uuid::Uuid::from_u128(20);
             for i in 0..20 {
                 let mut next = portal.clone();
                 next.id = uuid::Uuid::from_u128(40 + i);
-                state.share_return(next, creator, build, self.world.agent.position, now, unix);
+                state.keep_return(&self.world, next, creator, now, unix);
             }
             for i in 0..20 {
                 let mut next = portal.announcement();
@@ -165,7 +164,7 @@ impl App {
             log::info!(
                 "portal crowded return demo: entries {}, apertures {}",
                 state.entries.len(),
-                state.apertures().count()
+                state.shown(&self.world).count()
             );
             self.world.portals = state;
             self.camera.set_view(
@@ -269,10 +268,11 @@ impl App {
             });
             let mut state = std::mem::take(&mut self.world.portals);
             let opened = if own {
-                state.begin_arrival(root, floor, height, Instant::now())
+                state.begin_arrival(id, root, floor, height, Instant::now())
             } else {
                 let event = aurora_net::bridge::portal::Arrival {
                     id: uuid::Uuid::new_v4(),
+                    creator: id,
                     region: handle,
                     position: root.to_array(),
                     floor,
@@ -560,6 +560,10 @@ impl App {
     }
 
     pub(in crate::app) fn seed_portal_peer_demo(&mut self, mode: &str, mut portal: Portal, owner: uuid::Uuid) {
+        // The near-keyboard scenarios exercise the one-way emergence and camera.
+        if mode.contains("-near-keyboard-") {
+            self.settings.portal_returns = false;
+        }
         let mut world = World::new(self.world.avatar_lib.clone());
         world.agent_id = owner;
         world.main_region = self.world.main_region;

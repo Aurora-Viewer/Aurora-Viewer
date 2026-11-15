@@ -226,7 +226,7 @@ Human two-client grid checks: public crossing, friends/non-friends, selected
 group members/non-members, appearing on a stationary or moving avatar,
 leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
-Cross a freshly placed portal without first retreating. With solid support at most 2 m below arrival, both travelers and updated Aurora observers should see a temporary horizontal opening, the body and worn geometry falling out, then automatic closure. Repeat over a prim platform and with support farther than 2 m below (ordinary arrival without an opening). Walking beneath a closing arrival must never teleport back. Verify failed or canceled teleports never create an arrival effect.
+Cross a freshly placed portal without first retreating. The default arrival creates or reuses a traversable return. Disable **Keep a return portal on arrival** to check the horizontal exit. With solid support at most 2 m below arrival, the traveler should see the opening, the body and attachments falling out, then automatic closure. Repeat over a prim platform and with support farther than 2 m below (ordinary arrival). Check that a permitted observer sees the effect on buildable land, while the same traveler emerges privately on no-build land. Walking beneath a closing arrival must never teleport back. Verify failed or canceled teleports never create an arrival effect.
 
 `AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
 drags an inventory landmark over the world. Hover scenarios retain the cargo;
@@ -261,8 +261,9 @@ rows. Resolver tests cover delayed parcel/map replies, immutable arrivals,
 variable regions, invalid coordinates and cancellation guards.
 
 `AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
-exchanges real v2 codec messages between two offline peer states. Everyone sees
-the aperture; denied observers see only the creator and private/access labels.
+exchanges real v2 codec messages between two offline peer states. Observers
+whose source filter admits the portal see its aperture. The destination stays
+hidden until the original access rules allow disclosure.
 Only granted observers receive a destination. Group grants wait for a complete
 server-shaped members response. On the grid, also verify late arrivals, lost
 requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade.
@@ -329,13 +330,17 @@ invitations throughout and zero effects at 840. `arrival-platform` adds a solid
 platform 3 m above terrain: support must come from the object, not the terrain.
 `arrival-sky` starts 3.01 m above support and must create no aperture or fall.
 `arrival-static` checks reduced motion without visual drop or input pause.
-Preferences > Aurora > Behavior > Keep a return portal on arrival is off by
-default. Enabling it leaves a vertical, traversable return until the original
+Preferences > Aurora > Behavior > Keep a return portal on arrival is on by
+default. It leaves a vertical, traversable return until the original
 invitation expires (at most two minutes). A nearby return to the same departure
 place is reused, including after recreating the source; its position and expiry
-must not change. A different doorway already occupying the area prevents a new
+must not change. A different visible doorway already occupying the area prevents a new
 return and uses the temporary horizontal arrival instead. Existing returns
-remain visible and usable with the preference off. Use `repeat-local-return`
+follow the same visibility and crossing rules with the preference off. Test a
+return beside a parcel boundary: sharing follows the parcel beneath the retained
+aperture. On no-build land the traveler can still walk back through their own
+return. Other viewers receive it only once build rights have been confirmed.
+Use `repeat-local-return`
 for successive real local arrivals with held run: two entries (source and return),
 no one-shot arrivals, no immediate bounce and no growing entry count.
 `repeat-local-return-busy` adds an unrelated private doorway at the landing:
@@ -355,8 +360,9 @@ complete effect cleanup at 840; `portal own reveal` logs the camera's relation
 to the cloud during emergence. First-person and manually controlled cameras
 must retain their selected mode. Also repeat a real nearby teleport using
 `repeat-local-late` to verify the reveal does not disrupt repeated crossings.
-The typed arrival message contains only visible landing geometry and a finite
-clock; replay cannot restart it or select another avatar. Test with two Aurora
+The typed arrival message carries the original creator for visibility filtering,
+landing geometry and a finite clock. The sending bridge identifies the traveler.
+Replay cannot restart an effect or select another avatar. Test with two Aurora
 viewers on the grid, including a private source and a floor made of prims.
 `keyboard-departing-allowed` starts the creator's teleport when the access
 request arrives, then changes their region after the grant is sent: the

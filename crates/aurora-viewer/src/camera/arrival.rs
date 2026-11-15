@@ -48,7 +48,7 @@ mod tests {
         let mut portals = std::mem::take(&mut world.portals);
         portals.sync(&world, None, crate::world::portals::unix_time());
         let now = Instant::now();
-        assert!(portals.begin_arrival(world.agent.position, 24.16, 1.8, now));
+        assert!(portals.begin_arrival(world.agent_id, world.agent.position, 24.16, 1.8, now));
         world.portals = portals;
         (world, now)
     }

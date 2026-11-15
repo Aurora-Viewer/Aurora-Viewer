@@ -28,6 +28,7 @@ impl Journey {
     }
     fn valid(&self, world: &World, now: Instant, unix: u64) -> bool {
         self.agent == world.agent_id
+            && !world.mutes.is_muted_id(&self.creator)
             && now.saturating_duration_since(self.started) <= Duration::from_secs(30)
             && self.source.live(unix)
             && !world.tp_failed
@@ -69,6 +70,18 @@ impl Journey {
             expires: self.source.expires,
         }
     }
+
+    fn keep_returns(&self, world: &World, state: &mut crate::world::portals::State, now: Instant, unix: u64) -> bool {
+        let Some(region) = world.main() else { return false };
+        // On a local trip the departure is still in this region. Keep the
+        // traveler's pass there even if the original relay leaves or closes.
+        if self.source.region == region.handle && self.landing.is_none() {
+            state.keep_departure(world, self.source.clone(), self.creator, now, unix);
+        }
+        let exit = self.return_portal(region.handle, world.agent.position);
+        crate::world::portals::fits_region(Vec3::from(exit.center), [region.heightmap.size_x, region.heightmap.size_y])
+            && state.keep_return(world, exit, self.creator, now, unix)
+    }
 }
 impl App {
     pub(super) fn tick_portals(&mut self) {
@@ -92,17 +105,7 @@ impl App {
             && journey.arrival_region.eq_ignore_ascii_case(&self.world.region_name())
             && let Some(region) = self.world.main_region
         {
-            let portal = journey.return_portal(region, self.world.agent.position);
-            let fits = self
-                .world
-                .main()
-                .is_some_and(|r| crate::world::portals::fits_region(Vec3::from(portal.center), [r.heightmap.size_x, r.heightmap.size_y]));
-            let returned = if self.settings.portal_returns && fits {
-                let build = self.build_right_at(Vec3::from(portal.center));
-                state.share_return(portal, journey.creator, build, self.world.agent.position, now, unix)
-            } else {
-                false
-            };
+            let returned = self.settings.portal_returns && journey.keep_returns(&self.world, &mut state, now, unix);
             if returned {
                 if self.demo {
                     log::info!("portal demo persistent arrival: entries {}, region {region}", state.entries.len());
@@ -141,7 +144,7 @@ impl App {
                         .index_of_uuid(&self.world.agent_id)
                         .and_then(|i| self.world.objects.get(i))
                         .map_or(1.7, |o| o.scale.z.clamp(0.5, 8.0));
-                    let opened = close && floor.is_some_and(|floor| state.begin_arrival(root, floor, height, now));
+                    let opened = close && floor.is_some_and(|floor| state.begin_arrival(journey.creator, root, floor, height, now));
                     if opened {
                         self.world.agent.flying = false;
                     }
@@ -150,6 +153,17 @@ impl App {
                     }
                 }
             }
+        }
+        if let Some(center) = state.awaiting_arrival_land() {
+            let fits = self.world.main().is_some_and(|region| {
+                crate::world::portals::arrival::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y])
+            });
+            let build = if fits {
+                self.build_right_at(center)
+            } else {
+                crate::world::land::BuildRight::Denied
+            };
+            state.arrival_land_known(build, now);
         }
         // a return kept ours while its land was unknown: asked again until known
         for (creator, id, center) in state.awaiting_land() {
@@ -308,7 +322,7 @@ impl App {
                     &mut self.world.agent,
                     &self.settings.camera,
                 );
-                state.share_return(portal.clone(), creator, build, position, now, unix);
+                state.keep_return(&self.world, portal.clone(), creator, now, unix);
                 let mut announcement = portal.announcement();
                 announcement.creator = Some(creator);
                 for peer in [0xA771, 0xA772] {
@@ -443,6 +457,7 @@ impl App {
             return;
         };
         let portal = entry.portal.clone();
+        let creator = entry.owner;
         let Some(handle) = self.world.main_region else { return };
         let normal = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
         let tangent = Vec3::new(-normal.y, normal.x, 0.0);
@@ -530,6 +545,7 @@ impl App {
         {
             let event = aurora_net::bridge::portal::Arrival {
                 id: uuid::Uuid::new_v4(),
+                creator,
                 region: handle,
                 position: target.to_array(),
                 floor,
@@ -784,6 +800,86 @@ mod tests {
         assert_eq!(exit.access, source.access);
         assert_eq!(exit.expires, source.expires);
         assert!((Vec3::new(exit.yaw.cos(), exit.yaw.sin(), 0.0) + Vec3::X).length() < 1e-5);
+        assert!(journey.valid(&world, Instant::now(), unix_time()));
+        use crate::world::mutes::{Mute, MuteType};
+        world
+            .mutes
+            .add(
+                Mute {
+                    id: creator,
+                    name: "Muted Resident".into(),
+                    kind: MuteType::Agent,
+                    flags: 0,
+                },
+                0,
+            )
+            .unwrap();
+        assert!(
+            !journey.valid(&world, Instant::now(), unix_time()),
+            "muted during transit: no arrival is opened or shared"
+        );
+    }
+
+    #[test]
+    fn a_persistent_journey_keeps_both_personal_passes_only_on_a_local_trip() {
+        use crate::world::portals::{Sources, State};
+
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let region = world.main_region.unwrap();
+        let creator = uuid::Uuid::from_u128(9);
+        let now = Instant::now();
+        let unix = unix_time();
+        let mut source = Portal {
+            id: uuid::Uuid::from_u128(7),
+            region,
+            center: [10.0, 10.0, 25.0],
+            yaw: 0.0,
+            destination: world.region_name(),
+            position: [128.0, 128.0, 25.0],
+            access: Access::Friends,
+            expires: unix + LIFETIME,
+        };
+        world.portal_sources = Sources::Nobody;
+        for local in [true, false] {
+            if !local {
+                source.destination = "Next region".into();
+            }
+            world.agent.position = Vec3::from(source.center);
+            let journey = Journey::new(&world, creator, &source, now);
+            let destination = if local { region } else { region ^ 256 };
+            if !local {
+                let mut info = world.main().unwrap().info.as_deref().unwrap().clone();
+                info.handle = destination;
+                info.name = source.destination.clone();
+                world.apply(NetEvent::MainRegionChanged { handle: destination });
+                world.apply(NetEvent::RegionHandshake(Arc::new(info)));
+            }
+            world.agent.position = Vec3::from(source.position);
+            let exit = journey.return_portal(destination, world.agent.position);
+            // The source relay is no longer present when the teleport finishes.
+            let mut state = State::default();
+            state.sync(&world, None, unix);
+            assert!(journey.keep_returns(&world, &mut state, now, unix));
+            let returned = state.crossable(&world, creator, exit.id).unwrap();
+            assert_eq!(returned.details.as_ref(), Some(&exit.details()));
+            assert!(returned.waiting_for_clearance());
+            let departure = state.crossable(&world, creator, source.id);
+            if local {
+                let departure = departure.unwrap();
+                assert!(departure.ready_to_cross(now));
+                assert!(!departure.reveals_arrival());
+                assert_eq!(departure.portal.center, source.center);
+            } else {
+                assert!(departure.is_none());
+            }
+            let waiting = state.awaiting_land();
+            assert!(waiting.contains(&(creator, exit.id, Vec3::from(exit.center))));
+            assert_eq!(waiting.contains(&(creator, source.id, Vec3::from(source.center))), local);
+            assert_eq!(state.visible(&world).count(), if local { 2 } else { 1 });
+        }
     }
 
     #[test]

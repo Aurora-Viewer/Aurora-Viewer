@@ -254,11 +254,12 @@ impl Gate {
         }
     }
 
-    fn arrival(center: Vec3, position: Vec3, now: Instant) -> Self {
+    fn after_teleport(center: Vec3, position: Vec3, now: Instant, emerge: bool) -> Self {
+        let cleared = position.distance(center) >= CLEARANCE;
         Self {
-            armed: position.distance(center) >= CLEARANCE,
+            armed: cleared,
             clearance: CLEARANCE,
-            arriving: position.distance(center) < CLEARANCE,
+            arriving: emerge && !cleared,
             ..Self::new(center, position, now)
         }
     }
@@ -343,6 +344,9 @@ pub struct State {
     /// during transit; an unrelated teleport status is not that acceptance.
     pub departure: Option<Uuid>,
     pub arrivals: HashMap<Uuid, arrival::Effect>,
+    /// Short-lived events awaiting server-backed group information. The
+    /// renderer only receives them after both source filters pass.
+    waiting_arrivals: HashMap<Uuid, aurora_net::bridge::portal::Arrival>,
     pub reduced_motion: bool,
     pub awaiting_floor: bool,
     agent: Uuid,
@@ -430,29 +434,26 @@ impl State {
         self.confirmed
             .retain(|(owner, id)| self.entries.iter().any(|e| e.owner == *owner && e.portal.id == *id));
         self.profile_wants.retain(|id| !source_shown(world, *id));
-        self.arrivals
-            .retain(|owner, effect| !effect.finished(Instant::now()) && source_shown(world, *owner));
+        self.sync_arrivals(world, Instant::now());
         self.ended.retain(|_, until| *until > now);
         self.discoveries.retain(|_, at| at.elapsed() < Duration::from_secs(30));
-        self.fetches.retain(|(owner, id), _| {
-            self.entries
-                .iter()
-                .any(|e| e.portal.id == *id && e.details.is_none() && e.relays.contains(owner))
-        });
+        // A queued private request can outlive a preference, friendship or
+        // aperture change. Retire its nonce before the bridge can send it.
+        let mut fetches = std::mem::take(&mut self.fetches);
+        fetches.retain(|(relay, id), _| self.awaiting_details_from(world, *relay, *id).is_some());
+        self.fetches = fetches;
         self.inquiries
             .retain(|_, inquiry| inquiry.received.elapsed() < Duration::from_secs(30));
+        let own_arrival = self.arrivals.get(&self.agent).map(|effect| effect.event.id);
         self.out.retain(|(target, message)| match message {
-            Message::Arrival(event) => event.live(arrival::unix_millis()),
+            Message::Arrival(event) => own_arrival == Some(event.id) && event.live(arrival::unix_millis()),
             Message::Open(portal) => portal.live(now),
             Message::Details { id, .. } => self.entries.iter().any(|entry| entry.shared && entry.portal.id == *id),
-            Message::Request { id, .. } => self
-                .entries
-                .iter()
-                .any(|entry| entry.portal.id == *id && entry.details.is_none() && entry.relays.contains(target)),
+            Message::Request { id, nonce, .. } => self.fetches.get(&(*target, *id)).is_some_and(|fetch| fetch.nonce == *nonce),
             _ => true,
         });
         self.retries.retain(|retry| match &retry.action {
-            Message::Arrival(event) => event.live(arrival::unix_millis()),
+            Message::Arrival(event) => own_arrival == Some(event.id) && event.live(arrival::unix_millis()),
             Message::Open(portal) => self.entries.iter().any(|e| e.shared && e.portal.id == portal.id) && portal.live(now),
             Message::Close { id, .. } => self.ended.contains_key(&(self.agent, *id)),
             _ => false,
@@ -565,13 +566,8 @@ impl State {
         if self.entries.len() >= LIMIT {
             return Err(Refusal::Invalid);
         }
-        if let Access::Group(id) = portal.access
-            && !self.group_refresh.contains(&id)
-        {
-            self.group_refresh.push_back(id);
-        }
         let announcement = portal.announcement();
-        self.queue(Uuid::nil(), Message::Open(announcement.clone()));
+        self.announce(announcement.clone(), portal.access);
         self.entries.push(Entry {
             owner: self.agent,
             gate: Gate::new(Vec3::from(portal.center), position, now),
@@ -606,12 +602,16 @@ impl State {
         }
     }
 
-    fn announce(&mut self, announcement: Announcement, access: Access) -> bool {
+    fn refresh_access_group(&mut self, access: Access) {
         if let Access::Group(group) = access
             && !self.group_refresh.contains(&group)
         {
             self.group_refresh.push_back(group);
         }
+    }
+
+    fn announce(&mut self, announcement: Announcement, access: Access) -> bool {
+        self.refresh_access_group(access);
         self.queue(Uuid::nil(), Message::Open(announcement))
     }
 
@@ -693,14 +693,13 @@ impl State {
         }
         match message {
             Message::Arrival(event) => {
-                if source_shown(world, owner)
-                    && world
-                        .objects
-                        .index_of_uuid(&owner)
-                        .and_then(|i| world.objects.get(i))
-                        .is_none_or(|o| o.is_avatar())
+                if world
+                    .objects
+                    .index_of_uuid(&owner)
+                    .and_then(|i| world.objects.get(i))
+                    .is_none_or(|o| o.is_avatar())
                 {
-                    self.receive_arrival(owner, event, now);
+                    self.receive_arrival(world, owner, event, now);
                 }
             }
             Message::Open(portal) => {
@@ -732,7 +731,7 @@ impl State {
                     return;
                 }
                 // A creator other than the relay exists for travelers' returns
-                // (`share_return`). Such a claim never names us unless it joins
+                // (`keep_return`). Such a claim never names us unless it joins
                 // a portal of ours (above); it never names the label
                 // (`label_owner`), and the relay passes the setting with it.
                 if creator == world.agent_id
@@ -740,7 +739,10 @@ impl State {
                     || relayed >= PER_RELAY
                     || self.entries.iter().filter(|e| !e.own() && e.owner == creator).count() >= PER_CREATOR
                     || (portal.creator.is_none() && self.entries.iter().any(|e| e.owner == owner && e.portal.creator.is_none()))
-                    || (portal.creator.is_some() && self.entries.iter().any(|e| returns::overlaps(&e.portal, &portal)))
+                    || (portal.creator.is_some()
+                        && source_shown(world, owner)
+                        && source_shown(world, creator)
+                        && self.shown(world).any(|e| returns::overlaps(&e.portal, &portal)))
                 {
                     return;
                 }
@@ -834,12 +836,10 @@ impl State {
                 {
                     return;
                 }
-                if let Some(entry) = self
-                    .entries
-                    .iter_mut()
-                    .find(|entry| entry.portal.id == id && entry.portal.live(unix) && entry.relays.contains(&owner))
-                    && entry.details.is_none()
+                if let Some(index) = self.awaiting_details_from(world, owner, id)
+                    && self.entries[index].portal.live(unix)
                 {
+                    let entry = &mut self.entries[index];
                     if details.access == Access::Friends && owner != entry.owner && world.agent_id != entry.owner {
                         // Only the original creator can prove friendship. A
                         // return relay cannot grant access on their behalf.
@@ -853,6 +853,15 @@ impl State {
                 }
             }
         }
+    }
+
+    fn awaiting_details_from(&self, world: &World, relay: Uuid, id: Uuid) -> Option<usize> {
+        if !source_shown(world, relay) {
+            return None;
+        }
+        self.entries.iter().position(|entry| {
+            entry.portal.id == id && entry.details.is_none() && entry.relays.contains(&relay) && self.shown_entry(world, entry)
+        })
     }
 
     fn exchange_details(&mut self, world: &World, now: Instant) {
@@ -919,7 +928,7 @@ impl State {
         let requests: Vec<_> = self
             .entries
             .iter()
-            .filter(|entry| entry.details.is_none() && entry.shown(world))
+            .filter(|entry| entry.details.is_none() && self.shown_entry(world, entry))
             .flat_map(|entry| {
                 entry
                     .relays

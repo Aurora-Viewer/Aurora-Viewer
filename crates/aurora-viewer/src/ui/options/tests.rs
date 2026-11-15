@@ -704,19 +704,19 @@ fn the_simulator_version_notice_has_a_switch_off_by_default() {
 }
 
 #[test]
-fn persistent_portal_returns_are_opt_in_saved_searchable_and_independent_of_the_look() {
+fn portal_returns_default_on_and_the_saved_one_way_preference_survives_look_changes() {
     let mut settings: Settings = serde_json::from_str("{}").unwrap();
-    assert!(!settings.portal_returns);
+    assert!(settings.portal_returns);
     let query = cx::fold(aurora_i18n::tr!("ui-options-portal-returns"));
     assert!(counts(&mut settings, &query).hits(Page::Aurora) >= 1);
-    settings.portal_returns = true;
+    settings.portal_returns = false;
     assert_eq!(counts(&mut settings, "").modified(Page::Aurora), 1);
     for look in [pages::aurora::Look::Legacy, pages::aurora::Look::Aurora] {
         pages::aurora::set_all(&mut settings, look);
-        assert!(settings.portal_returns);
+        assert!(!settings.portal_returns);
     }
     let restored: Settings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
-    assert!(restored.portal_returns);
+    assert!(!restored.portal_returns);
 }
 
 #[test]

@@ -9,37 +9,42 @@ pub(super) fn overlaps(a: &Announcement, b: &Announcement) -> bool {
 }
 
 impl State {
-    pub(super) fn materialized(&self, entry: &Entry) -> bool {
-        // A manually placed source has priority if it appears after a return.
-        // Keep the return invitation intact, but never draw or cross both.
-        entry.portal.creator.is_none()
-            || !self
+    fn obscured(&self, world: &World, entry: &Entry) -> bool {
+        // Shown sources first, then our return. Two relayed returns can
+        // become visible together after a profile or preference changes;
+        // their immutable identities break that tie on every frame.
+        let priority = |e: &Entry| (e.portal.creator.is_some(), !e.return_pass, e.portal.id, e.owner);
+        entry.portal.creator.is_some()
+            && self
                 .entries
                 .iter()
-                .any(|other| other.portal.creator.is_none() && overlaps(&other.portal, &entry.portal))
-    }
-
-    pub fn apertures(&self) -> impl Iterator<Item = &Entry> {
-        self.entries.iter().filter(|entry| self.materialized(entry))
+                .any(|other| priority(other) < priority(entry) && other.shown(world) && overlaps(&other.portal, &entry.portal))
     }
 
     pub(super) fn shown_entry(&self, world: &World, entry: &Entry) -> bool {
-        entry.shown(world)
-            && (entry.portal.creator.is_none()
-                || !self
-                    .entries
-                    .iter()
-                    .any(|other| other.portal.creator.is_none() && other.shown(world) && overlaps(&other.portal, &entry.portal)))
+        entry.shown(world) && !self.obscured(world, entry)
+    }
+
+    /// A local trip keeps its departure pass. Start sampling again from
+    /// the landing position, even when it is right next to the departure.
+    pub fn keep_departure(&mut self, world: &World, portal: Portal, creator: Uuid, now: Instant, unix: u64) {
+        self.keep_endpoint(world, portal, creator, now, unix, false);
     }
 
     /// The accepted journey grants only this traveler a return pass. Other
     /// residents still need the original creator's Friends/Group permission.
-    pub fn share_return(&mut self, portal: Portal, creator: Uuid, build: BuildRight, position: Vec3, now: Instant, unix: u64) -> bool {
-        let share = build == BuildRight::Allowed;
-        let unknown = build == BuildRight::Unknown;
+    /// `awaiting_land` then checks the parcel at the retained aperture's
+    /// exact center before announcing an invitation, even on a reused route.
+    pub fn keep_return(&mut self, world: &World, portal: Portal, creator: Uuid, now: Instant, unix: u64) -> bool {
+        self.keep_endpoint(world, portal, creator, now, unix, true)
+    }
+
+    fn keep_endpoint(&mut self, world: &World, portal: Portal, creator: Uuid, now: Instant, unix: u64, emerge: bool) -> bool {
+        let position = world.agent.position;
         let mut announcement = portal.announcement();
         announcement.creator = Some(creator);
         if creator.is_nil()
+            || world.mutes.is_muted_id(&creator)
             || !position.is_finite()
             || Some(portal.region) != self.region
             || !portal.live(unix)
@@ -60,57 +65,51 @@ impl State {
         let same_route = |entry: &Entry| {
             entry.owner == creator
                 && overlaps(&entry.portal, &announcement)
-                && entry.details.as_ref().is_some_and(|details| {
-                    details.access == portal.access
-                        && details.destination.region.eq_ignore_ascii_case(&portal.destination)
-                        && Vec3::from(details.destination.position).distance(Vec3::from(portal.position)) <= 0.5
-                })
+                && entry.details.as_ref().map_or_else(
+                    || entry.shared_announcement() == announcement,
+                    |details| {
+                        details.access == portal.access
+                            && details.destination.region.eq_ignore_ascii_case(&portal.destination)
+                            && Vec3::from(details.destination.position).distance(Vec3::from(portal.position)) <= 0.5
+                    },
+                )
         };
         // Provenance is a place, not the departure UUID: recreating a source
         // must reuse the first aperture, its destination and its original TTL.
-        if let Some(index) = self.entries.iter().position(|entry| same_route(entry) && self.materialized(entry)) {
-            let entry = &self.entries[index];
-            announcement = entry.portal.clone();
-            announcement.creator = Some(creator);
-            if share && !entry.shared && !self.queue(Uuid::nil(), Message::Open(announcement.clone())) {
-                return false;
-            }
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| same_route(entry) && !self.obscured(world, entry))
+        {
             let entry = &mut self.entries[index];
-            // Retain a normal source's local priority. Only its relayed wire
-            // needs the creator hint; converting its stored kind would expose
-            // an older overlapping return that the source currently suppresses.
-            entry.shared |= share;
-            entry.awaiting_land = unknown && !entry.shared;
+            entry.details.get_or_insert_with(|| portal.details());
+            entry.awaiting_land = !entry.shared;
             entry.return_pass = true;
-            entry.gate = Gate::arrival(Vec3::from(entry.portal.center), position, now);
+            entry.gate = Gate::after_teleport(Vec3::from(entry.portal.center), position, now, emerge);
+            if entry.shared {
+                self.refresh_access_group(portal.access);
+            }
         } else {
             if self.entries.len() >= LIMIT
                 || self
                     .entries
                     .iter()
-                    .any(|entry| entry.portal.id == portal.id || overlaps(&entry.portal, &announcement))
-                || (share && !self.queue(Uuid::nil(), Message::Open(announcement.clone())))
+                    .any(|entry| entry.portal.id == portal.id || (entry.shown(world) && overlaps(&entry.portal, &announcement)))
             {
                 return false;
             }
             self.entries.push(Entry {
                 owner: creator,
-                gate: Gate::arrival(Vec3::from(portal.center), position, now),
+                gate: Gate::after_teleport(Vec3::from(portal.center), position, now, emerge),
                 expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
                 portal: announcement,
                 details: Some(portal.details()),
                 relays: Vec::new(),
-                shared: share,
+                shared: false,
                 created: false,
                 return_pass: true,
-                awaiting_land: unknown,
+                awaiting_land: true,
             });
-        }
-        if share
-            && let Access::Group(group) = portal.access
-            && !self.group_refresh.contains(&group)
-        {
-            self.group_refresh.push_back(group);
         }
         true
     }

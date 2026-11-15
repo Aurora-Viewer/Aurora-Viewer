@@ -14,6 +14,27 @@ pub(super) fn portal() -> Portal {
         expires: 1120,
     }
 }
+impl State {
+    // One arrival tick with the supplied parcel result.
+    pub(super) fn share_return(
+        &mut self,
+        portal: Portal,
+        creator: Uuid,
+        build: BuildRight,
+        world: &World,
+        now: Instant,
+        unix: u64,
+    ) -> bool {
+        if !self.keep_return(world, portal, creator, now, unix) {
+            return false;
+        }
+        for (creator, id, _) in self.awaiting_land() {
+            self.land_known(creator, id, build, unix);
+        }
+        true
+    }
+}
+
 pub(super) fn point(x: f32) -> Vec3 {
     Vec3::new(10.0 + x, 10.0, 25.0)
 }
@@ -282,7 +303,7 @@ fn a_return_is_announced_only_where_the_traveler_may_build_and_stays_crossable_e
         let now = Instant::now();
         let creator = Uuid::from_u128(20);
         let p = portal();
-        assert!(state.share_return(p.clone(), creator, build, traveler.agent.position, now, 1000));
+        assert!(state.share_return(p.clone(), creator, build, &traveler, now, 1000));
         let shared = build == BuildRight::Allowed;
         let opens = |state: &State| {
             state
@@ -326,7 +347,7 @@ fn a_return_waiting_for_its_land_is_shared_once_open_and_never_unshared() {
     // Unknown, then open to us: announced once, then no longer waiting
     let (traveler, mut state) = fixture();
     let p = portal();
-    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, &traveler, now, 1000));
     assert_eq!(state.awaiting_land().len(), 1);
     assert_eq!(opens(&state, p.id), 0);
     state.land_known(creator, p.id, BuildRight::Unknown, 1000);
@@ -336,14 +357,14 @@ fn a_return_waiting_for_its_land_is_shared_once_open_and_never_unshared() {
     assert!(state.awaiting_land().is_empty());
     // a later arrival on land not known or closed never makes it private again
     for build in [BuildRight::Unknown, BuildRight::Denied] {
-        assert!(state.share_return(p.clone(), creator, build, traveler.agent.position, now, 1000));
+        assert!(state.share_return(p.clone(), creator, build, &traveler, now, 1000));
         assert!(state.awaiting_land().is_empty(), "{build:?}");
     }
     state.receive(&traveler, &wire(Uuid::from_u128(5), Message::Discover { region: 256 }), now, 1000);
     assert_eq!(opens(&state, p.id), 2, "still answered to late arrivals");
     // Unknown, then closed: ours alone for good
     let (traveler, mut state) = fixture();
-    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, &traveler, now, 1000));
     state.land_known(creator, p.id, BuildRight::Denied, 1000);
     assert!(state.awaiting_land().is_empty());
     state.land_known(creator, p.id, BuildRight::Allowed, 1000);
@@ -351,11 +372,11 @@ fn a_return_waiting_for_its_land_is_shared_once_open_and_never_unshared() {
     assert!(state.crossable(&traveler, creator, p.id).is_some());
     // the return expires before the answer: nothing is announced
     let (traveler, mut state) = fixture();
-    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, &traveler, now, 1000));
     state.land_known(creator, p.id, BuildRight::Allowed, p.expires);
     assert_eq!(opens(&state, p.id), 0, "expired");
     let (traveler, mut state) = fixture();
-    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Unknown, &traveler, now, 1000));
     state.sync(&traveler, None, p.expires);
     assert!(state.awaiting_land().is_empty(), "gone with the return");
     state.land_known(creator, p.id, BuildRight::Allowed, 1000);
@@ -371,7 +392,7 @@ fn a_return_kept_to_the_traveler_answers_no_details_request() {
         access: Access::Friends,
         ..portal()
     };
-    assert!(state.share_return(p.clone(), creator, BuildRight::Denied, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Denied, &traveler, now, 1000));
     state.receive(
         &traveler,
         &wire(
@@ -423,7 +444,7 @@ fn portal_return_arrivals_share_one_aperture_and_preserve_the_observers_gate() {
         1000,
     );
     assert_eq!(state.entries.len(), 1, "one departing relay does not close the shared return");
-    assert!(state.share_return(portal(), creator, BuildRight::Allowed, observer.agent.position, now, 1000));
+    assert!(state.share_return(portal(), creator, BuildRight::Allowed, &observer, now, 1000));
     assert_eq!(state.entries.len(), 1);
     assert!(
         state.entries[0].waiting_for_clearance(),
@@ -449,7 +470,7 @@ fn private_return_preserves_travelers_rights_without_granting_the_relays_friends
         access: Access::Friends,
         ..portal()
     };
-    assert!(state.share_return(p.clone(), creator, BuildRight::Allowed, traveler.agent.position, now, 1000));
+    assert!(state.share_return(p.clone(), creator, BuildRight::Allowed, &traveler, now, 1000));
     assert!(state.entries[0].allowed(&traveler), "the traveler retains a personal return");
     assert!(state.entries[0].portal.destination.is_none());
     for peer in [creator, stranger] {
