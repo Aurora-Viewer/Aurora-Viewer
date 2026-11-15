@@ -49,6 +49,12 @@ type Placement = (glam::Vec3, glam::Quat, glam::Vec3);
 /// a frame), as a simulator keeps one undo step for a drag.
 const EDIT_GAP: Duration = Duration::from_millis(400);
 
+/// Restating live numbers after a local echo is not a new edit: float noise
+/// from the Object tab must not push another undo step of the same pose.
+fn same_placement(a: Placement, b: Placement) -> bool {
+    a.0.abs_diff_eq(b.0, 1e-4) && a.1.abs_diff_eq(b.1, 0.001) && a.2.abs_diff_eq(b.2, 1e-4)
+}
+
 #[derive(Default)]
 struct History {
     undo: Vec<Placement>,
@@ -430,7 +436,7 @@ impl DemoSim {
                         update.rotation.unwrap_or(before.1),
                         update.scale.unwrap_or(before.2),
                     );
-                    if after != before {
+                    if !same_placement(before, after) {
                         let history = self.history.entry(id).or_default();
                         let now = Instant::now();
                         if history.last.is_none_or(|at| now - at > EDIT_GAP) {
@@ -1189,6 +1195,85 @@ mod tests {
             "child {:?} {:?}",
             child.position,
             child.scale
+        );
+    }
+
+    /// Float noise from restating the live numbers is not a second undo step.
+    #[test]
+    fn a_restatement_of_the_stretched_pose_is_not_another_undo_step() {
+        let mut world = world();
+        let (id, local, handle, original) = prim(&world, 99610);
+        let mut sim = DemoSim::default();
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Select {
+                handle,
+                local_ids: vec![local],
+            },
+        );
+        let idx = world.objects.index_of_uuid(&id).unwrap();
+        world.objects.get_mut(idx).unwrap().scale = original.2 * 2.0;
+        let echoed = world.objects.get(idx).unwrap().scale;
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Transform {
+                handle,
+                updates: vec![TransformUpdate {
+                    local_id: local,
+                    position: None,
+                    rotation: None,
+                    scale: Some(echoed),
+                    linked: false,
+                    uniform: false,
+                }],
+            },
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Transform {
+                handle,
+                updates: vec![TransformUpdate {
+                    local_id: local,
+                    position: None,
+                    rotation: None,
+                    scale: Some(echoed + Vec3::splat(1e-5)),
+                    linked: true,
+                    uniform: false,
+                }],
+            },
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.scale.abs_diff_eq(original.2, 1e-4),
+            "first Ctrl+Z must restore the original, not walk a restatement {:?}",
+            o.scale
+        );
+        apply(
+            &mut world,
+            &mut sim,
+            BuildCmd::Undo {
+                handle,
+                ids: vec![id],
+                group_id: Uuid::nil(),
+            },
+        );
+        let o = world.objects.get(idx).unwrap();
+        assert!(
+            o.scale.abs_diff_eq(original.2, 1e-4),
+            "a second Ctrl+Z must not walk a restatement {:?}",
+            o.scale
         );
     }
 }

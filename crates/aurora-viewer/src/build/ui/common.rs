@@ -59,6 +59,49 @@ pub(crate) fn field_end(ui: &egui::Ui, r: &egui::Response) -> FieldEnd {
     if escape_pressed(ui) { FieldEnd::Revert } else { FieldEnd::Commit }
 }
 
+/// A numeric spinner that has the keyboard this pass: leftover focus is not
+/// typing. Ctrl+Z then undoes the object, as a press in the world would.
+fn spinner_kb_id() -> egui::Id {
+    egui::Id::unique("build_spinner_kb")
+}
+
+#[derive(Clone, Copy)]
+struct SpinnerKb {
+    id: egui::Id,
+    typed: bool,
+    pass: u64,
+}
+
+pub(crate) fn note_spinner_keyboard(ui: &egui::Ui, r: &egui::Response) {
+    if !r.has_focus() {
+        return;
+    }
+    let key = spinner_kb_id();
+    let pass = ui.ctx().cumulative_pass_nr();
+    let typed_text = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_))));
+    let typed = typed_text
+        || ui.data(|d| {
+            d.get_temp::<SpinnerKb>(key)
+                .is_some_and(|prev| prev.id == r.id && prev.typed && (prev.pass == pass || prev.pass + 1 == pass))
+        });
+    ui.data_mut(|d| {
+        d.insert_temp(key, SpinnerKb { id: r.id, typed, pass });
+    });
+}
+
+/// A leftover click on a spinner is not LLLineEditor: Ctrl+Z / Ctrl+Y undo
+/// the object. Typing a number in it still keeps those keys in the field.
+pub(crate) fn idle_spinner_history(ctx: &egui::Context) -> bool {
+    let Some(focused) = ctx.memory(|m| m.focused()) else {
+        return false;
+    };
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data(|d| {
+        d.get_temp::<SpinnerKb>(spinner_kb_id())
+            .is_some_and(|s| s.id == focused && !s.typed && (s.pass == pass || s.pass + 1 == pass))
+    })
+}
+
 /// What a value control did this frame: changed (live) and / or must be
 /// sent (typed value, end of a drag).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -253,6 +296,7 @@ fn spinner(
     });
     let row_rect = row.response.rect;
     let (r, step) = row.inner;
+    note_spinner_keyboard(ui, &r);
     // A typed draft and a drag keep the number they already own. The wheel
     // over the row is still eaten, so the panel does not jump underneath.
     // Deliberate difference: LLSpinCtrl::handleScrollWheel calls onUpBtn /
@@ -343,6 +387,7 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
     });
     let row_rect = row.response.rect;
     let (r, step) = row.inner;
+    note_spinner_keyboard(ui, &r);
     let protect = r.has_focus() || r.dragged() || r.drag_stopped();
     let wheel = crate::ui::widgets::spin_wheel(ui, row_rect, r.id, !protect);
     let delta = scale.saturating_mul(step) + wheel.integer;

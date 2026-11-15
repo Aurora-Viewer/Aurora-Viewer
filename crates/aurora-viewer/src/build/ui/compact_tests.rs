@@ -1083,6 +1083,45 @@ fn focused_text_history_stays_in_singleline_and_multiline_fields_instead_of_the_
 }
 
 #[test]
+fn object_history_runs_while_a_spinner_keeps_the_keyboard() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let mut value = 1.0f32;
+    let frame = |world: &mut World, tool: &mut BuildTool, settings: &mut BuildSettings, value: &mut f32, events: Vec<egui::Event>| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let r = ui.add(egui::DragValue::new(value));
+                r.request_focus();
+                super::super::common::note_spinner_keyboard(ui, &r);
+                super::super::shortcuts(ui.ctx(), tool, world, settings);
+            },
+        );
+        output.textures_delta.clear();
+    };
+    frame(&mut world, &mut tool, &mut settings, &mut value, vec![]);
+    frame(&mut world, &mut tool, &mut settings, &mut value, vec![]);
+    tool.out.clear();
+    frame(
+        &mut world,
+        &mut tool,
+        &mut settings,
+        &mut value,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(
+        tool.out
+            .iter()
+            .any(|cmd| matches!(cmd, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { .. }))),
+        "a leftover spinner click leaves Ctrl+Z to the object: {:?}",
+        tool.out
+    );
+}
+
+#[test]
 fn object_history_runs_while_a_button_keeps_the_keyboard() {
     let (mut world, mut tool, mut settings) = fixture();
     let ctx = egui::Context::default();

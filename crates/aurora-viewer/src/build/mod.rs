@@ -949,6 +949,10 @@ pub struct BuildTool {
     /// with the selected roots (`undo`). A later Transform of any of them
     /// drops the batch.
     stretch_prims: Vec<ObjKey>,
+    /// Pose those prims went out with. The Object tab restating the same
+    /// numbers is not a later edit: keep the batch so the first Ctrl+Z still
+    /// names the children.
+    stretch_sent: Vec<StretchSent>,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
     /// Mesh-header estimates refreshed from the scene before editor input.
@@ -1019,6 +1023,7 @@ impl Default for BuildTool {
             menu_selection: false,
             selection_linked: false,
             stretch_prims: Vec::new(),
+            stretch_sent: Vec::new(),
             pending_link: None,
             link_triangles: HashMap::new(),
             link_properties: HashSet::new(),
@@ -1252,8 +1257,8 @@ impl BuildTool {
     /// The simulator then holds an undo step per prim, so Ctrl+Z / Ctrl+Y name
     /// every one. A later Transform of those prims is a newer step: drop the
     /// batch so the next undo names the selection's roots alone
-    /// (LLSelectMgr::undo, SEND_ONLY_ROOTS). A spinner restating the live
-    /// numbers is not that later step (`set_transform` sends nothing then).
+    /// (LLSelectMgr::undo, SEND_ONLY_ROOTS). Restating the numbers the stretch
+    /// already sent (the Object tab as the drag ends) is not that later step.
     fn note_stretch_transform(&mut self, handle: RegionHandle, updates: &[TransformUpdate]) {
         let stretch = updates.len() >= 2 && updates.iter().any(|u| u.scale.is_some()) && updates.iter().all(|u| !u.linked);
         if stretch {
@@ -1264,14 +1269,26 @@ impl BuildTool {
                     local_id: u.local_id,
                 })
                 .collect();
+            self.stretch_sent = updates.iter().map(StretchSent::from_update).collect();
             return;
         }
         if updates
             .iter()
             .any(|u| self.stretch_prims.iter().any(|k| k.region == handle && k.local_id == u.local_id))
         {
+            if self.restates_stretch(updates) {
+                return;
+            }
             self.stretch_prims.clear();
+            self.stretch_sent.clear();
         }
+    }
+
+    fn restates_stretch(&self, updates: &[TransformUpdate]) -> bool {
+        !self.stretch_sent.is_empty()
+            && updates
+                .iter()
+                .all(|u| self.stretch_sent.iter().any(|sent| sent.local_id == u.local_id && sent.matches(u)))
     }
 
     /// The edit manipulator in use, with the modifier keys of the Edit tool
@@ -2992,5 +3009,43 @@ impl BuildTool {
             handle: key.region,
             updates: vec![u],
         });
+    }
+}
+
+/// One prim of a one-axis linkset stretch, as MultipleObjectUpdate sent it.
+struct StretchSent {
+    local_id: u32,
+    position: Option<Vec3>,
+    rotation: Option<Quat>,
+    scale: Option<Vec3>,
+}
+
+impl StretchSent {
+    fn from_update(u: &TransformUpdate) -> Self {
+        Self {
+            local_id: u.local_id,
+            position: u.position,
+            rotation: u.rotation,
+            scale: u.scale,
+        }
+    }
+
+    fn matches(&self, u: &TransformUpdate) -> bool {
+        const EPS: f32 = 1e-4;
+        close_opt(self.position, u.position, EPS) && close_quat(self.rotation, u.rotation) && close_opt(self.scale, u.scale, EPS)
+    }
+}
+
+fn close_opt(stored: Option<Vec3>, sent: Option<Vec3>, eps: f32) -> bool {
+    match sent {
+        None => true,
+        Some(v) => stored.is_some_and(|s| s.abs_diff_eq(v, eps)),
+    }
+}
+
+fn close_quat(stored: Option<Quat>, sent: Option<Quat>) -> bool {
+    match sent {
+        None => true,
+        Some(v) => stored.is_some_and(|s| s.abs_diff_eq(v, 0.001)),
     }
 }

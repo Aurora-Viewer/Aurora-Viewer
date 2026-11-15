@@ -3610,6 +3610,24 @@ mod tests {
         tool.set_transform(&mut world, &settings, None, None, Some(restated_rot), true);
         assert!(tool.out.is_empty(), "restating the stretched root is not a new Transform");
         assert_eq!(tool.stretch_prims, vec![root_key, children[0]]);
+        // A Transform that only repeats those numbers (the Object tab if a
+        // spinner still reports changed) must not drop the children.
+        tool.send(BuildCmd::Transform {
+            handle: root_key.region,
+            updates: vec![TransformUpdate {
+                local_id: root_key.local_id,
+                position: Some(restated_pos),
+                rotation: None,
+                scale: Some(restated_scale),
+                linked: true,
+                uniform: false,
+            }],
+        });
+        assert_eq!(
+            tool.stretch_prims,
+            vec![root_key, children[0]],
+            "restating the stretch's own numbers is not a later edit"
+        );
         tool.out.clear();
         tool.undo(&world, false);
         assert!(matches!(tool.out.as_slice(),

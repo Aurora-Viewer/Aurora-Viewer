@@ -23579,12 +23579,7 @@ impl ApplicationHandler for App {
                 // when it turns into a drag (LLTool::handleAnyMouseClick:
                 // setKeyboardFocus(NULL)); egui lets it go on a click only
                 if pressed && !over_ui && self.in_world() {
-                    let typing = self.egui_ctx.text_edit_focused();
-                    self.egui_ctx.memory_mut(|m| {
-                        if let Some(id) = m.focused() {
-                            m.surrender_focus(id);
-                        }
-                    });
+                    let typing = self.surrender_world_keyboard();
                     // the field commits first, to what it was typed for
                     if typing {
                         self.press_while_typing();
