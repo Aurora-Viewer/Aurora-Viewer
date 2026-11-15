@@ -14437,6 +14437,7 @@ admin-unfreeze-message = フリーズが解除されました。
 
 ui-weather = 天気
 ui-weather-aurora = Aurora の天気
+ui-bars-aurora-weather = Aurora の天気…
 ui-weather-precipitation = 降るもの
 ui-weather-precipitation-tip = 空から降るもの（自分の表示のみ）
 ui-weather-rain = 雨

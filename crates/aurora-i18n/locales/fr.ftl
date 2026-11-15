@@ -14520,6 +14520,7 @@ admin-unfreeze-message = Vous n’êtes plus gelé.
 
 ui-weather = Météo
 ui-weather-aurora = Météo Aurora
+ui-bars-aurora-weather = Météo Aurora…
 ui-weather-precipitation = Précipitations
 ui-weather-precipitation-tip = Ce qui tombe du ciel, pour votre vue seulement
 ui-weather-rain = Pluie
