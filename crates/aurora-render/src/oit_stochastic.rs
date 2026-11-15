@@ -239,17 +239,8 @@ pub(crate) fn enable_directive_with(prim: bool) -> &'static str {
 /// The scene module's source with the method's passes in (the common
 /// part, object.wgsl, env.wgsl): the module the method's pipelines use.
 pub(crate) fn st_scene_source(device: &wgpu::Device) -> String {
-    // (the passes of the exact blend order stay in the source, unused: without
-    // the attribute a device may not know, as `blend_exact::scene_source`)
-    let object = st_object_source(
-        device,
-        &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
-    );
-    let object = if device.features().contains(crate::blend_exact::EARLY_TEST) {
-        object
-    } else {
-        object.replace("@early_depth_test(force)", "")
-    };
+    // (the passes of the exact blend order stay in the source, unused)
+    let object = st_object_source(device, &crate::object_shader_source(device.features()));
     format!(
         "{}{}\n{}\n{}",
         enable_directive(device),
