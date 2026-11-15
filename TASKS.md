@@ -2010,6 +2010,8 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
 
 Frames per second, hitches, video memory and loading times. One PR per item, with the before / after measurement (`AURORA_PROFILE=1`, see [docs/TESTING.md](docs/TESTING.md#profiling)). The performance lines that were in "Rendering" (culling audit) and in "Interface" ("Perf, from this measurement run") were gathered here on 2026-10-12, without any change to their text.
 
+- 🔧 **Cost of the water** (human request, 2026-11-15, task `water-cost`; no issue): measure first (base water, enhanced water at each quality, with the water in view and hidden, 1080p and 4K), then lighten what weighs.
+
 - 🟡 **GTAO at half resolution from a 1080p screen** (task `high-preset-cost-1080p`, no issue, 2026-11-14). A tester with a mid-range card at 1080p got about 90 fps on High and 150 on Medium. Measured at 1920 x 1080 (demo plaza, RTX 4090, 4 alternated passes, GPU ms per frame): High 1.65, Medium 0.73; removing one effect from High: all shadows −0.48 (contact shadows alone −0.27), GTAO High → Low −0.34, water reflections −0.03, SMAA + sharpening −0.06, probes 0. GTAO ran at full resolution below 3.2 MP, so it cost more at 1080p (0.46 ms) than in a 1440p window (0.27 ms). The threshold (`HALF_RES_PIXELS`, gtao.rs) is now 1.8 MP: High's GTAO 0.46 → 0.17 ms (GPU frame 1.67 → 1.38), Ultra's 1.37 → 0.44 ms (2.73 → 1.88); same final image in the before / after captures, the occlusion view loses a little fine detail.
   - ✅ Human check of the before / after demo captures at 1080p on 2026-11-14: final image accepted.
   - ⬜ To check on Agni (QA testers), 1080p screen, High then Deluxe: no new ambient occlusion artefact along silhouettes (avatars, furniture, the foot of walls).
