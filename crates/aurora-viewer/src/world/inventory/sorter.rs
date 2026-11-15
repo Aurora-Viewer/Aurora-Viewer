@@ -158,13 +158,14 @@ impl Default for Preferences {
 }
 
 impl Preferences {
+    /// The sort folder's name, as the inventory keeps it. A name that would
+    /// reach somewhere it must not (a `#` viewer folder, the Pre-Trash
+    /// folder, a default folder's name) is refused for the default one:
+    /// typed or imported, it never puts the sort in a hands-off place.
     pub fn base_name(&self) -> String {
-        let name = self.base.trim();
-        if name.is_empty() {
-            aurora_i18n::tr!("inventory-sorter-default-base").to_owned()
-        } else {
-            name.to_owned()
-        }
+        let default = inventory_name(aurora_i18n::tr!("inventory-sorter-default-base"), "Sorted");
+        let name = inventory_name(self.base.trim(), &default);
+        if base_refused(&name) { default } else { name }
     }
 
     /// `id` is an excluded folder or inside one.
@@ -176,7 +177,41 @@ impl Preferences {
 /// The folder at the root of My Inventory that receives what the Pre-Trash
 /// rules take: nothing goes to the Trash before the user checks it there.
 pub fn pre_trash_name() -> String {
-    aurora_i18n::tr!("inventory-sorter-pre-trash").to_owned()
+    inventory_name(aurora_i18n::tr!("inventory-sorter-pre-trash"), "Pre-Trash")
+}
+
+/// The names a sort folder may not take: a viewer folder, Pre-Trash (in any
+/// language Aurora speaks), My Inventory's default folders.
+pub fn base_refused(name: &str) -> bool {
+    const DEFAULTS: &[&str] = &[
+        "pre-trash",
+        "pre-corbeille",
+        "trash",
+        "objects",
+        "clothing",
+        "body parts",
+        "landmarks",
+        "notecards",
+        "textures",
+        "scripts",
+        "sounds",
+        "animations",
+        "gestures",
+        "photo album",
+        "calling cards",
+        "favorites",
+        "materials",
+        "settings",
+        "lost and found",
+        "my outfits",
+        "current outfit",
+        "received items",
+        "marketplace listings",
+        "library",
+        "my inventory",
+    ];
+    let lower = name.trim().to_lowercase();
+    lower.is_empty() || lower.starts_with('#') || lower == pre_trash_name().to_lowercase() || DEFAULTS.contains(&lower.as_str())
 }
 
 /// The Pre-Trash folder, when it exists.
@@ -204,7 +239,7 @@ impl Body {
     pub fn folder(self) -> String {
         match self {
             Body::Named(name) => name.to_owned(),
-            Body::Several => aurora_i18n::tr!("inventory-sorter-several-bodies").to_owned(),
+            Body::Several => inventory_name(aurora_i18n::tr!("inventory-sorter-several-bodies"), "Several bodies"),
         }
     }
 }
@@ -897,7 +932,8 @@ pub fn rule_for<'a>(rules: &'a [Rule], name: &str, created: Option<i64>) -> Opti
 pub fn split_path(path: &str) -> Vec<String> {
     path.split(['/', '\\'])
         .filter_map(|part| actions::clean_name(part).ok())
-        .map(|part| crate::text_validation::generated_name(&part, 63))
+        .map(|part| inventory_name(&crate::text_validation::generated_name(&part, 63), ""))
+        .filter(|part| !part.is_empty())
         .collect()
 }
 
@@ -957,14 +993,17 @@ pub fn target_with(
     }
     let mut path = Vec::new();
     path.extend(found.body.map(Body::folder));
-    path.extend(found.category.map(|c| c.folder().to_owned()));
+    path.extend(found.category.map(category_folder));
     // By store (`stores`): below the category, or in Stores when the name
     // says nothing else.
     if stores && let Some(shop) = shop {
         if path.is_empty() {
-            path.push(aurora_i18n::tr!("inventory-sorter-stores").to_owned());
+            path.push(stores_folder());
         }
-        path.push(shop);
+        let shop = inventory_name(&shop, "");
+        if !shop.is_empty() {
+            path.push(shop);
+        }
     }
     // Waifus and Squish versions of clothes get their folder below the
     // category; the Waifus mod itself is a body add-on and gets none.
@@ -1057,8 +1096,12 @@ fn underscore_store(text: &str) -> Option<&str> {
     (!rest.is_empty() && (inner_capital || all_capitals)).then_some(first)
 }
 
+fn stores_folder() -> String {
+    inventory_name(aurora_i18n::tr!("inventory-sorter-stores"), "Stores")
+}
+
 fn squish_folder() -> String {
-    aurora_i18n::tr!("inventory-sorter-variant-squish").to_owned()
+    inventory_name(aurora_i18n::tr!("inventory-sorter-variant-squish"), "Squish")
 }
 
 /// The names of a folder and its parents, for the preview
@@ -1074,7 +1117,7 @@ pub fn folder_path(inv: &Inventory, id: Uuid) -> String {
 /// A folder a rule may send entries to: the user's own, not a system
 /// folder that refuses moves (`actions::destination`).
 pub fn target_allowed(inv: &Inventory, id: Uuid) -> bool {
-    inv.folders.get(&id).is_some_and(|f| !f.library) && actions::destination(inv, id) && !untouchable(inv, id)
+    folder_open(inv, id) && actions::destination(inv, id) && pre_trash(inv) != Some(id)
 }
 
 /// One entry to move.
@@ -1098,6 +1141,8 @@ pub struct Plan {
     pub unknown: Vec<String>,
     /// Entries that cannot move: worn, links, locked or system folders.
     pub kept: usize,
+    /// Those entries by name, and why each stays: the preview shows them.
+    pub kept_list: Vec<(String, Kept)>,
     /// Folders a Pre-Trash rule would read that are not loaded yet: the
     /// window asks for them and the preview fills in.
     pub unfetched: Vec<Uuid>,
@@ -1106,16 +1151,34 @@ pub struct Plan {
 impl Plan {
     /// The destination folders and how many entries each receives, by path;
     /// Pre-Trash first, so what would leave is seen before the rest.
+    #[cfg(test)]
     pub fn groups(&self) -> Vec<(String, usize)> {
-        let mut counts: HashMap<String, (usize, bool)> = HashMap::new();
-        for m in &self.moves {
-            let group = counts.entry(m.label.clone()).or_default();
-            group.0 += 1;
-            group.1 |= m.to == Dest::PreTrash;
+        self.grouped()
+            .into_iter()
+            .map(|(label, rows)| (label.to_owned(), rows.len()))
+            .collect()
+    }
+
+    /// The moves by destination, in [`groups`](Self::groups)' order. The
+    /// moves are sorted by destination when the plan is made, so each
+    /// group is one slice: nothing is copied or counted per frame.
+    pub fn grouped(&self) -> Vec<(&str, &[Move])> {
+        let mut groups: Vec<(&str, &[Move])> = self
+            .moves
+            .chunk_by(|a, b| a.label == b.label)
+            .map(|rows| (rows[0].label.as_str(), rows))
+            .collect();
+        groups.sort_by_cached_key(|(label, rows)| (rows[0].to != Dest::PreTrash, crate::natural_order::key(label)));
+        groups
+    }
+
+    /// What stays, by reason, each with its names.
+    pub fn kept_by_reason(&self) -> Vec<(Kept, Vec<&str>)> {
+        let mut by: std::collections::BTreeMap<Kept, Vec<&str>> = std::collections::BTreeMap::new();
+        for (name, why) in &self.kept_list {
+            by.entry(*why).or_default().push(name);
         }
-        let mut groups: Vec<_> = counts.into_iter().collect();
-        groups.sort_by_cached_key(|(path, (_, trash))| (!*trash, crate::natural_order::key(path)));
-        groups.into_iter().map(|(path, (count, _))| (path, count)).collect()
+        by.into_iter().collect()
     }
 
     pub fn unpackers(&self) -> usize {
@@ -1136,53 +1199,262 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
         .min()
 }
 
-/// The Trash and Marketplace Listings, at any depth: Auto-sort never takes
-/// anything out of them nor puts anything in (the Trash only through the
-/// confirmed Pre-Trash step, the ordinary delete path).
+/// Kept for the callers that ask about the Trash and Marketplace Listings:
+/// both are hands-off, like every default folder but Objects.
 pub fn untouchable(inv: &Inventory, id: Uuid) -> bool {
-    actions::in_type(inv, id, 14) || actions::in_type(inv, id, 53)
+    hands_off(inv, id) || actions::in_type(inv, id, 14) || actions::in_type(inv, id, 53)
 }
 
-/// Whether the sorter can run on `source`: a folder of the agent's own
-/// inventory, outside the Trash and Marketplace Listings.
+/// Whether the sorter can run on `source`: My Inventory, Objects, or one of
+/// the user's own folders, in an open place ([`folder_open`]).
 pub fn source_allowed(inv: &Inventory, source: Uuid) -> bool {
-    inv.folders.get(&source).is_some_and(|f| !f.library) && actions::mutable(inv, source) && !untouchable(inv, source)
+    folder_open(inv, source) && actions::mutable(inv, source)
 }
 
-/// The system folders a whole-inventory sort reads, besides the loose
-/// entries of My Inventory: those that collect deliveries and loose
-/// things. The Trash, Marketplace Listings, the outfits, the Current Outfit,
-/// Favorites and the Library are never read.
-const WHOLE_TYPES: &[i32] = &[0, 1, 3, 5, 6, 7, 10, 13, 15, 16, 20, 21, 50, 56, 57];
+/// A product's folder: an unpacked delivery, a fatpack with its HUD and
+/// card. It is never opened: it moves whole or stays. It is a folder of the
+/// user's (not one Auto-sort made) whose name reads as a product or a store,
+/// or that holds no folder of its own.
+pub fn product_folder(inv: &Inventory, folder: Uuid, prefs: &Preferences) -> bool {
+    let Some(f) = inv.folders.get(&folder) else { return false };
+    let name = f.info.name.trim();
+    if f.info.type_default != -1 || sorter_folder_names(prefs).contains(&name.to_lowercase()) {
+        return false;
+    }
+    let has_folders = f.children.iter().any(|c| inv.folders.contains_key(c));
+    target(name, -1, 0, None, &[], false).is_some() || store(name).is_some() || !has_folders
+}
 
-/// The folders a whole-inventory sort takes the direct contents of: My
-/// Inventory (its loose items only) and its system folders of
-/// [`WHOLE_TYPES`], less the excluded ones. The user's own folders are
-/// their organisation: they are neither opened nor moved.
+/// What a whole-inventory sort reads, in an open place only: the loose
+/// items of My Inventory, the contents of Objects, and the direct contents of
+/// each of the user's own folders at the root (not excluded, not the sort
+/// folder nor Pre-Trash). A product's folder at the root moves whole, never
+/// opened. No other default folder is read (see [`folder_open`]).
 pub fn whole_sources(inv: &Inventory, prefs: &Preferences) -> Vec<Uuid> {
     let mut sources = vec![inv.root];
+    let base = child(inv, inv.root, &prefs.base_name());
+    let waiting = pre_trash(inv);
     if let Some(root) = inv.folders.get(&inv.root) {
         sources.extend(root.children.iter().copied().filter(|id| {
-            inv.folders
-                .get(id)
-                .is_some_and(|f| !f.library && WHOLE_TYPES.contains(&f.info.type_default) && !prefs.excludes(inv, *id))
+            Some(*id) != base
+                && Some(*id) != waiting
+                && folder_open(inv, *id)
+                && !prefs.excludes(inv, *id)
+                && inv
+                    .folders
+                    .get(id)
+                    .is_some_and(|f| f.info.type_default == OPEN_DEFAULT || !product_folder(inv, *id, prefs))
         }));
     }
     sources
 }
 
 /// The plan of a whole-inventory sort (see [`whole_sources`]). Its
-/// Pre-Trash rules read all of My Inventory, at any depth ([`pre_trash_scan`]).
+/// Pre-Trash rules read all of My Inventory's open places, at any depth
+/// ([`pre_trash_scan`]). The default and viewer folders at the root are
+/// listed as kept, so the preview names what is never touched.
 pub fn plan_whole(inv: &Inventory, prefs: &Preferences, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Plan {
+    let sources = whole_sources(inv, prefs);
     let mut entries = Vec::new();
-    for source in whole_sources(inv, prefs) {
-        let folders = prefs.folders && source != inv.root;
-        entries.extend(contents(inv, source, prefs, folders));
+    for source in &sources {
+        // the root's own folders are sources, products or hands-off: only
+        // its loose items are entries
+        let folders = prefs.folders && *source != inv.root;
+        entries.extend(contents(inv, *source, prefs, folders));
+    }
+    // a product's folder at the root moves whole
+    if prefs.folders
+        && let Some(root) = inv.folders.get(&inv.root)
+    {
+        let base = child(inv, inv.root, &prefs.base_name());
+        entries.extend(root.children.iter().copied().filter(|id| {
+            !sources.contains(id)
+                && Some(*id) != base
+                && Some(*id) != pre_trash(inv)
+                && folder_open(inv, *id)
+                && product_folder(inv, *id, prefs)
+        }));
     }
     let scan = pre_trash_scan(inv, prefs, inv.root, protected, worn);
     let mut plan = plan_with(inv, entries, scan.found, prefs, protected, worn, true);
     plan.unfetched = scan.unfetched;
+    if let Some(root) = inv.folders.get(&inv.root) {
+        for id in &root.children {
+            if let Some(f) = inv.folders.get(id)
+                && hands_off(inv, *id)
+            {
+                plan.kept += 1;
+                plan.kept_list.push((f.info.name.clone(), Kept::Protected));
+            }
+        }
+    }
     plan
+}
+/// A folder name Auto-sort creates or looks up, as the inventory keeps it.
+/// Inventory names are ASCII (LLInventoryObject::correctInventoryName,
+/// indra/llinventory/llinventory.cpp; `operations::folder_name`): a name with
+/// accents loses them (`Trié` → `Trie`, `Café` → `Cafe`) instead of having
+/// them replaced by spaces, and a name that keeps no letter (Japanese) takes
+/// `fallback`. Both the lookup and the creation use this name, so a run
+/// finds the folders it made and never builds a second tree.
+pub fn inventory_name(name: &str, fallback: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            c if c.is_ascii() => out.push(c),
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => out.push('a'),
+            'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' => out.push('A'),
+            'ç' => out.push('c'),
+            'Ç' => out.push('C'),
+            'è' | 'é' | 'ê' | 'ë' => out.push('e'),
+            'È' | 'É' | 'Ê' | 'Ë' => out.push('E'),
+            'ì' | 'í' | 'î' | 'ï' => out.push('i'),
+            'Ì' | 'Í' | 'Î' | 'Ï' => out.push('I'),
+            'ñ' => out.push('n'),
+            'Ñ' => out.push('N'),
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => out.push('o'),
+            'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => out.push('O'),
+            'ù' | 'ú' | 'û' | 'ü' => out.push('u'),
+            'Ù' | 'Ú' | 'Û' | 'Ü' => out.push('U'),
+            'ý' | 'ÿ' => out.push('y'),
+            'Ý' => out.push('Y'),
+            'œ' => out.push_str("oe"),
+            'Œ' => out.push_str("OE"),
+            'æ' => out.push_str("ae"),
+            'Æ' => out.push_str("AE"),
+            'ß' => out.push_str("ss"),
+            '’' | '‘' => out.push('\''),
+            '–' | '—' => out.push('-'),
+            ' ' | '\u{3000}' => out.push(' '),
+            // a script with no ASCII spelling: the whole name falls back
+            _ => return aurora_net::inventory::operations::folder_name(fallback),
+        }
+    }
+    let name = aurora_net::inventory::operations::folder_name(&out);
+    if name.chars().any(|c| c.is_ascii_alphanumeric()) {
+        name
+    } else {
+        aurora_net::inventory::operations::folder_name(fallback)
+    }
+}
+
+/// A category's folder as the inventory names it, English when the
+/// language's name has no ASCII spelling.
+pub fn category_folder(category: Category) -> String {
+    let key = category.key().replace('-', " ");
+    let mut english = key[..1].to_uppercase();
+    english.push_str(&key[1..]);
+    inventory_name(category.folder(), &english)
+}
+
+/// The default folder whose contents Auto-sort may read: Objects, where
+/// deliveries land. Every other default folder is hands-off.
+const OPEN_DEFAULT: i32 = 6;
+
+/// A folder Auto-sort may read inside, move entries out of, or put entries
+/// into: My Inventory itself (its loose items), Objects, and the user's own
+/// folders, not in the Library. One shared rule for every path (sort, whole
+/// inventory, right-click, Pre-Trash rules, Clean up, empty folders, the
+/// Trash steps), checked when planning and again before each batch: no
+/// setting, rule or imported text can reach past it.
+fn open_container(inv: &Inventory, folder: &super::Folder) -> bool {
+    !folder.library && (folder.info.id == inv.root || matches!(folder.info.type_default, -1 | OPEN_DEFAULT))
+}
+
+/// A viewer folder at the root (`#RLV`, `#Firestorm`, `#Aurora` and any
+/// other `#` folder): RLVa, the AO and the scripting bridge depend on it.
+fn viewer_folder(inv: &Inventory, folder: &super::Folder) -> bool {
+    folder.info.parent == inv.root && folder.info.name.trim_start().starts_with('#')
+}
+
+/// `folder` and every folder above it are open: nothing in it is hands-off
+/// by place. Hands-off at any depth: every default folder but Objects
+/// (Clothing, Body Parts, Landmarks, Calling Cards, Favorites, Materials,
+/// Settings, Lost and Found, Photo Album…), My Outfits and each outfit, the
+/// Current Outfit, the Trash, Marketplace Listings and its stock and version
+/// folders, the old Merchant Outbox, Received Items, the Library, and the
+/// `#` viewer folders.
+pub fn folder_open(inv: &Inventory, folder: Uuid) -> bool {
+    for id in actions::ancestors(inv, folder) {
+        if id == inv.root {
+            return true;
+        }
+        let Some(f) = inv.folders.get(&id) else { return false };
+        if !open_container(inv, f) || viewer_folder(inv, f) {
+            return false;
+        }
+    }
+    // not under My Inventory (the Library, an orphan, a cycle)
+    false
+}
+
+/// An entry (item or folder) Auto-sort must never move, trash or open: a
+/// default folder itself (it never moves, Objects included), a `#` viewer
+/// folder, or anything in a hands-off folder ([`folder_open`]).
+pub fn hands_off(inv: &Inventory, id: Uuid) -> bool {
+    if let Some(f) = inv.folders.get(&id)
+        && (f.info.type_default != -1 || f.library || viewer_folder(inv, f) || id == inv.root)
+    {
+        return true;
+    }
+    actions::parent(inv, id).is_none_or(|parent| !folder_open(inv, parent))
+}
+
+/// Re-checked just before an entry goes to the Trash (Clean up, Empty
+/// Pre-Trash): it is still where the confirmed list saw it, nowhere
+/// hands-off, not excluded, and movable (nothing worn in it, no link, no
+/// locked folder above or below it). What changed since is skipped.
+pub fn trash_ready(
+    inv: &Inventory,
+    id: Uuid,
+    from: Uuid,
+    prefs: &Preferences,
+    protected: &HashSet<Uuid>,
+    holds_worn: &HashSet<Uuid>,
+) -> bool {
+    actions::parent(inv, id) == Some(from) && !hands_off(inv, id) && !prefs.excludes(inv, id) && movable(inv, id, protected, holds_worn)
+}
+
+/// Why an entry the preview lists stays where it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Kept {
+    /// Worn, or a folder holding something worn.
+    Worn,
+    /// A link: it belongs to its folder (an outfit's).
+    Link,
+    /// A locked folder, or inside one.
+    Locked,
+    /// In a folder the user excluded.
+    Excluded,
+    /// A system folder, the Trash, Marketplace Listings, the Library, the
+    /// Current Outfit, a viewer folder (#RLV…): what a drag may not move.
+    Protected,
+}
+
+impl Kept {
+    pub fn label(self) -> &'static str {
+        match self {
+            Kept::Worn => aurora_i18n::tr!("inventory-sorter-kept-worn"),
+            Kept::Link => aurora_i18n::tr!("inventory-sorter-kept-link"),
+            Kept::Locked => aurora_i18n::tr!("inventory-sorter-kept-locked"),
+            Kept::Excluded => aurora_i18n::tr!("inventory-sorter-kept-excluded"),
+            Kept::Protected => aurora_i18n::tr!("inventory-sorter-kept-protected"),
+        }
+    }
+}
+
+fn kept_reason(inv: &Inventory, id: Uuid, prefs: &Preferences, protected: &HashSet<Uuid>, holds_worn: &HashSet<Uuid>) -> Kept {
+    if prefs.excludes(inv, id) {
+        Kept::Excluded
+    } else if holds_worn.contains(&id) {
+        Kept::Worn
+    } else if inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25)) {
+        Kept::Link
+    } else if actions::ancestors(inv, id).any(|a| protected.contains(&a)) || protected.contains(&id) {
+        Kept::Locked
+    } else {
+        Kept::Protected
+    }
 }
 
 /// Can `id` leave its folder for the sorted ones? The rules of a drag
@@ -1193,6 +1465,10 @@ fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, holds_worn: &Ha
         && !untouchable(inv, id)
         && !holds_worn.contains(&id)
         && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 24 | 25))
+        // a locked folder keeps all it holds, and a folder holding a locked
+        // one never moves whole with it
+        && !actions::ancestors(inv, id).any(|a| protected.contains(&a))
+        && !protected.iter().any(|p| actions::under(inv, *p, id))
 }
 
 /// The names the sorter gives its own folders: a folder already named like
@@ -1205,9 +1481,9 @@ fn sorter_folder_names(prefs: &Preferences) -> HashSet<String> {
     for (waifus, squish) in [(true, false), (false, true), (true, true)] {
         names.insert(variant_folder(waifus, squish).to_lowercase());
     }
-    names.insert(aurora_i18n::tr!("inventory-sorter-stores").to_lowercase());
+    names.insert(stores_folder().to_lowercase());
     for (category, _) in CATEGORY_WORDS {
-        names.insert(category.folder().to_lowercase());
+        names.insert(category_folder(*category).to_lowercase());
     }
     for rule in prefs.rules.iter().filter(|r| r.target.is_none()) {
         names.extend(split_path(&rule.folder).into_iter().map(|p| p.to_lowercase()));
@@ -1293,8 +1569,8 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
             .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
             || Some(id) == pre_trash_at
             || protected.contains(&id)
-            || untouchable(inv, id)
             || prefs.excludes(inv, id)
+            || !folder_open(inv, id)
     };
     let mut seen = HashSet::new();
     while let Some(id) = stack.pop() {
@@ -1333,7 +1609,7 @@ pub fn pre_trash_scan(inv: &Inventory, prefs: &Preferences, source: Uuid, protec
                 }
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && target(name, -1, 0, None, &[], false).is_some();
+            let product = !system && !made && product_folder(inv, *sub, prefs);
             if !product {
                 stack.push(*sub);
             }
@@ -1593,8 +1869,8 @@ pub fn plan_cleanup(
             .is_none_or(|f| f.library || NEVER_READ.contains(&f.info.type_default))
             || Some(id) == pre_trash_at
             || protected.contains(&id)
-            || untouchable(inv, id)
             || prefs.excludes(inv, id)
+            || !folder_open(inv, id)
             || !cleanup.include_sorted && base.is_some_and(|b| id == b || actions::under(inv, id, b))
     };
     let mut stack = vec![source];
@@ -1669,7 +1945,7 @@ pub fn plan_cleanup(
                 continue;
             }
             // a product's folder stays whole: its old items are not pulled out
-            let product = !system && !made && target(name, -1, 0, None, &[], false).is_some();
+            let product = !system && !made && product_folder(inv, *sub, prefs);
             if !product {
                 stack.push(*sub);
             }
@@ -1735,6 +2011,20 @@ fn contents(inv: &Inventory, source: Uuid, prefs: &Preferences, folders: bool) -
     let base = child(inv, inv.root, &prefs.base_name());
     let reserved = sorter_folder_names(prefs);
     let mut entries: Vec<Uuid> = folder.items.clone();
+    if source == inv.root {
+        // My Inventory's own folders are never moved by a sort of it, but a
+        // product's folder lying loose at the root goes whole
+        if folders {
+            entries.extend(
+                folder
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|id| Some(*id) != base && Some(*id) != pre_trash(inv) && product_folder(inv, *id, prefs)),
+            );
+        }
+        return entries;
+    }
     if folders {
         // the sorted folders themselves stay where they are
         entries.extend(folder.children.iter().copied().filter(|id| {
@@ -1797,6 +2087,7 @@ fn plan_with(
             candidates.push((id, is_folder, from, name, asset_type, flags, created, sorted));
         } else {
             plan.kept += 1;
+            plan.kept_list.push((name, kept_reason(inv, id, prefs, protected, &holds_worn)));
         }
     }
     // Reading thousands of names against every phrase is the heavy part:
@@ -1874,7 +2165,14 @@ pub enum Step {
 /// reused; a missing one is created in the same mutation under a new id
 /// that later operations name. Entries that can no longer move (worn,
 /// deleted, moved away from its folder meanwhile) are dropped.
-pub fn step(inv: &mut Inventory, base_name: &str, queue: &mut VecDeque<Move>, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Step {
+pub fn step(
+    inv: &mut Inventory,
+    base_name: &str,
+    queue: &mut VecDeque<Move>,
+    protected: &HashSet<Uuid>,
+    worn: &HashSet<Uuid>,
+    skipped: &mut usize,
+) -> Step {
     let holds_worn = actions::worn_ancestors(inv, worn);
     let mut change = Mutation::default();
     // folders known in this mutation: (parent, lowercase name) → id
@@ -1889,12 +2187,14 @@ pub fn step(inv: &mut Inventory, base_name: &str, queue: &mut VecDeque<Move>, pr
             && movable(inv, next.id, protected, &holds_worn);
         if !still_here {
             queue.pop_front();
+            *skipped += 1;
             continue;
         }
         let path: Vec<String> = match &next.to {
             Dest::Folder(target) => {
                 if !target_allowed(inv, *target) {
                     queue.pop_front();
+                    *skipped += 1;
                     continue;
                 }
                 Vec::new()
@@ -1921,6 +2221,7 @@ pub fn step(inv: &mut Inventory, base_name: &str, queue: &mut VecDeque<Move>, pr
                     Some(FetchState::Failed) | None => {
                         // the destination cannot be read: this entry stays
                         queue.pop_front();
+                        *skipped += 1;
                         continue 'moves;
                     }
                     Some(FetchState::Unknown | FetchState::Fetching) => {

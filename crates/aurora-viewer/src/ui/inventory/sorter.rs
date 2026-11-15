@@ -34,9 +34,10 @@ enum Source {
 #[derive(Clone, PartialEq)]
 enum Confirm {
     Whole,
-    PreTrash(Vec<Uuid>),
+    /// Pre-Trash's entries and the folder they wait in.
+    PreTrash(Vec<(Uuid, Uuid)>),
     /// Clean up's entries, straight to the Trash.
-    Trash(Vec<Uuid>),
+    Trash(Vec<(Uuid, Uuid)>),
     /// Imported settings replacing the user's rules and store hints.
     Replace,
 }
@@ -110,7 +111,10 @@ enum CleanupAction {
 }
 
 struct TrashJob {
-    queue: VecDeque<Uuid>,
+    /// Each entry and the folder the confirmed list saw it in.
+    queue: VecDeque<(Uuid, Uuid)>,
+    /// Entries dropped because they changed since the confirmation.
+    skipped: usize,
     total: usize,
     sent: usize,
 }
@@ -121,6 +125,9 @@ struct Job {
     total: usize,
     done: usize,
     sending: usize,
+    /// Entries dropped because they changed since the preview (moved,
+    /// worn, deleted, now locked): never sent, reported at the end.
+    skipped: usize,
 }
 
 const PREVIEW: usize = 0;
@@ -157,7 +164,8 @@ impl InventoryUi {
         self.sorter.tab = PREVIEW;
     }
 
-    /// An entry's right-click: sort the selected entries at once.
+    /// An entry's right-click: the selected entries' preview, sorted once
+    /// the user presses Sort (nothing moves before a preview is seen).
     pub(crate) fn sort_entries(&mut self, ids: Vec<Uuid>) {
         if self.sorter.busy() {
             self.sorter.open = true;
@@ -165,7 +173,6 @@ impl InventoryUi {
         }
         self.sorter.set_source(Source::Entries(ids));
         self.sorter.tab = PREVIEW;
-        self.sorter.autostart = true;
     }
 
     /// The toolbar button: the window opens on `shown` (the folder the
@@ -305,7 +312,7 @@ pub(super) fn show(
         && !state.submitted
         && let Some(job) = state.job.as_mut()
     {
-        match sorter::step(inv, &job.base, &mut job.queue, &prefs.protected, worn) {
+        match sorter::step(inv, &job.base, &mut job.queue, &prefs.protected, worn, &mut job.skipped) {
             Step::Change(change, taken) => {
                 job.sending = taken;
                 state.submitted = true;
@@ -313,7 +320,11 @@ pub(super) fn show(
             }
             Step::Wait => {}
             Step::Done => {
-                state.status = aurora_i18n::tr!("inventory-sorter-done", count = job.done);
+                state.status = if job.skipped > 0 {
+                    aurora_i18n::tr!("inventory-sorter-done-skipped", count = job.done, skipped = job.skipped)
+                } else {
+                    aurora_i18n::tr!("inventory-sorter-done", count = job.done)
+                };
                 state.job = None;
                 state.preview = None;
                 state.cleanup = None;
@@ -414,6 +425,7 @@ pub(super) fn show(
     let mut go = false;
     let mut stop = false;
     let waiting = sorter::pre_trash_entries(inv);
+    let waiting_in = sorter::pre_trash(inv);
     // The tabs change the body's height all the time (rule cards, preview
     // groups opening): egui's frame followed it and kept the tallest it saw,
     // so the window grew down and its bottom edge snapped back when dragged.
@@ -469,7 +481,7 @@ pub(super) fn show(
                 CLEANUP => cleanup_tab(ui, p, state, &mut prefs.sorter, matches!(source, Source::Folder(_)), busy, free_now),
                 _ => {
                     if !waiting.is_empty() {
-                        pre_trash_card(ui, p, state, &waiting, busy);
+                        pre_trash_card(ui, p, state, &waiting, waiting_in, busy);
                         ui.add_space(6.0);
                     }
                     match state.preview.as_ref() {
@@ -501,6 +513,7 @@ pub(super) fn show(
                         base: prefs.sorter.base_name(),
                         done: 0,
                         sending: 0,
+                        skipped: 0,
                     });
                 }
             }
@@ -508,7 +521,12 @@ pub(super) fn show(
         Some(CleanupAction::Trash) => {
             let state = &mut st.sorter;
             if let Some((.., plan)) = state.cleanup.as_ref() {
-                let ids: Vec<Uuid> = plan.rows.iter().map(|r| r.id).filter(|id| !state.skipped.contains(id)).collect();
+                let ids: Vec<(Uuid, Uuid)> = plan
+                    .rows
+                    .iter()
+                    .filter(|r| !state.skipped.contains(&r.id))
+                    .map(|r| (r.id, r.from))
+                    .collect();
                 if !ids.is_empty() {
                     state.confirm = Some(Confirm::Trash(ids));
                 }
@@ -541,7 +559,7 @@ pub(super) fn show(
     picker(ctx, p, inv, st, prefs);
     share_window(ctx, p, st, &prefs.sorter);
     import_window(ctx, p, st, &mut prefs.sorter);
-    confirm(ctx, p, inv, st, prefs, worn, actions);
+    confirm(ctx, p, st, prefs);
 }
 
 /// A rule as one line: its words and where it sends them.
@@ -810,20 +828,29 @@ fn send_trash_batch(
         return;
     }
     if trash.queue.is_empty() {
-        st.sorter.status = aurora_i18n::tr!("inventory-cleanup-trash-done", count = trash.sent);
+        st.sorter.status = if trash.skipped > 0 {
+            aurora_i18n::tr!("inventory-sorter-done-skipped", count = trash.sent, skipped = trash.skipped)
+        } else {
+            aurora_i18n::tr!("inventory-cleanup-trash-done", count = trash.sent)
+        };
         st.sorter.trash = None;
         st.sorter.cleanup = None;
         st.sorter.skipped.clear();
         return;
     }
     let take = trash.queue.len().min(TRASH_BATCH);
-    let batch: Vec<Uuid> = trash.queue.drain(..take).collect();
-    trash.sent += batch.len();
-    // what left or can no longer go is dropped, like a sort's moves
-    let batch: Vec<Uuid> = batch
-        .into_iter()
-        .filter(|id| inv.items.contains_key(id) || inv.folders.contains_key(id))
+    let picked: Vec<(Uuid, Uuid)> = trash.queue.drain(..take).collect();
+    // Re-checked now, like a sort's moves: still where the confirmed list
+    // saw it, nowhere hands-off, nothing worn or locked. What changed is
+    // skipped and reported, never sent.
+    let holds_worn = crate::world::inventory::actions::worn_ancestors(inv, worn);
+    let batch: Vec<Uuid> = picked
+        .iter()
+        .filter(|(id, from)| sorter::trash_ready(inv, *id, *from, &prefs.sorter, &prefs.protected, &holds_worn))
+        .map(|(id, _)| *id)
         .collect();
+    trash.skipped += picked.len() - batch.len();
+    trash.sent += batch.len();
     if batch.is_empty() {
         return;
     }
@@ -840,7 +867,7 @@ fn send_trash_batch(
 }
 
 /// What waits in Pre-Trash, and the step that sends it to the Trash.
-fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[Uuid], busy: bool) {
+fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[Uuid], waiting_in: Option<Uuid>, busy: bool) {
     crate::ui::widgets::surface(ui, p, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
@@ -863,23 +890,17 @@ fn pre_trash_card(ui: &mut egui::Ui, p: &Palette, state: &mut State, waiting: &[
                 Vec2::new(0.0, 26.0),
             )
         });
-        if send.inner.clicked() {
-            state.confirm = Some(Confirm::PreTrash(waiting.to_vec()));
+        if send.inner.clicked()
+            && let Some(folder) = waiting_in
+        {
+            state.confirm = Some(Confirm::PreTrash(waiting.iter().map(|id| (*id, folder)).collect()));
         }
     });
 }
 
 /// The confirmations: a whole-inventory sort (with its "I understand" box)
 /// and Pre-Trash to Trash. Escape or Cancel closes them, nothing moved.
-fn confirm(
-    ctx: &egui::Context,
-    p: &Palette,
-    inv: &Inventory,
-    st: &mut InventoryUi,
-    prefs: &mut InventoryPreferences,
-    worn: &HashSet<Uuid>,
-    actions: &mut Vec<InvAction>,
-) {
+fn confirm(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
     let Some(asked) = st.sorter.confirm.clone() else { return };
     let moves = st.sorter.preview.as_ref().map_or(0, |(_, _, plan)| plan.moves.len());
     let mut answer = None;
@@ -1006,17 +1027,19 @@ fn confirm(
                 total: ids.len(),
                 queue: ids.into(),
                 sent: 0,
+                skipped: 0,
             });
         }
         Confirm::PreTrash(ids) => {
-            // the ordinary delete: the Trash's own rules decide what goes
-            let change = rules::system(inv, 14)
-                .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
-                .and_then(|trash| rules::move_selection(inv, &ids, trash, &prefs.protected, worn));
-            match change {
-                Ok(change) => actions.push(InvAction::Delete(Box::new(DeleteRequest::new(inv, st, &ids, change)))),
-                Err(reason) => st.sorter.status = reason,
-            }
+            // the same batches as Clean up's Trash: at most 200 per delete
+            // request, each entry re-checked before it goes
+            st.sorter.status.clear();
+            st.sorter.trash = Some(TrashJob {
+                total: ids.len(),
+                queue: ids.into(),
+                sent: 0,
+                skipped: 0,
+            });
         }
     }
 }
@@ -1034,6 +1057,7 @@ fn start(state: &mut State, prefs: &InventoryPreferences) {
         total: plan.moves.len(),
         done: 0,
         sending: 0,
+        skipped: 0,
     });
 }
 
@@ -1743,8 +1767,13 @@ fn rules_editor(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, state: &mut Sta
     }
 }
 
+/// Rows drawn in one preview group: the rest is counted.
+const PREVIEW_ROWS: usize = 300;
+
+/// The preview: how many entries move and where, each by name, then what
+/// stays and why. Nothing moves before it is shown.
 fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
-    if plan.moves.is_empty() && plan.unknown.is_empty() {
+    if plan.moves.is_empty() && plan.unknown.is_empty() && plan.kept == 0 {
         ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-nothing")).color(p.muted));
     }
     if !plan.moves.is_empty() {
@@ -1760,24 +1789,46 @@ fn preview(ui: &mut egui::Ui, p: &Palette, plan: &Plan) {
         ui.label(RichText::new(aurora_i18n::tr!("inventory-sorter-kept", count = plan.kept)).color(p.muted));
     }
     ui.add_space(4.0);
-    for (label, count) in plan.groups() {
-        let title = format!("{label}  ({count})");
+    for (label, rows) in plan.grouped() {
+        let title = format!("{label}  ({})", rows.len());
         crate::ui::widgets::collapsing(ui, p, ("inventory_sorter_group", &label), title, false, |ui| {
-            for m in plan.moves.iter().filter(|m| m.label == label) {
+            for m in rows.iter().take(PREVIEW_ROWS) {
                 ui.label(RichText::new(&m.name).color(if m.unpacker { p.violet_light } else { p.ink }));
             }
+            more(ui, p, rows.len());
         });
     }
     if !plan.unknown.is_empty() {
         let title = format!("{}  ({})", aurora_i18n::tr!("inventory-sorter-not-recognised"), plan.unknown.len());
         crate::ui::widgets::collapsing(ui, p, "inventory_sorter_unknown", title, false, |ui| {
-            for name in &plan.unknown {
+            for name in plan.unknown.iter().take(PREVIEW_ROWS) {
                 ui.label(RichText::new(name).color(p.muted));
             }
+            more(ui, p, plan.unknown.len());
+        });
+    }
+    // what stays, by reason: worn, links, locked, excluded, protected
+    for (why, names) in plan.kept_by_reason() {
+        let title = format!("{}  ({})", why.label(), names.len());
+        crate::ui::widgets::collapsing(ui, p, ("inventory_sorter_kept", why), title, false, |ui| {
+            for name in names.iter().take(PREVIEW_ROWS) {
+                ui.label(RichText::new(*name).color(p.muted));
+            }
+            more(ui, p, names.len());
         });
     }
 }
 
+/// "…and N more" under a list cut at [`PREVIEW_ROWS`].
+fn more(ui: &mut egui::Ui, p: &Palette, total: usize) {
+    if total > PREVIEW_ROWS {
+        ui.label(
+            RichText::new(aurora_i18n::tr!("inventory-cleanup-more", count = total - PREVIEW_ROWS))
+                .small()
+                .color(p.muted),
+        );
+    }
+}
 impl Picker {
     fn new(pick: Pick) -> Self {
         Self {

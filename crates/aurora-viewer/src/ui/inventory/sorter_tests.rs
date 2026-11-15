@@ -40,6 +40,7 @@ fn a_failed_batch_stops_the_sort_and_keeps_its_message() {
         total: 400,
         done: 200,
         sending: 200,
+        skipped: 0,
     });
     st.sorter.submitted = true;
     st.finish_sorter(None);

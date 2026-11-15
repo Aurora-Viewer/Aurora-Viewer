@@ -200,7 +200,7 @@ fn a_sort_creates_each_folder_once_reuses_existing_ones_and_is_idempotent() {
     let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
     assert_eq!(plan.moves.len(), 5);
     let mut queue: VecDeque<Move> = plan.moves.into();
-    let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) else {
+    let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0) else {
         panic!("a mutation")
     };
     assert_eq!(taken, 5);
@@ -221,7 +221,7 @@ fn a_sort_creates_each_folder_once_reuses_existing_ones_and_is_idempotent() {
     assert!(at(&["Furniture"]).is_some_and(|f| inv.folders[&f].items == [id(104)]));
     assert!(inv.folders[&id(OBJECTS)].items.is_empty());
     assert!(matches!(
-        step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()),
+        step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0),
         Step::Done
     ));
     // sorting Sorted/Reborn/Skirts itself moves nothing
@@ -236,7 +236,7 @@ fn a_large_sort_goes_in_bounded_batches() {
     let prefs = Preferences::default();
     let mut queue: VecDeque<Move> = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new()).moves.into();
     let mut batches = Vec::new();
-    while let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
+    while let Step::Change(change, taken) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0) {
         batches.push(taken);
         actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
     }
@@ -253,7 +253,7 @@ fn an_unloaded_destination_waits_without_sending_anything() {
     let prefs = Preferences::default();
     let mut queue: VecDeque<Move> = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new()).moves.into();
     assert!(matches!(
-        step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()),
+        step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0),
         Step::Wait
     ));
     assert_eq!(queue.len(), 1);
@@ -284,7 +284,7 @@ fn the_demo_inventory_sorts_into_reused_folders_and_keeps_what_it_cannot_read() 
     assert!(plan.unpackers() > 50);
     assert!(unknown.iter().any(|n| n == "Gift box"));
     let mut queue: VecDeque<Move> = plan.moves.into();
-    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
+    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0) {
         actions::demo_mutate(&mut inv, id(AGENT), *change).expect("demo server");
     }
     // the earlier run's Sorted and Sorted/Reborn are reused, not doubled
@@ -362,7 +362,7 @@ fn a_rule_can_send_entries_to_one_of_the_users_own_folders() {
     assert_eq!(chair.to, Dest::Folder(home));
     assert_eq!(chair.label, "My Inventory / Home");
     let mut queue: VecDeque<Move> = plan.moves.into();
-    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new()) {
+    while let Step::Change(change, _) = step(&mut inv, &prefs.base_name(), &mut queue, &HashSet::new(), &HashSet::new(), &mut 0) {
         // the chosen folder is used as it is: nothing is made inside it
         assert!(
             !change
@@ -505,7 +505,7 @@ fn excluded_folders_the_trash_and_marketplace_listings_are_never_touched() {
 }
 
 #[test]
-fn the_whole_inventory_reads_system_folders_and_keeps_the_users_own_folders() {
+fn the_whole_inventory_reads_objects_and_moves_root_deliveries_whole() {
     let mut inv = fixture(&["Velvet skirt Reborn"]);
     // a loose item at the root, a user folder and its contents
     let home = id(90);
@@ -535,14 +535,18 @@ fn the_whole_inventory_reads_system_folders_and_keeps_the_users_own_folders() {
     let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
     let mut moved: Vec<_> = plan.moves.iter().map(|m| m.id).collect();
     moved.sort();
-    assert_eq!(moved, [fatpack, id(100), id(150)]);
-    // excluding Objects leaves only the root's loose item
+    // "My chairs", the user's folder lying at the root with a name that
+    // reads as furniture and no folder inside, moves whole like a delivery
+    assert_eq!(moved, [home, fatpack, id(100), id(150)]);
+    // excluding Objects leaves the root's loose item and its delivery
     let prefs = Preferences {
         excluded: vec![id(OBJECTS)],
         ..Default::default()
     };
     let plan = plan_whole(&inv, &prefs, &HashSet::new(), &HashSet::new());
-    assert_eq!(plan.moves.iter().map(|m| m.id).collect::<Vec<_>>(), [id(150)]);
+    let mut moved: Vec<_> = plan.moves.iter().map(|m| m.id).collect();
+    moved.sort();
+    assert_eq!(moved, [home, id(150)]);
 }
 
 const OLD: i64 = 1_400_000_000;
@@ -604,6 +608,8 @@ fn sorted_fixture() -> Inventory {
     add_folder(&mut inv, 30, OBJECTS, "My stuff");
     add_item(&mut inv, 300, 30, "Freebie lamp", OLD);
     add_item(&mut inv, 301, 30, "Gift lamp", NEW);
+    // a folder of its own: My stuff is the user's arrangement, not a product
+    add_folder(&mut inv, 31, 30, "Lamps");
     add_folder(&mut inv, 40, OBJECTS, "Lumen - Hex Dress - FATPACK");
     add_item(&mut inv, 400, 40, "Lumen - Hex Dress HUD", OLD);
     add_item(&mut inv, 401, 40, "Lumen - Hex Dress (Reborn)", OLD);
@@ -1203,4 +1209,206 @@ fn shared_settings_skip_broken_lines_and_respect_the_ticks() {
     let huge = "rule: any | chair | Home\n".repeat(10_000);
     let found = import(&huge);
     assert!(found.rules.len() <= super::share::MAX_RULES);
+}
+
+/// My Inventory with every default folder Aurora must never read inside
+/// (each holding an old "denim freebie" and a delivery folder), the viewer
+/// folders, Objects, and a folder of the user's.
+fn hands_off_fixture() -> (Inventory, Vec<Uuid>) {
+    let mut inv = fixture(&[]);
+    let mut guarded = vec![id(11)];
+    add_item(&mut inv, 1100, 11, "Old denim freebie in the trash", OLD);
+    // every default folder type but Objects (6), and the old Outbox
+    let kinds = [0, 1, 2, 3, 5, 7, 10, 13, 15, 16, 20, 21, 23, 46, 48, 50, 51, 53, 56, 57];
+    for (n, kind) in kinds.iter().enumerate() {
+        let folder_id = 2000 + n as u128 * 10;
+        inv.folders
+            .insert(id(folder_id), folder(id(folder_id), id(1), &format!("System {kind}"), *kind));
+        inv.folders.get_mut(&id(1)).expect("root").children.push(id(folder_id));
+        add_item(&mut inv, folder_id + 1, folder_id, "Old denim freebie", OLD);
+        add_folder(&mut inv, folder_id + 2, folder_id, "Lumen - Denim Skirt - FATPACK");
+        add_item(&mut inv, folder_id + 3, folder_id + 2, "Old denim skirt", OLD);
+        add_folder(&mut inv, folder_id + 4, folder_id, "Empty inside");
+        guarded.push(id(folder_id));
+    }
+    // an outfit inside My Outfits, and stock / version folders in Listings
+    let outfits = 2000 + kinds.iter().position(|k| *k == 48).expect("my outfits") as u128 * 10;
+    inv.folders.insert(id(2900), folder(id(2900), id(outfits), "Party outfit", 47));
+    inv.folders.get_mut(&id(outfits)).expect("my outfits").children.push(id(2900));
+    add_item(&mut inv, 2901, 2900, "Old denim jacket", OLD);
+    let listings = 2000 + kinds.iter().position(|k| *k == 53).expect("listings") as u128 * 10;
+    for (n, kind) in [54, 55].into_iter().enumerate() {
+        let folder_id = 2910 + n as u128 * 10;
+        inv.folders
+            .insert(id(folder_id), folder(id(folder_id), id(listings), "Stock", kind));
+        inv.folders.get_mut(&id(listings)).expect("listings").children.push(id(folder_id));
+        add_item(&mut inv, folder_id + 1, folder_id, "Old denim freebie listed", OLD);
+    }
+    // the viewer folders: RLV shared folders, the AO, the bridge
+    for (n, (name, inside)) in [
+        ("#RLV", "Old denim freebie dress"),
+        ("#Firestorm", "#AO"),
+        ("#Aurora", "Aurora AO"),
+        ("#Mine", "Old denim stash"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let folder_id = 3000 + n as u128 * 10;
+        add_folder(&mut inv, folder_id, 1, name);
+        add_folder(&mut inv, folder_id + 1, folder_id, inside);
+        add_item(&mut inv, folder_id + 2, folder_id + 1, "Old denim freebie dance", OLD);
+        add_item(&mut inv, folder_id + 3, folder_id, "Old denim freebie bridge", OLD);
+        add_folder(&mut inv, folder_id + 4, folder_id + 1, "Empty");
+        guarded.push(id(folder_id));
+    }
+    // sortable: Objects' contents and a folder of the user's
+    add_item(&mut inv, 4000, OBJECTS, "Old denim freebie skirt", OLD);
+    add_folder(&mut inv, 4010, 1, "My clothes");
+    add_folder(&mut inv, 4011, 4010, "Tops");
+    add_item(&mut inv, 4012, 4010, "Old denim freebie top", OLD);
+    inv.generation += 1;
+    (inv, guarded)
+}
+
+/// Every rule, option and imported setting aimed at the hands-off folders.
+fn aimed_at(guarded: &[Uuid]) -> Preferences {
+    let mut rules = vec![
+        Rule {
+            words: "denim freebie old".into(),
+            mode: Match::Any,
+            pre_trash: true,
+            ..Default::default()
+        },
+        Rule {
+            words: "freebie".into(),
+            mode: Match::Any,
+            folder: "Trash/Freebies".into(),
+            ..Default::default()
+        },
+    ];
+    rules.extend(guarded.iter().map(|g| Rule {
+        words: "denim".into(),
+        target: Some(*g),
+        ..Default::default()
+    }));
+    // what an imported text could set: a viewer folder as the sort folder
+    let imported = super::share::import("# Aurora Auto-sort v1\noption: base = #RLV\noption: folders = on\n");
+    let mut prefs = Preferences {
+        rules,
+        stores: true,
+        ..Default::default()
+    };
+    imported.apply(
+        &mut prefs,
+        &super::share::Pick {
+            options: true,
+            ..Default::default()
+        },
+        false,
+    );
+    prefs
+}
+
+#[test]
+fn hands_off_folders_are_never_read_moved_or_trashed_whatever_the_settings() {
+    let (inv, guarded) = hands_off_fixture();
+    let prefs = aimed_at(&guarded);
+    assert_ne!(prefs.base_name(), "#RLV", "a viewer folder can never be the sort folder");
+    let inside = |id: Uuid| guarded.iter().any(|g| actions::under(&inv, id, *g));
+    let none = HashSet::new();
+    // every way in: the whole inventory, each guarded folder as a source,
+    // its entries chosen by hand, Pre-Trash rules, and Clean up
+    let mut plans = vec![plan_whole(&inv, &prefs, &none, &none)];
+    for g in &guarded {
+        assert!(!source_allowed(&inv, *g), "{g} is not a source");
+        assert!(!target_allowed(&inv, *g), "{g} is not a destination");
+        assert!(hands_off(&inv, *g), "{g} never moves");
+        plans.push(plan(&inv, *g, &prefs, &none, &none));
+        let entries: Vec<Uuid> = inv.folders[g].items.iter().chain(&inv.folders[g].children).copied().collect();
+        plans.push(plan_entries(&inv, &entries, &prefs, &none, &none));
+    }
+    for plan in &plans {
+        for m in &plan.moves {
+            assert!(!inside(m.id), "{} planned out of a hands-off folder", m.name);
+            if let Dest::Folder(target) = m.to {
+                assert!(!inside(target), "{} planned into a hands-off folder", m.name);
+            }
+        }
+    }
+    // the sortable places still sort
+    let whole = &plans[0];
+    assert!(whole.moves.iter().any(|m| m.id == id(4000)), "Objects' contents sort");
+    assert!(whole.moves.iter().any(|m| m.id == id(4012)), "the user's own folder sorts");
+    // the preview names the hands-off folders it leaves alone
+    assert!(whole.kept_list.iter().any(|(name, why)| name == "#RLV" && *why == Kept::Protected));
+    // Clean up, every option on
+    for whole in [true, false] {
+        let cleanup = Cleanup {
+            whole,
+            include_sorted: true,
+            empty_folders: true,
+            ..before_2020()
+        };
+        for source in std::iter::once(id(1)).chain(guarded.iter().copied()) {
+            let rows = plan_cleanup(&inv, &prefs, &cleanup, source, today(), &none, &none);
+            for row in &rows.rows {
+                assert!(!inside(row.id) && !guarded.contains(&row.id), "{} cleaned up", row.name);
+            }
+        }
+    }
+    // and the last check before the Trash
+    let holds_worn = HashSet::new();
+    for (item_id, it) in inv.items.iter() {
+        if inside(*item_id) {
+            assert!(
+                !trash_ready(&inv, *item_id, it.parent, &prefs, &none, &holds_worn),
+                "{} trashed",
+                it.name
+            );
+        }
+    }
+}
+
+#[test]
+fn folder_names_are_kept_in_ascii_so_runs_find_their_folders() {
+    assert_eq!(inventory_name("Trié", "Sorted"), "Trie");
+    assert_eq!(inventory_name("Pré-corbeille", "Pre-Trash"), "Pre-corbeille");
+    assert_eq!(inventory_name("Café Noir", ""), "Cafe Noir");
+    assert_eq!(inventory_name("整理済み", "Sorted"), "Sorted");
+    assert_eq!(inventory_name("   ", "Sorted"), "Sorted");
+    assert_eq!(inventory_name(&"x".repeat(80), "Sorted").len(), 63);
+    // every category folder is ASCII whatever the language's name
+    for category in Category::ALL {
+        let name = category_folder(category);
+        assert!(name.is_ascii() && !name.is_empty(), "{name:?}");
+    }
+    // a sort folder name that reaches somewhere it must not falls back
+    for refused in ["#RLV", "Pre-Trash", "pre-corbeille", "Clothing", "Lost and Found", "My Outfits", ""] {
+        let prefs = Preferences {
+            base: refused.into(),
+            ..Default::default()
+        };
+        assert!(!base_refused(&prefs.base_name()), "{refused}");
+    }
+}
+
+#[test]
+fn a_delivery_folder_whose_name_says_nothing_is_never_opened() {
+    let mut inv = sorted_fixture();
+    add_folder(&mut inv, 60, OBJECTS, "[Store] Aria");
+    add_item(&mut inv, 600, 60, "Aria HUD", OLD);
+    add_item(&mut inv, 601, 60, "Aria", NEW);
+    let rows = cleaned(&plan_cleanup(
+        &inv,
+        &Preferences::default(),
+        &before_2020(),
+        id(1),
+        today(),
+        &HashSet::new(),
+        &HashSet::new(),
+    ));
+    assert!(!rows.contains(&id(600)) && !rows.contains(&id(60)), "a mixed delivery stays whole");
+    let plan = plan(&inv, id(OBJECTS), &word_rule(false), &HashSet::new(), &HashSet::new());
+    assert!(!plan.moves.iter().any(|m| m.id == id(600)));
 }

@@ -741,12 +741,15 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 Command::BulkPermissions(ids.clone()),
             );
         }
-        // A folder's contents open the window; entries are sorted at once.
+        // A folder's contents, or the chosen entries, open the window on
+        // their preview; nothing moves before Sort is pressed. Nothing in a
+        // hands-off place is offered (sorter::hands_off).
         let (sort_enabled, sort_command) = if single && folder.is_some() {
             (crate::world::inventory::sorter::source_allowed(inv, id), Command::AutoSort(id))
         } else {
             (
-                ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected)),
+                ids.iter()
+                    .all(|id| rules::relocatable(inv, *id, &prefs.protected) && !crate::world::inventory::sorter::hands_off(inv, *id)),
                 Command::SortEntries(ids.clone()),
             )
         };
