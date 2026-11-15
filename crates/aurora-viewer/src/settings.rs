@@ -1483,6 +1483,11 @@ pub struct Settings {
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
+    /// Preferences › Accessibility › Vision: skip the glass of windows,
+    /// bars, menus and dialogs (`crate::disable_glass`), off by default.
+    /// Surfaces stay opaque, without frosting the world. High contrast
+    /// already does this.
+    pub disable_glass: bool,
     /// Preferences › Appearance › Skin: the accent, background and text
     /// colours of the interface (`crate::interface_colors`), each the
     /// skin's by default.
@@ -2689,6 +2694,7 @@ impl Default for Settings {
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,
+            disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
