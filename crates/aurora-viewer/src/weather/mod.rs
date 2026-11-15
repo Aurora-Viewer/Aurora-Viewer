@@ -306,8 +306,9 @@ impl WeatherSettings {
 
     /// How far the weather's memory of the ground must reach (m,
     /// `RainLook::memory_reach`): the wet ground's distance (drawn in any
-    /// rain, puddles or not), and the snow's while it settles (with "Snow
-    /// settles" off none lies, and its hidden slider changes nothing).
+    /// rain, puddles or not), and the snow's while it settles, falling or
+    /// melting (`RainLook::snow_distance`; with "Snow settles" off none
+    /// lies, and its hidden slider changes nothing).
     /// Both whichever falls: the memory's square keeps its size from rain
     /// to snow (a new size starts its texels again).
     fn memory_reach(&self) -> f32 {
@@ -334,6 +335,8 @@ impl WeatherSettings {
             // and a region's snow so far (weather/region.rs)
             snow_lying: 0.0,
             memory_reach: self.memory_reach(),
+            // the same while it melts as while it fell
+            snow_distance: self.snow_distance.clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end()),
             deep_reach: env_snow_deep_reach()
                 .filter(|_| !self.touched)
                 .unwrap_or(self.snow_deep_reach)
@@ -562,6 +565,29 @@ mod tests {
             (look.memory_reach, look.deep_reach),
             (*PUDDLE_DISTANCE.end(), *DEEP_SNOW_REACH.end())
         );
+    }
+
+    #[test]
+    fn melting_snow_is_drawn_as_far_as_it_fell_and_the_memory_covers_it() {
+        // the snow lying is drawn at its own distance in rain and in clear
+        // weather too (it was twice the puddles': at the defaults 76 m, past
+        // the memory's 60, a line where it stopped), never past the memory
+        for (wet, snow) in [(38.0, 60.0), (10.0, 256.0), (200.0, 40.0), (256.0, 20.0), (128.0, 128.0)] {
+            // snowing, raining, clear
+            for (precipitation, amount) in [(Precipitation::Snow, 0.5), (Precipitation::Rain, 0.5), (Precipitation::Rain, 0.0)] {
+                let w = WeatherSettings {
+                    precipitation,
+                    amount,
+                    puddle_distance: wet,
+                    snow_distance: snow,
+                    touched: true,
+                    ..WeatherSettings::default()
+                };
+                let look = w.rain_look(&Wind::default());
+                assert_eq!(look.snow_distance, snow, "{precipitation:?}, {wet} / {snow} m");
+                assert!(look.snow_distance <= look.memory_reach, "{precipitation:?}, {wet} / {snow} m");
+            }
+        }
     }
 
     #[test]
