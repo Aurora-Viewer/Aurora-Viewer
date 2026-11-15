@@ -625,6 +625,7 @@ mod tests {
                         kind: crate::world::ChatKind::Im,
                         source: JANE,
                         origin: crate::world::Origin::Live,
+                        blocked: false,
                         beyond_range: false,
                     },
                 );
@@ -751,6 +752,7 @@ mod tests {
                         kind: crate::world::ChatKind::Im,
                         source: id,
                         origin: crate::world::Origin::Live,
+                        blocked: false,
                         beyond_range: false,
                     },
                 );
@@ -1037,6 +1039,7 @@ mod tests {
                             kind: crate::world::ChatKind::Im,
                             source: JANE,
                             origin: crate::world::Origin::Live,
+                            blocked: false,
                             beyond_range: false,
                         },
                     );
@@ -1149,6 +1152,7 @@ mod tests {
                     kind: crate::world::ChatKind::Im,
                     source: BOB,
                     origin: crate::world::Origin::Live,
+                    blocked: false,
                     beyond_range: false,
                 },
             );
