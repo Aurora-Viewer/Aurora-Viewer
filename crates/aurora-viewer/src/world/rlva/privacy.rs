@@ -273,6 +273,16 @@ impl World {
         self.rlva_can_name(*id) && self.social.is_friend(id)
     }
 
+    /// The mark of a resident (`world::avatar_marks`) as the world, the maps
+    /// and the lists may show it: none for a resident whose name is hidden,
+    /// whose mark would tell who they are. LLNetMap::draw (llnetmap.cpp)
+    /// drops it from the dot (`canShowName(…) ? color : map_avatar_color`);
+    /// stricter than the Legacy Viewer on the name tag, which keeps the
+    /// mark's colour there (LLVOAvatar::getNameTagColor).
+    pub fn rlva_shown_mark(&self, id: &Uuid) -> Option<super::super::avatar_marks::Rgb> {
+        self.avatar_marks.get(id).filter(|_| self.rlva_can_name(*id))
+    }
+
     pub fn rlva_private_region(&self, region: &str) -> bool {
         self.rlva.has("showloc")
             && self

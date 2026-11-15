@@ -99,6 +99,27 @@ impl Rlva {
         self.rules_for("setcam", Uuid::nil()).next().map(|(id, _)| id)
     }
 
+    /// Something holds the camera (@setcam) or bounds it (where it may be,
+    /// what it looks at, how wide): a view of the viewer's own making (the
+    /// Avatar Studio's, the Director's track) is not allowed to replace it.
+    pub fn camera_restricted(&self) -> bool {
+        self.camera_owner().is_some()
+            || [
+                "setcam_unlock",
+                "setcam_avdistmin",
+                "setcam_avdistmax",
+                "setcam_origindistmin",
+                "setcam_origindistmax",
+                "setcam_eyeoffset",
+                "setcam_focusoffset",
+                "setcam_mouselook",
+                "setcam_fovmin",
+                "setcam_fovmax",
+            ]
+            .iter()
+            .any(|name| self.has(name))
+    }
+
     pub fn camera_value(&self, name: &str) -> Option<&str> {
         if !self.enabled() {
             return None;

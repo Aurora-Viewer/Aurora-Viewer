@@ -492,6 +492,8 @@ impl World {
                         kind: ChatKind::Im,
                         source: from,
                         origin: Origin::Live,
+                        blocked: false,
+                        beyond_range: false,
                     };
                     self.conversation_push(from, line, true);
                 }
@@ -533,6 +535,8 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         self.conversation_push(im.from_agent_id, line, false);
     }

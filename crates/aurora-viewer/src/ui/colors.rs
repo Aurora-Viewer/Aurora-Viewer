@@ -172,6 +172,19 @@ pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
     text(v)
 }
 
+/// How opaque a nearby line is drawn: Preferences › Chat's factor for a
+/// line said beyond the say range, whole otherwise. LLViewerChat::getChatColor
+/// (indra/newview/llviewerchat.cpp) gives that factor as the line's alpha,
+/// which FSChatHistory::appendMessage and the console apply to the whole
+/// line, the sender's name included; so does Aurora, in every chat style.
+pub fn beyond_range_alpha(line: &ChatLine) -> f32 {
+    line_alpha(line, get().chat_beyond_range)
+}
+
+fn line_alpha(line: &ChatLine, factor: f32) -> f32 {
+    if line.beyond_range { factor.clamp(0.0, 1.0) } else { 1.0 }
+}
+
 /// Text of a script error (ScriptErrorColor), the Aurora red by default:
 /// the same in every style of the chat (#1263).
 pub fn script_error_color() -> Color32 {
@@ -210,14 +223,26 @@ pub fn range_color_in(p: &crate::theme::Palette, range: Option<f32>, r: crate::w
 /// friend, blocked) rather than the match / mismatch one: the Legacy
 /// Viewer's tags colored by distance keep such a color
 /// (`special_color_override` in LLVOAvatar::idleUpdateNameTagText).
+/// A marked resident keeps their mark's color too (hasAvatarMarkColor).
 pub fn relation_tag(world: &World, id: &Uuid, name: &str) -> bool {
     let r = relation(world, id, is_linden(name), false);
-    get().relation_names && (r.linden || r.friend || r.blocked)
+    world.rlva_shown_mark(id).is_some() || (get().relation_names && (r.linden || r.friend || r.blocked))
+}
+
+/// The colour of a resident's mark (`world::avatar_marks`) as the world and
+/// the maps draw it, daltonised like the other configured colours. None for
+/// a resident whose name RLVa hides (`World::rlva_shown_mark`).
+pub fn mark_color(world: &World, id: &Uuid) -> Option<Color32> {
+    world.rlva_shown_mark(id).map(|[r, g, b]| c([r, g, b, 255]))
 }
 
 /// Name tag color of an avatar (own, Linden, friend while the names are
-/// colored by relation, else match / mismatch).
+/// colored by relation, else match / mismatch); a mark's color over all of
+/// them (LLNetMap::getAvatarMarkColor last in LLVOAvatar::getNameTagColor).
 pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool) -> Color32 {
+    if let Some([r, g, b]) = world.rlva_shown_mark(id) {
+        return text([r, g, b, 255]);
+    }
     let k = get();
     let r = relation(world, id, is_linden(name), false);
     let by_relation = k.relation_names;
@@ -238,10 +263,15 @@ pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool
     text(v)
 }
 
-/// Minimap marker color of an avatar. The others' colour for a resident
-/// whose name RLVa hides, whoever it is (LLNetMap::draw, llnetmap.cpp:
-/// `canShowName(…) ? color : map_avatar_color`).
+/// Minimap marker color of an avatar: its mark first, then its contact
+/// set's, then its relation's (LLNetMap::getAvatarColor: the mark is applied
+/// last, over the contact sets). The others' colour for a resident whose
+/// name RLVa hides, whoever it is and whatever mark it has (LLNetMap::draw,
+/// llnetmap.cpp: `canShowName(…) ? color : map_avatar_color`).
 pub fn map_color(world: &World, id: &Uuid, name: &str) -> Color32 {
+    if let Some(color) = mark_color(world, id) {
+        return color;
+    }
     if let Some(color) = world.rlva_contact_appearance(id).minimap {
         return set_color(color);
     }
@@ -264,6 +294,41 @@ pub fn map_color(world: &World, id: &Uuid, name: &str) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::Origin;
+
+    fn line(kind: ChatKind, beyond_range: bool) -> ChatLine {
+        ChatLine {
+            time: std::time::SystemTime::UNIX_EPOCH,
+            from: "Jane".into(),
+            text: "hello".into(),
+            kind,
+            source: Uuid::from_u128(7),
+            origin: Origin::Live,
+            blocked: false,
+            beyond_range,
+        }
+    }
+
+    #[test]
+    fn only_a_line_from_beyond_the_say_range_takes_the_factor() {
+        // the Legacy default, for a resident's and an object's line
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Shout), true), 0.8), 0.8);
+        assert_eq!(line_alpha(&line(ChatKind::Object(ChatType::Shout), true), 0.8), 0.8);
+        // within range, or an IM (no position): whole
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), false), 0.8), 1.0);
+        assert_eq!(line_alpha(&line(ChatKind::Im, false), 0.3), 1.0);
+        // the slider's ends, and a value out of them from a hand-edited file
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), 1.0), 1.0);
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), 0.0), 0.0);
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), 1.7), 1.0);
+        assert_eq!(line_alpha(&line(ChatKind::Local(ChatType::Normal), true), -0.5), 0.0);
+    }
+
+    #[test]
+    fn the_factor_defaults_to_the_legacy_viewers() {
+        assert_eq!(ColorSettings::default().chat_beyond_range, 0.8);
+    }
+
     use crate::world::contact_sets::Visuals;
 
     const ME: Uuid = Uuid::from_u128(1);
@@ -310,7 +375,7 @@ mod tests {
         world
     }
 
-    fn line(kind: ChatKind) -> ChatLine {
+    fn rlva_line(kind: ChatKind) -> ChatLine {
         ChatLine {
             time: std::time::SystemTime::now(),
             from: "Teagan Linden".into(),
@@ -318,6 +383,8 @@ mod tests {
             kind,
             source: FRIEND,
             origin: crate::world::Origin::Live,
+            blocked: false,
+            beyond_range: false,
         }
     }
 
@@ -352,7 +419,7 @@ mod tests {
     #[test]
     fn rlva_hidden_names_lose_their_contact_set_and_map_colours() {
         let mut world = world();
-        let local = line(ChatKind::Local(ChatType::Normal));
+        let local = rlva_line(ChatKind::Local(ChatType::Normal));
         let set = set_color([0.6, 0.2, 0.8, 1.0]);
         let stranger = Uuid::from_u128(99);
         assert_eq!(map_color(&world, &FRIEND, "Teagan Linden"), set);
@@ -365,8 +432,8 @@ mod tests {
             map_color(&world, &stranger, "Somebody Else")
         );
         for kind in [ChatKind::Local(ChatType::Normal), ChatKind::Im] {
-            assert_eq!(contact_chat_color(&line(kind), &world), None);
-            assert_eq!(contact_sender_color(&line(kind), &world), None);
+            assert_eq!(contact_chat_color(&rlva_line(kind), &world), None);
+            assert_eq!(contact_sender_color(&rlva_line(kind), &world), None);
         }
         assert_eq!(resident_name(&world, &FRIEND, Color32::PLACEHOLDER), Color32::PLACEHOLDER);
         rlva(&mut world, &format!("@shownames:{FRIEND}=add"));

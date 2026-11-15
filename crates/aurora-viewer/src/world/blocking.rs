@@ -77,6 +77,36 @@ impl World {
         self.mutes.text_muted(&c.source_id, &c.from_name) || (!c.owner_id.is_nil() && self.mutes.text_muted(&c.owner_id, ""))
     }
 
+    /// A blocked source's nearby line (`chat_blocked`). An object's, or one
+    /// of a blocked owner's objects, is dropped as process_chat_from_simulator
+    /// drops it before anything. A resident's is marked mMuted there, and
+    /// FSFloaterNearbyChat::addMessage keeps it for the muted history alone,
+    /// shown with FSShowMutedChatHistory: no console line, no flash, no
+    /// transcript, no sound, no bubble, no keyword alert, no unread count;
+    /// Aurora keeps it the same way when Preferences › Chat asks for it,
+    /// and translates nothing of it. Ours is never blocked.
+    pub(super) fn blocked_chat_line(&mut self, c: ChatMessage) {
+        if self.blocked_chat == crate::settings::BlockedChat::Hidden
+            || c.source_type != ChatSourceType::Agent
+            || c.source_id.is_nil()
+            || c.source_id == self.agent_id
+        {
+            return;
+        }
+        let from = self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name);
+        self.nearby_push(super::ChatLine {
+            time: std::time::SystemTime::now(),
+            from,
+            text: c.message,
+            kind: super::ChatKind::Local(c.chat_type),
+            source: c.source_id,
+            origin: super::Origin::Live,
+            blocked: true,
+            // already greyed as blocked: not dimmed a second time
+            beyond_range: false,
+        });
+    }
+
     /// A resident whose nearby chat is hidden (`chat_blocked`) is not named
     /// in the chat's "is typing" line either (#1395): their words never
     /// show, so the line would only point at them. The Legacy Viewer has no
@@ -504,5 +534,81 @@ mod tests {
         assert!(!w.nearby_typing_hidden(&bob));
         w.social.names.insert(bob, "Bob Smith".into());
         assert!(w.nearby_typing_hidden(&bob));
+    }
+
+    /// A world with Jane blocked, her spam box blocked, and Bob free.
+    fn blocked_world(mode: crate::settings::BlockedChat) -> World {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        w.block(JANE, "Jane Doe", MuteType::Agent).expect("blocked");
+        w.block(SPAM_BOX, "Spam box", MuteType::Object).expect("blocked");
+        w.take_social_commands();
+        w.blocked_chat = mode;
+        w
+    }
+
+    const JANE: Uuid = Uuid::from_u128(1);
+    const BOB: Uuid = Uuid::from_u128(2);
+    const SPAM_BOX: Uuid = Uuid::from_u128(3);
+    const JANES_BOX: Uuid = Uuid::from_u128(4);
+
+    fn said(w: &mut World, from: Uuid, owner: Uuid, source_type: ChatSourceType, text: &str) {
+        w.apply(aurora_net::NetEvent::Chat(ChatMessage {
+            from_name: "Speaker".into(),
+            source_id: from,
+            owner_id: owner,
+            source_type,
+            chat_type: aurora_net::ChatType::Normal,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: text.into(),
+        }));
+    }
+
+    #[test]
+    fn a_blocked_residents_line_is_dropped_while_hidden_as_by_default() {
+        assert_eq!(crate::settings::BlockedChat::default(), crate::settings::BlockedChat::Hidden);
+        let mut w = blocked_world(crate::settings::BlockedChat::Hidden);
+        said(&mut w, JANE, Uuid::nil(), ChatSourceType::Agent, "hello");
+        assert!(w.chat.is_empty());
+        assert_eq!((w.chat_unread, w.chat_badge), (0, 0));
+        assert!(w.ui_sounds.is_empty() && w.attention.is_empty());
+    }
+
+    #[test]
+    fn a_blocked_residents_line_goes_to_the_history_alone_when_collapsed_or_greyed() {
+        for mode in [crate::settings::BlockedChat::Collapsed, crate::settings::BlockedChat::Greyed] {
+            let mut w = blocked_world(mode);
+            // even a line that names us or holds a keyword alerts nobody
+            let mention = format!("hey secondlife:///app/agent/{}/mention", w.agent_id);
+            said(&mut w, JANE, Uuid::nil(), ChatSourceType::Agent, &mention);
+            let line = w.chat.back().expect("kept for the history");
+            assert!(line.blocked, "{mode:?}");
+            assert_eq!(line.source, JANE);
+            assert_eq!(line.kind, crate::world::ChatKind::Local(aurora_net::ChatType::Normal));
+            // no unread count, sound, flash, notification, bubble, last
+            // speaker
+            assert_eq!((w.chat_unread, w.chat_badge), (0, 0), "{mode:?}");
+            assert!(w.ui_sounds.is_empty() && w.attention.is_empty(), "{mode:?}");
+            assert!(!w.nearby_news && w.last_speaker.is_none(), "{mode:?}");
+            assert!(!w.bubble_chat.has_lines(&JANE, std::time::Instant::now()), "{mode:?}");
+            // Bob's line is his own as ever
+            said(&mut w, BOB, Uuid::nil(), ChatSourceType::Agent, "hi");
+            assert!(!w.chat.back().expect("Bob's line").blocked);
+            assert_eq!(w.chat_unread, 1);
+        }
+    }
+
+    #[test]
+    fn a_blocked_objects_line_is_dropped_in_every_mode() {
+        use crate::settings::BlockedChat;
+        for mode in [BlockedChat::Hidden, BlockedChat::Collapsed, BlockedChat::Greyed] {
+            let mut w = blocked_world(mode);
+            // blocked itself, or owned by a blocked resident
+            said(&mut w, SPAM_BOX, BOB, ChatSourceType::Object, "free money");
+            said(&mut w, JANES_BOX, JANE, ChatSourceType::Object, "buy now");
+            assert!(w.chat.is_empty(), "{mode:?}");
+        }
     }
 }

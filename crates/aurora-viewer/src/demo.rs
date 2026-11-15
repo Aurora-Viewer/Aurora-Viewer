@@ -68,6 +68,10 @@ pub mod bom_rezzed;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).
 #[path = "demo_calls.rs"]
 pub mod calls;
+/// Nearby chat from near and from beyond the say range, the far lines
+/// dimmed (AURORA_DEMO_CHAT_RANGE).
+#[path = "demo_chat_range.rs"]
+pub mod chat_range;
 /// EEP environment answers (AURORA_DEMO_EEP_PARCEL).
 #[path = "demo_chatlog.rs"]
 pub mod chatlog;
@@ -87,6 +91,11 @@ pub mod contact_markers;
 /// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
 #[path = "demo_conv_button.rs"]
 pub mod conv_button;
+/// The Legacy Viewer's conversation options (AURORA_DEMO_CONV_OPTIONS).
+#[path = "demo_conv_options.rs"]
+pub mod conv_options;
+#[path = "demo_conversation_log.rs"]
+pub mod conversation_log;
 /// A blended face lying exactly on an opaque face of the same mesh
 /// (AURORA_DEMO_COPLANAR_DECAL).
 #[path = "demo_coplanar_decal.rs"]
@@ -180,6 +189,10 @@ pub mod mask_255;
 pub mod mirror;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
+/// A blocked resident talks in nearby chat, the history hiding, folding or
+/// greying the lines (AURORA_DEMO_MUTED_CHAT).
+#[path = "demo_muted_chat.rs"]
+pub mod muted_chat;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
 /// (AURORA_DEMO_NIGHT_SKY).
 #[path = "demo_night_sky.rs"]
@@ -270,6 +283,9 @@ pub mod sky;
 /// (AURORA_DEMO_SLIDESHOW).
 #[path = "demo_slideshow.rs"]
 pub mod slideshow;
+/// AURORA_DEMO_SNOW_ROOF: canopies in the snow, one open at its top.
+#[path = "demo_snow_roof.rs"]
+pub mod snow_roof;
 /// AURORA_DEMO_SNOW_SPIN: turning boxes in lying snow (#3642).
 #[path = "demo_snow_spin.rs"]
 pub mod snow_spin;
@@ -1472,6 +1488,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     };
     match view {
         Bubbles::Friend | Bubbles::Legacy => {
@@ -1709,6 +1727,8 @@ pub fn conv_scroll_lines(world: &mut crate::world::World) {
             kind,
             source,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1730,6 +1750,8 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
             kind: crate::world::ChatKind::Im,
             source: DEMO_FRIEND,
             origin: crate::world::Origin::Live,
+            blocked: false,
+            beyond_range: false,
         };
         world.conversation_line(DEMO_FRIEND, line);
     }
@@ -1891,6 +1913,8 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
     };
     let names = |id: Uuid| world_name(id);
     let group = [
@@ -3413,6 +3437,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // were away (AURORA_DEMO_CHATLOG=offline), else nothing
         aurora_net::NetCommand::RequestOfflineMessages => match chatlog::mode() {
             Some(chatlog::Mode::Offline) => chatlog::offline_messages(DEMO_AGENT),
+            // AURORA_DEMO_CONV_OPTIONS: Orion's and a group's
+            _ if conv_options::scene().is_some() => conv_options::offline_messages(DEMO_AGENT),
             _ => Vec::new(),
         },
         // a conference started by message (AURORA_DEMO_CALL=conference-legacy)
@@ -7723,6 +7749,11 @@ fn crowd_te(color: [f32; 4], shiny: u8) -> Arc<TextureEntry> {
 /// child prims) on bones all over the body, so every worn prim follows its
 /// animated bone each frame. With `rigged` (AURORA_DEMO_ANIMESH, whose mesh
 /// and skin are installed), each also wears the rigged demo mesh.
+/// The id of the `k`-th avatar of the crowd ("Foule<k> Resident").
+pub const fn crowd_avatar(k: u32) -> Uuid {
+    Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128)
+}
+
 pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let sphere = shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0);
@@ -7745,7 +7776,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
             "",
         );
         a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = Uuid::from_u128(0xA0E0_C0D0_0000_0000_0000_0000_0000_0000 | k as u128);
+        a.full_id = crowd_avatar(k);
         a.name_values = format!("FirstName STRING RW SV Foule{k}\nLastName STRING RW SV Resident");
         anims.push(NetEvent::AvatarAnimations {
             avatar: a.full_id,

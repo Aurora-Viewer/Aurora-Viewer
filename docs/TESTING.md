@@ -1012,6 +1012,8 @@ when unfocused") is ignored during a screenshot.
 |---|---|
 | `AURORA_DEMO_CAM="yaw,pitch,dist"` | Places the camera around the avatar |
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details), including `head-follow`, `pelvis-follow` and `hand-follow` |
+| `AURORA_DEMO_DIRECTOR=1\|play\|lock\|green\|record\|record-alpha` | The Director open on a track of four keyframes around the avatar, that track playing, the view locked on the avatar's neck, the avatar alone on a green screen, or a second of the track recorded (see Details) |
+| `AURORA_DEMO_DIRECTOR_FILM=<file>` | The Director's recording writes its raw frames to that file, with no encoder (see Details) |
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_MOUSELOOK_COMBAT=1` | Mouselook combat aids and target markers on for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
@@ -1064,6 +1066,48 @@ when unfocused") is ignored during a screenshot.
   the yellow needle and the bearing under the compass follow. `mini`: the
   compact Compass (its layout saved as its Mini button would) opens at
   frame 650 and turns 1° to the right at 750.
+- **`AURORA_DEMO_DIRECTOR=1|play|lock|green|record|record-alpha`**: at frame 620, the Director (toolbar
+  `director`) opens on a track of four keyframes around our avatar, 9 s
+  long, the third keyframe selected (`director demo: 4 keyframes over 9.0 s`
+  in the log). Use `AURORA_FPS_LIMIT=60`: uncapped, the demo runs a
+  thousand frames a second and frame 700 is still under the loading fade.
+  With `1` and a capture at frame 900: the window on the right (Camera,
+  Lock, Keyframe 3 and Path open, Playback, Picture, Isolate and Environment folded,
+  the body scrolling when the viewer's window is short),
+  the timeline strip above the bottom bar with four diamonds, the third
+  violet, the playhead on it and the camera's speed written on each segment
+  (`m/s`); in the world the turquoise path through four small cameras
+  numbered 1 to 4, each pointing at the avatar, a dot each second, the
+  selected camera violet with its two Bézier handles. `play` plays the
+  track at once without a start delay (`director: playing 4 keyframes`):
+  captures at frames 800 and 1000 show the world alone from two places of
+  the path, no bar, window, name tag or HUD; the
+  log says `director: playback ended at 9.0 s` once the last view has been
+  held a second, and the interface is back. `lock` turns the lock on, on our
+  avatar's neck (`director demo: view locked on our avatar's neck`): the
+  view turns so that the neck sits in the middle of the screen, under an
+  amber ring, wherever the camera stands; the second and third keyframes
+  are locked (their cameras point at the neck), the picture is 2.39:1 (the
+  frame outlined, what lies above and below it dimmed) with the rule of
+  thirds. `green` isolates our avatar (the photo mode's isolation, on "My
+  avatar") on an empty background filled with the key green
+  (`director demo: our avatar alone on a green screen`): the avatar alone,
+  no sky, ground, water nor other avatar, on one flat green (0, 177, 64)
+  right up to its outline, the Director's interface over it. `record`
+  shortens the track to a second and records its playback at 24 frames a
+  second (`director: recording <w>x<h> at 24 frames a second`), through the
+  ffmpeg found (the film starts once it has answered, `director: ffmpeg at
+  <file>`, and goes to `<Videos>/Aurora Viewer`; with none, `director demo:
+  no ffmpeg to record with`) or, with `AURORA_DEMO_DIRECTOR_FILM=<file>`, as
+  raw RGBA frames one after the other in that file, with no encoder: the
+  file weighs the frames written times width times height times 4 (about 24
+  frames, the log says how many: `director: film of <n> frames written`),
+  each the 3D view alone. `record-alpha` does the same with our avatar
+  isolated on an empty background and the format with transparency: the
+  frames' alpha is 0 where nothing is drawn, 255 on the avatar. Every format
+  and quality through the computer's own ffmpeg, each film read back by it
+  (its frames, their size, their colors, the transparency):
+  `cargo test --workspace the_ffmpeg_found -- --ignored --nocapture`.
 - **`AURORA_DEMO_CROSSHAIR=dot|cross|circle|legacy|off|image:<file>`**: the crosshair of
   Preferences › Camera › Mouselook › Crosshair in that shape for the
   session, nothing saved (`cross` and `circle` with their centre dot; `off`:
@@ -4591,9 +4635,12 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Aurora Weather window is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow held at least this deep on the ground |
 | `AURORA_SNOW_DEEP=0\|1` | Deep snow off or on until the Aurora Weather window is used |
+| `AURORA_SNOW_DEEP_REACH=<m>` | Deep snow's reach (10 to 40 m) until the Aurora Weather window is used |
+| `AURORA_DEMO_SNOW_ROOF=1` | Four canopies in the snow: plain, open at the top, glass, leaves |
 | `AURORA_DEMO_SNOW_SPIN=1\|settles-off` | Boxes turning slowly, fast and by a script's steps in the lying snow |
+| `AURORA_DEMO_SNOW_SPIN=timer` | The same, the script's box stepped every 10 s (a move's hold between steps) |
 | `AURORA_WEATHER_QUALITY=low\|medium\|high` | The weather's quality until the Aurora Weather window is used |
-| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
+| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground (`=snow`: why the snow lies or not) |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
@@ -4610,23 +4657,43 @@ both open states and the selection count. Capture at frame 620.
   settles" off still hides it; without the variable it builds over minutes:
   a dusting, then a white cover on what faces up, none on walls or steep
   roofs).
-  `AURORA_SNOW_DEEP` and `AURORA_WEATHER_QUALITY` set deep snow and the
+  `AURORA_SNOW_DEEP`, `AURORA_SNOW_DEEP_REACH` (metres) and `AURORA_WEATHER_QUALITY` set deep snow, its reach and the
   quality the same way, to measure each with `AURORA_PROFILE`. The wind,
   the puddles and the thunder come from the settings.
+  `AURORA_DEMO_SNOW_ROOF=1` (with `AURORA_SNOW` and `AURORA_SNOW_LYING`)
+  sets four canopies 3 m above the plaza, north of the arrival, and looks
+  at them from the side: a plain one (snow on it, bare ground under it),
+  one whose top face is fully transparent while its underside still shows
+  (a skybox's painted ceiling: the snow falls through it onto the ground
+  under it), a glass one at 30 % (bare ground under it; the snow on
+  blended faces is not drawn), and leaves: the same open top over a
+  blended underside at 70 %, as a tree's cards facing down (bare ground
+  under it). The rain's shelter map holds what is seen from above: a face
+  turned down is left out, unless it is two-sided or has alpha (masked or
+  blended).
   `AURORA_DEMO_SNOW_SPIN=1` (with `AURORA_SNOW` and `AURORA_SNOW_LYING`)
   sets three flat red boxes in a row 6 m north of the arrival from frame
   60: one turning at 0.005 rad/s, one at 0.3 rad/s, and one turned 15°
   each second by plain updates with no motion reported, as a script's
   llSetRot on a timer. What moves stays out of the rain's shelter map, so
   none of them takes the ground's snow: no white squares on their tops or
-  sides, and none appearing or vanishing as they turn. `settles-off` turns the weather drawn to rain with "Snow settles"
+  sides, and none appearing or vanishing as they turn. `timer` steps the
+  third box every 600 frames instead (10 s with `AURORA_FPS_LIMIT=60`),
+  longer than a single move's hold: from its second step on it must stay
+  bare between its steps (capture around frame 2300, between the fourth
+  and the fifth). `settles-off` turns the weather drawn to rain with "Snow settles"
   off at frame 700 (that run only, never the settings): the snow lying
   goes at once instead of melting away in view. Capture both with the
   shadows on and off (the shelter map is redrawn once a second with them
   off). `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
-  cover; brighter, the wetter. `AURORA_THUNDER_AT=<s>` makes one strike
+  cover; brighter, the wetter. `AURORA_RAIN_DEBUG=snow` colours it by why
+  the snow lies or not: white, deep snow's own surface; red, no snow in the
+  memory there; yellow, too steep by the surface's facing; blue, off the
+  surface the shelter map has there (under cover, or not in the map),
+  purple the same beyond the near map; green, lying (darker beyond the
+  near map). `AURORA_THUNDER_AT=<s>` makes one strike
   1 km away, `s` seconds after the start, whether Thunder is on or not: its
   flash at once and, for most strikes, a bolt in the sky in its direction,
   then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in
@@ -5965,9 +6032,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `walk`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, a resident who comes and goes, Friends tab, Groups tab, a group's profile |
+| `AURORA_DEMO_RADAR_MARKS=1\|legacy` | Radar marks: crowd residents pre-marked, People › Near you and the mini-map open |
 | `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
-| `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
+| `AURORA_DEMO_ANTI_SPAM=1\|off\|global\|text\|burst` | Synthetic offer, script prompt and sound floods with Protections controls; `burst` many sources at once, one grouped notice |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
 | `AURORA_DEMO_RLVA=selftest` | Runs the RLVa self-test (Dev Toolbox T1), both phases, against the demo's simulated region |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
@@ -6026,12 +6094,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
+| `AURORA_DEMO_CONV_OPTIONS=aurora\|compact\|bubbles\|legacy[:on][:group\|nova]` | The conversation options of Preferences › Chat: tabs ordered by type, tab names, group moderators, "(You)", system messages in brackets, faded history, opening on offline messages |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
-| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|group-notice-chat\|purchase\|purchase-open\|fees\|fees-answered\|fees-short` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$ |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|group-notice-chat\|purchase\|purchase-open\|fees\|fees-answered\|fees-short\|pie-toasts\|legacy-pie-toasts` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$, toasts a wider gap apart under a more transparent pie |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
@@ -6047,7 +6116,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes[:lines]\|stagger\|legacy:stagger` | Nearby chat above the chat bar, optionally limited to 0–50 wrapped text lines; `stagger` says the lines one at a time |
+| `AURORA_DEMO_MUTED_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:hidden\|collapsed\|greyed]` | A blocked resident talking in nearby chat: the history hides, folds or greys the lines |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines][:inspect][:unnamed\|spoof]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact; `unnamed` an object without a name imitating a resident, `spoof` the same marked "(no name)" |
+| `AURORA_DEMO_CHAT_RANGE=aurora\|compact\|bubbles\|legacy\|lines` | Residents and objects talking from near and from beyond the say range, the far lines dimmed |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -6141,6 +6212,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 | `AURORA_DEMO_GRID_STATUS=open\|new\|none\|error` | Help › Grid status: the grid's incidents, and its toolbar button's flash |
+| `AURORA_DEMO_CONVERSATION_LOG=open\|name\|filter\|off\|empty\|live` | The conversation log window with demo conversations |
 
 ### Details
 
@@ -7048,6 +7120,7 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=group-notice|legacy-group-notice|group-notice-saved|group-notice-chat`**: two group notices at frame 700. Aurora Builders (no insignia: the group glyph) from Tess Touch without an attachment, then Northern Wolves (its insignia beside the title) from Orion with a "Texture kit" object attached. Each card is titled "group : subject", its text starts with "Sent by" and the sender, both names are links; the attachment row shows its icon, name and kind with "Save to inventory" beside it, or under it when a long translation leaves the name no room. `legacy-group-notice` shows them in the Legacy toasts; `group-notice-saved` saves the attachment at frame 850: the card stays out with a greyed "Saved". `group-notice-chat` closes both cards at frame 760 and shows the Aurora Builders chat (opened by Nova's invitation): its notice left a system line, "Group Notice Sent by: Tess Touch", the subject and the text, not counted as unread (Preferences › Chat › Groups and blocking, "Group notices in group chat" and "With their subjects and authors", both on); Northern Wolves has no chat open, so its line went to the group's transcript only. Capture at frame 760 (900 for `group-notice-saved` and `group-notice-chat`) in English and French.
 - **`AURORA_DEMO_NOTIFS=fees|fees-answered|fees-short`**: at frame 700, an invitation to Lagoon Sailing Club with a L$ 50 membership fee ("Membership fee" under its text, "Join · L$ 50" on its button) and a tip jar of Tess Touch asking to take L$ and animate the avatar: titled "Warning: access to your account", the warning then the other permission, Deny as the main button and Allow access beside it. `fees-answered` answers at frame 850: the invitation is replaced by "Join the group" naming the cost (Join / Cancel), the question is denied and the nearby chat tells it ("… has been denied permission to: Take L$ from your account."). `fees-short` asks L$ 5000: Accept at frame 850 leaves the invitation and adds "You do not have enough L$ to join this group". Capture at frame 760 (`fees`) or 900.
+- **`AURORA_DEMO_NOTIFS=pie-toasts|legacy-pie-toasts`**: ToastGap and PieMenuOpacity (Preferences › Chat › Toasts › "Gap between toasts"; Preferences › Appearance › Opacity › "Override the pie menu’s opacity" and "Pie menu"). At frame 600 the gap goes to 20 px (7 by default), the pie's opacity override on at 50 %, and four toasts arrive: two notices, an inventory offer from Orion and Orion coming online. At frame 630 the pie menu opens in the middle of the window. `pie-toasts` shows them in Aurora's style: the cards under the bell and the friend's toast, each 20 px apart (and 20 px above the nearby chat lines); `legacy-pie-toasts` in the Legacy toasts, top right, 20 px apart. The pie shows the scene through it in both. Capture at frame 700. For the human test, move the gap slider from 0 to 30 and the pie slider with the toasts or the pie out: the stack and the pie follow at once.
 - **`AURORA_DEMO_NOTIFS=purchase|purchase-open`**: a Marketplace purchase delivered at frame 700, in the grid's words, from no sender (#1604), with the demo inventory loaded just before. The nearby chat shows it as a notice (the box of items in compact rows, no "System" sender with its letter); "Received Items" in its text is a link to that folder. `purchase-open` clicks the link at frame 760: the inventory opens on its Received tab. Capture at frame 740 (`purchase`) or 820 (`purchase-open`).
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
@@ -7245,6 +7318,27 @@ failure. Grid validation and any paid upload are performed by the human.
   700: "Open conversations", then "Don't flash for nearby chat" (unchecked).
   Capture with `AURORA_FPS_LIMIT=60` at `690,715,730,915,1200` (715 and 915:
   the top of a rise; 730: its bottom), `760` for `menu`.
+- **`AURORA_DEMO_CONV_OPTIONS=aurora|compact|bubbles|legacy[:on][:group|nova]`**: the
+  options of Preferences › Chat › Conversations (tab order, tab names,
+  moderators, "(You)", brackets) and › History (faded history, opening on
+  offline messages), in the chat style named, the Conversations window
+  closed and placed at 700 × 560. At login Nova's conversation holds two
+  greyed lines of yesterday's transcript, then our line, hers, our emote, a
+  system line ("Teleport offer sent to …") and hers again. The offline
+  messages arrive once logged in: two from Orion Example and an invitation
+  to the Plaza Market group chat. Frame 640: Aurora Builders' chat opens
+  (Tess Touch is a moderator there); 660: a conference; 700: Tess writes
+  privately; 760: Tess, then we, write in Aurora Builders. `on` turns every
+  option on for the run (never saved): tabs by type (groups, conferences,
+  private), "username (display name)" on private tabs, moderators' names
+  bold and their text in italics, our own lines signed "(You)" (not the
+  emote nor the transcript), the system line in brackets, transcript lines
+  at 0.4 and the window opening by itself on the offline messages. Without
+  `on`, today's look: open the window from the chat bar and compare. Add
+  `group` (`legacy:on:group`) or `nova` to open Aurora Builders' or Nova's
+  conversation at frame 780.
+  `AURORA_DEMO_OPTIONS=chat:conversation-options` or `chat:history-fade`
+  opens Preferences on the rows. Capture at `800` or later.
 - **`AURORA_DEMO_DELIVERY=1|several|open|history`**: the Marketplace inbox
   (Received items) appears at frame 600 with an earlier purchase, which is
   not announced; at 700 a new delivery lands in it the way the server's
@@ -8411,6 +8505,34 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
   by frame.
 
+- **`AURORA_DEMO_MUTED_CHAT=aurora|compact|bubbles|legacy|lines[:hidden|collapsed|greyed]`**:
+  the demo's blocked resident, Violet Wolf (on the demo block list), talks
+  in nearby chat among Nova Example's lines, one line every 2 s from 3 s in
+  world: Nova, Violet three times in a row, the blocked spam box, Nova,
+  Violet once more, Nova. The mode named sets Preferences › Chat ›
+  "Blocked residents' chat" for the run, nothing saved; without one the
+  preference applies and can be changed while the lines come. Hidden (the
+  default, as the Legacy Viewer's FSShowMutedChatHistory off): Nova's three
+  lines only. Collapsed: Nova, "3 messages hidden · Show", Nova, "1 message
+  hidden · Show", Nova; consecutive blocked lines are grouped into one row,
+  and Show opens that row's lines, greyed. Greyed: every line of Violet's,
+  greyed. In every mode the spam box's line never shows, and none of
+  Violet's lines is ever above the chat bar (`lines`), in a bubble, a sound,
+  the unread count or the transcript; a search in the window never finds
+  what a fold hides.
+- **`AURORA_DEMO_CHAT_RANGE=aurora|compact|bubbles|legacy|lines`**: four
+  speakers around the agent, one line every 3 s from 3 s in world, five
+  rounds: Nova Example 6 m away (say), Orion Example 60 m away (shout), a
+  "Stage Announcer" object 45 m away (shout) and an "Info Kiosk" object
+  4 m away (say). The Conversations window shows the nearby chat in the
+  style named (`1` is `aurora`), or `lines` the lines above the chat bar
+  with the window closed. Orion's and the announcer's lines are drawn
+  dimmed, name and picture included (Preferences › Chat › Brightness beyond
+  chat range, 0.8 by default, as LLViewerChat::getChatColor); Nova's and
+  the kiosk's at full brightness. Move the slider: the lines already shown
+  follow it (1: no difference; 0.3: the far lines barely show). Above the
+  chat bar a far line gets its own card, the card's glass undimmed.
+
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines][:inspect][:unnamed|spoof]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
   greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
@@ -8812,6 +8934,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
+- **`AURORA_DEMO_PEOPLE=sets[:width]`** and its scenes: People › Contact sets with three demo sets, each with a badge and a look (Family tinted and bordered, Clubbing tinted, Shop bordered), so that their tiles show the cases; Nova sits in two sets (her chips). From 470 points wide the sets have a column (try `sets:560`), narrower (`sets:380`) or beside a sheet they are a picker above the members. `sets-select` chooses two members (the selection bar); `sets-editor` opens Family's editor on Look, `sets-editor-badges` with the badge grid unfolded, `sets-editor-marker` scrolled to the marker's choices, `sets-editor-thin` in a window 560 wide (narrower than 700 the preview is a strip on top), `sets-editor-behaviour`, `sets-editor-replies` and `sets-editor-members` on those tabs; `sets-sort` opens Quick sort on the friends in no set; `sets-options` the options shared by every set. What to look for: the tiles follow each set's Nameplate background (tint) and Nameplate border switches; dragging a set in the column carries its card under the pointer while the others slide out of the way, and releasing it reorders the priority; the preview follows every switch at once, and the marker's preview shows while the marker is on.
+- **`AURORA_DEMO_RADAR_MARKS=1|legacy`**: radar marks, with
+  `AURORA_DEMO_CROWD=<n>` (20 is enough). The first six residents of the
+  crowd ("Foule0" to "Foule5 Resident") are marked: red, green, blue,
+  purple and yellow (the Legacy Viewer's five colours), then a custom
+  orange. People opens on Near you with its mini-map shown, and the
+  mini-map window is open: the six dots take their mark's colour in both
+  maps, the six rows ring their picture with it, and their name tags take
+  it too. `1`: Aurora's look of People; `legacy`: the Legacy radar table,
+  for the run only. Right-click a row (or select several, or right-click
+  a dot of a mini-map) › Markers: a colour marks them at once; "Custom
+  color…" opens the colour picker, whose colour marks them as it changes;
+  "Clear marker" and "Clear all markers" remove them. The marks are kept
+  for the session only, as in the Legacy Viewer.
 - **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview, and its marker's. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
 
   For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.
@@ -8993,10 +9129,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   set Family (the demo friend Nova in it, in memory only) gets "Show
   notifications" and its own Do Not Disturb response, and the friends'
   global online notices (toast and nearby chat) are off for the run.
-  `config` opens the set's settings window on its switches
-  ("Show notifications"); `config-responses` scrolls it down to the three
-  custom responses, below the appearance options; `config-bottom` to "All
-  contact sets" (the two choices of the sets' notices). `chat` opens Conversations on
+  `config` opens the set's editor on its Behaviour tab
+  ("Show notifications"); `config-responses` on its Auto-replies tab (the
+  three custom responses); `config-bottom` opens the options of all contact
+  sets beside it (the two choices of the sets' notices). `chat` opens Conversations on
   nearby chat: at frames 300 and 360 Nova and another demo friend go
   offline and online, and only Nova gets the two lines; at 400 do not
   disturb comes on, at 420 Nova writes, and the log line `demo set
@@ -9757,6 +9893,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   where the incident is first and marked "New". `none`: a grid without a
   feed ("This grid does not publish its status."); `error`: a feed that
   cannot be read ("The grid status could not be loaded." and the reason).
+- **`AURORA_DEMO_CONVERSATION_LOG=open|name|filter|off|empty|live`** (`1`
+  is `open`): the conversation log filled at frame 590 from memory (no file
+  is read or written) with the demo's residents and groups, then its window
+  opened at frame 600 (capture at frame 640). `open`: by date with friends
+  first (the defaults): the demo friend first, then Nova Example two hours
+  ago with the violet inbox mark of unread offline messages, a group, a
+  resident, a conference and older entries; Loup Example, blocked in the
+  demo, stays hidden until the view menu's Show blocked. `name`: sorted by
+  name.
+  `filter`: "no" typed in the filter, the matching letters in violet.
+  `off`: logging turned off, the entries still listed. `empty`: logging on
+  and nothing from before: only the demo's open group chat, logged as it
+  opens. `live`: an
+  empty log; at frame 600 a message Nova Example sent while we were
+  offline opens a conversation, which the log lists at once with its
+  inbox mark (the log says `conversation log demo: … entries`).
 
 **`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
 skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,
@@ -10626,6 +10778,15 @@ separate searches enabled and disabled; that preference controls only the text.
   All/Any; right-click an item for "Find similar"; the ✕ of the chip bar (or
   "Quick search" in the search options) brings quick search back with its
   text. The demo keeps saved searches in memory only.
+- `recent-date`, `aurora-recent-date`: the Recent tab in advanced mode
+  under the Date rule "newer than 5 days", the filter items dated a day
+  apart: six of them are listed, where the tab alone (since the last
+  logout, a day on a first launch) lists two. The rule replaces the tab's
+  limit, as the finder's hours ago replace "Since Logoff" on the Recent
+  Items panel of the Legacy Viewer; a rule on another field keeps it.
+  `recent-date` shows the classic window with the rule builder open in
+  the Filters floater, `aurora-recent-date` Aurora's narrow window with
+  its chip bar.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the
@@ -14222,9 +14383,11 @@ Unread state is account-specific and survives reconnecting, restarting and clear
 
 ### Anti-spam validation (#678)
 
-`AURORA_DEMO_ANTI_SPAM=1` opens Preferences > Protections and enables the disabled-by-default protection for this demo run. At frame 700 it injects 15 script prompts, 15 scripted inventory offers, 15 teleport offers, 65 sounds and 65 sound preloads. Capture after frame 900. Modes `off` and `global` disable protection or combine the categories. Mode `text` sets the event allowance to 2, newline allowance to 5 and includes own objects: four own scripted gifts admit two notifications, then a six-LF object chat and a six-LF resident IM are suppressed. It lists three IM blocks (own gift owner, chat object and resident), with one notice each. Use both `--language en` and `--language fr` and compare `AURORA_DEMO_OPTIONS=protections` without this fixture for the normal disabled state.
+`AURORA_DEMO_ANTI_SPAM=1` opens Preferences > Protections and enables the disabled-by-default protection for this demo run. At frame 700 it injects 15 script prompts, 15 scripted inventory offers, 15 teleport offers, 65 sounds and 65 sound preloads. Capture after frame 900. Modes `off` and `global` disable protection or combine the categories. Mode `text` sets the event allowance to 2, newline allowance to 5 and includes own objects: four own scripted gifts admit two notifications, then a six-LF object chat and a six-LF resident IM are suppressed. It lists three IM blocks (own gift owner, chat object and resident), told in one notice with their count. Use both `--language en` and `--language fr` and compare `AURORA_DEMO_OPTIONS=protections` without this fixture for the normal disabled state.
 
-With protection enabled, ten prompts/offers of each source and sixty sounds/preloads pass; the next event blocks that source/category for the session and produces only one nearby-chat notice. Preferences lists five blocked pairs. The two sound queues stay independent. In global mode the sound and preload counts combine. Reset clears all counters/blocks; Unblock removes one listed source/category. Changing a setting clears the session counters and blocks. Existing accepted notifications stay available. Typing, saved text IMs, self/nil sources, known own objects (unless included), collision sounds and sound-stop commands are exempt. The object and its owner are both checked for sounds, preventing rotation of object UUIDs from bypassing the owner limit. A bounded source table falls back to a shared overflow counter at 8,192 active pairs rather than allocating without limit; reset also clears that fallback.
+Mode `burst` (`world::anti_spam::burst_window`) sets the event allowance to 2. At frame 700 twelve objects say three lines each in nearby chat, as a rezzer's temporary prims flood it: their first two lines each pass, then one notice reads "12 sources blocked by the anti-spam for this session (Nearby chat)", a single line whose count grows while the blocks come. 15 s later, past the 10 s window, Nova Example floods alone: a second notice names her. Preferences > Protections lists the thirteen blocked sources, each with Unblock.
+
+With protection enabled, ten prompts/offers of each source and sixty sounds/preloads pass; the next event blocks that source/category for the session. The blocks of one burst share one nearby-chat notice ("5 sources blocked by the anti-spam…", with the categories), edited in place as they come. Preferences lists five blocked pairs. The two sound queues stay independent. In global mode the sound and preload counts combine. Reset clears all counters/blocks; Unblock removes one listed source/category. Changing a setting clears the session counters and blocks. Existing accepted notifications stay available. Typing, saved text IMs, self/nil sources, known own objects (unless included), collision sounds and sound-stop commands are exempt. The object and its owner are both checked for sounds, preventing rotation of object UUIDs from bypassing the owner limit. A bounded source table falls back to a shared overflow counter at 8,192 active pairs rather than allocating without limit; reset also clears that fallback.
 
 Nearby chat has its own event queue. The single-message limit defaults to 70 LF characters (5–1,000 in Preferences), following checkNewlineFlood; the first line and visual wrapping do not count, so exactly 70 LF passes and 71 blocks. This check also covers saved text IMs, independently of their rate exemption. Both chat and IM newline floods create a persistent IM block, as in the Legacy Viewer; later chat checks consult it too. With own objects excluded, chat newline checks aggregate by owner; with them included they use the speaking source. System/self text, group invitations and IMs from known own objects retain the reference exemptions. Script/debug and internal bridge traffic keep their existing routing.
 

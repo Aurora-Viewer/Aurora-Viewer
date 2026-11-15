@@ -831,9 +831,11 @@ fn paint_rich(
     // the picture, round, with its status dot
     let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), RICH_H));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, identity.center().y), Vec2::splat(30.0));
-    // (a profile picture would name an anonymous row)
+    // (a profile picture would name an anonymous row; so would its mark,
+    // which `ring` leaves out)
     let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
     widgets::avatar_disc(ui, p, disc, face, &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
@@ -938,6 +940,7 @@ fn paint_compact(
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 10.0, identity.center().y), Vec2::splat(20.0));
     let face = data.pics.get(&row.id).filter(|_| !row.anonymous);
     widgets::avatar_disc(ui, p, disc, face, &row.name, row.muted);
+    crate::ui::avatar_marks::ring(ui, world, &row.id, disc, true);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
