@@ -196,3 +196,24 @@ fn a_gap_opens_before_a_row_for_a_drop_and_closes_after() {
     assert!((list.top("N") - list.allocated[1]).abs() < 0.5, "the new row in the gap");
     assert!((list.top("B") - list.allocated[2]).abs() < 0.5, "B stayed where it was drawn");
 }
+
+/// A list no longer drawn while a row is carried (its window closed with a
+/// key, another folder shown) forgets the carry: drawn again with the
+/// button up, it does not take that for a drop and moves nothing.
+#[test]
+fn a_list_hidden_during_a_drag_moves_nothing_when_it_comes_back() {
+    let mut list = List::new(&["A", "B", "C", "D"]);
+    let at = list.carry("A", 96.0);
+    assert_eq!(list.lifted, Some(0));
+    // frames without the list: the button is let go meanwhile
+    list.frames.run(vec![egui::Event::PointerMoved(at)], |_| {});
+    list.frames.run(vec![button(at, false)], |_| {});
+    list.frames.run(Vec::new(), |_| {});
+    list.frame(Vec::new(), true, None);
+    assert_eq!(list.moved, None, "a drop nobody made");
+    assert_eq!(list.lifted, None);
+    for _ in 0..60 {
+        list.frame(Vec::new(), true, None);
+    }
+    assert!((list.top("A") - list.allocated[0]).abs() < 0.5, "A stayed first");
+}

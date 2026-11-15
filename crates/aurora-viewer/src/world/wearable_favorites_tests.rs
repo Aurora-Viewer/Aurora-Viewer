@@ -252,6 +252,22 @@ fn folders_are_named_renamed_and_deleted_like_the_legacy_window() {
     assert!(delete_folder(&inv, root, made).is_none());
 }
 
+/// A subfolder not read yet looks empty: it is not deleted until its
+/// contents are known, nor while it lists an item the inventory lacks
+/// (the delete is permanent, and what it holds is not known).
+#[test]
+fn a_folder_is_deleted_only_once_its_contents_are_known() {
+    let (mut inv, root) = with_favorites();
+    let (made, change) = new_folder(root, "Work").expect("folder");
+    demo_mutate(&mut inv, id(AGENT), change).expect("created");
+    inv.folders.get_mut(&made).expect("made").state = FetchState::Unknown;
+    assert!(delete_folder(&inv, root, made).is_none(), "not read yet");
+    inv.folders.get_mut(&made).expect("made").state = FetchState::Fetched;
+    assert!(delete_folder(&inv, root, made).is_some(), "read and empty");
+    inv.folders.get_mut(&made).expect("made").items.push(id(999));
+    assert!(delete_folder(&inv, root, made).is_none(), "an item it lists is unknown");
+}
+
 #[test]
 fn the_search_needs_every_word_in_the_name_or_the_type_and_point() {
     let (mut inv, root) = with_favorites();
@@ -260,7 +276,7 @@ fn the_search_needs_every_word_in_the_name_or_the_type_and_point() {
     assert!(matches(&inv, &entry, "SHIRT blue", ""));
     assert!(matches(&inv, &entry, "", ""));
     assert!(!matches(&inv, &entry, "blue coat", ""));
-    // the row's second line: its type and where it is worn
+    // the tooltip's line: its type and where it is worn
     let detail = "Object · Spine";
     assert!(matches(&inv, &entry, "spine", detail));
     assert!(matches(&inv, &entry, "blue SPINE", detail), "a word of each");
@@ -302,4 +318,27 @@ fn a_drag_moves_one_wearable_and_a_drop_inserts_between_rows() {
     assert_eq!(inserted(&[a, b, c], 0, &[e]), [e, a, b, c]);
     assert_eq!(inserted(&[a, b, c], 9, &[e]), [a, b, c, e], "past the end: last");
     assert_eq!(inserted(&[a, b, c], 1, &[c, e, e]), [a, e, b, c], "held ones stay, no twice");
+}
+
+/// Sorted by name, then Custom order chosen: a view without an order of
+/// its own keeps the name order it showed (not the type order); a view
+/// that has one is left to get it back.
+#[test]
+fn choosing_custom_order_keeps_each_view_as_it_was() {
+    let (mut inv, root) = with_favorites();
+    link(&mut inv, 200, root, 103, 30); // Coat
+    link(&mut inv, 201, root, 100, 10); // Zest skin
+    link(&mut inv, 202, root, 102, 40); // Anklet
+    let (work, change) = new_folder(root, "Work").expect("folder");
+    demo_mutate(&mut inv, id(AGENT), change).expect("created");
+    link(&mut inv, 210, work, 101, 1); // Blue shirt
+    link(&mut inv, 211, work, 102, 2); // Anklet
+    let names = |order: &[Uuid]| order.iter().map(|i| inv.items[i].name.clone()).collect::<Vec<_>>();
+    let seeds = seeded_orders(&inv, &[root, work], Sort::Name, |view| view == work);
+    assert_eq!(seeds.len(), 1, "Work has its own order");
+    assert_eq!(seeds[0].0, root);
+    // All lists its folders' wearables too
+    assert_eq!(names(&seeds[0].1), ["Anklet", "Blue shirt", "Coat", "Zest skin"]);
+    let seeds = seeded_orders(&inv, &[root, work], Sort::Recent, |_| false);
+    assert_eq!(names(&seeds[1].1), ["Anklet", "Blue shirt"], "newest first");
 }

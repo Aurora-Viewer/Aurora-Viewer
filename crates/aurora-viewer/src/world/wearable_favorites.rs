@@ -300,6 +300,22 @@ pub fn remove(inv: &Inventory, shown: Uuid, items: &[Uuid]) -> Option<Mutation> 
     (!change.operations.is_empty()).then_some(change)
 }
 
+/// Custom order chosen (from the sort menu, or by a first drag): each of
+/// `views` that has no order of its own (`has` false) keeps the one it
+/// showed under `from`, instead of falling back to the type order; one
+/// that has an order gets it back.
+pub fn seeded_orders(inv: &Inventory, views: &[Uuid], from: Sort, has: impl Fn(Uuid) -> bool) -> Vec<(Uuid, Vec<Uuid>)> {
+    views
+        .iter()
+        .filter(|view| !has(**view))
+        .map(|view| {
+            let mut list = entries(inv, *view);
+            sort(inv, &mut list, from, &[]);
+            (*view, list.iter().map(|e| e.item).collect())
+        })
+        .collect()
+}
+
 /// onNewFolderCallback / onRenameFolderCallback: the name trimmed, refused
 /// when empty or holding a slash (FSWearableFavoritesFolderInvalidName).
 pub fn folder_name(name: &str) -> Result<String, String> {
@@ -330,13 +346,15 @@ pub fn rename_folder(inv: &Inventory, root: Uuid, folder: Uuid, name: &str) -> R
 
 /// onDeleteFolderCallback: a subfolder and its links (remove_inventory_category);
 /// never the root, and nothing but links inside, so no wearable is lost
-/// with it.
+/// with it. Its contents must be known: a folder not read yet looks empty,
+/// and the delete cannot be undone.
 pub fn delete_folder(inv: &Inventory, root: Uuid, folder: Uuid) -> Option<Mutation> {
     let f = inv.folders.get(&folder).filter(|f| f.info.parent == root && folder != root)?;
-    let only_links = f.children.is_empty()
+    let only_links = f.state == FetchState::Fetched
+        && f.children.is_empty()
         && f.items
             .iter()
-            .all(|id| inv.items.get(id).is_none_or(|it| matches!(it.asset_type, 24 | 25)));
+            .all(|id| inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 24 | 25)));
     if !only_links {
         return None;
     }

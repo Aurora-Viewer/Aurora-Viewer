@@ -52,6 +52,8 @@ struct State<K> {
     drawn: HashMap<K, f32>,
     carry: Option<Carry<K>>,
     dropped: Option<Dropped<K>>,
+    /// The frame the list was last drawn.
+    frame: u64,
 }
 
 impl<K> Default for State<K> {
@@ -60,6 +62,7 @@ impl<K> Default for State<K> {
             drawn: HashMap::new(),
             carry: None,
             dropped: None,
+            frame: 0,
         }
     }
 }
@@ -135,6 +138,14 @@ where
         return Layout::default();
     }
     let mut st: State<K> = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
+    // A list not drawn for a frame or more (its window closed, another
+    // folder shown) forgets its carry: the button let go meanwhile would
+    // otherwise read as a drop on its return, and its rows start in place.
+    let frame = ui.ctx().cumulative_frame_nr();
+    if st.frame + 1 < frame {
+        st = State::default();
+    }
+    st.frame = frame;
     let keys = &keys[..n];
     let top0 = rows[0].rect.top();
     let height = rows[0].rect.height();

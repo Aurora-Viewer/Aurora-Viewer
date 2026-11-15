@@ -14686,7 +14686,6 @@ ui-wearable-favorites-empty-hint = Glissez ici des vêtements, des parties du co
 ui-wearable-favorites-empty-folder = Rien dans ce dossier pour l’instant
 ui-wearable-favorites-empty-folder-hint = Glissez ici des éléments depuis votre inventaire, ou utilisez « Ajouter au dossier » sur une ligne.
 ui-wearable-favorites-all = Tous les favoris
-ui-wearable-favorites-folders = Choisir un dossier
 ui-wearable-favorites-wearing = Vous enfilez { $name }
 ui-wearable-favorites-taking-off = Vous retirez { $name }
 ui-wearable-favorites-no-match = { "Rien ne correspond à « " }{ $filter }{ " »." }

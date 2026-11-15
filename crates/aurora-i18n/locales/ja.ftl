@@ -14603,7 +14603,6 @@ ui-wearable-favorites-empty-hint = インベントリから衣類・身体部位
 ui-wearable-favorites-empty-folder = このフォルダーにはまだ何もありません
 ui-wearable-favorites-empty-folder-hint = インベントリからここへドラッグするか、行のメニューの「フォルダーに追加」を使ってください。
 ui-wearable-favorites-all = すべてのお気に入り
-ui-wearable-favorites-folders = フォルダーを選択
 ui-wearable-favorites-wearing = { $name }を着用します
 ui-wearable-favorites-taking-off = { $name }を外します
 ui-wearable-favorites-no-match = 「{ $filter }」に一致するものはありません。

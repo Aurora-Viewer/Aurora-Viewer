@@ -14685,7 +14685,6 @@ ui-wearable-favorites-empty-hint = Drag clothing, body parts or objects here fro
 ui-wearable-favorites-empty-folder = Nothing in this folder yet
 ui-wearable-favorites-empty-folder-hint = Drag wearables here from your inventory, or use Add to folder on a row.
 ui-wearable-favorites-all = All favorites
-ui-wearable-favorites-folders = Choose a folder
 ui-wearable-favorites-wearing = Wearing { $name }
 ui-wearable-favorites-taking-off = Taking off { $name }
 ui-wearable-favorites-no-match = Nothing matches “{ $filter }”.

@@ -53,9 +53,15 @@ pub(crate) struct State {
     /// once per account (initCategory) and again after a relog.
     requested: Option<Uuid>,
     message: String,
-    /// A view's new custom order (its folder, its wearables), for the app
-    /// to keep in the settings.
-    reordered: Option<(Uuid, Vec<Uuid>)>,
+    /// The views' new custom orders (their folder, their wearables), for
+    /// the app to keep in the settings.
+    reordered: Vec<(Uuid, Vec<Uuid>)>,
+    /// A folder just asked for, shown once the inventory lists it
+    /// (onNewFolderCallback shows the new folder).
+    select_new: Option<Uuid>,
+    /// Another inventory change is still on its way: the app takes no new
+    /// one until it lands, so the window asks for none.
+    busy: bool,
     /// Where a row was let go: no tooltip until the pointer leaves that
     /// spot, so that a drop does not end on a tooltip over the list.
     quiet_at: Option<egui::Pos2>,
@@ -64,9 +70,9 @@ pub(crate) struct State {
 }
 
 impl State {
-    /// The custom order changed this frame: the view and its new order.
-    pub(crate) fn take_reordered(&mut self) -> Option<(Uuid, Vec<Uuid>)> {
-        self.reordered.take()
+    /// The custom orders changed this frame: each view and its new order.
+    pub(crate) fn take_reordered(&mut self) -> Vec<(Uuid, Vec<Uuid>)> {
+        std::mem::take(&mut self.reordered)
     }
 }
 
@@ -77,7 +83,9 @@ enum Dialog {
 }
 
 /// The window, while `open`. `sort` is the remembered order
-/// (`FSWearableFavoritesSortOrder`), `orders` the account's custom orders.
+/// (`FSWearableFavoritesSortOrder`), `orders` the account's custom orders,
+/// `busy` while another inventory change is on its way (the app would
+/// drop a new one).
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
@@ -88,15 +96,20 @@ pub fn show(
     images: &HashMap<Uuid, egui::TextureHandle>,
     sort: &mut Sort,
     orders: Option<&model::Orders>,
+    busy: bool,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     if !*open {
         return actions;
     }
+    st.favorites.busy = busy;
+    let sort_before = *sort;
     let inv = &world.inventory;
     let root = model::root(inv);
-    // initCategory: made the first time the window opens.
+    // initCategory: made the first time the window opens, asked again
+    // after a change in flight instead of being lost behind it.
     if root.is_none()
+        && !busy
         && st.favorites.requested != Some(inv.root)
         && let Some(change) = model::create(inv)
     {
@@ -104,6 +117,12 @@ pub fn show(
         actions.push(Action::Folders(change));
     }
     let tabs = root.map(|root| model::folders(inv, root)).unwrap_or_default();
+    if let Some(id) = st.favorites.select_new
+        && tabs.iter().any(|(tab, _)| *tab == id)
+    {
+        st.favorites.shown = Some(id);
+        st.favorites.select_new = None;
+    }
     // A deleted tab falls back to All, once the folder is loaded: a frame
     // where it is being listed again must not lose the tab.
     if let Some(root) = root
@@ -159,7 +178,21 @@ pub fn show(
         let status = st.favorites.status.clone().filter(|(_, at)| now - at < STATUS_SECONDS);
         let room = ui.available_size() - Vec2::new(0.0, if status.is_some() { STATUS_HEIGHT + 4.0 } else { 0.0 });
         ui.allocate_ui(room, |ui| {
-            list_area(ui, p, world, st, images, root, &list, &order, total, &filter, sort, &mut actions);
+            list_area(
+                ui,
+                p,
+                world,
+                st,
+                images,
+                root,
+                &tabs,
+                &list,
+                &order,
+                total,
+                &filter,
+                sort,
+                &mut actions,
+            );
         });
         if let Some((text, at)) = status {
             status_line(ui, p, &text);
@@ -168,6 +201,17 @@ pub fn show(
         }
     });
     dialog(ctx, p, world, st, root, &mut actions);
+    if let Some(root) = root
+        && *sort == Sort::Custom
+        && sort_before != Sort::Custom
+    {
+        let views: Vec<Uuid> = std::iter::once(root).chain(tabs.iter().map(|(id, _)| *id)).collect();
+        let reordered = &mut st.favorites.reordered;
+        let seeds = model::seeded_orders(inv, &views, sort_before, |view| {
+            orders.is_some_and(|o| o.contains_key(&view)) || reordered.iter().any(|(v, _)| *v == view)
+        });
+        reordered.extend(seeds);
+    }
     actions
 }
 
@@ -225,7 +269,7 @@ fn header(
             "",
             widgets::ActionKind::Flat,
             Vec2::splat(side),
-            !selected.is_empty(),
+            !selected.is_empty() && !st.favorites.busy,
         )
         .on_hover_text(aurora_i18n::tr!("ui-wearable-favorites-remove"))
         .clicked()
@@ -262,8 +306,7 @@ fn folder_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let width = (ui.available_width() - side - 4.0).max(80.0);
-        let button = widgets::select_button(ui, p, icon, tint, label, &count.to_string(), open, Vec2::new(width, side))
-            .on_hover_text(aurora_i18n::tr!("ui-wearable-favorites-folders"));
+        let button = widgets::select_button(ui, p, icon, tint, label, &count.to_string(), open, Vec2::new(width, side));
         if demo_mode().is_some() {
             ui.ctx().data_mut(|d| d.insert_temp(demo_picker_id(), button.rect));
         }
@@ -354,6 +397,7 @@ fn list_area(
     st: &mut AppearanceUi,
     images: &HashMap<Uuid, egui::TextureHandle>,
     root: Uuid,
+    tabs: &[(Uuid, String)],
     list: &[Entry],
     order: &[Uuid],
     total: usize,
@@ -364,7 +408,7 @@ fn list_area(
     let inv = &world.inventory;
     let target = st.favorites.shown.unwrap_or(root);
     let area = Rect::from_min_size(ui.cursor().min, ui.available_size());
-    let carried = (ui.rect_contains_pointer(area))
+    let carried = (ui.rect_contains_pointer(area) && !st.favorites.busy)
         .then(|| crate::ui::inventory::drag::carried_ids(ui.ctx()))
         .flatten()
         .map(|ids| model::addable(inv, target, &ids))
@@ -404,10 +448,10 @@ fn list_area(
             let layout = reorder::update(ui, id, order, &rows, draggable, gap);
             if layout.started.is_some() && *sort != Sort::Custom {
                 *sort = Sort::Custom;
-                st.favorites.reordered = Some((target, order.to_vec()));
+                st.favorites.reordered.push((target, order.to_vec()));
             }
             if let Some((from, to)) = layout.moved {
-                st.favorites.reordered = Some((target, model::moved(order, from, to)));
+                st.favorites.reordered.push((target, model::moved(order, from, to)));
             }
             let pointer = ui.input(|i| i.pointer.hover_pos());
             if layout.moved.is_some() {
@@ -481,7 +525,7 @@ fn list_area(
                         .clone()
                         .on_hover_ui(|ui| tooltip(ui, p, inv, it, texture, is_worn, &detail))
                 };
-                row_menu(&response, p, world, st, root, it, order, actions);
+                row_menu(&response, p, world, st, root, tabs, it, order, actions);
             }
         });
     // the drop target lights up while it would take the cargo
@@ -501,7 +545,7 @@ fn list_area(
                 actions.push(Action::Folders(change));
                 // in Custom order, where it was let go
                 if let Some(at) = gap {
-                    st.favorites.reordered = Some((target, model::inserted(order, at, &carried)));
+                    st.favorites.reordered.push((target, model::inserted(order, at, &carried)));
                 }
             }
         }
@@ -509,6 +553,7 @@ fn list_area(
     // Delete: Remove, as the Legacy remove_btn
     let selected = st.favorites.selection.ordered(order);
     if !selected.is_empty()
+        && !st.favorites.busy
         && ui.ctx().memory(|m| m.focused().is_none())
         && ui.input(|i| i.key_pressed(egui::Key::Delete))
         && ui.ui_contains_pointer()
@@ -615,9 +660,10 @@ fn wear_button(ui: &mut egui::Ui, p: &Palette, row: Rect, it: &InvItem, worn: bo
         Vec2::splat(WEAR_BUTTON),
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(WEAR_BUTTON))
-            .on_hover_text(tip)
-            .clicked()
+        let button = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(WEAR_BUTTON)).on_hover_text(tip);
+        // the second click of a double-click asks nothing more: the worn
+        // state has not changed yet, so it would ask the same again
+        button.clicked() && !button.double_clicked()
     })
     .inner
 }
@@ -751,18 +797,19 @@ fn row_menu(
     world: &World,
     st: &mut AppearanceUi,
     root: Uuid,
+    tabs: &[(Uuid, String)],
     it: &InvItem,
     order: &[Uuid],
     actions: &mut Vec<Action>,
 ) {
     let inv = &world.inventory;
+    let busy = st.favorites.busy;
     let selected = if st.favorites.selection.contains(it.id) {
         st.favorites.selection.ordered(order)
     } else {
         vec![it.id]
     };
     let shown = st.favorites.shown.unwrap_or(root);
-    let tabs = model::folders(inv, root);
     let mut tail = |ui: &mut egui::Ui, actions: &mut Vec<Action>| {
         menu::separator(ui, p);
         // populate_assign_to_folder_menu: every tab, the items it lacks linked there
@@ -771,9 +818,9 @@ fn row_menu(
             p,
             "folder-filled",
             aurora_i18n::tr!("ui-wearable-favorites-assign"),
-            !tabs.is_empty(),
+            !tabs.is_empty() && !busy,
             |ui| {
-                for (id, name) in &tabs {
+                for (id, name) in tabs {
                     let add = model::addable(inv, *id, &selected);
                     if menu::item_if(ui, p, "", name, !add.is_empty())
                         && let Some(change) = model::add(inv, *id, &add)
@@ -783,7 +830,7 @@ fn row_menu(
                 }
             },
         );
-        if menu::item(ui, p, "heart-off", aurora_i18n::tr!("ui-wearable-favorites-remove"))
+        if menu::item_if(ui, p, "heart-off", aurora_i18n::tr!("ui-wearable-favorites-remove"), !busy)
             && let Some(change) = model::remove(inv, shown, &selected)
         {
             actions.push(Action::Folders(change));
@@ -845,11 +892,15 @@ fn dialog(ctx: &egui::Context, p: &Palette, world: &World, st: &mut AppearanceUi
                 );
                 valid = model::delete_folder(inv, root, *id).is_some();
                 if !valid {
-                    ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("ui-wearable-favorites-delete-refused"))
-                            .color(p.danger)
-                            .size(11.5),
-                    );
+                    // why: gone meanwhile, still being read, or holding more than links
+                    let (why, color) = if !inv.folders.contains_key(id) {
+                        (aurora_i18n::tr!("common-item-not-found"), p.danger)
+                    } else if !model::loaded(inv, *id) {
+                        (aurora_i18n::tr!("common-loading-2"), p.muted)
+                    } else {
+                        (aurora_i18n::tr!("ui-wearable-favorites-delete-refused"), p.danger)
+                    };
+                    ui.label(egui::RichText::new(why).color(color).size(11.5));
                 }
             }
         }
@@ -863,11 +914,14 @@ fn dialog(ctx: &egui::Context, p: &Palette, world: &World, st: &mut AppearanceUi
                 ("check", aurora_i18n::tr!("common-ok"), ActionKind::Primary)
             };
             let enter = widgets::enter_pressed(ui);
+            // another inventory change on its way: OK waits for it
+            let valid = valid && !st.favorites.busy;
             if action_button_if(ui, p, icon, label, kind, size, valid).clicked() || (valid && enter) {
                 let change = match dialog {
                     Dialog::New(name) => model::new_folder(root, name).map(|(id, change)| {
-                        // onNewFolderCallback shows the new folder
-                        st.favorites.shown = Some(id);
+                        // onNewFolderCallback shows the new folder, once
+                        // the inventory lists it
+                        st.favorites.select_new = Some(id);
                         change
                     }),
                     Dialog::Rename(id, name) => model::rename_folder(inv, root, *id, name),
