@@ -740,6 +740,11 @@ fn light(cx: &mut Cx) {
                 &field!(point_shadow_avatar),
                 |ui, s| ui.add_enabled_ui(enabled, |ui| toggle(ui, &p, &mut s.point_shadow_avatar)).inner,
             );
+            cx.experimental().toggle(
+                tr!("ui-options-point-shadow-tint"),
+                tr!("ui-options-point-shadow-tint-help"),
+                &field!(point_shadow_tint),
+            );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),
                 tr!("ui-options-contact-shadows-help"),
