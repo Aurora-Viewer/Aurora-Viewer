@@ -119,11 +119,14 @@ impl App {
                     .objects
                     .get(root)
                     .is_some_and(|o| o.parent_id == 0 && o.update_flags & 1 != 0 && o.update_flags & (1 << 8) != 0);
-                let hud = self.scene.gpu.get(idx).is_some_and(|g| g.hud);
-                // Scene HUD transforms are in the wearer's render frame;
-                // LLViewerObject::getPositionGlobal adds that frame to the
-                // wearer position before deriving the region grab point.
-                let start = if hud && !physical { self.world.agent.position + pos } else { pos };
+                // A HUD's motion starts from its root in the HUD frame, where
+                // the scene poses it: LLViewerObject::getPositionGlobal
+                // (indra/newview/llviewerobject.cpp) adds the agent's region
+                // origin to a HUD's render position, and the region frame of
+                // the grab update takes that same origin away again
+                // (LLViewerRegion::getPosRegionFromGlobal), so the wearer's
+                // position is never part of a HUD's GrabPosition.
+                let start = pos;
                 self.interactions.held = Some(Held {
                     target,
                     offset,
@@ -251,23 +254,24 @@ impl App {
         let Some(h) = self.interactions.held.as_mut() else { return };
         let hud = self.scene.gpu.get(idx).is_some_and(|g| g.hud);
         let previous_position = h.position;
+        // Vertical dragging is Ctrl alone: `mask == MASK_VERTICAL`
+        // (MASK_CONTROL, indra/newview/lltoolmgr.h) in
+        // LLToolGrabBase::handleHoverNonPhysical and handleHoverActive, so
+        // Ctrl+Shift (MASK_SPIN) or Ctrl+Alt does not drag vertically.
+        let vertical = self.ctrl && !self.shift && !self.alt;
         if let Some(motion) = h.grab_motion.as_mut() {
             h.position = motion.update(
                 self.cursor_pos,
                 self.camera.position,
                 self.camera.forward(),
-                self.ctrl,
+                vertical,
                 self.egui_ctx.pixels_per_point(),
             );
         } else if !hud {
             let forward = self.camera.forward();
             let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
-            let vertical = forward.cross(left).normalize_or(Vec3::Z);
-            let y_axis = if self.ctrl {
-                vertical
-            } else {
-                left.cross(Vec3::Z).normalize_or(Vec3::X)
-            };
+            let up = forward.cross(left).normalize_or(Vec3::Z);
+            let y_axis = if vertical { up } else { left.cross(Vec3::Z).normalize_or(Vec3::X) };
             // LLToolGrab's 0.0075 m per logical pixel, with screen Y down.
             let ppp = self.egui_ctx.pixels_per_point().max(0.1);
             let dx = (self.cursor_pos.0 - h.cursor.0) / ppp;
@@ -344,11 +348,10 @@ fn grab_update_command(held: &Held, region: Vec3, hud: bool, surface: aurora_net
         handle: held.target.key.region,
         object: held.target.object,
         offset: held.offset,
-        position: if hud && held.grab_motion.is_none() {
-            held.position
-        } else {
-            held.position - region
-        },
+        // A HUD's position is in the HUD frame, which the region frame
+        // leaves as it is (see the start of the grab); a world object's is
+        // sent in its region's frame.
+        position: if hud { held.position } else { held.position - region },
         elapsed_ms,
         surface,
     }
@@ -394,12 +397,7 @@ mod tests {
         assert!(h.is_finite() && v.is_finite());
     }
 
-    #[test]
-    fn virtual_grab_motion_is_sent_in_object_grab_update() {
-        let camera = Vec3::new(100.0, 200.0, 30.0);
-        let start = Vec3::new(104.0, 198.0, 31.0);
-        let mut motion = GrabMotion::new(start, camera, (0.0, 0.0));
-        let moved = motion.update((12.0, 0.0), camera, Vec3::X, false, 1.0);
+    fn held_with(position: Vec3, grab_motion: Option<GrabMotion>) -> Held {
         let key = crate::world::objects::ObjKey { region: 7, local_id: 2 };
         let id = uuid::Uuid::nil();
         let target = Target {
@@ -411,11 +409,11 @@ mod tests {
             root: id,
             menu: false,
         };
-        let held = Held {
+        Held {
             target,
             offset: Vec3::ZERO,
-            position: moved,
-            grab_motion: Some(motion),
+            position,
+            grab_motion,
             surface: aurora_net::TouchSurface::default(),
             shown: false,
             drawn: None,
@@ -424,13 +422,42 @@ mod tests {
             cursor: (12.0, 0.0),
             last: std::time::Instant::now(),
             physical: false,
-        };
-        let packet = grab_update_command(&held, Vec3::new(100.0, 190.0, 20.0), true, held.surface, 100);
-        let NetCommand::ObjectGrabUpdate { position, .. } = packet else {
+        }
+    }
+
+    fn sent_position(held: &Held, region: Vec3, hud: bool) -> Vec3 {
+        let NetCommand::ObjectGrabUpdate { position, .. } = grab_update_command(held, region, hud, held.surface, 100) else {
             panic!("expected grab update")
         };
-        assert_eq!(position, moved - Vec3::new(100.0, 190.0, 20.0));
+        position
+    }
+
+    #[test]
+    fn hud_grab_motion_is_sent_in_the_hud_frame() {
+        // A HUD's root sits in the HUD frame (a fraction of a metre from the
+        // screen joint), while the camera and the region are far away in the
+        // world: the drag moves the point, and nothing of the wearer's or the
+        // region's position gets into GrabPosition.
+        let camera = Vec3::new(128.0, 128.0, 27.0);
+        let start = Vec3::new(0.0, 0.25, -0.1);
+        let mut motion = GrabMotion::new(start, camera, (0.0, 0.0));
+        let moved = motion.update((12.0, 0.0), camera, Vec3::X, false, 1.0);
+        let position = sent_position(&held_with(moved, Some(motion)), Vec3::new(256.0, 512.0, 0.0), true);
+        assert_eq!(position, moved);
         assert_ne!(position, start);
+        assert!(position.length() < 1.0, "a HUD grab point stays near the HUD: {position}");
+    }
+
+    #[test]
+    fn world_grab_motion_is_sent_in_the_region_frame() {
+        let camera = Vec3::new(100.0, 200.0, 30.0);
+        let start = Vec3::new(104.0, 198.0, 31.0);
+        let mut motion = GrabMotion::new(start, camera, (0.0, 0.0));
+        let moved = motion.update((12.0, 0.0), camera, Vec3::X, false, 1.0);
+        let region = Vec3::new(100.0, 190.0, 20.0);
+        let position = sent_position(&held_with(moved, Some(motion)), region, false);
+        assert_eq!(position, moved - region);
+        assert_ne!(position, start - region);
     }
 
     #[test]
