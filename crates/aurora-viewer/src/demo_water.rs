@@ -73,6 +73,8 @@ pub fn update(
     if crate::ao::water_demo::mode().is_none() && camera.free().is_none() {
         let (eye, target) = if mode.contains("exclusion") {
             (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
+        } else if mode.contains("alpha-layers") {
+            (Vec3::new(46.0, 117.0, 24.0), Vec3::new(56.0, 130.0, 19.5))
         } else if mode.contains("parts-") {
             let x = if mode.contains("parts-feet") { 62.0 } else { 52.0 };
             if mode.contains("parts-feet") {
@@ -246,7 +248,8 @@ pub fn update(
             && (crate::ao::water_demo::mode().is_some()
                 || mode.contains("parts-")
                 || mode.contains("waterline")
-                || mode.contains("optics-"))
+                || mode.contains("optics-")
+                || mode.contains("alpha-layers"))
         {
             continue;
         }
@@ -295,6 +298,47 @@ pub fn update(
                 Vec3::new(x, 127.0, z),
                 Quat::IDENTITY,
                 Vec3::new(1.5, 0.3, height),
+                box_shape,
+                super::te(color, 0, false, 0.0),
+                Default::default(),
+                "",
+            ));
+        }
+    }
+    if mode.contains("alpha-layers") {
+        // Blended layers stacked under the water, as the animated surfaces
+        // of a pond lying in region water: two wide sheets tilted opposite
+        // ways, crossing along a line, and a small tile under both. Each
+        // must show through the others on both sides of the crossing; none
+        // may cut another along a straight edge.
+        for (id, pos, tilt, scale, color) in [
+            (
+                99533,
+                Vec3::new(56.0, 130.0, 19.55),
+                0.05,
+                Vec3::new(16.0, 12.0, 0.05),
+                [0.2, 0.45, 1.0, 0.3],
+            ),
+            (
+                99534,
+                Vec3::new(56.0, 130.0, 19.5),
+                -0.05,
+                Vec3::new(16.0, 12.0, 0.05),
+                [1.0, 0.85, 0.3, 0.45],
+            ),
+            (
+                99535,
+                Vec3::new(52.0, 128.0, 18.9),
+                0.0,
+                Vec3::new(2.0, 2.0, 0.05),
+                [0.95, 0.1, 0.1, 0.7],
+            ),
+        ] {
+            objects.push(super::prim(
+                id,
+                pos,
+                Quat::from_rotation_y(tilt),
+                scale,
                 box_shape,
                 super::te(color, 0, false, 0.0),
                 Default::default(),
