@@ -162,6 +162,7 @@ mod update_notice;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
+mod wearable_favorites;
 mod world_click_demo;
 mod worn_demo;
 
@@ -9995,6 +9996,11 @@ impl App {
                 crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
             ));
         }
+        // AURORA_DEMO_WEARABLE_FAVORITES: seeded once the demo inventory
+        // has arrived (its root listing would drop the folders added before)
+        if self.demo && self.frame_count == 300 {
+            self.demo_wearable_favorites();
+        }
         self.outfit_portrait_demo();
         self.outfit_batch_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
@@ -19156,6 +19162,7 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                self.wearable_favorites_window(&ctx, &p);
                 self.outfit_portrait_window(&ctx, &p);
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
