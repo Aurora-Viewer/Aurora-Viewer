@@ -1816,7 +1816,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 39;
+const SETTINGS_VERSION: u32 = 40;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -3276,6 +3276,19 @@ impl Settings {
             // default: a profile still exactly on Potato or Low keeps the
             // sorted order of these levels
             crate::graphics_presets::upgrade_blend_order(&mut self);
+        }
+        if self.settings_version < 40 {
+            // RecentItemsSortOrder is date only (indra/newview/app_settings/settings.xml,
+            // indra/newview/llinventoryfilter.h). Upgrade only the exact former default;
+            // other combinations were chosen, and later files keep every choice.
+            let former = crate::ui::inventory::view::Sort {
+                by_date: true,
+                folders_by_name: false,
+                system_first: true,
+            };
+            if self.inventory.recent_sort == former {
+                self.inventory.recent_sort.system_first = false;
+            }
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4777,6 +4790,66 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    #[test]
+    fn recent_sort_migration_changes_only_the_former_default_and_only_once() {
+        use crate::ui::inventory::view::Sort;
+        let former = Sort {
+            by_date: true,
+            folders_by_name: false,
+            system_first: true,
+        };
+        for version in [39, 40] {
+            for by_date in [false, true] {
+                for folders_by_name in [false, true] {
+                    for system_first in [false, true] {
+                        let chosen = Sort {
+                            by_date,
+                            folders_by_name,
+                            system_first,
+                        };
+                        let mut saved = Settings {
+                            settings_version: version,
+                            ..Default::default()
+                        };
+                        saved.inventory.recent_sort = chosen;
+                        saved.inventory.sort = chosen;
+                        saved.inventory.received_sort = chosen;
+                        let json = serde_json::to_string(&saved).expect("save settings");
+                        let loaded = serde_json::from_str::<Settings>(&json).expect("load settings").sanitized();
+                        let expected = if version < 40 && chosen == former {
+                            Sort {
+                                system_first: false,
+                                ..chosen
+                            }
+                        } else {
+                            chosen
+                        };
+                        assert_eq!(loaded.inventory.recent_sort, expected, "version {version}, {chosen:?}");
+                        assert_eq!(loaded.inventory.sort, chosen, "main sort stays untouched");
+                        assert_eq!(loaded.inventory.received_sort, chosen, "Received sort stays untouched");
+                        assert_eq!(loaded.settings_version, SETTINGS_VERSION);
+                        let json = serde_json::to_string(&loaded).expect("save migrated settings");
+                        let reloaded = serde_json::from_str::<Settings>(&json).expect("reload settings").sanitized();
+                        assert_eq!(reloaded.inventory.recent_sort, expected, "migration is not repeated");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn recent_sort_missing_from_old_settings_gets_the_new_default() {
+        let loaded = serde_json::from_str::<Settings>(r#"{"settings_version":39,"inventory":{}}"#)
+            .expect("old settings without Recent sort")
+            .sanitized();
+        assert_eq!(loaded.inventory.recent_sort, Settings::default().inventory.recent_sort);
+        assert!(loaded.inventory.recent_sort.by_date);
+        assert!(!loaded.inventory.recent_sort.folders_by_name);
+        assert!(!loaded.inventory.recent_sort.system_first);
+        assert_eq!(loaded.inventory.sort, Settings::default().inventory.sort);
+        assert_eq!(loaded.inventory.received_sort, Settings::default().inventory.received_sort);
     }
 
     /// ArrowKeysAlwaysMove is off in the Legacy Viewer: the arrows move the
