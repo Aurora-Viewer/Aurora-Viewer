@@ -1500,7 +1500,10 @@ mod tests {
         const ALONE: &str = "AURORA_TEST_FRENCH_OFFER_ALONE";
         if std::env::var_os(ALONE).is_none() {
             // the name libtest gives this test: its path without the crate
-            let path = concat!(module_path!(), "::legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french");
+            let path = concat!(
+                module_path!(),
+                "::legacy_object_offer_wrapped_buttons_keep_the_text_indent_in_french"
+            );
             let name = path.split_once("::").map_or(path, |(_, rest)| rest);
             let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
                 .args([name, "--exact", "--test-threads=1"])
