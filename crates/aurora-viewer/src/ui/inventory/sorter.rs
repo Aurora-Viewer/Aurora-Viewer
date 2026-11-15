@@ -263,13 +263,22 @@ pub(super) fn show(
     let mut go = false;
     let mut stop = false;
     let waiting = sorter::pre_trash_entries(inv);
-    crate::ui::widgets::Floater::new(
-        &format!("inventory_sorter_{}", st.ui_id),
+    // The tabs change the body's height all the time (rule cards, preview
+    // groups opening): egui's frame followed it and kept the tallest it saw,
+    // so the window grew down and its bottom edge snapped back when dragged.
+    // `steady_size` lays the body out in the window's own rect, like the
+    // World Map's side panel (#2815); the minimum keeps the tabs, a few rows
+    // and the footer whole.
+    let window_id = format!("inventory_sorter_{}", st.ui_id);
+    let mut window = crate::ui::widgets::Floater::new(
+        &window_id,
         aurora_i18n::tr!("inventory-sorter-title"),
         ctx.content_rect().center() - Vec2::new(250.0, 290.0),
         Vec2::new(500.0, 580.0),
     )
-    .show(ctx, p, &mut open, |ui| {
+    .steady_size();
+    window.min_size = Vec2::new(420.0, 360.0);
+    window.show(ctx, p, &mut open, |ui| {
         let state = &mut st.sorter;
         source_row(ui, p, inv, state, &source, busy);
         ui.add_space(6.0);
@@ -874,13 +883,18 @@ fn picker(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut InventoryU
     }
     let mut open = true;
     let mut chosen = None;
-    crate::ui::widgets::Floater::new(
-        &format!("inventory_sorter_picker_{}", st.ui_id),
+    // the same steady size as the Auto-sort window: the list's length
+    // follows the search, the window does not
+    let window_id = format!("inventory_sorter_picker_{}", st.ui_id);
+    let mut window = crate::ui::widgets::Floater::new(
+        &window_id,
         aurora_i18n::tr!("inventory-sorter-pick-title"),
         ctx.content_rect().center() - Vec2::new(170.0, 220.0),
         Vec2::new(340.0, 440.0),
     )
-    .show(ctx, p, &mut open, |ui| {
+    .steady_size();
+    window.min_size = Vec2::new(260.0, 240.0);
+    window.show(ctx, p, &mut open, |ui| {
         crate::ui::widgets::search_field(
             ui,
             p,
