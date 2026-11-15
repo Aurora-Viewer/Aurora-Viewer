@@ -3021,6 +3021,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_im_announce.rs` | `AURORA_DEMO_IM_ANNOUNCE` scenario: Nova and Tess in turn start typing IMs to us, then send them; both settings on for the run, or `prefs` |
 | `demo_conv_button.rs` | `AURORA_DEMO_CONV_BUTTON` scenario: the Conversations button flashing for a nearby chat line and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `demo_delivery.rs` | `AURORA_DEMO_DELIVERY` scenario: a Marketplace delivery landing in Received items with no offer, its card under the bell (one or several), "Show in inventory" and its history entry |
+| `demo_muted_chat.rs` | `AURORA_DEMO_MUTED_CHAT` scenario: the demo's blocked resident talking in nearby chat among Nova's lines, and a blocked object, the history hiding, folding or greying the blocked lines (`ChatLine::blocked`, `ui/chat/blocked.rs`) |
 | `demo_toasts.rs` | `AURORA_DEMO_TOASTS` scenario: a friend offline then online, two IMs from one resident, a group IM, then the bell list or a click on the IM card (window closed or minimized) |
 | `demo_chat_range.rs` | `AURORA_DEMO_CHAT_RANGE` scenario: residents and objects talking from near and from beyond the say range around the agent, the far lines dimmed (`ChatLine::beyond_range`, `ui::colors::beyond_range_alpha`) |
 | `demo_chatlog.rs` | `AURORA_DEMO_CHATLOG` scenario: history files of the demo account (in its own folder), conversation with history, search, History window on a long file, IMs received offline, long conversation to measure the view |

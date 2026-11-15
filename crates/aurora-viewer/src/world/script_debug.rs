@@ -61,6 +61,7 @@ impl Messages {
             kind: super::ChatKind::Object(message.chat_type),
             source: message.source_id,
             origin: super::Origin::Live,
+            blocked: false,
             beyond_range: false,
         });
         let error = message.chat_type == ChatType::Debug;
