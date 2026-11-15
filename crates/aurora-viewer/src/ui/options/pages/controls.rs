@@ -15,6 +15,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-world-mouse-walk-help"),
             &field!(world_mouse_walk),
         );
+        cx.toggle(
+            tr!("ui-options-mmo-mouse-buttons"),
+            tr!("ui-options-mmo-mouse-buttons-help"),
+            &field!(mmo_mouse_buttons),
+        );
         // "Double-click on land" (double_click_action_combo)
         let choices: Vec<(crate::autopilot::DoubleClick, &str)> =
             crate::autopilot::DoubleClick::ALL.iter().map(|a| (*a, a.label())).collect();
@@ -57,6 +62,12 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning"),
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
+        );
+        // FSTurnAvatarToSelectedObject
+        cx.toggle(
+            tr!("ui-options-turn-to-selected"),
+            tr!("ui-options-turn-to-selected-help"),
+            &field!(turn_to_selected),
         );
         // AutomaticFly (agent_jump / LLAgent::propagate), split into two
         // independent choices at the human's request.

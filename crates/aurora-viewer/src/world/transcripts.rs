@@ -294,14 +294,22 @@ impl World {
     /// Empty the nearby chat (the "clear" command of the chat bar).
     pub fn clear_nearby_chat(&mut self) {
         self.chat.clear();
+        self.chat_objects.clear();
         self.chat_clock.renumbered();
     }
 
     /// A line of the nearby chat, written when the nearby chat is logged
     /// (LogNearbyChat). Instant messages shown there are not
-    /// (FSLogIMInChatHistory is off by default), those of objects are.
+    /// (FSLogIMInChatHistory is off by default), those of objects are; a
+    /// blocked resident's never (FSFloaterNearbyChat::addMessage returns
+    /// before logging a muted line).
     pub(super) fn log_nearby(&mut self, line: &ChatLine) {
-        if line.origin != Origin::Live || !self.chat_log.cfg.log_nearby || line.kind == ChatKind::Im || self.chat_log.identity().is_none() {
+        if line.origin != Origin::Live
+            || line.blocked
+            || !self.chat_log.cfg.log_nearby
+            || line.kind == ChatKind::Im
+            || self.chat_log.identity().is_none()
+        {
             return;
         }
         let (from, text) = self.transcript_text(line);
@@ -413,6 +421,8 @@ impl World {
                     kind,
                     source,
                     origin: Origin::Log,
+                    blocked: false,
+                    beyond_range: false,
                 }
             })
             .collect()
@@ -506,6 +516,8 @@ impl World {
                     kind: if mine { ChatKind::OWN } else { ChatKind::Im },
                     source: if mine { Uuid::nil() } else { h.from_id },
                     origin: Origin::ServerLog,
+                    blocked: false,
+                    beyond_range: false,
                 }
             })
             .collect();
@@ -710,6 +722,8 @@ mod tests {
             kind: ChatKind::Local(ChatType::Shout),
             source: Uuid::from_u128(2),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -719,6 +733,7 @@ mod tests {
             owner_id: w.agent_id,
             source_type: aurora_net::ChatSourceType::Agent,
             chat_type: ChatType::Whisper,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "psst".into(),
         }));

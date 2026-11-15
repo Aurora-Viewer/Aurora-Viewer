@@ -32,6 +32,8 @@ pub use pathfinding::PathfindingUi;
 mod pie;
 
 #[cfg(test)]
+mod radar_menu_tests;
+#[cfg(test)]
 #[path = "context/sound_tests.rs"]
 mod sound_tests;
 #[cfg(test)]
@@ -52,6 +54,7 @@ pub mod flags {
     /// FLAGS_AFFECTS_NAVMESH: flagObjectPermanent.
     pub const AFFECTS_NAVMESH: u32 = 1 << 12;
     pub const OBJECT_TRANSFER: u32 = 1 << 17;
+    pub const OBJECT_GROUP_OWNED: u32 = 1 << 18;
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +129,9 @@ pub struct ObjectFacts {
     pub delete: bool,
     /// LLSelectMgr::enableUnlinkObjects: a linkset we can modify.
     pub unlink: bool,
+    /// enable_save_into_task_inventory: Build › Save back to object
+    /// contents applies to the menu's selection.
+    pub save_to_contents: bool,
     /// Blocked (LLMuteList), for "Ignore" / "Stop ignoring".
     pub blocked: bool,
     /// Name from ObjectProperties (block list entry).
@@ -278,6 +284,9 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// Save as › Collada / OBJ (Object.ExportCollada) of the prim's
+    /// selection.
+    SaveAs(Uuid, crate::build::export::Format),
     Pathfinding {
         id: Uuid,
         characters: bool,
@@ -382,6 +391,29 @@ pub enum CtxAction {
     RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// A group chat's moderator allows or forbids a member's text
+    /// (LLIMSpeakerMgr::allowTextChat).
+    ModerateGroupText {
+        session: Uuid,
+        agent: Uuid,
+        allow: bool,
+    },
+    /// "Eject from group" / "Ban member" of a group chat's members, asked
+    /// first (`ui::chat::moderation`).
+    GroupChatEject {
+        group: Uuid,
+        agent: Uuid,
+    },
+    GroupChatBan {
+        group: Uuid,
+        agent: Uuid,
+    },
+    /// "Ban from all my groups" / "Unban from all my groups", asked first
+    /// (`world::group_ban_all`).
+    BanFromAllGroups {
+        agent: Uuid,
+        ban: bool,
+    },
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
     /// LLSpeakerVolumeStorage).
     SetVoiceVolume(Uuid, f32),
@@ -412,6 +444,11 @@ pub enum CtxAction {
     ToggleBlockObject {
         id: Uuid,
         name: String,
+    },
+    /// Block the resident or group owning a remote object, never toggle it.
+    BlockObjectOwner {
+        owner: Uuid,
+        group_owned: bool,
     },
     /// Edit the object in the build tools (handle_object_edit).
     Edit(Uuid),
@@ -454,6 +491,9 @@ pub enum CtxAction {
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
     Unlink(Uuid),
+    /// "Save back to object contents" (Tools.SaveToObjectInventory), on
+    /// the menu's selection.
+    SaveToObjectContents,
     /// Link the selected objects (Tools.Link).
     Link(Uuid),
     /// "Take as separate items" / "Take copies as separate items"
@@ -554,6 +594,15 @@ pub enum CtxAction {
     /// "New contact set…" of an "Add to contact set" submenu: its name
     /// asked (AddNewContactSet), then these residents added to it.
     NewContactSet(Vec<Uuid>),
+    /// Mark ▸ a colour of the radar and mini-map menus
+    /// (Nearby.People.SetAvatarMarkColor, Minimap.Mark).
+    MarkAvatars(Vec<Uuid>, crate::world::avatar_marks::Rgb),
+    /// Mark ▸ Custom color…: the colour picker opens for these residents.
+    MarkCustom(Vec<Uuid>),
+    /// Mark ▸ Clear Mark(s) (Nearby.People.ClearAvatarMarkColor).
+    ClearMarks(Vec<Uuid>),
+    /// Mark ▸ Clear all Marks (Nearby.People.ClearAllAvatarMarkColors).
+    ClearAllMarks,
 }
 
 /// "Add to contact set": one entry per set, then "New contact set…"
@@ -728,6 +777,21 @@ fn voice_control(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVol
         Some(menu::VoiceEdit::ToggleMute) => request(ui.ctx(), CtxAction::ToggleVoiceMute(id)),
         None => {}
     }
+}
+
+/// The display choices of a resident (`CtxAction::SetRender`): always in
+/// full, never fully, by the preferences; the in-world menu's and the
+/// people lists'.
+pub(crate) fn render_choices() -> [(u8, &'static str, &'static str); 3] {
+    [
+        (2, "user-scan", aurora_i18n::tr!("ui-context-always-show-full-detail")),
+        (1, "ghost-filled", aurora_i18n::tr!("ui-context-never-fully-render")),
+        (
+            0,
+            "adjustments-filled",
+            aurora_i18n::tr!("ui-context-display-according-to-your-preferences"),
+        ),
+    ]
 }
 
 fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
@@ -929,6 +993,11 @@ fn avatar_menu_reporting(
             ) {
                 act(CtxAction::Call(id));
             }
+            // menu_fs_radar.xml's ScriptInfo (Avatar.getScriptInfo), as the
+            // avatar's own menu in the world offers it
+            if menu::item(ui, p, "code", aurora_i18n::tr!("ui-context-script-information")) {
+                act(CtxAction::ScriptInfo(id));
+            }
             menu::separator(ui, p);
             history(ui);
             menu::separator(ui, p);
@@ -944,6 +1013,8 @@ fn avatar_menu_reporting(
             if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), mappable) {
                 act(CtxAction::ShowOnMap(id));
             }
+            // menu_fs_radar.xml's MarkAvatar, before Share
+            crate::ui::avatar_marks::submenu(ui, p, world, &[id]);
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
             if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
                 act(CtxAction::PayResident(id));
@@ -1005,6 +1076,16 @@ fn avatar_menu_reporting(
                     act(CtxAction::Derender { id, permanent });
                 }
             }
+            // menu_fs_radar.xml's "Render Settings" (Nearby.People.SetRenderMode,
+            // CheckRenderMode): the in-world menu's display choices
+            let render = world.render_exceptions.get(&id).copied().unwrap_or(0);
+            menu::submenu(ui, p, "gauge-filled", aurora_i18n::tr!("ui-context-display-options"), true, |ui| {
+                for (mode, icon, label) in render_choices() {
+                    if menu::check(ui, p, icon, label, render == mode, true) && render != mode {
+                        act(CtxAction::SetRender(id, mode));
+                    }
+                }
+            });
         }
         AvatarList::Friend => {
             profile(ui);
@@ -1742,6 +1823,7 @@ mod tests {
             owner_id: world.agent_id,
             source_type: aurora_net::ChatSourceType::Object,
             chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
             position: Vec3::ZERO,
             message: "@shownames=n".into(),
         }));

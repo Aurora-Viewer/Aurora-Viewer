@@ -719,11 +719,12 @@ mod tests {
     }
 
     /// An inventory texture released on a slot's row sets it, like the
-    /// picker (#1291); a folder, a no-copy texture, a read-only layer or a
-    /// release beside the row leave the slot as it was.
+    /// picker (#1291), whatever its rights (a no-copy, no-transfer texture
+    /// too, as init_texture_ctrl's PERM_NONE filter allows); a folder, a
+    /// read-only layer or a release beside the row leave the slot as it was.
     #[test]
     fn an_inventory_texture_dropped_on_a_texture_row_sets_the_slot() {
-        use crate::world::inventory::actions::{COPY, MODIFY};
+        use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
         let (mut world, mut state, id) = crate::wearable_editor::tests::fixture(4);
         let slot = editor::slots(4)[0];
         let (item, asset) = (Uuid::from_u128(54001), Uuid::from_u128(54002));
@@ -745,12 +746,7 @@ mod tests {
         drop_on(&ctx, &mut world, &mut state, root, None);
         assert_eq!(slot_texture(&state), before, "beside the row, or a folder");
 
-        world.inventory.items.get_mut(&item).expect("texture").owner_mask &= !COPY;
-        drop_on(&ctx, &mut world, &mut state, item, None);
-        assert_eq!(slot_texture(&state), before, "no-copy texture");
-        assert_eq!(state.message, aurora_i18n::tr!("wearable-texture-permissions"));
-        world.inventory.items.get_mut(&item).expect("texture").owner_mask |= COPY;
-
+        world.inventory.items.get_mut(&item).expect("texture").owner_mask &= !(COPY | TRANSFER);
         world.inventory.items.get_mut(&id).expect("layer").owner_mask &= !MODIFY;
         drop_on(&ctx, &mut world, &mut state, item, None);
         assert_eq!(slot_texture(&state), before, "read-only layer");
