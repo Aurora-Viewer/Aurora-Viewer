@@ -575,6 +575,9 @@ pub struct Settings {
     pub sun_beacon: bool,
     pub moon_beacon: bool,
     pub beacons: crate::world::beacons::Beacons,
+    /// The Director's recording: the film's format, quality and rate, and
+    /// the ffmpeg chosen by hand (`recorder.rs`).
+    pub director_record: crate::recorder::Options,
     pub world_overlays: crate::world::beacons::Overlays,
     /// Debug overlays (not saved).
     #[serde(skip)]
@@ -2222,6 +2225,7 @@ impl Default for Settings {
             sun_beacon: false,
             moon_beacon: false,
             beacons: Default::default(),
+            director_record: Default::default(),
             world_overlays: Default::default(),
             debug: DebugView::default(),
             dev_toolbox: None,

@@ -548,6 +548,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
         "controls" | "camera_controls" => "video-filled",
+        "director" => "movie",
         "movement_controls" => "walk",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
