@@ -2290,6 +2290,18 @@ pub fn show(
             facts.names.insert(*id, world.social.name_of(id));
         }
     }
+    // Auto-sort's creator hints show who they are for: the names are asked
+    // for while the window is open and kept once known
+    if st.sorter_open() {
+        for hint in prefs.sorter.store_hints.iter_mut() {
+            let Some(creator) = hint.creator else { continue };
+            world.social.want_name(creator);
+            let name = world.social.name_of(&creator);
+            if name != "…" && hint.creator_name != name {
+                hint.creator_name = name.chars().take(64).collect();
+            }
+        }
+    }
     // Auto-sort holds its batches while a teleport runs or no region is
     // connected, and counts active gestures as worn (never moved)
     let sorter_hold = world.teleporting;

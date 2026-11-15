@@ -1154,17 +1154,29 @@ pub fn plan_saved(inv: &Inventory, moves: &[Move], protected: &HashSet<Uuid>, wo
     plan
 }
 
-/// Who made an entry: an item's creator (Properties' Creator), or for a
-/// folder (a fatpack) the creator of most of its items.
+/// Who an item comes from: its creator (Properties' Creator), or, for an
+/// object whose parts or contents have several creators (the simulator
+/// sends none then: "unknown / multiple", LLPermissions::accumulate), the
+/// account it came from (its last owner: the store's vendor or Marketplace
+/// account), never its owner.
+fn maker(it: &InvItem) -> Option<Uuid> {
+    if !it.creator.is_nil() {
+        return Some(it.creator);
+    }
+    (!it.last_owner.is_nil() && it.last_owner != it.owner).then_some(it.last_owner)
+}
+
+/// Who made an entry: an item's [`maker`], or for a folder (a fatpack) the
+/// maker of most of its items.
 pub fn creator_of(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     if let Some(it) = inv.items.get(&id) {
-        return (!it.creator.is_nil()).then_some(it.creator);
+        return maker(it);
     }
     let folder = inv.folders.get(&id)?;
     let mut counts: HashMap<Uuid, usize> = HashMap::new();
     for it in folder.items.iter().filter_map(|i| inv.items.get(i)) {
-        if !it.creator.is_nil() {
-            *counts.entry(it.creator).or_default() += 1;
+        if let Some(who) = maker(it) {
+            *counts.entry(who).or_default() += 1;
         }
     }
     counts

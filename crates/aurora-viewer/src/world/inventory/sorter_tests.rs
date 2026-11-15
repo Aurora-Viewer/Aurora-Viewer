@@ -1893,3 +1893,42 @@ fn replace_keeps_what_the_file_holds_too_and_my_own_folders() {
     let words: Vec<&str> = mine.rules.iter().map(|r| r.words.as_str()).collect();
     assert_eq!(words, vec!["chair sofa", "secret", "lamp"]);
 }
+
+/// An object whose contents have several creators has none ("unknown /
+/// multiple"): the account it came from (the store's) stands in, never the
+/// owner; a folder of such objects takes the store too.
+#[test]
+fn an_object_with_unknown_creators_is_known_by_the_store_it_came_from() {
+    let mut inv = fixture(&[]);
+    let store = id(8705);
+    add_folder(&mut inv, 90, OBJECTS, "Ryu Jeans - FATPACK");
+    for n in 0..3u128 {
+        add_item(&mut inv, 91 + n, 90, "Ryu Jeans", 0);
+        let it = inv.items.get_mut(&id(91 + n)).expect("item");
+        it.creator = Uuid::nil();
+        it.last_owner = store;
+    }
+    assert_eq!(creator_of(&inv, id(91)), Some(store));
+    assert_eq!(creator_of(&inv, id(90)), Some(store));
+    // an item the owner rezzed and took back: last owner is the owner
+    add_item(&mut inv, 95, OBJECTS, "My build", 0);
+    let it = inv.items.get_mut(&id(95)).expect("item");
+    it.creator = Uuid::nil();
+    it.last_owner = it.owner;
+    assert_eq!(creator_of(&inv, id(95)), None);
+    // a creator hint for the store sorts the fatpack under it
+    let prefs = Preferences {
+        stores: true,
+        folders: true,
+        store_hints: vec![StoreHint {
+            store: "Ryu Store".into(),
+            category: Category::Pants,
+            creator: Some(store),
+            creator_name: String::new(),
+        }],
+        ..Default::default()
+    };
+    let plan = plan(&inv, id(OBJECTS), &prefs, &HashSet::new(), &HashSet::new());
+    let moved = plan.moves.iter().find(|m| m.id == id(90)).expect("the fatpack moves");
+    assert!(path_of(&moved.to).ends_with("Ryu Store"), "{:?}", moved.to);
+}
