@@ -82,6 +82,12 @@ impl MaturityPreference {
         self.held.is_some()
     }
 
+    /// The teleport screen's Cancel while the teleport waits here
+    /// (LLAgent::teleportCancel with a pending request): it never leaves.
+    pub fn drop_teleport(&mut self) {
+        self.held = None;
+    }
+
     /// The server's answer: the value it kept, or None when the request
     /// failed. The waiting teleport is sent once in sync, dropped on a
     /// failure; on a failure the preference goes back to the server's.

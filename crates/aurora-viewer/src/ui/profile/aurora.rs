@@ -992,6 +992,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
     let mappable = world.can_locate_avatar(id);
+    crate::ui::chat::moderation::demo_mark(&resp.ctx, crate::ui::chat::moderation::DemoMark::ProfileMore, resp.rect);
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
         let act = |a: CtxAction| context::request(&ctx, a);
@@ -1000,7 +1001,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         // no Share: it only brought the inventory forward, and an item
         // dropped anywhere on the window is given (`super::give_drop`)
-        if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
+        if menu::item(ui, p, "car-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
             act(CtxAction::RequestTeleport(id));
         }
         if compact && menu::item(ui, p, "users", aurora_i18n::tr!("ui-profile-aurora-view-in-people")) {
@@ -1008,6 +1009,12 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         if f.friend && menu::item(ui, p, "user-minus", aurora_i18n::tr!("ui-profile-aurora-remove-friend")) {
             act(CtxAction::RemoveFriend(id));
+        }
+        // menu_profile_other.xml: separator_group_bans, then the ban and its
+        // lifting in all our groups (Profile.EnableItem: canBanFromAnyGroup)
+        if crate::world::group_ban_all::can_ban_anywhere(&world.groups.groups, id, world.agent_id) {
+            menu::separator(ui, p);
+            crate::ui::chat::moderation::ban_all_entries(ui, p, world, id, true);
         }
         menu::separator(ui, p);
         if menu::item_if(
@@ -1042,6 +1049,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         ) {
             act(CtxAction::ShowHistory(Some(id)));
         }
+        context::admin_submenu(ui, p, world, id, act);
     });
 }
 

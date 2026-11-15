@@ -342,6 +342,11 @@ impl Scene {
             world.avatar_shape_dz.get(&avatar).copied().unwrap_or(0.0) + world.appearance_hover(&avatar),
             world.visual_params(&avatar).map(|v| v.len()).unwrap_or(0)
         );
+        // issue #2747: an avatar in its system body, as if nothing it wears
+        // came; the list tells which of the simulator's never arrived
+        if let Some(worn) = world.worn_vs_listed(aidx) {
+            log::info!("  {}", worn.line());
+        }
         for (te, name, _) in avatar::BAKES {
             if let Some(t) = world.bake_texture(aidx, te) {
                 // our own bakes are ours; those of the others follow the rule
@@ -672,7 +677,7 @@ impl Scene {
             return format!("{head}: all {count} faces left out for texture-entry alpha 0");
         }
         if g.hud {
-            head.push_str(&self.hud_geometry(world, renderer, o, g));
+            head.push_str(&self.hud_geometry(world, renderer, o, g, ids));
         }
         let mut counts = vec![if g.faces.is_empty() {
             "no faces drawn".to_string()
@@ -694,7 +699,7 @@ impl Scene {
     /// Read the actual HUD draw matrices without changing its placement.
     /// Four vertices per face identify the edges of small panel meshes;
     /// bounding this sample also keeps the live inspector inexpensive.
-    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+    fn hud_geometry(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu, ids: &AssetIds) -> String {
         use std::fmt::Write as _;
 
         let mut text = format!(
@@ -704,8 +709,11 @@ impl Scene {
             o.scale.to_array(),
             o.visual_scale_at(Instant::now()).to_array()
         );
+        // The mesh or sculpt map is the HUD maker's asset: its id follows the
+        // same rule as every other id of these lines (AssetIds), so a copy to
+        // the clipboard never hands out someone's mesh id.
         if let Some(sculpt) = o.visual_volume().sculpt {
-            let _ = write!(text, ", asset {}", sculpt.texture);
+            let _ = write!(text, ", asset {}", ids.id(sculpt.texture));
         }
         if let Some(idx) = world.objects.index_of_uuid(&o.full_id)
             && crate::build::root_of(world, idx) == idx

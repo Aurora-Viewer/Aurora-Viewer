@@ -1,4 +1,4 @@
-//! Outfit JSON file dialogs and confirmation. Native dialogs, bounded reads,
+//! Appearance XML and outfit JSON file dialogs. Native dialogs, bounded reads,
 //! parsing and atomic writes run on a worker, like settings/stream exports.
 use super::*;
 use crate::world::outfit_backup::{self, Backup, Resolved};
@@ -12,11 +12,14 @@ use std::{
 enum Outcome {
     Saved(PathBuf),
     Read(Backup),
+    /// The file, and how many worn items were left out (no modify rights).
+    AppearanceSaved(PathBuf, usize),
     Failed(String),
     Cancelled,
 }
 
 struct Job {
+    appearance: bool,
     scope: (Uuid, Uuid),
     receiver: Receiver<Outcome>,
 }
@@ -71,7 +74,7 @@ impl State {
         if self.busy() {
             return;
         }
-        self.spawn(ctx, world, move || {
+        self.spawn(ctx, world, false, move || {
             let filename = outfit_backup::file_name(&backup.name);
             let Some(path) = dialog(aurora_i18n::tr!("outfit-json-export")).set_file_name(filename).save_file() else {
                 return Outcome::Cancelled;
@@ -89,11 +92,38 @@ impl State {
         });
     }
 
+    pub fn export_appearance(&mut self, ctx: &egui::Context, world: &World) {
+        if self.busy() {
+            return;
+        }
+        let Some(snapshot) = crate::world::appearance_xml::Snapshot::own(world) else {
+            return;
+        };
+        let left_out = snapshot.left_out();
+        self.spawn(ctx, world, true, move || {
+            let Some(path) = rfd::FileDialog::new()
+                .set_title(aurora_i18n::tr!("appearance-xml-export"))
+                .add_filter(aurora_i18n::tr!("appearance-xml-file-type"), &["xml"])
+                .set_file_name("appearance.xml")
+                .save_file()
+            else {
+                return Outcome::Cancelled;
+            };
+            match snapshot.write(&path) {
+                Ok(()) => Outcome::AppearanceSaved(path, left_out),
+                Err(reason) => {
+                    log::warn!("appearance XML export failed: {reason}");
+                    Outcome::Failed(aurora_i18n::tr!("appearance-xml-export-failed").into())
+                }
+            }
+        });
+    }
+
     pub fn import(&mut self, ctx: &egui::Context, world: &World) {
         if self.busy() {
             return;
         }
-        self.spawn(ctx, world, || {
+        self.spawn(ctx, world, false, || {
             let Some(path) = dialog(aurora_i18n::tr!("outfit-json-import")).pick_file() else {
                 return Outcome::Cancelled;
             };
@@ -104,18 +134,19 @@ impl State {
         });
     }
 
-    fn spawn(&mut self, ctx: &egui::Context, world: &World, work: impl FnOnce() -> Outcome + Send + 'static) {
+    fn spawn(&mut self, ctx: &egui::Context, world: &World, appearance: bool, work: impl FnOnce() -> Outcome + Send + 'static) {
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         self.job = Some(Job {
+            appearance,
             scope: scope(world),
             receiver,
         });
-        if let Err(e) = std::thread::Builder::new().name("aurora-outfit-json".into()).spawn(move || {
+        if let Err(e) = std::thread::Builder::new().name("aurora-appearance-file".into()).spawn(move || {
             let _ = sender.send(work());
             ctx.request_repaint();
         }) {
-            log::warn!("cannot start outfit JSON worker: {e}");
+            log::warn!("cannot start appearance file worker: {e}");
         }
     }
 
@@ -126,14 +157,30 @@ impl State {
             return Vec::new();
         }
         if let Some(job) = &self.job {
+            let appearance = job.appearance;
             let outcome = match job.receiver.try_recv() {
                 Ok(outcome) => Some(outcome),
                 Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => Some(Outcome::Failed(aurora_i18n::tr!("outfit-json-failed").into())),
+                Err(TryRecvError::Disconnected) => Some(Outcome::Failed(
+                    if appearance {
+                        aurora_i18n::tr!("appearance-xml-export-failed")
+                    } else {
+                        aurora_i18n::tr!("outfit-json-failed")
+                    }
+                    .into(),
+                )),
             };
             if let Some(outcome) = outcome {
                 self.job = None;
                 match outcome {
+                    Outcome::AppearanceSaved(path, left_out) => {
+                        world.notifications.push(
+                            crate::world::notifications::Kind::Info,
+                            aurora_i18n::tr!("appearance-xml-export"),
+                            saved_message(&path, left_out),
+                            crate::world::notifications::Data::None,
+                        );
+                    }
                     Outcome::Read(backup) => self.pending = Some(Pending::new(world, backup)),
                     Outcome::Saved(path) => {
                         world.notifications.push(
@@ -146,7 +193,11 @@ impl State {
                     Outcome::Failed(reason) => {
                         world.notifications.push(
                             crate::world::notifications::Kind::Alert,
-                            aurora_i18n::tr!("outfit-json-title"),
+                            if appearance {
+                                aurora_i18n::tr!("appearance-xml-export")
+                            } else {
+                                aurora_i18n::tr!("outfit-json-title")
+                            },
                             reason,
                             crate::world::notifications::Data::None,
                         );
@@ -329,6 +380,16 @@ pub(crate) fn demo(world: &World, st: &mut AppearanceUi, partial: bool) {
     }
 }
 
+/// "Appearance saved to …", and how many worn items were left out.
+fn saved_message(path: &std::path::Path, left_out: usize) -> String {
+    let saved = aurora_i18n::tr!("appearance-xml-saved", file = path.display().to_string());
+    if left_out == 0 {
+        saved
+    } else {
+        format!("{saved} {}", aurora_i18n::tr!("appearance-xml-left-out", count = left_out))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +455,51 @@ mod tests {
             );
         }
         actions
+    }
+
+    #[test]
+    fn appearance_xml_jobs_handle_cancel_failure_success_and_account_changes_without_inventory_commands() {
+        let (ctx, mut world, _) = fixture();
+        for outcome in [
+            Outcome::Cancelled,
+            Outcome::Failed("failure".into()),
+            Outcome::AppearanceSaved("appearance.xml".into(), 0),
+        ] {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            assert!(sender.send(outcome).is_ok());
+            let mut state = State {
+                job: Some(Job {
+                    appearance: true,
+                    scope: scope(&world),
+                    receiver,
+                }),
+                pending: None,
+            };
+            let before = world.notifications.list.len();
+            assert!(state.poll(&ctx, &mut world).is_empty());
+            assert!(!state.busy());
+            if world.notifications.list.len() > before {
+                assert_eq!(
+                    world.notifications.list.last().unwrap().title,
+                    aurora_i18n::tr!("appearance-xml-export")
+                );
+            }
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut state = State {
+            job: Some(Job {
+                appearance: true,
+                scope: scope(&world),
+                receiver,
+            }),
+            pending: None,
+        };
+        world.agent_id = Uuid::from_u128(2);
+        assert!(sender.send(Outcome::AppearanceSaved("appearance.xml".into(), 0)).is_ok());
+        let count = world.notifications.list.len();
+        assert!(state.poll(&ctx, &mut world).is_empty());
+        assert_eq!(world.notifications.list.len(), count);
+        assert!(!state.busy());
     }
 
     #[test]

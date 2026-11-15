@@ -641,25 +641,20 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
                 tool.deed(world, group);
             }
         }
-        Confirm::Divide | Confirm::Join => {
+        Confirm::Divide => {
             if let Some((handle, west, south, east, north)) = tool.land.selection_local(world) {
-                tool.send(if c == Confirm::Divide {
-                    BuildCmd::ParcelDivide {
-                        handle,
-                        west,
-                        south,
-                        east,
-                        north,
-                    }
-                } else {
-                    BuildCmd::ParcelJoin {
-                        handle,
-                        west,
-                        south,
-                        east,
-                        north,
-                    }
+                tool.send(BuildCmd::ParcelDivide {
+                    handle,
+                    west,
+                    south,
+                    east,
+                    north,
                 });
+            }
+        }
+        Confirm::Join => {
+            if let Some(cmd) = tool.land.join_command(world) {
+                tool.send(cmd);
             }
         }
         Confirm::Release => {
@@ -743,5 +738,67 @@ impl BuildTool {
             }
         }
         (tris, area)
+    }
+}
+
+/// LLSelectMgr's CannotLink notifications, shared by both editor styles.
+pub(super) fn link_error(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool) {
+    let Some(message) = tool.ui.link_error.clone() else { return };
+    let mut close = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    crate::ui::widgets::Modal::new(egui::Id::unique("build-link-error")).show(ctx, |ui| {
+        ui.set_max_width(340.0);
+        ui.label(RichText::new(aurora_i18n::tr!("build-link-error-title")).strong().color(p.ink));
+        ui.add_space(4.0);
+        ui.label(message);
+        ui.add_space(8.0);
+        close |= crate::ui::widgets::action_button(
+            ui,
+            p,
+            "check",
+            aurora_i18n::tr!("common-ok"),
+            crate::ui::widgets::ActionKind::Primary,
+            Vec2::new(0.0, 26.0),
+        )
+        .clicked();
+    });
+    if close {
+        tool.ui.link_error = None;
+    }
+}
+
+#[cfg(test)]
+mod link_error_tests {
+    use super::*;
+
+    #[test]
+    fn linking_refusal_is_visible_and_escape_dismisses_only_the_notice() {
+        for legacy in [false, true] {
+            let context = egui::Context::default();
+            let mut tool = BuildTool {
+                open: true,
+                ..Default::default()
+            };
+            tool.ui.legacy_window = legacy;
+            tool.ui.link_error = Some(aurora_i18n::tr!("build-link-modify").into());
+            let palette = crate::theme::Theme::default().palette();
+            let mut output = context.run_ui(Default::default(), |ui| link_error(ui.ctx(), &palette, &mut tool));
+            // Headless frames have no renderer to consume their texture updates.
+            output.textures_delta.clear();
+            assert!(tool.ui.link_error.is_some());
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            };
+            let mut output = context.run_ui(input, |ui| link_error(ui.ctx(), &palette, &mut tool));
+            output.textures_delta.clear();
+            assert!(tool.ui.link_error.is_none());
+            assert!(tool.open, "Escape dismissed the notice, preserving the editor");
+        }
     }
 }

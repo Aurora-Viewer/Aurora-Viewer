@@ -28,8 +28,7 @@ pub(super) enum Mode {
     Count,
     /// Nothing drawn: every row back to its default.
     Reset,
-    /// Nothing drawn: the settings each row edits (tests).
-    #[cfg(test)]
+    /// Nothing drawn: the settings each row edits, with its words.
     Collect,
 }
 
@@ -44,14 +43,12 @@ impl Mode {
 pub(super) trait Track {
     fn modified(&self, s: &Settings, d: &Settings) -> bool;
     fn reset(&self, s: &mut Settings, d: &Settings);
-    /// The settings' paths (`lookat.private`), for the tests.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The settings' paths (`lookat.private`).
     fn paths(&self, out: &mut Vec<&'static str>);
 }
 
 /// One setting, reached by its path (see [`field!`]).
 pub(super) struct F<T: 'static> {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub path: &'static str,
     pub get: fn(&Settings) -> &T,
     pub get_mut: fn(&mut Settings) -> &mut T,
@@ -99,7 +96,6 @@ impl Track for Nothing {
 /// A row's own way of telling and resetting its settings (a shortcut, one
 /// interface sound).
 pub(super) struct Custom<M: Fn(&Settings, &Settings) -> bool, R: Fn(&mut Settings, &Settings)> {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub path: &'static str,
     pub modified: M,
     pub reset: R,
@@ -301,8 +297,9 @@ pub(super) struct Cx<'a> {
     /// Another page's rows drawn here too (`borrow`): the settings they
     /// edit; the page's other rows, groups and notes are skipped.
     pick: Option<Vec<&'static str>>,
-    #[cfg(test)]
     pub collected: Vec<(Page, &'static str)>,
+    /// `Mode::Collect`: each setting a row edits, with its label and hint.
+    pub described: Vec<(&'static str, String, String)>,
     /// A setting changed (the app saves and applies them).
     pub changed: bool,
 }
@@ -360,8 +357,8 @@ impl<'a> Cx<'a> {
             rows_seen: 0,
             greyed: false,
             pick: None,
-            #[cfg(test)]
             collected: Vec::new(),
+            described: Vec::new(),
             changed: false,
         }
     }
@@ -543,7 +540,6 @@ impl<'a> Cx<'a> {
     pub fn track(&mut self, t: &dyn Track) {
         match self.mode {
             Mode::Reset if !self.rlva_locked(t) => t.reset(self.s, self.d),
-            #[cfg(test)]
             Mode::Collect => {
                 let mut paths = Vec::new();
                 t.paths(&mut paths);
@@ -557,13 +553,14 @@ impl<'a> Cx<'a> {
         if !self.st.rlva_camera_preset_locked && !self.st.rlva_camera_fov_locked {
             return false;
         }
+        let locks = crate::settings::registry::Locks {
+            camera_preset: self.st.rlva_camera_preset_locked,
+            camera_fov: self.st.rlva_camera_fov_locked,
+            ..Default::default()
+        };
         let mut paths = Vec::new();
         track.paths(&mut paths);
-        paths.iter().any(|path| match *path {
-            "camera.preset" | "camera.camera_offset" | "camera.focus_offset" | "camera.offset_scale" => self.st.rlva_camera_preset_locked,
-            "camera.fov" => self.st.rlva_camera_fov_locked,
-            _ => false,
-        })
+        paths.iter().any(|path| locks.locked(path))
     }
 
     /// A row: `label` on the left (`hint` under the pointer), the control
@@ -600,10 +597,11 @@ impl<'a> Cx<'a> {
                 }
                 return false;
             }
-            #[cfg(test)]
             Mode::Collect => {
                 let mut paths = Vec::new();
                 t.paths(&mut paths);
+                self.described
+                    .extend(paths.iter().map(|path| (*path, label.to_owned(), hint.to_owned())));
                 self.collected.extend(paths.into_iter().map(|p| (self.page, p)));
                 return false;
             }

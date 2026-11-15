@@ -48,7 +48,7 @@ const NAME_ABOVE: f32 = 0.3;
 /// The name over a target, in the format of DebugLookAtShowNames (1
 /// complete, 2 display, 3 legacy "Firstname Lastname", 4 username); none
 /// for 0 or a name not known yet.
-fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
+pub(crate) fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
     let names = &world.social.avatar_names;
     let n = names.get(id)?;
     let o = &names.options;
@@ -91,7 +91,12 @@ fn toward(p: Vec3, eye: Vec3) -> Vec3 {
 
 /// Whose targets are drawn: ours unless hidden (DebugLookAtHideOwn) or
 /// private (PrivateLookAtTarget), and every other avatar's.
+/// Studio suppresses this overlay without changing gaze tracking or settings:
+/// targets can lie outside the isolated scene, even for a seated companion.
 pub fn sources(world: &World, s: &Settings) -> Vec<(Uuid, Target)> {
+    if world.avatar_studio {
+        return Vec::new();
+    }
     let me = world.agent_id;
     let mut out: Vec<(Uuid, Target)> = world
         .look_at
@@ -254,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn our_target_is_hidden_when_asked_or_private() {
+    fn target_visibility_respects_privacy_and_studio_without_changing_tracking() {
         use crate::scene::avatar::AvatarLibrary;
         use std::sync::Arc;
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
@@ -286,5 +291,20 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(ids(&private), vec![other]);
+        world.avatar_studio = true;
+        assert!(
+            sources(&world, &shown).is_empty(),
+            "studio hides both our target and other avatars' targets"
+        );
+        assert_eq!(world.look_at.remote.get(&other), Some(&focus));
+        assert_eq!(world.look_at.own.target, focus);
+        world.avatar_studio = false;
+        let mut restored: Vec<_> = sources(&world, &shown).into_iter().map(|(id, _)| id).collect();
+        restored.sort();
+        assert_eq!(
+            restored,
+            vec![world.agent_id, other],
+            "leaving studio restores the existing visibility setting"
+        );
     }
 }

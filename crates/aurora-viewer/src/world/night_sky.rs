@@ -3,11 +3,15 @@
 //! (aurora-render stars.rs, `StarFrame`).
 //!
 //! - **Real sky** (Aurora's default): the stars and the Milky Way as seen
-//!   from Paris (48.9° N), turning around the Pole Star, which stands 48.9°
-//!   above the region's north. The hour follows the region's sun (its hour
-//!   angle as seen from Paris), so the sky turns once per day of the
-//!   region's day cycle; which stars are up at night follows the season of
-//!   today's date (the Sun's right ascension), as the real sky does.
+//!   from a place on Earth (Paris, 48.9° N 2.4° E, by default), turning
+//!   around the Pole Star, which stands at the place's latitude above the
+//!   region's north. The star hour (`StarHour`) is either the region's sun
+//!   (its hour angle as seen from the place: the sky turns once per day of
+//!   the region's day cycle, and which stars are up at night follows the
+//!   season of today's date, the Sun's right ascension) or the real time:
+//!   the stars above the place's latitude and longitude at this moment
+//!   (Greenwich sidereal time from the clock), so New York sees the sky
+//!   Paris saw about five hours earlier.
 //! - **Legacy**: the Legacy Viewer's random stars, turning slowly about the
 //!   vertical, as LLDrawPoolWLSky::renderStarsDeferred
 //!   (indra/newview/lldrawpoolwlsky.cpp) does: `rotatef(gFrameTimeSeconds
@@ -21,6 +25,8 @@ use serde::{Deserialize, Serialize};
 
 /// Latitude of Paris (degrees north).
 pub const LATITUDE: f64 = 48.8566;
+/// Longitude of Paris (degrees east).
+pub const LONGITUDE: f64 = 2.3522;
 
 /// Days of the J2000.0 epoch (2000-01-01 12:00 TT) after the Unix epoch.
 const J2000_UNIX_DAYS: f64 = 10957.5;
@@ -35,10 +41,33 @@ pub enum NightSky {
     Legacy,
 }
 
+/// What sets the hour of the real sky (Preferences › Graphics ›
+/// Environment, "Star hour").
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum StarHour {
+    /// The region's sun: its night shows the stars of a real night, at any
+    /// longitude.
+    #[default]
+    RegionSun,
+    /// The clock: the stars above the place now, its longitude included.
+    RealTime,
+}
+
+impl StarHour {
+    pub const ALL: [StarHour; 2] = [StarHour::RegionSun, StarHour::RealTime];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StarHour::RegionSun => aurora_i18n::tr!("ui-options-night-sky-hour-region"),
+            StarHour::RealTime => aurora_i18n::tr!("ui-options-night-sky-hour-real"),
+        }
+    }
+}
+
 /// Where on Earth the real sky is seen from (Preferences › Graphics ›
-/// Environment and Personal Lighting, "Sky seen from"). Only the latitude
-/// shows: the hour follows the region's sun, so a longitude would change
-/// nothing.
+/// Environment and Personal Lighting, "Sky seen from"). Its longitude
+/// counts with the real time only: with the region's sun, a night is a
+/// night at any longitude.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SkyPlace {
     #[default]
@@ -94,6 +123,24 @@ impl SkyPlace {
         })
     }
 
+    /// Longitude (degrees east) of a preset; `None` for Custom.
+    pub fn longitude(self) -> Option<f32> {
+        Some(match self {
+            SkyPlace::Paris => LONGITUDE as f32,
+            SkyPlace::London => -0.128,
+            SkyPlace::Lisbon => -9.139,
+            SkyPlace::Oslo => 10.752,
+            SkyPlace::NewYork => -74.006,
+            SkyPlace::LosAngeles => -118.244,
+            SkyPlace::Tokyo => 139.650,
+            SkyPlace::RioDeJaneiro => -43.173,
+            SkyPlace::CapeTown => 18.424,
+            SkyPlace::Sydney => 151.209,
+            SkyPlace::Equator | SkyPlace::NorthPole => 0.0,
+            SkyPlace::Custom => return None,
+        })
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             SkyPlace::Paris => aurora_i18n::tr!("ui-options-night-sky-place-paris"),
@@ -119,25 +166,67 @@ impl SkyPlace {
 pub const DEFAULT_GAIN: f32 = 2.0;
 pub const GAIN_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
 
-/// The star frame for this sky: `latitude` where the real sky is seen
-/// from (degrees north), `gain` the real stars' brightness, `sun` the
-/// region's sun direction, `unix_days` today's date (days since 1970-01-01
-/// UTC), `seconds` the viewer's running time (Legacy rotation).
-pub fn star_frame(mode: NightSky, latitude: f32, gain: f32, sun: Vec3, unix_days: f64, seconds: f64) -> StarFrame {
+/// Default brightness of the Milky Way (Preferences, "Milky Way
+/// brightness", 0 to 2 times its map's light): under half of it, a faint
+/// band behind the stars rather than a bright cloud across the sky. 0 hides
+/// it (the sky shader then skips it).
+pub const DEFAULT_MILKY_WAY: f32 = 0.4;
+pub const MILKY_WAY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=2.0;
+
+/// `v` within `range`, `default` when it is not a number (a hand-edited
+/// settings file).
+pub fn within(v: f32, range: std::ops::RangeInclusive<f32>, default: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(*range.start(), *range.end())
+    } else {
+        default
+    }
+}
+
+/// Where and when the real sky is seen: the place's latitude (degrees
+/// north) and longitude (degrees east), and what sets its hour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Observer {
+    pub latitude: f32,
+    pub longitude: f32,
+    pub hour: StarHour,
+}
+
+impl Observer {
+    /// At `latitude`, the hour from the region's sun (the longitude does
+    /// not count then).
+    #[cfg(test)]
+    pub fn region_sun(latitude: f32) -> Self {
+        Observer {
+            latitude,
+            longitude: LONGITUDE as f32,
+            hour: StarHour::RegionSun,
+        }
+    }
+}
+
+/// The star frame for this sky: `at` where and when the real sky is seen,
+/// `gain` the real stars' brightness, `milky_way` the Milky Way's, `sun` the
+/// region's sun direction, `unix_days` the moment (days since 1970-01-01
+/// UTC, with the time of day), `seconds` the viewer's running time (Legacy
+/// rotation).
+pub fn star_frame(mode: NightSky, at: Observer, gain: f32, milky_way: f32, sun: Vec3, unix_days: f64, seconds: f64) -> StarFrame {
     match mode {
         NightSky::Real => {
-            let lat = f64::from(latitude.clamp(-90.0, 90.0)).to_radians();
-            let lst = sun_right_ascension(unix_days - J2000_UNIX_DAYS) + sun_hour_angle(sun.as_dvec3(), lat);
+            let lat = f64::from(at.latitude.clamp(-90.0, 90.0)).to_radians();
+            let lst = match at.hour {
+                StarHour::RegionSun => sun_right_ascension(unix_days - J2000_UNIX_DAYS) + sun_hour_angle(sun.as_dvec3(), lat),
+                StarHour::RealTime => {
+                    let longitude = if at.longitude.is_finite() { at.longitude } else { LONGITUDE as f32 };
+                    greenwich_sidereal(unix_days - J2000_UNIX_DAYS) + f64::from(longitude).to_radians()
+                }
+            };
             let m = equatorial_to_region(lst, lat);
             StarFrame {
                 catalogue: Some(REAL),
                 axes: [m.x_axis.as_vec3(), m.y_axis.as_vec3(), m.z_axis.as_vec3()],
-                milky_way: 1.0,
-                gain: if gain.is_finite() {
-                    gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
-                } else {
-                    DEFAULT_GAIN
-                },
+                milky_way: within(milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY),
+                gain: within(gain, GAIN_RANGE, DEFAULT_GAIN),
             }
         }
         NightSky::Legacy => {
@@ -167,6 +256,12 @@ fn sun_right_ascension(n: f64) -> f64 {
     let lambda = l + (1.915 * g.sin() + 0.020 * (2.0 * g).sin()).to_radians();
     let epsilon = (23.439 - 0.000_000_4 * n).to_radians();
     (epsilon.cos() * lambda.sin()).atan2(lambda.cos())
+}
+
+/// Greenwich mean sidereal time (radians), `n` days (UT) after J2000.0
+/// (Astronomical Almanac, about 0.1 s over this century).
+fn greenwich_sidereal(n: f64) -> f64 {
+    (280.460_618_37 + 360.985_647_366_29 * n).rem_euclid(360.0).to_radians()
 }
 
 /// Hour angle (radians, 0 at noon, growing westwards) of a direction of the
@@ -214,7 +309,15 @@ mod tests {
     fn each_place_sees_its_own_sky() {
         for place in SkyPlace::ALL {
             let Some(lat) = place.latitude() else { continue };
-            let f = star_frame(NightSky::Real, lat, DEFAULT_GAIN, MIDNIGHT, WINTER, 0.0);
+            let f = star_frame(
+                NightSky::Real,
+                Observer::region_sun(lat),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                MIDNIGHT,
+                WINTER,
+                0.0,
+            );
             let polaris = region(&f, 2.53, 89.26);
             let altitude = polaris.z.asin().to_degrees();
             assert!((altitude - lat).abs() < 1.0, "{place:?}: {altitude}");
@@ -226,7 +329,20 @@ mod tests {
                 .map(|h| {
                     let a = (h as f32 / 24.0) * std::f32::consts::TAU;
                     let sun = Vec3::new(a.cos() * 0.3, a.sin() * 0.3, -0.95).normalize();
-                    region(&star_frame(NightSky::Real, lat, DEFAULT_GAIN, sun, WINTER, 0.0), 12.44, -63.1).z
+                    region(
+                        &star_frame(
+                            NightSky::Real,
+                            Observer::region_sun(lat),
+                            DEFAULT_GAIN,
+                            DEFAULT_MILKY_WAY,
+                            sun,
+                            WINTER,
+                            0.0,
+                        ),
+                        12.44,
+                        -63.1,
+                    )
+                    .z
                 })
                 .fold(f32::MIN, f32::max)
         };
@@ -236,22 +352,83 @@ mod tests {
 
     #[test]
     fn the_gain_reaches_the_real_stars_only_within_range() {
-        let real = |g: f32| star_frame(NightSky::Real, PARIS, g, MIDNIGHT, WINTER, 0.0).uniform()[2][3];
+        let real = |g: f32| {
+            star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                g,
+                DEFAULT_MILKY_WAY,
+                MIDNIGHT,
+                WINTER,
+                0.0,
+            )
+            .uniform()[2][3]
+        };
         assert_eq!(real(2.0), 2.0);
         assert_eq!(real(10.0), 4.0);
         assert_eq!(real(0.0), 0.5);
         assert_eq!(real(f32::NAN), DEFAULT_GAIN);
-        let legacy = star_frame(NightSky::Legacy, PARIS, 3.0, MIDNIGHT, WINTER, 0.0);
+        let legacy = star_frame(
+            NightSky::Legacy,
+            Observer::region_sun(PARIS),
+            3.0,
+            DEFAULT_MILKY_WAY,
+            MIDNIGHT,
+            WINTER,
+            0.0,
+        );
         assert_eq!(legacy.uniform()[2][3], 1.0);
         // the north pole: no NaN in the rotation
-        let pole = star_frame(NightSky::Real, 90.0, DEFAULT_GAIN, MIDNIGHT, WINTER, 0.0);
+        let pole = star_frame(
+            NightSky::Real,
+            Observer::region_sun(90.0),
+            DEFAULT_GAIN,
+            DEFAULT_MILKY_WAY,
+            MIDNIGHT,
+            WINTER,
+            0.0,
+        );
         assert!(pole.axes.iter().all(|a| a.is_finite() && (a.length() - 1.0).abs() < 1e-4));
+    }
+
+    /// The Milky Way's own brightness: within 0 to 2, apart from the stars'
+    /// gain (uniform()[1][3], the shader's sky_stars[1].w); 0 hides it, and
+    /// the Legacy Viewer's sky never has one.
+    #[test]
+    fn the_milky_way_brightness_is_its_own_within_range() {
+        let real = |m: f32| star_frame(NightSky::Real, Observer::region_sun(PARIS), DEFAULT_GAIN, m, MIDNIGHT, WINTER, 0.0);
+        assert_eq!(real(0.4).uniform()[1][3], 0.4);
+        assert_eq!(real(1.5).uniform()[1][3], 1.5);
+        assert_eq!(real(0.0).uniform()[1][3], 0.0);
+        assert_eq!(real(-1.0).uniform()[1][3], 0.0);
+        assert_eq!(real(9.0).uniform()[1][3], 2.0);
+        assert_eq!(real(f32::NAN).uniform()[1][3], DEFAULT_MILKY_WAY);
+        // the stars' gain does not move with it
+        assert_eq!(real(0.0).uniform()[2][3], DEFAULT_GAIN);
+        let legacy = star_frame(
+            NightSky::Legacy,
+            Observer::region_sun(PARIS),
+            DEFAULT_GAIN,
+            2.0,
+            MIDNIGHT,
+            WINTER,
+            0.0,
+        );
+        assert_eq!(legacy.uniform()[1][3], 0.0);
     }
 
     #[test]
     fn the_pole_star_stands_above_the_north_at_the_latitude_of_paris() {
         for sun in [MIDNIGHT, Vec3::Z, Vec3::X, Vec3::new(0.3, -0.5, 0.2).normalize()] {
-            let f = star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, sun, WINTER, 0.0);
+            let f = star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                sun,
+                WINTER,
+                0.0,
+            );
             let polaris = region(&f, 2.53, 89.26);
             let altitude = polaris.z.asin().to_degrees();
             assert!((altitude - 48.86).abs() < 1.0, "altitude {altitude}");
@@ -262,14 +439,46 @@ mod tests {
     #[test]
     fn orion_is_up_on_winter_nights_and_down_on_summer_nights() {
         // Betelgeuse (RA 5h55m, Dec +7.4°)
-        let winter = region(&star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, MIDNIGHT, WINTER, 0.0), 5.92, 7.41);
-        let summer = region(&star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, MIDNIGHT, SUMMER, 0.0), 5.92, 7.41);
+        let winter = region(
+            &star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                MIDNIGHT,
+                WINTER,
+                0.0,
+            ),
+            5.92,
+            7.41,
+        );
+        let summer = region(
+            &star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                MIDNIGHT,
+                SUMMER,
+                0.0,
+            ),
+            5.92,
+            7.41,
+        );
         assert!(winter.z > 0.5, "winter {winter}");
         assert!(winter.y < 0.0, "Orion is in the south: {winter}");
         assert!(summer.z < 0.0, "summer {summer}");
         // Vega (RA 18h37m, Dec +38.8°) the other way round
         let vega = region(
-            &star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, MIDNIGHT, SUMMER, 0.0),
+            &star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                MIDNIGHT,
+                SUMMER,
+                0.0,
+            ),
             18.62,
             38.78,
         );
@@ -280,8 +489,32 @@ mod tests {
     fn stars_rise_in_the_east_as_the_region_night_goes_on() {
         // Betelgeuse at the region's sunset, then at midnight
         let sunset = Vec3::new(-1.0, 0.0, -0.05).normalize();
-        let early = region(&star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, sunset, WINTER, 0.0), 5.92, 7.41);
-        let late = region(&star_frame(NightSky::Real, PARIS, DEFAULT_GAIN, MIDNIGHT, WINTER, 0.0), 5.92, 7.41);
+        let early = region(
+            &star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                sunset,
+                WINTER,
+                0.0,
+            ),
+            5.92,
+            7.41,
+        );
+        let late = region(
+            &star_frame(
+                NightSky::Real,
+                Observer::region_sun(PARIS),
+                DEFAULT_GAIN,
+                DEFAULT_MILKY_WAY,
+                MIDNIGHT,
+                WINTER,
+                0.0,
+            ),
+            5.92,
+            7.41,
+        );
         assert!(early.x > 0.5, "in the east at dusk: {early}");
         assert!(late.z > early.z, "higher at midnight: {early} -> {late}");
     }
@@ -290,8 +523,9 @@ mod tests {
     fn the_rotation_keeps_directions_unit_and_right_handed() {
         let f = star_frame(
             NightSky::Real,
-            PARIS,
+            Observer::region_sun(PARIS),
             DEFAULT_GAIN,
+            DEFAULT_MILKY_WAY,
             Vec3::new(0.2, 0.4, -0.9).normalize(),
             SUMMER,
             0.0,
@@ -303,12 +537,79 @@ mod tests {
 
     #[test]
     fn legacy_stars_turn_a_hundredth_of_a_degree_a_second_about_the_vertical() {
-        let f = star_frame(NightSky::Legacy, PARIS, DEFAULT_GAIN, MIDNIGHT, WINTER, 9000.0);
+        let f = star_frame(
+            NightSky::Legacy,
+            Observer::region_sun(PARIS),
+            DEFAULT_GAIN,
+            DEFAULT_MILKY_WAY,
+            MIDNIGHT,
+            WINTER,
+            9000.0,
+        );
         assert_eq!(f.catalogue, Some(LEGACY));
         assert_eq!(f.milky_way, 0.0);
         assert!(f.axes[2].distance(Vec3::Z) < 1e-6);
         // 90 degrees after 9,000 s
         assert!(f.axes[0].distance(Vec3::Y) < 1e-5, "{}", f.axes[0]);
+    }
+
+    #[test]
+    fn greenwich_sidereal_time_starts_from_its_j2000_value() {
+        // 18h 41m 50.5s at 2000-01-01 12:00 UT
+        assert!((greenwich_sidereal(0.0).to_degrees() - 280.4606).abs() < 1e-3);
+        // a sidereal day later it is back, a solar day later 3m 56s ahead
+        let sidereal_day = 360.0 / 360.985_647_366_29;
+        assert!((greenwich_sidereal(sidereal_day).to_degrees() - 280.4606).abs() < 1e-3);
+        let ahead = (greenwich_sidereal(1.0) - greenwich_sidereal(0.0)).to_degrees().rem_euclid(360.0);
+        assert!((ahead - 0.9856).abs() < 1e-3, "{ahead}");
+    }
+
+    /// In real time, the sky over New York is the one Paris had when its
+    /// clock showed the same local sidereal time: about five hours earlier.
+    #[test]
+    fn in_real_time_a_place_further_west_sees_the_sky_later() {
+        let at = |longitude: f32| Observer {
+            latitude: 45.0,
+            longitude,
+            hour: StarHour::RealTime,
+        };
+        let paris = star_frame(NightSky::Real, at(2.3522), DEFAULT_GAIN, DEFAULT_MILKY_WAY, MIDNIGHT, WINTER, 0.0);
+        let new_york = star_frame(NightSky::Real, at(-74.006), DEFAULT_GAIN, DEFAULT_MILKY_WAY, MIDNIGHT, WINTER, 0.0);
+        // the same instant: Betelgeuse stands elsewhere
+        let (p, n) = (region(&paris, 5.92, 7.41), region(&new_york, 5.92, 7.41));
+        assert!(p.distance(n) > 0.5, "{p} {n}");
+        // New York, later by the longitude difference in sidereal time
+        let later = (2.3522 + 74.006) / 360.985_647_366_29;
+        let new_york = star_frame(
+            NightSky::Real,
+            at(-74.006),
+            DEFAULT_GAIN,
+            DEFAULT_MILKY_WAY,
+            MIDNIGHT,
+            WINTER + later,
+            0.0,
+        );
+        for (a, b) in paris.axes.iter().zip(new_york.axes.iter()) {
+            assert!(a.distance(*b) < 1e-4, "{a} {b}");
+        }
+        // the Pole Star still at the latitude, whatever the hour
+        let polaris = region(&new_york, 2.53, 89.26).z.asin().to_degrees();
+        assert!((polaris - 45.0).abs() < 1.0, "{polaris}");
+    }
+
+    #[test]
+    fn with_the_region_sun_the_longitude_changes_nothing() {
+        let at = |longitude: f32| Observer {
+            latitude: 45.0,
+            longitude,
+            hour: StarHour::RegionSun,
+        };
+        let a = star_frame(NightSky::Real, at(2.35), DEFAULT_GAIN, DEFAULT_MILKY_WAY, MIDNIGHT, WINTER, 0.0);
+        let b = star_frame(NightSky::Real, at(-74.0), DEFAULT_GAIN, DEFAULT_MILKY_WAY, MIDNIGHT, WINTER, 0.0);
+        assert_eq!(a, b);
+        // every preset has its longitude, Custom none
+        assert!(SkyPlace::ALL.iter().all(|p| p.longitude().is_some() == p.latitude().is_some()));
+        assert_eq!(SkyPlace::NewYork.longitude(), Some(-74.006));
     }
 
     #[test]

@@ -208,7 +208,7 @@ impl App {
             f.take_copy = each.iter().all(|e| e.take_copy);
             f.delete = each.iter().any(|e| e.delete);
         }
-        f.link = !edit_linked && crate::build::link_allowed(w, &roots);
+        f.link = !edit_linked && self.build.link_allowed(w, &roots);
         // EditableSelected: a prim we may modify among those selected
         let prims: Vec<usize> = if kept {
             self.build.highlighted(w).into_iter().map(|(i, _)| i).collect()
@@ -279,6 +279,7 @@ impl App {
                 group: self.world.groups.group(&parcel.group_id),
                 health: self.world.health,
                 frozen: self.world.frozen,
+                god_level: self.world.god_level,
             }),
             // nothing known yet: the simulator decides
             _ => true,
