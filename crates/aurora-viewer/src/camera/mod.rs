@@ -18,6 +18,7 @@ pub mod free;
 mod mouselook_zoom;
 pub mod presets;
 mod settings;
+pub mod track;
 pub mod vr;
 
 pub use focus::FocusObject;
@@ -406,6 +407,10 @@ pub struct Camera {
     /// Where the camera really was before `fixed_view` put it at the eye
     /// (`release_fixed_view` brings it back).
     fixed_real_position: Option<Vec3>,
+    /// The Director's track (`track.rs`) playing or scrubbed: while set, the
+    /// view is this pose and whatever camera was there (the avatar's, the
+    /// free camera, the flycam) waits behind it, with the roll kept here.
+    track: Option<(track::Pose, f32)>,
 }
 
 /// A view imposed on the camera for a frame (`Camera::fixed_view`).
@@ -511,6 +516,7 @@ impl Default for Camera {
             fixed_real_position: None,
             shake: Vec3::ZERO,
             roll: 0.0,
+            track: None,
         }
     }
 }
@@ -1278,6 +1284,44 @@ impl Camera {
         }
     }
 
+    /// The Director's track takes the view (`Some`: its pose at the
+    /// playhead, each frame of a playback or a scrub) or gives it back to
+    /// the camera it took it from, at once and with the roll it had.
+    pub fn set_track_view(&mut self, pose: Option<track::Pose>) {
+        match (pose, self.track) {
+            (Some(pose), Some((_, roll))) => self.track = Some((pose, roll)),
+            (Some(pose), None) => self.track = Some((pose, self.roll)),
+            (None, Some((_, roll))) => {
+                self.track = None;
+                self.roll = roll;
+                // no glide back from the track's last view
+                self.smoothing_stop = true;
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// The Director's lock: the view turned to `point` for this frame, the
+    /// camera where it is, with its roll. Call it after `update`. The
+    /// avatar's camera keeps its own focus underneath and looks at it again
+    /// once the lock ends; the flycam and the free camera, which have no
+    /// focus, keep the direction the lock gave them. Nothing in mouselook
+    /// (the view is where the avatar aims) nor while the track has the view
+    /// (its pose is aimed before it is handed over).
+    pub fn aim_at(&mut self, point: Vec3) {
+        let direction = point - self.position;
+        if self.track.is_some() || self.mouselook() || !direction.is_finite() || direction.length_squared() < 1e-4 {
+            return;
+        }
+        if let Some(flycam) = &mut self.flycam {
+            let pose = track::Pose::from_view(flycam.position, flycam.forward(), flycam.up(), flycam.fov).aimed(point, 1.0);
+            flycam.rotation = pose.rotation;
+        } else if let Some(free) = &mut self.free {
+            *free = FreeCamera::from_view(free.position, point);
+        }
+        self.target = point;
+    }
+
     /// Back to the default view without animation (login, teleport).
     pub fn snap(&mut self) {
         self.initialized = false;
@@ -1293,6 +1337,9 @@ impl Camera {
             *target += delta;
         }
         self.vr_head = None;
+        if let Some((pose, _)) = &mut self.track {
+            pose.position += delta;
+        }
         self.follow.shift(delta);
         for p in [
             &mut self.position,
@@ -2036,6 +2083,17 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
+        if let Some((pose, _)) = self.track {
+            // the Director's track: its own view; the camera it took the
+            // view from waits for its return (RLVa's limits still apply to
+            // it, in `update`)
+            self.position = pose.position;
+            self.target = pose.position + pose.forward();
+            self.fov_y = pose.fov;
+            self.roll = pose.roll();
+            self.anim = None;
+            return;
+        }
         if let Some(flycam) = self.flycam {
             self.position = flycam.position;
             self.target = flycam.position + flycam.forward();
@@ -2958,6 +3016,9 @@ impl Camera {
         if let Some(fixed) = self.fixed_view {
             return glam::camera::rh::view::look_to_mat4(self.position, fixed.forward, fixed.up);
         }
+        if let Some((pose, _)) = self.track {
+            return glam::camera::rh::view::look_to_mat4(self.position + self.shake, pose.forward(), pose.up());
+        }
         if let Some(flycam) = self.flycam {
             return glam::camera::rh::view::look_to_mat4(self.position + self.shake, flycam.forward(), flycam.up());
         }
@@ -2970,6 +3031,9 @@ impl Camera {
     pub fn view_up(&self) -> Vec3 {
         if let Some(fixed) = self.fixed_view {
             return fixed.up;
+        }
+        if let Some((pose, _)) = self.track {
+            return pose.up();
         }
         if let Some(flycam) = self.flycam {
             return flycam.up();
