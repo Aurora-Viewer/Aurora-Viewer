@@ -141,6 +141,12 @@ pub struct Preferences {
     pub kinds: Vec<Kind>,
     /// Store → category, for the stores whose names say nothing.
     pub store_hints: Vec<StoreHint>,
+    /// Default folders the user allowed Auto-sort into, with a warning:
+    /// only [`unlockable`] ones count. Kept per account with the other
+    /// options, never shared nor imported.
+    pub unlocked: Vec<Uuid>,
+    /// Lost and Found's own switch, off by default.
+    pub include_lost_found: bool,
 }
 
 impl Default for Preferences {
@@ -154,11 +160,30 @@ impl Default for Preferences {
             cleanup: Cleanup::default(),
             kinds: Kind::ALL.to_vec(),
             store_hints: Vec::new(),
+            unlocked: Vec::new(),
+            include_lost_found: false,
         }
     }
 }
 
 impl Preferences {
+    /// The folders the hands-off rule opens for the user: the unlocked
+    /// ones that may be, and Lost and Found when its switch is on.
+    pub fn unlocked_set(&self, inv: &Inventory) -> HashSet<Uuid> {
+        let mut set: HashSet<Uuid> = self
+            .unlocked
+            .iter()
+            .copied()
+            .filter(|id| inv.folders.get(id).is_some_and(|f| unlockable(f.info.type_default)))
+            .collect();
+        if self.include_lost_found
+            && let Some(lost) = actions::system(inv, LOST_AND_FOUND)
+        {
+            set.insert(lost);
+        }
+        set
+    }
+
     /// The sort folder's name, as the inventory keeps it. A name that would
     /// reach somewhere it must not (a `#` viewer folder, the Pre-Trash
     /// folder, a default folder's name) is refused for the default one:
@@ -1031,10 +1056,42 @@ const OPEN_DEFAULT: i32 = 6;
 /// Trash steps), checked when planning and again before each batch: no
 /// setting, rule or imported text can reach past it.
 fn open_container(inv: &Inventory, folder: &super::Folder) -> bool {
-    !folder.library && (folder.info.id == inv.root || matches!(folder.info.type_default, -1 | OPEN_DEFAULT))
+    !folder.library
+        && (folder.info.id == inv.root
+            || matches!(folder.info.type_default, -1 | OPEN_DEFAULT)
+            || (unlockable(folder.info.type_default) || folder.info.type_default == LOST_AND_FOUND)
+                && inv.sorter_unlocked.contains(&folder.info.id))
 }
 
-/// The viewer folders at the root, never touched:
+/// The default folders the user may allow Auto-sort into, one by one, with
+/// a warning: Textures, Sounds, Calling Cards, Landmarks, Clothing,
+/// Notecards, Scripts, Body Parts, Photo Album, Animations, Gestures,
+/// Settings, Materials. Lost and Found opens by its own switch only
+/// (`Preferences::include_lost_found`). Never: the Trash, Marketplace
+/// Listings and its folders, the Current Outfit, My Outfits and the
+/// outfits, the Library, Received Items, Favorites, the viewer folders.
+pub fn unlockable(kind: i32) -> bool {
+    matches!(kind, 0 | 1 | 2 | 3 | 5 | 7 | 10 | 13 | 15 | 20 | 21 | 56 | 57)
+}
+
+/// Lost and Found, semi-protected: closed unless its switch is on.
+const LOST_AND_FOUND: i32 = 16;
+
+/// The default folders of My Inventory's root the user may unlock.
+pub fn unlockable_folders(inv: &Inventory) -> Vec<Uuid> {
+    inv.folders
+        .get(&inv.root)
+        .map(|root| {
+            root.children
+                .iter()
+                .copied()
+                .filter(|id| inv.folders.get(id).is_some_and(|f| !f.library && unlockable(f.info.type_default)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The viewer folders at the root, never touched and never unlockable:
 /// RLVa reads `#RLV` (RlvInventory::getSharedRootID), the AO and the
 /// scripting bridge live in `#Firestorm` and `#Aurora`, and the AO reads
 /// another viewer's `Animation Overrides` (ao::inventory::ALCHEMY_FOLDER).
@@ -1201,6 +1258,7 @@ pub fn snapshot(inv: &Inventory) -> Inventory {
         missing_items: inv.missing_items.clone(),
         too_big: inv.too_big.clone(),
         listing_holds: inv.listing_holds.clone(),
+        sorter_unlocked: inv.sorter_unlocked.clone(),
         ..Default::default()
     }
 }
