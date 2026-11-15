@@ -3518,8 +3518,15 @@ impl App {
             }
             return;
         }
-        if let NetEvent::ScriptTeleportRequest { .. } = ev {
-            // llMapDestination asked for the map (BEACON_SHOW_MAP)
+        if let NetEvent::ScriptTeleportRequest { flags, .. } = ev {
+            // llMapDestination asked for the map (BEACON_SHOW_MAP). Its search
+            // takes the keyboard only with BEACON_FOCUS_MAP, which the server
+            // sets by default: process_script_teleport_request sets the
+            // floater's auto-focus from it before openFloater
+            // (indra/newview/llviewermessage.cpp).
+            if !self.panels.world_map && flags & aurora_net::beacon::FOCUS_MAP == 0 {
+                self.worldmap_ui.open_for_script();
+            }
             self.panels.world_map = true;
             return;
         }
