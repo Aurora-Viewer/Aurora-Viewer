@@ -11,7 +11,28 @@ use crate::ui::emoji::Emoji;
 use crate::ui::fonts::chat_size;
 use egui::{Context, Id, TextEdit, Ui};
 
-const MAX_ROWS: f32 = 4.0;
+/// How far a field grows before it scrolls, and what its text leaves free.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Limits {
+    /// Visible rows at most.
+    pub rows: f32,
+    /// Height at most, whatever the rows (what the window has room for).
+    pub height: f32,
+    /// Width kept free on the text's right, inside the scroll area: the
+    /// box's buttons sit there, and its scroll bar runs along the area's
+    /// right edge, past them.
+    pub beside: f32,
+}
+
+impl Limits {
+    /// The chat bar's and the Legacy style's fields: four rows (the Legacy
+    /// Viewer's expand_lines_count is 5, LLChatEntry::expandText).
+    pub const FIELD: Limits = Limits {
+        rows: 4.0,
+        height: f32::INFINITY,
+        beside: 0.0,
+    };
+}
 
 /// Before completion reads the keyboard: route an explicit paragraph break
 /// through the editor's native paste handling (selection replacement/undo),
@@ -74,9 +95,10 @@ pub(super) fn hint(ui: &Ui, field: Id, text: impl Into<String>, width: f32, fram
     crate::ui::widgets::elided_galley(ui, text, (width - margin - 1.0).max(0.0)).into()
 }
 
-/// A wrapping editor with at most four visible rows. Its full galley feeds
-/// selection/completion while its response and painting stay in the viewport.
-/// Call `prepare` before the field's completion/history handlers.
+/// A wrapping editor with at most four visible rows (`Limits::FIELD`).
+/// Its full galley feeds selection/completion while its response and
+/// painting stay in the viewport. Call `prepare` before the field's
+/// completion/history handlers.
 pub(super) fn show(
     ui: &mut Ui,
     emoji: Option<&mut Emoji>,
@@ -86,7 +108,24 @@ pub(super) fn show(
     minimum: f32,
     build: impl FnOnce(TextEdit<'_>) -> TextEdit<'_>,
 ) -> egui::text_edit::TextEditOutput {
-    let previous = height(ui.ctx(), field, minimum);
+    show_with(ui, emoji, field, text, width, minimum, Limits::FIELD, build)
+}
+
+/// The same within `limits`: `width` is the scroll area's, its bar along
+/// the right edge; the text takes it less `limits.beside` and the bar's strip.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show_with(
+    ui: &mut Ui,
+    emoji: Option<&mut Emoji>,
+    field: Id,
+    text: &mut String,
+    width: f32,
+    minimum: f32,
+    limits: Limits,
+    build: impl FnOnce(TextEdit<'_>) -> TextEdit<'_>,
+) -> egui::text_edit::TextEditOutput {
+    let cap = limits.height.max(minimum);
+    let previous = height(ui.ctx(), field, minimum).min(cap);
     let scroll = ui
         .allocate_ui_with_layout(egui::vec2(width, previous), egui::Layout::top_down(egui::Align::Min), |ui| {
             egui::ScrollArea::vertical()
@@ -95,7 +134,13 @@ pub(super) fn show(
                 .min_scrolled_height(minimum)
                 .max_height(previous)
                 .show(ui, |ui| {
-                    let width = ui.available_width();
+                    // a column kept free beside the text: the same width
+                    // whether the bar shows or not (no rewrap when it does)
+                    let width = if limits.beside > 0.0 {
+                        (width - limits.beside - ui.spacing().scroll.allocated_width()).max(minimum)
+                    } else {
+                        ui.available_width()
+                    };
                     // the chat's text size (ChatFontSize sizes the chat
                     // fields too), for a field given no font of its own
                     let font = egui::FontSelection::default().resolve(ui.style());
@@ -111,7 +156,7 @@ pub(super) fn show(
     let content_height = output.response.rect.height();
     let row_height = output.galley.rows.first().map_or(minimum, |r| r.row.size.y);
     let padding = (content_height - output.galley.size().y).max(0.0);
-    let maximum = (MAX_ROWS * row_height + padding).max(minimum);
+    let maximum = (limits.rows * row_height + padding).min(cap).max(minimum);
     let next = content_height.clamp(minimum, maximum);
     if !ui.is_sizing_pass() && (next - previous).abs() > 0.5 {
         ui.ctx().data_mut(|d| d.insert_temp(field.with("paragraph_height"), next));

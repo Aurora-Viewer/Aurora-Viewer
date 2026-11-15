@@ -19,11 +19,32 @@ const TYPING_H: f32 = 18.0;
 pub(super) const BOX_H: f32 = 42.0;
 const BUTTON: f32 = 28.0;
 
+/// The box's margins around the field: its scroll bar runs close to the
+/// right edge, the buttons beside it keep the left side's gap.
+const BOX_MARGIN: egui::Margin = egui::Margin {
+    left: 6,
+    right: 2,
+    top: 7,
+    bottom: 7,
+};
+/// Rows the field shows before it scrolls (human request of 2026-11-15;
+/// the Legacy Viewer's field stops at 5, expand_lines_count).
+const ROWS: f32 = 30.0;
+/// The messages keep at least this much of the pane while the box grows.
+const MIN_MESSAGES: f32 = 120.0;
+
 /// What the field takes under the messages: typing line, box, the recent
-/// emojis and margin.
-pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>, recent: f32) -> f32 {
+/// emojis and margin. `cap` is `field_cap`'s.
+pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>, recent: f32, cap: f32) -> f32 {
     let field = egui::Id::unique(("conv_input", conversation));
-    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + recent + 12.0
+    let margin = BOX_MARGIN.sum().y;
+    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON).min(cap) + margin) + recent + 12.0
+}
+
+/// The field's greatest height when the messages and the box share `room`:
+/// it grows to `ROWS` rows while the messages keep `MIN_MESSAGES`.
+pub(super) fn field_cap(room: f32, recent: f32) -> f32 {
+    (room - MIN_MESSAGES - TYPING_H - BOX_MARGIN.sum().y - recent - 12.0).max(BUTTON)
 }
 
 /// The volume of what we say in the nearby chat.
@@ -85,6 +106,7 @@ pub(super) fn show(
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
     quote: Option<String>,
+    cap: f32,
 ) {
     let conv_input = egui::Id::unique(("conv_input", st.selected));
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
@@ -127,11 +149,13 @@ pub(super) fn show(
             let field = egui::Frame::new()
                 .fill(p.raised)
                 .corner_radius(ui.visuals().window_corner_radius)
-                .inner_margin(egui::Margin::symmetric(6, 4))
+                .inner_margin(BOX_MARGIN)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.set_min_height(BOX_H - 8.0);
-                    ui.horizontal_centered(|ui| {
+                    ui.set_min_height(BOX_H - BOX_MARGIN.sum().y);
+                    // the buttons level with the first line, rising with
+                    // the box as it grows (human request of 2026-11-15)
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         let b = box_button(ui, p, "mood-smile-filled", aurora_i18n::tr!("ui-chat-emoji"), st.emoji_open);
                         emoji_btn = Some(b.rect);
@@ -150,12 +174,18 @@ pub(super) fn show(
                         if kind.is_none() {
                             volume_button(ui, p, st, roomy);
                         }
-                        // the right end first: what it takes fixes the field's width
+                        // the right end: the channel and send, in a column
+                        // the text leaves free inside the field's scroll
+                        // area, whose bar runs along the box's right edge.
                         // The Legacy Viewer's selector remains available at
                         // every width; `/n` also works when it is hidden.
                         let chip = local && st.show_channel;
                         let chip_w = if chip { super::channel::RESERVED_WIDTH } else { 0.0 };
-                        let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
+                        let beside = chip_w + BUTTON + 8.0;
+                        let area_w = ui.available_width();
+                        let strip = ui.spacing().scroll.allocated_width();
+                        let field_w = (area_w - beside - strip).max(40.0);
+                        let area_top = ui.cursor().min;
                         let hint = super::input::hint(
                             ui,
                             conv_input,
@@ -170,9 +200,15 @@ pub(super) fn show(
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);
                         let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
-                        let mut output = super::input::show(ui, Some(&mut *emoji), conv_input, &mut draft, field_w, BUTTON, |edit| {
-                            edit.id(conv_input).hint_text(hint).frame(egui::Frame::NONE)
-                        });
+                        let limits = super::input::Limits {
+                            rows: ROWS,
+                            height: cap,
+                            beside,
+                        };
+                        let mut output =
+                            super::input::show_with(ui, Some(&mut *emoji), conv_input, &mut draft, area_w, BUTTON, limits, |edit| {
+                                edit.id(conv_input).hint_text(hint).frame(egui::Frame::NONE)
+                            });
                         if recalled {
                             output.response.mark_changed();
                         }
@@ -185,12 +221,25 @@ pub(super) fn show(
                             Some(id) => suggest::Scope::Session(id, &people),
                         };
                         suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
-                        // `chip` is only for the nearby chat
-                        if chip {
-                            super::channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
-                        }
+                        // over the scroll area's free column, at its top
+                        // (added after it: they take the pointer first)
+                        let right = area_top.x + area_w - strip;
+                        let column =
+                            egui::Rect::from_min_max(egui::pos2(right - beside + 8.0, area_top.y), egui::pos2(right, area_top.y + BUTTON));
                         let has_text = !draft.trim().is_empty();
-                        send_clicked = send_button(ui, p, has_text).clicked() && has_text;
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(column)
+                                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                send_clicked = send_button(ui, p, has_text).clicked() && has_text;
+                                // `chip` is only for the nearby chat
+                                if chip {
+                                    super::channel::show(ui, p, &mut st.chat_channel, sidebar::control_id("box-channel"));
+                                }
+                            },
+                        );
                         output.response.response.on_hover_ui(|ui| {
                             ui.label(super::shortcuts::tip(&super::shortcuts::get(ui.ctx()), local, false));
                         })

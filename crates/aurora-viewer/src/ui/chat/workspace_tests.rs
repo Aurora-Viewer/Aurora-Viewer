@@ -2704,6 +2704,71 @@ fn the_latest_button_brings_the_end_back() {
     }
 }
 
+/// The Aurora box grows with its text up to thirty rows, its buttons level
+/// with the first line, while the messages keep their end in sight; past
+/// what the window has room for it scrolls, the messages keeping their
+/// least height (human request of 2026-11-15).
+#[test]
+fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
+    let field = egui::Id::unique(("conv_input", Some(JANE)));
+    let mut h = Harness::new(ChatStyle::Aurora);
+    for k in 0..60 {
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+    }
+    h.st.selected = Some(JANE);
+    for _ in 0..4 {
+        h.settle();
+    }
+    // one row: the button's height (nothing stored while it is the least)
+    let one = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
+    let field_text = |texts: &[crate::ui::widgets::elide_tests::Text]| {
+        texts
+            .iter()
+            .find(|t| t.source.starts_with("row 1\n"))
+            .map(|t| t.rect)
+            .expect("the field's text drawn")
+    };
+    *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    let twelve = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let text = field_text(&texts);
+    // every row in sight: the field as tall as its text, past four rows
+    assert!(
+        twelve >= text.height() && twelve > one * 4.0,
+        "{one} -> {twelve}, text {}",
+        text.height()
+    );
+    assert!(has(&texts, "old 59"), "the last message still in sight");
+    assert!(!has(&texts, aurora_i18n::tr!("ui-chat-latest")), "no button back to it");
+    // the emoji button level with the first row, not centred on the box
+    let emoji = h.rect(crate::ui::chat::sidebar::control_id("box-mood-smile-filled"));
+    assert!((emoji.center().y - text.top()).abs() < 16.0, "{emoji:?} {text:?}");
+    // far more than the window holds: it stops growing, the messages keep
+    // their least height and the last of them shows
+    *h.st.draft_mut(Some(JANE)) = (1..=80).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    let tall = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let rows = field_text(&texts).height() / 80.0;
+    assert!(tall <= rows * 30.0 + 12.0, "{tall} for rows of {rows}");
+    assert!(has(&texts, "old 59"), "the last message still in sight");
+    // a draft already long when the conversation opens: the same
+    let mut h = Harness::new(ChatStyle::Aurora);
+    for k in 0..60 {
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+    }
+    h.st.selected = Some(JANE);
+    *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    assert!(has(&texts, "old 59"), "opened with a long draft: the last message in sight");
+    assert!(
+        !has(&texts, aurora_i18n::tr!("ui-chat-latest")),
+        "opened with a long draft: no button"
+    );
+}
+
 /// With the button turned off (Preferences › Chat › Conversations), a
 /// conversation scrolled away from its end shows none, even when lines come
 /// in, and the reader stays where they are, in both windows.

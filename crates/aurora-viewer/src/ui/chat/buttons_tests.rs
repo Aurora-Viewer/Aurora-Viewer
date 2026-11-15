@@ -1012,7 +1012,13 @@ fn paragraph_editor_wraps_scrolls_and_collapses_in_every_style() {
         h.settle();
         let expanded = rect(&h);
         assert!(expanded.height() > before.height() + 10.0, "{style:?}: wraps");
-        assert!(expanded.height() <= 100.0, "{style:?}: bounded viewport {expanded:?}");
+        // four rows, or in Aurora's workspace up to thirty, within what the
+        // window has room for (`compose::field_cap`)
+        let bound = if style.workspace() { 30.0 * 20.0 } else { 100.0 };
+        assert!(expanded.height() <= bound, "{style:?}: bounded viewport {expanded:?}");
+        if style.workspace() {
+            assert!(expanded.height() > 100.0, "{style:?}: past four rows {expanded:?}");
+        }
         for _ in 0..30 {
             h.frame(Vec::new());
         }

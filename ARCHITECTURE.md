@@ -673,7 +673,9 @@ app publishes them each frame and `ui/chat/shortcuts.rs` matches the fields' own
 key events against them, while the world's dispatch ignores them. Whisper is
 unbound by default, and Shout too (the volume menu shouts); the Whisper key in IMs and sessions is consumed, preserving the
 draft and focus.
-The editor grows to four visible rows, then scrolls. Its measured bounded height
+The editor grows to four visible rows, then scrolls (`input::Limits`; the
+Aurora workspace's box, `compose.rs`, to thirty within the pane's room, its
+buttons at the top and its scroll bar along the box's right edge). Its measured bounded height
 reserves space in the transcript or bar without growing the containing window.
 `ui/chat/channel.rs` shares the nearby-chat channel selector across all
 conversation layouts and both local chat bars. Its channel (`ChatUi::chat_channel`)

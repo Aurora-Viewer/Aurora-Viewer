@@ -7931,7 +7931,9 @@ failure. Grid validation and any paid upload are performed by the human.
   one is set in Preferences › Controls › Shortcuts › Communication ›
   Chat (while typing), and the Whisper key leaves an IM's draft, completion and focus
   unchanged. A long conversation name in the placeholder ("Write to …")
-  ends with "…" on one line. The field wraps and grows to four rows, then scrolls;
+  ends with "…" on one line. The field wraps and grows to four rows (thirty in the Aurora and Compact
+  styles' box, within the window's room, its buttons level with the first
+  row and its scroll bar along the box's right edge), then scrolls;
   the dock stays in place, while the full Legacy bar reserves its taller
   layout. Conversation windows keep their size. Sending collapses the field.
   Capture at frame 750 or later. This fixture uses no grid or system clipboard.
