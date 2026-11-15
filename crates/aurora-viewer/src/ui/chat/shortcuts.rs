@@ -200,13 +200,17 @@ mod tests {
     }
 
     #[test]
-    fn command_is_not_control_for_the_chat_keys() {
+    fn command_is_control_except_where_the_field_keeps_the_key() {
         let keys = ChatKeys::of(&KeyBindings::default());
         let cmd = Modifiers {
             mac_cmd: true,
             command: true,
             ..Default::default()
         };
+        // Command+Enter shouts, as the Legacy Viewer's MASK_CONTROL on macOS
+        assert!(keys.pressed(Action::ChatShout, &press(Key::Enter, cmd)));
+        assert!(keys.pressed(Action::ChatNewLine, &press(Key::Enter, cmd | SHIFT)));
+        // Command+Up stays the field's: the start of the text
         assert!(!keys.pressed(Action::ChatHistoryPrevious, &press(Key::ArrowUp, cmd)));
     }
 

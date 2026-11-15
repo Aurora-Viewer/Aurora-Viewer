@@ -211,17 +211,23 @@ impl Binding {
     /// is compared by its physical place, as the world's bindings are
     /// (egui names keys as winit's codes: `KeyA`, `Enter`, `ArrowUp`;
     /// Numpad Enter arrives as Enter). The modifiers must match exactly.
-    /// Control is the Control key alone: on macOS Command + an arrow stays
-    /// the field's (start / end of the text), as the chat's fixed keys
-    /// left it before they could be rebound. A mouse binding never
-    /// matches a key.
+    /// Command counts as Control on macOS, as `control_down` does for a key
+    /// (LLKeyboardMacOSX::currentMask) and as the shortcut table labels it,
+    /// except with the keys a text field keeps (`text_field_keeps`):
+    /// Command + an arrow stays the field's (start / end of the text), as
+    /// the chat's fixed keys left it before they could be rebound. A mouse
+    /// binding never matches a key.
     pub fn matches_egui(&self, key: egui::Key, physical: Option<egui::Key>, m: egui::Modifiers) -> bool {
         let Input::Key(code) = &self.input else {
             return false;
         };
+        let ctrl = if kept_by_field(self) {
+            m.ctrl && !m.mac_cmd
+        } else {
+            control_down(m.ctrl, m.mac_cmd, false)
+        };
         egui::Key::from_name(code).is_some_and(|bound| bound == physical.unwrap_or(key))
-            && self.ctrl == m.ctrl
-            && !m.mac_cmd
+            && self.ctrl == ctrl
             && self.shift == m.shift
             && self.alt == m.alt
     }
@@ -1107,6 +1113,42 @@ pub fn is_text_edit_key(code: KeyCode) -> bool {
     text_field_keeps(code, ctrl) || text_field_keeps(code, shifted)
 }
 
+/// Whether a focused text field keeps this binding's chord
+/// (`text_field_keeps`): the keys that function names, by their code.
+fn kept_by_field(b: &Binding) -> bool {
+    use KeyCode as K;
+    let Input::Key(name) = &b.input else {
+        return false;
+    };
+    let code = match name.as_str() {
+        "KeyA" => K::KeyA,
+        "KeyQ" => K::KeyQ,
+        "KeyC" => K::KeyC,
+        "KeyX" => K::KeyX,
+        "KeyV" => K::KeyV,
+        "KeyY" => K::KeyY,
+        "KeyZ" => K::KeyZ,
+        "KeyW" => K::KeyW,
+        "ArrowLeft" => K::ArrowLeft,
+        "ArrowRight" => K::ArrowRight,
+        "ArrowUp" => K::ArrowUp,
+        "ArrowDown" => K::ArrowDown,
+        "Home" => K::Home,
+        "End" => K::End,
+        "Backspace" => K::Backspace,
+        "Delete" => K::Delete,
+        _ => return false,
+    };
+    text_field_keeps(
+        code,
+        Mods {
+            ctrl: b.ctrl,
+            shift: b.shift,
+            alt: b.alt,
+        },
+    )
+}
+
 /// Chords a focused text field keeps. Menu accelerators match the mask
 /// exactly and run before the field (LLViewerWindow::handleKey,
 /// LLMenuItemGL::handleAcceleratorKey): Select All is `control|A`
@@ -1508,10 +1550,18 @@ impl KeyBindings {
             .collect()
     }
 
-    /// The other actions using this binding that it conflicts with: the
-    /// chat fields' shortcuts and the world's never meet (`is_chat`).
+    /// The other actions using this binding that it conflicts with. A chat
+    /// field's shortcut (`is_chat`) and a world's meet only on a Ctrl / Alt
+    /// chord the field does not keep: the world's runs first while typing
+    /// (`shortcut_while_typing` in app.rs, as the Legacy Viewer's menu
+    /// accelerators go before the focused field), so the chat's would
+    /// never be seen.
     pub fn rivals(&self, a: Action, b: &Binding) -> Vec<Action> {
-        self.users(b).into_iter().filter(|x| *x != a && is_chat(*x) == is_chat(a)).collect()
+        let meet_while_typing = (b.ctrl || b.alt) && !kept_by_field(b);
+        self.users(b)
+            .into_iter()
+            .filter(|x| *x != a && (is_chat(*x) == is_chat(a) || meet_while_typing))
+            .collect()
     }
 
     /// Is a held action active? A binding needs its modifiers and accepts
@@ -2171,6 +2221,17 @@ mod tests {
         // field's alone (`is_chat`)
         assert!(kb.users(&b).contains(&Action::ChatHistoryPrevious));
         assert!(kb.rivals(Action::ChatHistoryPrevious, &b).is_empty());
+        // but a chat key on a world chord that runs while typing is one: the
+        // world's would take the key first (Ctrl+P, Preferences)
+        let ctrl_p = Binding::captured(Input::key(KeyCode::KeyP), ctrl);
+        kb.set(Action::ChatWhisper, 0, Some(ctrl_p.clone()));
+        assert_eq!(kb.rivals(Action::ChatWhisper, &ctrl_p), vec![Action::Preferences]);
+        assert!(kb.rivals(Action::Preferences, &ctrl_p).contains(&Action::ChatWhisper));
+        // a plain key never meets: the world's do not run while typing
+        let f5 = Binding::captured(Input::key(KeyCode::F5), Mods::default());
+        kb.set(Action::ChatWhisper, 0, Some(f5.clone()));
+        kb.set(Action::Fly, 1, Some(f5.clone()));
+        assert!(kb.rivals(Action::ChatWhisper, &f5).is_empty());
         let down = [input].into_iter().collect();
         assert!(kb.held(Action::HudDrag, &down, ctrl));
         assert!(kb.held(Action::PushToTalk, &down, ctrl));

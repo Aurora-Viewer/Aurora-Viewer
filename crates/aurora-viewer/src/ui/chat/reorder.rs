@@ -118,6 +118,10 @@ pub(super) struct State {
     seeding: HashMap<Uuid, Pos2>,
     /// The entry let go, gliding into its place over the others.
     settling: Option<Uuid>,
+    /// The pass the list was last laid out on: a list not drawn since
+    /// (the window closed or minimised) drops its slides, and opens with
+    /// every entry in its place.
+    laid_out: Option<u64>,
     /// The pointer's last position: it may leave the viewer's window before
     /// the button is let go.
     last_pointer: Option<Pos2>,
@@ -129,7 +133,17 @@ impl State {
         self.order.retain(|id| remaining.remove(id));
         self.order
             .extend(world.social.ims.iter().map(|s| s.other).filter(|id| remaining.remove(id)));
+        let pass = ctx.cumulative_pass_nr();
+        if self.laid_out.is_none_or(|last| last + 1 < pass) {
+            self.offsets.clear();
+            self.targets.clear();
+            self.seed.clear();
+            self.settling = None;
+        }
         self.offsets.retain(|id, _| self.order.contains(id));
+        if self.settling.is_some_and(|id| !self.order.contains(&id)) {
+            self.settling = None;
+        }
         self.rows.clear();
         self.local = None;
         self.seeding = std::mem::take(&mut self.seed);
@@ -394,6 +408,7 @@ impl State {
         }
         // the frame after a drop has started every slide
         self.seeding.clear();
+        self.laid_out = Some(ui.ctx().cumulative_pass_nr());
         let grab = self.grab?;
         let source = match grab.conversation {
             Some(id) => self.rows.iter().find(|row| row.id == id).map(|row| row.rect),
